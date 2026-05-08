@@ -4,7 +4,7 @@
 
 roam-code (`pip install roam-code`) is a local code-graph engine: it indexes
 symbols, call graphs, dependencies, architectural layers, and git history into
-a SQLite database in your repo's `.roam/` directory. The CLI exposes 203
+a SQLite database in your repo's `.roam/` directory. The CLI exposes 205
 commands and 137 MCP tools that AI agents (Claude Code, Cursor, Codex, etc.)
 can call to answer questions like "what else does this PR break", "what tests
 exercise this function", "is this a clone of another implementation".
@@ -13,10 +13,17 @@ exercise this function", "is this a clone of another implementation".
 
 ## Products
 
-- [Free CLI](https://pypi.org/project/roam-code/) — `pip install roam-code`. The full engine. Always free, forever.
-- [Roam Review](https://roam-code.com/#review) — flat tiers from $99/mo (Starter $99, Team $299, Business $799, Scale $1,499). PR bot that posts a structural-risk verdict on every pull request. Usage caps with no surprise overage.
-- [Roam Cloud](https://roam-code.com/#cloud) — from $19/repo/mo (Team $99/mo, Growth $299/mo). Hosted dashboard for code-health metrics over time. Source code never uploaded; metrics-only payload.
-- [Roam Self-Hosted](https://roam-code.com/#self-hosted) — custom annual pricing, contact sales. The full Roam stack inside your own network. For regulated buyers.
+Status as of 2026-05-08: the Free CLI is live (PyPI). Roam Review,
+Roam Cloud, and Roam Self-Hosted are pre-launch / early access — pricing
+is published, sign-up is via email at hello@roam-code.com. Self-serve
+checkout (Stripe) launches alongside the products. See
+https://roam-code.com/status for the operational state.
+
+- [Free CLI](https://pypi.org/project/roam-code/) — `pip install roam-code`. The full engine. Always free, forever. **Live today.**
+- [Roam Review](https://roam-code.com/#review) — flat tiers from $99/mo (Starter $99, Team $299, Business $799, Scale $1,499). PR bot that posts a structural-risk verdict on every pull request. Usage caps with no surprise overage. **Early access.**
+- [Roam Cloud](https://roam-code.com/#cloud) — from $19/repo/mo (Team $99/mo, Growth $299/mo). Hosted dashboard for code-health metrics over time. Source code never uploaded; metrics-only payload. **Early access.**
+- [Roam Self-Hosted](https://roam-code.com/#self-hosted) — custom annual pricing, contact sales. The full Roam stack inside your own network. For regulated buyers. **Early access.**
+- [PR Replay](https://roam-code.com/audit) — one-shot paid audit. Sample (free / DIY) · Team ($2,500) · Deep ($6,000). 50% credits toward a Roam Review subscription within 60 days. **Available today via email**; self-serve checkout launches with Review.
 
 ## Key links
 

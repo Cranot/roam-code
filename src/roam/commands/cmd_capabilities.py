@@ -106,7 +106,7 @@ def _populate_registry() -> None:
     """Import known capability-decorated command modules to populate the registry.
 
     Today this lists commands explicitly. Once the decorator has been
-    applied to all 190 commands, this becomes a sweep of
+    applied to every command, this becomes a sweep of
     ``roam.commands.cmd_*``.
     """
     import importlib

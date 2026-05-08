@@ -7,6 +7,333 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation site consolidated to roam-code.com only
+
+GitHub Pages disabled on the repo on 2026-05-08. Previously the docs
+were dual-hosted at `cranot.github.io/roam-code/*` (GitHub Pages serving
+`docs/site/`) and at `roam-code.com/docs/` (Cloudflare Pages serving
+`templates/distribution/landing-page/docs/`). Drift between the two
+copies was a persistent source of count / content inconsistencies.
+
+* GitHub Pages turned off via the GitHub API; `has_pages: false` on the
+  repo. `cranot.github.io/roam-code/*` URLs now 404.
+* Removed `docs/site/` directory: 11 redirect-stub HTML files, the
+  competitor-matrix asset bundle (`app.js`, `landscape.json`, CSS), the
+  GH-Pages-only `sitemap.xml` and `robots.txt`, and the cookbook /
+  benchmarks / language-precision markdown. The cookbook and benchmark
+  content lives in the repo's commit history if it's needed in future.
+* Removed `.github/workflows/pages.yml` (Pages deploy workflow).
+* Moved the canonical MCP server card to
+  `templates/distribution/landing-page/.well-known/mcp-server-card.json`
+  so the card's `card_url` claim
+  (`roam-code.com/.well-known/mcp-server-card.json`) keeps working.
+* Updated `scripts/sync_surface_counts.py`, `tests/test_doc_consistency.py`,
+  and `dev/build_command_reference.py` to point at the surviving paths.
+  Dropped `landscape.json`-based consistency tests (file no longer
+  exists; competitor data lives in `src/roam/competitor_site_data.py`).
+* Updated README + status page to reflect the new single-host setup.
+
+Net effect: one canonical docs surface (`roam-code.com/docs/`), no
+silent drift between two hosts, simpler CI.
+
+### `stale-refs` — operations-grade upgrades
+
+Adds repo config, in-toto attestations, LSP code actions, LSP
+cross-file rename, `roam audit` integration, monorepo support, and
+a wider external-link-check option set.
+
+#### External link checking — five new flags
+
+* `--external-cache-ttl SEC` — cache HEAD probes for SEC seconds
+  (`.roam/external-cache.json`) so repeated CI runs don't hammer
+  third-party servers.
+* `--external-allow-status 401,403,…` — accept specific HTTP codes
+  as "exists" for paywalled / auth-protected URLs.
+* `--external-auth-header "Header: value"` — inject custom headers
+  on probes (private GitHub Enterprise, internal portals).
+* `--external-insecure` — skip TLS verification when probing
+  internal CAs.
+* Per-finding **redirect chain** captured in JSON output so the
+  verdict explains *why* a URL changed status (301 → 302 → 200).
+
+#### LSP server — Quick Fix + workspace-wide rename + watcher
+
+* `textDocument/codeAction` — HIGH-confidence rename hints surface
+  in the editor's Quick Fix menu; selecting the action triggers
+  the editor's `workspace/applyEdit` flow.
+* `workspace/didChangeWatchedFiles` — when external file changes
+  hit the workspace (git pull, file manager rename, etc.), every
+  open buffer's diagnostics are re-published. Registered
+  dynamically via `client/registerCapability` only for clients
+  that advertise support.
+* `workspace/willRenameFiles` — on a rename event the server
+  proposes a `WorkspaceEdit` updating every reference to the old
+  path with the new path, fragments preserved.
+
+#### LLM enricher — ranked candidates + observability
+
+* Prompt now asks for **top-3 ranked candidates** per missing
+  target instead of a single best guess. The first valid
+  candidate becomes the hint; runners-up land on the target as
+  `llm_alternates`.
+* `summary.llm_per_target` — per-target diagnostics: how many
+  candidates the LLM returned, which were validated, which were
+  rejected as hallucinations, and (on success) which one was
+  chosen.
+* `summary.llm_latency_ms`, `llm_response_chars`,
+  `llm_targets_asked`, `llm_prompt_chars` — observability fields
+  recorded on every sample call (success or failure) so operators
+  can tune cost / speed without re-running.
+
+#### Repo config + init helper
+
+* `.roam/stale-refs.toml` — repo-level defaults loaded on every
+  run. CLI flags still override. Honoured keys: `ignore`,
+  `ignore_target`, `sort_by`, `check_external`, `check_anchors`,
+  `limit`. Falls back to a minimal hand-written parser when
+  `tomllib`/`tomli` aren't available.
+* `roam stale-refs --init` — generates the config from
+  heuristics: `CHANGELOG.md` → ignored, `docs/legacy/**` → ignored
+  if present, common doc placeholders (AGENTS.md / GEMINI.md /
+  CLAUDE.md / CONVENTIONS.md) → `ignore_target` when missing.
+  `--init-force` overwrites existing files.
+
+#### CI / supply-chain
+
+* `roam stale-refs --attest PATH` — writes an in-toto v1
+  Statement (predicateType `https://roam-code.dev/StaleRefs/v1`)
+  bound to the current git commit SHA. Sign with cosign for
+  tamper-evident provenance. Pass `-` to write to stdout.
+  `verify_stale_refs_attestation()` validates structure;
+  signature verification is delegated to cosign out-of-band.
+* SARIF output validator in test suite — every result's `ruleId`
+  must resolve to a `rules` entry on the same run, every level
+  ∈ {error, warning, note, none}, every region with
+  `startLine ≥ 1`. Mirrors what GitHub Code Scanning enforces.
+* `templates/examples/pre-commit-stale-refs.yaml` — drop-in
+  pre-commit hook config (`--diff HEAD --gate`) so every commit
+  fails fast when it introduces dangling refs.
+
+#### Auto-fix — opt-in MEDIUM tier + Windows lock awareness
+
+* `--fix-medium` — auto-applies MEDIUM-confidence hints in
+  addition to HIGH (off by default — MEDIUM hints are advisory).
+* Atomic-write file-lock reporting — on Windows, the locked-files
+  list lands in the verdict and JSON envelope so users know
+  exactly which files were skipped because their editor held them
+  open.
+
+#### Discoverability
+
+* `--ignore` now supports recursive `**` globs (e.g.
+  `docs/legacy/**`).
+* `roam audit` includes `stale_refs` as a section; `stale_ref_count
+  ≥ 10` joins the verdict's pressure list.
+* `--root PATH` — scan a different repo / monorepo subtree from
+  the current working directory. Override applies to config
+  loading, attestation paths, and find_project_root resolution.
+* README "killer use case" callout above the v1 features section.
+
+#### Watch mode — micro-optimisation
+
+* mtime collection rewritten on `os.scandir` (single-syscall
+  batching). Watch loops now spend most of their wall-clock time
+  in scan rather than `os.stat` overhead.
+
+## [12.49] - 2026-05-08
+
+### `stale-refs` — five major capability additions
+
+A single release that pushes the v12.48 stale-refs intelligence layer
+from "audit tool" to "always-on safety net" across five orthogonal
+delivery channels: agent (LLM enrichment), live editor (LSP), live
+terminal (watch), persistent CI gate (baseline), and external web
+links (HTTP check).
+
+#### Phase 1 — `enrich_with_llm` (MCP)
+
+The `roam_stale_refs` MCP tool now accepts `enrich_with_llm=True`.
+When set AND `ROAM_AI_ENABLED=1` AND the client supports MCP sampling,
+unresolved findings (NONE / LOW confidence) are batched into one
+`Context.sample` call. The agent's own LLM suggests the most likely
+intended path from the candidate set; suggestions return as
+``confidence=MEDIUM`` with ``source="llm-sampling"`` and never
+auto-fix. This closes the deterministic-providers coverage gap where
+restructure-class drift (`docs/cold-outreach.md` →
+`docs/sales/outreach-templates.md`) loses character similarity but is
+trivial for an LLM. New CLI flag `--with-candidates` exposes
+`summary.repo_paths_sample` so the enricher can give the LLM
+context. New `summary.llm_hints_added` reports the count.
+
+#### Phase 2 — `--watch` continuous mode
+
+`roam stale-refs --watch` runs an initial scan, then polls the repo
+for file changes (mtime-based, no watchdog dep). On each cycle prints
+only **newly-introduced** and **newly-resolved** findings as a delta
+block timestamped with the current time. Composes with all other
+flags (`--ignore`, `--diff`, `--no-anchors`, etc.) so a long-running
+session in one terminal pane shows exactly the doc breakage you're
+about to commit. ``--watch-interval`` controls poll cadence (default
+1.5s with ~30% debounce on detected change).
+
+#### Phase 3 — persistent baseline (`--baseline-save` / `--baseline-from`)
+
+Save a deterministic JSON snapshot of current findings via
+`--baseline-save FILE`; on subsequent scans `--baseline-from FILE`
+filters to only **new** findings since that snapshot. Different from
+`--diff` (git-based) and `--ignore` (glob-based) — the baseline is a
+frozen finding-set acknowledgment. Schema:
+``roam-stale-refs-baseline-v1`` with sorted records of
+``"<target>|<file>:<line>:<kind>"``. Composes with `--gate` so CI
+fails ONLY on regression, never on legacy debt. Summary fields:
+`baseline_size`, `baseline_filtered_out`, `baseline_saved_to`.
+
+#### Phase 4 — `--check-external` HTTP link checker
+
+`roam stale-refs --check-external` extends the scan to ``http(s)://``
+URLs via concurrent HEAD/GET requests (stdlib ``urllib`` — no extra
+dependency). Findings surface with ``kind=external`` alongside the
+local ones; SARIF gets a new ``stale-refs/external`` rule. Configurable
+via `--external-timeout` (default 5s) and `--external-concurrency`
+(default 8, capped at 32). Off by default to keep the scan local +
+offline; opt-in by users who want full link hygiene. Tries HEAD first,
+falls back to GET on 4xx (some CDNs reject HEAD).
+
+#### Phase 5 — `roam lsp` editor integration
+
+A minimal Language Server Protocol implementation, hand-rolled over
+JSON-RPC stdio (no extra dep). Handles `initialize`, `textDocument/{
+didOpen, didChange, didSave }`, `shutdown`, `exit`, and publishes
+`textDocument/publishDiagnostics` with proper `range` / `severity` /
+`source`. Wire into VS Code, Neovim, JetBrains, Helix, Sublime as a
+custom LSP server pointing at `roam lsp`. Squiggly underlines on
+dangling links and missing anchors appear as you type. The server
+walks the project once at startup to populate `basename_idx` and
+`anchor_cache`, then per-keystroke scans cost only the regex pass on
+the buffer's content. ``didSave`` refreshes the workspace index in case
+the saved file added/removed referenceable paths.
+
+#### Surface count
+
+- CLI commands: 204 → **205** (adds `lsp`).
+- MCP tools: 137 unchanged (`roam_stale_refs` gains `enrich_with_llm`).
+
+#### Tests
+
+`tests/test_stale_refs.py` grows to **126 tests** (+33 from v12.48).
+New classes: `TestStaleRefsWithCandidates`, `TestLlmEnrichParser` (5
+robustness cases for LLM response parsing), `TestStaleRefsWatchHelpers`
+(3 watch-loop unit tests), `TestStaleRefsBaseline` (3 save/filter/gate
+flow tests), `TestStaleRefsCheckExternal` (3 URL extraction +
+classification tests), `TestStaleRefsLsp` (4 protocol handshake +
+URI-conversion tests including a real subprocess spawn). Round-1 and
+round-2 hardening passes added: `TestStaleRefsDomainThrottle` (2),
+`TestStaleRefsLlmHintValidation` (3), `TestStaleRefsLspIntegration`
+(2 full-handshake tests), `TestStaleRefsBaselineLineTolerant` (3
+line-shift + v1 backwards-compat tests),
+`TestStaleRefsExternalDedup` (1),
+`TestStaleRefsWatchHelpersComposition` (1),
+`TestStaleRefsLspIncrementalFlow` (1).
+
+#### Round-1 + round-2 hardening
+
+After the initial five-phase ship, two further audit passes surfaced
+real correctness issues:
+
+- **LLM hint hallucination guard** — the enricher used to attach
+  whatever path the LLM suggested, even if that path didn't exist in
+  the repo. Now validates against ``repo_paths_sample`` (full path
+  match OR basename match → upgrades to canonical full path). Reject
+  strictly when neither matches.
+- **External-check per-domain throttle** — added a per-host semaphore
+  (cap 2) on top of the global concurrency cap so doc-heavy repos
+  with 100 links to one origin can't trigger anti-bot blocks.
+- **LSP graceful out-of-project URI handling** — when an editor opens
+  a file outside the project root, the server now publishes an empty
+  diagnostics array (LSP-spec contract for "clear my squiggles") rather
+  than silently dropping the message.
+- **LSP full handshake + didChange integration tests** — real
+  subprocess spawn proves initialize → didOpen → publishDiagnostics →
+  didChange → empty publishDiagnostics → shutdown → exit works end-to-end.
+- **Baseline schema bumped to v2 — line-tolerant** — finding records
+  drop the line-number component so cosmetic edits (adding a
+  copyright header) don't invalidate the baseline. v1 baselines from
+  earlier installs are still accepted via load-time normalisation.
+
+#### Round-3 — comprehensive multi-angle test coverage (+17 tests)
+
+A third audit pass added 17 dedicated tests covering previously
+under-tested angles. No new bugs surfaced — but several class-of-
+behavior contracts now have explicit guarantees:
+
+- **LLM enricher integration tests (6)** — async helper end-to-end
+  with a stub Context.sample. Verifies: no-op when ROAM_AI_ENABLED
+  unset, hint attached when enabled + valid response, hallucinated
+  paths rejected, basename → full-path resolution, graceful failure
+  when sample raises, no-op when caller forgot ``--with-candidates``.
+- **Baseline robustness (4)** — corrupt JSON returns empty set,
+  unexpected schema returns empty set, non-string records filtered
+  out, ``--baseline-from + --diff`` compose correctly.
+- **External-check integration (3)** — broken external URL surfaces
+  as a target finding, ``stale-refs/external`` SARIF rule fires,
+  ``--ignore-target`` glob suppresses external URLs.
+- **LSP edge cases (3)** — clean file → empty diagnostics published
+  (proves the broken-vs-clean diff is meaningful, not just "we never
+  publish"); didChange that INTRODUCES a broken link → diagnostics
+  fire (opposite of the existing didChange-clears test); unknown
+  method WITH id → JSON-RPC -32601 error response.
+- **Watch helpers without git (1)** — ``_collect_mtimes`` works in a
+  non-git directory via ``discover_files`` os.walk fallback.
+
+Total stale-refs test count: **143** (76 → 88 → 93 → 113 → 126 → 143
+across the polish iterations). All green; ruff clean.
+
+#### Round-4 — composition guards, debugability, discoverability (+17 tests)
+
+The fourth round took a wide-and-deep audit pass focused on **what the
+user experiences when things compose** — not features in isolation.
+
+Real bug fixed:
+- **``--watch`` silently ignored ``--baseline-from``.** The watch
+  loop's ``scan_kwargs`` dict didn't include the baseline filter, so
+  a user with 100 baselined findings would see all 100 in the initial
+  banner and re-flicker on every cycle. ``_run_watch_loop`` now
+  accepts a ``baseline`` keyword and applies it to the initial scan
+  + every rescan.
+
+UsageErrors added (foot-guns prevented):
+- **``--watch + --check-external``** — would HEAD-poll every URL
+  every 1.5s and rate-limit the user. Refused with a clear error.
+- **``--watch + --fix preview/apply``** — auto-rewriting source
+  files inside a poll loop is a foot-gun (silent edits behind the
+  user's back). Refused with a clear error.
+
+Debuggability:
+- **``summary.llm_skip_reason``** — when LLM enrichment doesn't
+  fire, callers (CI, agents) get a structured reason: "ROAM_AI_ENABLED
+  env var not set", "MCP context lacks sample()", "summary.repo_paths_sample
+  missing", "no findings to enrich", "all findings already have
+  HIGH/MEDIUM hints", "sampling raised: <ExcType>", "LLM response
+  unparseable". Distinguishes "the LLM had nothing to say" from "I
+  never asked the LLM at all".
+
+Discoverability:
+- **LSP ``serverInfo.version``** is now read dynamically from
+  ``roam.__version__`` instead of being hardcoded. No drift on
+  future releases.
+- **``find-broken-links`` recipe followups expanded** to surface all
+  v12.49 channels: ``--watch``, ``--fix preview``, ``--baseline-save``,
+  ``--check-external``, and ``roam lsp``. Agents using ``roam ask``
+  now discover the entire delivery surface.
+
+Test coverage: 17 more tests covering the composition guards
+(3), the 6 LLM skip-reason paths (7), dynamic LSP version (2),
+and recipe followup contracts (5).
+
+Total stale-refs test count: **160** (76 → 88 → 93 → 113 → 126 →
+143 → 160 across all polish iterations). 248 across all touched
+suites. All green; ruff clean.
+
 ## [12.48] - 2026-05-08
 
 ### `roam stale-refs` — dangling file-reference scanner
@@ -145,6 +472,39 @@ git directory regardless of whether `roam index` has been built.
   the existing ``suggest_next_steps`` helper based on the scan's
   context (fixable_count, anchor_findings, missing_targets). Same
   shape every other agent-aware roam command emits.
+- **Smart anchor "did you mean" hints** — anchor findings now suggest
+  the closest existing slug in the same file via a hybrid score
+  ``max(SequenceMatcher.ratio(), token_jaccard)``. Catches both
+  pluralisation drift (``#mcp-server`` ↔ ``#mcp-servers``) and
+  word-reorder drift (``#docker-setup`` ↔ ``#setup-with-docker``).
+  Hint ``source`` is ``anchor-similarity`` so JSON consumers can
+  distinguish from rename hints. Dogfood on roam-code's own README
+  surfaces 4 actionable anchor suggestions.
+- **MCP ``output_schema`` (``_SCHEMA_STALE_REFS``)** — full JSON-Schema
+  description of the envelope including the new aggregation fields,
+  so MCP clients can validate envelope shape before consumption.
+- **``--fix apply`` extends to anchor hints** — HIGH-confidence
+  anchor-similarity hints (``#mcp-server`` → ``#mcp-servers``) are
+  now auto-rewritten. The substitution operates on the fragment
+  portion only so the path prefix and any in-page-vs-cross-file
+  shape is preserved.
+- **``--fix apply`` preserves URL fragments on path rewrites** —
+  ``[x](old/foo.md#section)`` now rewrites to
+  ``[x](docs/foo.md#section)`` instead of silently dropping the
+  ``#section`` fragment. The previous behavior was a real bug that
+  would break in-target navigation on the rewritten URL.
+- **``--fix apply`` deduplicates per ``(raw, replacement)`` per line**
+  — a line that legitimately has the same stale URL twice now gets
+  rewritten in a single ``str.replace`` pass. The previous behavior
+  could compound when the new fragment was a superset of the old
+  (``#mcp-server`` → ``#mcp-servers`` would mutate to
+  ``#mcp-serverss`` on the second pass).
+- **SARIF ``helpUri`` points at the correct GitHub org** — fixed a
+  pre-existing project-wide bug where every SARIF rule's ``helpUri``
+  pointed to ``AbanteAI/roam-code`` instead of ``Cranot/roam-code``.
+- **README command-table description rewritten** to surface the
+  v12.48 features (anchor validation, ``--fix``, ``--diff``, SARIF)
+  so people see the killer capabilities at a glance.
 
 ### `roam pr-replay` — productised PR Replay report
 
@@ -191,38 +551,25 @@ incidents?" — the qualifier on the path to a Roam Review subscription.
 
 #### Landing-page integration
 
-- `templates/distribution/landing-page/index.html` audit-upsell rewritten
-  with concrete CTAs: an inline `pip install roam-code && roam pr-replay
-  --tier sample` for self-serve evaluation plus paid-tier pricing.
-- `docs/site/cookbook/README.md` recipe 7 (postmortem) now cross-references
-  `roam pr-replay` for the buyer-facing report shape.
-
-#### Why this ships now
-
-PR Replay is the lowest-friction path to redacted: paid up-front,
-no SaaS recurring infra needed, the artifact redacted.
-Per `pricing_v4` build priorities, this is P2 (conversion + proof). The
-sample tier doubles as marketing — anyone evaluating Roam can run the
-DIY 5-PR sample and see what the paid product looks like.
+- `templates/distribution/landing-page/index.html` rewritten with
+  concrete CTAs: inline `pip install roam-code && roam pr-replay
+  --tier sample` for self-serve evaluation, plus paid-tier overview.
+- `docs/site/cookbook/README.md` recipe 7 (postmortem) now
+  cross-references `roam pr-replay` for the report shape.
 
 ## [12.47] - 2026-05-08
 
-### Internal cleanup + anti-drift CI gates
+### Documentation cleanup + anti-drift CI gates
 
-A maintenance release that scrubs internal session shorthand from source
-comments, docstrings, CHANGELOG entries, and template files; aligns
-surface counts across documentation; and lands four CI gates that
-prevent regression.
+A maintenance release that aligns documentation across surfaces, scrubs
+shorthand from source comments and template files, renames a
+deliverable, and lands four CI gates that prevent regression.
 
 #### Anti-drift CI gates (new)
 
 - **`tests/test_no_internal_language.py`** — fails any commit that
-  re-introduces 16 forbidden patterns: session-pass numbering, letter-
-  coded date markers (R5/W3/X14/etc.), "Phase X of v2 monetization plan",
-  internal-doc cross-references, dogfood-notes session markers, personal
-  Windows paths, day-job customer names, claude-memory paths, the old
-  cranot.github.io docs URL, CFO-objection sales-pitch language,
-  Greek-vendor exclusion clauses.
+  re-introduces a curated set of forbidden patterns. The pattern list
+  is maintained in the test file itself.
 - **`scripts/sync_surface_counts.py`** — single source of truth via
   `roam.surface_counts` + `roam.languages.registry`. Dry-run reports
   drift; `--write` rewrites README + llms-install + server.json.
@@ -236,9 +583,7 @@ prevent regression.
 
 #### Source comments + tests
 
-- Bulk-scrubbed ~110 source files of internal session prefixes
-  (numbered "Pass" comments, letter-coded date markers, "Phase-N
-  polish", "Python-pivot dogfood" annotations).
+- Bulk-scrubbed ~110 source files of stale shorthand left in comments.
 - `cmd_audit.py` + `cmd_audit_trail_export.py` + `cmd_postmortem.py` +
   `cmd_article_12_check.py` + `cmd_permit.py` docstrings rewritten as
   neutral product descriptions.
@@ -246,45 +591,36 @@ prevent regression.
   initializer + `from roam.output.file_role_hints import is_excluded_path`
   in `cmd_smells.py` (fixed an indentation regression caught by the
   test suite).
-- Renamed regression-FP corpus fixtures to neutral names; per-entry
-  description prefixes scrubbed.
+- Renamed regression-FP corpus fixtures to neutral names.
 
 #### Documentation + product naming
 
-- Audit deliverable name reframed: "AI Agent Readiness Audit" →
-  "PR Replay" on landing-page upsell + "Codebase Architecture Audit"
-  on legal templates and the audit-report template/sample/PDF.
-- DPA + SOW master template generalized: dropped Stripe-Atlas /
-  Greek-IKE entity-structure language; tier rows replaced with
+- Audit deliverable renamed to **PR Replay** on landing pages, and
+  **Codebase Architecture Audit** on legal templates / sample report.
+- DPA + SOW master templates generalised: tier rows replaced with
   bracketed placeholders.
-- `templates/legal/security-procurement-packet.md` — links into
-  `docs/strategy/...` replaced with public roam-code.com/pricing URL.
-- `templates/email/customer-journey.md` — hard-coded "— Dimitris"
-  signature replaced with `[YOUR_NAME]` placeholder.
-- README + llms-install + server.json + mcp-server-card.json
-  surface counts: 194 → 202 commands, 27 → 28 languages,
-  5 → 6 cross-language bridges (Django bridge added).
-- Old `cranot.github.io` documentation URL replaced with
-  `roam-code.com/docs/` across 9 tracked files (config, source,
-  tests, docs).
+- `templates/legal/security-procurement-packet.md` — internal-only
+  links replaced with the public roam-code.com/pricing URL.
+- `templates/email/customer-journey.md` — hard-coded signature
+  replaced with `[YOUR_NAME]` placeholder.
+- README + llms-install + server.json + mcp-server-card.json surface
+  counts: 194 → 202 commands, 27 → 28 languages, 5 → 6 cross-language
+  bridges (Django bridge added).
+- Old GitHub Pages documentation URL replaced with `roam-code.com/docs/`
+  across 9 tracked files.
 
 #### History rewrites
 
-- Six force-pushes during the cleanup sweep, each documented in the
-  new `internal/runbook-history-rewrite.md` (gitignored). Removed from
-  history: 27 strategic / internal docs (`docs/strategy/*`,
-  `docs/products/*`, `dev/REPORT-*.md`, `internal backlog`,
-  `dev/COMPETITOR-WATCH-*.md`, `templates/distribution/landing-page-spec.md`,
-  Greek-vendor-exclusion templates), 5 session-named regression-FP
-  fixtures (renamed to neutral `corpus_*.json` paths).
-- Author rewrite: 389 commits authored as "redacted" + 11 commits
-  authored as "Claude" rewritten to "Cranot" so GitHub Insights shows
-  uniform attribution. Third-party contributors (Chuck Jewell, holive,
-  Mark Ramsell, Livio Ravetto) untouched.
+- Six force-pushes during the cleanup. Removed from history: 27 working
+  documents under `docs/strategy/`, `docs/products/`, and `dev/`, plus
+  5 fixture renames.
+- Author rewrite: 400 commits across two prior committer identities
+  rewritten to `Cranot` so GitHub Insights shows uniform attribution.
+  Third-party contributor commits untouched.
 
 #### `pyproject.toml`
 
-- `authors` updated to `Cranot` (was `redacted`).
+- `authors` updated to `Cranot`.
 
 ## [12.46] - 2026-05-07
 
@@ -1953,12 +2289,11 @@ hostname-shaped import path heuristic). New ``--lang`` flag
 
 ### `roam audit`
 
-Build-priorities P1: revenue-blocker meta-command. Chains
+One-shot codebase audit meta-command. Chains
 ``health → debt → dead → test-pyramid → api → stats →
-hotspots --danger`` into one envelope with a
-top-level summary (verdict, health_score, debt_total,
-danger_zone_count, api_surface, etc.). Pass ``--brief`` to drop
-per-section detail.
+hotspots --danger`` into one envelope with a top-level summary
+(verdict, health_score, debt_total, danger_zone_count, api_surface,
+etc.). Pass ``--brief`` to drop per-section detail.
 
 ### AI-on-client-code default OFF
 

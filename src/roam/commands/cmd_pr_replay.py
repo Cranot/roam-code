@@ -582,7 +582,7 @@ def _render_pdf(markdown_text: str, output_path: Path) -> tuple[bool, str]:
         "roam pr-replay --tier team --client 'Acme Inc' --output acme.md",
         "roam pr-replay --range HEAD~50..HEAD --output report.md",
     ],
-    tags=["audit", "review", "monetization", "demo"],
+    tags=["audit", "review", "demo"],
     ai_safe=True,
     requires_index=True,
     since="12.48",

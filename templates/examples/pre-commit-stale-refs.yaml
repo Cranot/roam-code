@@ -1,0 +1,52 @@
+# Pre-commit hook: roam stale-refs
+#
+# Add to your repo's ``.pre-commit-config.yaml`` so every commit fails
+# fast when it introduces a dangling markdown link, HTML href, or
+# backtick path. Designed to be cheap on small commits — only the
+# changed files in the diff get scanned (``--diff HEAD``).
+#
+# Wire-in:
+#
+#     # Append to your ``.pre-commit-config.yaml``:
+#     - repo: local
+#       hooks:
+#         - id: roam-stale-refs
+#           name: roam stale-refs
+#           entry: roam stale-refs --diff HEAD --gate
+#           language: system
+#           pass_filenames: false
+#           stages: [commit]
+#
+# Notes:
+#
+# * Requires ``pip install roam-code`` in your dev environment. The
+#   hook calls the project-installed CLI via ``language: system``.
+# * ``--diff HEAD`` filters to refs that are NEW or NEWLY-BROKEN in the
+#   current commit, so historical CHANGELOG noise won't trip the gate.
+# * ``--gate`` makes the command exit non-zero on dangling findings —
+#   pre-commit treats that as a failed hook.
+# * Add ``--baseline-from .roam/stale-refs.baseline.json`` to suppress
+#   known issues on legacy repos.
+# * Add ``--check-anchors=false`` to skip markdown anchor validation if
+#   it's too noisy in your workflow (we recommend leaving it on).
+#
+# What it catches before the commit lands:
+#
+# * Renamed-but-not-updated docs links.
+# * Deleted files still referenced from the README.
+# * Anchor refs (``docs/x.md#deploy``) where the heading was renamed.
+# * HTML ``href="..."`` on local paths that no longer exist.
+#
+# Don't catch (use ``--check-external`` in CI for these):
+#
+# * Live HTTP URLs returning 404.
+# * Network outages on third-party domains.
+#
+- repo: local
+  hooks:
+    - id: roam-stale-refs
+      name: roam stale-refs (changed files)
+      entry: roam stale-refs --diff HEAD --gate
+      language: system
+      pass_filenames: false
+      stages: [commit]

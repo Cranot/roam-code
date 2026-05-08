@@ -194,9 +194,11 @@ _PRESETS: dict[str, set[str]] = {
         "roam_relate",
         "roam_agent_export",
     },
-    # v12.2: focused preset for the EU AI Act / NIS2 / FedRAMP buyer
-    # redacted the v12.2 redacted. Everything an auditor
-    # needs to verify a "trustable AI-assisted codebase" via roam.
+    # Compliance preset — focused tool set for AI-governance evidence
+    # workflows (SOC 2 CC8.1, ISO 42001, internal AI policy). Covers
+    # everything an auditor needs to verify an AI-assisted codebase
+    # via roam: pre-change checks, patch verification, taint analysis,
+    # SBOM, and code-graph attestation.
     "compliance": {
         # Pre-change checks (read)
         "roam_preflight",
@@ -623,6 +625,47 @@ _SCHEMA_CRITIQUE = _make_schema(
     },
     top_finding={"type": ["object", "null"]},
     changed_symbols={"type": "array"},
+)
+
+_SCHEMA_STALE_REFS = _make_schema(
+    {
+        "missing_targets": {"type": "integer"},
+        "stale_refs": {"type": "integer"},
+        "files_scanned": {"type": "integer"},
+        "refs_checked": {"type": "integer"},
+        "scan_seconds": {"type": "number"},
+        "anchor_findings": {"type": "integer"},
+        "fixable_count": {
+            "type": "integer",
+            "description": "HIGH-confidence rename hints --fix apply would act on.",
+        },
+        "by_kind": {
+            "type": "object",
+            "description": "Per-kind tally: md_inline / md_reference / html_attr / backtick / anchor.",
+        },
+        "by_confidence": {
+            "type": "object",
+            "description": "Per-confidence-band tally: HIGH / MEDIUM / LOW / NONE.",
+        },
+        "next_steps": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Actionable command suggestions for the agent's next move.",
+        },
+        "sort_by": {"type": "string"},
+        "diff_base": {
+            "type": "string",
+            "description": "Merge-base SHA when --diff is active (otherwise absent).",
+        },
+    },
+    targets={
+        "type": "array",
+        "description": (
+            "Per-missing-target findings with sources, ref_count, and "
+            "confidence-tagged hint (target / confidence / reason / source). "
+            "Hint sources: git-history, basename, symbol-graph, anchor-similarity."
+        ),
+    },
 )
 
 _SCHEMA_FLEET_PLAN = _make_schema(
@@ -3516,12 +3559,12 @@ def dogfood(
     rules_file: str = "",
     root: str = ".",
 ) -> dict:
-    """One-shot full v2 stack run: audit + pr-analyze + audit-trail + conformance.
+    """One-shot full-stack run: audit + pr-analyze + audit-trail + conformance.
 
     WHEN TO USE: First-touch demo for a new repo, or as a quick local
-    self-check. Bundles the entire v2 product surface (Cloud Lite metrics,
-    Agent Review verdict, EU AI Act audit-trail, conformance score) into
-    one envelope so the agent / user sees everything in one call.
+    self-check. Bundles the entire hosted-product surface (Cloud metrics,
+    Agent Review verdict, AI-governance audit-trail, conformance score)
+    into one envelope so the agent / user sees everything in one call.
 
     Parameters
     ----------
@@ -5731,11 +5774,291 @@ def roam_docs_coverage(limit: int = 20, days: int = 90, threshold: int = 0, root
     return _run_roam(args, root)
 
 
+_LLM_ENRICH_SYSTEM_PROMPT = (
+    "You are a repository hygiene assistant. The user's docs reference "
+    "files that no longer exist. For each missing target, propose up to "
+    "three candidate paths from the supplied repository file list, ranked "
+    "best first. Use semantic + path similarity. Use an empty array when "
+    "no candidate is plausible. Reply ONLY with valid compact JSON, no prose."
+)
+
+
+def _build_llm_enrich_prompt(unresolved: list[str], repo_paths: list[str]) -> str:
+    """Construct the user-side prompt for the LLM enricher.
+
+    Strict-shape JSON instructions because we parse the response.
+
+    The shape changed in v12.50: instead of a single best guess per
+    missing target we ask for a *ranked array* of up to three candidate
+    paths (best first). This lets the enricher surface alternatives in
+    ``--with-candidates`` mode and the verdict UI even when the top
+    candidate isn't trustworthy on its own.
+
+    The parser also accepts the legacy single-string shape, so older
+    LLMs / cached responses still flow through.
+    """
+    targets_block = "\n".join(f"- {t}" for t in unresolved[:40])
+    paths_block = "\n".join(f"- {p}" for p in repo_paths[:500])
+    return (
+        "Missing references in the repo's docs:\n"
+        f"{targets_block}\n\n"
+        "Available repository file paths:\n"
+        f"{paths_block}\n\n"
+        'Reply with this exact JSON shape: {"<missing>": ["<path1>", "<path2>", ...], ...}. '
+        "Each value is a list of up to three repository paths in best-first "
+        "order. Use [] when no candidate is plausible. Do not include "
+        "anything outside the JSON object."
+    )
+
+
+def _parse_llm_enrich_response(raw_text: str) -> dict[str, list[str]]:
+    r"""Pull the candidate map out of an LLM response, robustly.
+
+    Returns ``{target: [paths…]}``. Empty list = the LLM had no plausible
+    suggestion for that target. Returns ``{}`` on parse failure (any
+    kind) — the enricher is best-effort and never fatal.
+
+    Accepted input shapes:
+    * ``{target: [path1, path2, …]}`` — current shape (ranked candidates).
+    * ``{target: path}`` — legacy single-best shape (still in the wild).
+    * ``{target: null}`` — legacy "no plausible candidate".
+
+    The LLM occasionally wraps JSON in ``\`\`\`json`` fences, so we strip
+    those before json.loads().
+    """
+    import json
+    import re
+
+    if not raw_text:
+        return {}
+    text = raw_text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        parsed = json.loads(text[start : end + 1])
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for key, value in parsed.items():
+        sk = str(key)
+        if value is None:
+            out[sk] = []
+        elif isinstance(value, str) and value.strip():
+            out[sk] = [value.strip()]
+        elif isinstance(value, list):
+            cleaned = [v.strip() for v in value if isinstance(v, str) and v.strip()]
+            # Cap at three — anything beyond is noise and bloats the
+            # downstream serialised envelope.
+            out[sk] = cleaned[:3]
+    return out
+
+
+def _set_llm_skip_reason(envelope: dict, reason: str) -> dict:
+    """Attach a ``summary.llm_skip_reason`` so callers can debug why
+    enrichment didn't fire (env not set, no sampling, no candidates,
+    parse failure, etc.). The envelope shape is left otherwise intact."""
+    if not isinstance(envelope, dict):
+        return envelope
+    summary = envelope.get("summary")
+    if not isinstance(summary, dict):
+        summary = {}
+    summary["llm_skip_reason"] = reason
+    envelope["summary"] = summary
+    return envelope
+
+
+async def _enrich_stale_refs_with_llm_hints(envelope: dict, ctx: _Context | None) -> dict:
+    """Add LLM-suggested hints to NONE/LOW-confidence findings, in place.
+
+    Best-effort. Returns the envelope unchanged when enrichment can't
+    fire for any reason. When that happens, ``summary.llm_skip_reason``
+    is populated so callers (CI / agents) can distinguish "the LLM
+    found no matches" from "I never asked the LLM at all":
+
+    * ``ROAM_AI_ENABLED`` not set → ``"ROAM_AI_ENABLED env var not set"``
+    * No MCP sampling on this client → ``"MCP context lacks sample()"``
+    * Envelope malformed → ``"envelope shape unexpected"``
+    * No targets → ``"no findings to enrich"``
+    * No ``--with-candidates`` → ``"summary.repo_paths_sample missing"``
+    * Nothing to enrich (everything HIGH/MEDIUM already) →
+      ``"all findings already have HIGH/MEDIUM hints"``
+    * Sampling raised → ``"sampling raised: <exc class>"``
+    * No suggestions parsed → ``"LLM response unparseable"``
+
+    On success, attaches a hint with ``source="llm-sampling"``,
+    ``confidence="MEDIUM"``, ``reason="LLM-suggested semantic match"``
+    to each target it could resolve. ``summary.llm_hints_added`` reports
+    the count.
+    """
+    import os as _os
+
+    if _os.environ.get("ROAM_AI_ENABLED", "").strip().lower() not in {"1", "true", "yes"}:
+        return _set_llm_skip_reason(envelope, "ROAM_AI_ENABLED env var not set")
+    if ctx is None or not callable(getattr(ctx, "sample", None)):
+        return _set_llm_skip_reason(envelope, "MCP context lacks sample()")
+    if not isinstance(envelope, dict):
+        return envelope  # Can't even attach a skip reason — bail.
+    summary = envelope.get("summary") or {}
+    targets = envelope.get("targets") or []
+    repo_paths = summary.get("repo_paths_sample") or []
+    if not targets:
+        return _set_llm_skip_reason(envelope, "no findings to enrich")
+    if not repo_paths:
+        return _set_llm_skip_reason(envelope, "summary.repo_paths_sample missing")
+
+    # Pick targets that need help: no hint, or LOW/NONE confidence,
+    # AND not anchor-only findings (those have their own provider).
+    unresolved: list[dict] = []
+    for tgt in targets:
+        hint = tgt.get("hint") or {}
+        if hint.get("confidence") in {"HIGH", "MEDIUM"}:
+            continue
+        first_source = (tgt.get("sources") or [{}])[0]
+        if first_source.get("kind") == "anchor":
+            continue
+        unresolved.append(tgt)
+    if not unresolved:
+        return _set_llm_skip_reason(envelope, "all findings already have HIGH/MEDIUM hints")
+
+    user_prompt = _build_llm_enrich_prompt(
+        [t["target"] for t in unresolved],
+        list(repo_paths),
+    )
+
+    import time as _time
+
+    started = _time.monotonic()
+    try:
+        result = await ctx.sample(
+            user_prompt,
+            system_prompt=_LLM_ENRICH_SYSTEM_PROMPT,
+            max_tokens=800,
+            temperature=0.1,
+        )
+    except Exception as exc:
+        elapsed_ms = int((_time.monotonic() - started) * 1000)
+        envelope = _set_llm_skip_reason(envelope, f"sampling raised: {type(exc).__name__}")
+        envelope.setdefault("summary", {})["llm_latency_ms"] = elapsed_ms
+        return envelope
+    elapsed_ms = int((_time.monotonic() - started) * 1000)
+
+    raw_text = ""
+    text_attr = getattr(result, "text", None)
+    if isinstance(text_attr, str):
+        raw_text = text_attr
+
+    # Capture diagnostic metadata regardless of parse success — operators
+    # tuning the enricher want to see latency / response size before
+    # they see hint counts.
+    summary["llm_latency_ms"] = elapsed_ms
+    summary["llm_response_chars"] = len(raw_text)
+    summary["llm_targets_asked"] = len(unresolved)
+    summary["llm_prompt_chars"] = len(user_prompt)
+    envelope["summary"] = summary
+
+    suggestions = _parse_llm_enrich_response(raw_text)
+    if not suggestions:
+        return _set_llm_skip_reason(envelope, "LLM response unparseable")
+
+    # Cardinal rule: never attach a hint pointing at a path the repo
+    # doesn't actually contain. Build fast lookup sets — full paths AND
+    # basenames — so suggestions like ``"intro.md"`` resolve to
+    # ``docs/intro.md`` when that's the canonical location.
+    valid_paths = set(repo_paths)
+    basename_to_paths: dict[str, list[str]] = {}
+    for p in repo_paths:
+        basename_to_paths.setdefault(p.rsplit("/", 1)[-1], []).append(p)
+
+    def _validate_candidate(c: str) -> str | None:
+        """Return a repo-relative path the candidate resolves to, or None."""
+        if not c or "://" in c or c.startswith("/"):
+            return None
+        if c in valid_paths:
+            return c
+        matches = basename_to_paths.get(c.rsplit("/", 1)[-1])
+        if not matches:
+            return None
+        # Prefer the shortest matching path (usually canonical).
+        return min(matches, key=len)
+
+    added = 0
+    per_target: dict[str, dict] = {}
+    for tgt in unresolved:
+        target_name = tgt["target"]
+        candidates = suggestions.get(target_name)
+        if candidates is None:
+            per_target[target_name] = {
+                "skip_reason": "target not present in LLM response",
+                "candidates_returned": 0,
+            }
+            continue
+        per_target_entry: dict = {
+            "candidates_returned": len(candidates),
+            "candidates_raw": list(candidates),
+        }
+        if not candidates:
+            per_target_entry["skip_reason"] = "LLM returned empty candidate list"
+            per_target[target_name] = per_target_entry
+            continue
+
+        accepted: list[str] = []
+        rejection: list[dict] = []
+        for raw_candidate in candidates:
+            resolved = _validate_candidate(raw_candidate)
+            if resolved is None:
+                rejection.append({"candidate": raw_candidate, "reason": "not in repo"})
+                continue
+            accepted.append(resolved)
+        per_target_entry["candidates_validated"] = accepted
+        if rejection:
+            per_target_entry["candidates_rejected"] = rejection
+
+        if not accepted:
+            per_target_entry["skip_reason"] = "all candidates failed validation"
+            per_target[target_name] = per_target_entry
+            continue
+
+        chosen = accepted[0]
+        tgt["hint"] = {
+            "target": chosen,
+            "confidence": "MEDIUM",
+            "reason": "LLM-suggested semantic match",
+            "source": "llm-sampling",
+        }
+        tgt["rename_hint"] = chosen
+        # Surface the runners-up so callers (CI / agents / verdict UI)
+        # can present alternatives without re-asking the LLM.
+        if len(accepted) > 1:
+            tgt["llm_alternates"] = accepted[1:]
+        per_target_entry["chosen"] = chosen
+        per_target[target_name] = per_target_entry
+        added += 1
+
+    summary["llm_hints_added"] = added
+    summary["llm_per_target"] = per_target
+    if added:
+        # Re-derive ``by_confidence`` so the count reflects the new hints.
+        new_by_confidence: dict[str, int] = {}
+        for t in targets:
+            c = (t.get("hint") or {}).get("confidence", "NONE")
+            new_by_confidence[c] = new_by_confidence.get(c, 0) + 1
+        summary["by_confidence"] = new_by_confidence
+    envelope["summary"] = summary
+    return envelope
+
+
 @_tool(
     name="roam_stale_refs",
-    description="Find dangling file references — markdown links / HTML href-src / backtick paths whose target is missing. v12.48 adds anchor validation, confidence-tagged hints, --diff branch filter, --fix preview/apply, and --sort-by ranking.",
+    description="Find dangling file references — markdown links / HTML href-src / backtick paths whose target is missing. v12.48 adds anchor validation, confidence-tagged hints, --diff branch filter, --fix preview/apply, and --sort-by ranking. Set enrich_with_llm=True for LLM-sampled hints on findings the deterministic providers couldn't resolve.",
+    output_schema=_SCHEMA_STALE_REFS,
 )
-def roam_stale_refs(
+async def roam_stale_refs(
     limit: int = 20,
     rename_hint: bool = True,
     kind: str = "",
@@ -5747,7 +6070,9 @@ def roam_stale_refs(
     sort_by: str = "priority",
     fix: str = "",
     by_file: bool = False,
+    enrich_with_llm: bool = False,
     root: str = ".",
+    ctx: _Context | None = None,
 ) -> dict:
     """Detect references to files that no longer exist.
 
@@ -5805,12 +6130,22 @@ def roam_stale_refs(
     by_file:
         If True, group findings by source file instead of by missing
         target — useful when fixing one document at a time.
+    enrich_with_llm:
+        If True AND ``ROAM_AI_ENABLED=1`` is set in the environment AND
+        the MCP client supports sampling, ask the calling agent's LLM
+        to suggest semantic matches for findings the deterministic
+        providers (git-history / basename / symbol-graph) couldn't
+        resolve. LLM-sourced hints are tagged ``confidence=MEDIUM``
+        with ``source=llm-sampling`` and never auto-fixed. Off by
+        default (preserves the "no source code leaves your machine"
+        stance unless the user opts in).
     root:
         Working directory (project root).
 
     Returns: targets list with per-target source locations, confidence-
     tagged rename hints, and a verdict / counts summary including
-    ``scan_seconds`` and (when --diff is active) ``diff_base``.
+    ``scan_seconds`` and (when --diff is active) ``diff_base``. When
+    enrichment fired, ``summary.llm_hints_added`` reports the count.
     """
     args = ["stale-refs", "--limit", str(limit), "--sort-by", sort_by]
     if not rename_hint:
@@ -5836,7 +6171,13 @@ def roam_stale_refs(
         args.extend(["--fix", fix])
     if by_file:
         args.append("--by-file")
-    return _run_roam(args, root)
+    if enrich_with_llm:
+        # The CLI flag exposes the candidate path sample the enricher needs.
+        args.append("--with-candidates")
+    envelope = _run_roam(args, root)
+    if enrich_with_llm:
+        envelope = await _enrich_stale_refs_with_llm_hints(envelope, ctx)
+    return envelope
 
 
 @_tool(

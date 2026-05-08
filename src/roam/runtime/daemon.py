@@ -1,14 +1,13 @@
-"""v12.2 daemon scaffold — redacted.
+"""Optional long-running daemon for shared lock state across commands.
 
-This file ships the **shape** of the daemon: PID file, socket path,
-lifecycle helpers, and a public ``acquire_lock_for_command`` entry
-point. The full cmd-by-cmd migration lands in v13.0.
+Ships the daemon **shape**: PID file, socket path, lifecycle helpers,
+and a public ``acquire_lock_for_command`` entry point. Per-command
+migration is incremental.
 
-Daemon **optional** in v12.2 — running ``roam <cmd>`` without
-``roam daemon start`` works exactly as before. Without a daemon, the
-``acquire_lock_for_command`` context manager falls back to a
-process-local ``LockMgr`` so the lock-mode contract still holds within
-one process.
+Running ``roam <cmd>`` without ``roam daemon start`` works exactly as
+before — without a daemon, ``acquire_lock_for_command`` falls back to
+a process-local ``LockMgr`` so the lock-mode contract still holds
+within one process.
 """
 
 from __future__ import annotations

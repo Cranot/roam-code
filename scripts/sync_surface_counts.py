@@ -4,7 +4,8 @@
 Single source of truth: ``roam.surface_counts.collect_surface_counts()``.
 This script reads the live counts and rewrites every doc-surface that
 quotes them: README.md, llms-install.md, server.json, mcp-server-card
-(both copies), docs/site/data/landscape.json.
+(both copies), the Cloudflare-served landing-page HTML / llms.txt, the
+Claude Code skill, and the in-repo CI integration doc.
 
 Usage:
     python scripts/sync_surface_counts.py            # dry-run (report only)
@@ -18,9 +19,7 @@ CI usage:
 from __future__ import annotations
 
 import argparse
-import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -64,39 +63,144 @@ def build_replacements(counts: dict, languages: int) -> None:
     langs = languages
 
     # README.md
-    REPLACEMENTS.append((REPO_ROOT / "README.md", [
-        (re.compile(r"\*\d+ commands · \d+ MCP tools · \d+ languages"),
-         f"*{cmds} commands · {mcp} MCP tools · {langs} languages"),
-        (re.compile(r"\bother \d+ specialised commands\b"),
-         f"other {spec} specialised commands"),
-        (re.compile(r"\bremaining ~\d+ commands\b"),
-         f"remaining ~{spec} commands"),
-        (re.compile(r"canonical surface is \*\*\d+ commands"),
-         f"canonical surface is **{cmds} commands"),
-    ]))
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "README.md",
+            [
+                (
+                    re.compile(r"\*\d+ commands · \d+ MCP tools · \d+ languages"),
+                    f"*{cmds} commands · {mcp} MCP tools · {langs} languages",
+                ),
+                (re.compile(r"\bother \d+ specialised commands\b"), f"other {spec} specialised commands"),
+                (re.compile(r"\bremaining ~\d+ commands\b"), f"remaining ~{spec} commands"),
+                (re.compile(r"canonical surface is \*\*\d+ commands"), f"canonical surface is **{cmds} commands"),
+            ],
+        )
+    )
 
     # llms-install.md
-    REPLACEMENTS.append((REPO_ROOT / "llms-install.md", [
-        (re.compile(r"\b\d+ commands, \d+ MCP tools, \d+ languages\b"),
-         f"{cmds} commands, {mcp} MCP tools, {langs} languages"),
-        (re.compile(r"all \d+ commands"),
-         f"all {cmds} commands"),
-    ]))
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "llms-install.md",
+            [
+                (
+                    re.compile(r"\b\d+ commands, \d+ MCP tools, \d+ languages\b"),
+                    f"{cmds} commands, {mcp} MCP tools, {langs} languages",
+                ),
+                (re.compile(r"all \d+ commands"), f"all {cmds} commands"),
+            ],
+        )
+    )
 
     # server.json (string description with "N languages")
-    REPLACEMENTS.append((REPO_ROOT / "server.json", [
-        (re.compile(r"\b\d+ languages\b"), f"{langs} languages"),
-    ]))
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "server.json",
+            [
+                (re.compile(r"\b\d+ languages\b"), f"{langs} languages"),
+            ],
+        )
+    )
 
     # mcp-server-card.json — both copies
+    # The second copy used to live at ``docs/site/.well-known/`` (served
+    # via GitHub Pages at cranot.github.io). After GH Pages was disabled
+    # on 2026-05-08, the canonical public copy moved under the
+    # Cloudflare-served landing-page tree so the card_url claim
+    # (``roam-code.com/.well-known/mcp-server-card.json``) keeps working.
     for p in [
         REPO_ROOT / "src" / "roam" / "mcp-server-card.json",
-        REPO_ROOT / "docs" / "site" / ".well-known" / "mcp-server-card.json",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp-server-card.json",
     ]:
-        REPLACEMENTS.append((p, [
-            (re.compile(r'"total":\s*\d+,?(\s*\n\s*"watched")'),
-             None),  # don't touch resources count
-        ]))
+        REPLACEMENTS.append(
+            (
+                p,
+                [
+                    (re.compile(r'"total":\s*\d+,?(\s*\n\s*"watched")'), None),  # don't touch resources count
+                ],
+            )
+        )
+
+    # ----- Public landing page + docs site -----
+    # Reviewer (2026-05-08) found 5 different command counts on
+    # different surfaces because these files weren't in the script.
+    # All of them must match the live counts.
+
+    # Cardinal pattern across the landing-page HTML files: any standalone
+    # ``N CLI commands``, ``N commands``, ``N MCP tools``, or
+    # ``N languages``. The regex deliberately uses word boundaries so we
+    # don't catch e.g. "v12.50" or unrelated numerics.
+    landing_pages = [
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "index.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "setup.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "pricing.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "compare.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "press.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "llms.txt",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "index.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "command-reference.html",
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "getting-started.html",
+    ]
+    for p in landing_pages:
+        REPLACEMENTS.append(
+            (
+                p,
+                [
+                    (re.compile(r"\b\d+ CLI commands\b"), f"{cmds} CLI commands"),
+                    (re.compile(r"\b\d+ commands\b"), f"{cmds} commands"),
+                    (re.compile(r"\b\d+ MCP tools\b"), f"{mcp} MCP tools"),
+                    (re.compile(r"\((\d+) tools\)"), f"({mcp} tools)"),
+                    (re.compile(r"\bRoam's \d+ tools\b"), f"Roam's {mcp} tools"),
+                    (re.compile(r"\b\d+ languages\b"), f"{langs} languages"),
+                ],
+            )
+        )
+
+    # Print all 137 MCP tools — explicit number on the command-reference page.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "command-reference.html",
+            [
+                (re.compile(r"all (\d+) MCP tools"), f"all {mcp} MCP tools"),
+                (re.compile(r"All (\d+) commands"), f"All {cmds} commands"),
+            ],
+        )
+    )
+
+    # ``docs/site/data/landscape.json`` was deleted on 2026-05-08 when
+    # GitHub Pages was disabled. The competitor data still lives in
+    # ``src/roam/competitor_site_data.py`` (Python module) and the
+    # gitignored ``internal/competitor_tracker.md`` (source of truth).
+
+    # src/roam/competitor_site_data.py — peer-entry self-reference.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "src" / "roam" / "competitor_site_data.py",
+            [
+                (re.compile(r"\b\d+ MCP tools, \d+ CLI commands\b"), f"{mcp} MCP tools, {cmds} CLI commands"),
+            ],
+        )
+    )
+
+    # skills/roam/SKILL.md — Claude Code skill mentions the count.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "skills" / "roam" / "SKILL.md",
+            [
+                (re.compile(r"\broam has \d+ commands\b"), f"roam has {cmds} commands"),
+            ],
+        )
+    )
+
+    # docs/ci-integration.md — "all N commands" footer.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "docs" / "ci-integration.md",
+            [
+                (re.compile(r"all \d+ commands"), f"all {cmds} commands"),
+            ],
+        )
+    )
 
 
 def _scrape(text: str, pat: re.Pattern) -> str | None:
@@ -111,7 +215,9 @@ def main() -> int:
 
     counts = _live_counts()
     langs = _live_languages()
-    print(f"Live surface: {counts['commands']} commands ({counts['canonical']} canonical, {counts['canonical'] + 7} with aliases)")
+    print(
+        f"Live surface: {counts['commands']} commands ({counts['canonical']} canonical, {counts['canonical'] + 7} with aliases)"
+    )
     print(f"               {counts['mcp_tools']} MCP tools, {langs} languages")
     print()
 

@@ -21,7 +21,7 @@ from pathlib import Path
 _SARIF_VERSION = "2.1.0"
 _SARIF_SCHEMA = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json"
 _TOOL_NAME = "roam-code"
-_HELP_BASE = "https://github.com/AbanteAI/roam-code#"
+_HELP_BASE = "https://github.com/Cranot/roam-code#"
 
 
 def _get_version() -> str:
@@ -437,6 +437,7 @@ def stale_refs_to_sarif(targets: list[dict]) -> dict:
         "html_attr": ("HTML href/src target missing", "warning"),
         "backtick": ("Backtick-wrapped path target missing", "note"),
         "anchor": ("Markdown anchor / fragment missing in target file", "note"),
+        "external": ("External http(s) URL unreachable", "warning"),
     }
 
     seen_rules: dict[str, dict] = {}

@@ -86,6 +86,9 @@ def audit(ctx, brief) -> None:
     api = _capture(["api", "--limit", "0"])
     stats = _capture(["stats"])
     hotspots = _capture(["hotspots", "--danger"])
+    # Doc hygiene: dangling markdown links / hrefs / backticks / anchors.
+    # Capped at the default --limit so the audit envelope stays small.
+    stale_refs = _capture(["stale-refs"])
 
     # Top-level scores so consumers can branch fast.
     health_score = _summary_field(health, "health_score", "score")
@@ -97,6 +100,7 @@ def audit(ctx, brief) -> None:
     file_total = _summary_field(stats, "file_total", default=0)
     sym_total = _summary_field(stats, "symbol_total", default=0)
     coverage_pct = _summary_field(health, "imported_coverage_pct")
+    stale_ref_count = _summary_field(stale_refs, "stale_refs", "missing_targets", default=0)
 
     # Verdict — stack-rank the most pressing dimension.
     pressures = []
@@ -106,6 +110,11 @@ def audit(ctx, brief) -> None:
         pressures.append(f"{danger_count} danger-zone file(s)")
     if isinstance(coverage_pct, (int, float)) and coverage_pct < 40:
         pressures.append(f"coverage {coverage_pct:.0f}%")
+    # Stale refs cross from "noise" to "pressure" at 10 — one or two
+    # dangling links is a doc-hygiene paper cut, but a wave of them
+    # signals an undocumented rename and breaks AI agents downstream.
+    if isinstance(stale_ref_count, int) and stale_ref_count >= 10:
+        pressures.append(f"{stale_ref_count} stale doc ref(s)")
     if pressures:
         verdict = "AUDIT — pressures: " + ", ".join(pressures)
     else:
@@ -126,6 +135,7 @@ def audit(ctx, brief) -> None:
         "imported_coverage_pct": coverage_pct,
         "file_total": file_total,
         "symbol_total": sym_total,
+        "stale_ref_count": stale_ref_count,
     }
 
     sections = {
@@ -135,6 +145,7 @@ def audit(ctx, brief) -> None:
         "test_pyramid": test_pyramid if not brief else {"summary": test_pyramid.get("summary", {})},
         "hotspots_danger": hotspots if not brief else {"summary": hotspots.get("summary", {})},
         "stats": stats if not brief else {"summary": stats.get("summary", {})},
+        "stale_refs": stale_refs if not brief else {"summary": stale_refs.get("summary", {})},
     }
 
     if json_mode:
@@ -164,5 +175,6 @@ def audit(ctx, brief) -> None:
         ("imported coverage %", coverage_pct),
         ("total files", file_total),
         ("total symbols", sym_total),
+        ("stale doc refs", stale_ref_count),
     ]:
         click.echo(f"{label:<28}  {value}")

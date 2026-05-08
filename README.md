@@ -4,9 +4,9 @@
 
 **Architectural sight for AI coding agents — before they edit.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 199 specialised commands are advanced surface for specialised workflows.
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 200 specialised commands are advanced surface for specialised workflows.
 
-*204 commands · 137 MCP tools · 28 languages · 100% local · zero API keys*
+*205 commands · 137 MCP tools · 28 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -15,6 +15,24 @@ A local code graph (SQLite + tree-sitter + git history) that gives any agent —
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 </div>
+
+---
+
+### Killer use case: post-rename doc hygiene
+
+```bash
+git mv docs/old-guide.md docs/new-guide.md
+roam stale-refs --fix preview     # see what auto-rewrites are safe
+roam stale-refs --fix apply       # rewrite README + CHANGELOG + everywhere
+```
+
+`stale-refs` finds every dangling markdown link, HTML href, backtick path, and
+broken `#anchor` across the repo, with confidence-tagged rename hints from git
+history + basename match + LLM enrichment. Composable with `--gate` (CI),
+`--diff` (branch-only), `--baseline-from` (acknowledged debt), `--watch` (live),
+`--check-external` (HTTP validation), `--sarif` (Code Scanning), and a
+companion `roam lsp` server for editor squiggles. See
+[stale-refs in the command table](#commands).
 
 ---
 
@@ -100,7 +118,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
 - **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
 - **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
-- **204 CLI commands, 137 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
+- **205 CLI commands, 137 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
 
 ## What's New in v11
 
@@ -274,7 +292,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~199 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **204 commands organised into 7 categories** (plus 7 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~200 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **205 commands organised into 7 categories** (plus 7 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -603,7 +621,8 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam bus-factor [--brain-methods]` | Knowledge loss risk per module |
 | `roam doc-staleness` | Detect stale docstrings |
 | `roam docs-coverage` | Public-symbol doc coverage + stale docs + PageRank-ranked missing-doc hotlist |
-| `roam stale-refs [--gate]` | Find dangling file references — markdown links, HTML href/src, backtick paths whose target is missing |
+| `roam stale-refs [--gate] [--diff REF] [--fix preview\|apply]` | Find dangling file references AND markdown anchor mismatches — confidence-tagged rename hints from git history / basename / symbol graph; HIGH-confidence auto-fix; branch-diff filter for CI; SARIF export. Index-free. |
+| `roam lsp` | Minimal LSP server (JSON-RPC over stdio). Wire into VS Code / Neovim / JetBrains as a custom server to get squiggly underlines on dangling links and missing anchors as you type. |
 | `roam suggest-refactoring [--limit N] [--min-score N]` | Proactive refactoring recommendations ranked by complexity, coupling, churn, smells, coverage gaps, and debt |
 | `roam plan-refactor <symbol> [--operation auto\|extract\|move]` | Ordered refactor plan with blast radius, test gaps, layer risk, and simulation-based strategy preview |
 | `roam test-scaffold <name\|file> [--write] [--framework F]` | Generate test file/function/import skeletons from symbol data (pytest, jest, Go, JUnit, RSpec) |
@@ -1559,11 +1578,11 @@ Each factor uses sigmoid health: `h = e^(-signal/scale)` (1 = pristine, approach
 
 roam-code is the only tool that combines graph algorithms (PageRank, Tarjan SCC, Louvain clustering), git archaeology, architecture simulation, and multi-agent partitioning in a single local CLI with zero API keys.
 
-Documentation (local HTML in `docs/site/`, CI-deployed via `.github/workflows/pages.yml`):
-- `docs/site/getting-started.html` — tutorial
-- `docs/site/command-reference.html` — examples
-- `docs/site/architecture.html` — diagram + internals
-- `docs/site/landscape.html` — competitor matrix
+Documentation lives at <https://roam-code.com/docs/>:
+- Tutorial — <https://roam-code.com/docs/getting-started>
+- Command reference — <https://roam-code.com/docs/command-reference>
+- Architecture guide — <https://roam-code.com/docs/architecture>
+- Integration tutorials — <https://roam-code.com/docs/integration-tutorials>
 
 | Capability | roam-code | AI IDEs (Cursor, Windsurf) | AI Agents (Claude Code, Codex) | SAST (SonarQube, CodeQL) |
 |---|---|---|---|---|
@@ -1668,7 +1687,7 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (196 canonical + 7 aliases)
+│   ├── cli.py                         # Click CLI (198 canonical + 7 aliases)
 │   ├── mcp_server.py                  # MCP server (137 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
@@ -1763,7 +1782,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 196 canonical CLI commands and 137 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 198 canonical CLI commands (205 with aliases) and 137 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.

@@ -66,9 +66,9 @@ _CONFIGS = {
     default=None,
     help=(
         "Pre-fill the generated config with ``ROAM_MCP_PRESET=<preset>``. "
-        "Default = no env var (uses 'core'). v12.2 adds the 'compliance' "
-        "preset for the EU AI Act / NIS2 redacted — 14 tools covering "
-        "preflight, taint, sbom, cga emit/verify."
+        "Default = no env var (uses 'core'). The 'compliance' preset "
+        "exposes 14 tools focused on AI-governance evidence workflows: "
+        "preflight, taint, SBOM, and code-graph attest emit/verify."
     ),
 )
 @click.pass_context
