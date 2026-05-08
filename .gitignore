@@ -65,3 +65,23 @@ internal/
 
 # Claude Code internal state (lockfiles, scheduled tasks, etc.)
 .claude/
+
+# Ad-hoc dev session artefacts that should never reach the public tree.
+# Tracked dev/ files (build_command_reference.py, todo_guard.py, etc.) are
+# explicit; everything else stays untracked. Scrub fixture filenames that
+# encode session context before they are tracked.
+dev/.audit-envelope.json
+dev/OVERNIGHT-*.md
+dev/COMPETITOR-WATCH-*.md
+dev/REPORT-*.md
+dev/DOGFOOD-RESULTS-*.md
+dev/RELEASE-CHECKLIST.md
+internal backlog
+dev/dogfood-batch/
+dev/oss-pr-dogfood/
+dev/batch-test/
+dev/sample-audit-report.md
+dev/sample-audit-report.pdf
+dev/roam-self-audit-test.md
+dev/test-*.diff
+dev/test-rules*.yml
