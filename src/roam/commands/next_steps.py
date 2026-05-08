@@ -133,6 +133,47 @@ def suggest_next_steps(command: str, context: dict) -> list[str]:
             # surface it as a structured next step too so JSON consumers see it.
             steps.append(f"Run the bench/test command for this hot path: `{bench_hint}`")
         steps.append("Run `roam diff` to confirm the structural delta of what you actually changed")
+        # When critique surfaced something material, the highest-signal
+        # moment to suggest PR Replay: "if this PR had this much, what
+        # about the last 30?" Phrased as a question so it doesn't read
+        # as a sales prompt.
+        if high > 0:
+            steps.append(
+                "See what current detectors would have caught on your last 30 PRs: `roam pr-replay --tier sample`"
+            )
+
+    elif command == "stale-refs":
+        # synergize — turn a stale-refs scan into a launchpad
+        # for the natural follow-up: auto-fix what's safe, review what's
+        # not, and gate CI on branch-new findings only.
+        missing = context.get("missing_targets", 0)
+        fixable = context.get("fixable_count", 0)
+        anchor = context.get("anchor_findings", 0)
+        sources_count = context.get("by_confidence", {}) if isinstance(context.get("by_confidence"), dict) else {}
+        low = sources_count.get("LOW", 0)
+        none = sources_count.get("NONE", 0)
+        if missing == 0:
+            # Clean repo — point at the CI gate so they can keep it that way.
+            steps.append("Add `roam stale-refs --gate --diff` to CI to keep the repo this clean")
+        else:
+            if fixable > 0:
+                steps.append(
+                    f"Run `roam stale-refs --fix preview` to inspect the {fixable} HIGH-confidence "
+                    "auto-rewrite(s); follow with `--fix apply` to write them"
+                )
+            if anchor > 0:
+                steps.append(
+                    f"Review {anchor} anchor finding(s) — those are header-slug mismatches "
+                    "(no rename hint applies; fix the URL or update the header)"
+                )
+            if low > 0 or none > 0:
+                steps.append(
+                    "Run `roam stale-refs --by-file` to triage the remaining LOW/NONE-confidence "
+                    "findings one document at a time"
+                )
+            if not steps:
+                # Pure-MEDIUM repo — point at the gate as the path forward.
+                steps.append("Run `roam stale-refs --gate --diff` in CI so new dangling refs can't be merged")
 
     elif command == "retrieve":
         low_confidence = context.get("low_confidence", False)

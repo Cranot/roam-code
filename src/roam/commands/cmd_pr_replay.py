@@ -356,6 +356,50 @@ def _render_report(
 
     out.append("")
 
+    # ── Subscription credit (paid tiers only) ─────────────────────────────
+    # Pricing v4 promise: 50% of the engagement fee credits toward Roam
+    # Review if the buyer subscribes within 60 days. Surfacing it inside
+    # the deliverable is more credible than only on the marketing page.
+    if tier in ("team", "deep"):
+        out.append("## Apply this fee toward Roam Review")
+        out.append("")
+        credit_amount = "$1,250" if tier == "team" else "$3,000"
+        out.append(
+            f"50% of the engagement fee — **{credit_amount}** — credits toward your "
+            f"first year of [Roam Review](https://roam-code.com/pricing) if you "
+            f"subscribe within **60 days** of report delivery. Roam Review runs the "
+            f"same detectors on every pull request automatically, with a sticky PR "
+            f"comment, BLOCK / REVIEW / APPROVE verdict, and exit-code-5 CI gating. "
+            f"Mention this report when subscribing and we apply the credit to the "
+            f"first invoice."
+        )
+        out.append("")
+
+    # ── What's not in scope ────────────────────────────────────────────────
+    if tier in ("team", "deep"):
+        out.append("## What this report does *not* cover")
+        out.append("")
+        out.append(
+            "- **Semantic correctness** — whether the code does the right thing. "
+            "We complement semantic reviewers (CodeRabbit, Greptile, Qodo), we "
+            "don't replace them."
+        )
+        out.append(
+            "- **Security audit** of the kind a third-party penetration test "
+            "would produce. We surface structural risks (clones, blast radius, "
+            "layer violations) — not exploit paths."
+        )
+        out.append(
+            "- **Performance profiling**. Some findings touch hot paths "
+            "(when runtime telemetry is wired), but this isn't a benchmark run."
+        )
+        out.append(
+            "- **Code review of in-flight PRs.** This report covers *merged* "
+            "history. For pre-merge gating, install the free CLI plus, when it "
+            "ships, the Roam Review GitHub App."
+        )
+        out.append("")
+
     # ── Methodology ──────────────────────────────────────────────────────
     out.append("## Methodology")
     out.append("")
@@ -374,6 +418,55 @@ def _render_report(
     out.append("")
 
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Engagement ledger — append-only JSONL written next to .roam/index.db.
+# ---------------------------------------------------------------------------
+
+
+def _record_engagement(
+    *,
+    tier: str,
+    client: str | None,
+    commit_range: str,
+    commits_scanned: int,
+    commits_with_findings: int,
+    top_detector: str | None,
+    output_path: str,
+    generated_at: str,
+) -> Path | None:
+    """Append one record to ``.roam/engagements.jsonl``.
+
+    Returns the ledger path on success, ``None`` on failure (we never
+    raise — telemetry must not break a buyer-facing run).
+
+    Schema is intentionally flat so the operator can do
+    ``cat .roam/engagements.jsonl | jq -s 'group_by(.tier)'`` without
+    nested-key acrobatics. Schema version bump = additive only.
+    """
+    try:
+        ledger_dir = Path(".roam")
+        ledger_dir.mkdir(exist_ok=True)
+        ledger = ledger_dir / "engagements.jsonl"
+        record = {
+            "ledger_schema": 1,
+            "tier": tier,
+            "client": client,
+            "commit_range": commit_range,
+            "commits_scanned": commits_scanned,
+            "commits_with_findings": commits_with_findings,
+            "top_detector": top_detector,
+            "output_path": output_path,
+            "generated_at": generated_at,
+        }
+        with ledger.open("a", encoding="utf-8") as f:
+            f.write(_json.dumps(record) + "\n")
+        return ledger
+    except OSError:
+        # Filesystem refused us (read-only mount, no permission, …) —
+        # silently skip rather than crash the report run.
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +525,18 @@ def _render_report(
     type=click.Path(dir_okay=False, writable=True),
     help="Write the markdown report to PATH instead of stdout.",
 )
+@click.option(
+    "--track-engagement/--no-track-engagement",
+    default=True,
+    show_default=True,
+    help=(
+        "On paid tiers (team / deep), append a one-line JSONL record to "
+        "``.roam/engagements.jsonl`` so the operator has a single-file "
+        "ledger of every paid engagement (tier, client, commit count, "
+        "findings, output path, timestamp). Skipped on sample tier and "
+        "when --output is unset (no artefact = no engagement)."
+    ),
+)
 @click.pass_context
 def pr_replay_cmd(
     ctx,
@@ -439,6 +544,7 @@ def pr_replay_cmd(
     commit_range: str | None,
     client: str | None,
     output_path: str | None,
+    track_engagement: bool,
 ):
     """Generate a PR Replay report.
 
@@ -496,6 +602,24 @@ def pr_replay_cmd(
         if not json_mode:
             click.echo(f"Wrote {len(report_md):,} bytes to {output_path}")
 
+    # Engagement ledger — paid tiers only, only when an output artefact
+    # exists. Cheap, append-only JSONL the operator can `cat | jq` later
+    # to see every paid engagement at a glance. No external service.
+    engagement_record = None
+    if track_engagement and tier in ("team", "deep") and output_path:
+        engagement_record = _record_engagement(
+            tier=tier,
+            client=client,
+            commit_range=commit_range,
+            commits_scanned=summary.get("commits_scanned", len(commits)),
+            commits_with_findings=summary.get("commits_with_findings", 0),
+            top_detector=by_detector[0]["detector"] if by_detector else None,
+            output_path=output_path,
+            generated_at=generated_at,
+        )
+        if engagement_record and not json_mode:
+            click.echo(f"Logged engagement to {engagement_record}")
+
     if json_mode:
         click.echo(
             to_json(
@@ -511,6 +635,7 @@ def pr_replay_cmd(
                         "top_detector": by_detector[0]["detector"] if by_detector else None,
                         "output_path": output_path,
                         "generated_at": generated_at,
+                        "engagement_logged_to": str(engagement_record) if engagement_record else None,
                     },
                     by_detector=by_detector,
                     commits=commits,

@@ -129,6 +129,22 @@ git directory regardless of whether `roam index` has been built.
 - **Recency-stat memoisation** — ``_recency_score`` caches per-file
   mtime resolution so the priority sort doesn't ``stat`` the same
   source file once per missing-target group.
+- **URL percent-decoding** — ``[a](docs/file%20with%20spaces.md)`` to
+  an actual ``file with spaces.md`` no longer mis-flags. Applies to
+  the path portion AND to anchor fragments (``#caf%C3%A9`` matches
+  header ``# Café``).
+- **Unicode-aware anchor slugify** — ``# Über`` slugifies to ``über``
+  not ``ber``; CJK headers produce useful slugs; references to
+  ``#über`` / ``#日本語`` validate against the corresponding header.
+- **Agent-ergonomic JSON aggregations** — ``summary.fixable_count``,
+  ``summary.by_kind``, ``summary.by_confidence`` so CI tools and
+  agents don't have to walk per-target hints to build a dashboard or
+  decide whether ``--fix`` is worth running.
+- **``summary.next_steps`` array + text NEXT STEPS block** — the
+  report now ends with 1-3 actionable command suggestions chosen by
+  the existing ``suggest_next_steps`` helper based on the scan's
+  context (fixable_count, anchor_findings, missing_targets). Same
+  shape every other agent-aware roam command emits.
 
 ### `roam pr-replay` — productised PR Replay report
 

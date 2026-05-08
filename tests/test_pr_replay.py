@@ -245,3 +245,92 @@ def test_tiers_dict_has_three_entries_with_required_keys():
     # Tier counts increase with price
     assert _TIERS["sample"]["default_count"] < _TIERS["team"]["default_count"]
     assert _TIERS["team"]["default_count"] < _TIERS["deep"]["default_count"]
+
+
+# ---------------------------------------------------------------------------
+# Engagement ledger
+# ---------------------------------------------------------------------------
+
+
+def test_paid_tier_with_output_appends_to_engagement_ledger(tmp_path, monkeypatch):
+    """Paid tiers + --output write a JSONL record to .roam/engagements.jsonl."""
+    monkeypatch.chdir(tmp_path)
+    # We need a valid git checkout for postmortem to walk; the test repo
+    # itself isn't usable from tmp_path. Instead invoke the engagement
+    # helper directly — that's the contract that matters.
+    from roam.commands.cmd_pr_replay import _record_engagement
+
+    rec = _record_engagement(
+        tier="team",
+        client="Acme Inc",
+        commit_range="HEAD~30..HEAD",
+        commits_scanned=30,
+        commits_with_findings=11,
+        top_detector="clones-not-edited",
+        output_path=str(tmp_path / "report.md"),
+        generated_at="2026-05-08 10:00 UTC",
+    )
+    assert rec is not None, "ledger write returned None"
+    ledger = tmp_path / ".roam" / "engagements.jsonl"
+    assert ledger.exists()
+    line = ledger.read_text(encoding="utf-8").strip()
+    record = _json.loads(line)
+    assert record["tier"] == "team"
+    assert record["client"] == "Acme Inc"
+    assert record["commits_scanned"] == 30
+    assert record["commits_with_findings"] == 11
+    assert record["top_detector"] == "clones-not-edited"
+    assert record["ledger_schema"] == 1
+
+
+def test_engagement_ledger_appends_not_overwrites(tmp_path, monkeypatch):
+    """Two engagements in the same repo append two lines, not overwrite."""
+    monkeypatch.chdir(tmp_path)
+    from roam.commands.cmd_pr_replay import _record_engagement
+
+    _record_engagement(
+        tier="team",
+        client="Acme Inc",
+        commit_range="HEAD~30..HEAD",
+        commits_scanned=30,
+        commits_with_findings=5,
+        top_detector="blast-radius",
+        output_path="acme.md",
+        generated_at="2026-05-08 10:00 UTC",
+    )
+    _record_engagement(
+        tier="deep",
+        client="Beta Corp",
+        commit_range="HEAD~90..HEAD",
+        commits_scanned=90,
+        commits_with_findings=22,
+        top_detector="clones-not-edited",
+        output_path="beta.md",
+        generated_at="2026-05-08 11:00 UTC",
+    )
+    ledger = tmp_path / ".roam" / "engagements.jsonl"
+    lines = ledger.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    rec_a = _json.loads(lines[0])
+    rec_b = _json.loads(lines[1])
+    assert rec_a["client"] == "Acme Inc"
+    assert rec_b["client"] == "Beta Corp"
+    assert rec_b["tier"] == "deep"
+
+
+def test_no_track_engagement_flag_skips_ledger(tmp_path, monkeypatch):
+    """``--no-track-engagement`` opts out — useful for dry-run / CI use."""
+    monkeypatch.chdir(tmp_path)
+    output = tmp_path / "report.md"
+    code, out = _invoke(
+        "--tier",
+        "team",
+        "--output",
+        str(output),
+        "--no-track-engagement",
+    )
+    assert code == 0
+    ledger = tmp_path / ".roam" / "engagements.jsonl"
+    # Either the ledger doesn't exist or it doesn't contain this run.
+    if ledger.exists():
+        assert ledger.read_text(encoding="utf-8").strip() == ""

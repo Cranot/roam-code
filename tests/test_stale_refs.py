@@ -1317,3 +1317,130 @@ class TestStaleRefsFixOnDirtyFile:
         invoke_cli(cli_runner, ["stale-refs", "--fix", "apply"], cwd=proj)
         # Final content unchanged from user's manual fix.
         assert readme.read_text(encoding="utf-8") == "[g](docs/guide.md)\n"
+
+
+# ---------------------------------------------------------------------------
+# v12.48 polish-5 — agent-ergonomic JSON aggregations + next_steps
+# ---------------------------------------------------------------------------
+
+
+class TestStaleRefsAggregations:
+    def test_summary_includes_fixable_count(self, cli_runner, tmp_path, monkeypatch):
+        """``summary.fixable_count`` reports how many HIGH-confidence hints
+        ``--fix apply`` would act on. Lets agents/CI decide whether to call
+        --fix at all."""
+        proj = tmp_path / "fixable_count"
+        proj.mkdir()
+        # Two findings: one HIGH-confidence (shared dir prefix), one LOW
+        # (multiple basename matches).
+        (proj / "docs").mkdir()
+        (proj / "docs" / "guide.md").write_text("hi\n")
+        for d in ("a", "b"):
+            (proj / d).mkdir()
+            (proj / d / "shared.md").write_text("hi\n")
+        (proj / "README.md").write_text("[high](docs/old/guide.md)\n[low](missing/shared.md)\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        assert data["summary"]["fixable_count"] == 1
+
+    def test_summary_includes_by_kind(self, cli_runner, tmp_path, monkeypatch):
+        """``summary.by_kind`` breaks down findings by reference kind
+        (md_inline, html_attr, backtick, anchor)."""
+        proj = tmp_path / "by_kind"
+        proj.mkdir()
+        (proj / "README.md").write_text("[a](docs/missing.md)\n`docs/gone.md`\n# Setup\n")
+        (proj / "docs").mkdir()
+        (proj / "docs" / "live.md").write_text("[anchor](#missing-target)\n# OK\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        by_kind = data["summary"]["by_kind"]
+        assert "md_inline" in by_kind
+        assert by_kind["md_inline"] >= 1
+        # Expect at least one anchor finding (in-page broken anchor).
+        assert by_kind.get("anchor", 0) >= 1
+
+    def test_summary_includes_by_confidence(self, cli_runner, tmp_path, monkeypatch):
+        """``summary.by_confidence`` reports the count per HIGH/MEDIUM/LOW/NONE
+        band. Agents can prioritise review by confidence bucket."""
+        proj = tmp_path / "by_conf"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "guide.md").write_text("hi\n")
+        # HIGH: shared dir prefix; NONE: no basename match anywhere; MEDIUM
+        # would need a single match outside the source dir, etc.
+        (proj / "README.md").write_text("[high](docs/old/guide.md)\n[none](nonexistent/random-thing.md)\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        by_conf = data["summary"]["by_confidence"]
+        # Both HIGH and NONE should appear; total must equal target count.
+        assert by_conf.get("HIGH", 0) >= 1
+        assert by_conf.get("NONE", 0) >= 1
+        assert sum(by_conf.values()) == data["summary"]["missing_targets"]
+
+
+class TestStaleRefsNextSteps:
+    def test_next_steps_present_in_json(self, cli_runner, tmp_path, monkeypatch):
+        """``summary.next_steps`` is a non-empty list when findings exist."""
+        proj = tmp_path / "next_steps_exists"
+        proj.mkdir()
+        (proj / "README.md").write_text("[x](missing.md)\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        assert isinstance(data["summary"]["next_steps"], list)
+        assert len(data["summary"]["next_steps"]) >= 1
+
+    def test_next_steps_recommends_fix_when_fixable(self, cli_runner, tmp_path, monkeypatch):
+        """When fixable_count > 0, next_steps should mention --fix preview."""
+        proj = tmp_path / "next_fix"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "guide.md").write_text("hi\n")
+        (proj / "README.md").write_text("[g](docs/old/guide.md)\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        steps = data["summary"]["next_steps"]
+        assert any("--fix preview" in s for s in steps)
+
+    def test_next_steps_calls_out_anchor_findings(self, cli_runner, tmp_path, monkeypatch):
+        """When anchor_findings > 0, next_steps should explicitly mention them."""
+        proj = tmp_path / "next_anchor"
+        proj.mkdir()
+        (proj / "README.md").write_text("[broken](#nonexistent)\n# Setup\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        steps = data["summary"]["next_steps"]
+        assert any("anchor" in s.lower() for s in steps)
+
+    def test_next_steps_recommends_gate_when_clean(self, cli_runner, tmp_path, monkeypatch):
+        """Clean repo → next_steps should suggest setting up the CI gate."""
+        proj = tmp_path / "next_clean"
+        proj.mkdir()
+        (proj / "README.md").write_text("# Hello\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        steps = data["summary"]["next_steps"]
+        assert any("--gate" in s for s in steps)
+
+    def test_next_steps_rendered_in_text_output(self, cli_runner, tmp_path, monkeypatch):
+        """Text mode appends a NEXT STEPS section when there are suggestions."""
+        proj = tmp_path / "next_text"
+        proj.mkdir()
+        (proj / "README.md").write_text("[x](missing.md)\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj)
+        assert "NEXT STEPS:" in result.output

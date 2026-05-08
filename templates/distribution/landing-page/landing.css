@@ -1618,6 +1618,19 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   border-style: dashed;
 }
 
+/* Fine-print under the tier picker — turnaround / data-handling, the
+   things a procurement-conscious buyer wants to see before clicking. */
+.replay-fineprint {
+  margin: var(--s-5) auto 0;
+  max-width: 820px;
+  font-size: var(--t-sm);
+  color: var(--muted);
+  line-height: var(--lh-snug);
+  text-align: left;
+}
+.replay-fineprint a { color: var(--muted); text-decoration: underline; }
+.replay-fineprint a:hover { color: var(--accent); }
+
 /* ─── Trust strip ─── */
 .trust-strip {
   padding: var(--section-y) 0;
