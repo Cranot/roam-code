@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PR Replay audit — Roam · Free 5-PR sample, paid Team and Deep reports</title>
+  <meta name="description" content="Roam runs against your last 5 / 30 / 90 merged PRs and produces a written structural-review report. Free DIY sample. Paid Team ($2,500) and Deep ($6,000) reports include a founder walk-through. 50% credit toward Roam Review.">
+  <link rel="canonical" href="https://roam-code.com/audit">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preconnect" href="//github.com" crossorigin>
+  <link rel="preconnect" href="//pypi.org" crossorigin>
+  <link rel="preload" href="./landing.css" as="style">
+  <link rel="stylesheet" href="./landing.css">
+  <meta name="robots" content="index,follow">
+
+  <meta property="og:title" content="PR Replay audit — Roam">
+  <meta property="og:description" content="Free DIY sample plus paid Team ($2,500) and Deep ($6,000) reports. We replay current detectors against your last 5 / 30 / 90 PRs and ship a written report.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://roam-code.com/audit">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="PR Replay audit — Roam">
+  <meta name="twitter:description" content="Replay current detectors against your last quarter of merged PRs. Free sample, paid Team and Deep reports.">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "name": "Roam PR Replay",
+    "url": "https://roam-code.com/audit",
+    "provider": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
+    "serviceType": "Structural code-review audit",
+    "areaServed": "Global (remote-delivered)",
+    "description": "Roam replays the current detector set against a buyer's last 5, 30, or 90 merged PRs and ships a written structural-review report covering findings the detectors would have flagged pre-merge, an aggregated by-detector breakdown, and recommended CI gates.",
+    "offers": [
+      {"@type": "Offer", "name": "PR Replay — Sample (DIY)", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "5-PR self-serve sample, watermarked, no founder review."},
+      {"@type": "Offer", "name": "PR Replay — Team", "price": "2500", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "30-PR report, 30-min founder walk-through. 50% of fee credits toward a Roam Review subscription within 60 days."},
+      {"@type": "Offer", "name": "PR Replay — Deep", "price": "6000", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "90-PR report with per-detector deep-dive, 90-min founder walk-through, written 90-day remediation plan. 50% of fee credits toward a Roam Review subscription within 60 days."}
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://roam-code.com/"},
+      {"@type": "ListItem", "position": 2, "name": "Audit", "item": "https://roam-code.com/audit"}
+    ]
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type": "Question", "name": "How do I get the report on a private repo without giving you direct access?", "acceptedAnswer": {"@type": "Answer", "text": "We offer two paths: (1) you grant us a read-only deploy key on a temporary clone we delete on completion, or (2) you run roam pr-replay locally and send us the JSON envelope plus the markdown — we add the founder review and ship the polished deliverable. Both paths sign the DPA and a one-page SOW."}},
+      {"@type": "Question", "name": "What if you find nothing material on my repo?", "acceptedAnswer": {"@type": "Answer", "text": "If a Team engagement surfaces zero findings worth wiring into CI, we'll either run it on a different range at no extra cost (if you want broader coverage) or refund 50% of the fee. The whole point is that you'd have shipped the same incidents knowing what Roam would have flagged — if you wouldn't have, the engagement underdelivered."}},
+      {"@type": "Question", "name": "Can I share the report with my CTO, board, or auditor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The report is yours. You own the IP and can redistribute internally without restriction. External attribution is appreciated but not required."}},
+      {"@type": "Question", "name": "Why this and not just running roam critique ourselves?", "acceptedAnswer": {"@type": "Answer", "text": "You can. The CLI is Apache 2.0 and free forever. The paid engagement adds: founder review of the patterns that matter for your codebase specifically, a ranked recommendation of which detector classes to wire into CI first, a polished narrative artefact you can hand to leadership or auditors, and a 30 or 90-minute walk-through call."}},
+      {"@type": "Question", "name": "How fast is the turnaround?", "acceptedAnswer": {"@type": "Answer", "text": "Five business days from kickoff for Team, ten business days for Deep. Kickoff happens the day we receive payment confirmation and the agreed-on commit range or repo access. We'll usually move faster on small repos."}},
+      {"@type": "Question", "name": "Do you train ML models on our code?", "acceptedAnswer": {"@type": "Answer", "text": "No. Contractually committed in the DPA. We never use buyer source code, diffs, comments, metrics, or any derived artefact to train, fine-tune, or evaluate any machine-learning model — ours, ours-via-third-party, or any third party's."}}
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/setup">Setup</a></li>
+        <li><a href="/docs/">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main">
+
+  <!-- ──────────────────────────────────────────────────────────
+       Hero
+       ────────────────────────────────────────────────────────── -->
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Paid PR Replay audit · Free DIY sample</p>
+      <h1 class="hero-headline">
+        Would Roam have caught<br>
+        <strong>your last incident?</strong>
+      </h1>
+      <p class="hero-subhead">
+        We replay today's structural detectors against your last
+        5 / 30 / 90 merged PRs and ship a written report — what the
+        detectors would have flagged pre-merge, the patterns worth
+        wiring into CI, and the single highest-leverage gate to add
+        today.
+      </p>
+      <div class="hero-ctas">
+        <a class="btn-primary" href="#tiers">See the tiers</a>
+        <a class="btn-secondary" href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See the sample report</a>
+      </div>
+      <p class="hero-trust-strip">
+        Same engine as the free CLI · Apache 2.0 · No code uploaded for the DIY sample · 50% credits toward Roam Review
+      </p>
+    </div>
+  </header>
+
+  <!-- ──────────────────────────────────────────────────────────
+       How it works
+       ────────────────────────────────────────────────────────── -->
+  <section class="how-it-works" id="how">
+    <div class="how-it-works-inner">
+      <h2>How it works</h2>
+      <p class="lede">
+        Three steps from "I'd like a PR Replay" to "here is the report."
+        Synchronous walk-through call closes the engagement.
+      </p>
+      <ol class="flow">
+        <li>
+          <span class="flow-num">1</span>
+          <strong>Kickoff (day 1).</strong>
+          You send the repo URL and the time window. We sign a one-page SOW
+          and our DPA. You approve the read-only access scope. No code
+          leaves your environment until you've signed.
+        </li>
+        <li>
+          <span class="flow-num">2</span>
+          <strong>Replay (days 2–4 for Team, 2–8 for Deep).</strong>
+          We clone to a temp working tree, run <code>roam pr-replay</code>
+          across your range, founder reviews the top findings by hand and
+          drafts the narrative. Per-detector deep-dive added on Deep tier.
+        </li>
+        <li>
+          <span class="flow-num">3</span>
+          <strong>Walk-through + delivery (day 5 / day 10).</strong>
+          30-min call (Team) or 90-min call (Deep) over your video tool of
+          choice. We walk the report, answer questions, and discuss the
+          recommended CI gates. Polished Markdown + PDF lands in your
+          inbox right after.
+        </li>
+      </ol>
+      <p class="how-it-works-foot">
+        After delivery: temporary clone is deleted, the git ledger we kept
+        of the engagement is yours on request, and the optional 50% credit
+        toward Roam Review activates if you subscribe within 60 days.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       Tier picker
+       ────────────────────────────────────────────────────────── -->
+  <section class="audit-upsell" id="tiers" aria-labelledby="tiers-heading">
+    <div class="audit-upsell-inner">
+      <h2 id="tiers-heading">Three tiers</h2>
+      <p class="lede">
+        Same engine across all three. The difference is window size,
+        founder hours included, and the depth of the recommended-actions
+        section.
+      </p>
+      <div class="replay-tiers">
+
+        <article class="replay-tier replay-tier--sample">
+          <h3>Sample</h3>
+          <p class="replay-price"><strong>Free</strong> · 5 PRs · self-serve</p>
+          <p class="replay-body">
+            DIY 5-PR sample. Watermarked. No code uploaded — the CLI runs
+            entirely on your machine. Same engine as the paid tiers, just
+            with a smaller window and no founder review.
+          </p>
+          <p class="install-cmd replay-cmd">
+            <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>
+          </p>
+          <p class="replay-foot">
+            No email needed. Run it on any repo you have a checkout of.
+          </p>
+        </article>
+
+        <article class="replay-tier replay-tier--team">
+          <h3>Team</h3>
+          <p class="replay-price"><strong>$2,500</strong> · 30 PRs · 30-min walk-through</p>
+          <p class="replay-body">
+            Thirty most-recent merged PRs scored against the current
+            detector set. Aggregated detector-class breakdown, per-PR
+            ranking, recommended CI gates, written narrative, founder
+            walk-through. <strong>$1,250 credits toward Roam Review</strong>
+            if you subscribe within 60 days.
+            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample output</a>.
+          </p>
+          <a class="btn-primary"
+             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Team%20PR%20Replay%20report.%0A%0ARepo%3A%20%5Bgit%20URL%20or%20%22I%27ll%20share%20privately%22%5D%0ADefault%20branch%3A%20%5Bmain%20%2F%20master%20%2F%20other%5D%0AApprox%20PRs%20%2F%20commits%20on%20main%20in%20the%20last%2030%20days%3A%20%5Bunknown%20is%20fine%5D%0AAreas%20to%20emphasise%20%28optional%29%3A%20%5Bauth%20%2F%20payments%20%2F%20rate-limited%20paths%20%2F%20...%5D%0APreferred%20windows%20for%20the%2030-min%20walk-through%3A%20%5Btime%20zones%20%2B%202-3%20options%5D%0A%0A%E2%80%94%20%5Byour%20name%5D">
+            Commission a Team report
+          </a>
+        </article>
+
+        <article class="replay-tier replay-tier--deep">
+          <h3>Deep</h3>
+          <p class="replay-price"><strong>$6,000</strong> · 90 PRs · 90-min walk-through</p>
+          <p class="replay-body">
+            Everything in Team plus a per-detector deep-dive section, a
+            written 90-day remediation plan against the highest-leverage
+            CI gates, and a 90-minute walk-through call.
+            <strong>$3,000 credits toward Roam Review</strong> if you
+            subscribe within 60 days.
+            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample (Team format; Deep adds the deep-dive section)</a>.
+          </p>
+          <a class="btn-secondary"
+             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Deep%20PR%20Replay%20report.%0A%0ARepo%3A%20%5Bgit%20URL%20or%20%22I%27ll%20share%20privately%22%5D%0ADefault%20branch%3A%20%5Bmain%20%2F%20master%20%2F%20other%5D%0ATime%20window%3A%20%5Btrailing%2090%20days%20%2F%20a%20specific%20release%20range%2C%20e.g.%20v1.0..main%5D%0AAreas%20to%20emphasise%20%28optional%29%3A%20%5Bauth%20%2F%20payments%20%2F%20rate-limited%20paths%20%2F%20...%5D%0APreferred%20windows%20for%20the%2090-min%20walk-through%3A%20%5Btime%20zones%20%2B%202-3%20options%5D%0AAny%20incidents%20you%27d%20like%20us%20to%20look%20for%20specifically%3A%20%5Bfree%20text%5D%0A%0A%E2%80%94%20%5Byour%20name%5D">
+            Commission a Deep report
+          </a>
+        </article>
+
+      </div>
+      <p class="replay-fineprint">
+        Reports ship as Markdown + PDF. Turnaround: 5 business days for
+        Team, 10 business days for Deep, both from kickoff. We never
+        train on or reuse buyer code; the engagement runs against a
+        temporary clone we delete on completion. See the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>
+        and <a href="/security">security policy</a> for details. Email
+        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
+        with questions before purchase.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       What you get — deliverable spec
+       ────────────────────────────────────────────────────────── -->
+  <section class="whats-in" id="deliverable">
+    <div class="whats-in-inner">
+      <h2>What's in the deliverable</h2>
+      <p class="lede">
+        Every paid report has the same skeleton. Section depth scales
+        with tier; Deep adds the per-detector deep-dive.
+      </p>
+      <div class="verbs-grid verbs-grid--3">
+        <div class="verb-cell">
+          <code>Executive summary</code>
+          <span>Verdict line, % of PRs that would have been flagged, total high / medium counts.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Detector breakdown</code>
+          <span>Aggregated table: detector × total findings × ratio of PRs hit. Highlights the highest-impact class.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Per-PR ranking</code>
+          <span>Top PRs ranked high → medium → total severity, with date, SHA, subject, top hits.</span>
+        </div>
+        <div class="verb-cell replay-deep-only">
+          <code>Per-detector deep-dive</code>
+          <span><strong>Deep tier only.</strong> One section per detector class with up to 5 example PRs each.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Recommended next steps</code>
+          <span>Top three detector classes to gate on first, plus concrete CLI commands for CI integration.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Roam Review credit</code>
+          <span>Explicit credit amount and 60-day window — surfaced inside the deliverable, not just the marketing page.</span>
+        </div>
+        <div class="verb-cell">
+          <code>What's NOT covered</code>
+          <span>Semantic correctness, security audit, performance profiling, in-flight PR review — set out explicitly.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Methodology</code>
+          <span>What was measured, what wasn't, and how to reproduce on your own machine.</span>
+        </div>
+      </div>
+      <p class="how-it-works-foot" style="margin-top: 24px;">
+        Markdown + PDF. You can preview the Team-tier shape on
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">GitHub</a>
+        before commissioning.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       Who it's for
+       ────────────────────────────────────────────────────────── -->
+  <section class="how-it-works" id="who">
+    <div class="how-it-works-inner">
+      <h2>Who PR Replay is for</h2>
+      <p class="lede">
+        Three buyer shapes recur across the engagements we'd quote.
+      </p>
+      <ol class="flow">
+        <li>
+          <span class="flow-num">A</span>
+          <strong>Teams adopting AI coding agents.</strong>
+          You've added Cursor, Claude Code, or Copilot in the last 6
+          months and the shape of incoming PRs has changed. You want a
+          read on what's slipping through your existing reviewer.
+        </li>
+        <li>
+          <span class="flow-num">B</span>
+          <strong>Post-incident retrospectives.</strong>
+          You shipped something that broke production. You want to know
+          if a structural-review gate would have caught it pre-merge —
+          and what other PRs in the last quarter look like the same shape.
+        </li>
+        <li>
+          <span class="flow-num">C</span>
+          <strong>Pre-purchase signal for Roam Review.</strong>
+          You're considering a Roam Review subscription. PR Replay tells
+          you what the gate would have done on your specific codebase
+          before you commit. The 50% credit makes it close to free if
+          you subscribe.
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       Trust + handling
+       ────────────────────────────────────────────────────────── -->
+  <section class="trust-strip" id="trust">
+    <div class="trust-strip-inner">
+      <div class="trust-cell">
+        <strong>Apache 2.0 engine</strong>
+        <span>The same <a href="https://github.com/Cranot/roam-code">roam-code</a> CLI you can install yourself runs the analysis. Nothing proprietary in the audit pipeline.</span>
+      </div>
+      <div class="trust-cell">
+        <strong>Temporary clone, deleted on completion</strong>
+        <span>We clone your repo to a temp working tree only for the duration of the engagement. Deleted within 7 days of report delivery. <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a> covers retention details.</span>
+      </div>
+      <div class="trust-cell">
+        <strong>No training on your code</strong>
+        <span>Contractually committed: never used to train, fine-tune, or evaluate any ML model — ours or any third-party's. See the <a href="/security">security policy</a>.</span>
+      </div>
+      <div class="trust-cell">
+        <strong>EU-based, GDPR-native</strong>
+        <span>Built in Athens. Made in the EU. The default processing location is the EU; Stripe handles billing under SCCs.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       Apply credit toward Roam Review
+       ────────────────────────────────────────────────────────── -->
+  <section class="audit-upsell" id="credit">
+    <div class="audit-upsell-inner">
+      <h2>Apply this fee toward Roam Review</h2>
+      <p class="lede">
+        Half of the engagement fee credits toward your first year of Roam
+        Review if you subscribe within 60 days of report delivery.
+      </p>
+      <table class="compare-table" style="max-width: 760px; margin: 24px auto 0;">
+        <caption class="visually-hidden">Roam Review credit math by PR Replay tier and Roam Review subscription tier.</caption>
+        <thead>
+          <tr>
+            <th scope="col">PR Replay tier</th>
+            <th scope="col">Fee</th>
+            <th scope="col">Credits toward Review</th>
+            <th scope="col">Net first-year cost on Review Team ($299/mo)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Team</th>
+            <td>$2,500</td>
+            <td>$1,250</td>
+            <td>$2,338 (was $3,588)</td>
+          </tr>
+          <tr>
+            <th scope="row">Deep</th>
+            <td>$6,000</td>
+            <td>$3,000</td>
+            <td>$588 (was $3,588)</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="compare-foot">
+        Mention the report when subscribing and we apply the credit to
+        the first invoice. Credit is single-use and expires 60 days
+        after report delivery.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       FAQ
+       ────────────────────────────────────────────────────────── -->
+  <section class="faq" id="faq">
+    <div class="faq-inner">
+      <h2>Common questions</h2>
+      <details>
+        <summary>How do I get the report on a private repo without giving you direct access?</summary>
+        <p>
+          Two paths: (1) you grant us a read-only deploy key on a
+          temporary clone we delete on completion, or (2) you run
+          <code>roam pr-replay</code> locally and send us the JSON
+          envelope plus the markdown — we add the founder review and
+          ship the polished deliverable. Both paths sign the
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>
+          and a one-page SOW.
+        </p>
+      </details>
+      <details>
+        <summary>What if you find nothing material on my repo?</summary>
+        <p>
+          If a Team engagement surfaces zero findings worth wiring into
+          CI, we'll either run it on a different range at no extra cost
+          (if you want broader coverage) or refund 50% of the fee. The
+          point is to know whether you'd have shipped the same incidents
+          knowing what Roam would have flagged — if you wouldn't have,
+          the engagement underdelivered and we own that.
+        </p>
+      </details>
+      <details>
+        <summary>Can I share the report with my CTO, board, or auditor?</summary>
+        <p>
+          Yes. The report is yours. You own the IP and can redistribute
+          internally without restriction. External attribution (e.g., in
+          a public post-mortem) is appreciated but not required.
+        </p>
+      </details>
+      <details>
+        <summary>Why this and not just running <code>roam critique</code> ourselves?</summary>
+        <p>
+          You can. The CLI is Apache 2.0 and free forever. The paid
+          engagement adds: founder review of the patterns that matter
+          for your codebase specifically, a ranked recommendation of
+          which detector classes to wire into CI first, a polished
+          narrative artefact you can hand to leadership or auditors,
+          and a 30 or 90-minute walk-through call.
+        </p>
+      </details>
+      <details>
+        <summary>How fast is the turnaround?</summary>
+        <p>
+          5 business days from kickoff for Team, 10 business days for
+          Deep. Kickoff happens the day we receive payment confirmation
+          and the agreed-on commit range or repo access. Smaller repos
+          usually finish faster.
+        </p>
+      </details>
+      <details>
+        <summary>Do you train ML models on our code?</summary>
+        <p>
+          No. Contractually committed in the
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>.
+          We never use buyer source code, diffs, comments, metrics, or
+          any derived artefact to train, fine-tune, or evaluate any
+          machine-learning model — ours, ours-via-third-party, or any
+          third party's.
+        </p>
+      </details>
+      <details>
+        <summary>Can multiple people on our team join the walk-through?</summary>
+        <p>
+          Yes. We default to "everyone you'd want in a code-review
+          retrospective": eng lead, the engineers who shipped the
+          flagged PRs, sometimes the security lead. We send the report
+          a few minutes before the call so people can skim.
+        </p>
+      </details>
+      <details>
+        <summary>What about the EU AI Act?</summary>
+        <p>
+          PR Replay is evidence-generation tooling, not a regulated
+          service. The EU AI Act Article 12 (record-keeping) only
+          attaches to providers of high-risk AI systems listed in
+          Annex III; code-generation tooling is not in Annex III. If
+          your <em>own product</em> is a high-risk AI system, the
+          report's tamper-evident audit-trail entries are useful as
+          Article 14 human-oversight evidence. The classification call
+          is for you and your DPO.
+        </p>
+      </details>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       Final CTA
+       ────────────────────────────────────────────────────────── -->
+  <section class="page-cta-strip">
+    <div class="page-cta-inner">
+      <p>
+        Try the free sample first:
+        <a href="#tiers" class="btn-secondary">See the tiers</a>
+        · or email
+        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
+        with questions before purchase.
+      </p>
+    </div>
+  </section>
+
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/setup">Setup</a>
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
