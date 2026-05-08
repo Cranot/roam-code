@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.50] - 2026-05-09
+
+### Release notes
+
+12.50 is the first PyPI release after a stretch of locally-bumped
+versions (12.48, 12.49) that never published. The wheel ships every
+change from the [12.48] and [12.49] entries below plus the new work
+described here. Going forward, releases are deliberate weekly /
+bi-weekly cuts (see ``CONTRIBUTING.md``); ``[Unreleased]`` accumulates
+work between cuts instead of triggering a version bump per change.
+
+### Build / packaging
+
+* `setuptools` build requirement bumped to `>= 77.0` so the wheel
+  emits the PEP 639 ``License-Expression: Apache-2.0`` metadata
+  field. Earlier wheels (≤ 12.47) shipped to PyPI with no license
+  metadata visible on the project page; 12.50 fixes that.
+
+### Site / trust
+
+* Service-level commitments in `/terms` and `/status` now make the
+  pre-launch / GA distinction explicit: the 99.5% uptime target
+  applies after general availability, not during early access.
+* Privacy page: hosting subprocessor list no longer says "Hetzner /
+  DigitalOcean / similar EU-based provider" — replaced with the
+  honest "to be selected and disclosed before paid GA; named in the
+  DPA at GA. During early access there is no production backend
+  processing customer data."
+* Security page gains a "Verify a release yourself" section with
+  the exact `sigstore verify github` invocation against the
+  workflow's OIDC chain.
+* `/docs/roam-code` legacy paths on About + Press fixed to point
+  at `/docs/`.
+
+### Action.yml
+
+* `roam --json` invocations now write stdout (the JSON envelope) and
+  stderr (progress + warnings) to separate files, then validate
+  the JSON; non-JSON output is wrapped in a structured
+  ``{status, command, exit_code, stdout, stderr, reason}`` envelope
+  so downstream parsers see a deterministic shape. Previously a
+  warning landing on stderr would corrupt the JSON file.
+
 ### Documentation site consolidated to roam-code.com only
 
 GitHub Pages disabled on the repo on 2026-05-08. Previously the docs

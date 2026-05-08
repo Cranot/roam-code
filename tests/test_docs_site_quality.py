@@ -1,86 +1,45 @@
-"""Docs site quality checks for the legacy GitHub Pages artifact.
+"""Sanity checks for the docs site under ``templates/distribution/landing-page/docs/``.
 
-The canonical docs site lives at https://roam-code.com/docs/ on
-Cloudflare Pages (built from the templates/distribution/landing-page/docs/
-tree). The files under docs/site/* in this repo are now thin redirects
-to the new URL; the rich content moved out of this repo.
+The canonical docs live at https://roam-code.com/docs/ (Cloudflare Pages,
+served from ``templates/distribution/landing-page/docs/``). GitHub Pages
+was disabled on 2026-05-08 and ``docs/site/`` was deleted; the previous
+redirect-stub tests in this file went with it.
 
-Most legacy assertions (specific copy, SVG diagrams, command examples)
-are skipped because they targeted the old in-repo docs that have been
-migrated. The redirect-existence + redirect-target checks remain so we
-notice if the migration ever bit-rots.
+Remaining checks: the required HTML files exist, each one declares a
+canonical URL pointing at the production path, and each one renders
+the surface counts that are kept in sync by ``scripts/sync_surface_counts.py``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
+
+DOCS_ROOT = Path(__file__).resolve().parents[1] / "templates" / "distribution" / "landing-page" / "docs"
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
-def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
-
-
-REDIRECT_TARGETS = {
+REQUIRED_PAGES = {
     "index.html": "https://roam-code.com/docs/",
     "getting-started.html": "https://roam-code.com/docs/getting-started",
-    "integration-tutorials.html": "https://roam-code.com/docs/integration-tutorials",
     "command-reference.html": "https://roam-code.com/docs/command-reference",
     "architecture.html": "https://roam-code.com/docs/architecture",
-    "landscape.html": "https://roam-code.com/docs/",
+    "integration-tutorials.html": "https://roam-code.com/docs/integration-tutorials",
 }
 
 
 def test_docs_site_required_pages_exist():
-    root = _repo_root() / "docs" / "site"
-    required = [
-        "getting-started.html",
-        "integration-tutorials.html",
-        "command-reference.html",
-        "architecture.html",
-        "docs.css",
-    ]
-    for rel in required:
-        assert (root / rel).is_file(), f"missing docs page: {rel}"
+    """Every URL in the production sitemap maps to a real file in the repo."""
+    for filename in REQUIRED_PAGES:
+        path = DOCS_ROOT / filename
+        assert path.is_file(), f"missing docs page: {path.relative_to(DOCS_ROOT.parents[3])}"
 
 
-def test_redirect_pages_point_at_new_docs_url():
-    """Each legacy docs/site/*.html file is a redirect to roam-code.com/docs/*."""
-    root = _repo_root() / "docs" / "site"
-    for filename, target in REDIRECT_TARGETS.items():
-        path = root / filename
-        if not path.exists():
-            continue
-        text = _read(path)
-        assert "url=" in text, f"{filename} missing meta-refresh URL"
-        assert target in text, f"{filename} should redirect to {target}"
-
-
-@pytest.mark.skip(reason="docs/site is now a redirect; rich content moved to roam-code.com/docs/")
-def test_getting_started_has_tutorial_flow():
-    pass
-
-
-@pytest.mark.skip(reason="docs/site is now a redirect; rich content moved to roam-code.com/docs/")
-def test_command_reference_has_examples():
-    pass
-
-
-@pytest.mark.skip(reason="docs/site is now a redirect; rich content moved to roam-code.com/docs/")
-def test_integration_tutorials_cover_five_platforms():
-    pass
-
-
-@pytest.mark.skip(reason="docs/site is now a redirect; rich content moved to roam-code.com/docs/")
-def test_architecture_page_has_diagram_and_pipeline():
-    pass
-
-
-@pytest.mark.skip(reason="docs/site is now a redirect; cross-page nav lives at roam-code.com")
-def test_site_pages_linked_from_main_pages():
-    pass
+def test_docs_pages_declare_canonical_url():
+    """Each docs page declares its canonical URL on roam-code.com/docs/*."""
+    for filename, canonical in REQUIRED_PAGES.items():
+        path = DOCS_ROOT / filename
+        text = path.read_text(encoding="utf-8")
+        # The pages all use a ``<link rel="canonical" href="…">`` declaration.
+        assert f'rel="canonical" href="{canonical}"' in text, (
+            f"{filename} should declare canonical={canonical}"
+        )

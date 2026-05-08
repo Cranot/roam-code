@@ -71,6 +71,24 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[12.50] - 2026-05-09</h2>
+<h3>Release notes</h3>
+<p>12.50 is the first PyPI release after a stretch of locally-bumped versions (12.48, 12.49) that never published. The wheel ships every change from the [12.48] and [12.49] entries below plus the new work described here. Going forward, releases are deliberate weekly / bi-weekly cuts (see <code>CONTRIBUTING.md</code>); <code>[Unreleased]</code> accumulates work between cuts instead of triggering a version bump per change.</p>
+<h3>Build / packaging</h3>
+<ul>
+<li><code>setuptools</code> build requirement bumped to <code>&gt;= 77.0</code> so the wheel emits the PEP 639 <code>License-Expression: Apache-2.0</code> metadata field. Earlier wheels (≤ 12.47) shipped to PyPI with no license metadata visible on the project page; 12.50 fixes that.</li>
+</ul>
+<h3>Site / trust</h3>
+<ul>
+<li>Service-level commitments in <code>/terms</code> and <code>/status</code> now make the pre-launch / GA distinction explicit: the 99.5% uptime target applies after general availability, not during early access.</li>
+<li>Privacy page: hosting subprocessor list no longer says "Hetzner / DigitalOcean / similar EU-based provider" — replaced with the honest "to be selected and disclosed before paid GA; named in the DPA at GA. During early access there is no production backend processing customer data."</li>
+<li>Security page gains a "Verify a release yourself" section with the exact <code>sigstore verify github</code> invocation against the workflow's OIDC chain.</li>
+<li><code>/docs/roam-code</code> legacy paths on About + Press fixed to point at <code>/docs/</code>.</li>
+</ul>
+<h3>Action.yml</h3>
+<ul>
+<li><code>roam --json</code> invocations now write stdout (the JSON envelope) and stderr (progress + warnings) to separate files, then validate the JSON; non-JSON output is wrapped in a structured <code>{status, command, exit_code, stdout, stderr, reason}</code> envelope so downstream parsers see a deterministic shape. Previously a warning landing on stderr would corrupt the JSON file.</li>
+</ul>
 <h3>Documentation site consolidated to roam-code.com only</h3>
 <p>GitHub Pages disabled on the repo on 2026-05-08. Previously the docs were dual-hosted at <code>cranot.github.io/roam-code/*</code> (GitHub Pages serving <code>docs/site/</code>) and at <code>roam-code.com/docs/</code> (Cloudflare Pages serving <code>templates/distribution/landing-page/docs/</code>). Drift between the two copies was a persistent source of count / content inconsistencies.</p>
 <ul>
