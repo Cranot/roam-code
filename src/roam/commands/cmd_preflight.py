@@ -814,7 +814,7 @@ def preflight(ctx, target, staged):
         click.echo(f"  Conventions:      {conv_desc:<40s} {_severity_tag(convs['severity'])}")
 
         # Fitness — distinguish target-attributed vs sibling failures
-        #. The same rule can fail because of OTHER code in
+        # . The same rule can fail because of OTHER code in
         # the same file ("Max function complexity 50" tripped by a
         # 700-cc neighbour); blaming the changing symbol for that is
         # misleading. We surface both buckets explicitly.

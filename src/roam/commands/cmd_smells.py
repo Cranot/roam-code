@@ -211,7 +211,7 @@ def smells(ctx, file_path, min_severity, include_tooling):
 
         if not detail:
             # Show top 5 with truncated location so the user can jump
-            # straight to the offender. 
+            # straight to the offender.
             # bare symbol names ("main", "buildComment") were
             # ambiguous when the same name lived in multiple files.
             top = findings[:5]

@@ -111,9 +111,7 @@ def why_slow(ctx, top: int, changed: bool, base: str, min_calls: int):
     ensure_index()
 
     with open_db(readonly=True) as conn:
-        total_traced = conn.execute(
-            "SELECT COUNT(*) FROM runtime_stats WHERE call_count > 0"
-        ).fetchone()[0]
+        total_traced = conn.execute("SELECT COUNT(*) FROM runtime_stats WHERE call_count > 0").fetchone()[0]
 
         if total_traced == 0:
             verdict = "NO RUNTIME DATA"
