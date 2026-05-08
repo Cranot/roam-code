@@ -552,7 +552,7 @@ src/
       formatter.py            # to_json, json_envelope
     cli.py                    # cli, LazyGroup
     mcp_server.py
-tests/  (186 files)
+tests/  (267 files)
 ` ` `
 
 **Key symbols** (PageRank): `open_db` · `ensure_index` · `json_envelope` · `to_json` · `LanguageExtractor`
@@ -1670,7 +1670,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # ~5500 tests, Python 3.9-3.13
+pytest tests/              # ~7,500 tests, Python 3.9-3.13
 
 # Or use Make targets:
 make dev      # install with dev extras
@@ -1759,7 +1759,7 @@ roam-code/
 │       ├── formatter.py               # Token-efficient formatting
 │       ├── sarif.py                   # SARIF 2.1.0 output
 │       └── schema_registry.py         # JSON envelope schema versioning
-└── tests/                             # ~5500 tests across 186 test files
+└── tests/                             # ~7,500 tests across 267 test files
 ```
 
 </details>
@@ -1803,7 +1803,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # all ~5500 tests must pass
+pytest tests/   # all ~7,500 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.

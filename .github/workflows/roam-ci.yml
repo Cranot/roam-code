@@ -130,6 +130,9 @@ jobs:
       - name: Surface-count drift gate
         run: python scripts/sync_surface_counts.py
 
+      - name: Changelog-render drift gate
+        run: python scripts/build_changelog_html.py
+
       - name: Internal-link integrity
         run: python scripts/linkcheck.py --strict
 

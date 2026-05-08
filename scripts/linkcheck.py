@@ -70,7 +70,13 @@ def main() -> int:
         print(f"Site dir not found: {SITE}", file=sys.stderr)
         return 2
 
-    pages = list(SITE.glob("*.html")) + list(SITE.glob("docs/*.html"))
+    # changelog.html is auto-rendered from CHANGELOG.md and necessarily
+    # contains example markdown link references (``[path](path)`` etc.)
+    # that aren't real navigation. Skip it from the link audit; the
+    # changelog-render gate covers content correctness via its own
+    # source-of-truth diff against CHANGELOG.md.
+    skip = {"changelog.html"}
+    pages = [p for p in (list(SITE.glob("*.html")) + list(SITE.glob("docs/*.html"))) if p.name not in skip]
     page_ids: dict[Path, set[str]] = {p: _collect_ids(p) for p in pages}
 
     issues: list[str] = []
