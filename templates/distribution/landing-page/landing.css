@@ -666,7 +666,26 @@ a.verb-cell:hover {
   max-width: 720px;
   margin: 0 auto 32px;
 }
-.compare-table-wrap { overflow-x: auto; margin: 0 -24px; padding: 0 24px; }
+.compare-table-wrap {
+  overflow-x: auto;
+  margin: 0 -24px;
+  padding: 0 24px;
+  /* Subtle scroll-hint shadow on mobile so readers know the table scrolls */
+  background:
+    linear-gradient(to right, var(--bg) 30%, rgba(253, 253, 253, 0)) 0 0 / 24px 100% no-repeat,
+    linear-gradient(to right, rgba(253, 253, 253, 0), var(--bg) 70%) 100% 0 / 24px 100% no-repeat,
+    linear-gradient(to right, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0)) 0 0 / 12px 100% no-repeat,
+    linear-gradient(to left, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0)) 100% 0 / 12px 100% no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
+@media (max-width: 600px) {
+  .compare-table { font-size: 12.5px; }
+  .compare-table tbody td,
+  .compare-table tbody th { padding: 12px 10px; }
+  .compare-table tbody th[scope="row"],
+  .compare-table tbody td:first-child { padding-left: 14px; }
+  .compare-table thead th:first-child { padding-left: 14px; min-width: 180px; }
+}
 .compare-table {
   width: 100%;
   border-collapse: collapse;

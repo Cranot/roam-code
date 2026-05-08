@@ -69,9 +69,8 @@ def test_roam_counts_match_surface_source_of_truth():
     roam = next(entry for entry in payload["competitors"] if entry["name"] == "roam-code")
 
     assert roam["mcp"] == str(surface["mcp"]["registered_tools"])
-    assert str(surface["cli"]["canonical_commands"]) in roam["cli_commands"]
-    alias_count = surface["cli"]["alias_names"]
-    assert re.search(rf"\+{alias_count} alias", roam["cli_commands"])
+    # cli_commands now uses public command_names count (matches roam --help).
+    assert str(surface["cli"]["command_names"]) in roam["cli_commands"]
 
 
 # ---------------------------------------------------------------------------

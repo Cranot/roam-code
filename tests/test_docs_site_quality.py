@@ -1,8 +1,21 @@
-"""Docs site quality checks for tutorial/reference/architecture pages."""
+"""Docs site quality checks for the legacy GitHub Pages artifact.
+
+The canonical docs site lives at https://roam-code.com/docs/ on
+Cloudflare Pages (built from the templates/distribution/landing-page/docs/
+tree). The files under docs/site/* in this repo are now thin redirects
+to the new URL; the rich content moved out of this repo.
+
+Most legacy assertions (specific copy, SVG diagrams, command examples)
+are skipped because they targeted the old in-repo docs that have been
+migrated. The redirect-existence + redirect-target checks remain so we
+notice if the migration ever bit-rots.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+
+import pytest
 
 
 def _repo_root() -> Path:
@@ -11,6 +24,16 @@ def _repo_root() -> Path:
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+REDIRECT_TARGETS = {
+    "index.html": "https://roam-code.com/docs/",
+    "getting-started.html": "https://roam-code.com/docs/getting-started",
+    "integration-tutorials.html": "https://roam-code.com/docs/integration-tutorials",
+    "command-reference.html": "https://roam-code.com/docs/command-reference",
+    "architecture.html": "https://roam-code.com/docs/architecture",
+    "landscape.html": "https://roam-code.com/docs/",
+}
 
 
 def test_docs_site_required_pages_exist():
@@ -26,56 +49,38 @@ def test_docs_site_required_pages_exist():
         assert (root / rel).is_file(), f"missing docs page: {rel}"
 
 
+def test_redirect_pages_point_at_new_docs_url():
+    """Each legacy docs/site/*.html file is a redirect to roam-code.com/docs/*."""
+    root = _repo_root() / "docs" / "site"
+    for filename, target in REDIRECT_TARGETS.items():
+        path = root / filename
+        if not path.exists():
+            continue
+        text = _read(path)
+        assert "url=" in text, f"{filename} missing meta-refresh URL"
+        assert target in text, f"{filename} should redirect to {target}"
+
+
+@pytest.mark.skip(reason="docs/site is now a redirect; rich content moved to roam-code.com/docs/")
 def test_getting_started_has_tutorial_flow():
-    text = _read(_repo_root() / "docs" / "site" / "getting-started.html")
-    assert "Getting Started with roam" in text
-    assert "Step 1: Install" in text
-    assert "roam init" in text
-    assert "roam mcp-setup" in text
-    assert "roam health --gate" in text
+    pass
 
 
+@pytest.mark.skip(reason="docs/site is now a redirect; rich content moved to roam-code.com/docs/")
 def test_command_reference_has_examples():
-    text = _read(_repo_root() / "docs" / "site" / "command-reference.html")
-    assert "Command Reference with Examples" in text
-    assert "Core Daily Commands" in text
-    assert "roam context" in text
-    assert "roam check-rules" in text
-    assert "roam mcp --list-tools" in text
+    pass
 
 
+@pytest.mark.skip(reason="docs/site is now a redirect; rich content moved to roam-code.com/docs/")
 def test_integration_tutorials_cover_five_platforms():
-    text = _read(_repo_root() / "docs" / "site" / "integration-tutorials.html")
-    assert "Integration Tutorials (5 Platforms)" in text
-    assert "Claude Code" in text
-    assert "Cursor" in text
-    assert "Gemini CLI" in text
-    assert "Codex CLI" in text
-    assert "Amp (Sourcegraph)" in text
-    assert "roam mcp-setup claude-code" in text
-    assert "roam mcp-setup cursor" in text
-    assert "roam mcp-setup gemini-cli" in text
-    assert "roam mcp-setup codex-cli" in text
+    pass
 
 
+@pytest.mark.skip(reason="docs/site is now a redirect; rich content moved to roam-code.com/docs/")
 def test_architecture_page_has_diagram_and_pipeline():
-    text = _read(_repo_root() / "docs" / "site" / "architecture.html")
-    assert "roam-code Architecture" in text
-    assert "Architecture Diagram" in text
-    assert "<svg" in text
-    assert "Index Pipeline Stages" in text
-    assert ".roam/index.db" in text
+    pass
 
 
+@pytest.mark.skip(reason="docs/site is now a redirect; cross-page nav lives at roam-code.com")
 def test_site_pages_linked_from_main_pages():
-    index_text = _read(_repo_root() / "docs" / "site" / "index.html")
-    landscape_text = _read(_repo_root() / "docs" / "site" / "landscape.html")
-
-    for link in [
-        "./getting-started.html",
-        "./integration-tutorials.html",
-        "./command-reference.html",
-        "./architecture.html",
-    ]:
-        assert link in index_text
-        assert link in landscape_text
+    pass
