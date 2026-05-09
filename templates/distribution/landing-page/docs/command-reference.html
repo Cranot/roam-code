@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Command Reference — Roam Docs · 205 commands grouped by intent</title>
+  <title>Command Reference — Roam Docs · 208 commands grouped by intent</title>
   <meta name="description" content="Roam command reference: the 5 core verbs plus the most-used commands grouped by intent — exploration, health, refactoring, security, governance, runtime.">
   <link rel="canonical" href="https://roam-code.com/docs/command-reference">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -41,6 +41,11 @@
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span>
+        <span class="visually-hidden">Menu</span>
+      </label>
       <ul class="nav-links">
         <li><a href="/">Home</a></li>
         <li><a href="/pricing">Pricing</a></li>
@@ -204,7 +209,7 @@
     <section>
       <h2>Where to find more</h2>
       <ul>
-        <li><strong>All 205 commands</strong>: run <code>roam --help</code> in a terminal.</li>
+        <li><strong>All 208 commands</strong>: run <code>roam --help</code> in a terminal.</li>
         <li><strong>Per-command flags</strong>: <code>roam &lt;cmd&gt; --help</code>.</li>
         <li><strong>Cookbook recipes</strong>: <a href="https://github.com/Cranot/roam-code/tree/main/docs/cookbook">github.com/Cranot/roam-code/docs/cookbook</a>.</li>
         <li><strong>Source</strong>: each command lives in <code>src/roam/commands/cmd_*.py</code>. Apache 2.0.</li>

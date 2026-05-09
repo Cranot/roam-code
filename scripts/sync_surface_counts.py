@@ -130,6 +130,17 @@ def build_replacements(counts: dict, languages: int) -> None:
     # ``N CLI commands``, ``N commands``, ``N MCP tools``, or
     # ``N languages``. The regex deliberately uses word boundaries so we
     # don't catch e.g. "v12.50" or unrelated numerics.
+    # Marketing-tone pages where the user has chosen the soft-count
+    # framing ("200+ CLI capabilities", "130+ MCP tools", "28 language
+    # families") deliberately, per the strategic-reframe directive on
+    # 2026-05-09. These pages are EXCLUDED from auto-sync; otherwise
+    # the script would clobber the soft framing with hard counts and
+    # contradict the positioning. Reference / docs / press surfaces
+    # below still get hard counts.
+    SOFT_COUNT_PAGES = {
+        REPO_ROOT / "templates" / "distribution" / "landing-page" / "index.html",
+    }
+
     landing_pages = [
         REPO_ROOT / "templates" / "distribution" / "landing-page" / "index.html",
         REPO_ROOT / "templates" / "distribution" / "landing-page" / "setup.html",
@@ -142,6 +153,8 @@ def build_replacements(counts: dict, languages: int) -> None:
         REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "getting-started.html",
     ]
     for p in landing_pages:
+        if p in SOFT_COUNT_PAGES:
+            continue
         REPLACEMENTS.append(
             (
                 p,
