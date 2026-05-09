@@ -1132,6 +1132,26 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
      match the lift but keep the existing static shadow. */
   box-shadow: 0 12px 28px rgba(0, 73, 183, 0.14);
 }
+
+/* Cross-product bridge link under each product card. Subordinate to
+   the primary CTA — small, muted, single-line on desktop — but
+   surfaces the upsell path so visitors don't have to scroll back to
+   the comparison table to find what fits next. */
+.product-bridge {
+  margin: 14px 0 0;
+  font-size: var(--t-xs);
+  color: var(--ink-60);
+  text-align: center;
+  line-height: 1.5;
+}
+.product-bridge a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--ink-30);
+}
+.product-bridge a:hover {
+  text-decoration-color: var(--accent);
+}
 .product-card h3 {
   margin: 0 0 6px;
   font-size: var(--t-card-h);
