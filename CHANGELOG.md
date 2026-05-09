@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`roam grep` rewritten end-to-end with index-aware enrichment.** Multi-pattern (`-e` repeatable, `--patterns-from FILE`), multi-glob (`-g py -g md`), `-F/--fixed-string`, `-i/-w` flags. Engine selection prefers ripgrep > git grep > indexed-file fallback (pin via `ROAM_GREP_ENGINE`). Bulk-fetch enclosing symbols once per file (interval index) — replaces the per-match `SELECT` N+1 path. New flags: `--reachable-from <entry[,entry,...]>` (forward BFS over the call graph), `--unreachable` (orphan / not-reachable filter), `--co-occur` (every `-e` pattern must hit the same enclosing symbol), `--missing-pattern P` (anti-correlation), `--rank-by importance` (PageRank-ordered output), `--group-by symbol` (collapse hits per fn/class), `--blame` (last author + date), `--heat` (file churn), plus opt-out `--no-clones` / `--no-bridges`. Each match carries clone-class siblings (from `clone_pairs`) and cross-language bridge links when applicable.
+- **`roam refs-text <string>...`** — string-audit verdict shaped like `safe-delete` but for arbitrary literals (config keys, file paths, URLs, error messages). Groups references by surface (code / test / docs / config / dead), annotates reachability for code hits, emits per-string verdict (`SAFE-TO-REMOVE` / `REVIEW` / `LOAD-BEARING`). `--reachable-from <entry>` anchors reachability; `--per-match-detail` includes match lists in JSON.
+- **`roam delete-check`** — gates the working diff on surviving references. Parses Python / JS / TS / Go signatures from deletion lines, searches the post-edit tree for surviving uses, classifies each deletion `SAFE` / `LIKELY-SAFE` / `BREAK-RISK`. `--source {working,staged,pr,head}`, `--ci` exits 5 on `BREAK-RISK` for CI gating. Pairs with the PR Replay narrative.
+- **`roam history-grep <pattern>`** — git pickaxe wrapper (`-S` / `-G`) with `-e` repeatable, `--since` / `--until`, `-p` path filter, `--polarity` to mark each commit as `introduced` / `removed` / `modified`. Useful for postmortems and provenance audits when the trace is no longer in HEAD.
+
+### Internal
+
+- New `roam.commands.grep_helpers` module: `detect_engine`, `run_search`, `build_interval_index` / `find_enclosing`, `build_reachable_set` (multi-entry), `build_orphan_set`, `build_clone_index` / `lookup_clone_siblings`, `build_bridge_index`, `attach_blame` / `attach_heat` / `attach_pagerank`, `classify_surface`, `group_by_symbol`. Single-source primitives behind grep / refs-text / delete-check / history-grep so cross-cutting logic (reachability, clone-class join, surface classification) doesn't drift.
+
 ## [12.50] - 2026-05-09
 
 ### Release notes

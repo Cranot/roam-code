@@ -49,6 +49,11 @@
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span>
+        <span class="visually-hidden">Menu</span>
+      </label>
       <ul class="nav-links">
         <li><a href="/">Home</a></li>
         <li><a href="/pricing">Pricing</a></li>
@@ -71,6 +76,17 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h3>Added</h3>
+<ul>
+<li><strong><code>roam grep</code> rewritten end-to-end with index-aware enrichment.</strong> Multi-pattern (<code>-e</code> repeatable, <code>--patterns-from FILE</code>), multi-glob (<code>-g py -g md</code>), <code>-F/--fixed-string</code>, <code>-i/-w</code> flags. Engine selection prefers ripgrep &gt; git grep &gt; indexed-file fallback (pin via <code>ROAM_GREP_ENGINE</code>). Bulk-fetch enclosing symbols once per file (interval index) — replaces the per-match <code>SELECT</code> N+1 path. New flags: <code>--reachable-from &lt;entry[,entry,...]&gt;</code> (forward BFS over the call graph), <code>--unreachable</code> (orphan / not-reachable filter), <code>--co-occur</code> (every <code>-e</code> pattern must hit the same enclosing symbol), <code>--missing-pattern P</code> (anti-correlation), <code>--rank-by importance</code> (PageRank-ordered output), <code>--group-by symbol</code> (collapse hits per fn/class), <code>--blame</code> (last author + date), <code>--heat</code> (file churn), plus opt-out <code>--no-clones</code> / <code>--no-bridges</code>. Each match carries clone-class siblings (from <code>clone_pairs</code>) and cross-language bridge links when applicable.</li>
+<li><strong><code>roam refs-text &lt;string&gt;...</code></strong> — string-audit verdict shaped like <code>safe-delete</code> but for arbitrary literals (config keys, file paths, URLs, error messages). Groups references by surface (code / test / docs / config / dead), annotates reachability for code hits, emits per-string verdict (<code>SAFE-TO-REMOVE</code> / <code>REVIEW</code> / <code>LOAD-BEARING</code>). <code>--reachable-from &lt;entry&gt;</code> anchors reachability; <code>--per-match-detail</code> includes match lists in JSON.</li>
+<li><strong><code>roam delete-check</code></strong> — gates the working diff on surviving references. Parses Python / JS / TS / Go signatures from deletion lines, searches the post-edit tree for surviving uses, classifies each deletion <code>SAFE</code> / <code>LIKELY-SAFE</code> / <code>BREAK-RISK</code>. <code>--source {working,staged,pr,head}</code>, <code>--ci</code> exits 5 on <code>BREAK-RISK</code> for CI gating. Pairs with the PR Replay narrative.</li>
+<li><strong><code>roam history-grep &lt;pattern&gt;</code></strong> — git pickaxe wrapper (<code>-S</code> / <code>-G</code>) with <code>-e</code> repeatable, <code>--since</code> / <code>--until</code>, <code>-p</code> path filter, <code>--polarity</code> to mark each commit as <code>introduced</code> / <code>removed</code> / <code>modified</code>. Useful for postmortems and provenance audits when the trace is no longer in HEAD.</li>
+</ul>
+<h3>Internal</h3>
+<ul>
+<li>New <code>roam.commands.grep_helpers</code> module: <code>detect_engine</code>, <code>run_search</code>, <code>build_interval_index</code> / <code>find_enclosing</code>, <code>build_reachable_set</code> (multi-entry), <code>build_orphan_set</code>, <code>build_clone_index</code> / <code>lookup_clone_siblings</code>, <code>build_bridge_index</code>, <code>attach_blame</code> / <code>attach_heat</code> / <code>attach_pagerank</code>, <code>classify_surface</code>, <code>group_by_symbol</code>. Single-source primitives behind grep / refs-text / delete-check / history-grep so cross-cutting logic (reachability, clone-class join, surface classification) doesn't drift.</li>
+</ul>
 <h2>[12.50] - 2026-05-09</h2>
 <h3>Release notes</h3>
 <p>12.50 is the first PyPI release after a stretch of locally-bumped versions (12.48, 12.49) that never published. The wheel ships every change from the [12.48] and [12.49] entries below plus the new work described here. Going forward, releases are deliberate weekly / bi-weekly cuts (see <code>CONTRIBUTING.md</code>); <code>[Unreleased]</code> accumulates work between cuts instead of triggering a version bump per change.</p>

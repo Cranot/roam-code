@@ -42,6 +42,11 @@
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span>
+        <span class="visually-hidden">Menu</span>
+      </label>
       <ul class="nav-links">
         <li><a href="/">Home</a></li>
         <li><a href="/pricing">Pricing</a></li>
@@ -89,9 +94,10 @@
         (incremental, near-instant — only changed files re-parse).
       </p>
       <p class="install-note">
-        Discover everything: <code>roam --help</code> (205 commands grouped by
-        intent) or <code>roam tour</code> (guided walk through the most-used
-        five). Full reference at <a href="/docs/command-reference">/docs/command-reference</a>.
+        Discover everything: <code>roam --help</code> (200+ capabilities
+        grouped by what an agent asks) or <code>roam tour</code> (guided
+        walk through the five core verbs). Full reference at
+        <a href="/docs/command-reference">/docs/command-reference</a>.
       </p>
     </div>
   </section>
@@ -148,7 +154,7 @@
       </div>
       <div class="trust-cell">
         <strong>Browse the source</strong>
-        <span>205 commands live in <code>src/roam/commands/</code>, registered in <code>cli.py</code>. Apache 2.0.</span>
+        <span>200+ commands live in <code>src/roam/commands/</code>, registered in <code>cli.py</code>. Apache 2.0.</span>
       </div>
       <div class="trust-cell">
         <strong>Need help?</strong>

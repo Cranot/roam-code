@@ -89,6 +89,11 @@
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span>
+        <span class="visually-hidden">Menu</span>
+      </label>
       <ul class="nav-links">
         <li><a href="/" aria-current="page">Home</a></li>
         <li><a href="/pricing">Pricing</a></li>
@@ -110,7 +115,10 @@
         <strong>Roam gives it the map.</strong>
       </h1>
       <p class="hero-subhead">
-        Roam turns your repo into a local code graph that agents can query before they edit — and Roam Review catches what each PR touched (callers, tests, clones, runtime paths) before merge.
+        Roam turns your repo into a local code graph and exposes
+        engineering judgment as 130+ MCP tools agents can call before,
+        during, and after every change. Roam Review (paid, early access)
+        runs the same engine on every PR.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
@@ -123,24 +131,27 @@
   </header>
 
   <!-- ──────────────────────────────────────────────────────────
-       SECTION 1 — What's in the free CLI
+       SECTION 1 — Agent senses (the local engineering judgment layer)
        ────────────────────────────────────────────────────────── -->
   <section class="whats-in" id="what-you-get">
     <div class="whats-in-inner">
-      <h2>What's in the free CLI</h2>
+      <h2>The senses your agent doesn't have</h2>
       <p class="lede">
-        Install once. Works on any Git repo. Indexes 100,000 lines of code in seconds.
-        Asks the same questions a senior engineer would, before you merge.
+        AI agents can write code. They can't see what else the code
+        touches, which tests cover it, which loop just went quadratic,
+        or whether they're editing one of three near-identical clones.
+        Roam exposes engineering judgment as deterministic local tools
+        the agent calls before, during, and after every change.
       </p>
       <div class="numbers-grid">
-        <div class="num-cell"><strong>205</strong><span>CLI commands</span></div>
-        <div class="num-cell"><strong>137</strong><span>tools your AI agent can call</span></div>
-        <div class="num-cell"><strong>28</strong><span>languages</span></div>
+        <div class="num-cell"><strong>200+</strong><span>CLI capabilities</span></div>
+        <div class="num-cell"><strong>130+</strong><span>tools your AI agent can call (MCP)</span></div>
+        <div class="num-cell"><strong>28</strong><span>language families</span></div>
         <div class="num-cell"><strong>459</strong><span>GitHub stars</span></div>
         <div class="num-cell"><strong>7,731</strong><span>PyPI installs / month</span></div>
-        <div class="num-cell"><strong>86</strong><span>releases shipped</span></div>
+        <div class="num-cell"><strong>local</strong><span>code graph + git history in your repo</span></div>
       </div>
-      <p class="numbers-date">numbers as of <time datetime="2026-05-07">2026-05-07</time></p>
+      <p class="numbers-date">snapshot as of <time datetime="2026-05-09">2026-05-09</time></p>
 
       <p class="install-cmd" id="install">
         <code>pip install roam-code &amp;&amp; roam init</code>
@@ -150,12 +161,77 @@
         <h3>Your first 5 minutes</h3>
         <ol>
           <li><code>cd</code> into any Git repo</li>
-          <li><code>roam init</code> — index the whole codebase (a typical 100k-LOC repo finishes in seconds)</li>
-          <li><code>roam understand</code> — get a guided tour</li>
-          <li><code>roam tour</code> — see the entry points</li>
-          <li><code>roam mcp</code> — start the MCP server so your AI agent can call it</li>
+          <li><code>roam init</code> — build the local graph (a typical 100k-LOC repo finishes in seconds)</li>
+          <li><code>roam understand</code> — guided architectural tour</li>
+          <li><code>git diff | roam critique</code> — structural review of your current changes</li>
+          <li><code>roam mcp</code> — start the MCP server so your agent can call all 130+ tools</li>
         </ol>
       </div>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 1B — Agent senses, by category
+       ────────────────────────────────────────────────────────── -->
+  <section class="whats-in" id="senses">
+    <div class="whats-in-inner" style="max-width: 980px;">
+      <h2>What an agent can ask Roam</h2>
+      <p class="lede">
+        Each row is one engineering question agents commonly miss.
+        The CLI surface is organised around them — not around an
+        encyclopaedic command list.
+      </p>
+      <div class="senses-grid">
+        <div class="sense-cell">
+          <strong>Codebase sight</strong>
+          <span class="sense-q">"What does this repo do? What should I read?"</span>
+          <code>roam understand</code> · <code>roam map</code> · <code>roam tour</code> · <code>roam describe</code>
+        </div>
+        <div class="sense-cell">
+          <strong>Context retrieval</strong>
+          <span class="sense-q">"Pull the exact spans I need for this task."</span>
+          <code>roam retrieve</code> · <code>roam context</code> · <code>roam search-semantic</code> · <code>roam agent-context</code>
+        </div>
+        <div class="sense-cell">
+          <strong>Change safety</strong>
+          <span class="sense-q">"What breaks if I edit this? Which tests run?"</span>
+          <code>roam preflight</code> · <code>roam impact</code> · <code>roam affected-tests</code> · <code>roam diff</code>
+        </div>
+        <div class="sense-cell">
+          <strong>PR review</strong>
+          <span class="sense-q">"Did the AI miss a clone, a caller, a test?"</span>
+          <code>roam critique</code> · <code>roam pr-analyze</code> · <code>roam pr-risk</code> · <code>roam clones</code>
+        </div>
+        <div class="sense-cell sense-cell--featured">
+          <strong>Algorithmic judgment</strong>
+          <span class="sense-q">"Is this code <em>correct but slow</em>?"</span>
+          <code>roam math</code> · <code>roam algo</code> · <code>roam n1</code> · <code>roam missing-index</code> · <code>roam hotspots</code>
+          <em class="sense-aside">Catches AI patterns that pass tests but become O(n²): nested-loop lookups, N+1 queries, regex compiled in loops, repeated JSON parsing, branching recursion without memoisation.</em>
+        </div>
+        <div class="sense-cell">
+          <strong>Architecture governance</strong>
+          <span class="sense-q">"Is the architecture drifting?"</span>
+          <code>roam layers</code> · <code>roam cycles</code> · <code>roam health</code> · <code>roam dark-matter</code> · <code>roam fitness</code>
+        </div>
+        <div class="sense-cell">
+          <strong>Refactor safety</strong>
+          <span class="sense-q">"Can I simulate this refactor first?"</span>
+          <code>roam simulate</code> · <code>roam mutate</code> · <code>roam safe-delete</code> · <code>roam plan-refactor</code>
+        </div>
+        <div class="sense-cell">
+          <strong>Multi-agent coordination</strong>
+          <span class="sense-q">"Can multiple agents work on this graph in parallel?"</span>
+          <code>roam fleet</code> · <code>roam partition</code> · <code>roam orchestrate</code> · <code>roam agent-plan</code>
+        </div>
+        <div class="sense-cell">
+          <strong>Evidence + compliance</strong>
+          <span class="sense-q">"Can we prove what was checked, signed, and gated?"</span>
+          <code>roam attest</code> · <code>roam cga</code> · <code>roam audit-trail-export</code> · <code>roam --sarif</code>
+        </div>
+      </div>
+      <p class="how-it-works-foot" style="text-align: center;">
+        Full reference at <a href="/docs/command-reference">/docs/command-reference</a>.
+      </p>
     </div>
   </section>
 

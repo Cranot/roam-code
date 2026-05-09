@@ -216,7 +216,7 @@ Any roam command can be passed via the `commands` input. Common choices:
 | `breaking` | Detect breaking API changes |
 | `conventions` | Naming convention violations |
 
-Run `roam --help` for all 205 commands.
+Run `roam --help` for all 208 commands.
 
 ## Exit Codes
 

@@ -253,10 +253,106 @@ summary:focus-visible,
 }
 .nav-links a { color: var(--muted); }
 .nav-links a[aria-current="page"] { color: var(--accent); font-weight: 600; }
-@media (max-width: 600px) {
-  /* Six links × 24px gap = 120px of empty space. On a phone this forces
-     the menu onto three lines. Tighten the gap so it fits on two. */
-  .nav-links { gap: 14px; font-size: 14px; }
+
+/* Hamburger toggle — pure CSS, no JS, plays nicely with strict CSP.
+   The hidden checkbox holds open/closed state; the label is the
+   visible burger button. Below the breakpoint, the .nav-links list
+   collapses to a slide-down drawer that the label toggles. */
+.nav-toggle-checkbox {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.nav-toggle-label {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  color: var(--text);
+  transition: background-color 0.15s ease;
+}
+.nav-toggle-label:hover { background: var(--accent-soft); }
+.nav-toggle-checkbox:focus-visible + .nav-toggle-label {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The burger glyph itself — three lines drawn with currentColor.
+   Animates to an X when the checkbox is checked. */
+.nav-burger,
+.nav-burger::before,
+.nav-burger::after {
+  display: block;
+  width: 22px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+  transition: transform 0.25s ease, opacity 0.2s ease;
+}
+.nav-burger {
+  position: relative;
+}
+.nav-burger::before,
+.nav-burger::after {
+  content: "";
+  position: absolute;
+  left: 0;
+}
+.nav-burger::before { top: -7px; }
+.nav-burger::after  { top:  7px; }
+.nav-toggle-checkbox:checked + .nav-toggle-label .nav-burger {
+  background: transparent;
+}
+.nav-toggle-checkbox:checked + .nav-toggle-label .nav-burger::before {
+  top: 0;
+  transform: rotate(45deg);
+}
+.nav-toggle-checkbox:checked + .nav-toggle-label .nav-burger::after {
+  top: 0;
+  transform: rotate(-45deg);
+}
+
+@media (max-width: 760px) {
+  /* Show the hamburger button, collapse the link list into a drawer. */
+  .nav-toggle-label { display: flex; }
+  .nav-inner {
+    flex-wrap: nowrap;
+    /* Logo on the left, hamburger on the right. */
+  }
+  .nav-links {
+    /* The list spans the full row below the logo+burger. Hidden by
+       default; revealed by :checked. */
+    flex-basis: 100%;
+    flex-direction: column;
+    gap: 0;
+    padding: 8px 0 4px;
+    margin-top: 8px;
+    border-top: 1px solid var(--border);
+    display: none;
+  }
+  .nav-links li { width: 100%; }
+  .nav-links a {
+    display: block;
+    padding: 12px 6px;
+    font-size: 16px;
+    line-height: 1;
+    border-radius: 6px;
+  }
+  .nav-links a:hover { background: var(--accent-soft); color: var(--text); }
+
+  .nav-toggle-checkbox:checked ~ .nav-links { display: flex; }
 }
 
 /* ─── Hero ─── */
@@ -1151,6 +1247,72 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .product-bridge a:hover {
   text-decoration-color: var(--accent);
+}
+
+/* ─── Agent senses grid (Section 1B) ───
+   Each cell is one engineering question agents miss. Featured cell
+   (algorithmic judgment) gets a thicker accent border because it's
+   our biggest differentiator. */
+.senses-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  max-width: 1100px;
+  margin: 24px auto 0;
+}
+.sense-cell {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.18s ease;
+}
+.sense-cell:hover { border-color: var(--accent); }
+.sense-cell strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sense-cell .sense-q {
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+  line-height: 1.5;
+  min-height: 2.2em;
+}
+.sense-cell code {
+  font-size: 12px;
+  background: transparent;
+  padding: 0;
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  line-height: 1.7;
+  display: inline;
+}
+.sense-cell .sense-aside {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-style: normal;
+  line-height: 1.5;
+}
+.sense-cell--featured {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  grid-column: span 1;
+  box-shadow: 0 2px 12px rgba(0, 73, 183, 0.06);
+}
+@media (max-width: 900px) {
+  .senses-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .senses-grid { grid-template-columns: 1fr; }
+  .sense-cell { padding: 14px 16px; }
 }
 .product-card h3 {
   margin: 0 0 6px;

@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 205 invokable command names (198 canonical commands + 7 alias names).
+# Total: 208 invokable command names (201 canonical commands + 7 alias names).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
 # deprecated commands map to their replacement.  When a user
 # invokes a deprecated name, we still resolve it (no breaking change)
@@ -238,6 +238,9 @@ _COMMANDS = {
     "oracle": ("roam.commands.cmd_oracle", "oracle"),
     "index-export": ("roam.commands.cmd_index_bundle", "index_export"),
     "index-import": ("roam.commands.cmd_index_bundle", "index_import"),
+    "refs-text": ("roam.commands.cmd_refs_text", "refs_text_cmd"),
+    "delete-check": ("roam.commands.cmd_delete_check", "delete_check_cmd"),
+    "history-grep": ("roam.commands.cmd_history_grep", "history_grep_cmd"),
 }
 
 # Command categories for organized --help display
@@ -389,6 +392,8 @@ _CATEGORIES = {
         "search",
         "search-semantic",
         "grep",
+        "refs-text",
+        "history-grep",
         "file",
         "symbol",
         "module",
@@ -437,6 +442,7 @@ _CATEGORIES = {
         "flag-dead",
         "duplicates",
         "safe-delete",
+        "delete-check",
         "split",
         "fn-coupling",
         "doc-staleness",
