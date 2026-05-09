@@ -71,10 +71,10 @@
     <p class="eyebrow">Tutorial</p>
     <h1>Getting Started with Roam</h1>
     <p class="subtitle">
-      Zero to a working structural index in 10 minutes, then through the daily workflows: impact analysis, safety checks, and agent integration.
+      Ten minutes from <code>pip install</code> to an AI agent that asks the right structural questions before it edits, deletes, refactors, or merges.
     </p>
     <div class="callout">
-      Tutorial scope: local CLI usage, MCP setup, and CI gate setup. Non-goal: cloud hosting or SaaS deployment.
+      This tutorial walks through the <a href="/docs/agent-contract">agent contract</a> in practice: <strong>context</strong> before edit, <strong>impact</strong> before delete, <strong>critique</strong> before merge, <strong>simulate</strong> before refactor, <strong>math</strong> before optimise. Local CLI + MCP + CI gates. Non-goal: cloud hosting or SaaS deployment.
     </div>
 
     <section>
@@ -139,7 +139,7 @@ roam cga verify .roam/attestations/&lt;sha&gt;.intoto.json</code></pre>
 <pre><code>roam ask "is it safe to delete UserSession"
 roam ask "where does login validate sessions"
 roam ask --list</code></pre>
-          <p><code>roam ask</code> classifies a free-form question and dispatches the right composition of preflight/retrieve/critique/fleet/understand. No need to memorise the 205-command surface.</p>
+          <p><code>roam ask</code> classifies a free-form question and dispatches the right composition of preflight/retrieve/critique/fleet/understand. No need to memorise the full surface — the agent learns it from MCP.</p>
         </article>
 
       </div>

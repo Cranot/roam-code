@@ -47,21 +47,30 @@ jobs:
 """
 
 _WELCOME = """\
-Roam initialized! Getting-started path:
+Roam is ready. The five-rule agent contract:
 
-  1. roam understand        -- Full codebase overview
-  2. roam health            -- Health score and issues
-  3. roam preflight <file>  -- Safety-check before changes
-  4. roam pr-risk           -- Score pending changes
-  5. roam fitness           -- Enforce architectural rules
+  before EDIT       roam context <name>     -- files + lines to read
+  before DELETE     roam impact <name>      -- blast radius + safe-delete
+  before MERGE      git diff | roam critique -- structural patch review
+  before REFACTOR   roam simulate <op>      -- "what breaks?" before touching source
+  before OPTIMISE   roam math               -- accidental O(n^2), N+1, regex-in-loop
+
+Get oriented:
+
+  roam understand           -- the repo at a glance
+  roam tour                 -- 5-minute guided walk
+  roam health               -- score + top issues
+
+Wire it into your AI coding agent (one command per editor):
+
+  roam mcp-setup claude     -- Claude Code
+  roam mcp-setup cursor     -- Cursor
+  roam mcp-setup codex      -- Codex CLI
 
 Created:
 {created_lines}
-Tip: create a .roamignore file to exclude generated files (protobuf stubs,
-gRPC code, etc.) from indexing. Use gitignore-style glob patterns.
-You can also run `roam config --exclude "pattern"` for local exclusions.
-
-Run `roam --help` for all commands."""
+Tip: add a .roamignore (gitignore syntax) to skip generated files.
+Run `roam --help` for the full surface, or `roam --detail <cmd>` for one command."""
 
 
 @click.command("init")

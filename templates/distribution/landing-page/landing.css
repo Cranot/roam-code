@@ -1344,6 +1344,22 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   margin-right: 8px;
   flex-shrink: 0;
 }
+/* Named capabilities = the productised senses (Structural Risk Review,
+   Algorithmic Risk Review, etc.). Slightly tighter than the generic
+   features list so the bold capability name + dash + description
+   reads as one phrase per line. */
+.product-card .features.named-capabilities li {
+  display: list-item;
+  padding-left: 0;
+}
+.product-card .features.named-capabilities li::before {
+  content: "";
+  margin-right: 0;
+}
+.product-card .features.named-capabilities li strong {
+  color: var(--accent);
+  font-weight: 600;
+}
 .product-card .features code {
   background: var(--bg-alt);
   padding: 1px 4px;
