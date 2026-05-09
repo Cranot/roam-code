@@ -113,7 +113,10 @@ def check_stale(
                 if indexed_head and current_head and indexed_head[:7] != current_head[:7]:
                     if sensitivity == "high":
                         return True, f"git HEAD changed since index ({indexed_head[:7]} -> {current_head[:7]})"
-                    return False, f"git HEAD differs from index ({indexed_head[:7]} -> {current_head[:7]}); fresh enough but rebuild for accuracy"
+                    return (
+                        False,
+                        f"git HEAD differs from index ({indexed_head[:7]} -> {current_head[:7]}); fresh enough but rebuild for accuracy",
+                    )
         else:
             conn.close()
     except Exception:

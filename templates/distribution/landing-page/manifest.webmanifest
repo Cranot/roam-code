@@ -1,11 +1,11 @@
 {
-  "name": "Roam — A second opinion on AI-generated code",
+  "name": "Roam — Local structural intelligence for coding agents",
   "short_name": "Roam",
-  "description": "Free open-source CLI that maps your codebase. Plus a PR bot, dashboard, and self-hosted option for teams.",
+  "description": "Local code-graph engine with 130+ MCP tools coding agents call before, during, and after every change. Free CLI; paid PR bot, dashboard, and self-hosted for teams.",
   "start_url": "/",
   "scope": "/",
   "display": "browser",
-  "background_color": "#fdfdfd",
+  "background_color": "#fafaf6",
   "theme_color": "#0049b7",
   "icons": [
     {
