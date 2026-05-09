@@ -67,7 +67,7 @@ _CONFIGS = {
     help=(
         "Pre-fill the generated config with ``ROAM_MCP_PRESET=<preset>``. "
         "Default = no env var (uses 'core'). The 'compliance' preset "
-        "exposes 14 tools focused on AI-governance evidence workflows: "
+        "exposes 13 tools focused on AI-governance evidence workflows: "
         "preflight, taint, SBOM, and code-graph attest emit/verify."
     ),
 )
@@ -89,10 +89,10 @@ def mcp_setup(ctx, platform, preset):
       codex-cli     OpenAI Codex CLI
 
     \b
-    Presets (v12.2):
-      core          33 tools — default, balanced for daily agent use
-      compliance    14 tools — EU AI Act / NIS2 audit (taint, sbom, cga, …)
-      full          116 tools — every tool exposed
+    Presets:
+      core          49 tools — default, balanced for daily agent use
+      compliance    13 tools — AI-governance evidence (taint, sbom, cga, …)
+      full          137 tools — every tool exposed
       review/refactor/debug/architecture — task-specific subsets
 
     \b
