@@ -76,14 +76,14 @@
   </header>
 
   <section class="whats-in" id="three-layers" style="padding-top: 56px;">
-    <div class="whats-in-inner" style="max-width: 880px;">
-      <h2>Three layers of review, working together</h2>
+    <div class="whats-in-inner" style="max-width: 980px;">
+      <h2>Four layers of review, working together</h2>
       <p class="lede">
         Most teams arguing about reviewers are arguing about the wrong axis.
-        These three layers answer different questions and ship different signals.
-        The healthiest setup runs all three.
+        These four layers answer different questions and ship different signals.
+        The healthiest setup runs all four; Roam covers two of them.
       </p>
-      <div class="verbs-grid verbs-grid--3">
+      <div class="verbs-grid verbs-grid--3" style="grid-template-columns: repeat(2, 1fr); max-width: 800px; margin: 0 auto;">
         <div class="verb-cell">
           <code>1. Semantic</code>
           <span><strong>Does the code make sense?</strong>
@@ -93,20 +93,32 @@
         <div class="verb-cell">
           <code>2. Static</code>
           <span><strong>Does it violate rules?</strong>
-          SonarQube, Semgrep, ast-grep. Catches insecure patterns, taint
-          violations, banned APIs. Rule-based and language-aware.</span>
+          SonarQube, Semgrep, ast-grep, ESLint. Catches insecure patterns,
+          taint violations, banned APIs. Rule-based and language-aware.</span>
         </div>
-        <div class="verb-cell">
+        <div class="verb-cell" style="border-color: var(--accent); background: var(--accent-soft);">
           <code>3. Structural</code>
           <span><strong>What else does it touch?</strong>
           <strong>Roam.</strong> Reads the diff as a graph mutation. Callers,
-          tests, clones, runtime hot spots, layer violations. Different
-          questions from the other two.</span>
+          tests, clones, runtime hot spots, layer violations, blast radius —
+          questions the other layers can't answer.</span>
+        </div>
+        <div class="verb-cell" style="border-color: var(--accent); background: var(--accent-soft);">
+          <code>4. Algorithmic</code>
+          <span><strong>Is it correct but slow?</strong>
+          <strong>Roam.</strong> Detects code that is computationally wrong:
+          O(n²) nested-loop lookups, N+1 queries, regex compiled in hot
+          loops, repeated JSON parses, quadratic strings, branching
+          recursion without memoisation. The exact patterns AI agents ship
+          that pass tests and fail at scale. Nothing else in the
+          AI-code-review space catches this deterministically.</span>
         </div>
       </div>
-      <p style="margin-top: 24px; text-align: center;">
-        Roam isn't a replacement for the other layers. The flat-tier pricing
-        is intentional: <strong>add structural review without a per-seat
+      <p style="margin-top: 28px; text-align: center;">
+        Roam isn't a replacement for the semantic or static layers — it's
+        the structural <em>and</em> algorithmic layer that the other tools
+        don't cover. The flat-tier pricing is intentional:
+        <strong>add structural + algorithmic review without a per-seat
         headcount conversation.</strong>
       </p>
     </div>

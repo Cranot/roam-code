@@ -73,18 +73,31 @@
     <article>
       <h2>What Roam is for</h2>
       <p>
-        AI coding agents — Claude Code, Cursor, Codex, Copilot — write
-        code that compiles and passes the tests, but breaks something
-        else. The "something else" is what we built Roam to surface
-        before a human sees the PR. Roam reads what your code
-        <em>touches</em> — callers, dependency cycles, layer violations,
-        copy-paste duplicates, blast radius — not just what it
-        <em>does</em>.
+        Roam is the <strong>local structural intelligence layer for
+        coding agents</strong>. AI agents write code; they don't see
+        what else the code touches, which tests cover it, which loop
+        just went quadratic, or whether they're editing one of three
+        near-identical clones. Roam exposes that engineering judgment
+        as deterministic local tools the agent calls before, during,
+        and after every change.
       </p>
       <p>
-        Existing reviewers (CodeRabbit, Greptile, Qodo) operate on the
-        diff as text. Roam operates on the diff as a graph mutation.
-        Different layer, different bugs. Most teams want both signals.
+        The differentiator is <strong>algorithmic risk review</strong>
+        (<code>roam math</code>, alias <code>roam algo</code>): code
+        that is correct but computationally wrong — the exact class
+        of patterns AI agents ship that pass tests and fail at scale.
+        Nested-loop O(n²) lookups, N+1 queries, regex compiled inside
+        hot loops, repeated JSON parsing, quadratic string
+        concatenation, branching recursion without memoisation.
+        Linters don't catch this. Semantic AI reviewers don't catch
+        this. Roam does, deterministically.
+      </p>
+      <p>
+        Roam complements existing review layers. Linters, SAST, and
+        AI semantic reviewers (CodeRabbit, Greptile, Qodo) operate on
+        the diff as text. Roam operates on the diff as a graph
+        mutation. Different layer, different bugs. Most teams that
+        ship serious AI-generated code want both signals.
       </p>
 
       <h2>Why now</h2>
