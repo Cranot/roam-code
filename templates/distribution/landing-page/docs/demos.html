@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>What AI misses, Roam catches — Roam Docs · Eight concrete demos</title>
+  <meta name="description" content="Eight concrete scenarios where an AI coding agent ships a plausible patch and Roam catches the structural or algorithmic problem before merge — clones, blast radius, accidental O(n²), N+1 queries, layer violations, missing tests, refactor safety, audit evidence.">
+  <link rel="canonical" href="https://roam-code.com/docs/demos">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="dns-prefetch" href="//github.com">
+  <link rel="dns-prefetch" href="//pypi.org">
+  <link rel="stylesheet" href="/landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="What AI misses, Roam catches — eight concrete demos">
+  <meta property="og:description" content="Eight scenarios where an AI agent ships a plausible patch and Roam catches the structural or algorithmic problem before merge.">
+  <meta property="og:url" content="https://roam-code.com/docs/demos">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://roam-code.com/"},
+      {"@type": "ListItem", "position": 2, "name": "Docs", "item": "https://roam-code.com/docs/"},
+      {"@type": "ListItem", "position": 3, "name": "Demos", "item": "https://roam-code.com/docs/demos"}
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span>
+        <span class="visually-hidden">Menu</span>
+      </label>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/setup">Setup</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main" class="legal-page">
+    <header class="legal-header">
+      <h1>What AI misses, Roam catches</h1>
+      <p class="legal-meta">Eight concrete scenarios — each starts with a plausible patch from an AI coding agent and ends with the Roam command that catches the problem before merge.</p>
+    </header>
+
+    <article>
+      <p>
+        AI coding agents are good at writing code. They are not yet good
+        at the engineering judgment <em>around</em> code: which callers
+        will break, which tests cover the change, whether the new loop
+        is quadratic, whether the function the agent just edited has
+        two near-identical siblings that didn't get the patch.
+      </p>
+      <p>
+        Each demo below is a real failure pattern we see in agent PRs.
+        Roam ships a deterministic local tool for each.
+      </p>
+
+      <h2>1. The clone the AI didn't notice</h2>
+      <p><strong>Scenario.</strong> The agent fixes a bug in <code>UserService.normalize_email()</code>. It looks correct. Tests pass. Reviewers approve. Two weeks later the same bug fires from <code>AdminService.normalize_email()</code> and <code>SignupFlow._normalize_email()</code> — copy-pasted siblings the agent never saw.</p>
+      <p><strong>What Roam does.</strong> <code>roam clones --persist</code> populates a clone-class table; <code>git diff | roam critique</code> flags <em>clones-not-edited</em> at <code>BLOCK</code> severity when a patch touches one member of a clone class without touching the others.</p>
+      <pre class="terminal" aria-label="Clones-not-edited demo"><span class="t-prompt">$</span> <span class="t-cmd">roam clones --persist</span>
+clone classes: 47  (3 high-similarity, 21 medium, 23 low)
+class C-12 [3 members, 0.91 similarity]:
+  src/users/service.py:142  normalize_email
+  src/admin/service.py:89   normalize_email
+  src/signup/flow.py:201    _normalize_email
+
+<span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
+VERDICT: BLOCK
+[1] clones-not-edited (HIGH)
+    Edited: src/users/service.py:142 normalize_email
+    Unedited siblings in class C-12:
+      src/admin/service.py:89   normalize_email
+      src/signup/flow.py:201    _normalize_email
+    Hint: copy-paste fix or extract a shared helper.</pre>
+
+      <h2>2. The deletion that breaks production</h2>
+      <p><strong>Scenario.</strong> The agent is "cleaning up dead code" and deletes <code>resolve_legacy_token()</code>. Tests pass — there are no direct callers in source. The function is reached at runtime through a string lookup in a dispatcher map. Production breaks the next morning.</p>
+      <p><strong>What Roam does.</strong> <code>roam impact</code> follows static + bridge edges (REST, template, config, ORM, dispatcher tables). <code>roam safe-delete</code> returns a binary verdict.</p>
+      <pre class="terminal" aria-label="Safe-delete demo"><span class="t-prompt">$</span> <span class="t-cmd">roam safe-delete resolve_legacy_token</span>
+VERDICT: UNSAFE
+reachable_from: 3 entry points (login_handler, sso_callback, mobile_v1)
+indirect callers: 1 (dispatcher_map['legacy_token'] in src/auth/dispatch.py:67)
+runtime hits: 1,247 in last 7 days
+recommendation: do not delete. Add deprecation warning instead.</pre>
+
+      <h2>3. The accidental O(n²) the linter approved</h2>
+      <p><strong>Scenario.</strong> The agent rewrites a list-deduplication loop. It's clean, idiomatic, and uses <code>list.append</code> + <code>if x not in seen</code>. Linters love it. At 100 records it runs in 2 ms; at 50,000 records it takes 18 seconds and the request times out.</p>
+      <p><strong>What Roam does.</strong> <code>roam math</code> (alias <code>roam algo</code>) detects nested-loop lookups (LIST-MEMBERSHIP-IN-LOOP), regex-in-loop, JSON-parse-in-loop, quadratic string concatenation, and seven other algorithmic anti-patterns the AI agent's training distribution doesn't penalise.</p>
+      <pre class="terminal" aria-label="Math/algo demo"><span class="t-prompt">$</span> <span class="t-cmd">roam math --confidence high</span>
+VERDICT: 3 high-confidence findings
+[1] LIST-MEMBERSHIP-IN-LOOP (O(n²))
+    src/etl/dedupe.py:34  in dedupe_records
+    Hint: use a set for O(1) membership; switch list[] to set() at line 32.
+[2] REGEX-COMPILE-IN-LOOP
+    src/parsers/log.py:88  in parse_log_lines
+    Hint: hoist re.compile() outside the loop. ~40× speedup at 10k lines.
+[3] JSON-PARSE-IN-LOOP
+    src/sync/users.py:212  in sync_user_batch
+    Hint: parse once outside the loop, iterate the parsed object.</pre>
+
+      <h2>4. The N+1 query no one noticed</h2>
+      <p><strong>Scenario.</strong> The agent adds an <code>order.customer.name</code> reference to the order-list template. Each rendered row issues a fresh SELECT against the customers table. Page load goes from 80 ms to 4.2 seconds at 200 orders. Tests pass — the test fixture has 3 orders.</p>
+      <p><strong>What Roam does.</strong> <code>roam n1</code> walks the call graph and matches DB-call patterns inside loops; <code>roam missing-index</code> matches WHERE-clause shapes against the schema's index list.</p>
+      <pre class="terminal" aria-label="N+1 demo"><span class="t-prompt">$</span> <span class="t-cmd">roam n1</span>
+VERDICT: 2 N+1 hotspots
+[1] OrderList.render_rows -> Customer.find_by_id  (loop in render_rows:42)
+    Hint: prefetch with .includes(:customer) in the query at line 30.
+[2] InvoiceExport.export -> LineItem.tax_for_country  (loop in export:88)
+    Hint: batch-load tax rates for the unique country set.</pre>
+
+      <h2>5. The layer violation that quietly couples your domain to your HTTP stack</h2>
+      <p><strong>Scenario.</strong> The agent is asked to "use the existing HTTP retry helper" and imports <code>http.retry</code> directly inside <code>domain/billing.py</code>. The change passes review — it's a small import. Six months later you can't change HTTP libraries without touching the entire domain layer.</p>
+      <p><strong>What Roam does.</strong> <code>roam layers</code> infers architectural layers; <code>roam fitness</code> + <code>.roam-gates.yml</code> declare layer constraints; <code>roam critique</code> blocks PRs that violate them.</p>
+      <pre class="terminal" aria-label="Layers/fitness demo"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique --gates fitness</span>
+VERDICT: BLOCK
+[1] layer-violation (HIGH)
+    Edge added: domain/billing.py -> http/retry.py
+    Rule: domain/* MUST NOT import from http/* (.roam-gates.yml:18)
+    Suggestion: route through application/retry_policy or pass an injected client.</pre>
+
+      <h2>6. The change with no tests touching it</h2>
+      <p><strong>Scenario.</strong> The agent edits <code>PricingEngine.discount_for_segment()</code>. The full test suite is green. But the only test that <em>actually exercises that branch</em> was deleted six months ago when its fixture broke. Coverage looks fine because other tests pass through the function without entering the changed branch.</p>
+      <p><strong>What Roam does.</strong> <code>roam affected-tests</code> walks the call graph in reverse and lists tests reachable from changed lines, not files. <code>roam test-gaps</code> highlights changed code with no reaching test.</p>
+      <pre class="terminal" aria-label="Affected-tests demo"><span class="t-prompt">$</span> <span class="t-cmd">roam affected-tests</span>
+changed: PricingEngine.discount_for_segment (lines 88-104)
+tests reaching this branch: 0
+nearest tests:
+  test_pricing_engine.py::test_basic_discount (covers lines 60-79, not 88-104)
+  test_pricing_engine.py::test_segment_lookup (covers segment_for_user, not the discount branch)
+
+<span class="t-prompt">$</span> <span class="t-cmd">roam test-gaps --diff</span>
+VERDICT: 1 high-risk gap
+src/pricing/engine.py:88-104 discount_for_segment
+  reach-from-tests: 0
+  hint: add a test that exercises segment="enterprise" + amount &gt; 10_000.</pre>
+
+      <h2>7. The refactor that takes the codebase down for an afternoon</h2>
+      <p><strong>Scenario.</strong> The agent says "I'll move <code>EmailQueue</code> to <code>infrastructure/messaging/</code> — it's a clean rename." It updates the imports it can see. CI passes. Production stops sending emails because three runtime registries reference the old import path through <code>importlib.import_module</code>.</p>
+      <p><strong>What Roam does.</strong> <code>roam simulate move</code> clones the graph, applies the move, reports what breaks before any source file changes.</p>
+      <pre class="terminal" aria-label="Simulate move demo"><span class="t-prompt">$</span> <span class="t-cmd">roam simulate move EmailQueue infrastructure/messaging/email_queue.py</span>
+VERDICT: BLOCK (3 unresolved references)
+direct callers updatable: 14
+indirect references requiring manual fix:
+  config/celery.py:12          'app.queues.email.EmailQueue' (string ref in CELERY_BEAT_SCHEDULE)
+  scripts/seed_demo.py:88      importlib.import_module('app.queues.email')
+  src/admin/registry.py:204    QUEUE_REGISTRY['email'] = 'app.queues.email:EmailQueue'
+
+run: roam plan-refactor EmailQueue --target infrastructure/messaging/email_queue.py
+to get a step-by-step plan with caller-update ordering.</pre>
+
+      <h2>8. The PR that ships unsigned</h2>
+      <p><strong>Scenario.</strong> Quarterly review arrives. Compliance asks "what was checked on this PR before it merged?" You point at green checkmarks. They want a signed, tamper-evident artifact — not a screenshot of CI. EU AI Act / SOC 2 CC8.1 / ISO 42001 evidence.</p>
+      <p><strong>What Roam does.</strong> <code>roam attest</code> emits an in-toto v1 attestation (<code>roam-code.dev/CodeGraph/v1</code>) covering the inputs, the gates that ran, and the verdicts. Optional <code>cosign</code> signing produces an offline-verifiable artifact you can store with the PR.</p>
+      <pre class="terminal" aria-label="Attest demo"><span class="t-prompt">$</span> <span class="t-cmd">roam attest --cosign --sign --output cga.intoto.jsonl</span>
+attestation: roam-code.dev/CodeGraph/v1
+inputs:
+  graph_merkle: sha256:e2b0...c4f
+  diff_merkle:  sha256:9a17...8d2
+gates:
+  critique:    PASS (severity max=LOW)
+  fitness:     PASS
+  math:        PASS (0 high-confidence findings)
+  test-gaps:   PASS (0 high-risk gaps)
+signed by: keyless OIDC (github-actions)
+written: cga.intoto.jsonl
+
+<span class="t-prompt">$</span> <span class="t-cmd">roam audit-trail-verify cga.intoto.jsonl</span>
+VERDICT: VERIFIED
+signature: valid
+graph_merkle: matches HEAD
+gates: PASS</pre>
+
+      <h2>The pattern</h2>
+      <p>
+        Each demo follows the same shape: an AI agent ships a plausible
+        patch, conventional CI passes, and a structural problem slips
+        through. Roam runs alongside CI as a deterministic graph-aware
+        gate that catches the problem before merge.
+      </p>
+      <p>
+        None of these checks require a network call, an API key, or
+        access to your source code outside the repo. The graph is
+        local, the analysis is local, and the verdict is reproducible.
+      </p>
+      <p>
+        Try them yourself —
+        <a href="/" class="btn-primary">install the free CLI</a> ·
+        or read the <a href="/docs/agent-contract">agent contract</a>
+        for the discipline that strings them together.
+      </p>
+    </article>
+
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>The local structural intelligence layer for coding agents.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/setup">Setup</a>
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

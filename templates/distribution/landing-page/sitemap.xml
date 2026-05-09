@@ -124,6 +124,12 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://roam-code.com/docs/demos</loc>
+    <lastmod>2026-05-09</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://roam-code.com/docs/command-reference</loc>
     <lastmod>2026-05-07</lastmod>
     <changefreq>weekly</changefreq>

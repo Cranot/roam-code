@@ -1,13 +1,37 @@
 # roam-code
 
-> Free open-source CLI that gives AI coding agents structural awareness of a codebase before they edit it. Plus a paid PR bot, dashboard, and self-hosted bundle for engineering teams.
+> The local structural intelligence layer for coding agents. AI agents can write code; they can't see what else it touches, which tests cover it, which loop just went quadratic, or whether they're editing one of three near-identical clones. Roam exposes that engineering judgment as deterministic local tools.
 
-roam-code (`pip install roam-code`) is a local code-graph engine: it indexes
-symbols, call graphs, dependencies, architectural layers, and git history into
-a SQLite database in your repo's `.roam/` directory. The CLI exposes 205
-commands and 137 MCP tools that AI agents (Claude Code, Cursor, Codex, etc.)
-can call to answer questions like "what else does this PR break", "what tests
-exercise this function", "is this a clone of another implementation".
+roam-code (`pip install roam-code`) is a local code-graph engine. It parses
+your repo once, stores structural facts in a local SQLite graph (symbols,
+dependencies, call graphs, architecture layers, git history, runtime
+traces), and exposes the graph through 208 CLI commands and 137 MCP tools
+across 28 languages. AI agents (Claude Code, Cursor, Codex, Aider, your own)
+call it before, during, and after every change.
+
+The senses Roam gives an agent — each tied to one engineering question
+agents miss:
+
+- **Codebase sight**: "What does this repo do? What should I read?" -> understand, map, tour, describe, minimap
+- **Context retrieval**: "Pull the exact spans I need." -> retrieve, context, search-semantic, agent-context
+- **Change safety**: "What breaks if I edit this?" -> preflight, impact, affected-tests, diff, guard
+- **PR review**: "Did the AI miss a clone, a caller, a test?" -> critique, pr-analyze, pr-risk, pr-comment-render
+- **Algorithmic judgment** (the differentiator): "Is this correct but slow?" -> math/algo, n1, missing-index, hotspots
+- **Architecture governance**: "Is the architecture drifting?" -> layers, cycles, clusters, health, budget, fitness, dark-matter
+- **Refactor safety**: "Can I simulate this first?" -> simulate, mutate, safe-delete, closure, plan-refactor
+- **Multi-agent coordination**: "Can agents work in parallel?" -> fleet, partition, orchestrate, agent-plan
+- **Evidence + compliance**: "Can we prove what was checked?" -> attest, cga, audit-trail-export, audit-trail-verify, --sarif
+
+The differentiator: roam math (alias roam algo) detects code that is
+"correct but computationally wrong" — accidental O(n^2) nested-loop
+lookups, N+1 queries, regex compiled inside hot loops, repeated JSON
+parsing, quadratic string concatenation, branching recursion without
+memoisation, expensive work in request/render loops. This is exactly the
+class of pattern AI agents ship that pass tests and fail at scale, and
+nothing else in the AI-code-review space catches it deterministically.
+
+Roam complements linters, SAST, and AI semantic reviewers — it answers
+graph-aware change questions they don't.
 
 100% local. No telemetry. No API keys. Apache 2.0. 28 languages supported.
 
