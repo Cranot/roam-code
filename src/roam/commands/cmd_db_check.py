@@ -17,9 +17,7 @@ from roam.output.formatter import json_envelope, to_json
 
 
 def _check_orphan_symbols(conn) -> dict:
-    cur = conn.execute(
-        "SELECT COUNT(*) FROM symbols s WHERE s.file_id NOT IN (SELECT id FROM files)"
-    )
+    cur = conn.execute("SELECT COUNT(*) FROM symbols s WHERE s.file_id NOT IN (SELECT id FROM files)")
     n = cur.fetchone()[0]
     return {"name": "orphan_symbols", "count": n, "severity": "high" if n else "ok"}
 
@@ -37,9 +35,7 @@ def _check_broken_edges(conn) -> dict:
 
 
 def _check_duplicate_file_paths(conn) -> dict:
-    cur = conn.execute(
-        "SELECT COUNT(*) FROM (SELECT path, COUNT(*) c FROM files GROUP BY path HAVING c > 1)"
-    )
+    cur = conn.execute("SELECT COUNT(*) FROM (SELECT path, COUNT(*) c FROM files GROUP BY path HAVING c > 1)")
     n = cur.fetchone()[0]
     return {"name": "duplicate_file_paths", "count": n, "severity": "high" if n else "ok"}
 

@@ -56,10 +56,26 @@ CANONICAL_COMMANDS = _canonical_commands()
 # only wants a quick run.
 _SLOW_CATEGORY_COMMANDS = {
     # Architecture category — graph-heavy.
-    "map", "graph-export", "graph-stats", "layers", "clusters", "spectral",
-    "coupling", "dark-matter", "effects", "cut", "simulate", "orchestrate",
-    "partition", "entry-points", "patterns", "safe-zones", "visualize",
-    "x-lang", "fingerprint", "clones",
+    "map",
+    "graph-export",
+    "graph-stats",
+    "layers",
+    "clusters",
+    "spectral",
+    "coupling",
+    "dark-matter",
+    "effects",
+    "cut",
+    "simulate",
+    "orchestrate",
+    "partition",
+    "entry-points",
+    "patterns",
+    "safe-zones",
+    "visualize",
+    "x-lang",
+    "fingerprint",
+    "clones",
 }
 
 
@@ -128,7 +144,9 @@ def indexed_self_repo(tmp_path_factory):
     subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True, env=env)
     subprocess.run(
         ["git", "commit", "-m", "init", "--allow-empty"],
-        cwd=str(proj), capture_output=True, env=env,
+        cwd=str(proj),
+        capture_output=True,
+        env=env,
     )
 
     runner = CliRunner()
@@ -158,8 +176,7 @@ def test_command_imports_cleanly(name):
     mod = importlib.import_module(module_path)
     fn = getattr(mod, attr, None)
     assert fn is not None, (
-        f"{name}: cli.py points at {module_path}.{attr} but that attribute "
-        f"does not exist on the imported module"
+        f"{name}: cli.py points at {module_path}.{attr} but that attribute does not exist on the imported module"
     )
     assert callable(fn), f"{name}: {module_path}.{attr} is not callable"
 
@@ -197,16 +214,12 @@ def test_command_help_invokes(name, cli_runner):
         # function level, not per-id, so we just note the categorisation.
         pass
     result = cli_runner.invoke(cli, [name, "--help"])
-    assert result.exit_code == 0, (
-        f"`roam {name} --help` exited {result.exit_code}\n"
-        f"output:\n{result.output}"
-    )
+    assert result.exit_code == 0, f"`roam {name} --help` exited {result.exit_code}\noutput:\n{result.output}"
     out = result.output or ""
     assert out.strip(), f"`roam {name} --help` produced empty output"
     # Click prints "Usage: ... <name> [OPTIONS]" — the name must appear.
     assert name in out, (
-        f"`roam {name} --help` output does not mention the command name "
-        f"(first 200 chars: {out[:200]!r})"
+        f"`roam {name} --help` output does not mention the command name (first 200 chars: {out[:200]!r})"
     )
 
 
@@ -270,8 +283,7 @@ def test_command_json_no_traceback_in_empty_dir(name, empty_dir, cli_runner):
     """
     if name in _XFAIL_NO_TRACEBACK_JSON:
         pytest.xfail(
-            f"{name}: known pre-existing bug — see _XFAIL_NO_TRACEBACK_JSON "
-            f"comment in tests/test_cli_contract.py"
+            f"{name}: known pre-existing bug — see _XFAIL_NO_TRACEBACK_JSON comment in tests/test_cli_contract.py"
         )
 
     # Some commands take a required argument; passing --help avoids hanging
@@ -291,6 +303,7 @@ def test_command_json_no_traceback_in_empty_dir(name, empty_dir, cli_runner):
     # in the captured output.
     if result.exception is not None:
         import click as _click
+
         allowed = (SystemExit, _click.exceptions.ClickException, _click.exceptions.Exit, _click.Abort)
         assert isinstance(result.exception, allowed), (
             f"`roam --json {name}` raised an unhandled exception: "
@@ -322,10 +335,7 @@ def _parse_json_strict(result, label):
     try:
         return json.loads(out[idx:])
     except json.JSONDecodeError as exc:
-        pytest.fail(
-            f"{label}: invalid JSON at offset {idx}: {exc}\n"
-            f"raw: {out[idx:idx + 500]!r}"
-        )
+        pytest.fail(f"{label}: invalid JSON at offset {idx}: {exc}\nraw: {out[idx : idx + 500]!r}")
 
 
 def test_surface_json_shape(cli_runner, empty_dir):
@@ -341,17 +351,23 @@ def test_surface_json_shape(cli_runner, empty_dir):
 
     # Floor: 200+ commands. Today the registry has 211; we leave headroom
     # for future trims down to 200 before the test fails.
-    assert summary["command_count"] >= 200, (
-        f"command_count={summary['command_count']} below 200 floor"
-    )
+    assert summary["command_count"] >= 200, f"command_count={summary['command_count']} below 200 floor"
     assert summary["verdict"] == "OK"
 
     # Per-command shape.
     commands = data["commands"]
     assert isinstance(commands, list)
     assert len(commands) == summary["command_count"]
-    required_fields = {"name", "module", "function", "category", "maturity",
-                       "aliases", "deprecated_replacement", "mcp_exposed"}
+    required_fields = {
+        "name",
+        "module",
+        "function",
+        "category",
+        "maturity",
+        "aliases",
+        "deprecated_replacement",
+        "mcp_exposed",
+    }
     for entry in commands:
         missing = required_fields - set(entry)
         assert not missing, f"command {entry.get('name')!r} missing fields: {missing}"
@@ -379,8 +395,7 @@ def test_surface_aliases_share_same_target():
         # Every name in the group must resolve to the literal same tuple.
         for n in names:
             assert _COMMANDS[n] == target, (
-                f"Alias drift: {n} -> {_COMMANDS[n]}, expected {target} "
-                f"(group: {sorted(names)})"
+                f"Alias drift: {n} -> {_COMMANDS[n]}, expected {target} (group: {sorted(names)})"
             )
 
 
@@ -399,11 +414,9 @@ def test_explain_command_surface_json(cli_runner, empty_dir):
     assert data["command"] == "explain-command"
     cmd_field = data.get("command_info")
     assert isinstance(cmd_field, dict), (
-        "explain-command --json should expose a 'command_info' sub-dict with "
-        "the resolved command's metadata"
+        "explain-command --json should expose a 'command_info' sub-dict with the resolved command's metadata"
     )
-    for key in ("name", "module", "function", "category", "maturity",
-                "aliases", "mcp_exposed"):
+    for key in ("name", "module", "function", "category", "maturity", "aliases", "mcp_exposed"):
         assert key in cmd_field, f"explain-command's `command_info` field missing {key!r}"
     assert cmd_field["name"] == "surface"
 
@@ -425,22 +438,16 @@ def test_db_check_json_envelope(cli_runner, indexed_self_repo):
     # db-check exits 0 by default (no --ci); verdict may be OK / REVIEW / BAD.
     # We accept any of the documented exit codes (0 or 5) because a fresh
     # tiny index can in theory surface a transient note-level finding.
-    assert result.exit_code in (0, 5), (
-        f"db-check exited {result.exit_code}\n{result.output}"
-    )
+    assert result.exit_code in (0, 5), f"db-check exited {result.exit_code}\n{result.output}"
     data = _parse_json_strict(result, "db-check --json")
 
     assert data["command"] == "db-check"
     summary = data["summary"]
     assert "verdict" in summary, "db-check summary must carry a verdict"
-    assert summary["verdict"] in {"OK", "REVIEW", "BAD"}, (
-        f"unexpected verdict {summary['verdict']!r}"
-    )
+    assert summary["verdict"] in {"OK", "REVIEW", "BAD"}, f"unexpected verdict {summary['verdict']!r}"
 
     findings = data.get("findings")
     assert isinstance(findings, list), "db-check must emit a `findings` array"
     # Each finding has at minimum a name / count / severity.
     for f in findings:
-        assert "name" in f and "count" in f and "severity" in f, (
-            f"db-check finding missing required fields: {f}"
-        )
+        assert "name" in f and "count" in f and "severity" in f, f"db-check finding missing required fields: {f}"

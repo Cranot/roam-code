@@ -870,8 +870,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                 click.echo("\nNew findings:")
                 for f in delta["new_findings"][:10]:
                     click.echo(
-                        f"  [{f['severity']}] +{f['now'] - f['was']} {f['kind']} "
-                        f"(was {f['was']}, now {f['now']})"
+                        f"  [{f['severity']}] +{f['now'] - f['was']} {f['kind']} (was {f['was']}, now {f['now']})"
                     )
                 if len(delta["new_findings"]) > 10:
                     click.echo(f"  (+{len(delta['new_findings']) - 10} more)")
@@ -882,9 +881,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                 if score_regressions:
                     click.echo("\nRegressed:")
                     for r in score_regressions:
-                        click.echo(
-                            f"  [{r['severity']}] {r['kind']}: {r['was']} -> {r['now']}"
-                        )
+                        click.echo(f"  [{r['severity']}] {r['kind']}: {r['was']} -> {r['now']}")
             if not delta["new_findings"] and not delta["regressed"]:
                 click.echo("\nNo regressions detected.")
             return

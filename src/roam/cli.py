@@ -48,6 +48,7 @@ def _deprecation_record(name: str) -> dict | None:
         "removal_version": record.get("removal_version"),
     }
 
+
 _COMMANDS = {
     "index": ("roam.commands.cmd_index", "index"),
     "map": ("roam.commands.cmd_map", "map_cmd"),

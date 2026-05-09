@@ -526,9 +526,7 @@ def _check_index_manifest() -> dict:
         old_head = drift["git_head"][0]
         new_head = drift["git_head"][1]
         if old_head and new_head:
-            hints.append(
-                f"INFO: index was built at commit {old_head[:7]}; current HEAD is {new_head[:7]}"
-            )
+            hints.append(f"INFO: index was built at commit {old_head[:7]}; current HEAD is {new_head[:7]}")
         elif new_head and not old_head:
             hints.append(f"INFO: current HEAD is {new_head[:7]}; index has no recorded commit")
         elif old_head and not new_head:
@@ -668,7 +666,8 @@ def _check_optional_extras() -> dict:
         # Always pass — these are optional. Report status for visibility.
         "name": "Optional extras",
         "passed": True,
-        "detail": ", ".join(detail_parts) + (f" ({len(missing)} missing — features degrade gracefully)" if missing else ""),
+        "detail": ", ".join(detail_parts)
+        + (f" ({len(missing)} missing — features degrade gracefully)" if missing else ""),
     }
 
 

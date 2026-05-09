@@ -104,9 +104,7 @@ def test_health_no_baseline_clean_run(cli_runner, indexed_project, monkeypatch):
 def test_health_baseline_no_snapshot(cli_runner, indexed_project, monkeypatch):
     """--baseline main with no stored snapshot produces DEGRADED + clean exit."""
     monkeypatch.chdir(indexed_project)
-    result = invoke_cli(
-        cli_runner, ["health", "--baseline", "main"], cwd=indexed_project
-    )
+    result = invoke_cli(cli_runner, ["health", "--baseline", "main"], cwd=indexed_project)
     assert result.exit_code == 0, f"health --baseline failed: {result.output}"
     assert "DEGRADED" in result.output
     assert "No baseline snapshot found" in result.output
@@ -117,9 +115,7 @@ def test_health_baseline_no_snapshot(cli_runner, indexed_project, monkeypatch):
 def test_health_baseline_no_snapshot_json(cli_runner, indexed_project, monkeypatch):
     """--baseline + --json with no snapshot returns the documented degraded envelope."""
     monkeypatch.chdir(indexed_project)
-    result = invoke_cli(
-        cli_runner, ["health", "--baseline", "main"], cwd=indexed_project, json_mode=True
-    )
+    result = invoke_cli(cli_runner, ["health", "--baseline", "main"], cwd=indexed_project, json_mode=True)
     data = parse_json_output(result, "health")
     assert_json_envelope(data, "health")
     summary = data["summary"]
@@ -147,9 +143,7 @@ def test_health_baseline_with_snapshot(cli_runner, indexed_project, monkeypatch)
         layer_violations=0,
     )
 
-    result = invoke_cli(
-        cli_runner, ["health", "--baseline", "main"], cwd=indexed_project, json_mode=True
-    )
+    result = invoke_cli(cli_runner, ["health", "--baseline", "main"], cwd=indexed_project, json_mode=True)
     data = parse_json_output(result, "health")
     assert_json_envelope(data, "health")
     # Verdict should be one of the documented baseline-mode verdicts.
@@ -178,9 +172,7 @@ def test_health_baseline_json_envelope_shape(cli_runner, indexed_project, monkey
         layer_violations=5,
     )
 
-    result = invoke_cli(
-        cli_runner, ["health", "--baseline", "main"], cwd=indexed_project, json_mode=True
-    )
+    result = invoke_cli(cli_runner, ["health", "--baseline", "main"], cwd=indexed_project, json_mode=True)
     data = parse_json_output(result, "health")
     assert_json_envelope(data, "health")
 
@@ -203,9 +195,7 @@ def test_health_baseline_json_envelope_shape(cli_runner, indexed_project, monkey
         assert isinstance(delta[collection], list)
         for f in delta[collection]:
             for fkey in ("kind", "target", "severity", "was", "now"):
-                assert fkey in f, (
-                    f"Finding in {collection} missing key '{fkey}': {f}"
-                )
+                assert fkey in f, f"Finding in {collection} missing key '{fkey}': {f}"
 
     # score_delta keys are snake_case metric names.
     for metric_key in ("health_score", "cycles", "god_components"):
@@ -228,9 +218,7 @@ def test_health_baseline_text_output(cli_runner, indexed_project, monkeypatch):
         layer_violations=10,
     )
 
-    result = invoke_cli(
-        cli_runner, ["health", "--baseline", "main"], cwd=indexed_project
-    )
+    result = invoke_cli(cli_runner, ["health", "--baseline", "main"], cwd=indexed_project)
     assert result.exit_code == 0, f"health --baseline failed: {result.output}"
     out = result.output
     # The Δ line is the documented summary marker.
@@ -267,9 +255,7 @@ def test_health_baseline_last_resolves_most_recent(cli_runner, indexed_project, 
         health_score=90,
     )
 
-    result = invoke_cli(
-        cli_runner, ["health", "--baseline", "last"], cwd=indexed_project, json_mode=True
-    )
+    result = invoke_cli(cli_runner, ["health", "--baseline", "last"], cwd=indexed_project, json_mode=True)
     data = parse_json_output(result, "health")
     delta = data["delta"]
     # `last` should resolve to the newer (release/v1) snapshot.
