@@ -947,7 +947,7 @@ pip install "roam-code[mcp]"
 roam mcp
 ```
 
-137 tools, 10 resources, and 5 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
+137 tools, 10 resources, and 6 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
 
 **MCP v2 highlights (v11):**
 - In-process MCP execution (no subprocess shell-out per call)
@@ -1688,7 +1688,7 @@ roam-code/
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
 │   ├── cli.py                         # Click CLI (198 canonical + 7 aliases)
-│   ├── mcp_server.py                  # MCP server (137 tools, 10 resources, 5 prompts)
+│   ├── mcp_server.py                  # MCP server (137 tools, 10 resources, 6 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
