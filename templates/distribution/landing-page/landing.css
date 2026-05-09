@@ -200,8 +200,11 @@ img, svg, video { max-width: 100%; height: auto; }
    white-space rules; terminal blocks scroll horizontally on purpose. */
 .scenario p code,
 .scenario p,
-.gh-finding,
-.gh-finding code,
+.pr-find,
+.pr-find code,
+.pr-find-loc,
+.pr-find-body,
+.pr-diff,
 .product-card .features li code,
 .product-card .features li,
 .product-card .features li strong,
@@ -1007,6 +1010,28 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
     0 1px 0 rgba(255,255,255,.06) inset,
     0 16px 40px rgba(10, 14, 22, 0.20);
 }
+
+/* Terminal-in-narrow-card override: scenarios live in a 3-column grid,
+   so each card is ~280-360px on desktop. The default `white-space: pre`
+   forces lines like `cleanup_old_records  db/maintenance.py:84` to scroll
+   horizontally inside the card and clip the right edge — the line stays
+   on one line while the card stays narrow. Wrap mid-token instead so
+   every char is readable without a scrollbar. Drop a notch in font-size
+   to keep the terminal aesthetic without the scroll. */
+.scenario .terminal {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: visible;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 16px 18px;
+}
+.scenario .terminal .t-prompt,
+.scenario .terminal .t-cmd,
+.scenario .terminal .t-line {
+  display: inline;
+}
 .terminal .t-prompt { color: #6a6a6a; user-select: none; }
 .terminal .t-cmd { color: #fff; font-weight: 500; }
 .terminal .t-line { color: #d6d6d6; }
@@ -1106,108 +1131,294 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   margin: 0 0 10px;
 }
 
-/* ─── Fake GitHub PR comment ─── */
-.gh-pr {
-  background: #fff;
-  border: 1px solid #d1d9e0;
-  border-radius: 8px;
-  text-align: left;
-  font-size: 14px;
-  overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0,0,0,.06);
+/* ─── PR review comment mockup (authentic Primer tokens + Roam touches) ───
+   Replaces the older .gh-pr block. Uses GitHub's actual color tokens for
+   credibility (--gh-canvas, --gh-border, severity pills) and adds two
+   Roam-distinctive moments competitors don't ship: an inline blast-radius
+   SVG visualisation under the medium finding, and a real diff-suggestion
+   block under the high finding rendered in GitHub's green-on-paper style. */
+:root {
+  --gh-canvas: #fff;
+  --gh-canvas-subtle: #f6f8fa;
+  --gh-canvas-inset: #eff2f5;
+  --gh-border: #d1d9e0;
+  --gh-border-muted: #d8dee4;
+  --gh-fg-default: #1f2328;
+  --gh-fg-muted: #59636e;
+  --gh-accent-fg: #0969da;
+  --gh-danger-fg: #cf222e;
+  --gh-danger-emphasis: #cf222e;
+  --gh-danger-bg: #ffebe9;
+  --gh-danger-border: #ffcecb;
+  --gh-attention-fg: #9a6700;
+  --gh-attention-bg: #fff8c5;
+  --gh-attention-border: #d4a72c;
+  --gh-success-fg: #1a7f37;
+  --gh-success-bg: #dafbe1;
+  --gh-success-border: #aceebb;
 }
-.gh-pr-head {
+
+.pr-card {
+  background: var(--gh-canvas);
+  border: 1px solid var(--gh-border);
+  border-radius: 6px;
+  text-align: left;
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  color: var(--gh-fg-default);
+  line-height: 1.5;
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(31, 35, 40, 0.04), 0 8px 24px rgba(31, 35, 40, 0.08);
+}
+
+.pr-card-hd {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid #d1d9e0;
-  background: #f6f8fa;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--gh-border);
+  background: var(--gh-canvas-subtle);
+  font-size: 12px;
 }
-.gh-avatar {
-  width: 32px; height: 32px;
-  background: var(--accent);
-  color: #fff;
-  border-radius: 50%;
-  display: flex;
+.pr-avatar {
+  width: 24px; height: 24px;
+  flex-shrink: 0;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-family: 'IBM Plex Mono', monospace;
-  font-weight: 600;
-  font-size: 16px;
 }
-.gh-pr-meta strong { color: #1f2328; font-size: 14px; }
-.gh-time { color: #59636e; font-size: 12px; margin-left: 4px; }
-.gh-pr-body { padding: 16px; }
-.gh-verdict {
-  display: inline-block;
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 14px;
+.pr-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--gh-fg-muted);
 }
-.gh-verdict-block {
-  background: #ffebe9;
-  color: #cf222e;
-  border: 1px solid #ffcecb;
-}
-.gh-finding {
-  border-left: 3px solid #d1d9e0;
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #1f2328;
-  background: #f6f8fa;
-  border-radius: 0 4px 4px 0;
-}
-.gh-sev {
-  display: inline-block;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 2px 6px;
+.pr-author { font-weight: 600; color: var(--gh-fg-default); }
+.pr-app-tag {
+  background: var(--gh-canvas-inset);
+  border: 1px solid var(--gh-border-muted);
+  color: var(--gh-fg-muted);
   border-radius: 3px;
-  margin-right: 8px;
-  vertical-align: middle;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
-.gh-sev-high { background: #ffebe9; color: #cf222e; }
-.gh-sev-med  { background: #fff8c5; color: #7a5100; }
-.gh-conf {
+.pr-meta-sep { color: var(--gh-fg-muted); opacity: 0.6; }
+
+.pr-checks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--gh-border);
+}
+.pr-checks--block {
+  background: linear-gradient(0deg, var(--gh-danger-bg) 0%, #fff 80%);
+  color: var(--gh-fg-default);
+}
+.pr-checks-icon { display: inline-flex; }
+.pr-checks strong { color: var(--gh-danger-emphasis); font-weight: 600; }
+.pr-checks-summary { color: var(--gh-fg-muted); }
+
+.pr-findings {
+  list-style: none;
+  margin: 0;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pr-find {
+  border: 1px solid var(--gh-border);
+  border-left: 3px solid var(--gh-border-muted);
+  border-radius: 4px;
+  padding: 10px 12px;
+  background: var(--gh-canvas);
+  font-size: 13px;
+}
+.pr-find-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.pr-sev {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+}
+.pr-sev--high {
+  background: var(--gh-danger-bg);
+  color: var(--gh-danger-fg);
+  border-color: var(--gh-danger-border);
+}
+.pr-sev--med {
+  background: var(--gh-attention-bg);
+  color: var(--gh-attention-fg);
+  border-color: rgba(212, 167, 44, 0.45);
+}
+.pr-find-kind {
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
-  color: #4d555c;
-  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  color: var(--gh-fg-default);
 }
-.gh-meta { color: #4d555c; font-size: 12px; font-family: 'IBM Plex Mono', monospace; }
-.gh-finding code {
-  background: #eaeef2;
+.pr-find-conf {
+  font-size: 11px;
+  color: var(--gh-fg-muted);
+  margin-left: auto;
+  font-feature-settings: 'tnum';
+}
+
+.pr-find-loc {
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  color: var(--gh-fg-muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.pr-find-loc a {
+  color: var(--gh-accent-fg);
+  text-decoration: none;
+}
+.pr-find-loc a:hover { text-decoration: underline; }
+.pr-arrow { color: var(--gh-fg-muted); flex-shrink: 0; }
+.pr-find-pct {
+  background: var(--gh-canvas-inset);
+  border-radius: 3px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.pr-find-body {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: var(--gh-fg-default);
+}
+.pr-find-body code,
+.pr-find-loc code {
+  background: var(--gh-canvas-inset);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 12px;
-  color: #1f2328;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  color: var(--gh-fg-default);
 }
-.gh-fix {
+
+/* GitHub-style suggestion diff block. Real GH renders this with a header
+   strip, then a removed line in pink, an added line in green. We mirror the
+   tokens exactly so a dev who's seen GH will recognise it instantly. */
+.pr-suggestion {
+  margin-top: 8px;
+  border: 1px solid var(--gh-border);
+  border-radius: 4px;
+  overflow: hidden;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+.pr-suggestion-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--gh-canvas-subtle);
+  border-bottom: 1px solid var(--gh-border);
+  font-size: 11px;
+  color: var(--gh-fg-muted);
+}
+.pr-suggestion-hd svg { color: var(--gh-success-fg); }
+.pr-suggestion-file {
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--gh-fg-default);
+}
+.pr-diff {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--gh-canvas);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.pr-diff-rm {
   display: block;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed #d1d9e0;
-  font-size: 12px;
-  color: var(--pop);
+  background: #ffebe9;
+  color: #82071e;
+  padding: 0 6px;
+  margin: 0 -6px;
 }
-.gh-actions {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid #d1d9e0;
-  font-size: 12px;
-  color: #59636e;
+.pr-diff-add {
+  display: block;
+  background: var(--gh-success-bg);
+  color: #0a3622;
+  padding: 0 6px;
+  margin: 0 -6px;
 }
-.gh-actions code {
-  background: #eaeef2;
-  padding: 2px 6px;
+.pr-diff-ctx {
+  display: block;
+  color: var(--gh-fg-muted);
+  padding: 0 6px;
+  margin: 0 -6px;
+}
+
+/* Roam-distinctive: tiny embedded blast-radius graph. No competitor
+   ships this — it visualises the "47 callers" claim instead of just
+   stating it as a number. */
+.pr-blast {
+  margin: 8px 0 0 0;
+  padding: 8px 10px;
+  background: var(--gh-canvas-subtle);
+  border: 1px solid var(--gh-border);
+  border-radius: 4px;
+}
+.pr-blast svg { display: block; }
+
+.pr-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--gh-border);
+  background: var(--gh-canvas-subtle);
+  font-size: 12px;
+  color: var(--gh-fg-muted);
+}
+.pr-cmd {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--gh-accent-fg);
+  background: var(--gh-canvas-inset);
+  padding: 2px 7px;
   border-radius: 3px;
-  color: var(--accent);
+  border: 1px solid var(--gh-border-muted);
+}
+.pr-cmd-sep { color: var(--gh-fg-muted); opacity: 0.6; }
+.pr-cmd-link {
+  margin-left: auto;
+  color: var(--gh-accent-fg);
+  font-size: 12px;
+  text-decoration: none;
+}
+.pr-cmd-link:hover { text-decoration: underline; }
+
+@media (max-width: 540px) {
+  .pr-find-hd { gap: 6px; }
+  .pr-find-conf { margin-left: 0; width: 100%; }
+  .pr-actions { font-size: 11px; }
+  .pr-cmd-link { margin-left: 0; width: 100%; padding-top: 4px; }
 }
 
 /* ─── Comparison table ─── */
@@ -2506,7 +2717,7 @@ footer a { color: #fff; }
     page-break-before: auto;
     break-before: auto;
   }
-  pre, code, table, blockquote, .gh-pr, .scenario {
+  pre, code, table, blockquote, .pr-card, .scenario {
     page-break-inside: avoid;
     break-inside: avoid;
   }
