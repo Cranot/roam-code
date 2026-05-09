@@ -40,7 +40,7 @@ companion `roam lsp` server for editor squiggles. See
 
 Roam is the **engineering-judgment layer for coding agents**. AI agents can write code; they can't see what else the code touches, which tests cover it, which loop just went quadratic, or whether they're editing one of three near-identical clones. Roam exposes that judgment as deterministic local tools the agent calls — *before* it edits, *during* generation, and *after* the patch lands.
 
-Mechanically: Roam parses your repo once, stores structural facts in a local SQLite graph (symbols, dependencies, call graphs, architecture layers, git history, runtime traces), and exposes the graph through 208 commands and 137 MCP tools across 28 languages.
+Mechanically: Roam parses your repo once, stores structural facts in a local SQLite graph (symbols, dependencies, call graphs, architecture layers, git history, runtime traces), and exposes the graph through 211 commands and 137 MCP tools across 28 languages.
 
 ### The senses your agent doesn't have
 
@@ -322,7 +322,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~203 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **208 commands organised into 7 categories** (plus 7 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~206 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **211 commands organised into 7 categories** (plus 7 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>

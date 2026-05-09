@@ -1834,7 +1834,7 @@
 <ul>
 <li><strong><code>roam retrieve "&lt;task&gt;"</code></strong> — graph-aware FTS5 + structural reranker (personalised PageRank + clone-canonical signal + lexical baseline) + token-budget cap. Returns ranked spans with justification tags. MCP tool: <code>roam_retrieve</code>.</li>
 <li><strong><code>roam critique</code></strong> — graph-grounded patch verifier. <code>git diff | roam critique</code> gets findings ranked by severity. The killer signal is <strong>clones-not-edited</strong>. Exits 5 on high severity (CI-gateable). MCP tool: <code>roam_critique</code>.</li>
-<li><strong><code>roam fleet plan</code></strong> — Louvain + dark-matter co-change + PageRank multi-agent partitioner. Emits <code>roam-fleet/v1</code> manifest with raw / Composio / GitHub Copilot CLI adapters. MCP tool: <code>roam_fleet_plan</code>.</li>
+<li><strong><code>roam fleet plan</code></strong> — Louvain + dark-matter co-change + PageRank multi-agent partitioner. Emits <code>roam-fleet/v1</code> manifest with raw / Composio / Codex CLI adapters. MCP tool: <code>roam_fleet_plan</code>.</li>
 <li><strong><code>roam ask</code></strong> — 12-recipe TF-IDF intent classifier dispatching <code>preflight/retrieve/critique/fleet/diagnose/trace/...</code> in-process.</li>
 <li><strong><code>roam taint</code></strong> — graph-reach BFS + 5 starter rule packs (sqli, xss, path-traversal, command-injection, deserialization). OpenVEX-correct status + justification strings (no <code>code_not_reachable</code>).</li>
 <li><strong><code>roam cga emit</code></strong> — in-toto v1 statement (predicate type <code>roam-code.dev/CodeGraph/v1</code>) with Merkle root + edge-bundle digest + optional taint reachability claims. Cosign keyless or offline signing.</li>
@@ -2343,7 +2343,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>Local structural intelligence for coding agents.</span>
+        <span>The local structural intelligence layer for coding agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

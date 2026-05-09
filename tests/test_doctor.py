@@ -114,8 +114,10 @@ class TestDoctorCheckCoverage:
         # three checks (CLI registry + MCP registry +
         # MCP backpressure), bringing the total from 8 to 11.
         # v12.16 / Pass 35 added two more (Plugin discovery + Required
-        # tables) for a total of 13.
-        assert data["summary"]["total"] == 13
+        # tables) for a total of 13. Three more (optional extras, cloud
+        # sync, cache permissions) bring it to 16; the manifest check
+        # makes it 17.
+        assert data["summary"]["total"] == 17
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()

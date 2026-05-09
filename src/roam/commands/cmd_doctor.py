@@ -446,6 +446,109 @@ def _check_required_tables() -> dict:
     }
 
 
+def _format_age(seconds: float) -> str:
+    """Format an age in seconds as a human-readable string."""
+    seconds = max(0.0, float(seconds))
+    if seconds < 60:
+        n = int(seconds)
+        return f"{n} second{'s' if n != 1 else ''}"
+    if seconds < 3600:
+        n = int(seconds / 60)
+        return f"{n} minute{'s' if n != 1 else ''}"
+    if seconds < 86400:
+        n = int(seconds / 3600)
+        return f"{n} hour{'s' if n != 1 else ''}"
+    n = int(seconds / 86400)
+    return f"{n} day{'s' if n != 1 else ''}"
+
+
+def _check_index_manifest() -> dict:
+    """Surface manifest age + drift hints from the most recent index run.
+
+    Drift between the recorded parser / grammar / roam version and what's
+    currently installed means the index was built with a different
+    toolchain — agents should ``roam index --rebuild`` before trusting it.
+    """
+    try:
+        from roam.db.connection import db_exists, find_project_root, open_db
+        from roam.index.manifest import collect_manifest, latest_manifest, manifest_diff
+    except Exception as exc:
+        return {
+            "name": "Index manifest",
+            "passed": False,
+            "detail": f"manifest module import failed: {type(exc).__name__}: {exc}",
+        }
+
+    if not db_exists():
+        return {
+            "name": "Index manifest",
+            "passed": True,
+            "detail": "no index — manifest check skipped",
+        }
+
+    try:
+        with open_db(readonly=True) as conn:
+            prev = latest_manifest(conn)
+    except Exception as exc:
+        return {
+            "name": "Index manifest",
+            "passed": False,
+            "detail": f"could not read manifest: {type(exc).__name__}: {exc}",
+        }
+
+    if prev is None:
+        return {
+            "name": "Index manifest",
+            "passed": False,
+            "detail": "no manifest recorded — run `roam index --rebuild` to refresh",
+        }
+
+    # Build a "current state" manifest and diff it. conn=None makes the
+    # schema_version come from the running code's constant, which is the
+    # right reference when checking for drift.
+    project_root = find_project_root()
+    current = collect_manifest(project_root, profile=prev.get("index_profile") or "all", conn=None)
+
+    drift = manifest_diff(prev, current)
+
+    age_s = max(0, int(time.time()) - int(prev.get("indexed_at") or 0))
+    base = (
+        f"index built {_format_age(age_s)} ago with roam-code "
+        f"{prev.get('roam_version')}, schema v{prev.get('schema_version')}"
+    )
+
+    hints: list[str] = []
+    parser_drift = "parser_versions" in drift or "grammar_versions" in drift
+    if parser_drift or "schema_version" in drift or "roam_version" in drift:
+        hints.append("WARN: parser version drift since last index — run `roam index --rebuild`")
+
+    if "git_head" in drift:
+        old_head = drift["git_head"][0]
+        new_head = drift["git_head"][1]
+        if old_head and new_head:
+            hints.append(
+                f"INFO: index was built at commit {old_head[:7]}; current HEAD is {new_head[:7]}"
+            )
+        elif new_head and not old_head:
+            hints.append(f"INFO: current HEAD is {new_head[:7]}; index has no recorded commit")
+        elif old_head and not new_head:
+            hints.append(f"INFO: index was built at commit {old_head[:7]}; no git HEAD detectable now")
+
+    if hints:
+        detail = base + "; " + "; ".join(hints)
+        passed = not (parser_drift or "schema_version" in drift or "roam_version" in drift)
+    else:
+        detail = base
+        passed = True
+
+    return {
+        "name": "Index manifest",
+        "passed": passed,
+        "detail": detail,
+        "_drift_fields": sorted(drift.keys()),
+    }
+
+
 def _check_mcp_backpressure() -> dict:
     """MCP backpressure module loads with sensible limits.
 
@@ -474,6 +577,98 @@ def _check_mcp_backpressure() -> dict:
         "name": "MCP backpressure",
         "passed": True,
         "detail": f"max_concurrent={limit}, {per_tool_count} per-tool override(s) active",
+    }
+
+
+_CLOUD_PATH_MARKERS = (
+    "OneDrive",
+    "Dropbox",
+    "iCloudDrive",
+    "iCloud Drive",
+    "Google Drive",
+    "Google Drive File Stream",
+    "GoogleDrive",
+    "Box Sync",
+    "pCloud",
+)
+
+
+def _check_cloud_sync() -> dict:
+    """Warn if the project lives under a cloud-sync folder.
+
+    Cloud-synced folders (OneDrive, Dropbox, iCloud, Google Drive) re-upload the
+    SQLite index file on every write, which can corrupt the DB during a long
+    index run, and slow `roam` calls considerably. Excluding `.roam/` from sync
+    fixes both.
+    """
+    project_root = str(Path.cwd().resolve())
+    matched = next((m for m in _CLOUD_PATH_MARKERS if m in project_root), None)
+    if matched is None:
+        return {
+            "name": "Cloud sync",
+            "passed": True,
+            "detail": "project not under a known cloud-sync folder",
+        }
+    return {
+        "name": "Cloud sync",
+        "passed": False,
+        "detail": (
+            f"project root contains '{matched}' — exclude .roam/ from sync to "
+            "avoid index corruption during long indexing runs and to reduce "
+            "per-command latency."
+        ),
+    }
+
+
+def _check_cache_permissions() -> dict:
+    """`.roam/` and `.pytest_cache/` must be writable; locks here cause silent failures."""
+    project_root = Path.cwd()
+    issues: list[str] = []
+    for sub in (".roam", ".pytest_cache"):
+        d = project_root / sub
+        if not d.exists():
+            continue
+        # Try to create a tiny probe file.
+        probe = d / ".roam-probe"
+        try:
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+        except (OSError, PermissionError) as exc:
+            issues.append(f"{sub}/: {type(exc).__name__}")
+    if issues:
+        return {
+            "name": "Cache permissions",
+            "passed": False,
+            "detail": "not writable: " + ", ".join(issues),
+        }
+    return {
+        "name": "Cache permissions",
+        "passed": True,
+        "detail": "all probed cache dirs writable",
+    }
+
+
+def _check_optional_extras() -> dict:
+    """Probe optional extras: semantic search, file watcher, MCP server."""
+    extras: dict[str, str] = {}
+    for mod, label in (
+        ("onnxruntime", "semantic-search ONNX runtime"),
+        ("watchdog", "file watcher"),
+        ("fastmcp", "MCP server"),
+        ("scipy", "spectral analysis"),
+    ):
+        try:
+            __import__(mod)
+            extras[mod] = "installed"
+        except ImportError:
+            extras[mod] = "missing (optional)"
+    missing = [m for m, s in extras.items() if "missing" in s]
+    detail_parts = [f"{m}={s.split()[0]}" for m, s in extras.items()]
+    return {
+        # Always pass — these are optional. Report status for visibility.
+        "name": "Optional extras",
+        "passed": True,
+        "detail": ", ".join(detail_parts) + (f" ({len(missing)} missing — features degrade gracefully)" if missing else ""),
     }
 
 
@@ -512,7 +707,9 @@ def doctor(ctx):
     checks.append(_check_tree_sitter_language_pack())
     checks.append(_check_git())
     checks.append(_check_networkx())
-    # Round 4 S3 — verify the CLI + MCP tool surfaces are intact.
+    checks.append(_check_optional_extras())
+    checks.append(_check_cloud_sync())
+    checks.append(_check_cache_permissions())
     checks.append(_check_command_registry())
     checks.append(_check_mcp_registry())
     checks.append(_check_mcp_backpressure())
@@ -526,6 +723,7 @@ def doctor(ctx):
     db_path_str = index_check.get("_db_path")
     checks.append(_check_index_freshness(db_path_str))
     checks.append(_check_sqlite(db_path_str))
+    checks.append(_check_index_manifest())
 
     # --- Compute summary ---
     total = len(checks)

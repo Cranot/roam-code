@@ -380,4 +380,24 @@ CREATE INDEX IF NOT EXISTS idx_clone_pairs_qname_b ON clone_pairs(qname_b);
 CREATE INDEX IF NOT EXISTS idx_clone_pairs_cluster ON clone_pairs(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_clone_pairs_file_a ON clone_pairs(file_a);
 CREATE INDEX IF NOT EXISTS idx_clone_pairs_file_b ON clone_pairs(file_b);
+
+-- Index manifest: one row per index run capturing the environment +
+-- project state at indexing time. Used by `roam doctor` to flag stale
+-- indexes (parser/grammar drift, schema bumps, version mismatches) and
+-- by drift checks on the agent contract surface.
+CREATE TABLE IF NOT EXISTS index_manifest (
+    id INTEGER PRIMARY KEY,
+    indexed_at INTEGER NOT NULL,
+    roam_version TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    parser_versions TEXT NOT NULL,
+    grammar_versions TEXT,
+    config_hash TEXT NOT NULL,
+    git_head TEXT,
+    git_dirty_hash TEXT,
+    enabled_extras TEXT NOT NULL,
+    index_profile TEXT DEFAULT 'all',
+    notes TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_index_manifest_at ON index_manifest(indexed_at);
 """

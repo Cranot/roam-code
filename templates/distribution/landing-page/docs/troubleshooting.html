@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Troubleshooting — Roam Docs · Stale indexes, sync conflicts, missing extras, MCP setup</title>
+  <meta name="description" content="The eight most common Roam problems and how to fix them: stale indexes, OneDrive/Dropbox/iCloud sync conflicts, missing optional extras, parser failures, MCP setup, cache permissions, OOM during indexing, slow JSON output.">
+  <link rel="canonical" href="https://roam-code.com/docs/troubleshooting">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="dns-prefetch" href="//github.com">
+  <link rel="dns-prefetch" href="//pypi.org">
+  <link rel="stylesheet" href="/landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Troubleshooting — Roam Docs">
+  <meta property="og:description" content="Stale indexes, cloud-sync conflicts, missing extras, MCP setup, cache permissions, OOM, slow JSON. Symptom to fix in eight short blocks.">
+  <meta property="og:url" content="https://roam-code.com/docs/troubleshooting">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://roam-code.com/"},
+      {"@type": "ListItem", "position": 2, "name": "Docs", "item": "https://roam-code.com/docs/"},
+      {"@type": "ListItem", "position": 3, "name": "Troubleshooting", "item": "https://roam-code.com/docs/troubleshooting"}
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span>
+        <span class="visually-hidden">Menu</span>
+      </label>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/setup">Setup</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main">
+
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Documentation</p>
+      <h1 class="hero-headline">
+        Troubleshooting.
+      </h1>
+      <p class="hero-subhead">
+        Eight things that go wrong with Roam, and the one command that
+        usually fixes each one. Start with <code>roam doctor</code> —
+        it diagnoses six of the eight.
+      </p>
+      <p class="hero-trust-strip">
+        Run <code>roam doctor --json</code> if you need to send us output.
+      </p>
+    </div>
+  </header>
+
+  <article>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>1. Stale index after a pull, rename, or schema change</h2>
+        <p>
+          <strong>Symptom.</strong> Commands return symbols that don't
+          exist anymore, miss new ones, or report a verdict that doesn't
+          match the working tree. Often happens after <code>git pull</code>
+          on a long-lived branch, after a large rename, or after upgrading
+          Roam to a version that changed the SQLite schema.
+        </p>
+        <p>
+          <strong>Diagnose.</strong>
+          <code>roam doctor</code> reports stale-index status; the
+          schema-version check tells you if the DB is older than the
+          installed roam-code version.
+        </p>
+        <p>
+          <strong>Fix.</strong> Rebuild from scratch.
+        </p>
+<pre class="terminal" aria-label="Rebuild stale index"><span class="t-prompt">$</span> <span class="t-cmd">roam doctor</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam index --rebuild</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>2. OneDrive / Dropbox / iCloud sync conflicts</h2>
+        <p>
+          <strong>Symptom.</strong> Random
+          <code>database is locked</code> errors, partial writes,
+          ghost <code>conflict</code> copies of <code>.roam/index.db</code>,
+          or commands hanging on the first SQLite open. The cloud-sync
+          client is racing the indexer for the file.
+        </p>
+        <p>
+          <strong>Diagnose.</strong> Check whether your project lives
+          inside a synced folder. On macOS / Windows the path will
+          contain <code>iCloud Drive</code>, <code>OneDrive</code>, or
+          <code>Dropbox</code>.
+        </p>
+        <p>
+          <strong>Fix.</strong> Either move the project off the synced
+          drive entirely, or exclude <code>.roam/</code> from sync. On
+          OneDrive: right-click the folder, "Always keep on this device"
+          off, then add <code>.roam/</code> to the unsync list. On
+          Dropbox: <code>dropbox exclude add .roam/</code>. On iCloud:
+          rename to <code>.roam.nosync/</code> and update
+          <code>ROAM_DB_DIR</code>, or move the repo out of
+          <code>~/Documents</code>.
+        </p>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>3. Missing optional extras</h2>
+        <p>
+          <strong>Symptom.</strong> An <code>ImportError</code> on
+          startup, or a "feature unavailable — install
+          <code>roam-code[X]</code>" warning. Roam keeps the base
+          install small and gates heavy dependencies behind extras.
+        </p>
+        <p>
+          <strong>Diagnose.</strong>
+          <code>roam doctor</code> lists which extras are installed and
+          which features are gated off.
+        </p>
+        <p>
+          <strong>Fix.</strong> Install the extra you need.
+        </p>
+<pre class="terminal" aria-label="Install optional extras"><span class="t-prompt">#</span> <span class="t-cmd">MCP server (FastMCP)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">pip install "roam-code[mcp]"</span>
+
+<span class="t-prompt">#</span> <span class="t-cmd">Semantic search (onnxruntime)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">pip install "roam-code[semantic]"</span>
+
+<span class="t-prompt">#</span> <span class="t-cmd">File watcher (watchdog)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">pip install "roam-code[watch]"</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>4. Parser failures — zero symbols extracted from a file</h2>
+        <p>
+          <strong>Symptom.</strong> A file you know exists is missing
+          from <code>roam search</code> results, or
+          <code>roam file &lt;path&gt;</code> returns an empty skeleton.
+          Usually a tree-sitter grammar load failure: the
+          <code>tree-sitter-language-pack</code> version installed in
+          your environment is older than what Roam expects, or the file
+          extension isn't mapped to a grammar.
+        </p>
+        <p>
+          <strong>Diagnose.</strong>
+          <code>roam doctor</code> lists language coverage and grammar
+          load status; <code>roam languages</code> shows the supported
+          extension map.
+        </p>
+        <p>
+          <strong>Fix.</strong> Reinstall with the latest grammar pack.
+        </p>
+<pre class="terminal" aria-label="Refresh tree-sitter grammars"><span class="t-prompt">$</span> <span class="t-cmd">pip install --upgrade tree-sitter-language-pack</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam doctor</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam index --rebuild</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>5. Agent doesn't see Roam's MCP tools</h2>
+        <p>
+          <strong>Symptom.</strong> Claude Code, Cursor, Codex, or your
+          own MCP-aware agent has Roam configured but doesn't list the
+          Roam tools when you ask it. Usually the MCP server isn't
+          starting, the binary isn't on the agent's PATH, or the
+          editor's MCP config points at the wrong working directory.
+        </p>
+        <p>
+          <strong>Diagnose.</strong> Run the server directly. If it
+          starts and lists tools, the problem is the editor's config.
+        </p>
+<pre class="terminal" aria-label="Verify MCP server"><span class="t-prompt">$</span> <span class="t-cmd">roam mcp --list-tools</span>
+<span class="t-prompt">$</span> <span class="t-cmd">which roam   # path the editor needs</span></pre>
+        <p>
+          <strong>Fix.</strong> See the per-editor walkthrough in
+          <a href="/docs/integration-tutorials">/docs/integration-tutorials</a>
+          — it covers Claude Code, Cursor, Codex CLI, Gemini CLI, and Amp.
+          The common gotcha: the editor MCP config must use the absolute
+          path to <code>roam</code>, not the bare command, when running
+          inside a sandboxed launcher.
+        </p>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>6. Cache or DB permission errors</h2>
+        <p>
+          <strong>Symptom.</strong>
+          <code>PermissionError</code> on <code>.roam/index.db</code>,
+          <code>.pytest_cache/</code>, or <code>~/.cache/roam/</code>.
+          Usually because a previous run was launched as a different
+          user (root via <code>sudo</code>, a CI runner UID, a Docker
+          container) and left files the current user can't write.
+        </p>
+        <p>
+          <strong>Diagnose.</strong>
+          <code>ls -la .roam/</code> on Unix or
+          <code>icacls .roam</code> on Windows shows the owner.
+        </p>
+        <p>
+          <strong>Fix.</strong> Reclaim ownership or wipe the cache.
+        </p>
+<pre class="terminal" aria-label="Reclaim cache ownership"><span class="t-prompt">#</span> <span class="t-cmd">macOS / Linux</span>
+<span class="t-prompt">$</span> <span class="t-cmd">sudo chown -R "$(whoami)" .roam .pytest_cache</span>
+
+<span class="t-prompt">#</span> <span class="t-cmd">or wipe and re-init</span>
+<span class="t-prompt">$</span> <span class="t-cmd">rm -rf .roam &amp;&amp; roam init</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>7. Out-of-memory during indexing on a large monorepo</h2>
+        <p>
+          <strong>Symptom.</strong> Indexer is OOM-killed on a repo with
+          hundreds of thousands of files, or RAM climbs past available
+          and the process slows to a crawl. Roam parses the working set
+          in-memory before flushing to SQLite; very large monorepos can
+          exceed reasonable RAM budgets.
+        </p>
+        <p>
+          <strong>Diagnose.</strong>
+          <code>roam doctor</code> reports the file count and estimated
+          parse-set size before you commit.
+        </p>
+        <p>
+          <strong>Fix.</strong> Exclude what you don't need to index —
+          generated code, vendored dependencies, large fixtures —
+          via <code>--exclude</code> patterns or
+          <code>.roamignore</code>.
+        </p>
+<pre class="terminal" aria-label="Exclude directories during index"><span class="t-prompt">$</span> <span class="t-cmd">roam index --exclude 'vendor/**' --exclude 'generated/**'</span>
+<span class="t-prompt">$</span> <span class="t-cmd">echo 'vendor/' &gt;&gt; .roamignore</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam index --rebuild</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>8. <code>--json</code> output is too verbose / too slow</h2>
+        <p>
+          <strong>Symptom.</strong> Piping
+          <code>roam &lt;cmd&gt; --json</code> into an agent's context
+          uses too many tokens, or the envelope wrapper makes
+          line-oriented parsing awkward.
+        </p>
+        <p>
+          <strong>Diagnose.</strong>
+          <code>roam &lt;cmd&gt; --json | wc -c</code> gives you the
+          byte count. If the envelope is bigger than the payload, you
+          want compact mode.
+        </p>
+        <p>
+          <strong>Fix.</strong> Use <code>--compact</code> for narrower
+          envelopes (drops <code>_meta</code>, schema preamble, and
+          optional fields).
+        </p>
+<pre class="terminal" aria-label="Compact JSON output"><span class="t-prompt">$</span> <span class="t-cmd">roam impact AuthService --json --compact</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam preflight AuthService --json --compact</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>Still stuck?</h2>
+        <p>
+          Email <a href="mailto:hello@roam-code.com?subject=Roam%20troubleshooting">hello@roam-code.com</a>
+          with the output of <code>roam doctor --json</code> attached.
+          That dump tells us your roam-code version, Python version,
+          installed extras, schema version, language coverage, and
+          index health — usually enough to identify the issue without a
+          back-and-forth.
+        </p>
+<pre class="terminal" aria-label="Generate diagnostic dump"><span class="t-prompt">$</span> <span class="t-cmd">roam doctor --json &gt; roam-doctor.json</span></pre>
+        <p>
+          For bug reports, file an issue at
+          <a href="https://github.com/Cranot/roam-code/issues">github.com/Cranot/roam-code</a>
+          with the same dump attached.
+        </p>
+      </div>
+    </section>
+
+  </article>
+
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>The local structural intelligence layer for coding agents.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/setup">Setup</a>
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

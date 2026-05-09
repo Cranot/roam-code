@@ -1,8 +1,42 @@
-"""Detect and report code health issues."""
+"""Detect and report code health issues.
+
+Baseline-diff mode (``--baseline <ref>``)
+-----------------------------------------
+
+When ``--baseline <ref>`` is supplied, ``roam health`` reports DELTAS against
+a previously-stored snapshot instead of the absolute set of findings. The
+delta surface is what most users actually care about: "what is new since the
+last green run, what got fixed, what regressed."
+
+``<ref>`` accepts three forms:
+
+* a git ref (``main``, ``v12.0``, a SHA prefix) — compare against the most
+  recent snapshot recorded with a matching ``git_branch`` or ``git_commit``;
+* ``last`` — compare against the most recent snapshot on file regardless of
+  ref (useful for "did I make things worse since I last saved?");
+* ``auto`` — compare against the most recent snapshot whose ``git_branch``
+  matches the project's main branch (``main`` or ``master``). Sensible CI
+  default.
+
+Verdict semantics in baseline mode:
+
+* ``OK`` — no new findings and no score regression.
+* ``REVIEW`` — at least one new high-severity finding, even if the score
+  did not move.
+* ``BAD`` — composite ``health_score`` regressed against the baseline.
+
+If no baseline snapshot can be located for ``<ref>`` the command prints a
+friendly explanation, marks the run as ``DEGRADED`` (``summary.reason =
+"no_baseline_snapshot"``), and exits cleanly. Snapshots are populated by
+``roam trends --save`` (typically run in CI on the main branch).
+"""
 
 from __future__ import annotations
 
 import math
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
 
 import click
 
@@ -191,6 +225,181 @@ def _load_gate_config() -> dict:
         return defaults
 
 
+# ---------------------------------------------------------------------------
+# Baseline-diff mode helpers
+# ---------------------------------------------------------------------------
+
+# Per-category metric definitions used for delta synthesis. Each entry maps
+# the snapshot column to a finding "kind" + a default severity + the polarity
+# (lower_is_better=True means an INCREASE is a regression). ``health_score``
+# is the only inverted metric (higher is better).
+_BASELINE_METRICS = (
+    # (snapshot_col, kind, severity, lower_is_better)
+    ("cycles", "cycle", "WARNING", True),
+    ("god_components", "god_component", "WARNING", True),
+    ("bottlenecks", "bottleneck", "WARNING", True),
+    ("dead_exports", "dead_export", "INFO", True),
+    ("layer_violations", "layer_violation", "WARNING", True),
+)
+
+
+def _resolve_main_branch(root: Path) -> str:
+    """Detect the local main branch (main or master) for ``--baseline auto``."""
+    for branch in ("main", "master"):
+        try:
+            r = subprocess.run(
+                ["git", "rev-parse", "--verify", branch],
+                cwd=str(root),
+                capture_output=True,
+                timeout=5,
+            )
+            if r.returncode == 0:
+                return branch
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    return "main"
+
+
+def _find_baseline_snapshot(conn, ref: str) -> dict | None:
+    """Look up a baseline snapshot for the given ref.
+
+    Returns a row dict on success, ``None`` if nothing matched.
+    Refs are resolved as follows:
+
+    * ``last`` — most recent snapshot regardless of ref.
+    * ``auto`` — most recent snapshot whose ``git_branch`` equals the local
+      main/master branch.
+    * anything else — most recent snapshot whose ``git_branch`` equals
+      ``ref`` OR whose ``git_commit`` starts with ``ref``.
+    """
+    if ref == "last":
+        row = conn.execute("SELECT * FROM snapshots ORDER BY timestamp DESC LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+    if ref == "auto":
+        from roam.db.connection import find_project_root
+
+        try:
+            root = find_project_root()
+        except Exception:
+            root = Path(".")
+        branch = _resolve_main_branch(root)
+        row = conn.execute(
+            "SELECT * FROM snapshots WHERE git_branch = ? ORDER BY timestamp DESC LIMIT 1",
+            (branch,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    # Treat ref as either a branch name or a commit prefix.
+    row = conn.execute(
+        "SELECT * FROM snapshots WHERE git_branch = ? ORDER BY timestamp DESC LIMIT 1",
+        (ref,),
+    ).fetchone()
+    if row:
+        return dict(row)
+
+    row = conn.execute(
+        "SELECT * FROM snapshots WHERE git_commit LIKE ? ORDER BY timestamp DESC LIMIT 1",
+        (f"{ref}%",),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _format_baseline_timestamp(ts: int | None) -> str | None:
+    """Render a unix timestamp as ISO 8601 UTC, or ``None`` if missing."""
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromtimestamp(int(ts), tz=timezone.utc).replace(microsecond=0)
+        return dt.isoformat().replace("+00:00", "Z")
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
+def _compute_baseline_delta(current: dict, baseline: dict) -> dict:
+    """Compute new / fixed / regressed findings + per-metric score deltas.
+
+    The snapshots table only stores aggregate counts, not per-finding rows,
+    so each "finding" in the delta arrays is a synthetic per-category entry
+    of shape ``{kind, target, severity, was, now}``. ``new_findings`` is
+    emitted when the current count is strictly higher than the baseline,
+    ``fixed_findings`` when strictly lower, and ``regressed`` when the
+    composite ``health_score`` (or any tracked count) moved in the bad
+    direction.
+    """
+    new_findings: list[dict] = []
+    fixed_findings: list[dict] = []
+    regressed: list[dict] = []
+    score_delta: dict[str, float] = {}
+
+    for col, kind, severity, lower_is_better in _BASELINE_METRICS:
+        was = baseline.get(col) or 0
+        now = current.get(col) or 0
+        delta = now - was
+        score_delta[col] = delta
+        if delta == 0:
+            continue
+        # Severity bumps to CRITICAL when the swing is large in the bad direction.
+        worsened = (delta > 0) if lower_is_better else (delta < 0)
+        improved = not worsened
+        finding = {
+            "kind": kind,
+            "target": col,
+            "severity": severity,
+            "was": was,
+            "now": now,
+        }
+        if worsened:
+            # If the metric grew by more than 50% (and at least 2 absolute),
+            # promote to CRITICAL — that's the "high-severity new finding"
+            # signal the verdict logic looks for.
+            if abs(delta) >= 2 and (was == 0 or abs(delta) / max(was, 1) >= 0.5):
+                finding["severity"] = "CRITICAL"
+            new_findings.append(finding)
+            regressed.append(finding)
+        elif improved:
+            fixed_findings.append(finding)
+
+    # Composite health_score handled separately (higher = better).
+    cur_score = current.get("health_score") or 0
+    base_score = baseline.get("health_score") or 0
+    score_diff = cur_score - base_score
+    score_delta["health_score"] = score_diff
+    if score_diff < 0:
+        regressed.append(
+            {
+                "kind": "health_score",
+                "target": "health_score",
+                "severity": "CRITICAL" if abs(score_diff) >= 10 else "WARNING",
+                "was": base_score,
+                "now": cur_score,
+            }
+        )
+
+    return {
+        "new_findings": new_findings,
+        "fixed_findings": fixed_findings,
+        "regressed": regressed,
+        "score_delta": score_delta,
+    }
+
+
+def _baseline_verdict(delta: dict) -> str:
+    """Apply the documented verdict policy to a delta block.
+
+    * ``BAD``    — composite health_score regressed against baseline.
+    * ``REVIEW`` — at least one new CRITICAL finding (even if score held).
+    * ``OK``     — otherwise.
+    """
+    score_diff = delta["score_delta"].get("health_score", 0)
+    if score_diff < 0:
+        return "BAD"
+    for f in delta["new_findings"]:
+        if f.get("severity") == "CRITICAL":
+            return "REVIEW"
+    return "OK"
+
+
 @click.command()
 @click.option(
     "--no-framework",
@@ -203,8 +412,21 @@ def _load_gate_config() -> dict:
     is_flag=True,
     help="Show how the 0-100 score decomposes into category contributions.",
 )
+@click.option(
+    "--baseline",
+    "baseline_ref",
+    default=None,
+    metavar="REF",
+    help=(
+        "Compare against a stored baseline snapshot and report deltas instead of "
+        "the absolute set. REF can be a git ref (e.g. 'main', a tag, a SHA), "
+        "'last' for the most recent snapshot regardless of ref, or 'auto' for "
+        "the most recent snapshot taken on the main branch. "
+        "Run `roam trends --save` regularly (or in CI) to populate baseline snapshots."
+    ),
+)
 @click.pass_context
-def health(ctx, no_framework, gate, explain):
+def health(ctx, no_framework, gate, explain, baseline_ref):
     """Show code health: cycles, god components, bottlenecks."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
@@ -536,6 +758,136 @@ def health(ctx, no_framework, gate, explain):
                 f"Unhealthy codebase ({health_score}/100) — "
                 f"{sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings{_focus_hint}"
             )
+
+        # --- Baseline-diff mode ---
+        # When --baseline is set, swap the absolute-findings output for a
+        # delta report against a stored snapshot. Runs and exits before
+        # gate/sarif/json/text branches so existing behaviour is untouched
+        # when the flag is absent.
+        if baseline_ref:
+            # Dead-export count: mirror the query metrics_history uses so the
+            # current vs. baseline comparison is apples-to-apples. Tests that
+            # don't care about exports are unaffected by 0-vs-0 deltas.
+            from roam.db.queries import UNREFERENCED_EXPORTS as _UNREF_EXPORTS
+
+            try:
+                _dead_rows = conn.execute(_UNREF_EXPORTS).fetchall()
+                _dead_exports = sum(
+                    1
+                    for r in _dead_rows
+                    if not (r["file_path"] or "").lower().rsplit("/", 1)[-1].startswith("test_")
+                    and not (r["file_path"] or "").lower().endswith("_test.py")
+                )
+            except Exception:
+                _dead_exports = 0
+
+            current_metrics = {
+                "health_score": health_score,
+                "cycles": len(actionable_cycles),
+                "god_components": len(god_items),
+                "bottlenecks": len(bn_items),
+                "dead_exports": _dead_exports,
+                "layer_violations": len(violations),
+            }
+
+            baseline = _find_baseline_snapshot(conn, baseline_ref)
+
+            if baseline is None:
+                degraded_msg = (
+                    f"No baseline snapshot found for ref `{baseline_ref}`. "
+                    "Run `roam trends --save` first, or use `--baseline last`."
+                )
+                if json_mode:
+                    envelope = json_envelope(
+                        "health",
+                        budget=token_budget,
+                        summary={
+                            "verdict": "DEGRADED",
+                            "reason": "no_baseline_snapshot",
+                            "baseline_ref": baseline_ref,
+                            "health_score": health_score,
+                        },
+                        baseline_ref=baseline_ref,
+                        message=degraded_msg,
+                    )
+                    click.echo(to_json(envelope))
+                    return
+                click.echo(f"VERDICT: DEGRADED — {degraded_msg}")
+                return
+
+            delta = _compute_baseline_delta(current_metrics, baseline)
+            baseline_verdict = _baseline_verdict(delta)
+            baseline_taken_at = _format_baseline_timestamp(baseline.get("timestamp"))
+            new_count = len(delta["new_findings"])
+            fixed_count = len(delta["fixed_findings"])
+            regressed_count = len(delta["regressed"])
+            delta_block = {
+                "new_findings": delta["new_findings"],
+                "fixed_findings": delta["fixed_findings"],
+                "regressed": delta["regressed"],
+                "score_delta": delta["score_delta"],
+                "baseline_ref": baseline_ref,
+                "baseline_taken_at": baseline_taken_at,
+                "baseline_git_branch": baseline.get("git_branch"),
+                "baseline_git_commit": baseline.get("git_commit"),
+            }
+
+            if json_mode:
+                envelope = json_envelope(
+                    "health",
+                    budget=token_budget,
+                    summary={
+                        "verdict": baseline_verdict,
+                        "baseline_ref": baseline_ref,
+                        "baseline_taken_at": baseline_taken_at,
+                        "new_findings_count": new_count,
+                        "fixed_findings_count": fixed_count,
+                        "regressed_count": regressed_count,
+                        "health_score": health_score,
+                        "score_delta": delta["score_delta"],
+                    },
+                    delta=delta_block,
+                    health_score=health_score,
+                )
+                click.echo(to_json(envelope))
+                return
+
+            # Text output for baseline mode.
+            click.echo(f"VERDICT: {baseline_verdict} (baseline: {baseline_ref})\n")
+            click.echo(
+                "Δ +{new} findings, {fixed} fixed, {regressed} regressed".format(
+                    new=new_count, fixed=fixed_count, regressed=regressed_count
+                )
+            )
+            score_diff = delta["score_delta"].get("health_score", 0)
+            score_sign = "+" if score_diff > 0 else ""
+            base_score = baseline.get("health_score") or 0
+            click.echo(
+                f"Score: {base_score} -> {health_score} ({score_sign}{score_diff})"
+                f"   Baseline taken: {baseline_taken_at or '(unknown)'}"
+            )
+            if delta["new_findings"]:
+                click.echo("\nNew findings:")
+                for f in delta["new_findings"][:10]:
+                    click.echo(
+                        f"  [{f['severity']}] +{f['now'] - f['was']} {f['kind']} "
+                        f"(was {f['was']}, now {f['now']})"
+                    )
+                if len(delta["new_findings"]) > 10:
+                    click.echo(f"  (+{len(delta['new_findings']) - 10} more)")
+            if delta["regressed"]:
+                # Avoid double-listing items already shown under "new_findings"
+                # — only score regressions are exclusive to this section.
+                score_regressions = [r for r in delta["regressed"] if r["kind"] == "health_score"]
+                if score_regressions:
+                    click.echo("\nRegressed:")
+                    for r in score_regressions:
+                        click.echo(
+                            f"  [{r['severity']}] {r['kind']}: {r['was']} -> {r['now']}"
+                        )
+            if not delta["new_findings"] and not delta["regressed"]:
+                click.echo("\nNo regressions detected.")
+            return
 
         # --- Quality Gate ---
         if gate:
