@@ -75,15 +75,15 @@
     </div>
   </header>
 
-  <section class="whats-in" id="three-layers" style="padding-top: 56px;">
-    <div class="whats-in-inner" style="max-width: 980px;">
+  <section class="whats-in section-intro-tight" id="three-layers">
+    <div class="whats-in-inner whats-in-inner--wide">
       <h2>Four layers of review, working together</h2>
       <p class="lede">
         Most teams arguing about reviewers are arguing about the wrong axis.
         These four layers answer different questions and ship different signals.
         The healthiest setup runs all four; Roam covers two of them.
       </p>
-      <div class="verbs-grid verbs-grid--3" style="grid-template-columns: repeat(2, 1fr); max-width: 800px; margin: 0 auto;">
+      <div class="verbs-grid verbs-grid--2 review-layers-grid">
         <div class="verb-cell">
           <code>1. Semantic</code>
           <span><strong>Does the code make sense?</strong>
@@ -96,14 +96,14 @@
           SonarQube, Semgrep, ast-grep, ESLint. Catches insecure patterns,
           taint violations, banned APIs. Rule-based and language-aware.</span>
         </div>
-        <div class="verb-cell" style="border-color: var(--accent); background: var(--accent-soft);">
+        <div class="verb-cell verb-cell--accent">
           <code>3. Structural</code>
           <span><strong>What else does it touch?</strong>
           <strong>Roam.</strong> Reads the diff as a graph mutation. Callers,
           tests, clones, runtime hot spots, layer violations, blast radius —
           questions the other layers can't answer.</span>
         </div>
-        <div class="verb-cell" style="border-color: var(--accent); background: var(--accent-soft);">
+        <div class="verb-cell verb-cell--accent">
           <code>4. Algorithmic</code>
           <span><strong>Is it correct but slow?</strong>
           <strong>Roam.</strong> Detects code that is computationally wrong:
@@ -114,7 +114,7 @@
           AI-code-review space catches this deterministically.</span>
         </div>
       </div>
-      <p style="margin-top: 28px; text-align: center;">
+      <p class="review-layers-foot">
         Roam isn't a replacement for the semantic or static layers — it's
         the structural <em>and</em> algorithmic layer that the other tools
         don't cover. The flat-tier pricing is intentional:
@@ -124,10 +124,10 @@
     </div>
   </section>
 
-  <section class="compare" style="padding-top: 32px; border-top: none;">
+  <section class="compare section-intro-tight">
     <div class="compare-inner">
-      <h2 style="text-align: center; margin-bottom: 8px;">Vendor side-by-side</h2>
-      <p class="lede" style="text-align: center; margin-bottom: 24px;">
+      <h2 class="compare-h2--tight">Vendor side-by-side</h2>
+      <p class="lede compare-lede--tight">
         For procurement evaluations. Every cell is verifiable; sources are listed below.
       </p>
       <div class="compare-table-wrap">
@@ -225,7 +225,7 @@
     </div>
   </section>
 
-  <section class="whats-in" id="methodology" style="padding-top: 56px;">
+  <section class="whats-in section-intro-tight" id="methodology">
     <div class="whats-in-inner">
       <h2>Methodology</h2>
       <p class="lede">
@@ -239,10 +239,10 @@
     </div>
   </section>
 
-  <section class="whats-in" style="padding-top: 0;">
-    <div class="whats-in-inner" style="max-width: 760px; text-align: left;">
-      <h3 style="text-align: center;">Sources verified <time datetime="2026-05-07">2026-05-07</time></h3>
-      <ul style="line-height: 1.8;">
+  <section class="whats-in whats-in--flush-top">
+    <div class="whats-in-inner whats-in-inner--prose">
+      <h3 class="text-center">Sources verified <time datetime="2026-05-07">2026-05-07</time></h3>
+      <ul class="prose-list">
         <li><strong>CodeRabbit:</strong> pricing — <a href="https://www.coderabbit.ai/pricing">coderabbit.ai/pricing</a>; product capabilities — <a href="https://www.coderabbit.ai/">coderabbit.ai</a>. Pro tier: $24/dev/mo annual.</li>
         <li><strong>Greptile:</strong> pricing — <a href="https://www.greptile.com/pricing">greptile.com/pricing</a>; product — <a href="https://www.greptile.com/">greptile.com</a>. Team tier: $30/seat/mo + $1 per review beyond 50.</li>
         <li><strong>Qodo (formerly Codium):</strong> pricing — <a href="https://www.qodo.ai/pricing/">qodo.ai/pricing</a>; product — <a href="https://www.qodo.ai/">qodo.ai</a>. Teams tier: $30/user/mo annual, $38 monthly.</li>
@@ -250,14 +250,14 @@
         <li><strong>Roam:</strong> pricing — <a href="/pricing">/pricing</a>; product — <a href="/">homepage</a>; source — <a href="https://github.com/Cranot/roam-code">github.com/Cranot/roam-code</a>.</li>
       </ul>
 
-      <h3 style="text-align: center; margin-top: 36px;">How we mark each cell</h3>
-      <ul style="line-height: 1.8;">
-        <li><strong class="yes" style="color: var(--pop);">Yes</strong> — capability documented on the vendor's marketing or docs page</li>
-        <li><strong class="ltd" style="color: var(--warn);">Limited</strong> — partial capability documented, or the capability appears on enterprise-only or undocumented surfaces</li>
-        <li><strong class="no" style="color: var(--muted-soft);">Not advertised</strong> — we could not find the capability documented; this is verifiable via vendor pages above</li>
+      <h3 class="text-center prose-h3-spaced">How we mark each cell</h3>
+      <ul class="prose-list">
+        <li><strong class="yes legend-yes">Yes</strong> — capability documented on the vendor's marketing or docs page</li>
+        <li><strong class="ltd legend-ltd">Limited</strong> — partial capability documented, or the capability appears on enterprise-only or undocumented surfaces</li>
+        <li><strong class="no legend-no">Not advertised</strong> — we could not find the capability documented; this is verifiable via vendor pages above</li>
       </ul>
 
-      <h3 style="text-align: center; margin-top: 36px;">Why "alongside", not "instead of"</h3>
+      <h3 class="text-center prose-h3-spaced">Why "alongside", not "instead of"</h3>
       <p>
         Semantic and structural review answer different questions.
         Semantic review (CodeRabbit, Greptile, Qodo) reads the diff as text

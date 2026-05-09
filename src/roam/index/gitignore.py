@@ -41,8 +41,10 @@ def _compile_pattern(pattern: str) -> tuple[re.Pattern[str], bool]:
     # If pattern contains a / (after stripping leading /), it's implicitly anchored
     basename_match = not anchored and "/" not in raw
 
-    # Convert gitignore glob to regex
-    regex = ""
+    # Convert gitignore glob to regex.
+    # Collect parts in a list and ``"".join`` at the end — building a
+    # string with ``+=`` inside a loop is O(n²) for n pattern segments.
+    parts: list[str] = []
     i = 0
     plen = len(raw)
     while i < plen:
@@ -55,52 +57,53 @@ def _compile_pattern(pattern: str) -> tuple[re.Pattern[str], bool]:
                 end += 1
             if end >= plen:
                 # ** at end of pattern: match anything remaining
-                regex += ".*"
+                parts.append(".*")
             else:
-                regex += "(.*/)?"
+                parts.append("(.*/)?")
             i = end
         elif c == "*":
-            regex += "[^/]*"
+            parts.append("[^/]*")
             i += 1
         elif c == "?":
-            regex += "[^/]"
+            parts.append("[^/]")
             i += 1
         elif c == "[":
             # Character class — pass through, converting [! to [^
             j = i + 1
-            cls = "["
+            cls_parts: list[str] = ["["]
             if j < plen and raw[j] == "!":
-                cls += "^"
+                cls_parts.append("^")
                 j += 1
             # Find closing ]
             while j < plen and raw[j] != "]":
-                cls += raw[j]
+                cls_parts.append(raw[j])
                 j += 1
             if j < plen:
-                cls += "]"
+                cls_parts.append("]")
                 j += 1
-            regex += cls
+            parts.append("".join(cls_parts))
             i = j
         elif c == ".":
-            regex += r"\."
+            parts.append(r"\.")
             i += 1
         else:
-            regex += re.escape(c)
+            parts.append(re.escape(c))
             i += 1
 
+    body = "".join(parts)
     if dir_only:
         # Directory pattern: match the dir itself or anything underneath
         if basename_match:
             # Unanchored directory: match anywhere
-            regex = "(^|.*/)" + regex + "(/.*)?$"
+            regex = f"(^|.*/){body}(/.*)?$"
         else:
-            regex = "^" + regex + "(/.*)?$"
+            regex = f"^{body}(/.*)?$"
     elif basename_match:
         # No slash in pattern: match against any path component (basename)
-        regex = "(^|.*/)" + regex + "$"
+        regex = f"(^|.*/){body}$"
     else:
         # Anchored or has slash: match from root
-        regex = "^" + regex + "$"
+        regex = f"^{body}$"
 
     return re.compile(regex), basename_match
 

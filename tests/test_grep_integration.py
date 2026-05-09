@@ -7,14 +7,11 @@ surfaces (code, test, docs, config, dead).
 
 from __future__ import annotations
 
-import subprocess
 import textwrap
-from pathlib import Path
 
 import pytest
 
 from tests.conftest import assert_json_envelope, invoke_cli, parse_json_output
-
 
 # ---------------------------------------------------------------------------
 # Fixture: multi-surface project

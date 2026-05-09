@@ -8,7 +8,6 @@ enclosing symbols and avoid the per-match SELECT N+1 path.
 
 from __future__ import annotations
 
-import os
 import time
 
 import pytest

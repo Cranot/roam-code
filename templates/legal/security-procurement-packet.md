@@ -144,7 +144,7 @@ We do not make compliance claims we cannot evidence. If a framework is missing f
 
 ## 8. Incident response
 
-- **Contact**: `security@roam-code.com` (PGP key published at `roam-code.com/.well-known/security.txt`).
+- **Contact**: `security@roam-code.com` (PGP key published at `templates/distribution/landing-page/.well-known/security.txt`).
 - **Acknowledgement target**: 1 business hour for the security inbox, 24 hours for general support.
 - **Notification**: customers affected by a confirmed security incident are notified within 72 hours of confirmation, in line with GDPR Article 33 timelines.
 - **Status page**: `roam-code.com/status` shows live availability and incident history.
@@ -205,7 +205,7 @@ Where this packet is bundled with `roam audit-evidence-pack` output for a specif
 | Control | Status |
 |---|---|
 | **Penetration testing** | Annual third-party penetration test scheduled from GA. Executive summary available to Business+ customers under NDA; Scale-tier customers may request the raw report under mutual NDA. |
-| **Vulnerability disclosure policy** | Public VDP at `roam-code.com/.well-known/security.txt`. 90-day disclosure timeline. PGP key for encrypted reports published at the same URL. Safe-harbour commitment for good-faith research. |
+| **Vulnerability disclosure policy** | Public VDP at `templates/distribution/landing-page/.well-known/security.txt`. 90-day disclosure timeline. PGP key for encrypted reports published at the same URL. Safe-harbour commitment for good-faith research. |
 | **Bug bounty** | Not currently. VDP-only. Reassessed once paid-customer count reaches 100. |
 | **SBOM (software bill of materials)** | Published per release in CycloneDX format, cosign-signed. Linked from the PyPI release page. CI pipeline emits in-toto v1 attestations for the build. |
 | **Dependency hygiene** | Dependabot enabled on the public repo; daily security-advisory scan; high-severity advisories patched within 7 days of public disclosure. |

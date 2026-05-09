@@ -1,4 +1,3 @@
-import json
 import re
 import sys
 from pathlib import Path
@@ -15,7 +14,6 @@ from roam.competitor_site_data import (
     SCORING_RUBRIC,
     build_site_payload,
     compute_scores,
-    default_output_path,
     default_tracker_path,
 )
 from roam.surface_counts import collect_surface_counts

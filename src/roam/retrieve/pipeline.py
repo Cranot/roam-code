@@ -334,7 +334,7 @@ def _expand_via_file_neighbors(
       dogfood notes flagged for ``seeds.py``.
     * **hub neighbour rejection** (v12.12) — even if a seed file is
       itself non-hub, its neighbour list often includes utility hubs
-      (e.g. ``cmd_critique.py`` imports ``output/formatter.py``). Those
+      (e.g. ``cmd_critique.py`` imports ``src/roam/output/formatter.py``). Those
       utility imports are not the answer to "where is X" queries, so
       reject neighbour files that exceed ``hub_threshold`` themselves.
       Symmetric to the seed-side filter; closes the residual hub-seed

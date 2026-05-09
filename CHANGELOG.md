@@ -9,14 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`roam surface`** — canonical capability registry as JSON or text. Source of truth for commands, aliases, MCP tools, presets, categories, maturity. `--filter stable|experimental|internal|deprecated` and `--category <name>` flags. Used by docs generation, contract tests, release notes, and the marketing/landscape surfaces.
+- **`roam explain-command <name>`** — per-command introspection: category, maturity, aliases, deprecation, MCP exposure, DB tables touched (best-effort source-grep), optional extras detected, stale-index sensitivity (high / medium / low / unknown).
+- **`roam db-check`** — integrity sweep over the local index: orphan symbols, broken edges, duplicate file paths, missing FTS rows, invalid line spans, corrupt metrics, files with zero symbols. Exit code 5 on any high-severity finding when `--ci` is set.
+- **`roam health --baseline <ref>`** — compares against a stored snapshot at the named ref (any git ref, `last`, or `auto` for default-branch). Reports delta (new / fixed / regressed findings) instead of an absolute set. Verdict reflects the delta — REVIEW on new high-severity, BAD on score regression, OK otherwise. Graceful DEGRADED when no snapshot exists.
+- **Index manifest table.** New `index_manifest` schema records the indexer run: roam version, schema version, parser versions, grammar versions, config hash, git HEAD, dirty hash, enabled extras, index profile. `roam doctor` surfaces manifest age plus drift hints (parser-version drift, git-HEAD drift) so commands depending on graph accuracy can warn or refuse.
+- **`roam doctor` expansion.** Four new checks: optional extras (onnxruntime / watchdog / fastmcp / scipy presence), cloud-sync detection (OneDrive / Dropbox / iCloud / Google Drive / Box / pCloud), cache permissions (`.roam/` and `.pytest_cache/` writable), and index manifest age + parser drift. 17 checks total.
 - **`roam grep` rewritten end-to-end with index-aware enrichment.** Multi-pattern (`-e` repeatable, `--patterns-from FILE`), multi-glob (`-g py -g md`), `-F/--fixed-string`, `-i/-w` flags. Engine selection prefers ripgrep > git grep > indexed-file fallback (pin via `ROAM_GREP_ENGINE`). Bulk-fetch enclosing symbols once per file (interval index) — replaces the per-match `SELECT` N+1 path. New flags: `--reachable-from <entry[,entry,...]>` (forward BFS over the call graph), `--unreachable` (orphan / not-reachable filter), `--co-occur` (every `-e` pattern must hit the same enclosing symbol), `--missing-pattern P` (anti-correlation), `--rank-by importance` (PageRank-ordered output), `--group-by symbol` (collapse hits per fn/class), `--blame` (last author + date), `--heat` (file churn), plus opt-out `--no-clones` / `--no-bridges`. Each match carries clone-class siblings (from `clone_pairs`) and cross-language bridge links when applicable.
 - **`roam refs-text <string>...`** — string-audit verdict shaped like `safe-delete` but for arbitrary literals (config keys, file paths, URLs, error messages). Groups references by surface (code / test / docs / config / dead), annotates reachability for code hits, emits per-string verdict (`SAFE-TO-REMOVE` / `REVIEW` / `LOAD-BEARING`). `--reachable-from <entry>` anchors reachability; `--per-match-detail` includes match lists in JSON.
 - **`roam delete-check`** — gates the working diff on surviving references. Parses Python / JS / TS / Go signatures from deletion lines, searches the post-edit tree for surviving uses, classifies each deletion `SAFE` / `LIKELY-SAFE` / `BREAK-RISK`. `--source {working,staged,pr,head}`, `--ci` exits 5 on `BREAK-RISK` for CI gating. Pairs with the PR Replay narrative.
 - **`roam history-grep <pattern>`** — git pickaxe wrapper (`-S` / `-G`) with `-e` repeatable, `--since` / `--until`, `-p` path filter, `--polarity` to mark each commit as `introduced` / `removed` / `modified`. Useful for postmortems and provenance audits when the trace is no longer in HEAD.
 
+### Site / docs
+
+- **Homepage visual overhaul** — paper bg (`#fafaf6`), refined card system on a unified 200ms easing curve, dot-grid hero pattern with custom code-graph SVG corner mark, dark-wedge differentiator section with light-on-navy treatment for the algorithmic-judgment moment, custom monogram in nav. Type system rebuilt with clamp() display sizes (h1 34→64, h2 26→40), `text-wrap: balance` on every heading, font-variant-numeric tabular-nums on body. Color depth via new `--ink` / `--bg-deep` / `--bg-tint` / `--line-soft` / `--accent-deep` tokens layered alongside the legacy `--text` / `--bg-alt` / `--border` (kept aliased for sub-page back-compat). Verified zero horizontal-overflow violations + WCAG-AA contrast at 320 / 390 / 768 / 1280 / 1920 viewports.
+- **PR review comment mockup redesign** — replaced the generic GitHub-comment block with one built on authentic Primer color tokens (`--gh-canvas-subtle`, `--gh-border`, `--gh-danger-bg`, `--gh-attention-bg`, `--gh-success-bg`). Status banner mirrors GitHub's "checks failed" pattern. Findings render as bordered cards with Primer-pill severity ("High" / "Medium"), file:line links with arrow glyph, suggested-fix block in GitHub's actual diff styling (3 context lines, green-on-paper add). New: inline blast-radius SVG visualisation under the medium finding — central red node with eight spokes to caller nodes — visualises the "47 callers" claim that competitors only state numerically.
+- **Mobile-overflow guard** — fixes previously silent overflow on grid layouts at narrow viewports. Direct children of `.products` / `.scenarios-grid` / `.demo-grid` / `.replay-tiers` / `.senses-grid` / `.numbers-grid` / `.verbs-grid` / `.flow` get `min-width: 0` so `1fr` tracks shrink below their content's min-content width. Inline code in scenario / PR-find / dogfood / FAQ contexts gets `overflow-wrap: anywhere`. Terminal blocks inside narrow scenario cards switch to `white-space: pre-wrap` so output wraps cleanly inside 280-360px columns instead of clipping with a horizontal scrollbar.
+- **Cross-page visual propagation** — the new design system applied to pricing, compare, setup, docs hub, getting-started, integration-tutorials, architecture, agent-contract, demos, command-reference. Inline `style="..."` chains replaced with class modifiers (`.docs-card`, `.setup-editor-grid`, `.section-intro-tight`, `.whats-in-inner--narrow`, `.verbs-grid--2`, `.numbers-grid--2`). Dot-grid lede applied to `.docs-page` so the four no-hero docs pages inherit the homepage texture. `.docs-page table { display:block; overflow-x:auto }` so reference tables horizontal-scroll on phones. `.docs-page .step pre { white-space: pre-wrap }` so wide commands inside step cards wrap. Class swap `.legal-page` → `.docs-page` on agent-contract + demos (legal-page was the wrong base class for a docs guide).
+- Two new docs pages: **`/docs/how-roam-thinks`** (decision tree mapping engineering questions to the right Roam command — 9 moments, command lists, example invocations) and **`/docs/troubleshooting`** (eight common problems: stale index, cloud sync, missing extras, parser failures, MCP setup, cache permissions, OOM, slow JSON — each with symptom + diagnosis + fix). Sitemap updated.
+- **Site positioning sweep** — 24-page footer tagline unified to `The local structural intelligence layer for coding agents.` (locked memo phrasing). Press-kit one-liner + two-paragraph blurb rewritten. About page meta description updated. PWA manifest name + description matched. SOC 2 / ISO 42001 / AI-governance acronyms removed from homepage trust-strip + JSON-LD (framework-specific detail moved to `/security`). All Copilot mentions removed; Codex confirmed across homepage, press, audit, llms.txt. PR Replay mailto bodies trimmed from 6-7 fields to 3-4 essentials.
+
+### Fixed
+
+- **`gitignore.py:_compile_pattern` quadratic-string fix** — the pattern compiler was building its regex via `regex += "..."` inside a `while` loop, O(n²) for n pattern segments. Rewrote to collect parts in a list and `"".join(...)` at the end. Surfaced by `roam math` running against the repo itself.
+- **`cmd_explain_command` json_envelope kwarg collision** — `json_envelope("explain-command", ..., command={...})` collided with the function's first positional parameter named `command`. Renamed the kwarg to `command_info`. Caught by the new CLI contract test suite.
+- **Stale path references in CHANGELOG.md** — 12 high-confidence path-rename hints applied via `roam stale-refs --fix apply` (old `templates/site/` and `docs/site/` paths updated to current `templates/distribution/landing-page/`).
+
+### Tests
+
+- New `tests/test_cli_contract.py` — 667 contract tests: every canonical command's module + attribute imports cleanly, every command has non-empty `--help`, JSON output never tracebacks in a fresh empty dir. Plus end-to-end shape tests for `surface --json`, `explain-command --json`, `db-check --json`. Catches lazy-load drift before users hit it.
+- New `tests/test_manifest.py` — 8 tests covering manifest schema presence, collect/write/read round-trip, drift detection (roam_version / parser_versions / git_head), empty-table behaviour, end-to-end indexer-writes-manifest.
+- New `tests/test_health_baseline.py` — 7 tests covering `--baseline` semantics including DEGRADED no-snapshot path, REVIEW on new high-severity, BAD on score regression, JSON envelope shape, text-output rendering.
+- Removed `test_generated_landscape_json_is_in_sync` from `test_competitor_site_data.py` — the `landscape.json` it expected was deliberately deleted in the GH Pages takedown; test had been failing on every run.
+
 ### Internal
 
 - New `roam.commands.grep_helpers` module: `detect_engine`, `run_search`, `build_interval_index` / `find_enclosing`, `build_reachable_set` (multi-entry), `build_orphan_set`, `build_clone_index` / `lookup_clone_siblings`, `build_bridge_index`, `attach_blame` / `attach_heat` / `attach_pagerank`, `classify_surface`, `group_by_symbol`. Single-source primitives behind grep / refs-text / delete-check / history-grep so cross-cutting logic (reachability, clone-class join, surface classification) doesn't drift.
+- `_DEPRECATED_COMMANDS` now supports structured records (`{replacement, reason, removal_version}`); `_deprecation_record` helper normalises both legacy string entries and the new shape. Surface output exposes deprecation reason + removal version.
+- New `roam.commands.stale_index` helper — `check_stale()` returns `(is_stale, reason)`, manifest-aware where the manifest table is present, mtime fallback otherwise. Available for any command that wants to opt into stale-index warnings.
 
 ## [12.50] - 2026-05-09
 
@@ -431,7 +461,7 @@ git directory regardless of whether `roam index` has been built.
   `--check-absolute-routes` to flip to strict file-system lookup.
 - Absolute URLs with extensions try project-root, then `public/` /
   `static/` / `assets/`, then walk the source file's ancestor chain —
-  so `<img src="/favicon.svg">` from `templates/site/about.html` resolves
+  so `<img src="/favicon.svg">` from `templates/distribution/landing-page/about.html` resolves
   to `templates/site/favicon.svg` when that's the deploy root.
 
 #### Reporting
@@ -903,7 +933,7 @@ the new domain recommendation.
 
 ### Tests
 
-- `tests/test_pivot_phase0_commands.py` — 7 tests covering happy-
+- `tests/test_phase0_commands.py` — 7 tests covering happy-
   path + verdict-decision-tree for `permit`, no-commits-found path
   for `postmortem`, JSON envelope shape + markdown render + file-
   output for `article-12-check`. All pass on Python 3.9-3.13.
@@ -3395,7 +3425,7 @@ quoted ``"122 MCP tools"`` in plain text but the structured number
 clients actually parse was stale.
 
 Updated both copies (``src/roam/mcp-server-card.json`` and the
-canonical ``docs/site/.well-known/mcp-server-card.json``). Added
+canonical ``templates/distribution/landing-page/.well-known/mcp-server-card.json``). Added
 ``test_card_tool_count_matches_live_count`` which compares the
 card's tool count against ``surface_counts.collect_surface_counts``
 so a future MCP-tool addition that forgets the card update fails
@@ -4075,7 +4105,7 @@ precision, full SARIF coverage, and a documentation-drift CI check.
 - **`tests/test_doc_consistency.py`** — cross-surface consistency
   check. Asserts version + CLI command count + MCP tool count agree
   across `pyproject.toml`, `server.json`,
-  `docs/site/.well-known/mcp-server-card.json`, `README.md`,
+  `templates/distribution/landing-page/.well-known/mcp-server-card.json`, `README.md`,
   `llms-install.md`, and `docs/site/data/landscape.json`. Optional
   surfaces (project-local files, missing fields) skip cleanly. Caught
   a real drift on first run: the docs-site landscape entry was
@@ -4392,7 +4422,7 @@ five papercut bugs fixed.
   the gap is ≥ 0.30 the structural reranker has a unique winner and
   the token-coverage check is skipped. Distinguishes real big-gap
   matches from "one common word matches everything" failure modes.
-- **MCP server card** at `docs/site/.well-known/mcp-server-card.json`
+- **MCP server card** at `templates/distribution/landing-page/.well-known/mcp-server-card.json`
   was hardcoded to `"version": "12.2.0"`. Bumped to track the
   package.
 - **`roam mcp --list-tools-json`** was missing `inputSchema` per

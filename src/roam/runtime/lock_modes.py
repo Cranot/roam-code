@@ -15,7 +15,7 @@ Initial seed covers 5 pilot commands. Migration is incremental;
 the audit env var ``ROAM_DAEMON_AUDIT=1`` checks per-command DB
 ``readonly=`` flags match the registered mode.
 
-Companion: ``runtime/lockmgr.py`` (RWLock + drain semantics).
+Companion: ``src/roam/runtime/lockmgr.py`` (RWLock + drain semantics).
 """
 
 from __future__ import annotations
