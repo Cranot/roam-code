@@ -141,7 +141,6 @@ body {
 .legal-page,
 .faq details p,
 .trust-cell span,
-.pain-quote,
 .dogfood-list li,
 .compare-foot {
   overflow-wrap: break-word;
@@ -1143,60 +1142,12 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   }
 }
 
-/* ─── Buyer-pain band ─── */
-.pain-band {
-  background: var(--pain-bg);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  padding: var(--section-y) 0;
-}
-.pain-band-inner {
-  max-width: var(--max-w);
-  margin: 0 auto;
-  padding: 0 var(--container-x);
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: var(--s-5);
-}
-@media (max-width: 800px) { .pain-band-inner { grid-template-columns: 1fr; } }
-.pain-quote {
-  margin: 0;
-  font-size: 14px;
-  color: var(--text);
-  border-left: 3px solid var(--warn);
-  padding-left: 14px;
-  line-height: 1.5;
-}
-.pain-quote strong { color: var(--warn); }
-.pain-source {
-  display: block;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--muted);
-  font-style: italic;
-}
-.pain-source a { color: var(--muted); text-decoration: underline; }
-
-/* ─── Products intro ─── */
-.products-intro {
-  padding: var(--section-y) 0 0;
-  background: var(--bg);
-}
+/* ─── Products intro (folded into .products section as a centered lede) ─── */
 .products-intro-inner {
   max-width: 720px;
   margin: 0 auto;
   padding: 0 var(--container-x);
   text-align: center;
-}
-.products-intro h2 {
-  font-size: var(--t-section-h);
-  font-weight: 600;
-  margin: 0 0 12px;
-}
-.products-intro .lede {
-  font-size: 17px;
-  color: var(--muted);
-  margin: 0;
 }
 
 /* ─── Product cards ─── */
@@ -1993,9 +1944,6 @@ footer a { color: #fff; }
   .compare-table {
     border-width: 2px;
   }
-  .pain-quote {
-    border-left-width: 4px;
-  }
 }
 
 /* ─── Reduced motion ─── */
@@ -2045,7 +1993,6 @@ footer a { color: #fff; }
   .docs-subnav a,
   .dogfood-list a,
   .trust-cell a,
-  .pain-source a,
   .compare-foot a,
   .legal-foot a,
   .legal-page article a,
@@ -2158,7 +2105,7 @@ footer a { color: #fff; }
     page-break-before: auto;
     break-before: auto;
   }
-  pre, code, table, blockquote, .pain-quote, .gh-pr, .scenario {
+  pre, code, table, blockquote, .gh-pr, .scenario {
     page-break-inside: avoid;
     break-inside: avoid;
   }
