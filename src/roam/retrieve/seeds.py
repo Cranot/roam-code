@@ -446,7 +446,7 @@ def extract_tokens(query: str) -> list[str]:
 # FTS5 / LIKE matching
 # ---------------------------------------------------------------------------
 
-# Same column weights as `search/index_embeddings.py` so behaviour matches
+# Same column weights as `src/roam/search/index_embeddings.py` so behaviour matches
 # the rest of the search stack: name=10, qualified_name=5, signature=2,
 # kind=1, file_path=3.
 _BM25_WEIGHTS = "10.0, 5.0, 2.0, 1.0, 3.0"

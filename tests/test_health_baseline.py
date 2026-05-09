@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 from pathlib import Path
@@ -21,7 +20,6 @@ from conftest import (
     invoke_cli,
     parse_json_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers — seed synthetic snapshot rows

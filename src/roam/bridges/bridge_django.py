@@ -11,7 +11,7 @@ framework but not visible in static imports:
 - Celery task tagging (via @app.task/@shared_task)
 
 Ported from `upstream fork/roam-code` — credit upstream fork author. See the
-companion ``index/django_post.py`` for transitive inheritance + custom
+companion ``src/roam/index/django_post.py`` for transitive inheritance + custom
 field resolution that runs after the per-file extraction phase.
 """
 

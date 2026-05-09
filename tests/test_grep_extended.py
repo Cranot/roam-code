@@ -7,13 +7,9 @@ tests live in their own files.
 
 from __future__ import annotations
 
-import textwrap
-from pathlib import Path
-
 import pytest
 
 from tests.conftest import assert_json_envelope, invoke_cli, parse_json_output
-
 
 # ============================================================================
 # Multi-pattern + patterns-from + multi-glob + -F

@@ -1,7 +1,7 @@
 """Python-specific anti-pattern detectors.
 
 The
-existing ``catalog/detectors.py`` covers language-agnostic algorithm
+existing ``src/roam/catalog/detectors.py`` covers language-agnostic algorithm
 patterns (O(n²) string concat, sort-to-take, IO-in-loop). This module
 adds Python-canonical anti-patterns that don't generalise to other
 languages and would muddy the detector registry there.

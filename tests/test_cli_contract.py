@@ -24,14 +24,11 @@ import importlib
 import json
 import os
 import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from roam.cli import _COMMANDS, _DEPRECATED_COMMANDS, cli
-
 
 # ---------------------------------------------------------------------------
 # Discovery
