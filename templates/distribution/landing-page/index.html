@@ -88,7 +88,19 @@
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
-      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <!-- Code-graph monogram: a central node with two thin edges
+               extending toward the rest of the page. Stroke-only so it
+               picks up currentColor on light + dark surfaces. -->
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
       <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
       <label for="nav-toggle" class="nav-toggle-label">
         <span class="nav-burger" aria-hidden="true"></span>
@@ -108,6 +120,20 @@
   <main id="main">
 
   <header class="hero">
+    <svg class="hero-graph-mark" viewBox="0 0 120 120" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+      <!-- Tiny hero corner mark: 4 nodes + 4 edges, stroke-only.
+           Sits at low opacity behind the headline. Sub-perceptible
+           texture, not decoration. -->
+      <line x1="20" y1="30" x2="60" y2="58" stroke-width="0.8"/>
+      <line x1="60" y1="58" x2="100" y2="38" stroke-width="0.8"/>
+      <line x1="60" y1="58" x2="48" y2="100" stroke-width="0.8"/>
+      <line x1="100" y1="38" x2="92" y2="92" stroke-width="0.8"/>
+      <circle cx="20" cy="30" r="4" fill="currentColor" stroke="none"/>
+      <circle cx="60" cy="58" r="5" fill="currentColor" stroke="none"/>
+      <circle cx="100" cy="38" r="3.5" fill="currentColor" stroke="none"/>
+      <circle cx="48" cy="100" r="3" fill="currentColor" stroke="none"/>
+      <circle cx="92" cy="92" r="3.5" fill="currentColor" stroke="none"/>
+    </svg>
     <div class="hero-inner">
       <p class="eyebrow">For teams using Cursor, Claude Code, Codex, Gemini</p>
       <h1 class="hero-headline">
@@ -134,33 +160,34 @@
   <!-- ──────────────────────────────────────────────────────────
        SECTION 1A — Algorithmic Risk Review (the differentiator)
        ────────────────────────────────────────────────────────── -->
-  <section class="whats-in" id="algo-wedge" style="background: var(--bg-alt);">
-    <div class="whats-in-inner" style="max-width: 980px;">
+  <section class="whats-in whats-in--dark whats-in--wide" id="algo-wedge">
+    <div class="whats-in-inner">
+      <p class="eyebrow eyebrow--on-dark">The differentiator</p>
       <h2>Computational judgment most reviewers don't run.</h2>
       <p class="lede">
         AI-generated code often passes tests and still ships accidental
         O(n²) loops, N+1 queries, regex compilation inside loops, repeated
         JSON parsing, or recursion without memoisation. Semantic reviewers
         (CodeRabbit, Greptile, Qodo) read the diff as text; static analyzers
-        (SonarQube, Semgrep, CodeQL) match rule patterns. Roam analyzes
-        algorithmic shape over the call graph — locally, deterministically.
+        (SonarQube, Semgrep, CodeQL) match rule patterns. <strong>Roam analyzes
+        algorithmic shape over the call graph</strong> — locally, deterministically.
         One of nine engineering senses your agent can call.
       </p>
-      <div class="numbers-grid">
+      <div class="numbers-grid numbers-grid--3">
         <div class="num-cell">
-          <strong style="font-size: 15px; font-family: 'Space Grotesk';">Agent output</strong>
+          <strong>Agent output</strong>
           <span>Plausible-looking patch — passes tests, reads as clean. Hides accidental O(n²), N+1, or repeated parsing.</span>
         </div>
         <div class="num-cell">
-          <strong style="font-size: 15px; font-family: 'Space Grotesk';">Roam critique</strong>
+          <strong>Roam critique</strong>
           <span>Names the structural flaw — invariant violation, asymptotic shape, hot-path interaction — with the exact line and call sites.</span>
         </div>
         <div class="num-cell">
-          <strong style="font-size: 15px; font-family: 'Space Grotesk';">Engineer action</strong>
+          <strong>Engineer action</strong>
           <span>Re-prompt the agent with Roam's finding, patch the implementation, verify related clones and call sites are consistent.</span>
         </div>
       </div>
-      <p class="how-it-works-foot" style="text-align: center; margin-top: 24px;">
+      <p class="how-it-works-foot wedge-trylist">
         Try it: <code>roam math</code> · <code>roam algo</code> · <code>roam n1</code> · <code>roam missing-index</code> · <code>roam hotspots</code>
       </p>
     </div>
@@ -208,8 +235,8 @@
   <!-- ──────────────────────────────────────────────────────────
        SECTION 1B — Agent senses, by category
        ────────────────────────────────────────────────────────── -->
-  <section class="whats-in" id="senses">
-    <div class="whats-in-inner" style="max-width: 980px;">
+  <section class="whats-in whats-in--wide" id="senses">
+    <div class="whats-in-inner">
       <h2>The questions agents miss</h2>
       <p class="lede">
         Each row is one engineering question AI agents commonly skip
@@ -264,7 +291,7 @@
           <code>roam attest</code> · <code>roam cga</code> · <code>roam audit-trail-export</code> · <code>roam --sarif</code>
         </div>
       </div>
-      <p class="how-it-works-foot" style="text-align: center;">
+      <p class="how-it-works-foot how-it-works-foot--centered">
         See it in action: <a href="/docs/demos">eight concrete scenarios where AI ships a plausible patch and Roam catches the problem before merge</a>. Or jump to the <a href="/docs/command-reference">full command reference</a>.
       </p>
     </div>
@@ -319,7 +346,7 @@
   <!-- ──────────────────────────────────────────────────────────
        SECTION 3 — What Roam catches (merged pain + scenarios)
        ────────────────────────────────────────────────────────── -->
-  <section class="whats-in" id="what-roam-catches" style="padding-top: 56px; background: var(--bg-alt);">
+  <section class="whats-in" id="what-roam-catches">
     <div class="whats-in-inner">
       <h2>What Roam catches</h2>
       <p class="lede">
@@ -330,7 +357,7 @@
         plausible code faster than human reviewers can inspect its
         structural consequences. Roam catches three classes of structural
         consequence the agent and the reviewer both tend to miss.
-        <span style="display: block; margin-top: 8px; font-size: 14px; color: var(--text-muted);">
+        <span class="lede-source">
           Source: <a href="https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025">Faros AI, 2026 telemetry analysis</a>
           (<a class="archive-link" href="https://web.archive.org/web/20260507124644/https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025" rel="external">archive</a>).
         </span>
@@ -580,10 +607,10 @@
        SECTION 5d — Roam on Roam (dogfooding evidence)
        ────────────────────────────────────────────────────────── -->
   <section class="dogfood-band">
-    <div class="dogfood-band-inner">
-      <p class="eyebrow" style="text-align: center;">Roam on Roam</p>
-      <h2 style="text-align: center;">We use what we sell.</h2>
-      <p class="lede" style="text-align: center; max-width: 720px; margin: 0 auto var(--s-5);">
+    <div class="dogfood-band-inner dogfood-band-inner--centered">
+      <p class="eyebrow">Roam on Roam</p>
+      <h2>We use what we sell.</h2>
+      <p class="lede">
         Roam runs against its own codebase. Recent commits where Roam flagged something we missed, with the verifiable git hash:
       </p>
       <ul class="dogfood-list">
@@ -613,16 +640,19 @@
   <!-- ──────────────────────────────────────────────────────────
        SECTION 6 — Paid product cards
        ────────────────────────────────────────────────────────── -->
-  <section class="products" id="review">
-    <div class="products-intro-inner" style="margin-bottom: 32px;">
-      <h2 style="text-align: center;">For teams: three paid surfaces, one engine</h2>
-      <p class="lede" style="text-align: center;">
+  <section class="products-intro">
+    <div class="products-intro-inner">
+      <h2>For teams: three paid surfaces, one engine</h2>
+      <p class="lede">
         The free CLI is the engine. The paid products run the same engine
         in different places — on every pull request, in a shared dashboard,
         or inside your own network — so the structural-intelligence layer
         is available whenever an agent or reviewer needs it.
       </p>
     </div>
+  </section>
+
+  <section class="products" id="review">
     <div class="product-card">
       <h3>Roam Review</h3>
       <p class="tagline">A structural second opinion on every pull request — runs <strong>alongside</strong> CodeRabbit, Greptile, or Qodo, not instead.</p>

@@ -25,43 +25,65 @@
 }
 
 :root {
-  /* ─── Color tokens ─── */
+  /* ─── Color tokens ───
+     --ink is the deepest text colour, reserved for headings and the dark
+     wedge background. --text is body copy. --bg is a warm off-white
+     (paper). --bg-deep doubles as the dark-section background and matches
+     --ink so any cross-section element keeps a visual relationship. */
+  --ink: #0a0e16;
+  --ink-30: rgba(10, 14, 22, 0.30);
+  --ink-60: rgba(10, 14, 22, 0.60);
   --text: #1a1a1a;
   --muted: #595959;
   --muted-soft: #6b6b6b;
-  --bg: #fdfdfd;
-  --bg-alt: #f4f4f0;
+  --bg: #fafaf6;            /* warm paper */
+  --bg-tint: #f3f3ec;       /* a touch deeper than bg, for tinted bands */
+  --bg-alt: #f4f4f0;        /* legacy token retained for sub-pages */
+  --bg-deep: #0a0e16;       /* the single dark wedge */
   --accent: #0049b7;
+  --accent-deep: #02307a;
   --accent-soft: #eef2fb;
   --warn: #b04800;
   --pop: #007a3d;
   --border: #d6d6d0;
+  --line-soft: rgba(10, 14, 22, 0.08);
   --pain-bg: #fff8ed;
-  --footer-bg: #1a1a1a;
+  --footer-bg: #0a0e16;
   --footer-text: #fff;
   --footer-meta: #aaa;
 
   /* ─── Type scale (modular, ratio 1.25) ─── */
   --t-xs: 12px;
   --t-sm: 13px;
-  --t-base: 17px;
+  --t-base: 16px;
   --t-md: 19px;
   --t-lg: 22px;
   --t-xl: 28px;
   --t-2xl: 34px;
-  --t-hero: clamp(28px, 5vw, 48px);
-  /* Fluid section-heading scale — used by .whats-in/how-it-works/compare/
-     faq h2 etc. Floors at 22 px so a 320 px phone shows readable section
-     titles instead of 28 px headlines that wrap to three lines. */
-  --t-section-h: clamp(22px, 4vw, 28px);
+  /* Display ramp — used by hero h1 + section h2 + card h3 + eyebrow. */
+  --t-h1: clamp(34px, 5.2vw, 64px);
+  --t-h2: clamp(26px, 3vw, 40px);
+  --t-h3: 18px;
+  --t-eyebrow: 12px;
+  --t-hero: clamp(34px, 5.2vw, 64px);
+  /* Fluid section-heading scale — floors at 26 px so 320 px phones show a
+     readable section title without breaking onto three lines. */
+  --t-section-h: clamp(26px, 3vw, 40px);
   /* Card h3 ramp (product cards, scenario cards). */
-  --t-card-h: clamp(19px, 3vw, 22px);
+  --t-card-h: 18px;
   /* Big-number ramp (.num-cell strong, .price-amount). */
   --t-numeric: clamp(22px, 4vw, 26px);
   --t-price: clamp(26px, 5vw, 32px);
-  --lh-tight: 1.2;
+  --lh-tight: 1.06;          /* hero h1 */
+  --lh-h2: 1.15;             /* h2 / h3 */
   --lh-snug: 1.4;
-  --lh-base: 1.6;
+  --lh-base: 1.55;
+  --ls-h1: -0.04em;
+  --ls-h2: -0.03em;
+  --ls-eyebrow: 0.08em;
+  /* Standard easing + duration shared by all microinteractions. */
+  --easing: cubic-bezier(0.4, 0, 0.2, 1);
+  --t-fast: 200ms;
 
   /* ─── Spacing scale (4px base) ─── */
   --s-1: 4px;
@@ -75,22 +97,25 @@
   --s-9: 96px;
 
   /* ─── Section + container rhythm — fluid across viewport ─── */
-  /* Vertical padding inside sections. Scales 48 -> 64 px from phone to
-     desktop. Used for headline content sections (whats-in, how-it-works,
-     compare, faq, trust-strip, demo-block). */
-  --section-y: clamp(48px, 7vw, 64px);
-  /* Hero gets a touch more headroom up top, less below. */
-  --section-y-hero-top: clamp(56px, 9vw, 80px);
-  --section-y-hero-bottom: clamp(40px, 6vw, 60px);
+  /* Vertical padding inside sections. See bumped definition below in the
+     Layout block; this comment is kept to mark the rhythm. The hero gets
+     a touch more headroom up top, less below. */
+  --section-y-hero-top: clamp(80px, 10vw, 140px);
+  --section-y-hero-bottom: clamp(56px, 7vw, 100px);
   /* Minor section (audit-upsell, page-cta-strip) — slightly tighter. */
   --section-y-tight: clamp(32px, 5vw, 48px);
   /* Horizontal container padding. 16 px on phones, 24 px on tablets+. */
   --container-x: clamp(16px, 3vw, 24px);
 
   /* ─── Layout ─── */
-  --radius: 8px;
-  --radius-sm: 4px;
+  --radius: 14px;
+  --radius-sm: 6px;
   --max-w: 1100px;
+
+  /* ─── Section vertical breathing — bumped from clamp(48,7vw,64) so
+     headlines + content rooms feel like a high-craft page rather than a
+     generic LLM-default tight column. ─── */
+  --section-y: clamp(64px, 8vw, 120px);
 }
 
 * { box-sizing: border-box; }
@@ -130,10 +155,14 @@ html, body {
 }
 body {
   font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  font-size: 17px;
-  line-height: 1.6;
+  font-size: 16px;
+  line-height: 1.55;
   color: var(--text);
   background: var(--bg);
+  /* Tabular figures keep counts ("200+", "459", "7,731") aligned vertically
+     anywhere they appear in body copy. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "ss01" 1;
 }
 /* Long URLs in legal-style prose should wrap rather than blow out the
    viewport. Scoped to body-text containers so that monospace identifiers
@@ -146,14 +175,79 @@ body {
   overflow-wrap: break-word;
 }
 img, svg, video { max-width: 100%; height: auto; }
-/* Default heading line-height — without this, h1/h2/h3 inherit body's 1.6,
-   which leaves gaping vertical space inside two-line headlines on mobile.
+
+/* Mobile-overflow guard. Grid items default to min-width: min-content,
+   which lets a long unbreakable child (mailto URL, monospace identifier,
+   demo code span) push the column wider than the viewport on phones —
+   and because the body uses overflow-x: clip, that excess gets silently
+   chopped off the right edge. Forcing min-width: 0 on direct children of
+   our layout grids lets them shrink to fit. Pairs with overflow-wrap on
+   the long-content cells below. */
+.products > *,
+.scenarios-grid > *,
+.demo-grid > *,
+.replay-tiers > *,
+.senses-grid > *,
+.numbers-grid > *,
+.verbs-grid > *,
+.flow > * {
+  min-width: 0;
+}
+
+/* Inline code, mailto links, and prefilled mockups can carry long
+   unbreakable tokens. On mobile we'd rather wrap mid-token than
+   overflow the viewport. Compare-table cells already opt out via
+   white-space rules; terminal blocks scroll horizontally on purpose. */
+.scenario p code,
+.scenario p,
+.gh-finding,
+.gh-finding code,
+.product-card .features li code,
+.product-card .features li,
+.product-card .features li strong,
+.dogfood-list li code,
+.faq details p code,
+.faq details p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/* Display typography — distinct from body. Tighter line-height, negative
+   tracking, balanced wrapping. Headings get the deeper --ink colour so
+   they sit visually above body text rather than blurring with it.
    text-wrap: balance redistributes words across lines so a 3-line heading
    doesn't end on a single dangling word. Progressive-enhanced — Safari
    17.4+, Chrome 114+, Firefox 121+. Older browsers ignore. */
 h1, h2, h3, h4 {
-  line-height: var(--lh-snug);
+  color: var(--ink);
   text-wrap: balance;
+  font-feature-settings: "ss01" 1, "tnum" 1;
+}
+h1 {
+  font-size: var(--t-h1);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-h1);
+  margin: 0 0 24px;
+}
+h2 {
+  font-size: var(--t-h2);
+  font-weight: 600;
+  line-height: var(--lh-h2);
+  letter-spacing: var(--ls-h2);
+  margin: 0 0 16px;
+}
+h3 {
+  font-size: var(--t-h3);
+  font-weight: 600;
+  line-height: var(--lh-h2);
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+}
+h4 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: var(--lh-h2);
+  margin: 0 0 8px;
 }
 
 code { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -161,16 +255,20 @@ code { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monosp
 a {
   color: var(--accent);
   text-decoration: none;
-  /* Animated underline: thicker on hover, smooth ramp instead of an
-     instant CSS-default snap. text-decoration-thickness 0 -> 2px in
-     0.15s reads as a hover affirmation, not a layout shift. */
+  /* Subtle underline on hover, never always-on. Animated thickness +
+     colour ramp on the unified easing. */
   text-decoration-thickness: 1px;
+  text-decoration-color: rgba(0, 73, 183, 0.40);
   text-underline-offset: 0.18em;
-  transition: text-decoration-thickness 0.15s ease, color 0.15s ease;
+  transition:
+    text-decoration-color var(--t-fast) var(--easing),
+    text-decoration-thickness var(--t-fast) var(--easing),
+    color var(--t-fast) var(--easing);
 }
 a:hover {
   text-decoration: underline;
   text-decoration-thickness: 2px;
+  text-decoration-color: var(--accent);
 }
 
 /* Single source of truth for focus-visible outlines. Any focusable element
@@ -218,11 +316,16 @@ summary:focus-visible,
 /* ─── Nav ─── */
 .site-nav {
   background: var(--bg);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line-soft);
   padding: 14px 0;
   position: sticky;
   top: 0;
   z-index: 50;
+  /* Glassy fall-back-able backdrop on supporting browsers, so the nav
+     doesn't visually punch a hole when content scrolls behind it. */
+  backdrop-filter: saturate(140%) blur(8px);
+  -webkit-backdrop-filter: saturate(140%) blur(8px);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
 }
 .nav-inner {
   max-width: var(--max-w);
@@ -237,20 +340,38 @@ summary:focus-visible,
 .site-logo {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 600;
-  font-size: 22px;
-  color: var(--text);
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: opacity var(--t-fast) var(--easing);
+}
+.site-logo:hover { opacity: 0.85; text-decoration: none; }
+.site-logo .site-logo-mark {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--accent);
 }
 .logo-dot { color: var(--accent); }
 .nav-links {
   list-style: none;
   display: flex;
-  gap: 24px;
+  gap: 28px;
   margin: 0;
   padding: 0;
-  font-size: 15px;
+  font-size: 14px;
   flex-wrap: wrap;
 }
-.nav-links a { color: var(--muted); }
+.nav-links a {
+  color: var(--ink-60);
+  transition: color var(--t-fast) var(--easing);
+  text-underline-offset: 0.18em;
+}
+.nav-links a:hover { color: var(--ink); text-decoration: none; }
 .nav-links a[aria-current="page"] { color: var(--accent); font-weight: 600; }
 
 /* Hamburger toggle — pure CSS, no JS, plays nicely with strict CSP.
@@ -354,38 +475,79 @@ summary:focus-visible,
   .nav-toggle-checkbox:checked ~ .nav-links { display: flex; }
 }
 
-/* ─── Hero ─── */
+/* ─── Hero ───
+   Two layered SVGs as background: a 24×24 dot grid that fades downward,
+   plus a small code-graph (3 nodes + edges) tucked into the top-right
+   corner. Both at 0.06–0.08 opacity. The page bg colour shows through
+   between dots — restraint over decoration. */
 .hero {
-  background: linear-gradient(180deg, var(--accent-soft) 0%, var(--bg) 100%);
+  position: relative;
+  background: var(--bg);
   padding: var(--section-y-hero-top) 0 var(--section-y-hero-bottom);
+  overflow: hidden;
+  isolation: isolate; /* keep the bg svgs behind text */
+}
+.hero::before {
+  /* Dot grid — 24×24 px cells, 1.4 px dots in --ink, fading down. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(10, 14, 22, 0.18) 1px, transparent 1.5px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+  /* Soft fade to nothing at the bottom so the eye lands on hero text,
+     not on the grid edge. */
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.45) 35%, rgba(0,0,0,0.18) 70%, transparent 95%);
+          mask-image: linear-gradient(180deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.45) 35%, rgba(0,0,0,0.18) 70%, transparent 95%);
+  pointer-events: none;
+}
+.hero-graph-mark {
+  position: absolute;
+  top: clamp(20px, 4vw, 60px);
+  right: clamp(20px, 5vw, 80px);
+  width: clamp(80px, 8vw, 120px);
+  height: clamp(80px, 8vw, 120px);
+  opacity: 0.18;
+  z-index: -1;
+  color: var(--accent);
+  pointer-events: none;
 }
 .hero-inner {
   max-width: var(--max-w);
   margin: 0 auto;
   padding: 0 var(--container-x);
   text-align: center;
+  position: relative;
 }
 .eyebrow {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 13px;
+  font-size: var(--t-eyebrow);
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: var(--accent);
-  margin: 0 0 16px;
+  letter-spacing: var(--ls-eyebrow);
+  color: var(--ink-60);
+  margin: 0 0 18px;
 }
 .hero-headline {
-  font-size: clamp(28px, 5vw, 48px);
-  font-weight: 500;
-  line-height: 1.2;
+  font-size: var(--t-h1);
+  font-weight: 600;
+  line-height: var(--lh-tight);
   margin: 0 0 24px;
-  letter-spacing: -0.5px;
+  letter-spacing: var(--ls-h1);
+  color: var(--ink);
+  max-width: 920px;
+  margin-left: auto;
+  margin-right: auto;
 }
-.hero-headline strong { font-weight: 700; }
+.hero-headline strong { font-weight: 600; color: var(--ink); }
 .hero-subhead {
-  font-size: clamp(17px, 2vw, 19px);
-  color: var(--muted);
+  font-size: clamp(16px, 1.5vw, 18px);
+  line-height: 1.55;
+  color: var(--ink-60);
   max-width: 640px;
-  margin: 0 auto 36px;
+  margin: 0 auto 40px;
   /* Read-flow optimization: text-wrap: pretty drops orphans + balances
      line lengths. Both progressive-enhanced — older browsers ignore. */
   text-wrap: pretty;
@@ -393,51 +555,72 @@ summary:focus-visible,
 .hero-ctas {
   display: flex;
   justify-content: center;
-  gap: 14px;
+  gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 28px;
+  margin-bottom: 32px;
 }
 
-/* CTA buttons */
+/* CTA buttons — unified easing, single 200ms transition curve, soft
+   y-translate on hover. Border stays 1px on the secondary; primary uses
+   a single solid fill so it reads as the page's load-bearing action. */
 .btn-primary, .btn-secondary {
   display: inline-block;
-  padding: 14px 22px;
-  border-radius: var(--radius);
+  padding: 12px 20px;
+  border-radius: 10px;
   font-family: inherit;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   text-decoration: none;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
   cursor: pointer;
+  transition:
+    background-color var(--t-fast) var(--easing),
+    color var(--t-fast) var(--easing),
+    border-color var(--t-fast) var(--easing),
+    transform var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing);
 }
 .btn-primary {
   background: var(--accent);
   color: #fff;
-  border: 2px solid var(--accent);
+  border: 1px solid var(--accent);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 1px 2px rgba(2,48,122,.12);
 }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,73,183,.3); text-decoration: none; }
+.btn-primary:hover {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  transform: translateY(-1px);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset, 0 8px 20px rgba(2,48,122,.22);
+  text-decoration: none;
+}
 .btn-primary:active {
-  /* Press-down feedback. Sub-tactile but materially clearer than nothing
-     when the user actually taps on a phone (no hover state to convey
-     "you pressed me"). */
   transform: translateY(0);
-  box-shadow: 0 1px 4px rgba(0,73,183,.25);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 1px 4px rgba(2,48,122,.20);
 }
 .btn-secondary {
   background: var(--bg);
-  color: var(--accent);
-  border: 2px solid var(--accent);
+  color: var(--ink);
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
 }
-.btn-secondary:hover { background: var(--accent-soft); text-decoration: none; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,73,183,.15); }
+.btn-secondary:hover {
+  background: var(--bg);
+  border-color: var(--ink);
+  color: var(--ink);
+  text-decoration: none;
+  transform: translateY(-1px);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 20px rgba(10,14,22,.06);
+}
 .btn-secondary:active {
   transform: translateY(0);
-  box-shadow: 0 1px 4px rgba(0,73,183,.12);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 3px rgba(10,14,22,.06);
 }
 
 .hero-trust-strip {
   font-size: 13px;
-  color: var(--muted);
-  margin: 28px 0 0;
+  color: var(--ink-60);
+  margin: 32px 0 0;
+  letter-spacing: -0.005em;
 }
 
 /* ─── What's in the free CLI ─── */
@@ -445,6 +628,97 @@ summary:focus-visible,
   padding: var(--section-y) 0;
   background: var(--bg);
 }
+/* Section variants — alternation rhythm. Default sections use --bg
+   (paper). Tinted sections use --bg-tint. Dark wedge uses --bg-deep. */
+.whats-in.section-tinted { background: var(--bg-tint); }
+
+/* ─── Dark wedge ───
+   The single dark section on the page — algo-wedge is the differentiator,
+   so it gets the visual moment. Faint dot grid (lower-contrast variant of
+   the hero grid), light copy, accent strong-tags, hairline-bordered cards
+   with a subtle inner highlight. */
+section.whats-in--dark {
+  position: relative;
+  background: var(--bg-deep);
+  isolation: isolate;
+  overflow: hidden;
+}
+section.whats-in--dark::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.06) 1px, transparent 1.5px);
+  background-size: 28px 28px;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.6) 0%, transparent 100%);
+          mask-image: linear-gradient(180deg, rgba(0,0,0,0.6) 0%, transparent 100%);
+  pointer-events: none;
+}
+section.whats-in--dark h2 { color: #f5f5f0; }
+section.whats-in--dark .lede { color: rgba(245, 245, 240, 0.72); }
+section.whats-in--dark .lede strong { color: #ffffff; }
+section.whats-in--dark .num-cell {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 1px 24px rgba(0, 0, 0, 0.20);
+  transition:
+    border-color var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing),
+    transform var(--t-fast) var(--easing);
+}
+section.whats-in--dark .num-cell:hover {
+  border-color: rgba(0, 73, 183, 0.55);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 8px 32px rgba(0, 73, 183, 0.18);
+}
+section.whats-in--dark .num-cell strong {
+  color: #ffffff;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  display: block;
+  margin-bottom: 6px;
+}
+section.whats-in--dark .num-cell span {
+  color: rgba(245, 245, 240, 0.72);
+  font-size: 13px;
+  line-height: 1.55;
+}
+section.whats-in--dark .how-it-works-foot {
+  color: rgba(245, 245, 240, 0.66);
+}
+section.whats-in--dark .how-it-works-foot code {
+  background: rgba(255, 255, 255, 0.06);
+  color: #cfd8ec;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+}
+.whats-in--wide .whats-in-inner { max-width: 980px; }
+.wedge-trylist { text-align: center; margin-top: 32px; }
+.eyebrow--on-dark { color: rgba(255, 255, 255, 0.55); }
+.how-it-works-foot--centered { text-align: center; }
+/* Inline-source caption inside .lede paragraphs (e.g. Faros source line). */
+.lede-source {
+  display: block;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--ink-60);
+  font-style: italic;
+}
+.lede-source a { color: var(--ink-60); }
+/* Dogfood band centered variant — uses class-based centering instead of
+   inline styles so the rule lives with the component. */
+.dogfood-band-inner--centered { text-align: center; max-width: 760px; }
+.dogfood-band-inner--centered .lede { max-width: 720px; margin: 0 auto var(--s-5); }
+.dogfood-band-inner--centered .dogfood-list { text-align: left; }
 .whats-in-inner {
   max-width: var(--max-w);
   margin: 0 auto;
@@ -454,30 +728,43 @@ summary:focus-visible,
 .whats-in h2 {
   font-size: var(--t-section-h);
   font-weight: 600;
-  margin: 0 0 14px;
+  margin: 0 0 16px;
+  letter-spacing: var(--ls-h2);
+  line-height: var(--lh-h2);
 }
 .whats-in .lede {
   font-size: 17px;
-  color: var(--muted);
+  color: var(--ink-60);
   max-width: 680px;
-  margin: 0 auto 36px;
+  margin: 0 auto 40px;
+  line-height: 1.55;
+  text-wrap: pretty;
 }
 .numbers-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 16px;
+  gap: 12px;
   margin: 0 0 36px;
 }
 @media (max-width: 900px) { .numbers-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 540px) { .numbers-grid { grid-template-columns: repeat(2, 1fr); } }
 .num-cell {
-  background: var(--bg-alt);
-  border: 1px solid var(--border);
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   min-width: 0;
   word-break: keep-all;
-  padding: 18px 10px;
+  padding: 22px 14px;
   text-align: center;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  transition:
+    border-color var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing),
+    transform var(--t-fast) var(--easing);
+}
+.num-cell:hover {
+  border-color: rgba(0, 73, 183, 0.20);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 24px rgba(2,48,122,.06);
 }
 .num-cell strong {
   display: block;
@@ -500,10 +787,10 @@ summary:focus-visible,
   line-height: 1.3;
 }
 .install-cmd {
-  background: var(--text);
+  background: var(--ink);
   color: #fff;
-  padding: 16px 20px;
-  border-radius: var(--radius);
+  padding: 18px 22px;
+  border-radius: 10px;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 14px;
   display: inline-block;
@@ -515,11 +802,12 @@ summary:focus-visible,
   overflow-x: auto;
   white-space: nowrap;
   vertical-align: top;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 12px 32px rgba(10,14,22,.10);
 }
 .install-cmd code { color: #fff; }
 .install-cmd code::before {
   content: "$ ";
-  color: #888;
+  color: #6a7280;
 }
 .install-note {
   font-size: 14px;
@@ -559,21 +847,26 @@ summary:focus-visible,
   .numbers-grid--3 { grid-template-columns: 1fr; }
 }
 .verb-cell {
-  background: var(--bg-alt);
-  border: 1px solid var(--border);
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: 14px 14px;
+  padding: 18px 18px;
   text-decoration: none;
   color: inherit;
   display: block;
-}
-a.verb-cell {
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  transition:
+    background-color var(--t-fast) var(--easing),
+    border-color var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing),
+    transform var(--t-fast) var(--easing);
 }
 a.verb-cell:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
+  background: var(--bg);
+  border-color: rgba(0, 73, 183, 0.20);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 24px rgba(2,48,122,.06);
   text-decoration: none;
+  transform: translateY(-1px);
 }
 a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(--accent) 30%); }
 .verb-cell code {
@@ -581,24 +874,22 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   font-size: 13px;
   color: var(--accent);
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .verb-cell span {
   display: block;
   font-size: 13px;
-  color: var(--muted);
-  line-height: 1.4;
+  color: var(--ink-60);
+  line-height: 1.5;
 }
 
 /* ─── How it works (MCP flow) ─── */
 .how-it-works {
   padding: var(--section-y) 0;
-  background: var(--bg-alt);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-tint);
 }
 .how-it-works-inner {
-  max-width: 860px;
+  max-width: 980px;
   margin: 0 auto;
   padding: 0 var(--container-x);
   text-align: center;
@@ -606,30 +897,43 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .how-it-works h2 {
   font-size: var(--t-section-h);
   font-weight: 600;
-  margin: 0 0 12px;
+  margin: 0 0 16px;
+  letter-spacing: var(--ls-h2);
+  line-height: var(--lh-h2);
 }
 .how-it-works .lede {
   font-size: 17px;
-  color: var(--muted);
-  margin: 0 auto 32px;
+  color: var(--ink-60);
+  margin: 0 auto 40px;
   max-width: 720px;
+  line-height: 1.55;
+  text-wrap: pretty;
 }
 .flow {
   list-style: none;
   padding: 0;
-  margin: 0 0 28px;
+  margin: 0 0 32px;
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 18px;
+  gap: 16px;
   text-align: left;
 }
 @media (max-width: 800px) { .flow { grid-template-columns: 1fr; } }
 .flow li {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: 22px 18px;
+  padding: 28px;
   position: relative;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  transition:
+    border-color var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing),
+    transform var(--t-fast) var(--easing);
+}
+.flow li:hover {
+  border-color: rgba(0, 73, 183, 0.20);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 24px rgba(2,48,122,.06);
 }
 .flow-num {
   display: inline-block;
@@ -679,22 +983,29 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   font-size: 14px;
 }
 .terminal {
-  background: #1a1a1a;
+  background: var(--ink);
   color: #e8e8e8;
   font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   line-height: 1.55;
   padding: 24px 28px;
-  border-radius: 8px;
+  border-radius: 10px;
   text-align: left;
   overflow-x: auto;
   white-space: pre;
   margin: 0 auto 18px;
   /* Outer drop + 1px top inner highlight for terminal-window depth. */
-  box-shadow: 0 8px 32px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.04);
-  /* Disable smooth-scroll snapping on overflow-x so the user can flick
-     freely on touch. */
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.04) inset,
+    0 12px 32px rgba(10, 14, 22, 0.16);
   -webkit-overflow-scrolling: touch;
+  transition: box-shadow var(--t-fast) var(--easing);
+}
+.terminal:hover {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+    0 1px 0 rgba(255,255,255,.06) inset,
+    0 16px 40px rgba(10, 14, 22, 0.20);
 }
 .terminal .t-prompt { color: #6a6a6a; user-select: none; }
 .terminal .t-cmd { color: #fff; font-weight: 500; }
@@ -902,8 +1213,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 /* ─── Comparison table ─── */
 .compare {
   padding: var(--section-y) 0;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
+  background: var(--bg-tint);
 }
 .compare-inner {
   max-width: 1080px;
@@ -961,19 +1271,21 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   font-size: 13px;
   text-align: left;
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   /* No overflow:hidden — it would round the corners but also break Safari's
      position:sticky on the first column. We'd rather have working sticky
      than rounded corners on a horizontally-scrolling table. */
   min-width: 760px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
 }
 .compare-table thead th {
-  background: var(--bg-alt);
-  padding: 14px 12px;
+  background: var(--bg-tint);
+  padding: 16px 12px;
   font-weight: 600;
-  border-bottom: 2px solid var(--border);
+  border-bottom: 1px solid var(--line-soft);
   text-align: center;
+  color: var(--ink);
 }
 .compare-table thead th:first-child { text-align: left; padding-left: 18px; min-width: 240px; }
 .compare-table thead th strong { color: var(--accent); }
@@ -1028,7 +1340,11 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .compare-table .yes { color: var(--pop); font-weight: 600; font-size: 13px; }
 .compare-table .no  { color: var(--muted-soft); font-size: 13px; }
 .compare-table .ltd { color: var(--warn); font-weight: 500; font-size: 13px; }
-.compare-table sup { font-weight: 400; color: var(--muted); margin-left: 2px; font-size: 11px; vertical-align: super; }
+.compare-table sup { font-weight: 400; color: var(--muted); margin-left: 2px; font-size: 12px; vertical-align: super; }
+/* sup inside the comparison footnote prose: keep at base body size so
+   browser-default `font-size: smaller` doesn't pull it below 12 px on
+   already-shrunk parents. */
+.compare-foot sup { font-size: 1em; line-height: 1; }
 .compare-table small { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; font-weight: 400; line-height: 1.4; }
 .compare-foot {
   margin: 18px 0 0;
@@ -1142,12 +1458,26 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   }
 }
 
-/* ─── Products intro (folded into .products section as a centered lede) ─── */
+/* ─── Products intro ─── */
+.products-intro {
+  padding: var(--section-y) 0 0;
+  background: var(--bg);
+}
 .products-intro-inner {
   max-width: 720px;
   margin: 0 auto;
   padding: 0 var(--container-x);
   text-align: center;
+}
+.products-intro h2 {
+  font-size: var(--t-section-h);
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+.products-intro .lede {
+  font-size: 17px;
+  color: var(--muted);
+  margin: 0;
 }
 
 /* ─── Product cards ─── */
@@ -1163,21 +1493,31 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 
 .product-card {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: 28px;
+  padding: 32px;
   display: flex;
   flex-direction: column;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  transition:
+    border-color var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing),
+    transform var(--t-fast) var(--easing);
 }
 .product-card:hover {
-  border-color: var(--accent);
-  box-shadow: 0 4px 16px rgba(0, 73, 183, 0.08);
+  border-color: rgba(0, 73, 183, 0.20);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.6) inset,
+    0 8px 24px rgba(2, 48, 122, 0.08);
+  transform: translateY(-1px);
 }
 .product-card.popular:hover {
   /* The popular card already has accent border + heavier shadow at rest;
      match the lift but keep the existing static shadow. */
-  box-shadow: 0 12px 28px rgba(0, 73, 183, 0.14);
+  border-color: var(--accent);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.6) inset,
+    0 12px 32px rgba(0, 73, 183, 0.16);
 }
 
 /* Cross-product bridge link under each product card. Subordinate to
@@ -1209,27 +1549,36 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   max-width: 1100px;
-  margin: 24px auto 0;
+  margin: 32px auto 0;
 }
 .sense-cell {
-  background: var(--bg-alt);
-  border: 1px solid var(--border);
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: 18px 20px;
+  padding: 24px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  transition: border-color 0.18s ease;
+  gap: 10px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  transition:
+    border-color var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing),
+    transform var(--t-fast) var(--easing);
 }
-.sense-cell:hover { border-color: var(--accent); }
+.sense-cell:hover {
+  border-color: rgba(0, 73, 183, 0.20);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 24px rgba(2, 48, 122, 0.06);
+  transform: translateY(-1px);
+}
 .sense-cell strong {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--ink);
+  letter-spacing: -0.01em;
 }
 .sense-cell .sense-q {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--ink-60);
   font-style: italic;
   line-height: 1.5;
   min-height: 2.2em;
@@ -1238,25 +1587,35 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   font-size: 12px;
   background: transparent;
   padding: 0;
-  color: var(--text);
+  color: var(--ink);
   font-family: 'IBM Plex Mono', monospace;
   line-height: 1.7;
   display: inline;
 }
 .sense-cell .sense-aside {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--ink-60);
   margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  border-top: 1px dashed var(--line-soft);
   font-style: normal;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 .sense-cell--featured {
   border-color: var(--accent);
   background: var(--accent-soft);
   grid-column: span 1;
-  box-shadow: 0 2px 12px rgba(0, 73, 183, 0.06);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.6) inset,
+    0 0 0 1px rgba(0, 73, 183, 0.08),
+    0 8px 28px rgba(0, 73, 183, 0.10);
+}
+.sense-cell--featured:hover {
+  border-color: var(--accent);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.6) inset,
+    0 0 0 1px rgba(0, 73, 183, 0.16),
+    0 12px 36px rgba(0, 73, 183, 0.16);
 }
 @media (max-width: 900px) {
   .senses-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1285,9 +1644,12 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .product-card .features li {
   padding: 5px 0;
-  border-bottom: 1px solid var(--bg-alt);
+  border-bottom: 1px solid var(--line-soft);
   display: flex;
   align-items: flex-start;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
 }
 .product-card .features li::before {
   content: "→";
@@ -1375,29 +1737,40 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .scenario {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: var(--s-5);
+  padding: 28px;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  transition:
+    border-color var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing),
+    transform var(--t-fast) var(--easing);
+}
+.scenario:hover {
+  border-color: rgba(0, 73, 183, 0.20);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 24px rgba(2, 48, 122, 0.06);
+  transform: translateY(-1px);
 }
 .scenario h3 {
-  margin: 0 0 var(--s-2);
-  font-size: var(--t-md);
+  margin: 0 0 8px;
+  font-size: var(--t-card-h);
   font-weight: 600;
-  color: var(--accent);
+  color: var(--ink);
+  letter-spacing: -0.01em;
 }
 .scenario-cite {
   font-size: var(--t-sm);
-  color: var(--muted);
+  color: var(--ink-60);
   font-style: italic;
   margin: 0 0 var(--s-3);
-  line-height: var(--lh-snug);
+  line-height: 1.55;
 }
 .scenario p {
-  font-size: var(--t-sm);
+  font-size: 14px;
   margin: 0 0 var(--s-3);
-  line-height: var(--lh-snug);
+  line-height: 1.55;
 }
 .scenario .terminal {
   font-size: var(--t-xs);
@@ -1619,8 +1992,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 /* ─── Dogfood band ─── */
 .dogfood-band {
   padding: var(--section-y) 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg);
 }
 .dogfood-band-inner {
   max-width: 720px;
@@ -1633,10 +2005,10 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   margin: 0 0 var(--s-5);
 }
 .dogfood-list li {
-  padding: var(--s-3) 0;
-  border-bottom: 1px solid var(--bg-alt);
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line-soft);
   font-size: var(--t-sm);
-  line-height: var(--lh-snug);
+  line-height: 1.55;
 }
 .dogfood-list li:last-child {
   border-bottom: none;
@@ -1681,9 +2053,8 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 
 /* ─── Audit upsell ─── */
 .audit-upsell {
-  background: var(--bg-alt);
+  background: var(--bg-tint);
   padding: var(--section-y) 0;
-  border-top: 1px solid var(--border);
 }
 .audit-upsell-inner {
   max-width: var(--max-w);
@@ -1716,11 +2087,21 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .replay-tier {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: var(--s-5);
+  padding: 28px;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  transition:
+    border-color var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing),
+    transform var(--t-fast) var(--easing);
+}
+.replay-tier:hover {
+  border-color: rgba(0, 73, 183, 0.20);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 24px rgba(2, 48, 122, 0.06);
+  transform: translateY(-1px);
 }
 .replay-tier h3 {
   margin: 0 0 var(--s-2);
@@ -1804,7 +2185,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 /* ─── Trust strip ─── */
 .trust-strip {
   padding: var(--section-y) 0;
-  background: var(--bg);
+  background: var(--bg-tint);
 }
 .trust-strip-inner {
   max-width: 980px;
@@ -1812,45 +2193,64 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   padding: 0 var(--container-x);
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--s-6) var(--s-7);
+  gap: var(--s-5);
 }
 .trust-strip-inner > .trust-cell:nth-child(odd):last-child { grid-column: 1 / -1; }
 @media (max-width: 700px) { .trust-strip-inner { grid-template-columns: 1fr; } }
 .trust-cell {
-  background: var(--bg-alt);
-  border: 1px solid var(--border);
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: 18px 20px;
+  padding: 24px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  transition:
+    border-color var(--t-fast) var(--easing),
+    box-shadow var(--t-fast) var(--easing);
 }
-.trust-cell strong { display: block; font-size: 16px; color: var(--accent); margin-bottom: 6px; }
-.trust-cell span { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.trust-cell:hover {
+  border-color: rgba(0, 73, 183, 0.20);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 24px rgba(2, 48, 122, 0.06);
+}
+.trust-cell strong { display: block; font-size: 15px; color: var(--ink); margin-bottom: 8px; letter-spacing: -0.01em; }
+.trust-cell span { font-size: 13px; color: var(--ink-60); line-height: 1.55; }
 .trust-cell a { color: var(--accent); }
 
 /* ─── FAQ ─── */
 .faq {
-  background: var(--bg-alt);
+  background: var(--bg);
   padding: var(--section-y) 0;
 }
 .faq-inner {
-  max-width: 800px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 0 var(--container-x);
 }
-.faq h2 { font-size: var(--t-section-h); margin: 0 0 28px; text-align: center; }
+.faq h2 { font-size: var(--t-section-h); margin: 0 0 32px; text-align: center; }
 .faq details {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: 18px 22px;
-  margin-bottom: 12px;
+  padding: 22px 28px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
+  transition: border-color var(--t-fast) var(--easing), box-shadow var(--t-fast) var(--easing);
+}
+.faq details:hover { border-color: rgba(0, 73, 183, 0.16); }
+.faq details[open] {
+  border-color: rgba(0, 73, 183, 0.20);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 24px rgba(2, 48, 122, 0.04);
 }
 .faq summary {
   font-weight: 600;
-  font-size: 16px;
-  color: var(--accent);
+  font-size: 15px;
+  color: var(--ink);
   list-style: none;
   cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: color var(--t-fast) var(--easing);
 }
+.faq summary:hover { color: var(--accent); }
+.faq details[open] summary { color: var(--accent); }
 .faq summary:focus-visible {
   /* FAQ summaries sit inside their padded details box, so the standard
      2 px offset crowds the accordion chevron. Push the ring further out. */
@@ -1875,11 +2275,12 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 
 /* ─── Footer ─── */
 footer {
-  background: var(--text);
+  background: var(--ink);
   color: #ccc;
   padding: var(--section-y-tight) 0;
   font-size: 14px;
 }
+footer .footer-col strong { color: #fff; font-weight: 600; letter-spacing: -0.01em; }
 .footer-inner {
   max-width: var(--max-w);
   margin: 0 auto;
