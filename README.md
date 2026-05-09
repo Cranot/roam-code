@@ -2,11 +2,11 @@
 
 # roam-code
 
-**Architectural sight for AI coding agents — before they edit.**
+**The local structural intelligence layer for coding agents.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 203 specialised commands are advanced surface for specialised workflows.
+Roam turns a repository into a queryable graph and exposes engineering judgment as deterministic local tools — code-graph queries, change-safety checks, algorithmic-risk detection, refactor simulation, audit evidence. Coding agents (Claude Code, Cursor, Codex, Windsurf, your own) call it before, during, and after every change.
 
-*208 commands · 137 MCP tools · 28 languages · 100% local · zero API keys*
+*200+ CLI capabilities · 130+ MCP tools · 28 language families · 100% local · zero API keys · Apache 2.0*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -38,14 +38,44 @@ companion `roam lsp` server for editor squiggles. See
 
 ## What is Roam?
 
-Roam is a structural intelligence engine for software. It pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture layers, git history, and runtime traces -- stored in a local SQLite DB. Agents query it via CLI or MCP instead of repeatedly grepping files and guessing structure.
+Roam is the **engineering-judgment layer for coding agents**. AI agents can write code; they can't see what else the code touches, which tests cover it, which loop just went quadratic, or whether they're editing one of three near-identical clones. Roam exposes that judgment as deterministic local tools the agent calls — *before* it edits, *during* generation, and *after* the patch lands.
 
-> **For teams running AI coding agents:** Roam ships two paid layers on top of the free CLI — **[Roam Review](#roam-review-pr-bot-for-ai-generated-changes)** (PR bot scoring AI-generated changes for structural risk) and **[Roam Cloud](#roam-cloud-metrics-history-no-source-upload)** (metrics-history dashboard, no source-code bodies uploaded). Both run on the OSS engine and are licensed separately.
+Mechanically: Roam parses your repo once, stores structural facts in a local SQLite graph (symbols, dependencies, call graphs, architecture layers, git history, runtime traces), and exposes the graph through 208 commands and 137 MCP tools across 28 languages.
 
-Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact. It goes beyond comprehension: Roam governs architecture through budget gates, simulates refactoring outcomes, orchestrates multi-agent swarms with zero-conflict guarantees, maps vulnerability reachability paths, and enables graph-level code editing without syntax errors.
+### The senses your agent doesn't have
+
+| Sense | The question agents miss | Roam commands |
+| ----- | ------------------------ | ------------- |
+| **Codebase sight** | "What does this repo do? What should I read?" | `understand` · `map` · `tour` · `describe` · `minimap` |
+| **Context retrieval** | "Pull the exact spans I need for this task." | `retrieve` · `context` · `search-semantic` · `agent-context` |
+| **Change safety** | "What breaks if I edit this? Which tests run?" | `preflight` · `impact` · `affected-tests` · `diff` · `guard` |
+| **PR review** | "Did the AI miss a clone, a caller, a test?" | `critique` · `pr-analyze` · `pr-risk` · `pr-comment-render` |
+| **Algorithmic judgment** | "Is this code *correct but slow*?" | `math` / `algo` · `n1` · `missing-index` · `hotspots` |
+| **Architecture governance** | "Is the architecture drifting?" | `layers` · `cycles` · `clusters` · `health` · `budget` · `fitness` · `dark-matter` |
+| **Refactor safety** | "Can I simulate this refactor first?" | `simulate` · `mutate` · `safe-delete` · `closure` · `plan-refactor` |
+| **Multi-agent coordination** | "Can multiple agents work in parallel?" | `fleet` · `partition` · `orchestrate` · `agent-plan` |
+| **Evidence + compliance** | "Can we prove what was checked?" | `attest` · `cga` · `audit-trail-export` · `audit-trail-verify` · `--sarif` |
+
+Roam doesn't replace your linter, SAST, or AI semantic reviewer — it complements them by answering graph-aware questions they don't.
+
+### Algorithmic Risk Review (the differentiator)
+
+`roam math` (alias `roam algo`) detects **code that is correct but computationally wrong** — exactly the class of patterns AI agents ship that pass tests and fail at scale:
+
+- nested-loop lookups that quietly become O(n²)
+- N+1 database query patterns
+- regex compilation inside hot loops
+- repeated JSON parsing of the same payload
+- quadratic string concatenation
+- branching recursion without memoisation
+- expensive work inside request / render loops
+
+This is the reason agent-generated code goes red after deploy without ever failing CI. Roam catches it before merge.
+
+> **For teams running AI coding agents:** the OSS engine ships paid layers on top — **[Roam Review](#roam-review-pr-bot-for-ai-generated-changes)** (PR bot, early access), **[Roam Cloud](#roam-cloud-metrics-history-no-source-upload)** (metrics dashboard, early access), **[Roam Self-Hosted](https://roam-code.com/pricing#self-hosted)** (regulated stacks, early access), and **[PR Replay](#pr-replay-one-shot-paid-audit)** (one-shot audit, available today via email). All are licensed separately; the CLI stays Apache 2.0 forever.
 
 ```
-Codebase ──> [Index] ──> Semantic Graph ──> 194 Commands ──> AI Agent
+Codebase ──> [Index] ──> Semantic Graph ──> 200+ Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
            28 languages   + edges            govern
@@ -384,6 +414,9 @@ roam health
 | `roam oracle <name> <subject>` | Boolean oracles for agents — 1-token yes/no answers. Subcommands: `symbol-exists`, `route-exists`, `is-test-only`, `is-reachable-from-entry`, `is-clone-of`. |
 | `roam search <pattern> [--kind KIND]` | Find symbols by name pattern, PageRank-ranked |
 | `roam grep <pattern> [-g glob] [-n N]` | Text search annotated with enclosing symbol context |
+| `roam refs-text <string>...` | String audit with verdict (SAFE-TO-REMOVE / REVIEW / LOAD-BEARING). Groups refs by surface (code/test/docs/config/dead) and annotates reachability. |
+| `roam delete-check [--source working\|staged\|pr\|head] [--ci]` | Gate a diff on surviving references — exits 5 on `BREAK-RISK` with `--ci`. The companion to `safe-delete` for unstructured deletion review. |
+| `roam history-grep <pattern> [--polarity]` | Git pickaxe (`-S` / `-G`) with author / date and introduced-vs-removed annotation — for "when did this string appear?" investigations. |
 | `roam deps <path> [--full]` | What a file imports and what imports it |
 | `roam trace <source> <target> [-k N]` | Dependency paths with coupling strength and hub detection |
 | `roam impact <symbol>` | Blast radius: what breaks if a symbol changes (Personalized PageRank weighted) |
