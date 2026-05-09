@@ -1206,6 +1206,11 @@ Add to `.vscode/mcp.json`:
 
 ## Roam Review (PR bot for AI-generated changes)
 
+> **Status (2026-05-09):** Early access. Pricing published, sign-up via
+> [hello@roam-code.com](mailto:hello@roam-code.com). Flat tiers from
+> $99/mo: Starter $99 · Team $299 · Business $799 · Scale $1,499. Free
+> for open-source forever. Full pricing at <https://roam-code.com/pricing>.
+
 Most "AI safety net" tools — CodeRabbit, Greptile, Qodo — review PR **semantics** (does the diff *look* right?). They don't read your **graph**: who calls the changed symbol, which layer it belongs to, whether the AI just touched a god-component with 47 callers. Roam Review fills that gap.
 
 `roam pr-analyze` is the CLI engine: pipe a unified diff in, get back a verdict (`INTENTIONAL` / `SAFE` / `REVIEW` / `BLOCK`) plus AI-likelihood score, blast radius, rule violations, suggested reviewers, and a governance audit-trail record.
@@ -1244,6 +1249,10 @@ A hosted GitHub App is in development on top of this CLI engine. Until it ships,
 
 ## Roam Cloud (metrics history, no source upload)
 
+> **Status (2026-05-09):** Early access. From $19/repo/mo (Starter),
+> $99/mo Team (10 repos), $299/mo Growth. 30-day money-back. Source
+> code is never uploaded — only metrics.
+
 `roam metrics-push` sends a *summary-only* payload from `roam audit --json` to a Roam Cloud endpoint — numerical metrics, file paths (or SHA-256 hashes when `--anonymize`), and identifier names only. **No source-code bodies are transmitted**, ever. Inspect the exact payload locally with `--dry-run` before any token is set.
 
 ```bash
@@ -1255,6 +1264,26 @@ roam metrics-push --no-hotspots --json                 # minimal payload
 The hosted dashboard at `roam.cloud` (in development) renders trend charts of health-score, debt, dead-code count, danger-zone count, and bus-factor concentration over time. The schema (`roam-metrics-v1`) is allow-listed: any payload key outside the allow-list is rejected by the receiving API.
 
 Both products are paid layers on top of the free CLI; the CLI itself stays Apache 2.0, zero-API-key, fully local, forever.
+
+## PR Replay (one-shot paid audit)
+
+> **Status (2026-05-09):** Available today via email. Self-serve checkout
+> launches alongside Roam Review.
+
+PR Replay runs Roam against your last 30 or 90 merged PRs and ships a
+written structural-review report plus a founder walk-through. Same
+engine as the free CLI; the engagement is the report + the call.
+
+| Tier   | Price | What you get |
+| ------ | ----- | ------------ |
+| Sample | Free, DIY (`roam pr-replay --tier sample`) | 5 PRs, watermarked, no founder review. Same engine as the paid tiers. |
+| Team   | $2,500 | 30-PR report, 30-min walk-through. **$1,250 credit** toward a Roam Review subscription within 60 days. |
+| Deep   | $6,000 | 90-PR report with per-detector deep-dive + a 90-day remediation plan + 90-min walk-through. **$3,000 credit** toward a Roam Review subscription within 60 days. |
+
+Order paid tiers by emailing
+[hello@roam-code.com](mailto:hello@roam-code.com) — the
+self-serve Stripe checkout launches with Roam Review. Full deliverable
+shape at <https://roam-code.com/audit>.
 
 ## CI/CD Integration
 
