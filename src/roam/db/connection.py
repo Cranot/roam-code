@@ -241,6 +241,33 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     # v11: FTS5 full-text search for symbols (BM25 ranking, all in C)
     _ensure_fts5_table(conn)
 
+    # v12.x: index_manifest table is created in SCHEMA_SQL above. Bump
+    # PRAGMA user_version so the manifest writer can mirror it. Migration
+    # is idempotent — re-running ensure_schema() never lowers the value.
+    _bump_user_version(conn, USER_VERSION)
+
+
+# Current schema version. Bump this when adding migrations that consumers
+# (manifest writer, bundle import, drift checks) need to detect. Mirrored
+# into ``index_manifest.schema_version`` on every index run.
+USER_VERSION = 1
+
+
+def _bump_user_version(conn: sqlite3.Connection, target: int) -> None:
+    """Set ``PRAGMA user_version`` to *target* if it's currently lower.
+
+    Never lowers the value — that would cause downgraded clients to think
+    the DB is fresher than it really is.
+    """
+    try:
+        row = conn.execute("PRAGMA user_version").fetchone()
+        current = int(row[0]) if row else 0
+    except sqlite3.DatabaseError:
+        current = 0
+    if current < target:
+        # PRAGMA can't take ? params — target is internal, not user input.
+        conn.execute(f"PRAGMA user_version = {int(target)}")
+
 
 def _ensure_tfidf_cascade(conn: sqlite3.Connection):
     """Ensure symbol_tfidf has ON DELETE CASCADE (missing in early schema)."""

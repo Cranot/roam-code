@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>How Roam thinks — Roam Docs · Pick the right tool for the question</title>
+  <meta name="description" content="A decision tree for AI coding agents and technical leads: given an engineering question or workflow moment, which Roam command answers it. Nine moments, fifty-plus commands, one mental model.">
+  <link rel="canonical" href="https://roam-code.com/docs/how-roam-thinks">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="dns-prefetch" href="//github.com">
+  <link rel="dns-prefetch" href="//pypi.org">
+  <link rel="stylesheet" href="/landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="How Roam thinks — Roam Docs">
+  <meta property="og:description" content="A decision tree mapping engineering questions to specific Roam commands. Match the question to the command, not the other way around.">
+  <meta property="og:url" content="https://roam-code.com/docs/how-roam-thinks">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://roam-code.com/"},
+      {"@type": "ListItem", "position": 2, "name": "Docs", "item": "https://roam-code.com/docs/"},
+      {"@type": "ListItem", "position": 3, "name": "How Roam thinks", "item": "https://roam-code.com/docs/how-roam-thinks"}
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span>
+        <span class="visually-hidden">Menu</span>
+      </label>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/setup">Setup</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main">
+
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Documentation</p>
+      <h1 class="hero-headline">
+        How Roam thinks.
+      </h1>
+      <p class="hero-subhead">
+        Pick the right tool for the question. Each Roam command answers
+        a specific engineering question — match the question to the
+        command, not the other way around.
+      </p>
+      <p class="hero-trust-strip">
+        Nine moments in an engineering workflow · 208 commands · 137 MCP tools · 28 languages
+      </p>
+    </div>
+  </header>
+
+  <section class="whats-in">
+    <div class="whats-in-inner">
+      <h2>The decision tree</h2>
+      <p class="lede">
+        The <a href="/docs/agent-contract">agent contract</a> covers the
+        five rules. This page goes deeper: nine moments that come up in
+        real work, with the four-to-five Roam commands that answer each
+        and one example invocation per moment. If you only remember the
+        moment, you can find the command later.
+      </p>
+    </div>
+  </section>
+
+  <article>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>1. "I'm new to this repo. What does it do?"</h2>
+        <p>
+          You've cloned a codebase you didn't write. Before reading any
+          file, get the shape: layers, entry points, hot files, the few
+          symbols everything else depends on. Roam answers with a
+          landing-pad summary, a curated tour, and a one-page minimap
+          that fits in an agent's context window.
+        </p>
+        <p>
+          Commands: <code>roam understand</code> ·
+          <code>roam tour</code> ·
+          <code>roam map</code> ·
+          <code>roam minimap</code> ·
+          <code>roam describe</code>.
+        </p>
+<pre class="terminal" aria-label="First-day repo orientation"><span class="t-prompt">$</span> <span class="t-cmd">roam understand</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam tour</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam minimap --tokens 4000</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>2. "I have a task. What code should I read first?"</h2>
+        <p>
+          You have a feature, a bug, or a phrase like "trace login flow"
+          or "where is the n+1?" You need ranked, budget-bounded spans —
+          not a grep wall. Roam returns the spans that matter, ranked by
+          PageRank, clone signal, runtime hotness, and lexical match.
+        </p>
+        <p>
+          Commands: <code>roam context</code> ·
+          <code>roam retrieve</code> ·
+          <code>roam search-semantic</code> ·
+          <code>roam agent-context</code>.
+        </p>
+<pre class="terminal" aria-label="Task-driven retrieval"><span class="t-prompt">$</span> <span class="t-cmd">roam retrieve "where does login validate sessions"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam context UserService</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam agent-context --tokens 8000</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>3. "I'm about to edit X. What breaks?"</h2>
+        <p>
+          Before any edit, ask Roam for the blast radius: who calls this
+          symbol transitively, which tests cover it, and what fitness
+          rules guard the surrounding architecture. The answer tells you
+          whether the change is local, regional, or cross-cutting.
+        </p>
+        <p>
+          Commands: <code>roam preflight</code> ·
+          <code>roam impact</code> ·
+          <code>roam affected-tests</code> ·
+          <code>roam diff</code> ·
+          <code>roam guard</code>.
+        </p>
+<pre class="terminal" aria-label="Pre-edit blast-radius check"><span class="t-prompt">$</span> <span class="t-cmd">roam preflight AuthService</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam impact AuthService</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam affected-tests AuthService</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>4. "Did the agent miss something on this PR?"</h2>
+        <p>
+          The most common AI-PR failure is structural: the agent edited
+          one of three near-identical implementations, or the patch
+          touched a high-PageRank symbol without updating the callers.
+          Roam reads the diff against the graph and surfaces those
+          misses with a verdict line first.
+        </p>
+        <p>
+          Commands: <code>roam critique</code> ·
+          <code>roam clones</code> ·
+          <code>roam pr-risk</code> ·
+          <code>roam pr-analyze</code>.
+        </p>
+<pre class="terminal" aria-label="PR-level structural review"><span class="t-prompt">$</span> <span class="t-cmd">git diff main..HEAD | roam critique</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam pr-risk</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam clones --persist</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>5. "Is the agent's patch correct but slow?"</h2>
+        <p>
+          The differentiator. Tests pass; the patch will fail at scale.
+          Roam detects the algorithmic shape: accidental O(n²) lookups,
+          N+1 queries, regex compiled inside hot loops, repeated JSON
+          parsing, missing indexes on hot tables, branching recursion
+          without memoisation. CodeRabbit, Greptile, SonarQube, Semgrep
+          do not run this class of check. Roam does.
+        </p>
+        <p>
+          Commands: <code>roam math</code> /
+          <code>roam algo</code> ·
+          <code>roam n1</code> ·
+          <code>roam missing-index</code> ·
+          <code>roam hotspots</code>.
+        </p>
+<pre class="terminal" aria-label="Algorithmic risk review"><span class="t-prompt">$</span> <span class="t-cmd">roam math</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam n1</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam hotspots --danger</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>6. "Is the architecture drifting?"</h2>
+        <p>
+          Layers blur. Cycles appear. Modules creep into each other.
+          Roam reports topological layers, strongly-connected components,
+          Louvain communities, hidden co-change coupling, and a 0–100
+          health score with the worst-offending edges named. Wire the
+          fitness rules into CI to fail PRs that introduce new cycles.
+        </p>
+        <p>
+          Commands: <code>roam layers</code> ·
+          <code>roam cycles</code> ·
+          <code>roam clusters</code> ·
+          <code>roam health</code> ·
+          <code>roam dark-matter</code> ·
+          <code>roam fitness</code>.
+        </p>
+<pre class="terminal" aria-label="Architecture-drift sweep"><span class="t-prompt">$</span> <span class="t-cmd">roam health</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam cycles</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam dark-matter</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam fitness --ci</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>7. "Can I refactor safely?"</h2>
+        <p>
+          Before any move, rename, extract, or delete: clone the graph,
+          apply the transform in-memory, report what breaks. If the
+          simulation passes, <code>roam mutate</code> applies the
+          transform to source. <code>roam plan-refactor</code> emits a
+          step-by-step plan with caller-update ordering so a junior
+          agent can execute it without breaking the build.
+        </p>
+        <p>
+          Commands: <code>roam simulate</code> ·
+          <code>roam mutate</code> ·
+          <code>roam safe-delete</code> ·
+          <code>roam closure</code> ·
+          <code>roam plan-refactor</code>.
+        </p>
+<pre class="terminal" aria-label="Refactor-safety simulation"><span class="t-prompt">$</span> <span class="t-cmd">roam simulate move PaymentService src/billing/</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam safe-delete LegacyAdapter</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam plan-refactor PaymentService</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>8. "Multiple agents are working in parallel — can they?"</h2>
+        <p>
+          Hand three agents the same repo and they collide on the same
+          files. Roam partitions the graph into low-coupling clusters,
+          assigns one cluster per agent, and emits a fleet plan with
+          conflict-free file ownership and a recommended merge order.
+        </p>
+        <p>
+          Commands: <code>roam fleet</code> ·
+          <code>roam partition</code> ·
+          <code>roam orchestrate</code> ·
+          <code>roam agent-plan</code>.
+        </p>
+<pre class="terminal" aria-label="Multi-agent partitioning"><span class="t-prompt">$</span> <span class="t-cmd">roam partition --agents 3</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam orchestrate --emit fleet.json</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam agent-plan --target claude</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>9. "Can we prove what was checked, signed, and gated?"</h2>
+        <p>
+          For governance, audit, and SOC 2 / ISO 42001 / AI Governance
+          evidence: emit a Code Graph Attestation (in-toto v1, optionally
+          cosign-signed) that records the index hash, the fitness gates
+          that ran, and the verdict. SARIF output plugs straight into
+          GitHub Code Scanning so findings live next to the PR.
+        </p>
+        <p>
+          Commands: <code>roam attest</code> ·
+          <code>roam cga</code> ·
+          <code>roam audit-trail-export</code> ·
+          <code>roam audit-trail-verify</code> ·
+          <code>--sarif</code>.
+        </p>
+<pre class="terminal" aria-label="Audit-grade evidence emission"><span class="t-prompt">$</span> <span class="t-cmd">roam attest --sign cosign</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam audit-trail-export --since 2026-01-01</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam health --sarif &gt; health.sarif</span></pre>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>What you don't ask Roam</h2>
+        <p>
+          Roam answers structural, graph-aware, and algorithmic-shape
+          questions. It does not replace the tools that answer the rest.
+          When the question is one of these, reach for the right tool —
+          and check <a href="/compare">/compare</a> for who does what.
+        </p>
+        <ul>
+          <li>
+            <strong>Semantic correctness</strong> — does this function
+            actually do what its name says, prose-level. Use an LLM
+            reviewer (CodeRabbit, Greptile, Qodo) or a careful human.
+          </li>
+          <li>
+            <strong>Code style and formatting</strong> — line length,
+            quote consistency, import order. Use a linter and formatter
+            (Ruff, ESLint, Prettier, Black, gofmt).
+          </li>
+          <li>
+            <strong>Single-function security smells</strong> —
+            string-concat SQL inside one function, hard-coded keys,
+            unsafe deserialisation in isolation. Use a SAST tool
+            (Semgrep, CodeQL, SonarQube). Roam complements these by
+            showing whether the smell is reachable from an entry point
+            (<code>roam vuln</code>) — but the smell catalogue is theirs.
+          </li>
+          <li>
+            <strong>Type errors</strong> — use the type checker
+            (<code>mypy</code>, <code>tsc</code>, <code>pyright</code>).
+          </li>
+          <li>
+            <strong>Runtime profiling</strong> — Roam predicts
+            algorithmic shape from the graph. To measure a real run, use
+            a profiler (<code>py-spy</code>, <code>perf</code>, your APM)
+            and feed traces back via <code>roam runtime ingest</code>.
+          </li>
+        </ul>
+        <p>
+          The framing is complementary, never replacement. Roam plus a
+          linter plus a SAST tool plus an LLM reviewer covers the
+          surface; any one of them alone leaves a gap.
+        </p>
+      </div>
+    </section>
+
+    <section class="whats-in">
+      <div class="whats-in-inner">
+        <h2>Where to next</h2>
+        <p>
+          <a href="/docs/agent-contract" class="btn-primary">Read the agent contract</a> ·
+          <a href="/docs/command-reference">browse the full command reference</a> ·
+          <a href="/docs/getting-started">run the 10-minute tutorial</a>.
+        </p>
+      </div>
+    </section>
+
+  </article>
+
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>The local structural intelligence layer for coding agents.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/setup">Setup</a>
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

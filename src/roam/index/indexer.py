@@ -1329,6 +1329,32 @@ class Indexer:
         if error_summary:
             self._log(f"  Parse issues: {error_summary}")
 
+    def _record_manifest(self, conn, *, force: bool, include_excluded: bool) -> None:
+        """Persist an index_manifest row capturing this run's environment.
+
+        Best-effort: any failure logs (in verbose mode via ROAM_DEBUG) but
+        never aborts indexing. The manifest is consumed by ``roam doctor``
+        and bundle-import drift checks; missing it just means those
+        consumers fall back to "no manifest".
+        """
+        try:
+            from roam.index.manifest import record_indexer_run
+        except Exception:
+            return
+        # Mix the CLI flags that affect indexing into the config hash so a
+        # flag flip invalidates the manifest comparison even when the
+        # config files themselves are unchanged.
+        flags = [
+            f"force={1 if force else 0}",
+            f"include_excluded={1 if include_excluded else 0}",
+        ]
+        record_indexer_run(
+            conn,
+            self.root,
+            profile="all",
+            extra_config_inputs=flags,
+        )
+
     def _set_completion_summary(self, conn, elapsed: float) -> None:
         file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
@@ -1429,6 +1455,7 @@ class Indexer:
             self._build_search_indexes(conn)
             self._log_parse_issues()
             self._set_completion_summary(conn, time.monotonic() - t0)
+            self._record_manifest(conn, force=force, include_excluded=include_excluded)
 
         try:
             from roam.graph.builder import clear_graph_cache

@@ -225,8 +225,8 @@ class RoamClient:
             allow_gate_failure=allow_gate_failure,
         )
 
-    def context(self, symbol: str, *, depth: int = 2) -> dict:
-        return self.run("context", symbol, "--depth", str(depth))
+    def context(self, symbol: str) -> dict:
+        return self.run("context", symbol)
 
     def metrics(self, target: str) -> dict:
         return self.run("metrics", target)

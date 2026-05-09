@@ -16,10 +16,37 @@ import click
 # This avoids importing networkx (~500ms) on every CLI call.
 # Total: 208 invokable command names (201 canonical commands + 7 alias names).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
-# deprecated commands map to their replacement.  When a user
-# invokes a deprecated name, we still resolve it (no breaking change)
-# but print a note on stderr suggesting the replacement.
-_DEPRECATED_COMMANDS: dict[str, str] = {}
+# Deprecated commands map to a structured record. When a user invokes a
+# deprecated name we still resolve it (no breaking change) and print a
+# note on stderr. Each entry is:
+#   {"replacement": str, "reason": str, "removal_version": str}
+# Backwards-compat: a bare-string value still works (treated as
+# `{"replacement": <string>}`).
+_DEPRECATED_COMMANDS: dict[str, dict] = {}
+
+
+def _deprecation_replacement(name: str) -> str | None:
+    """Return the replacement command for a deprecated name, or None."""
+    record = _DEPRECATED_COMMANDS.get(name)
+    if record is None:
+        return None
+    if isinstance(record, str):
+        return record
+    return record.get("replacement")
+
+
+def _deprecation_record(name: str) -> dict | None:
+    """Return the full deprecation record for a name, normalized."""
+    record = _DEPRECATED_COMMANDS.get(name)
+    if record is None:
+        return None
+    if isinstance(record, str):
+        return {"replacement": record, "reason": None, "removal_version": None}
+    return {
+        "replacement": record.get("replacement"),
+        "reason": record.get("reason"),
+        "removal_version": record.get("removal_version"),
+    }
 
 _COMMANDS = {
     "index": ("roam.commands.cmd_index", "index"),
@@ -241,6 +268,9 @@ _COMMANDS = {
     "refs-text": ("roam.commands.cmd_refs_text", "refs_text_cmd"),
     "delete-check": ("roam.commands.cmd_delete_check", "delete_check_cmd"),
     "history-grep": ("roam.commands.cmd_history_grep", "history_grep_cmd"),
+    "surface": ("roam.commands.cmd_surface", "surface"),
+    "explain-command": ("roam.commands.cmd_explain_command", "explain_command"),
+    "db-check": ("roam.commands.cmd_db_check", "db_check"),
 }
 
 # Command categories for organized --help display
@@ -283,6 +313,9 @@ _CATEGORIES = {
         "index-stats",
         "stats",
         "telemetry",
+        "surface",
+        "explain-command",
+        "db-check",
     ],
     "Daily Workflow": [
         "preflight",
@@ -597,12 +630,14 @@ class LazyGroup(click.Group):
         # pre-resolve deprecation hint.
         if args:
             cmd_name = args[0]
-            replacement = _DEPRECATED_COMMANDS.get(cmd_name)
-            if replacement:
-                click.echo(
-                    f"NOTE: `roam {cmd_name}` is deprecated — use `roam {replacement}` instead.",
-                    err=True,
-                )
+            record = _deprecation_record(cmd_name)
+            if record and record.get("replacement"):
+                msg = f"NOTE: `roam {cmd_name}` is deprecated — use `roam {record['replacement']}` instead."
+                if record.get("removal_version"):
+                    msg += f" Will be removed in v{record['removal_version']}."
+                if record.get("reason"):
+                    msg += f" ({record['reason']})"
+                click.echo(msg, err=True)
         try:
             return super().resolve_command(ctx, args)
         except click.UsageError as exc:

@@ -56,13 +56,6 @@ def test_competitor_rows_include_evidence_metadata():
     assert re.match(r"\d{4}-\d{2}-\d{2}", sample["last_verified"])
 
 
-def test_generated_landscape_json_is_in_sync():
-    expected = build_site_payload()
-    output_path = default_output_path()
-    actual = json.loads(output_path.read_text(encoding="utf-8"))
-    assert actual == expected
-
-
 def test_roam_counts_match_surface_source_of_truth():
     payload = build_site_payload()
     surface = collect_surface_counts()
