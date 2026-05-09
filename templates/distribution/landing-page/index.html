@@ -452,43 +452,120 @@
 
         <div class="demo-col">
           <p class="demo-label">On a pull request — example comment (illustrative)</p>
-          <div class="gh-pr" aria-label="Sample Roam Review PR comment">
-            <div class="gh-pr-head">
-              <span class="gh-avatar" aria-hidden="true">R</span>
-              <div class="gh-pr-meta">
-                <strong>roam-review-bot</strong> <span class="gh-time">commented just now</span>
+          <article class="pr-card" aria-label="Sample Roam Review PR comment">
+            <header class="pr-card-hd">
+              <span class="pr-avatar" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <circle cx="10" cy="10" r="10" fill="#0049b7"/>
+                  <circle cx="10" cy="10" r="3.2" fill="#fff"/>
+                  <path d="M10 6.8V4 M10 13.2V16 M6.8 10H4 M13.2 10H16" stroke="#fff" stroke-width="1.2" stroke-linecap="round"/>
+                </svg>
+              </span>
+              <div class="pr-meta">
+                <span class="pr-author">roam-review-bot</span>
+                <span class="pr-meta-sep">·</span>
+                <span class="pr-app-tag">bot</span>
+                <span class="pr-meta-sep">·</span>
+                <span class="pr-time">commented now</span>
               </div>
+            </header>
+
+            <div class="pr-checks pr-checks--block">
+              <span class="pr-checks-icon" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 16 16">
+                  <path fill="#cf222e" d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm-.75 3.75a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-1.5 0v-3.5ZM8 12a.9.9 0 1 1 0-1.8.9.9 0 0 1 0 1.8Z"/>
+                </svg>
+              </span>
+              <strong>Roam check failed</strong>
+              <span class="pr-checks-summary">— 1 high, 3 medium structural risks · gates merge</span>
             </div>
-            <div class="gh-pr-body">
-              <div class="gh-verdict gh-verdict-block">
-                <strong>BLOCK</strong> &nbsp;·&nbsp; 1 high, 3 medium
-              </div>
-              <div class="gh-finding">
-                <span class="gh-sev gh-sev-high">HIGH</span>
-                <strong>clones-not-edited</strong> &nbsp;<span class="gh-conf">conf 0.94</span><br>
-                <span class="gh-meta">api/users.py:42 ↔ admin/users.py:38 (95% similar)</span><br>
-                AI updated one copy of <code>create_user</code>; the other still calls <code>db.commit()</code> with the old logic.
-                <span class="gh-fix">Suggested fix: apply the same change to <code>admin/users.py:38</code></span>
-              </div>
-              <div class="gh-finding">
-                <span class="gh-sev gh-sev-med">MED</span>
-                <strong>blast-radius</strong> &nbsp;<span class="gh-conf">47 callers</span><br>
-                <code>UserService.authenticate</code> is called from 12 files. Test coverage is at 64% on the new error path.
-              </div>
-              <div class="gh-finding">
-                <span class="gh-sev gh-sev-med">MED</span>
-                <strong>layer-violation</strong><br>
-                Domain layer now imports HTTP layer (<code>requests.post</code>). Move the side-effect to a controller.
-              </div>
-              <div class="gh-actions">
-                <code>/roam re-review</code> &nbsp;·&nbsp; <code>/roam explain api/users.py</code>
-              </div>
-            </div>
-          </div>
+
+            <ol class="pr-findings">
+              <li class="pr-find">
+                <div class="pr-find-hd">
+                  <span class="pr-sev pr-sev--high">High</span>
+                  <span class="pr-find-kind">clones-not-edited</span>
+                  <span class="pr-find-conf">confidence 0.94</span>
+                </div>
+                <p class="pr-find-loc">
+                  <a href="#" tabindex="-1">api/users.py:42</a>
+                  <svg class="pr-arrow" width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3.5 8a.5.5 0 0 1 .5-.5h7.793l-2.147-2.146a.5.5 0 0 1 .708-.708l3 3a.5.5 0 0 1 0 .708l-3 3a.5.5 0 0 1-.708-.708L11.793 8.5H4a.5.5 0 0 1-.5-.5Z"/></svg>
+                  <a href="#" tabindex="-1">admin/users.py:38</a>
+                  <span class="pr-find-pct">95% AST similar</span>
+                </p>
+                <p class="pr-find-body">
+                  AI updated one copy of <code>create_user</code>. The other still calls <code>db.commit()</code> with the prior logic; merging this leaves silent divergence.
+                </p>
+                <div class="pr-suggestion" aria-label="Suggested fix as a diff">
+                  <div class="pr-suggestion-hd">
+                    <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M11.78 5.22a.75.75 0 0 1 0 1.06L7.06 11l-2.84-2.84a.75.75 0 0 1 1.06-1.06l1.78 1.78 3.66-3.66a.75.75 0 0 1 1.06 0Z"/></svg>
+                    Suggested fix · <span class="pr-suggestion-file">admin/users.py:38</span>
+                  </div>
+                  <pre class="pr-diff"><span class="pr-diff-ctx">  self.session.add(user)</span>
+<span class="pr-diff-add">+ self.db.commit()</span>
+<span class="pr-diff-ctx">  return user</span></pre>
+                </div>
+              </li>
+
+              <li class="pr-find">
+                <div class="pr-find-hd">
+                  <span class="pr-sev pr-sev--med">Medium</span>
+                  <span class="pr-find-kind">blast-radius</span>
+                  <span class="pr-find-conf">47 callers · 12 files</span>
+                </div>
+                <p class="pr-find-body">
+                  <code>UserService.authenticate</code> is called from 12 files; test coverage is at 64% on the new error path.
+                </p>
+                <figure class="pr-blast" aria-label="Blast radius visualisation: one changed function reaches 47 callers">
+                  <svg viewBox="0 0 240 80" width="100%" height="80" role="img">
+                    <defs>
+                      <radialGradient id="prBlastEdge" cx="50%" cy="50%">
+                        <stop offset="0%" stop-color="#0969da" stop-opacity="0.45"/>
+                        <stop offset="100%" stop-color="#0969da" stop-opacity="0.05"/>
+                      </radialGradient>
+                    </defs>
+                    <g stroke="#0969da" stroke-opacity="0.42" stroke-width="1" fill="none">
+                      <path d="M120 40 L 40 18"/><path d="M120 40 L 60 64"/>
+                      <path d="M120 40 L 90 12"/><path d="M120 40 L 200 14"/>
+                      <path d="M120 40 L 218 60"/><path d="M120 40 L 154 70"/>
+                      <path d="M120 40 L 84 38"/><path d="M120 40 L 178 38"/>
+                    </g>
+                    <g fill="#0969da">
+                      <circle cx="40" cy="18" r="3.2"/><circle cx="60" cy="64" r="3.2"/>
+                      <circle cx="90" cy="12" r="3.2"/><circle cx="200" cy="14" r="3.2"/>
+                      <circle cx="218" cy="60" r="3.2"/><circle cx="154" cy="70" r="3.2"/>
+                      <circle cx="84" cy="38" r="3.2"/><circle cx="178" cy="38" r="3.2"/>
+                    </g>
+                    <circle cx="120" cy="40" r="9" fill="#cf222e"/>
+                    <circle cx="120" cy="40" r="9" fill="none" stroke="#cf222e" stroke-opacity="0.32" stroke-width="6"/>
+                    <text x="120" y="60" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="#59636e">authenticate · 47 reach</text>
+                  </svg>
+                </figure>
+              </li>
+
+              <li class="pr-find pr-find--last">
+                <div class="pr-find-hd">
+                  <span class="pr-sev pr-sev--med">Medium</span>
+                  <span class="pr-find-kind">layer-violation</span>
+                  <span class="pr-find-conf">domain → http</span>
+                </div>
+                <p class="pr-find-body">
+                  Domain layer now imports HTTP layer (<code>requests.post</code>). Move the side-effect to a controller.
+                </p>
+              </li>
+            </ol>
+
+            <footer class="pr-actions">
+              <span class="pr-cmd">/roam re-review</span>
+              <span class="pr-cmd-sep">·</span>
+              <span class="pr-cmd">/roam explain api/users.py</span>
+              <span class="pr-cmd-sep">·</span>
+              <a class="pr-cmd-link" href="#" tabindex="-1">view full report</a>
+            </footer>
+          </article>
           <p class="demo-foot">
-            Roam Review posts this on every PR (<a href="/status">early access</a>).
-            Suggested fixes are rendered as reviewable diffs — apply locally
-            after reading them.
+            Posted on every PR by Roam Review (<a href="/status">early access</a>).
+            Suggested fixes render as reviewable GitHub diffs.
           </p>
         </div>
       </div>
