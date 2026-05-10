@@ -67,11 +67,52 @@ jobs:
             exit 1
           fi
 
+      - name: Generate CycloneDX SBOM
+        # SBOM (Software Bill of Materials) for the published wheel.
+        # CycloneDX is the format auditors and enterprise procurement
+        # ask for under the audit-trail product.
+        #
+        # Method: build a fresh venv, install the just-built wheel
+        # (so the resolved dependency closure matches what end users
+        # get from ``pip install roam-code``), then run
+        # ``cyclonedx-py environment`` against that venv. Running
+        # cyclonedx against the CI build env would include build-only
+        # tooling like ``build`` and ``twine`` which users never see.
+        #
+        # The SBOM lives in ``sbom/`` (NOT ``dist/``) so it doesn't
+        # land in twine's upload set — twine validates filenames and
+        # would reject .cdx.json.
+        run: |
+          set -e
+          mkdir -p sbom
+          version=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          python -m venv /tmp/sbom-venv
+          /tmp/sbom-venv/bin/pip install --quiet --upgrade pip
+          /tmp/sbom-venv/bin/pip install --quiet cyclonedx-bom
+          /tmp/sbom-venv/bin/pip install --quiet dist/*.whl
+          /tmp/sbom-venv/bin/cyclonedx-py environment \
+            /tmp/sbom-venv/bin/python \
+            --of JSON \
+            -o "sbom/roam-code-${version}.cdx.json"
+          echo "SBOM written to sbom/roam-code-${version}.cdx.json"
+          # Quick sanity: ensure roam-code itself appears in components.
+          grep -q '"name": "roam-code"' "sbom/roam-code-${version}.cdx.json" \
+            || (echo "::error::SBOM missing roam-code component" && exit 1)
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+
+      - name: Upload SBOM artifact
+        # Separate artifact so downstream consumers (release notes
+        # workflow, customers grabbing the SBOM directly) can fetch
+        # it without pulling the wheel.
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
 
   publish:
     needs: build

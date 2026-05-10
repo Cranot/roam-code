@@ -225,7 +225,14 @@ def _seed_synthetic_models(conn, n_models):
             line_start INTEGER,
             line_end INTEGER,
             parent_id INTEGER,
-            signature TEXT
+            signature TEXT,
+            default_value TEXT
+        );
+        CREATE TABLE IF NOT EXISTS edges (
+            id INTEGER PRIMARY KEY,
+            source_id INTEGER,
+            target_id INTEGER,
+            kind TEXT
         );
         """
     )
@@ -294,13 +301,57 @@ def test_analyze_n1_model_methods_constant_query_count(monkeypatch, n_models):
     assert framework == "laravel"
     assert findings == []
 
-    # The bulk model-methods fetch is 1 query regardless of n_models.
-    # Allow up to 3 queries total to absorb batched_in chunking and any
-    # other one-shot lookups; the old code would emit n_models queries.
-    assert cc.execute_calls <= 3, (
+    # The pre-loop bulk fetches issue a fixed number of batched_in
+    # queries regardless of n_models:
+    #   * 1 — _bulk_fetch_methods_with_locations
+    #   * 1-2 — _bulk_fetch_appends_symbols (parent_id pass + optional
+    #           file-range fallback when models lack parent_id-linked
+    #           appends; this fixture's synthetic models have none)
+    #   * 1 — _bulk_fetch_incoming_refs
+    #   * 1 — _build_controller_cache (files-where-Controller scan)
+    # Cap at 8 to absorb batched_in chunking under future expansion.
+    # Old code: 1 per model for several helpers (linear in n_models).
+    assert cc.execute_calls <= 8, (
         f"analyze_n1 ran {cc.execute_calls} queries for {n_models} models — "
-        f"expected <= 3 (constant). Old code: 1 per model.\n"
+        f"expected <= 8 (constant). Old code: linear in n_models.\n"
         f"queries: {cc.queries}"
+    )
+
+
+def test_analyze_n1_appends_collection_edges_constant_query_count(monkeypatch):
+    """The follow-up bulk fetches (_bulk_fetch_appends_symbols,
+    _bulk_fetch_incoming_refs, _bulk_fetch_accessor_edge_traces) must
+    each issue a constant number of queries regardless of n_models.
+
+    Compares 1-model run against 50-model run; total query count
+    should not scale.
+    """
+    from roam.commands import cmd_n1
+
+    def _run(n_models):
+        real = sqlite3.connect(":memory:")
+        real.row_factory = sqlite3.Row
+        models = _seed_synthetic_models(real, n_models)
+        monkeypatch.setattr(cmd_n1, "_detect_framework", lambda _conn: "laravel")
+        monkeypatch.setattr(cmd_n1, "_find_model_classes", lambda _conn: models)
+        monkeypatch.setattr(cmd_n1, "_is_test_path", lambda _p: False)
+        monkeypatch.setattr(cmd_n1, "_find_appends_properties", lambda *a, **k: [])
+        cc = CountingConn(real)
+        try:
+            cmd_n1.analyze_n1(cc)
+        finally:
+            real.close()
+        return cc.execute_calls
+
+    one = _run(1)
+    fifty = _run(50)
+    # Old code: ~5 per model = 5 vs 250.
+    # New code: constant ~4-6.
+    # Allow 3 queries of slack (batched_in chunking) but reject any
+    # solution that scales with n_models.
+    assert fifty <= one + 3, (
+        f"query count grew from {one} to {fifty} as n_models went 1→50 — "
+        f"expected near-constant. Bulk fetches should batch."
     )
 
 
