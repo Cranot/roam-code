@@ -155,3 +155,307 @@ def test_plan_json_with_operations_wrapper():
     plan = json.dumps({"operations": [{"kind": "modify", "symbol": "_format_count"}]})
     r = validate_plan(plan_json=plan)
     assert r["summary"]["operations"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Warning-code coverage (R8.E3 — backfill for `verdict == "needs-review"` paths)
+# ---------------------------------------------------------------------------
+#
+# These tests exercise the WARNING half of the validator. Without them, a
+# regression that silently dropped a _warn(...) call would still produce
+# verdict=="ok" and an agent could ship a risky plan unsurfaced. Each test
+# pins the warning code AND the verdict so either drift fails the suite.
+
+
+def test_name_collision_warning_fires_when_new_name_exists():
+    """Renaming `analyze_n1` to `loc` — both real symbols in this repo."""
+    # `analyze_n1` has only ~5 callers (below MEDIUM threshold) so the
+    # rename op produces NAME_COLLISION cleanly without a blast warning.
+    r = validate_plan(
+        operations=[{"kind": "rename", "symbol": "analyze_n1", "new_name": "loc"}]
+    )
+    op = r["operations"][0]
+    codes = {w["code"] for w in op["warnings"]}
+    assert "NAME_COLLISION" in codes, (
+        f"NAME_COLLISION not raised when rename target collides with an existing "
+        f"symbol; warnings={op['warnings']}"
+    )
+    # MEDIUM/HIGH must NOT fire on a 5-caller symbol
+    assert "MEDIUM_BLAST_RADIUS" not in codes
+    assert "HIGH_BLAST_RADIUS" not in codes
+    # Fact carries the collision flag
+    assert op["facts"].get("new_name_collision") is True
+    # Op is still ok=True (no blockers); verdict bumps to needs-review
+    assert op["ok"] is True
+    assert r["summary"]["verdict"] == "needs-review"
+
+
+def test_name_collision_silent_when_new_name_is_unique():
+    """Negative control — a fresh new_name must NOT raise NAME_COLLISION."""
+    r = validate_plan(
+        operations=[
+            {
+                "kind": "rename",
+                "symbol": "analyze_n1",
+                "new_name": "this_is_a_brand_new_name_that_definitely_doesnt_exist_xyz789",
+            }
+        ]
+    )
+    op = r["operations"][0]
+    codes = {w["code"] for w in op["warnings"]}
+    assert "NAME_COLLISION" not in codes
+    assert op["facts"].get("new_name_collision") is False
+
+
+def test_medium_blast_radius_warning_fires_on_modest_caller_count():
+    """`_format_count` has ~11 callers — sits just inside the (10, 50] band."""
+    r = validate_plan(operations=[{"kind": "modify", "symbol": "_format_count"}])
+    op = r["operations"][0]
+    codes = {w["code"] for w in op["warnings"]}
+    blast = op["facts"].get("blast_radius")
+    assert isinstance(blast, int) and 10 < blast <= 50, (
+        f"_format_count blast moved out of MEDIUM band: {blast}. "
+        f"Pick a different fixture symbol."
+    )
+    assert "MEDIUM_BLAST_RADIUS" in codes, (
+        f"MEDIUM_BLAST_RADIUS missing for blast={blast}; warnings={op['warnings']}"
+    )
+    assert "HIGH_BLAST_RADIUS" not in codes
+    assert r["summary"]["verdict"] == "needs-review"
+
+
+def test_high_blast_radius_warning_fires_on_widely_used_symbol():
+    """`to_json` is called from hundreds of sites — must trip HIGH (not MEDIUM)."""
+    r = validate_plan(operations=[{"kind": "modify", "symbol": "to_json"}])
+    op = r["operations"][0]
+    codes = {w["code"] for w in op["warnings"]}
+    blast = op["facts"].get("blast_radius")
+    assert isinstance(blast, int) and blast > 50, (
+        f"to_json blast dropped below HIGH threshold: {blast}. "
+        f"Pick a different fixture symbol."
+    )
+    assert "HIGH_BLAST_RADIUS" in codes, (
+        f"HIGH_BLAST_RADIUS missing for blast={blast}; warnings={op['warnings']}"
+    )
+    # Mutual-exclusion guard: HIGH path uses `if`, MEDIUM uses `elif` —
+    # they must never both fire on the same op.
+    assert "MEDIUM_BLAST_RADIUS" not in codes
+    assert r["summary"]["verdict"] == "needs-review"
+
+
+def test_fitness_violations_warning_fires_when_preflight_summary_lists_them(monkeypatch):
+    """The FITNESS_VIOLATIONS branch reads ``summary['fitness_violations']`` /
+    ``summary['violations']`` from ``roam preflight`` and only fires when the
+    value is a non-empty *list*.
+
+    NOTE / FINDING: in the live envelope produced by ``cmd_preflight``,
+    fitness data lives at ``r['fitness']['rule_details']`` (and
+    ``failed_rules`` is a list of strings). ``summary`` never carries
+    ``fitness_violations`` or ``violations`` — meaning this warning path
+    is effectively *unreachable* against real preflight output today.
+    See the suite's report for details. We monkeypatch ``_run_roam`` so
+    the warning emitter itself is still pinned by tests.
+    """
+    import roam.mcp_server as mcp
+
+    real_run_roam = mcp._run_roam
+
+    def fake_run_roam(args, root="."):
+        if args and args[0] == "preflight":
+            return {
+                "summary": {
+                    "verdict": "needs-review",
+                    "fitness_violations": [
+                        {"rule": "Max function complexity 25", "severity": "WARNING"},
+                        {"rule": "No cycles", "severity": "ERROR"},
+                    ],
+                }
+            }
+        return real_run_roam(args, root)
+
+    monkeypatch.setattr(mcp, "_run_roam", fake_run_roam)
+
+    r = validate_plan(operations=[{"kind": "modify", "symbol": "analyze_n1"}])
+    op = r["operations"][0]
+    codes = {w["code"] for w in op["warnings"]}
+    assert "FITNESS_VIOLATIONS" in codes, (
+        f"FITNESS_VIOLATIONS not raised when preflight summary carries a "
+        f"violations list; warnings={op['warnings']}"
+    )
+    # The detail message must mention the count we injected (2).
+    fv_detail = next(w["detail"] for w in op["warnings"] if w["code"] == "FITNESS_VIOLATIONS")
+    assert "2" in fv_detail
+    assert r["summary"]["verdict"] == "needs-review"
+
+
+def test_preflight_summary_carries_fitness_violations_list():
+    """Producer-side contract pin: ``cmd_preflight`` must populate
+    ``summary['fitness_violations']`` as a *list* whenever fitness rules
+    are configured for the project.
+
+    Replaces the prior silent-pin test (R10.4 placeholder) — that test
+    documented that the FITNESS_VIOLATIONS warning was unreachable
+    against real preflight output because the producer never emitted the
+    field. The fix is on the producer side: ``cmd_preflight`` now
+    derives a flat list of ``{symbol, rule, severity}`` dicts from
+    ``rule_details`` and surfaces it in ``summary``.
+    """
+    from roam.mcp_server import _run_roam
+
+    pre = _run_roam(["preflight", "_vp_validate_one"])
+    assert isinstance(pre, dict)
+    summary = pre.get("summary") or {}
+    # Field must exist and be a list (possibly empty if no rules
+    # currently fail) — never absent, never an int.
+    assert "fitness_violations" in summary, (
+        f"summary missing the 'fitness_violations' contract field; "
+        f"summary keys={list(summary.keys())}"
+    )
+    fv = summary["fitness_violations"]
+    assert isinstance(fv, list), (
+        f"summary['fitness_violations'] must be a list (the validator "
+        f"checks ``isinstance(..., list)`` before firing FITNESS_VIOLATIONS); "
+        f"got {type(fv).__name__}"
+    )
+    # When non-empty, each entry must carry the keys the warning relies on.
+    for entry in fv:
+        assert isinstance(entry, dict)
+        assert "rule" in entry, f"violation entry missing 'rule': {entry}"
+
+
+def test_fitness_violations_warning_fires_against_live_preflight_envelope():
+    """End-to-end pin: when the live preflight envelope carries a
+    non-empty ``summary['fitness_violations']`` list, the
+    ``FITNESS_VIOLATIONS`` warning in ``_vp_validate_one`` must fire on
+    a ``modify`` op.
+
+    Skips when the index currently has no fitness violations (e.g. all
+    rules pass on the target file) — in that case the empty-list
+    contract is exercised by the producer-side test above.
+    """
+    from roam.mcp_server import _run_roam
+
+    # Probe the live envelope first so we can decide whether to assert
+    # the warning fires (non-empty list) or assert it stays silent
+    # (empty list — the file currently passes all fitness rules).
+    pre = _run_roam(["preflight", "_vp_validate_one"])
+    fv = (pre.get("summary") or {}).get("fitness_violations") or []
+    r = validate_plan(operations=[{"kind": "modify", "symbol": "_vp_validate_one"}])
+    op = r["operations"][0]
+    codes = {w["code"] for w in op["warnings"]}
+    if fv:
+        assert "FITNESS_VIOLATIONS" in codes, (
+            f"live preflight reports {len(fv)} fitness violation(s) for "
+            f"_vp_validate_one but FITNESS_VIOLATIONS warning did not fire; "
+            f"warnings={op['warnings']}"
+        )
+        detail = next(w["detail"] for w in op["warnings"] if w["code"] == "FITNESS_VIOLATIONS")
+        assert str(len(fv)) in detail
+    else:
+        # All fitness rules currently pass on the target — the warning
+        # must stay silent. The producer-side contract is still pinned
+        # by ``test_preflight_summary_carries_fitness_violations_list``.
+        assert "FITNESS_VIOLATIONS" not in codes
+
+
+def test_invalid_target_file_blocker_for_path_traversal_move():
+    """``move`` op pointing outside the project root must be blocked, not
+    warned. `_vp_check_target_file` returns ``escapes project root`` and
+    that branch escalates to ``INVALID_TARGET_FILE`` blocker."""
+    r = validate_plan(
+        operations=[
+            {"kind": "move", "symbol": "analyze_n1", "target_file": "../../etc/passwd"}
+        ]
+    )
+    op = r["operations"][0]
+    codes = {b["code"] for b in op["blockers"]}
+    assert "INVALID_TARGET_FILE" in codes, (
+        f"INVALID_TARGET_FILE not raised for path-traversal target_file; "
+        f"blockers={op['blockers']}"
+    )
+    detail = next(b["detail"] for b in op["blockers"] if b["code"] == "INVALID_TARGET_FILE")
+    assert "escapes project root" in detail
+    assert op["ok"] is False
+    assert op["facts"].get("target_file_ok") is False
+    assert r["summary"]["verdict"] == "blocked"
+
+
+def test_invalid_target_file_blocker_for_missing_parent_dir():
+    """A move into a non-existent parent dir must also block."""
+    r = validate_plan(
+        operations=[
+            {
+                "kind": "move",
+                "symbol": "analyze_n1",
+                "target_file": "no/such/parent/dir/new_home.py",
+            }
+        ]
+    )
+    op = r["operations"][0]
+    codes = {b["code"] for b in op["blockers"]}
+    assert "INVALID_TARGET_FILE" in codes
+    assert r["summary"]["verdict"] == "blocked"
+
+
+def test_multiple_warnings_aggregate_in_summary():
+    """A 3-op plan, each producing at least one warning, must surface
+    ``warnings_count >= 3`` and verdict ``needs-review`` (no blockers).
+
+    Per-op codes are checked as supersets — modify ops can additionally
+    surface FITNESS_VIOLATIONS now that ``cmd_preflight`` populates
+    ``summary['fitness_violations']`` (R10.4 fix, May 2026). The test
+    pins the *required* warnings (NAME_COLLISION / blast-radius bands)
+    and tolerates fitness add-ons whose presence depends on the live
+    state of ``.roam/fitness.yaml`` for this repo.
+    """
+    r = validate_plan(
+        operations=[
+            # Op 0 — NAME_COLLISION (rename to a real symbol; analyze_n1 has
+            # only 5 callers so no MEDIUM/HIGH warning piggybacks).
+            {"kind": "rename", "symbol": "analyze_n1", "new_name": "loc"},
+            # Op 1 — MEDIUM_BLAST_RADIUS (modify, ~11 callers). May also
+            # surface FITNESS_VIOLATIONS depending on live fitness state.
+            {"kind": "modify", "symbol": "_format_count"},
+            # Op 2 — HIGH_BLAST_RADIUS (modify, hundreds of callers). May
+            # also surface FITNESS_VIOLATIONS depending on live fitness state.
+            {"kind": "modify", "symbol": "to_json"},
+        ]
+    )
+    assert r["summary"]["blockers_count"] == 0, (
+        f"unexpected blockers: { [op['blockers'] for op in r['operations']] }"
+    )
+    assert r["summary"]["warnings_count"] >= 3, (
+        f"expected >=3 warnings, got { r['summary']['warnings_count'] }; "
+        f"per-op: { [(op['kind'], [w['code'] for w in op['warnings']]) for op in r['operations']] }"
+    )
+    assert r["summary"]["verdict"] == "needs-review"
+    # Per-op codes — required warnings pinned; FITNESS_VIOLATIONS may
+    # piggyback on modify ops when fitness rules currently fail.
+    op0_codes = {w["code"] for w in r["operations"][0]["warnings"]}
+    op1_codes = {w["code"] for w in r["operations"][1]["warnings"]}
+    op2_codes = {w["code"] for w in r["operations"][2]["warnings"]}
+    assert op0_codes == {"NAME_COLLISION"}
+    assert "MEDIUM_BLAST_RADIUS" in op1_codes
+    assert op1_codes <= {"MEDIUM_BLAST_RADIUS", "FITNESS_VIOLATIONS"}
+    assert "HIGH_BLAST_RADIUS" in op2_codes
+    assert op2_codes <= {"HIGH_BLAST_RADIUS", "FITNESS_VIOLATIONS"}
+
+
+def test_verdict_precedence_blocker_dominates_warning():
+    """When the same plan carries both a blocker and a warning, the final
+    verdict must collapse to ``blocked`` (not ``needs-review``)."""
+    r = validate_plan(
+        operations=[
+            # Warning-only op: HIGH_BLAST_RADIUS.
+            {"kind": "modify", "symbol": "to_json"},
+            # Blocker op: rename without a new_name -> MISSING_NEW_NAME.
+            {"kind": "rename", "symbol": "_format_count"},
+        ]
+    )
+    assert r["summary"]["blockers_count"] >= 1
+    assert r["summary"]["warnings_count"] >= 1
+    assert r["summary"]["verdict"] == "blocked", (
+        f"verdict precedence broke: blockers={r['summary']['blockers_count']}, "
+        f"warnings={r['summary']['warnings_count']}, "
+        f"verdict={r['summary']['verdict']}"
+    )

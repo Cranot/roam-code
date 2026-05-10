@@ -216,20 +216,30 @@ def move_symbol(conn, symbol_name: str, target_file: str, dry_run: bool = True) 
     }
 
     if not dry_run:
-        _apply_move(
-            source_file,
-            source_lines,
-            start_idx,
-            end_idx,
-            target_file,
-            target_lines,
-            symbol_lines,
-            conn,
-            sym,
-            old_module,
-            new_module,
-            referencing_files,
-        )
+        try:
+            _apply_move(
+                source_file,
+                source_lines,
+                start_idx,
+                end_idx,
+                target_file,
+                target_lines,
+                symbol_lines,
+                conn,
+                sym,
+                old_module,
+                new_module,
+                referencing_files,
+            )
+        except OSError as e:
+            # Rollback already performed inside _apply_move; surface a
+            # structured error envelope so callers (and the agent) can
+            # detect partial-failure recovery without parsing tracebacks.
+            result["error"] = f"apply failed, changes rolled back: {e}"
+            result["isError"] = True
+            result["error_code"] = "APPLY_FAILED"
+            result["files_modified"] = []
+            result.setdefault("warnings", []).append(f"apply failed and was rolled back: {e}")
 
     return result
 
@@ -248,31 +258,82 @@ def _apply_move(
     new_module,
     referencing_files,
 ):
-    """Actually write the move changes to disk."""
-    # Write symbol to target
-    new_target = list(target_lines)
-    if new_target:
-        new_target.append("")
-    new_target.extend(symbol_lines)
-    _write_file(target_file, new_target)
+    """Actually write the move changes to disk.
 
-    # Remove from source
-    new_source = source_lines[:start_idx] + source_lines[end_idx:]
-    _write_file(source_file, new_source)
+    Rollback contract: if any write fails mid-way, restore every file
+    that has been written this run to its pre-apply state. Newly-created
+    target files are removed; pre-existing files are rewritten with
+    their original bytes. Then re-raise the original ``OSError`` so the
+    calling ``move_symbol`` can wrap it into a structured error envelope.
+    Without this contract, a partial failure would leave duplicate
+    definitions in the repo (target has the symbol; source still has it).
+    """
+    # Snapshot the pre-apply state of every file we may touch so we
+    # can roll back on partial failure.
+    target_existed = os.path.isfile(target_file)
+    snapshots: dict[str, list[str]] = {}
+    if target_existed:
+        snapshots[target_file] = list(target_lines)
+    snapshots[source_file] = list(source_lines)
 
-    # Rewrite caller imports
     sym_name = sym["name"]
+    ref_snapshots: dict[str, list[str]] = {}
     for ref_file in referencing_files:
         if ref_file == source_file:
             continue
+        if ref_file in snapshots:
+            continue
         ref_lines = _read_file(ref_file)
-        import_idx = _find_import_line(ref_lines, sym_name)
-        if import_idx is not None:
-            old_line = ref_lines[import_idx]
-            new_line = _rewrite_import(old_line, old_module, new_module)
-            if old_line != new_line:
-                ref_lines[import_idx] = new_line
-                _write_file(ref_file, ref_lines)
+        ref_snapshots[ref_file] = ref_lines
+    snapshots.update(ref_snapshots)
+
+    written: list[str] = []
+    try:
+        # Write symbol to target
+        new_target = list(target_lines)
+        if new_target:
+            new_target.append("")
+        new_target.extend(symbol_lines)
+        _write_file(target_file, new_target)
+        written.append(target_file)
+
+        # Remove from source
+        new_source = source_lines[:start_idx] + source_lines[end_idx:]
+        _write_file(source_file, new_source)
+        written.append(source_file)
+
+        # Rewrite caller imports
+        for ref_file in referencing_files:
+            if ref_file == source_file:
+                continue
+            ref_lines = _read_file(ref_file)
+            import_idx = _find_import_line(ref_lines, sym_name)
+            if import_idx is not None:
+                old_line = ref_lines[import_idx]
+                new_line = _rewrite_import(old_line, old_module, new_module)
+                if old_line != new_line:
+                    ref_lines[import_idx] = new_line
+                    _write_file(ref_file, ref_lines)
+                    written.append(ref_file)
+    except OSError:
+        # Restore every file that we successfully wrote during this
+        # attempt, in reverse order. If the target file did not exist
+        # before the apply, remove it entirely so the repo has no
+        # leftover duplicate definition.
+        for path in reversed(written):
+            try:
+                if path == target_file and not target_existed:
+                    if os.path.isfile(path):
+                        os.remove(path)
+                    continue
+                original = snapshots.get(path)
+                if original is not None:
+                    _write_file(path, original)
+            except OSError:
+                # Best-effort rollback: ignore secondary failures so the
+                # original error is what surfaces to the caller.
+                pass
+        raise
 
 
 def rename_symbol(conn, symbol_name: str, new_name: str, dry_run: bool = True) -> dict:

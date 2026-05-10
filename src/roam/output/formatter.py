@@ -106,27 +106,57 @@ def format_edge_kind(kind: str) -> str:
 
 
 def format_table(headers: list[str], rows: list[list[str]], budget: int = 0) -> str:
+    """Render a 2-column-spaced left-aligned text table.
+
+    Single-pass column-width computation: walks the displayed rows exactly
+    once, stringifying each cell on the way (so the emit pass below does
+    not re-do ``str(cell)`` work) and updating per-column widths inline.
+
+    Output is byte-identical to the previous implementation: the only
+    behavioural quirks preserved are
+    (a) cells past ``len(headers)`` are still rendered (and contribute to
+        the row's emit, but never widen the table) — same as before; and
+    (b) trailing missing cells in a short row do not get padded, but
+        non-final visible cells do (because they were ``ljust``-ed against
+        the column width) — same as before.
+    """
     if not rows:
         return "(none)"
+
+    num_cols = len(headers)
+    truncated = bool(budget) and len(rows) > budget
+    display_count = budget if truncated else len(rows)
+
+    # Single pass over ALL rows: stringify cells once and accumulate
+    # per-column widths inline. We keep the str-versions of *display_rows*
+    # only (no need to retain stringified rows we will not emit), but
+    # widths are computed from every row so output matches the original
+    # implementation byte-for-byte even when budget < len(rows).
     widths = [len(h) for h in headers]
-    num_cols = len(widths)
-    for row in rows:
-        for i, cell in enumerate(row):
-            if i < num_cols:
-                widths[i] = max(widths[i], len(str(cell)))
-    lines = []
-    header_line = "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers))
-    lines.append(header_line)
-    lines.append("  ".join("-" * w for w in widths))
-    display_rows = rows
-    if budget and len(rows) > budget:
-        display_rows = rows[:budget]
-    for row in display_rows:
-        line = "  ".join(str(cell).ljust(widths[i]) for i, cell in enumerate(row))
-        lines.append(line)
-    if budget and len(rows) > budget:
-        lines.append(f"(+{len(rows) - budget} more)")
-    return "\n".join(lines)
+    str_rows: list[list[str]] = []
+    for idx, row in enumerate(rows):
+        srow = [str(cell) for cell in row]
+        if idx < display_count:
+            str_rows.append(srow)
+        # Manual loop beats enumerate()+max() — only writes when wider.
+        upper = num_cols if len(srow) >= num_cols else len(srow)
+        for i in range(upper):
+            cell_len = len(srow[i])
+            if cell_len > widths[i]:
+                widths[i] = cell_len
+
+    # Emit phase — uses pre-stringified cells; no second str()/len() pass.
+    out_lines: list[str] = []
+    out_lines.append("  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)))
+    out_lines.append("  ".join("-" * w for w in widths))
+    for srow in str_rows:
+        # Match original semantics exactly: enumerate(srow) and ljust
+        # against widths[i]. Rows wider than the header crashed in the
+        # original (IndexError) and continue to crash here.
+        out_lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(srow)))
+    if truncated:
+        out_lines.append(f"(+{len(rows) - budget} more)")
+    return "\n".join(out_lines)
 
 
 def to_json(data) -> str:

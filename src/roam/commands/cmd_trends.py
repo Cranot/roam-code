@@ -1044,6 +1044,18 @@ def trends(
     Use --cohort-by-author to compare AI vs human quality trajectories.
     Use --save [--tag TAG] to persist a health snapshot.
     Use --compare [--since TAG] to diff current metrics against a snapshot.
+
+    \b
+    Examples:
+      roam trends
+      roam trends --analyze --fail-on-anomaly
+      roam trends --save --tag pre-refactor
+      roam trends --compare --since pre-refactor
+      roam trends --metric complexity --days 30
+
+    See also ``health`` (current-snapshot score), ``forecast``
+    (predictive trajectory), and ``alerts`` (anomaly notifications
+    pipeline).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     cmd_name = ctx.info_name or "trends"

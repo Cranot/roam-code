@@ -44,6 +44,17 @@ def capabilities_cmd(ctx, emit: str, category: str | None, ai_safe_only: bool) -
 
     Imports trigger registration. Run ``roam capabilities --emit yaml``
     to produce a stable manifest after every release.
+
+    \b
+    Examples:
+      roam capabilities --emit yaml
+      roam capabilities --emit json
+      roam capabilities --category review
+      roam capabilities --ai-safe-only
+
+    See also ``recipes`` (intent-classified workflow recipes),
+    ``permit`` (allow-list a tool for an AI agent), and ``mcp-setup``
+    (wire roam into MCP-aware clients).
     """
     # Force-load known command modules so the registry is populated.
     _populate_registry()

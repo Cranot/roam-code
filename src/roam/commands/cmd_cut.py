@@ -26,6 +26,17 @@ def cut(ctx, between, leak_edges, top_n):
     Computes minimum edge cuts between architectural clusters to identify
     the thinnest (most fragile) boundaries and the highest-impact "leak
     edges" whose removal would best improve domain isolation.
+
+    \b
+    Examples:
+      roam cut
+      roam cut --top 5
+      roam cut --between auth payments
+      roam cut --leak-edges --top 20
+
+    See also ``split`` (decompose a single file), ``clusters``
+    (community-detection groupings), and ``layers`` (dependency-layer
+    violations).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

@@ -215,6 +215,10 @@ def ci_setup(ctx, platform, write_file, python_version, gate):
       roam ci-setup --platform gitlab      # show GitLab template
       roam ci-setup --platform azure --write  # write Azure template
       roam --json ci-setup --platform github  # JSON output
+
+    See also ``mcp-setup`` (MCP server JSON for AI clients),
+    ``hooks`` (git hook installer), and ``pr-risk`` (gate command CI
+    pipelines call on every PR).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 

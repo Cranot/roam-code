@@ -31,6 +31,11 @@ def effects(ctx, target, file_path, effect_type, transitive):
       roam effects create_user       # effects of a specific function
       roam effects --file src/api.py  # effects per function in a file
       roam effects --type writes_db   # all functions that write to DB
+      roam effects --transitive login_user
+
+    See also ``impact`` (graph-level break-radius), ``trace`` (call-path
+    walk through the graph), and ``taint`` (source-to-sink reachability
+    for security).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

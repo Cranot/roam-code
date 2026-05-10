@@ -293,6 +293,17 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
     Unlike ``suggest-refactoring`` (which screens for refactoring
     candidates), this command builds a detailed execution plan with
     simulation previews for a specific symbol.
+
+    \b
+    Examples:
+      roam plan-refactor build_query
+      roam plan-refactor parse_amount --operation extract
+      roam plan-refactor handle_request --target-file src/handlers.py
+      roam plan-refactor render_grid --max-steps 12
+
+    See also ``suggest-refactoring`` (codebase-wide candidate ranking),
+    ``simulate`` (architecture what-if), and ``preflight`` (blast-radius
+    gate before applying the plan).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

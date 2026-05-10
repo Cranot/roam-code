@@ -732,6 +732,25 @@ def preflight(ctx, target, staged):
         else:
             verdict = f"Significant risk — {risk}, {blast['affected_symbols']} symbols in blast radius"
 
+        # Build a flat list of fitness violations for the summary so
+        # downstream contracts (e.g. ``roam_validate_plan``'s
+        # FITNESS_VIOLATIONS warning, which reads
+        # ``summary['fitness_violations']`` as a *list*) can fire
+        # without having to dig into ``r['fitness']['rule_details']``.
+        # Additive: we keep ``r['fitness']['rule_details']`` and
+        # ``r['fitness']['failed_rules']`` untouched for existing
+        # consumers.
+        target_label_for_fitness = label.split(" (", 1)[0] if isinstance(label, str) else ""
+        fitness_violations_list = [
+            {
+                "symbol": target_label_for_fitness,
+                "rule": detail.get("name", "unnamed"),
+                "severity": fitns.get("severity", "WARNING"),
+            }
+            for detail in fitns.get("rule_details") or []
+            if detail.get("status") == "FAIL"
+        ]
+
         # JSON output
         if json_mode:
             click.echo(
@@ -744,6 +763,7 @@ def preflight(ctx, target, staged):
                             "risk_level": risk,
                             "symbols_checked": len(sym_ids),
                             "files_checked": len(file_paths),
+                            "fitness_violations": fitness_violations_list,
                         },
                         blast_radius={
                             "affected_symbols": blast["affected_symbols"],

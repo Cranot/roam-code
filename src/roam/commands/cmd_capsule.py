@@ -215,6 +215,17 @@ def capsule(ctx, redact_paths, no_signatures, output):
 
     When --output is given, the full capsule JSON is always written to the
     file regardless of --json mode, and a summary is printed to stdout.
+
+    \b
+    Examples:
+      roam capsule
+      roam capsule --output graph.json
+      roam capsule --redact-paths --no-signatures
+      roam --json capsule
+
+    See also ``context`` (per-symbol read order), ``graph-export``
+    (graph-export to GraphML/DOT/JSON), and ``attest`` (signed
+    in-toto attestation of the capsule contents).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

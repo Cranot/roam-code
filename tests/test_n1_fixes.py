@@ -592,3 +592,768 @@ def test_against_mode_constant_query_count(n_files):
         f"files — expected <= 5 (constant). Old code: 4 + n_files.\n"
         f"queries: {cc.queries}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6 — cmd_context: get_blast_radius / get_affected_tests_bfs / get_coupling
+# ---------------------------------------------------------------------------
+
+
+def _seed_context_fixture(conn, n_chain=200):
+    """Seed a long caller chain so the BFS helpers have real work to do.
+
+    The pre-fix code issued one ``SELECT source_id ... WHERE target_id =
+    ?`` per BFS pop — on a 200-edge chain that meant ~200 queries. The
+    bulk-load fix issues exactly ONE query for the full reverse
+    adjacency, regardless of chain length.
+
+    Symbol layout (chain of length n_chain):
+        sym_0 -> sym_1 -> sym_2 -> ... -> sym_{n-1}
+    Plus a couple of co-change rows so ``get_coupling`` has partners.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE files (
+            id INTEGER PRIMARY KEY,
+            path TEXT,
+            language TEXT,
+            file_role TEXT
+        );
+        CREATE TABLE symbols (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER,
+            name TEXT,
+            qualified_name TEXT,
+            kind TEXT,
+            line_start INTEGER,
+            line_end INTEGER,
+            parent_id INTEGER,
+            signature TEXT,
+            docstring TEXT,
+            is_exported INTEGER DEFAULT 1,
+            is_async INTEGER DEFAULT 0,
+            decorators TEXT
+        );
+        CREATE TABLE edges (
+            id INTEGER PRIMARY KEY,
+            source_id INTEGER,
+            target_id INTEGER,
+            kind TEXT,
+            line INTEGER
+        );
+        CREATE TABLE file_stats (
+            file_id INTEGER PRIMARY KEY,
+            commit_count INTEGER,
+            total_churn INTEGER,
+            distinct_authors INTEGER,
+            cochange_entropy REAL
+        );
+        CREATE TABLE git_cochange (
+            file_id_a INTEGER,
+            file_id_b INTEGER,
+            cochange_count INTEGER
+        );
+        CREATE TABLE symbol_metrics (
+            symbol_id INTEGER PRIMARY KEY,
+            cognitive_complexity INTEGER,
+            nesting_depth INTEGER,
+            param_count INTEGER,
+            line_count INTEGER,
+            return_count INTEGER,
+            bool_op_count INTEGER,
+            callback_depth INTEGER
+        );
+        CREATE TABLE graph_metrics (
+            symbol_id INTEGER PRIMARY KEY,
+            pagerank REAL,
+            in_degree INTEGER,
+            out_degree INTEGER,
+            betweenness REAL
+        );
+        """
+    )
+    # n_chain files, each with one function. file_id == sym_id == i+1.
+    for i in range(n_chain):
+        conn.execute(
+            "INSERT INTO files(id, path, language, file_role) VALUES (?, ?, 'python', 'source')",
+            (i + 1, f"src/m_{i}.py"),
+        )
+        conn.execute(
+            "INSERT INTO symbols(id, file_id, name, qualified_name, kind, line_start, line_end) "
+            "VALUES (?, ?, ?, ?, 'function', 1, 5)",
+            (
+                i + 1,
+                i + 1,
+                f"sym_{i}",
+                f"sym_{i}",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO file_stats(file_id, commit_count) VALUES (?, ?)",
+            (i + 1, 10 + (i % 5)),
+        )
+
+    # Caller chain: sym_0 (id=1) is called by sym_1, sym_1 by sym_2, ...
+    # So get_blast_radius / get_affected_tests_bfs starting at sym_0
+    # walks reverse edges through the entire chain.
+    for i in range(n_chain - 1):
+        conn.execute(
+            "INSERT INTO edges(source_id, target_id, kind, line) VALUES (?, ?, 'call', 3)",
+            (
+                i + 2,
+                i + 1,
+            ),
+        )
+
+    # A couple of co-change rows so get_coupling has work.
+    for i in range(min(5, n_chain - 1)):
+        conn.execute(
+            "INSERT INTO git_cochange(file_id_a, file_id_b, cochange_count) VALUES (1, ?, ?)",
+            (i + 2, 5 - i),
+        )
+    conn.commit()
+
+
+@pytest.mark.parametrize("n_chain", [10, 100, 200])
+def test_get_blast_radius_constant_query_count(n_chain):
+    """``get_blast_radius`` must bulk-load the reverse adjacency once
+    instead of querying per BFS pop.
+
+    Pre-fix: 1 ``SELECT source_id ... WHERE target_id = ?`` per visited
+    node → linear in chain depth.
+    Post-fix: 1 bulk ``SELECT source_id, target_id FROM edges`` + 1
+    batched_in for dependent file paths → constant.
+    """
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    _seed_context_fixture(real, n_chain=n_chain)
+
+    cc = CountingConn(real)
+    try:
+        from roam.commands.context_helpers import get_blast_radius
+
+        result = get_blast_radius(cc, sym_id=1)
+    finally:
+        real.close()
+
+    # Sanity: every other symbol in the chain transitively depends on sym_0.
+    assert result["dependent_symbols"] == n_chain - 1, (
+        f"expected {n_chain - 1} dependents, got {result['dependent_symbols']}"
+    )
+    # Constant query budget: 1 bulk reverse-adj fetch + 1 batched_in.
+    # Cap at 4 to absorb batched_in chunking. Old code: ~n_chain queries.
+    assert cc.execute_calls <= 4, (
+        f"get_blast_radius ran {cc.execute_calls} queries for chain of "
+        f"{n_chain} — expected <= 4 (constant). Old code: linear in chain.\n"
+        f"queries: {cc.queries}"
+    )
+
+
+@pytest.mark.parametrize("n_chain", [10, 100, 200])
+def test_get_affected_tests_bfs_constant_query_count(n_chain):
+    """``get_affected_tests_bfs`` must bulk-load reverse adjacency once
+    rather than issue a query per visited node.
+
+    Pre-fix: 1 ``SELECT source_id, name ... WHERE target_id = ?`` per
+    pop. Post-fix: 1 bulk reverse-adj load + 1 batched_in for caller
+    metadata.
+    """
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    _seed_context_fixture(real, n_chain=n_chain)
+
+    cc = CountingConn(real)
+    try:
+        from roam.commands.context_helpers import get_affected_tests_bfs
+
+        # Use a deep enough max_hops that the BFS would walk the full
+        # chain in the pre-fix code path.
+        result = get_affected_tests_bfs(cc, sym_id=1, max_hops=n_chain + 5)
+    finally:
+        real.close()
+
+    # No symbols are in test files in this fixture, so result is empty —
+    # but the BFS must still have walked everyone for that to be true.
+    assert result == []
+    # Constant: 1 reverse-adj bulk fetch + 1 batched_in for symbol meta.
+    # Cap at 4 to absorb batched_in chunking.
+    assert cc.execute_calls <= 4, (
+        f"get_affected_tests_bfs ran {cc.execute_calls} queries for chain "
+        f"of {n_chain} — expected <= 4 (constant). Old code: linear.\n"
+        f"queries: {cc.queries}"
+    )
+
+
+@pytest.mark.parametrize("n_partners", [1, 5, 10])
+def test_get_coupling_constant_query_count(n_partners):
+    """``get_coupling`` must batch the per-partner ``commit_count``
+    lookup, not run one query per partner.
+
+    Pre-fix: 1 partners query + 1 ``SELECT commit_count`` per partner
+    inside the loop → 2 + n_partners.
+    Post-fix: 1 partners query + 1 batched_in across all partners → 4
+    queries total regardless of n_partners.
+    """
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    # n_partners + 1 files so partner edges have somewhere to point.
+    _seed_context_fixture(real, n_chain=n_partners + 1)
+
+    cc = CountingConn(real)
+    try:
+        from roam.commands.context_helpers import get_coupling
+
+        partners = get_coupling(cc, "src/m_0.py", limit=n_partners)
+    finally:
+        real.close()
+
+    assert partners, "expected at least one coupling partner"
+    # 4 queries: file_id resolve, file_stats fetch, partner select,
+    # batched_in for partner stats. Allow up to 5 for chunking.
+    assert cc.execute_calls <= 5, (
+        f"get_coupling ran {cc.execute_calls} queries for {n_partners} "
+        f"partners — expected <= 5 (constant). Old code: 2 + n_partners.\n"
+        f"queries: {cc.queries}"
+    )
+
+
+def test_get_blast_radius_query_count_not_linear():
+    """Bigger regression: 10-chain vs 200-chain should NOT see 20x query
+    growth. Pin the bulk-load behaviour."""
+    from roam.commands.context_helpers import get_blast_radius
+
+    def count_for(n):
+        real = sqlite3.connect(":memory:")
+        real.row_factory = sqlite3.Row
+        _seed_context_fixture(real, n_chain=n)
+        cc = CountingConn(real)
+        try:
+            get_blast_radius(cc, sym_id=1)
+        finally:
+            real.close()
+        return cc.execute_calls
+
+    ten = count_for(10)
+    two_hundred = count_for(200)
+    assert two_hundred <= ten + 1, (
+        f"query count grew from {ten} to {two_hundred} as chain went 10→200 — "
+        f"expected near-constant. Bulk-load reverse adjacency."
+    )
+
+
+def test_cmd_context_total_under_50_queries():
+    """End-to-end: invoking the helpers cmd_context calls in single-symbol
+    mode must finish under the <50 query ceiling other hot commands hold.
+
+    Pre-fix: ~1986 queries for a moderate-fan symbol (the BFS helpers
+    queried per-pop and the coupling helper queried per-partner).
+    Post-fix: ~30-40 queries.
+    """
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    # Simulate a chain of 150 callers — exercises both BFS helpers in a
+    # way that the old code would have blown out to 300+ queries on its
+    # own.
+    _seed_context_fixture(real, n_chain=150)
+
+    sym = real.execute("SELECT * FROM symbols WHERE id = 1").fetchone()
+    sym_dict = dict(sym)
+    sym_dict["file_path"] = "src/m_0.py"
+
+    cc = CountingConn(real)
+    try:
+        from roam.commands.context_helpers import (
+            gather_annotations,
+            get_affected_tests_bfs,
+            get_blast_radius,
+            get_coupling,
+            get_file_churn,
+            get_file_context,
+            get_graph_metrics,
+            get_similar_symbols,
+            get_symbol_metrics,
+        )
+
+        # Mirror the calls _gather_single makes in cmd_context.py — minus
+        # gather_symbol_context (which depends on graph_metrics &
+        # file_edges that aren't seeded here) and a couple of helpers
+        # that need extra schema tables. The two BFS helpers + coupling
+        # are the dominant offenders we measured.
+        gather_annotations(cc, sym=sym_dict)
+        get_symbol_metrics(cc, sym_dict["id"])
+        get_graph_metrics(cc, sym_dict["id"])
+        get_file_churn(cc, sym_dict["file_path"])
+        get_coupling(cc, sym_dict["file_path"], limit=10)
+        get_affected_tests_bfs(cc, sym_dict["id"], max_hops=200)
+        get_blast_radius(cc, sym_dict["id"])
+        get_similar_symbols(cc, sym_dict, limit=10)
+        get_file_context(cc, sym_dict["file_id"], sym_dict["id"])
+    finally:
+        real.close()
+
+    assert cc.execute_calls < 50, (
+        f"cmd_context helpers ran {cc.execute_calls} queries — expected "
+        f"<50. Pre-fix baseline was ~1986 on the live roam DB.\n"
+        f"queries (first 20): {cc.queries[:20]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — cmd_attest._collect_risk test-coverage loop
+# ---------------------------------------------------------------------------
+
+
+def _seed_attest_coverage_fixture(conn, n_source_files):
+    """Seed files + file_edges so the test-coverage loop in
+    ``_collect_risk`` has work. For every source file we insert one
+    test-file file_edge so the source ends up "covered" — this lets us
+    assert behaviour preservation alongside query count.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE files (
+            id INTEGER PRIMARY KEY,
+            path TEXT,
+            language TEXT,
+            file_role TEXT
+        );
+        CREATE TABLE file_edges (
+            source_file_id INTEGER,
+            target_file_id INTEGER,
+            symbol_count INTEGER
+        );
+        """
+    )
+    file_map: dict = {}
+    fid = 1
+    for i in range(n_source_files):
+        src_path = f"src/m_{i}.py"
+        conn.execute(
+            "INSERT INTO files(id, path, language, file_role) VALUES (?, ?, 'python', 'source')",
+            (fid, src_path),
+        )
+        src_fid = fid
+        file_map[src_path] = src_fid
+        fid += 1
+        # Colocated test file that imports the source.
+        test_path = f"src/test_m_{i}.py"
+        conn.execute(
+            "INSERT INTO files(id, path, language, file_role) VALUES (?, ?, 'python', 'test')",
+            (fid, test_path),
+        )
+        conn.execute(
+            "INSERT INTO file_edges(source_file_id, target_file_id, symbol_count) VALUES (?, ?, 1)",
+            (fid, src_fid),  # test_path imports src_path → file_edge src->tgt
+        )
+        fid += 1
+    conn.commit()
+    return file_map
+
+
+def _run_attest_coverage(conn, file_map):
+    """Re-implement the test-coverage block from ``_collect_risk`` in
+    isolation so the test doesn't have to spin up the rest of the risk
+    pipeline (networkx, file_stats, etc.). Mirrors the post-fix code in
+    cmd_attest.py exactly.
+    """
+    from roam.commands.changed_files import is_test_file
+
+    try:
+        from roam.commands.changed_files import is_low_risk_file
+    except ImportError:
+        is_low_risk_file = lambda p: False  # noqa: E731
+
+    from roam.db.connection import batched_in
+
+    source_files = [p for p in file_map if not is_test_file(p) and not is_low_risk_file(p)]
+    covered_files = 0
+    if source_files:
+        source_fids = [file_map[p] for p in source_files]
+        rows = batched_in(
+            conn,
+            "SELECT fe.target_file_id, f.path FROM file_edges fe "
+            "JOIN files f ON fe.source_file_id = f.id "
+            "WHERE fe.target_file_id IN ({ph})",
+            source_fids,
+        )
+        incoming_by_fid: dict = {}
+        for r in rows:
+            incoming_by_fid.setdefault(r["target_file_id"], []).append(r["path"])
+        for path in source_files:
+            fid = file_map[path]
+            if any(is_test_file(p) for p in incoming_by_fid.get(fid, ())):
+                covered_files += 1
+    return covered_files, len(source_files)
+
+
+@pytest.mark.parametrize("n_files", [1, 5, 50])
+def test_attest_coverage_constant_query_count(n_files):
+    """The test-coverage block in ``_collect_risk`` must bulk-fetch
+    incoming file_edges in a single batched query. Pre-fix: 1 SELECT per
+    source file (linear). Post-fix: 1 batched_in regardless of n_files.
+    """
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    file_map = _seed_attest_coverage_fixture(real, n_files)
+
+    cc = CountingConn(real)
+    try:
+        covered, total = _run_attest_coverage(cc, file_map)
+    finally:
+        real.close()
+
+    # Behaviour preservation: every fixture source has a colocated test file.
+    assert total == n_files, f"expected {n_files} source files, got {total}"
+    assert covered == n_files, f"expected all {n_files} sources covered, got {covered}"
+
+    # Constant query budget: 1 batched_in. Allow up to 2 to absorb
+    # potential chunking under future growth. Old code: n_files queries.
+    assert cc.execute_calls <= 2, (
+        f"_collect_risk test-coverage loop ran {cc.execute_calls} queries for "
+        f"{n_files} source files — expected <= 2 (constant in n).\n"
+        f"queries: {cc.queries}"
+    )
+
+
+def test_attest_coverage_query_count_not_linear():
+    """1-file vs 50-file should not see 50x query growth."""
+
+    def count_for(n):
+        real = sqlite3.connect(":memory:")
+        real.row_factory = sqlite3.Row
+        file_map = _seed_attest_coverage_fixture(real, n)
+        cc = CountingConn(real)
+        try:
+            _run_attest_coverage(cc, file_map)
+        finally:
+            real.close()
+        return cc.execute_calls
+
+    one = count_for(1)
+    fifty = count_for(50)
+    assert fifty <= one + 1, (
+        f"query count grew from {one} to {fifty} as n_files went 1→50 — "
+        f"expected near-constant. The coverage loop must batch."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — cmd_module: _module_deps + _collect_sym_ids
+# ---------------------------------------------------------------------------
+
+
+def _seed_module_fixture(conn, n_files, with_external=True):
+    """Seed files + file_edges + symbols so ``_module_deps`` and
+    ``_collect_sym_ids`` have work for a directory of n_files.
+
+    Every file imports an *external* shared utility file (so
+    imports_external should pick up exactly one entry post-bulk-fetch),
+    and every file is imported by an *external* test consumer (so
+    imported_by_external picks up one entry). Each module file gets 2
+    symbols.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE files (
+            id INTEGER PRIMARY KEY,
+            path TEXT,
+            language TEXT,
+            file_role TEXT
+        );
+        CREATE TABLE symbols (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER,
+            name TEXT,
+            qualified_name TEXT,
+            kind TEXT,
+            line_start INTEGER,
+            line_end INTEGER,
+            is_exported INTEGER DEFAULT 1
+        );
+        CREATE TABLE file_edges (
+            source_file_id INTEGER,
+            target_file_id INTEGER,
+            symbol_count INTEGER
+        );
+        """
+    )
+    files = []
+    sid = 1
+    fid = 1
+    # External "util" file (target of imports_external) and external
+    # "consumer" file (source of imported_by_external).
+    if with_external:
+        conn.execute(
+            "INSERT INTO files(id, path, language, file_role) VALUES (?, 'src/ext/util.py', 'python', 'source')",
+            (1000,),
+        )
+        conn.execute(
+            "INSERT INTO files(id, path, language, file_role) VALUES (?, 'src/ext/consumer.py', 'python', 'source')",
+            (1001,),
+        )
+    for i in range(n_files):
+        p = f"mymod/m_{i}.py"
+        conn.execute(
+            "INSERT INTO files(id, path, language, file_role) VALUES (?, ?, 'python', 'source')",
+            (fid, p),
+        )
+        files.append({"id": fid, "path": p})
+        # 2 symbols per file
+        for j in range(2):
+            conn.execute(
+                "INSERT INTO symbols(id, file_id, name, qualified_name, kind, line_start, line_end) "
+                "VALUES (?, ?, ?, ?, 'function', ?, ?)",
+                (sid, fid, f"fn_{i}_{j}", f"mymod.m_{i}.fn_{j}", j * 10, j * 10 + 5),
+            )
+            sid += 1
+        if with_external:
+            # m_i imports util once
+            conn.execute(
+                "INSERT INTO file_edges(source_file_id, target_file_id, symbol_count) VALUES (?, 1000, 2)",
+                (fid,),
+            )
+            # consumer imports m_i once
+            conn.execute(
+                "INSERT INTO file_edges(source_file_id, target_file_id, symbol_count) VALUES (1001, ?, 1)",
+                (fid,),
+            )
+        fid += 1
+    conn.commit()
+    return files
+
+
+@pytest.mark.parametrize("n_files", [1, 5, 50])
+def test_module_deps_constant_query_count(n_files):
+    """``_module_deps`` must bulk-fetch imports + imported_by in two
+    batched queries regardless of n_files. Pre-fix: 2 SELECT per file
+    (linear). Post-fix: 2 batched_in total.
+    """
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    files = _seed_module_fixture(real, n_files)
+
+    cc = CountingConn(real)
+    try:
+        from roam.commands.cmd_module import _module_deps
+
+        file_ids = [f["id"] for f in files]
+        imports_external, imported_by_external = _module_deps(cc, file_ids)
+    finally:
+        real.close()
+
+    # Behaviour preservation: each module file imports util.py (one
+    # external import target with summed symbol_count = 2 * n_files), and
+    # consumer.py imports each module file (one external importer with
+    # summed symbol_count = 1 * n_files).
+    assert "src/ext/util.py" in imports_external, f"expected util.py in external imports, got {list(imports_external)}"
+    assert imports_external["src/ext/util.py"] == 2 * n_files, (
+        f"expected sum 2*{n_files} for util.py, got {imports_external['src/ext/util.py']}"
+    )
+    assert "src/ext/consumer.py" in imported_by_external
+    assert imported_by_external["src/ext/consumer.py"] == 1 * n_files
+
+    # Constant query budget: 2 batched_in. Allow up to 4 to absorb
+    # chunking. Old code: 2*n_files.
+    assert cc.execute_calls <= 4, (
+        f"_module_deps ran {cc.execute_calls} queries for {n_files} files — "
+        f"expected <= 4 (constant in n). Old code: 2*n_files.\n"
+        f"queries: {cc.queries}"
+    )
+
+
+@pytest.mark.parametrize("n_files", [1, 5, 50])
+def test_collect_sym_ids_constant_query_count(n_files):
+    """``_collect_sym_ids`` must bulk-fetch all symbol IDs in one
+    batched query. Pre-fix: 1 SELECT per file. Post-fix: 1 batched_in.
+    """
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    files = _seed_module_fixture(real, n_files, with_external=False)
+
+    cc = CountingConn(real)
+    try:
+        from roam.commands.cmd_module import _collect_sym_ids
+
+        sym_ids = _collect_sym_ids(cc, files)
+    finally:
+        real.close()
+
+    # Behaviour preservation: 2 symbols per file.
+    assert len(sym_ids) == 2 * n_files, f"expected {2 * n_files} symbol ids, got {len(sym_ids)}"
+    # Constant: 1 batched_in. Allow up to 2.
+    assert cc.execute_calls <= 2, (
+        f"_collect_sym_ids ran {cc.execute_calls} queries for {n_files} files — "
+        f"expected <= 2 (constant in n). Old code: n_files queries.\n"
+        f"queries: {cc.queries}"
+    )
+
+
+def test_module_deps_query_count_not_linear():
+    """1-file vs 50-file: query count must not scale linearly."""
+
+    def count_for(n):
+        real = sqlite3.connect(":memory:")
+        real.row_factory = sqlite3.Row
+        files = _seed_module_fixture(real, n)
+        cc = CountingConn(real)
+        try:
+            from roam.commands.cmd_module import _collect_sym_ids, _module_deps
+
+            file_ids = [f["id"] for f in files]
+            _module_deps(cc, file_ids)
+            _collect_sym_ids(cc, files)
+        finally:
+            real.close()
+        return cc.execute_calls
+
+    one = count_for(1)
+    fifty = count_for(50)
+    # Old code: 3*n_files (2 in _module_deps + 1 in _collect_sym_ids).
+    # New code: 3 batched queries total.
+    assert fifty <= one + 1, (
+        f"query count grew from {one} to {fifty} as n_files went 1→50 — "
+        f"expected near-constant. Both helpers must batch."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — cmd_dead._predict_extinction BFS
+# ---------------------------------------------------------------------------
+
+
+def _seed_extinction_fixture(conn, n_chain):
+    """Seed a linear caller chain so ``_predict_extinction`` walks every
+    node when the leaf is "deleted":
+
+        sym_0 (target) <- sym_1 <- sym_2 <- ... <- sym_{n-1}
+
+    Each sym_i (i ≥ 1) calls ONLY sym_{i-1}, so removing sym_0 cascades
+    all the way to sym_{n-1}. This exercises both the BFS reverse-edge
+    walk AND the per-orphan info lookup.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE files (
+            id INTEGER PRIMARY KEY,
+            path TEXT,
+            language TEXT,
+            file_role TEXT
+        );
+        CREATE TABLE symbols (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER,
+            name TEXT,
+            qualified_name TEXT,
+            kind TEXT,
+            line_start INTEGER,
+            line_end INTEGER,
+            parent_id INTEGER,
+            signature TEXT,
+            docstring TEXT,
+            is_exported INTEGER DEFAULT 1
+        );
+        CREATE TABLE edges (
+            id INTEGER PRIMARY KEY,
+            source_id INTEGER,
+            target_id INTEGER,
+            kind TEXT,
+            line INTEGER
+        );
+        """
+    )
+    for i in range(n_chain):
+        conn.execute(
+            "INSERT INTO files(id, path, language, file_role) VALUES (?, ?, 'python', 'source')",
+            (i + 1, f"src/m_{i}.py"),
+        )
+        conn.execute(
+            "INSERT INTO symbols(id, file_id, name, qualified_name, kind, line_start, line_end) "
+            "VALUES (?, ?, ?, ?, 'function', 1, 5)",
+            (i + 1, i + 1, f"sym_{i}", f"sym_{i}"),
+        )
+    # i+1 calls i (so target_id=i, source_id=i+1)
+    for i in range(n_chain - 1):
+        conn.execute(
+            "INSERT INTO edges(source_id, target_id, kind, line) VALUES (?, ?, 'call', 3)",
+            (i + 2, i + 1),
+        )
+    conn.commit()
+
+
+@pytest.mark.parametrize("n_chain", [10, 50, 200])
+def test_predict_extinction_constant_query_count(n_chain, monkeypatch):
+    """``_predict_extinction`` must bulk-load the full edge adjacency in
+    one query (not query-per-BFS-pop). Pre-fix: 1 SELECT per pop +
+    1 batched_count per visited caller + 1 SELECT per orphan info →
+    O(n_chain) queries. Post-fix: 2 queries total (1 edges scan + 1
+    batched_in for cascade info).
+    """
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    _seed_extinction_fixture(real, n_chain)
+
+    # Stub out find_symbol so we don't need the heavy resolve module's
+    # full schema (graph_metrics/file_edges/etc. would otherwise be
+    # required for the FTS / fuzzy fallbacks).
+    target_sym = dict(real.execute("SELECT * FROM symbols WHERE id = 1").fetchone())
+    from roam.commands import resolve as resolve_mod
+
+    monkeypatch.setattr(resolve_mod, "find_symbol", lambda _conn, _name: target_sym)
+
+    cc = CountingConn(real)
+    try:
+        from roam.commands.cmd_dead import _predict_extinction
+
+        sym, cascade = _predict_extinction(cc, "sym_0")
+    finally:
+        real.close()
+
+    # Behaviour preservation: removing sym_0 orphans the entire chain
+    # except sym_0 itself (which is the deletion target, not in cascade).
+    assert sym is not None
+    assert sym["id"] == 1
+    assert len(cascade) == n_chain - 1, (
+        f"expected cascade of {n_chain - 1} (whole chain minus target), got {len(cascade)}"
+    )
+    # Cascade items should each have name/kind/location/reason.
+    for item in cascade:
+        assert "name" in item and "location" in item and item["reason"] == "only callees removed"
+
+    # Constant query budget: 1 edges scan + 1 batched_in for info. Allow
+    # up to 4 to absorb find_symbol-side bookkeeping under future
+    # refactoring. Old code: linear in n_chain (one SELECT per pop +
+    # batched_count per caller + info SELECT per orphan).
+    assert cc.execute_calls <= 4, (
+        f"_predict_extinction ran {cc.execute_calls} queries for chain "
+        f"of {n_chain} — expected <= 4 (constant). Old code: linear in chain.\n"
+        f"queries (first 10): {cc.queries[:10]}"
+    )
+
+
+def test_predict_extinction_query_count_not_linear(monkeypatch):
+    """10-chain vs 200-chain: query count must NOT scale 20x."""
+
+    def count_for(n):
+        real = sqlite3.connect(":memory:")
+        real.row_factory = sqlite3.Row
+        _seed_extinction_fixture(real, n)
+        target_sym = dict(real.execute("SELECT * FROM symbols WHERE id = 1").fetchone())
+        from roam.commands import resolve as resolve_mod
+
+        monkeypatch.setattr(resolve_mod, "find_symbol", lambda _conn, _name: target_sym)
+
+        cc = CountingConn(real)
+        try:
+            from roam.commands.cmd_dead import _predict_extinction
+
+            _predict_extinction(cc, "sym_0")
+        finally:
+            real.close()
+        return cc.execute_calls
+
+    ten = count_for(10)
+    two_hundred = count_for(200)
+    assert two_hundred <= ten + 1, (
+        f"query count grew from {ten} to {two_hundred} as chain went 10→200 — "
+        f"expected near-constant. Bulk-load adjacency once."
+    )

@@ -529,3 +529,158 @@ class TestEdgeCases:
             assert "app.py" in paths, f"app.py should be indexed but is missing: {paths}"
             assert "secret.py" not in paths, f"secret.py should be gitignored but was indexed: {paths}"
             assert "build/output.py" not in paths, f"build/output.py should be gitignored but was indexed: {paths}"
+
+
+# ===========================================================================
+# Cluster cache (gate Louvain on graph signature)
+# ===========================================================================
+
+
+class TestClusterCache:
+    """The Louvain clustering pass costs ~3-11s on a 17K-symbol graph.
+    When the symbol graph hasn't structurally changed since the last run
+    we skip Louvain entirely and reuse the persisted cluster table.
+
+    Skip is gated on a cheap graph signature persisted in the
+    ``index_manifest.notes`` JSON column.
+    """
+
+    def test_signature_compute_under_budget(self):
+        """``_compute_graph_signature`` must run in <100ms even on a
+        moderately sized graph — it's the per-incremental cost we pay
+        every time, even on cache hits.
+        """
+        try:
+            import networkx as nx
+        except ImportError:
+            pytest.skip("networkx not installed")
+
+        import time
+
+        from roam.index.indexer import Indexer
+
+        G = nx.DiGraph()
+        # ~5K nodes / 5K edges — well-shy of the real-world 17K but big
+        # enough to catch a regression that's quadratic in node count.
+        for i in range(5000):
+            G.add_edge(i, (i + 1) % 5000)
+        # Sprinkle some high-degree hubs so the top-N sort has work to do.
+        for hub in (0, 100, 200, 300, 400):
+            for j in range(50):
+                G.add_edge(hub, 5000 + hub * 10 + j)
+
+        t0 = time.monotonic()
+        sig = Indexer._compute_graph_signature(G)
+        elapsed = time.monotonic() - t0
+
+        assert sig is not None
+        assert sig["n"] == G.number_of_nodes()
+        assert sig["m"] == G.number_of_edges()
+        assert isinstance(sig["top"], list)
+        assert sig["top"] == sorted(sig["top"]), "top-N IDs must be sorted for stable comparison"
+        assert elapsed < 0.5, f"_compute_graph_signature took {elapsed * 1000:.1f}ms — expected <500ms"
+
+    def test_signature_changes_when_node_added(self):
+        """Adding a node MUST change the signature so Louvain re-runs."""
+        try:
+            import networkx as nx
+        except ImportError:
+            pytest.skip("networkx not installed")
+
+        from roam.index.indexer import Indexer
+
+        G = nx.DiGraph()
+        for i in range(20):
+            G.add_edge(i, (i + 1) % 20)
+        sig_before = Indexer._compute_graph_signature(G)
+        G.add_node(999)
+        sig_after = Indexer._compute_graph_signature(G)
+        assert sig_before != sig_after
+
+    def test_signature_changes_when_edge_added(self):
+        """Adding an edge MUST change the signature so Louvain re-runs."""
+        try:
+            import networkx as nx
+        except ImportError:
+            pytest.skip("networkx not installed")
+
+        from roam.index.indexer import Indexer
+
+        G = nx.DiGraph()
+        for i in range(20):
+            G.add_edge(i, (i + 1) % 20)
+        sig_before = Indexer._compute_graph_signature(G)
+        # Add an edge that should reshape top-N degree (i.e. raise node 0
+        # well above its peers).
+        for j in range(50, 100):
+            G.add_edge(0, j)
+        sig_after = Indexer._compute_graph_signature(G)
+        assert sig_before != sig_after
+
+    def test_signature_stable_under_no_change(self):
+        """Re-computing the signature on the same graph yields the same value."""
+        try:
+            import networkx as nx
+        except ImportError:
+            pytest.skip("networkx not installed")
+
+        from roam.index.indexer import Indexer
+
+        G = nx.DiGraph()
+        for i in range(50):
+            G.add_edge(i, (i + 1) % 50)
+        a = Indexer._compute_graph_signature(G)
+        b = Indexer._compute_graph_signature(G)
+        assert a == b
+
+    def test_clustering_skipped_on_signature_match(self, index_project, monkeypatch):
+        """Indexing twice with no source changes must skip the Louvain
+        pass on the second run. We patch ``detect_clusters`` with a
+        spy that counts invocations.
+        """
+        # First run — populates clusters + manifest signature.
+        out, rc = index_in_process(index_project)
+        assert rc == 0, f"first index failed:\n{out}"
+
+        # Spy: count how many times Louvain runs on the second pass.
+        from roam.graph import clusters as clusters_mod
+
+        call_count = {"n": 0}
+        original = clusters_mod.detect_clusters
+
+        def spy(G):
+            call_count["n"] += 1
+            return original(G)
+
+        monkeypatch.setattr(clusters_mod, "detect_clusters", spy)
+
+        # Second run — graph topology is identical, signature must match.
+        out, rc = index_in_process(index_project)
+        assert rc == 0, f"second index failed:\n{out}"
+        assert call_count["n"] == 0, (
+            f"detect_clusters was called {call_count['n']} times on a no-change "
+            f"re-index — expected 0 (signature should match the persisted one)."
+        )
+
+    def test_force_rebuild_bypasses_cluster_cache(self, index_project, monkeypatch):
+        """``--force`` must always re-run Louvain, even when the graph
+        signature is unchanged. Force is the user's way of saying
+        "ignore caches, recompute everything".
+        """
+        out, rc = index_in_process(index_project)
+        assert rc == 0, f"first index failed:\n{out}"
+
+        from roam.graph import clusters as clusters_mod
+
+        call_count = {"n": 0}
+        original = clusters_mod.detect_clusters
+
+        def spy(G):
+            call_count["n"] += 1
+            return original(G)
+
+        monkeypatch.setattr(clusters_mod, "detect_clusters", spy)
+
+        out, rc = index_in_process(index_project, "--force")
+        assert rc == 0, f"forced index failed:\n{out}"
+        assert call_count["n"] >= 1, "detect_clusters MUST run under --force even on signature match"

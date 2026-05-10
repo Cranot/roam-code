@@ -473,6 +473,17 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
 
     TARGET is a symbol name or file path.  Use --symbol / --file for
     explicit disambiguation, or --staged to plan for staged changes.
+
+    \b
+    Examples:
+      roam plan login_user
+      roam plan src/api.py --task refactor
+      roam plan --staged --task review
+      roam plan parse_amount --task debug --depth 3
+
+    See also ``plan-refactor`` (refactoring-specific simulation),
+    ``preflight`` (blast-radius gate), and ``context`` (read-order for
+    one symbol).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

@@ -16,7 +16,7 @@ from roam.commands.changed_files import (
     resolve_changed_to_db,
 )
 from roam.commands.resolve import ensure_index
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -152,20 +152,26 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
             author_counts.append(len(authors))
     bus_factor_risk = _author_count_risk(author_counts) if author_counts else 0.0
 
-    # Test coverage
+    # Test coverage — bulk-fetch incoming source paths for all source files
+    # in one query (was N+1: one SELECT per source file).
     source_files = [p for p in file_map if not is_test_file(p) and not is_low_risk_file(p)]
     covered_files = 0
-    for path in source_files:
-        fid = file_map[path]
-        has_test = any(
-            is_test_file(r["path"])
-            for r in conn.execute(
-                "SELECT f.path FROM file_edges fe JOIN files f ON fe.source_file_id = f.id WHERE fe.target_file_id = ?",
-                (fid,),
-            ).fetchall()
+    if source_files:
+        source_fids = [file_map[p] for p in source_files]
+        rows = batched_in(
+            conn,
+            "SELECT fe.target_file_id, f.path FROM file_edges fe "
+            "JOIN files f ON fe.source_file_id = f.id "
+            "WHERE fe.target_file_id IN ({ph})",
+            source_fids,
         )
-        if has_test:
-            covered_files += 1
+        incoming_by_fid: dict = {}
+        for r in rows:
+            incoming_by_fid.setdefault(r["target_file_id"], []).append(r["path"])
+        for path in source_files:
+            fid = file_map[path]
+            if any(is_test_file(p) for p in incoming_by_fid.get(fid, ())):
+                covered_files += 1
     test_coverage = covered_files / len(source_files) if source_files else 0.0
 
     # Coupling

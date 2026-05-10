@@ -68,6 +68,34 @@ CURATED_COMMANDS: tuple[str, ...] = (
     "taint",
     "vuln-reach",
     "attest",
+    # === Ratchet wave 3 (next 20 high-leverage commands) ===
+    # Refactoring planning + simulation
+    "plan",
+    "plan-refactor",
+    "suggest-refactoring",
+    # Architecture + multi-agent
+    "partition",
+    "layers",
+    "cut",
+    "orchestrate",
+    "agent-plan",
+    "agent-context",
+    # PR + review
+    "pr-diff",
+    # Verdict-style explainers
+    "why",
+    "intent",
+    "capabilities",
+    "capsule",
+    # Trends + audit + ownership
+    "trends",
+    "audit",
+    "bus-factor",
+    # Dataflow + search variants
+    "effects",
+    "grep",
+    # CI integration
+    "ci-setup",
 )
 
 

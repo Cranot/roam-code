@@ -1251,11 +1251,113 @@ class Indexer:
             self._log(f"  Git analysis failed: {e}")
             self._record_step("git_analysis", f"failed:{type(e).__name__}")
 
-    def _run_clustering(self, conn, G, detect_clusters, label_clusters, store_clusters) -> None:
+    @staticmethod
+    def _compute_graph_signature(G) -> dict | None:
+        """Cheap structural signature of *G* for cluster-cache gating.
+
+        Captures node count, edge count, and the IDs of the top-N highest
+        degree nodes (sorted). When all three match the persisted
+        signature on the previous run AND the previous cluster table is
+        non-empty, the Louvain pass can be skipped — its output is still
+        valid for this graph topology.
+
+        We deliberately avoid hashing the full edge list: on 17K
+        symbols / 17K edges this method runs in <50ms (top-N partial
+        sort) versus ~3-11s for Louvain. The top-N IDs catch most
+        meaningful structural changes (any new high-fan symbol reshapes
+        community membership).
+        """
+        if G is None or len(G) == 0:
+            return None
+        try:
+            n = G.number_of_nodes()
+            m = G.number_of_edges()
+            # Top-N high-degree nodes — N=64 is enough to detect "anything
+            # interesting reshuffled" without paying a full sort.
+            top_n = 64
+            # Use total degree (in + out) so direction-flips also register.
+            degs = [(node, G.in_degree(node) + G.out_degree(node)) for node in G.nodes()]
+            degs.sort(key=lambda p: (-p[1], p[0]))
+            top_ids = sorted(int(p[0]) for p in degs[:top_n])
+            return {"n": int(n), "m": int(m), "top": top_ids}
+        except Exception:
+            return None
+
+    @staticmethod
+    def _previous_cluster_signature(conn) -> dict | None:
+        """Read the most recent persisted cluster signature, or None.
+
+        Pulled from the ``notes`` JSON of the latest ``index_manifest``
+        row under the ``cluster_signature`` key. Tolerant of all the
+        shapes the manifest might be in (missing table, no rows, notes
+        not JSON, key absent).
+        """
+        try:
+            from roam.index.manifest import latest_manifest
+
+            prev = latest_manifest(conn)
+        except Exception:
+            return None
+        if not prev:
+            return None
+        notes_raw = prev.get("notes")
+        if not notes_raw:
+            return None
+        try:
+            import json as _json
+
+            notes = _json.loads(notes_raw)
+        except Exception:
+            return None
+        sig = notes.get("cluster_signature") if isinstance(notes, dict) else None
+        if not isinstance(sig, dict):
+            return None
+        return sig
+
+    @staticmethod
+    def _has_existing_clusters(conn) -> bool:
+        """Return True if the clusters table has at least one row."""
+        try:
+            row = conn.execute("SELECT 1 FROM clusters LIMIT 1").fetchone()
+            return row is not None
+        except Exception:
+            return False
+
+    def _run_clustering(
+        self,
+        conn,
+        G,
+        detect_clusters,
+        label_clusters,
+        store_clusters,
+        force: bool = False,
+    ) -> None:
         if detect_clusters is None or G is None:
             self._log("Skipping clustering (module not available)")
             self._record_step("clustering", "skipped:module_missing" if detect_clusters is None else "skipped:no_graph")
             return
+
+        # Cache the live graph signature so _record_manifest can persist
+        # it whether we ran Louvain or skipped it.
+        live_sig = self._compute_graph_signature(G)
+        self._cluster_signature = live_sig
+
+        if not force and live_sig is not None:
+            prev_sig = self._previous_cluster_signature(conn)
+            if (
+                prev_sig is not None
+                and prev_sig.get("n") == live_sig["n"]
+                and prev_sig.get("m") == live_sig["m"]
+                and list(prev_sig.get("top") or ()) == live_sig["top"]
+                and self._has_existing_clusters(conn)
+            ):
+                self._log("Computing clusters...")
+                self._log(
+                    f"  cached: graph signature unchanged "
+                    f"({live_sig['n']} nodes, {live_sig['m']} edges) — skipping Louvain"
+                )
+                self._record_step("clustering", "ok:cached")
+                return
 
         self._log("Computing clusters...")
         try:
@@ -1397,10 +1499,16 @@ class Indexer:
         ]
         notes = None
         step_status = getattr(self, "_step_status", None)
+        cluster_sig = getattr(self, "_cluster_signature", None)
+        notes_payload: dict = {}
         if step_status:
+            notes_payload["steps"] = step_status
+        if cluster_sig:
+            notes_payload["cluster_signature"] = cluster_sig
+        if notes_payload:
             import json as _json
 
-            notes = _json.dumps({"steps": step_status}, sort_keys=True)
+            notes = _json.dumps(notes_payload, sort_keys=True)
         record_indexer_run(
             conn,
             self.root,
@@ -1525,7 +1633,7 @@ class Indexer:
             G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn)
             self._begin_phase(4, "Analyzing git history...")
             self._run_git_analysis(conn)
-            self._run_clustering(conn, G, detect_clusters, label_clusters, store_clusters)
+            self._run_clustering(conn, G, detect_clusters, label_clusters, store_clusters, force=force)
             self._begin_phase(5, "Computing effects & taint flow...")
             self._run_effect_analysis(conn, G)
             self._run_taint_analysis(conn, G)

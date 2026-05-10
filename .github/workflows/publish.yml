@@ -120,6 +120,7 @@ jobs:
     environment: pypi          # optional: use a GitHub environment for approval
     permissions:
       id-token: write
+      contents: write   # upload SBOM as a release asset
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -127,12 +128,88 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Download SBOM artifact
+        # Pull the SBOM produced in the ``build`` job back into this job
+        # so it's on disk for the release-asset upload + signing steps.
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           # Idempotency: when a manual twine upload already shipped the wheel,
           # the workflow should no-op cleanly instead of erroring on file collision.
           skip-existing: true
+
+      - name: Install cosign
+        # Only needed for tag-driven runs; the install is cheap enough
+        # to do unconditionally and skip the actual sign step below.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign SBOM with cosign (keyless OIDC)
+        # Same Sigstore chain as ``cga emit --sign --keyless``: GitHub OIDC
+        # token → Fulcio short-lived cert → Rekor transparency log. Produces
+        # a sibling ``.sig`` file that procurement can verify with
+        # ``cosign verify-blob --certificate <crt> <file>``.
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -e
+          for f in sbom/*.cdx.json; do
+            cosign sign-blob --yes \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.crt" \
+              "$f"
+          done
+          ls -la sbom/
+
+      - name: Upload SBOM to GitHub Release
+        # Attach the CycloneDX SBOM (and its cosign sig + cert when present)
+        # to the GitHub Release that triggered this run. This is the
+        # canonical fetch path for procurement under the audit-trail
+        # product narrative — workflow artifacts expire after 90 days,
+        # release assets do not.
+        #
+        # Only run on tag-triggered events: workflow_dispatch / release
+        # webhooks may not have a clean tag context.
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          # --clobber makes the upload idempotent — re-running the workflow
+          # for the same tag overwrites the previous asset rather than 422-ing.
+          gh release upload "$TAG" sbom/*.cdx.json --clobber
+          # Best-effort: upload cosign sig + cert if they exist. ls returns
+          # nothing if the cosign step was skipped, in which case the loop
+          # body never runs.
+          for sig in sbom/*.sig sbom/*.crt; do
+            [ -f "$sig" ] && gh release upload "$TAG" "$sig" --clobber || true
+          done
+
+      - name: Verify SBOM is attached to the release
+        # Sanity check: the GitHub API must list the .cdx.json file in
+        # the release's assets array. Catches the class of failure where
+        # ``gh release upload`` exits 0 but the asset never lands (e.g.
+        # token scoping, rate-limit edge case, or someone deleting the
+        # release between upload and check).
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          assets=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.assets[].name')
+          echo "Release assets:"
+          echo "$assets"
+          echo "$assets" | grep -q '\.cdx\.json$' \
+            || (echo "::error::SBOM .cdx.json not found among release assets" && exit 1)
 
   smoke:
     # Post-publish: install the just-released package from PyPI in a

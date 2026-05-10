@@ -316,6 +316,17 @@ def suggest_refactoring(ctx, limit, min_score):
     Unlike ``plan-refactor`` (which builds a step-by-step plan for one
     symbol), this command screens the entire codebase to identify the
     highest-value refactoring targets.
+
+    \b
+    Examples:
+      roam suggest-refactoring
+      roam suggest-refactoring --limit 25
+      roam suggest-refactoring --min-score 0.6
+      roam --json suggest-refactoring
+
+    See also ``plan-refactor`` (build a step-by-step plan for one
+    target), ``debt`` (remediation effort + ROI), and ``smells`` (style
+    + structural anti-patterns).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

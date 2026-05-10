@@ -75,6 +75,16 @@ def audit(ctx, brief) -> None:
     Bundles health, debt, dead-code, risk, test-pyramid, coverage, and
     API-surface signals into a single envelope. Designed as the
     structured artifact a written audit report attaches.
+
+    \b
+    Examples:
+      roam audit
+      roam audit --brief
+      roam --json audit
+      roam --json audit --brief
+
+    See also ``health`` (single-score snapshot), ``report`` (rendered
+    Markdown report), and ``ai-readiness`` (agent-readiness scorecard).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

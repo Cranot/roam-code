@@ -123,6 +123,18 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
     Scans markdown/text documentation for references to known symbols
     and reports doc-to-code links, drift (dead references), and
     undocumented high-importance symbols.
+
+    \b
+    Examples:
+      roam intent
+      roam intent --symbol build_query
+      roam intent --doc docs/architecture.md
+      roam intent --drift --top 50
+      roam intent --undocumented
+
+    See also ``docs-coverage`` (PageRank-ranked missing-docstring
+    hotlist), ``doc-staleness`` (stale docstring content), and
+    ``stale-refs`` (dangling file references in markdown).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
