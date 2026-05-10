@@ -208,6 +208,9 @@ def mcp_setup(ctx, platform, preset, write):
       roam mcp-setup cursor --preset compliance
       roam mcp-setup vscode --write
       roam --json mcp-setup vscode
+
+    See also ``init`` (project bootstrap) and ``doctor`` (verifies your
+    MCP server is registered and reachable).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 

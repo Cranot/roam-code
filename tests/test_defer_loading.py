@@ -192,6 +192,15 @@ class TestDeferLoading:
             # v12.51 — free-form intent dispatcher + telemetry
             "roam_ask",
             "roam_session_metrics",
+            # R8.E3 — pre-apply change-plan validator
+            "roam_validate_plan",
+            # R8.E4 — situation-keyed compound entry points
+            "roam_for_new_feature",
+            "roam_for_bug_fix",
+            "roam_for_refactor",
+            "roam_for_security_review",
+            # R8.E8 — large-response handle retrieval
+            "roam_fetch_handle",
         }
         assert core_names == expected_core, (
             f"Core tools mismatch.\n  Extra: {core_names - expected_core}\n  Missing: {expected_core - core_names}"

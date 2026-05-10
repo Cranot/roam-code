@@ -1235,6 +1235,16 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
       extend     - full graph, similar symbols, conventions (integration)
       review     - complexity, churn, blast radius, coupling (risk assessment)
       understand - docstring, cluster, architecture role (comprehension)
+
+    \b
+    Examples:
+      roam context handle_login
+      roam context User --task refactor
+      roam context --for-file src/auth.py
+      roam context fn_a fn_b fn_c    # batch with shared callers
+
+    See also ``preflight`` (full safety pre-change check), ``impact``
+    (blast radius alone), and ``understand`` (broad orientation).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

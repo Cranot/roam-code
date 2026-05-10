@@ -225,6 +225,16 @@ def ask(ctx, query, list_recipes, explain, recipe_override):
     also carries workflow metadata: phase, review perspectives, and next
     actions. When the classifier is confident, ``roam ask`` runs the matched
     recipe; when it's not, it shows the top-3 candidates so you can refine.
+
+    \b
+    Examples:
+      roam ask "what is the most coupled module?"
+      roam ask --list                       # show recipe registry
+      roam ask "trace login flow" --explain # show classifier reasoning
+      roam ask "n+1" --recipe diagnose-n1   # force a specific recipe
+
+    See also ``retrieve`` (graph-aware code-span retrieval), ``understand``
+    (broad orientation), and ``diagnose`` (root-cause for a known symbol).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 

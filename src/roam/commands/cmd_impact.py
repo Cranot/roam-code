@@ -163,6 +163,15 @@ def impact(ctx, name, hops):
     Unlike ``uses`` (which lists direct callers), this command computes the
     full transitive blast radius including affected files and PageRank-weighted
     importance.
+
+    \b
+    Examples:
+      roam impact handle_login
+      roam impact User --hops 3
+      roam --json impact MyClass.method
+
+    See also ``uses`` (direct callers only), ``preflight`` (full
+    pre-change checklist), and ``trace`` (k-shortest call paths).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

@@ -649,6 +649,16 @@ def preflight(ctx, target, staged):
     symbol with layer analysis and move-sensitive edges), this command
     handles files, staged changes, and multiple symbols at once, combining
     6 signal dimensions into a single CRITICAL/HIGH/MEDIUM/LOW verdict.
+
+    \b
+    Examples:
+      roam preflight handle_login
+      roam preflight src/auth.py
+      roam preflight --staged          # checks anything git-staged
+
+    See also ``critique`` (post-change clones-not-edited check),
+    ``impact`` (blast radius alone), and ``guard`` (deep 0-100 risk
+    for a single symbol).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 

@@ -133,6 +133,16 @@ def init(ctx, root, yes, with_ci):
     repository — pass ``--with-ci=github`` to opt into a starter
     GitHub Actions workflow. For full multi-platform CI generation
     see ``roam ci-setup``.
+
+    \b
+    Examples:
+      roam init                      # interactive bootstrap
+      roam init --yes                # accept all defaults
+      roam init --with-ci=github     # also drop a starter Actions workflow
+
+    See also ``doctor`` (validates the index after init), ``mcp-setup``
+    (configure MCP for an editor), and ``understand`` (first call after
+    init for repo orientation).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     project_root = find_project_root(root)
