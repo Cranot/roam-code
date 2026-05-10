@@ -56,50 +56,65 @@ def test_pragma_user_version_matches_constant_on_fresh_db(tmp_path):
     )
 
 
-def test_migration_ops_count_matches_source():
-    """Pin the count of migration operations in ``ensure_schema``.
+def test_migration_ops_count_matches_ledger():
+    """``MIGRATION_OPS_COUNT`` is derived from ``_MIGRATIONS``; verify
+    that derivation hasn't been replaced with a hand-bumped constant.
 
-    Counted: ``_safe_alter(`` calls + ``CREATE INDEX IF NOT EXISTS`` +
-    ``DROP INDEX IF EXISTS`` + ``_ensure_tfidf_cascade(`` +
-    ``_ensure_fts5_table(``.
-
-    When this count drifts, the contributor must:
-      - Update ``MIGRATION_OPS_COUNT`` in ``connection.py`` to the new count
-      - Bump ``USER_VERSION`` (so consumers see the new schema generation)
-      - Confirm the new migration is idempotent (re-runs are safe)
-
-    Why this matters: the manifest writer mirrors ``USER_VERSION`` into
-    every ``index_manifest`` row. If schema changes ship without a bump,
-    drift detection in ``roam doctor`` silently misses real changes.
+    R9.A2 moved migrations into a numbered ledger (``_MIGRATIONS``)
+    so adding/removing an entry auto-updates the count without manual
+    bookkeeping. This test catches a regression where a contributor
+    re-introduces a hand-pinned constant.
     """
-    src = (Path(__file__).resolve().parents[1] / "src" / "roam" / "db" / "connection.py").read_text(encoding="utf-8")
-    lines = src.split("\n")
+    from roam.db.connection import _MIGRATIONS
 
-    # Locate the ensure_schema body — bounded by the next top-level ``def``.
-    start = None
-    end = len(lines)
-    for i, ln in enumerate(lines):
-        if ln.startswith("def ensure_schema"):
-            start = i
-        elif start is not None and ln.startswith("def "):
-            end = i
-            break
-    assert start is not None, "could not locate ensure_schema function"
-
-    body = "\n".join(lines[start:end])
-    ops = (
-        body.count("_safe_alter(")
-        + body.count("CREATE INDEX IF NOT EXISTS")
-        + body.count("DROP INDEX IF EXISTS")
-        + body.count("_ensure_tfidf_cascade(")
-        + body.count("_ensure_fts5_table(")
+    assert MIGRATION_OPS_COUNT == len(_MIGRATIONS), (
+        f"MIGRATION_OPS_COUNT={MIGRATION_OPS_COUNT} but len(_MIGRATIONS)="
+        f"{len(_MIGRATIONS)} — these MUST be the same expression "
+        f"(`MIGRATION_OPS_COUNT = len(_MIGRATIONS)`)."
     )
 
-    assert ops == MIGRATION_OPS_COUNT, (
-        f"ensure_schema body has {ops} migration ops, but "
-        f"MIGRATION_OPS_COUNT = {MIGRATION_OPS_COUNT}. "
-        f"\n\nIf you intentionally added or removed a migration:\n"
-        f"  1. Update MIGRATION_OPS_COUNT in src/roam/db/connection.py to {ops}\n"
-        f"  2. Bump USER_VERSION so consumers see the new schema generation\n"
-        f"  3. Confirm the migration is idempotent (re-runs are safe)\n"
+
+def test_migration_seqs_are_unique_and_monotonic():
+    """Sequence numbers in the ledger must be strictly increasing
+    (so the ledger order = the apply order, no ambiguity).
+
+    Catches: copy-paste mistakes (two entries with the same seq),
+    out-of-order edits (renumbered some but not others), and
+    accidentally-shuffled merge conflicts.
+    """
+    from roam.db.connection import _MIGRATIONS
+
+    seqs = [seq for seq, _, _ in _MIGRATIONS]
+    assert seqs == sorted(seqs), (
+        f"_MIGRATIONS seqs are not in increasing order: {seqs}"
+    )
+    assert len(seqs) == len(set(seqs)), (
+        f"_MIGRATIONS contains duplicate seqs: "
+        f"{[s for s in seqs if seqs.count(s) > 1]}"
+    )
+
+
+def test_migrations_are_idempotent_on_a_fresh_db(tmp_path):
+    """Running ensure_schema twice on the same DB must be a no-op
+    on the second call — every migration in the ledger is required
+    to be idempotent. R9.A2 ledger discipline is what allows future
+    partial-failure recovery (re-run from where we crashed) without
+    side effects.
+    """
+    from roam.db.connection import open_db
+
+    proj = tmp_path / "idempotent_proj"
+    proj.mkdir()
+
+    # First call — full schema build.
+    with open_db(readonly=False, project_root=proj) as conn:
+        v1 = int(conn.execute("PRAGMA user_version").fetchone()[0])
+
+    # Second call — re-runs every migration. Should not raise.
+    with open_db(readonly=False, project_root=proj) as conn:
+        v2 = int(conn.execute("PRAGMA user_version").fetchone()[0])
+
+    assert v1 == v2 == USER_VERSION, (
+        f"user_version drifted across two ensure_schema runs: "
+        f"v1={v1}, v2={v2}, expected={USER_VERSION}"
     )

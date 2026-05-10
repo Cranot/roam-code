@@ -120,7 +120,19 @@ def _build_surface() -> dict:
 )
 @click.pass_context
 def surface(ctx, filter_by: str, category: str | None):
-    """Print the canonical capability surface (commands, aliases, MCP tools, maturity)."""
+    """Print the canonical capability surface (commands, aliases, MCP tools, maturity).
+
+    \b
+    Examples:
+      roam surface
+      roam surface --filter stable
+      roam surface --category "Daily Workflow"
+      roam --json surface > surface.json
+
+    See also ``recipes`` (curated multi-command workflows),
+    ``help-search`` (search command help text), and
+    ``explain-command`` (per-command summary card).
+    """
     json_mode = bool(ctx.obj and ctx.obj.get("json"))
     data = _build_surface()
 

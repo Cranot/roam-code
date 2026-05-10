@@ -100,6 +100,16 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
     nesting depth, boolean operators, callback depth, and control-flow
     breaks. Use --bumpy-road to find files where many functions are
     individually moderate but collectively hard to maintain.
+
+    \b
+    Examples:
+      roam complexity
+      roam complexity --threshold 15 --top 50
+      roam complexity src/auth.py --by-file
+      roam complexity --bumpy-road
+
+    See also ``health`` (whole-codebase score), ``debt`` (remediation
+    effort + ROI), and ``hotspots`` (runtime hotspots).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False

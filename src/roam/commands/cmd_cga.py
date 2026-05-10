@@ -39,7 +39,24 @@ from roam.output.formatter import json_envelope, to_json
 
 @click.group()
 def cga():
-    """Code Graph Attestation — sign-ready in-toto evidence over the index."""
+    """Code Graph Attestation: sign-ready in-toto evidence over the index.
+
+    Emits an in-toto v1 statement (predicate
+    ``roam-code.dev/CodeGraph/v1``) covering symbols, edges, taint
+    findings, and AIBOM material. Optionally cosign-signs the
+    statement so auditors can verify the artifact later.
+
+    \b
+    Examples:
+      roam cga emit
+      roam cga emit --include-taint --aibom
+      roam cga emit --sign --keyless
+      roam cga verify .roam/attestations/abc123.intoto.json
+
+    See also ``attest`` (proof-carrying PR attestation),
+    ``audit-trail-verify`` (verify a stored artifact), and ``taint``
+    (the source-to-sink findings cited inside the statement).
+    """
 
 
 def _default_output_path(project_root: Path, statement: dict) -> Path:

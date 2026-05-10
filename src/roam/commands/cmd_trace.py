@@ -124,6 +124,15 @@ def trace(ctx, source, target, k_paths):
     Unlike ``impact`` (which shows the blast radius of one symbol), this
     command finds the shortest dependency path connecting two specific
     symbols.
+
+    \b
+    Examples:
+      roam trace handle_login validate_token
+      roam trace UserService.create AuditLog.write -k 3
+      roam --json trace login logout
+
+    See also ``impact`` (blast radius from one symbol), ``uses``
+    (direct consumers), and ``why`` (architectural role of a symbol).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

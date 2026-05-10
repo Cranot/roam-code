@@ -369,9 +369,15 @@ def tour(ctx, write_file, mermaid_mode, focus_path):
     overview), this command provides a standalone guided reading order with
     ``--write FILE`` for persisting onboarding documentation.
 
-    Use --write to save to a file:
+    \b
+    Examples:
+      roam tour
+      roam tour --write ONBOARDING.md
+      roam tour --mermaid
+      roam tour --focus src/auth
 
-        roam tour --write ONBOARDING.md
+    See also ``understand`` (full project overview), ``minimap``
+    (compact codebase map), and ``describe`` (per-symbol explainer).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

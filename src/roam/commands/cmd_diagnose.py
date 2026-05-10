@@ -207,10 +207,14 @@ def diagnose(ctx, name, depth, batch_input):
     Also shows co-change partners and recent git history for the
     symbol's file.
 
-    Example:
+    \b
+    Examples:
+      roam diagnose handle_payment
+      roam diagnose UserService.create --depth 3
+      roam diagnose checkout --batch failing_symbols.txt
 
-        roam diagnose handle_payment
-        roam diagnose UserService.create --depth 3
+    See also ``why`` (architectural role), ``preflight`` (pre-change
+    safety), and ``impact`` (blast radius alone).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

@@ -107,21 +107,32 @@ def _strip_url_credentials(url: str) -> str:
     statement carries the repo identity but not the cloning credential.
     SSH URLs (``git@host:owner/repo``) are left untouched — the ``git@``
     prefix is conventional, not a credential.
+
+    R9 security recheck #2: previously used ``rpartition("@")`` on the
+    whole post-``://`` string, which finds the LAST ``@`` anywhere in
+    the URL. A legitimate URL like
+    ``https://github.com/owner/repo?reviewer=a@b.com`` would get
+    rewritten to ``https://b.com`` — wrong subject in every signed CGA.
+    Fix: per RFC 3986 §3, the userinfo segment is only inside the
+    authority — between ``://`` and the first ``/``. Slice the
+    authority first, then strip credentials from THAT slice only.
     """
     # SSH form ``user@host:path`` — leave alone.
     if "://" not in url:
         return url
     scheme, _, rest = url.partition("://")
-    # Find the userinfo segment (``user:token@``) before the first ``/``
-    # in the path. Strip it without touching the rest.
-    host_and_path = rest
-    if "@" in host_and_path:
-        userinfo, _, host_and_path = host_and_path.rpartition("@")
-        # Keep nothing of userinfo — both ``user`` alone and ``user:token``
-        # are credential-bearing in the HTTPS-clone context. (A bare ``user``
-        # could be re-added if a real customer flow needs it; today none does.)
-        del userinfo
-    return f"{scheme}://{host_and_path}"
+    # Authority = everything up to the first ``/``. Path/query/fragment
+    # may legitimately contain ``@`` (email addresses in query strings,
+    # for example) and MUST NOT be touched.
+    if "/" in rest:
+        authority, slash, path = rest.partition("/")
+    else:
+        authority, slash, path = rest, "", ""
+    if "@" in authority:
+        # Strip userinfo from the authority only.
+        _userinfo, _, host = authority.rpartition("@")
+        authority = host
+    return f"{scheme}://{authority}{slash}{path}"
 
 
 def _git_remote_url(root: Path) -> str | None:

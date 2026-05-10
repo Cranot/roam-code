@@ -1334,12 +1334,16 @@ class Indexer:
             except Exception:
                 pass
 
-    def _build_search_indexes(self, conn) -> None:
+    def _build_search_indexes(self, conn, force: bool = False) -> None:
         # Phase header emitted by _begin_phase in _do_run.
+        # ``force=True`` (passed when the user ran ``roam index --rebuild``)
+        # triggers a full DELETE+INSERT in build_fts_index. Default is
+        # incremental: FTS5 is diffed against symbols and only the
+        # delta is applied (R9.B7).
         try:
             from roam.search.index_embeddings import build_fts_index, fts5_available
 
-            build_fts_index(conn, project_root=self.root)
+            build_fts_index(conn, project_root=self.root, force=force)
             if fts5_available(conn):
                 fts_count = conn.execute("SELECT COUNT(*) FROM symbol_fts").fetchone()[0]
                 self._log(f"  FTS5 index for {_format_count(fts_count)} symbols")
@@ -1529,7 +1533,7 @@ class Indexer:
             self._compute_health_and_load(conn, G)
             self._restore_or_relink_annotations(conn, force, saved_annotations)
             self._begin_phase(7, "Building search indexes...")
-            self._build_search_indexes(conn)
+            self._build_search_indexes(conn, force=force)
             self._log_parse_issues()
             self._set_completion_summary(conn, time.monotonic() - t0)
             self._record_manifest(conn, force=force, include_excluded=include_excluded)

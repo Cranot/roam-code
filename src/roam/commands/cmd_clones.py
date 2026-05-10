@@ -62,6 +62,17 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file):
 
     Unlike ``duplicates`` (metric-based), this uses actual tree-sitter AST
     comparison for higher precision.
+
+    \b
+    Examples:
+      roam clones
+      roam clones --threshold 0.85 --min-lines 8
+      roam clones --persist
+      roam clones --by-file --top 30
+
+    See also ``duplicates`` (metric-based dup detection), ``critique``
+    (clones-not-edited check on a diff), and ``debt`` (refactoring
+    backlog).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

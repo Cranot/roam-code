@@ -242,6 +242,33 @@ class TestVerification:
         # userinfo as credential-bearing in the HTTPS-clone context.
         assert _strip_url_credentials("https://alice@github.com/owner/repo") == "https://github.com/owner/repo"
 
+    def test_strip_url_credentials_preserves_at_in_path_or_query(self):
+        """R9 security recheck #2 — the previous implementation used
+        ``rpartition("@")`` over the whole post-``://`` string, which
+        finds the LAST ``@`` anywhere in the URL. URLs that
+        legitimately carry ``@`` in the path or query (email addresses
+        in reviewer params, content-addressed package paths, etc.)
+        got rewritten to the wrong host.
+        """
+        from roam.attest.cga import _strip_url_credentials
+
+        # Legitimate email in query string — must NOT be treated as userinfo.
+        assert (
+            _strip_url_credentials("https://github.com/owner/repo?reviewer=a@b.com")
+            == "https://github.com/owner/repo?reviewer=a@b.com"
+        )
+        # Path-segment with ``@`` (npm-style scoped package).
+        assert (
+            _strip_url_credentials("https://registry.npmjs.org/@scope/pkg")
+            == "https://registry.npmjs.org/@scope/pkg"
+        )
+        # Combined: real userinfo PLUS ``@`` later in path — strip
+        # the userinfo only, leave the path alone.
+        assert (
+            _strip_url_credentials("https://x:tok@github.com/owner/@scoped/repo")
+            == "https://github.com/owner/@scoped/repo"
+        )
+
     def test_legacy_dev_iri_still_verifies(self, tmp_path):
         """Statements signed before the .dev → .com migration must still
         verify cleanly so consumers don't have to rebuild the chain.

@@ -40,6 +40,34 @@ CURATED_COMMANDS: tuple[str, ...] = (
     "diff",
     "retrieve",
     "mcp-setup",
+    # === Ratchet wave 2 (next 20 highest-leverage commands) ===
+    # Codebase navigation primitives (CLAUDE.md "Codebase navigation
+    # with roam" section + docs site staples)
+    "tour",
+    "file",
+    "uses",  # ``refs`` is the alias; both surface the same docstring.
+    "trace",
+    "deps",
+    # Health, risk, and verdicts
+    "health",
+    "diagnose",
+    "complexity",
+    "pr-risk",
+    "affected-tests",
+    "fan",
+    # Code quality detectors
+    "n1",
+    "clones",
+    # Architecture transforms
+    "simulate",
+    "mutate",
+    # Indexing + maintenance
+    "index",
+    "watch",
+    # Security + audit
+    "taint",
+    "vuln-reach",
+    "attest",
 )
 
 

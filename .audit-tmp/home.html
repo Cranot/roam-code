@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Roam — Local structural intelligence for coding agents</title>
-  <meta name="description" content="Roam is a local repo-intelligence layer for coding agents — call graphs, blast radius, algorithmic risk, refactor simulation, audit evidence — exposed as a CLI and 130+ MCP tools. Free locally; paid surfaces for teams.">
+  <meta name="description" content="Roam is a local repo-intelligence layer for coding agents — call graphs, blast-radius, algorithmic risk, refactor simulation, audit evidence — exposed as a CLI and 130+ MCP tools. Free locally; paid PR bot, dashboard, and self-hosted for teams.">
 
   <meta property="og:title" content="Roam — The structural intelligence coding agents don't have">
-  <meta property="og:description" content="A queryable repo graph and 130+ MCP tools your coding agents call before, during, and after every change. Free CLI; paid surfaces for teams.">
+  <meta property="og:description" content="A queryable repo graph plus deterministic engineering-judgment tools that agents call before, during, and after every change. Free CLI; paid PR bot, dashboard, self-hosted.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/">
   <meta property="og:image" content="https://roam-code.com/og.png">
@@ -637,7 +637,7 @@
             </tr>
             <tr>
               <th scope="row">Exposes the code graph to agents via MCP</th>
-              <td class="yes">Yes (145 tools)</td>
+              <td class="yes">Yes (137 tools)</td>
               <td class="ltd">Consumes MCP<sup>***</sup></td>
               <td class="ltd">Consumes MCP<sup>***</sup></td>
               <td class="ltd">Enterprise tier<sup>***</sup></td>
@@ -671,9 +671,9 @@
         </table>
       </div>
       <p class="compare-foot">
-        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (145 tools); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and an embedded version in SonarQube Cloud in March 2026.
+        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (137 tools); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and an embedded version in SonarQube Cloud in March 2026.
         Roam runs <em>alongside</em> a semantic reviewer (CodeRabbit, Greptile, Qodo) — different layer, different bugs. Also pairs with Cursor / Claude Code / Codex / Gemini via MCP, and exports SARIF for GitHub / GitLab CI.
-        See something wrong? <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
+        See something wrong? <a href="/cdn-cgi/l/email-protection#325a575e5e5d72405d535f1f515d56571c515d5f0d414750585751460f715d5f4253405b415d5c170002515d40405751465b5d5c"><span class="__cf_email__" data-cfemail="7e161b1212113e0c111f13531d111a1b501d1113">[email&#160;protected]</span></a>.
       </p>
     </div>
   </section>
@@ -738,13 +738,13 @@
         <li>Inline severity, confidence score, and a reviewable suggested-fix diff</li>
         <li><code>/roam re-review</code> and <code>/roam explain &lt;file&gt;</code> — slash commands invoked from a GitHub PR comment, ship with the bot at launch</li>
         <li>Exports SARIF for GitHub Code Scanning and any compatible CI</li>
-        <li>GitHub Marketplace install on launch — <a href="mailto:hello@roam-code.com?subject=Roam%20Review%20early%20access">join early access</a></li>
+        <li>GitHub Marketplace install on launch — <a href="/cdn-cgi/l/email-protection#29414c454546695b464844044a464d4c074a4644165a5c4b434c4a5d147b4648440c1b197b4c5f404c5e0c1b194c485b45500c1b19484a4a4c5a5a">join early access</a></li>
       </ul>
       <div class="price">
         <span class="price-amount">from $99<span class="price-unit">/mo</span></span>
         <span class="price-note">$99 Starter · $299 Team · $799 Business · $1,499 Scale · monthly or annual · 14-day trial · free for open-source forever</span>
       </div>
-      <a class="btn-primary" href="mailto:hello@roam-code.com?subject=Roam%20Review%20early%20access&amp;body=Hi%20%E2%80%94%20requesting%20Roam%20Review%20early%20access.%0A%0AGitHub%20org%3A%20%0ATeam%20size%20%28PR%20authors%29%3A%20%0AInterested%20tier%3A%20Starter%20%2F%20Team%20%2F%20Business%20%2F%20Scale%0A%0A%E2%80%94%20">Get early access</a>
+      <a class="btn-primary" href="/cdn-cgi/l/email-protection#335b565f5f5c73415c525e1e505c57561d505c5e0c404651595650470e615c525e1601036156455a56441601035652415f4a16010352505056404015525e4308515c574a0e7b5a160103167601160b03160a07160103415642465640475a5d54160103615c525e1601036156455a56441601035652415f4a1601035250505640401d160372160372745a477b46511601035c41541600721601031603726756525e160103405a495616010316010b63611601035246475b5c414016010a1600721601031603727a5d4756415640475657160103475a5641160072160103604752414756411601031601751601036756525e1601031601751601037146405a5d5640401601031601751601036050525f56160372160372167601160b03160a07160103">Get early access</a>
       <p class="product-bridge">Want history across releases? <a href="#cloud">Add Roam Cloud →</a> · Want to evaluate first? <a href="/audit">Run a paid PR Replay →</a></p>
     </div>
 
@@ -762,7 +762,7 @@
         <span class="price-amount">$19<span class="price-unit">/repo/mo</span></span>
         <span class="price-note">$99/mo Team (10 repos) · $299/mo Growth · 30-day money back</span>
       </div>
-      <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Cloud%20early%20access&amp;body=Hi%20%E2%80%94%20requesting%20Roam%20Cloud%20early%20access.%0A%0AGitHub%20org%3A%20%0ARepos%20to%20track%3A%20%0AInterested%20tier%3A%20Starter%20%2F%20Team%20%2F%20Growth%0A%0A%E2%80%94%20">Get early access</a>
+      <a class="btn-secondary" href="/cdn-cgi/l/email-protection#a4ccc1c8c8cbe4d6cbc5c989c7cbc0c18ac7cbc99bd7d1c6cec1c7d099f6cbc5c9819694e7c8cbd1c0819694c1c5d6c8dd819694c5c7c7c1d7d782c5c9d49fc6cbc0dd99eccd81969481e196819c94819d90819694d6c1d5d1c1d7d0cdcac3819694f6cbc5c9819694e7c8cbd1c0819694c1c5d6c8dd819694c5c7c7c1d7d78a8194e58194e5e3cdd0ecd1c6819694cbd6c38197e58196948194e5f6c1d4cbd7819694d0cb819694d0d6c5c7cf8197e58196948194e5edcad0c1d6c1d7d0c1c0819694d0cdc1d68197e5819694f7d0c5d6d0c1d68196948196e2819694f0c1c5c98196948196e2819694e3d6cbd3d0cc8194e58194e581e196819c94819d90819694">Get early access</a>
       <p class="product-bridge">Cloud pairs with <a href="#review">Roam Review →</a>. Regulated stack? <a href="#self-hosted">Run all of it inside your network →</a></p>
     </div>
 
@@ -779,7 +779,7 @@
         <span class="price-amount">Custom</span>
         <span class="price-note">Annual. Sized to team, support level, and compliance scope. For regulated buyers.</span>
       </div>
-      <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Self-Hosted%20enquiry">Book a 30-min call</a>
+      <a class="btn-secondary" href="/cdn-cgi/l/email-protection#f49c9198989bb4869b9599d9979b9091da979b99cb8781969e919780c9a69b9599d1c6c4a7919892d9bc9b87809190d1c6c4919a85819d868d">Book a 30-min call</a>
       <p class="product-bridge">Self-Hosted bundles <a href="#review">Roam Review</a> + <a href="#cloud">Roam Cloud</a> + the audit-trail toolkit. Talk to us about a pilot first.</p>
     </div>
   </section>
@@ -996,8 +996,7 @@
           <!-- STRIPE_TEAM_LINK: when the live Stripe Payment Link URL is
                ready, replace the primary button's href with the Stripe
                URL and re-add the "Or email first" mailto as the secondary. -->
-          <a class="btn-primary"
-             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Team%20PR%20Replay%20report.%0A%0ARepo%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
+          <a class="btn-primary" href="/cdn-cgi/l/email-protection#0e666b6262614e7c616f63236d616a6b206d6163317d7b6c646b6d7a335e5c2b3c3e5c6b7e626f772b3c3e5a6b6f632b3c3e7c6b7f7b6b7d7a286f637e356c616a773346672b3c3e2b4b3c2b363e2b373a2b3c3e472b3c396a2b3c3e6267656b2b3c3e7a612b3c3e6d616363677d7d6761602b3c3e6f2b3c3e5a6b6f632b3c3e5e5c2b3c3e5c6b7e626f772b3c3e7c6b7e617c7a202b3e4f2b3e4f5c6b7e612b3d4f2b3c3e2b3e4f4f7c6b6f7d2b3c3e7a612b3c3e6b637e666f7d677d6b2b3c3e2b3c36617e7a6761606f622b3c372b3d4f2b3c3e2b3e4f5e7c6b686b7c7c6b6a2b3c3e796f6265237a667c617b69662b3c3e7967606a61797d2b3d4f2b3c3e2b3e4f2b3e4f2b4b3c2b363e2b373a2b3c3e">
             Buy Team — $2,500
           </a>
           <p class="replay-checkout-note">Self-serve checkout launches soon; email orders go through today.</p>
@@ -1014,8 +1013,7 @@
           <!-- STRIPE_DEEP_LINK: when the live Stripe Payment Link URL is
                ready, replace the primary button's href with the Stripe
                URL and re-add the "Or email first" mailto as the secondary. -->
-          <a class="btn-primary"
-             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Deep%20PR%20Replay%20report.%0A%0ARepo%3A%20%0ATime%20window%20%28default%3A%20last%2090%20days%29%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
+          <a class="btn-primary" href="/cdn-cgi/l/email-protection#c9a1aca5a5a689bba6a8a4e4aaa6adace7aaa6a4f6babcaba3acaabdf4999becfbf99bacb9a5a8b0ecfbf98dacacb9ecfbf9bbacb8bcacbabdefa8a4b9f2aba6adb0f481a0ecfbf9ec8cfbecf1f9ecf0fdecfbf980ecfbfeadecfbf9a5a0a2acecfbf9bda6ecfbf9aaa6a4a4a0babaa0a6a7ecfbf9a8ecfbf98dacacb9ecfbf9999becfbf99bacb9a5a8b0ecfbf9bbacb9a6bbbde7ecf988ecf9889bacb9a6ecfa88ecfbf9ecf9889da0a4acecfbf9bea0a7ada6beecfbf9ecfbf1adacafa8bca5bdecfa88ecfbf9a5a8babdecfbf9f0f9ecfbf9ada8b0baecfbf0ecfa88ecfbf9ecf98888bbaca8baecfbf9bda6ecfbf9aca4b9a1a8baa0baacecfbf9ecfbf1a6b9bda0a6a7a8a5ecfbf0ecfa88ecfbf9ecf98899bbacafacbbbbacadecfbf9bea8a5a2e4bda1bba6bcaea1ecfbf9bea0a7ada6bebaecfa88ecfbf9ecf988ecf988ec8cfbecf1f9ecf0fdecfbf9">
             Buy Deep — $6,000
           </a>
           <p class="replay-checkout-note">Self-serve checkout launches soon; email orders go through today.</p>
@@ -1029,7 +1027,7 @@
         <strong><a href="/audit">Full deliverable spec, FAQ, and credit math →</a></strong>
         See the <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>
         and <a href="/security">security policy</a> for details. Email
-        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
+        <a href="/cdn-cgi/l/email-protection#4c24292020230c3e232d21612f232829622f2321733f392e26292f38711c1e697e7c1e293c202d35697e7c3d39293f38252322"><span class="__cf_email__" data-cfemail="2d45484141426d5f424c40004e424948034e4240">[email&#160;protected]</span></a>
         with questions before purchase.
       </p>
     </div>
@@ -1065,13 +1063,13 @@
         <a href="/no-cookies">No cookies</a>
       </div>
       <div class="footer-col">
-        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
-        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <a href="/cdn-cgi/l/email-protection#28404d444447685a474945054b474c4d064b4745"><span class="__cf_email__" data-cfemail="761e131a1a19360419171b5b151912135815191b">[email&#160;protected]</span></a>
+        <a href="/cdn-cgi/l/email-protection#bccfd9dfc9ced5c8c5fcced3ddd191dfd3d8d992dfd3d1"><span class="__cf_email__" data-cfemail="8efdebedfbfce7faf7cefce1efe3a3ede1eaeba0ede1e3">[email&#160;protected]</span></a>
         <span class="footer-meta">No cookies. No tracking. No analytics.</span>
         <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
       </div>
     </div>
   </footer>
 
-</body>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script></body>
 </html>

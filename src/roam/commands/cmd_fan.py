@@ -142,6 +142,15 @@ def fan(ctx, mode, count, no_framework, include_tooling):
     Unlike ``coupling`` (which measures temporal co-change frequency), this
     command measures structural connectivity (import/call edges) and flags
     hub/spreader hotspots.
+
+    \b
+    Examples:
+      roam fan
+      roam fan --mode file
+      roam fan --count 30 --no-framework
+
+    See also ``coupling`` (co-change frequency), ``deps`` (dependency
+    graph), and ``hotspots`` (runtime hotspots).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

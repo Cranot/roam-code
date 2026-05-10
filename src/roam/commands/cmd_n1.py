@@ -1217,6 +1217,10 @@ def n1_cmd(ctx, confidence_filter, limit, verbose):
         roam n1                    # Full scan
         roam n1 --confidence high  # Only high-confidence findings
         roam n1 -v                 # Show I/O trace details
+
+    See also ``algo`` (explicit I/O-in-loop AST shapes),
+    ``over-fetch`` (overly broad SELECT * patterns), and ``hotspots``
+    (runtime evidence to confirm the suspicion).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

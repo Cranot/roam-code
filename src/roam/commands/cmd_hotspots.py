@@ -478,6 +478,16 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
       UPGRADE   — runtime-critical but statically safe (hidden hotspot)
       CONFIRMED — both static and runtime agree on importance
       DOWNGRADE — statically risky but low traffic
+
+    \b
+    Examples:
+      roam hotspots
+      roam hotspots --runtime
+      roam hotspots --discrepancy
+      roam hotspots --security
+
+    See also ``ingest-trace`` (load runtime traces first), ``smells``
+    (structural anti-patterns), and ``complexity`` (cognitive metrics).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

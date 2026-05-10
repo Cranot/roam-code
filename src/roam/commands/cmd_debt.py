@@ -519,6 +519,17 @@ def debt(ctx, limit, by_kind, threshold, roi):
     \b
     health_penalty = complexity*0.4 + cycles*0.3 + god*0.2 + dead*0.1
     hotspot_factor = max(1.0, churn_percentile * 3)   # up to 3x for hot files
+
+    \b
+    Examples:
+      roam debt
+      roam debt --threshold 50 --top 30
+      roam debt --by-kind
+      roam debt --roi
+
+    See also ``health`` (whole-codebase score), ``complexity`` (per-symbol
+    cognitive metrics), and ``suggest-refactoring`` (concrete refactoring
+    proposals ranked by ROI).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

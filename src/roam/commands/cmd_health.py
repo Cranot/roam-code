@@ -400,6 +400,146 @@ def _baseline_verdict(delta: dict) -> str:
     return "OK"
 
 
+def _emit_baseline_diff(
+    *,
+    conn,
+    baseline_ref: str,
+    health_score: int,
+    actionable_cycles,
+    god_items,
+    bn_items,
+    violations,
+    json_mode: bool,
+    token_budget: int,
+) -> None:
+    """Emit the --baseline mode response: compute delta vs a stored
+    snapshot and echo it as JSON or text.
+
+    Extracted from ``health()`` (R9.A5) — was a 125-line inline branch.
+    Both the JSON and text exit paths terminate the command, so the
+    caller does ``return`` immediately after invoking this helper.
+    """
+    # Dead-export count: mirror the query metrics_history uses so the
+    # current vs. baseline comparison is apples-to-apples. Tests that
+    # don't care about exports are unaffected by 0-vs-0 deltas.
+    from roam.db.queries import UNREFERENCED_EXPORTS as _UNREF_EXPORTS
+
+    try:
+        _dead_rows = conn.execute(_UNREF_EXPORTS).fetchall()
+        _dead_exports = sum(
+            1
+            for r in _dead_rows
+            if not (r["file_path"] or "").lower().rsplit("/", 1)[-1].startswith("test_")
+            and not (r["file_path"] or "").lower().endswith("_test.py")
+        )
+    except Exception:
+        _dead_exports = 0
+
+    current_metrics = {
+        "health_score": health_score,
+        "cycles": len(actionable_cycles),
+        "god_components": len(god_items),
+        "bottlenecks": len(bn_items),
+        "dead_exports": _dead_exports,
+        "layer_violations": len(violations),
+    }
+
+    baseline = _find_baseline_snapshot(conn, baseline_ref)
+
+    if baseline is None:
+        degraded_msg = (
+            f"No baseline snapshot found for ref `{baseline_ref}`. "
+            "Run `roam trends --save` first, or use `--baseline last`."
+        )
+        if json_mode:
+            envelope = json_envelope(
+                "health",
+                budget=token_budget,
+                summary={
+                    "verdict": "DEGRADED",
+                    "reason": "no_baseline_snapshot",
+                    "baseline_ref": baseline_ref,
+                    "health_score": health_score,
+                },
+                baseline_ref=baseline_ref,
+                message=degraded_msg,
+            )
+            click.echo(to_json(envelope))
+            return
+        click.echo(f"VERDICT: DEGRADED — {degraded_msg}")
+        return
+
+    delta = _compute_baseline_delta(current_metrics, baseline)
+    baseline_verdict = _baseline_verdict(delta)
+    baseline_taken_at = _format_baseline_timestamp(baseline.get("timestamp"))
+    new_count = len(delta["new_findings"])
+    fixed_count = len(delta["fixed_findings"])
+    regressed_count = len(delta["regressed"])
+    delta_block = {
+        "new_findings": delta["new_findings"],
+        "fixed_findings": delta["fixed_findings"],
+        "regressed": delta["regressed"],
+        "score_delta": delta["score_delta"],
+        "baseline_ref": baseline_ref,
+        "baseline_taken_at": baseline_taken_at,
+        "baseline_git_branch": baseline.get("git_branch"),
+        "baseline_git_commit": baseline.get("git_commit"),
+    }
+
+    if json_mode:
+        envelope = json_envelope(
+            "health",
+            budget=token_budget,
+            summary={
+                "verdict": baseline_verdict,
+                "baseline_ref": baseline_ref,
+                "baseline_taken_at": baseline_taken_at,
+                "new_findings_count": new_count,
+                "fixed_findings_count": fixed_count,
+                "regressed_count": regressed_count,
+                "health_score": health_score,
+                "score_delta": delta["score_delta"],
+            },
+            delta=delta_block,
+            health_score=health_score,
+        )
+        click.echo(to_json(envelope))
+        return
+
+    # Text output for baseline mode.
+    click.echo(f"VERDICT: {baseline_verdict} (baseline: {baseline_ref})\n")
+    click.echo(
+        "Δ +{new} findings, {fixed} fixed, {regressed} regressed".format(
+            new=new_count, fixed=fixed_count, regressed=regressed_count
+        )
+    )
+    score_diff = delta["score_delta"].get("health_score", 0)
+    score_sign = "+" if score_diff > 0 else ""
+    base_score = baseline.get("health_score") or 0
+    click.echo(
+        f"Score: {base_score} -> {health_score} ({score_sign}{score_diff})"
+        f"   Baseline taken: {baseline_taken_at or '(unknown)'}"
+    )
+    if delta["new_findings"]:
+        click.echo("\nNew findings:")
+        for f in delta["new_findings"][:10]:
+            click.echo(
+                f"  [{f['severity']}] +{f['now'] - f['was']} {f['kind']} (was {f['was']}, now {f['now']})"
+            )
+        if len(delta["new_findings"]) > 10:
+            click.echo(f"  (+{len(delta['new_findings']) - 10} more)")
+    if delta["regressed"]:
+        # Avoid double-listing items already shown under "new_findings"
+        # — only score regressions are exclusive to this section.
+        score_regressions = [r for r in delta["regressed"] if r["kind"] == "health_score"]
+        if score_regressions:
+            click.echo("\nRegressed:")
+            for r in score_regressions:
+                click.echo(f"  [{r['severity']}] {r['kind']}: {r['was']} -> {r['now']}")
+    if not delta["new_findings"] and not delta["regressed"]:
+        click.echo("\nNo regressions detected.")
+
+
 @click.command()
 @click.option(
     "--no-framework",
@@ -427,7 +567,19 @@ def _baseline_verdict(delta: dict) -> str:
 )
 @click.pass_context
 def health(ctx, no_framework, gate, explain, baseline_ref):
-    """Show code health: cycles, god components, bottlenecks."""
+    """Show code health: cycles, god components, bottlenecks.
+
+    \b
+    Examples:
+      roam health
+      roam health --explain
+      roam health --baseline auto --gate
+      roam --sarif health > health.sarif
+
+    See also ``debt`` (refactoring backlog with ROI), ``trends``
+    (snapshot history + regressions), and ``diagnose`` (root cause
+    ranking for a single failing symbol).
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
@@ -760,130 +912,21 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
             )
 
         # --- Baseline-diff mode ---
-        # When --baseline is set, swap the absolute-findings output for a
-        # delta report against a stored snapshot. Runs and exits before
-        # gate/sarif/json/text branches so existing behaviour is untouched
-        # when the flag is absent.
+        # When --baseline is set, delegate to the dedicated helper and
+        # exit before gate/sarif/json/text branches. Existing behaviour
+        # is untouched when the flag is absent.
         if baseline_ref:
-            # Dead-export count: mirror the query metrics_history uses so the
-            # current vs. baseline comparison is apples-to-apples. Tests that
-            # don't care about exports are unaffected by 0-vs-0 deltas.
-            from roam.db.queries import UNREFERENCED_EXPORTS as _UNREF_EXPORTS
-
-            try:
-                _dead_rows = conn.execute(_UNREF_EXPORTS).fetchall()
-                _dead_exports = sum(
-                    1
-                    for r in _dead_rows
-                    if not (r["file_path"] or "").lower().rsplit("/", 1)[-1].startswith("test_")
-                    and not (r["file_path"] or "").lower().endswith("_test.py")
-                )
-            except Exception:
-                _dead_exports = 0
-
-            current_metrics = {
-                "health_score": health_score,
-                "cycles": len(actionable_cycles),
-                "god_components": len(god_items),
-                "bottlenecks": len(bn_items),
-                "dead_exports": _dead_exports,
-                "layer_violations": len(violations),
-            }
-
-            baseline = _find_baseline_snapshot(conn, baseline_ref)
-
-            if baseline is None:
-                degraded_msg = (
-                    f"No baseline snapshot found for ref `{baseline_ref}`. "
-                    "Run `roam trends --save` first, or use `--baseline last`."
-                )
-                if json_mode:
-                    envelope = json_envelope(
-                        "health",
-                        budget=token_budget,
-                        summary={
-                            "verdict": "DEGRADED",
-                            "reason": "no_baseline_snapshot",
-                            "baseline_ref": baseline_ref,
-                            "health_score": health_score,
-                        },
-                        baseline_ref=baseline_ref,
-                        message=degraded_msg,
-                    )
-                    click.echo(to_json(envelope))
-                    return
-                click.echo(f"VERDICT: DEGRADED — {degraded_msg}")
-                return
-
-            delta = _compute_baseline_delta(current_metrics, baseline)
-            baseline_verdict = _baseline_verdict(delta)
-            baseline_taken_at = _format_baseline_timestamp(baseline.get("timestamp"))
-            new_count = len(delta["new_findings"])
-            fixed_count = len(delta["fixed_findings"])
-            regressed_count = len(delta["regressed"])
-            delta_block = {
-                "new_findings": delta["new_findings"],
-                "fixed_findings": delta["fixed_findings"],
-                "regressed": delta["regressed"],
-                "score_delta": delta["score_delta"],
-                "baseline_ref": baseline_ref,
-                "baseline_taken_at": baseline_taken_at,
-                "baseline_git_branch": baseline.get("git_branch"),
-                "baseline_git_commit": baseline.get("git_commit"),
-            }
-
-            if json_mode:
-                envelope = json_envelope(
-                    "health",
-                    budget=token_budget,
-                    summary={
-                        "verdict": baseline_verdict,
-                        "baseline_ref": baseline_ref,
-                        "baseline_taken_at": baseline_taken_at,
-                        "new_findings_count": new_count,
-                        "fixed_findings_count": fixed_count,
-                        "regressed_count": regressed_count,
-                        "health_score": health_score,
-                        "score_delta": delta["score_delta"],
-                    },
-                    delta=delta_block,
-                    health_score=health_score,
-                )
-                click.echo(to_json(envelope))
-                return
-
-            # Text output for baseline mode.
-            click.echo(f"VERDICT: {baseline_verdict} (baseline: {baseline_ref})\n")
-            click.echo(
-                "Δ +{new} findings, {fixed} fixed, {regressed} regressed".format(
-                    new=new_count, fixed=fixed_count, regressed=regressed_count
-                )
+            _emit_baseline_diff(
+                conn=conn,
+                baseline_ref=baseline_ref,
+                health_score=health_score,
+                actionable_cycles=actionable_cycles,
+                god_items=god_items,
+                bn_items=bn_items,
+                violations=violations,
+                json_mode=json_mode,
+                token_budget=token_budget,
             )
-            score_diff = delta["score_delta"].get("health_score", 0)
-            score_sign = "+" if score_diff > 0 else ""
-            base_score = baseline.get("health_score") or 0
-            click.echo(
-                f"Score: {base_score} -> {health_score} ({score_sign}{score_diff})"
-                f"   Baseline taken: {baseline_taken_at or '(unknown)'}"
-            )
-            if delta["new_findings"]:
-                click.echo("\nNew findings:")
-                for f in delta["new_findings"][:10]:
-                    click.echo(
-                        f"  [{f['severity']}] +{f['now'] - f['was']} {f['kind']} (was {f['was']}, now {f['now']})"
-                    )
-                if len(delta["new_findings"]) > 10:
-                    click.echo(f"  (+{len(delta['new_findings']) - 10} more)")
-            if delta["regressed"]:
-                # Avoid double-listing items already shown under "new_findings"
-                # — only score regressions are exclusive to this section.
-                score_regressions = [r for r in delta["regressed"] if r["kind"] == "health_score"]
-                if score_regressions:
-                    click.echo("\nRegressed:")
-                    for r in score_regressions:
-                        click.echo(f"  [{r['severity']}] {r['kind']}: {r['was']} -> {r['now']}")
-            if not delta["new_findings"] and not delta["regressed"]:
-                click.echo("\nNo regressions detected.")
             return
 
         # --- Quality Gate ---

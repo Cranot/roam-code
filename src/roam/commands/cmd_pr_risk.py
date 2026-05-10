@@ -289,6 +289,16 @@ def pr_risk(ctx, commit_range, staged, author):
 
     Pass a COMMIT_RANGE (e.g. HEAD~3..HEAD) for committed changes,
     or use --staged for staged changes. Default: unstaged changes.
+
+    \b
+    Examples:
+      roam pr-risk
+      roam pr-risk --staged
+      roam pr-risk HEAD~3..HEAD
+      roam --json pr-risk HEAD~1..HEAD
+
+    See also ``preflight`` (pre-change safety), ``critique`` (post-change
+    diff review), and ``affected-tests`` (which tests run for the diff).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -298,7 +308,17 @@ def pr_risk(ctx, commit_range, staged, author):
     if not changed:
         label = commit_range or ("staged" if staged else "unstaged")
         if json_mode:
-            click.echo(to_json({"label": label, "risk_score": 0, "message": "No changes found"}))
+            # R9 API recheck: every --json exit must go through json_envelope
+            # so consumers see schema_version + summary.verdict — not bare dicts.
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "pr-risk",
+                        summary={"verdict": "no-changes", "risk_score": 0, "label": label},
+                        message=f"No changes found for {label}.",
+                    )
+                )
+            )
         else:
             click.echo(f"No changes found for {label}.")
         return
@@ -309,7 +329,20 @@ def pr_risk(ctx, commit_range, staged, author):
 
         if not file_map:
             if json_mode:
-                click.echo(to_json({"risk_score": 0, "message": "Changed files not in index"}))
+                # R9 API recheck: same as above — wrap with json_envelope.
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "pr-risk",
+                            summary={
+                                "verdict": "index-stale",
+                                "risk_score": 0,
+                                "hint": "Changed files not in index — run `roam index`.",
+                            },
+                            message="Changed files not found in index. Run `roam index` first.",
+                        )
+                    )
+                )
             else:
                 click.echo("Changed files not found in index. Run `roam index` first.")
             return

@@ -734,6 +734,16 @@ def watch(
     violations after each re-index).
 
     Press Ctrl+C to stop.
+
+    \b
+    Examples:
+      roam watch
+      roam watch --interval 5 --debounce 2
+      roam watch --guardian --guardian-health-gate 80
+      roam watch --webhook-port 8765 --webhook-secret mytoken
+
+    See also ``index`` (one-shot reindex), ``hooks`` (git hook setup),
+    and ``health`` (the score the guardian gate enforces).
     """
     project_root = find_project_root()
     bridge: WebhookBridge | None = None
