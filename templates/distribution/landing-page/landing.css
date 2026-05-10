@@ -517,6 +517,12 @@ summary:focus-visible,
   color: var(--accent);
   pointer-events: none;
 }
+/* On phones the corner mark sits too close to the eyebrow line and
+   competes for attention. Hide below the mid-tablet break — hero text
+   is the only thing that matters at narrow widths. */
+@media (max-width: 540px) {
+  .hero-graph-mark { display: none; }
+}
 .hero-inner {
   max-width: var(--max-w);
   margin: 0 auto;
