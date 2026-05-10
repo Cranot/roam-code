@@ -194,6 +194,9 @@ def grep_cmd(
       roam grep "DATABASE_URL" --reachable-from main
       roam grep "deprecated" --unreachable   # only in dead code
       roam grep "format_name" --rank-by importance --group-by symbol
+
+    See also ``search`` (FTS5 symbol search), ``refs-text`` (literal-string
+    audit with verdict), and ``history-grep`` (through-history pickaxe).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

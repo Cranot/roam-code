@@ -248,6 +248,17 @@ def agent_plan(ctx, n_agents, output_format):
     ``orchestrate`` (which focuses on operational dispatch), this command
     builds a dependency-ordered phase schedule with merge sequencing and
     Claude Teams schema output.
+
+    \b
+    Examples:
+      roam agent-plan --n-agents 3
+      roam agent-plan --n-agents 4 --format json
+      roam agent-plan --n-agents 5 --format claude-teams
+      roam --json agent-plan --n-agents 6
+
+    See also ``agent-context`` (per-worker focused slice), ``partition``
+    (analytical manifest), and ``orchestrate`` (interface-contract
+    dispatch).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

@@ -319,6 +319,17 @@ def layers(ctx, mermaid_mode):
     Unlike ``guard`` (which uses layer info as one component of a per-symbol
     risk score), this command shows the full global layering structure with
     all violations and optional ``--mermaid`` diagram output.
+
+    \b
+    Examples:
+      roam layers
+      roam layers --mermaid
+      roam --json layers
+      roam --detail layers
+
+    See also ``guard`` (per-symbol layer-violation risk),
+    ``clusters`` (community-detection groupings), and ``cut``
+    (min-cut domain-boundary fragility).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     detail = ctx.obj.get("detail", False) if ctx.obj else False

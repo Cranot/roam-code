@@ -280,6 +280,18 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
     leaving) and ``drift`` (which measures ownership divergence from CODEOWNERS),
     this command scans all directories for knowledge concentration using Shannon
     entropy and staleness factors.
+
+    \b
+    Examples:
+      roam bus-factor
+      roam bus-factor --limit 30
+      roam bus-factor --stale-months 12
+      roam bus-factor --brain-methods
+      roam bus-factor --force-team-mode
+
+    See also ``simulate-departure`` (impact of a specific developer
+    leaving), ``drift`` (CODEOWNERS divergence), and ``owner``
+    (per-symbol ownership lookup).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

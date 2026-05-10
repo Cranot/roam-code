@@ -7,8 +7,6 @@ import click
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.db.queries import (
-    FILE_IMPORTED_BY,
-    FILE_IMPORTS,
     FILES_IN_DIR,
     SYMBOLS_IN_DIR,
 )
@@ -24,27 +22,55 @@ from roam.output.formatter import (
 
 
 def _module_deps(conn, file_ids):
-    """Compute external import/imported-by maps for a set of file IDs."""
+    """Compute external import/imported-by maps for a set of file IDs.
+
+    Bulk-fetches all incoming/outgoing file_edges in two batched queries
+    instead of one per file_id (was 2 * N queries for N files).
+    """
     file_id_set = set(file_ids)
-    imports_external = {}
-    imported_by_external = {}
-    for fid in file_ids:
-        for row in conn.execute(FILE_IMPORTS, (fid,)).fetchall():
-            if row["id"] not in file_id_set:
-                imports_external[row["path"]] = imports_external.get(row["path"], 0) + row["symbol_count"]
-        for row in conn.execute(FILE_IMPORTED_BY, (fid,)).fetchall():
-            if row["id"] not in file_id_set:
-                imported_by_external[row["path"]] = imported_by_external.get(row["path"], 0) + row["symbol_count"]
+    imports_external: dict = {}
+    imported_by_external: dict = {}
+    if not file_ids:
+        return imports_external, imported_by_external
+
+    import_rows = batched_in(
+        conn,
+        "SELECT fe.source_file_id AS src, f.id AS id, f.path AS path, "
+        "fe.symbol_count AS symbol_count "
+        "FROM file_edges fe JOIN files f ON fe.target_file_id = f.id "
+        "WHERE fe.source_file_id IN ({ph})",
+        list(file_ids),
+    )
+    for row in import_rows:
+        if row["id"] not in file_id_set:
+            imports_external[row["path"]] = imports_external.get(row["path"], 0) + (row["symbol_count"] or 0)
+
+    imported_by_rows = batched_in(
+        conn,
+        "SELECT fe.target_file_id AS tgt, f.id AS id, f.path AS path, "
+        "fe.symbol_count AS symbol_count "
+        "FROM file_edges fe JOIN files f ON fe.source_file_id = f.id "
+        "WHERE fe.target_file_id IN ({ph})",
+        list(file_ids),
+    )
+    for row in imported_by_rows:
+        if row["id"] not in file_id_set:
+            imported_by_external[row["path"]] = imported_by_external.get(row["path"], 0) + (row["symbol_count"] or 0)
+
     return imports_external, imported_by_external
 
 
 def _collect_sym_ids(conn, files):
-    """Collect all symbol IDs for a list of files."""
-    all_sym_ids = set()
-    for f in files:
-        for sr in conn.execute("SELECT id FROM symbols WHERE file_id = ?", (f["id"],)).fetchall():
-            all_sym_ids.add(sr["id"])
-    return all_sym_ids
+    """Collect all symbol IDs for a list of files (single batched query)."""
+    file_ids = [f["id"] for f in files]
+    if not file_ids:
+        return set()
+    rows = batched_in(
+        conn,
+        "SELECT id FROM symbols WHERE file_id IN ({ph})",
+        file_ids,
+    )
+    return {r["id"] for r in rows}
 
 
 def _module_cohesion(conn, all_sym_ids):

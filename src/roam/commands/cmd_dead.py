@@ -15,7 +15,7 @@ import click
 from roam.commands.changed_files import is_test_file
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
-from roam.db.connection import batched_count, batched_in, find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import (
     abbrev_kind,
     format_table,
@@ -333,54 +333,59 @@ def _predict_extinction(conn, target_name):
 
     target_id = sym["id"]
 
-    # Pre-compute out-degree (callee count) for all symbols
-    out_deg = {}
-    for r in conn.execute("SELECT source_id, COUNT(*) as cnt FROM edges GROUP BY source_id").fetchall():
-        out_deg[r["source_id"]] = r["cnt"]
-
-    # Pre-compute callers for any symbol
-    def get_callers(sid):
-        return [
-            r["source_id"] for r in conn.execute("SELECT source_id FROM edges WHERE target_id = ?", (sid,)).fetchall()
-        ]
+    # Pre-load the full forward + reverse adjacency in a single query so the
+    # BFS becomes pure-Python dict lookup (was: 1 SELECT per BFS pop +
+    # 1 batched_count per caller — quadratic on deep cascades).
+    callees_of: dict = defaultdict(set)  # source_id -> {target_id, ...}
+    callers_of: dict = defaultdict(set)  # target_id -> {source_id, ...}
+    for r in conn.execute("SELECT source_id, target_id FROM edges").fetchall():
+        s = r["source_id"]
+        t = r["target_id"]
+        callees_of[s].add(t)
+        callers_of[t].add(s)
 
     # BFS cascade
     cascade = []
     removed = {target_id}
     queue = [target_id]
+    orphan_ids: list = []  # for batched info lookup at the end
 
     while queue:
         current = queue.pop(0)
-        callers = get_callers(current)
-        for caller_id in callers:
+        for caller_id in callers_of.get(current, ()):
             if caller_id in removed:
                 continue
-            # Check remaining out-degree after removing all removed targets
-            remaining = batched_count(
-                conn,
-                "SELECT COUNT(*) FROM edges WHERE source_id = ? AND target_id NOT IN ({ph})",
-                list(removed),
-                pre=[caller_id],
-            )
+            # Remaining callees after removing all currently-removed targets.
+            remaining = sum(1 for t in callees_of.get(caller_id, ()) if t not in removed)
             if remaining == 0:
                 # This caller has no remaining callees → orphaned
                 removed.add(caller_id)
                 queue.append(caller_id)
-                # Get name info for the cascade item
-                info = conn.execute(
-                    "SELECT s.name, s.kind, f.path as file_path, s.line_start "
-                    "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?",
-                    (caller_id,),
-                ).fetchone()
-                if info:
-                    cascade.append(
-                        {
-                            "name": info["name"],
-                            "kind": info["kind"],
-                            "location": loc(info["file_path"], info["line_start"]),
-                            "reason": "only callees removed",
-                        }
-                    )
+                orphan_ids.append(caller_id)
+
+    # Single batched lookup for cascade names/locations (was: 1 SELECT per
+    # orphaned caller).
+    if orphan_ids:
+        info_rows = batched_in(
+            conn,
+            "SELECT s.id, s.name, s.kind, f.path as file_path, s.line_start "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE s.id IN ({ph})",
+            orphan_ids,
+        )
+        info_by_id = {r["id"]: r for r in info_rows}
+        # Preserve the orphan order from the BFS for stable output.
+        for oid in orphan_ids:
+            info = info_by_id.get(oid)
+            if info:
+                cascade.append(
+                    {
+                        "name": info["name"],
+                        "kind": info["kind"],
+                        "location": loc(info["file_path"], info["line_start"]),
+                        "reason": "only callees removed",
+                    }
+                )
 
     return sym, cascade
 

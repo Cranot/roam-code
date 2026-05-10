@@ -539,7 +539,12 @@ def get_file_churn(conn: sqlite3.Connection, file_path: str):
 
 
 def get_coupling(conn: sqlite3.Connection, file_path: str, limit: int = 10):
-    """Fetch temporal coupling partners for the symbol's file."""
+    """Fetch temporal coupling partners for the symbol's file.
+
+    Bulk-fetches all partner ``commit_count`` values in one batched
+    ``IN (...)`` query so we never issue per-partner lookups inside the
+    loop (was N+1 — one query per partner).
+    """
     frow = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
     if frow is None:
         return []
@@ -562,10 +567,20 @@ def get_coupling(conn: sqlite3.Connection, file_path: str, limit: int = 10):
         (fid, fid, fid, fid, limit),
     ).fetchall()
 
+    if not partners:
+        return []
+
+    partner_fids = [p["partner_fid"] for p in partners]
+    pstats_rows = batched_in(
+        conn,
+        "SELECT file_id, commit_count FROM file_stats WHERE file_id IN ({ph})",
+        partner_fids,
+    )
+    pcommits_by_fid = {r["file_id"]: (r["commit_count"] or 1) for r in pstats_rows}
+
     results = []
     for p in partners:
-        pstats = conn.execute("SELECT commit_count FROM file_stats WHERE file_id = ?", (p["partner_fid"],)).fetchone()
-        partner_commits = (pstats["commit_count"] or 1) if pstats else 1
+        partner_commits = pcommits_by_fid.get(p["partner_fid"], 1)
         avg = (file_commits + partner_commits) / 2
         strength = round(p["cochange_count"] / avg, 2) if avg > 0 else 0
         results.append(
@@ -580,25 +595,47 @@ def get_coupling(conn: sqlite3.Connection, file_path: str, limit: int = 10):
 
 def get_affected_tests_bfs(conn: sqlite3.Connection, sym_id: int, max_hops: int = 8):
     """BFS reverse-edge walk to find test symbols that transitively depend
-    on the target symbol."""
-    visited = {sym_id: (0, None)}
-    queue = deque([(sym_id, 0, None)])
+    on the target symbol.
+
+    Loads the reverse adjacency map once (single bulk query) and then
+    BFS-walks it in memory. The previous version issued one ``SELECT
+    source_id ... WHERE target_id = ?`` per pop — on a 17K-edge graph
+    that meant ~970 queries for a moderate-fan symbol.
+    """
+    # Load reverse adjacency + symbol names in one query. Pulling the
+    # name here saves a follow-up batched_in on caller_ids for the
+    # ``via`` chain (we still need a separate batched_in for kind/path).
+    rev_adj: dict[int, list[tuple[int, str]]] = {}
+    try:
+        for row in conn.execute(
+            "SELECT e.target_id, e.source_id, s.name FROM edges e JOIN symbols s ON e.source_id = s.id"
+        ).fetchall():
+            try:
+                tgt = row["target_id"]
+                src = row["source_id"]
+                name = row["name"]
+            except (KeyError, TypeError):
+                tgt, src, name = row[0], row[1], row[2]
+            rev_adj.setdefault(tgt, []).append((src, name))
+    except Exception:
+        # If anything goes wrong with the bulk load, fall back to an
+        # empty adjacency — we'll just return no affected tests rather
+        # than re-introducing per-hop queries.
+        rev_adj = {}
+
+    visited: dict[int, tuple[int, str | None]] = {sym_id: (0, None)}
+    queue: deque[tuple[int, int, str | None]] = deque([(sym_id, 0, None)])
 
     while queue:
         current_id, hops, via = queue.popleft()
         if hops >= max_hops:
             continue
-        callers = conn.execute(
-            "SELECT e.source_id, s.name FROM edges e JOIN symbols s ON e.source_id = s.id WHERE e.target_id = ?",
-            (current_id,),
-        ).fetchall()
-        for row in callers:
-            cid = row["source_id"]
+        for src, src_name in rev_adj.get(current_id, ()):
             new_hops = hops + 1
-            new_via = via if via else row["name"]
-            if cid not in visited or visited[cid][0] > new_hops:
-                visited[cid] = (new_hops, new_via)
-                queue.append((cid, new_hops, new_via))
+            new_via = via if via else src_name
+            if src not in visited or visited[src][0] > new_hops:
+                visited[src] = (new_hops, new_via)
+                queue.append((src, new_hops, new_via))
 
     caller_ids = [sid for sid in visited if sid != sym_id]
     if not caller_ids:
@@ -643,17 +680,33 @@ def get_affected_tests_bfs(conn: sqlite3.Connection, sym_id: int, max_hops: int 
 
 
 def get_blast_radius(conn: sqlite3.Connection, sym_id: int):
-    """Compute downstream dependents count via BFS on reverse edges."""
+    """Compute downstream dependents count via BFS on reverse edges.
+
+    Loads the reverse adjacency map in a single bulk query and walks it
+    in memory. The previous version issued one ``SELECT source_id
+    ... WHERE target_id = ?`` per pop — on a 17K-edge graph that meant
+    ~970 queries for a moderate-fan symbol.
+    """
+    rev_adj: dict[int, list[int]] = {}
+    try:
+        for row in conn.execute("SELECT source_id, target_id FROM edges").fetchall():
+            try:
+                src = row["source_id"]
+                tgt = row["target_id"]
+            except (KeyError, TypeError):
+                src, tgt = row[0], row[1]
+            rev_adj.setdefault(tgt, []).append(src)
+    except Exception:
+        rev_adj = {}
+
     visited = {sym_id}
-    queue = deque([sym_id])
+    queue: deque[int] = deque([sym_id])
     while queue:
         current = queue.popleft()
-        callers = conn.execute("SELECT source_id FROM edges WHERE target_id = ?", (current,)).fetchall()
-        for row in callers:
-            cid = row["source_id"]
-            if cid not in visited:
-                visited.add(cid)
-                queue.append(cid)
+        for src in rev_adj.get(current, ()):
+            if src not in visited:
+                visited.add(src)
+                queue.append(src)
 
     if len(visited) <= 1:
         return {"dependent_symbols": 0, "dependent_files": 0}

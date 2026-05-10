@@ -32,6 +32,17 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
     Unlike ``diff`` (which shows the developer-facing blast radius of
     changed symbols), this command compares aggregate CI-level metrics
     before and after a change.
+
+    \b
+    Examples:
+      roam pr-diff
+      roam pr-diff --staged
+      roam pr-diff --commit-range main..HEAD
+      roam pr-diff --fail-on-degradation
+
+    See also ``diff`` (developer-facing blast radius), ``pr-risk``
+    (PR risk score), and ``critique`` (clones-not-edited check on a
+    diff).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

@@ -85,6 +85,17 @@ def orchestrate(ctx, n_agents, file_args, staged):
     difficulty scores, churn, and co-change coupling), this command
     focuses on operational dispatch: give it N agents and get back
     ready-to-use work assignments with interface contracts.
+
+    \b
+    Examples:
+      roam orchestrate --n-agents 3
+      roam orchestrate --n-agents 4 --staged
+      roam orchestrate --n-agents 5 --files src/api.py --files src/auth.py
+      roam --json orchestrate --n-agents 4
+
+    See also ``partition`` (deeper analytical metrics + claude-teams
+    output), ``agent-plan`` (dependency-ordered phases), and
+    ``fleet`` (graph-aware planner for external orchestrators).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

@@ -644,6 +644,17 @@ def partition(ctx, n_agents, output_format):
     contracts for immediate multi-agent dispatch), this command provides
     deeper analytical metrics: difficulty scores, churn, co-change coupling,
     and the ``--format claude-teams`` output for SDK integration.
+
+    \b
+    Examples:
+      roam partition --n-agents 4
+      roam partition --n-agents 6 --format json
+      roam partition --n-agents 3 --format claude-teams
+      roam --json partition --n-agents 5
+
+    See also ``orchestrate`` (operational dispatch with interface
+    contracts), ``agent-plan`` (dependency-ordered phases), and
+    ``fleet`` (graph-aware planner for external orchestrators).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

@@ -1007,6 +1007,10 @@ _DOC_LINKS: dict[str, str] = {
     "ELICITATION_REQUIRED": "https://roam-code.com/docs/troubleshooting",
     "FILE_NOT_FOUND": "https://roam-code.com/docs/troubleshooting",
     "DIRTY_TREE": "https://roam-code.com/docs/troubleshooting",
+    # R10.1 — emitted by ``_apply_move`` when a destructive op partially
+    # fails and the rollback path runs. Agents need a doc link to the
+    # recovery playbook (verify rollback, re-stage, retry).
+    "APPLY_FAILED": "https://roam-code.com/docs/troubleshooting",
     "UNKNOWN": "https://roam-code.com/docs/troubleshooting",
 }
 
@@ -1066,13 +1070,17 @@ _SEVERITY_MAP: dict[str, str] = {
     # R9 security recheck #4 — codes emitted by mcp_server.py that
     # were falling through to the default "error" severity. Pin them
     # so agents can branch on severity without parsing the message.
-    "EMPTY_INPUT": "error",       # missing required input
-    "INVALID_DIFF": "error",      # malformed git diff in critique
-    "RUN_FAILED": "error",        # subprocess returned non-zero
-    "JSON_DECODE": "error",       # downstream produced non-JSON
+    "EMPTY_INPUT": "error",  # missing required input
+    "INVALID_DIFF": "error",  # malformed git diff in critique
+    "RUN_FAILED": "error",  # subprocess returned non-zero
+    "JSON_DECODE": "error",  # downstream produced non-JSON
     "ELICITATION_REQUIRED": "warning",  # awaits user response, retryable
-    "FILE_NOT_FOUND": "error",    # specific file missing
-    "DIRTY_TREE": "warning",      # uncommitted changes block emit
+    "FILE_NOT_FOUND": "error",  # specific file missing
+    "DIRTY_TREE": "warning",  # uncommitted changes block emit
+    # R10.1 — destructive op partial failure (rollback ran). Severity is
+    # ``error`` because the working tree may carry partial edits even
+    # after rollback; the agent must re-verify before retrying.
+    "APPLY_FAILED": "error",
     "UNKNOWN": "error",
 }
 
@@ -1104,6 +1112,126 @@ def _handle_storage_dir() -> Path:
     """Where large-response payloads are written. Relative to cwd so
     each project's handles stay scoped to its workspace."""
     return Path.cwd() / ".roam" / "responses"
+
+
+# Default GC tunables. Overridable via env vars at call time.
+# - TTL: evict files whose mtime is older than this many hours (default 7d).
+# - Max bytes: evict oldest-first until total dir size is under this cap.
+# - Min files before GC kicks in: amortise the cost; never run on every write.
+_HANDLE_GC_DEFAULT_TTL_HOURS = 168  # 7 days
+_HANDLE_GC_DEFAULT_MAX_BYTES = 100 * 1024 * 1024  # 100MB
+_HANDLE_GC_MIN_FILES = 50  # only consider GC once dir has > this many entries
+
+
+def _gc_handle_dir(handle_dir: Path) -> None:
+    """Best-effort LRU/TTL cleanup of the on-disk handle store.
+
+    Tunable via env vars:
+      ROAM_MCP_HANDLE_TTL_HOURS  (default 168 = 7 days; <=0 disables TTL)
+      ROAM_MCP_HANDLE_MAX_BYTES  (default 100MB; <=0 disables size cap)
+
+    Eviction order:
+      1. TTL pass — drop any *.json file whose mtime is older than the TTL.
+      2. Size pass — if total bytes still exceed the cap, delete oldest-mtime
+         files first until under the cap.
+
+    Hardening:
+      * Only operates on files matching ``*.json`` directly inside the handle
+        dir — never recurses, never follows symlinks out of scope.
+      * Tolerates files vanishing mid-iteration (another process / GC race).
+      * If ``handle_dir`` is missing or not a directory, returns silently.
+      * Never raises — GC is opportunistic; the caller has more important
+        work (a tool response is mid-flight).
+    """
+    try:
+        if not handle_dir.is_dir():
+            return
+    except OSError:
+        return
+
+    # Resolve tunables. Bad values fall back to defaults rather than crashing.
+    try:
+        ttl_hours = int(os.environ.get("ROAM_MCP_HANDLE_TTL_HOURS", str(_HANDLE_GC_DEFAULT_TTL_HOURS)))
+    except ValueError:
+        ttl_hours = _HANDLE_GC_DEFAULT_TTL_HOURS
+    try:
+        max_bytes = int(os.environ.get("ROAM_MCP_HANDLE_MAX_BYTES", str(_HANDLE_GC_DEFAULT_MAX_BYTES)))
+    except ValueError:
+        max_bytes = _HANDLE_GC_DEFAULT_MAX_BYTES
+
+    # Snapshot directory contents. iterdir can raise if the dir was removed
+    # between the is_dir check and now (rmtree race) — swallow that.
+    try:
+        raw_entries = list(handle_dir.iterdir())
+    except (OSError, FileNotFoundError):
+        return
+
+    # Filter + stat in one pass, tolerating per-entry races (a file may
+    # vanish between iterdir and stat / is_file). Each file is wrapped in
+    # its own try so one missing entry doesn't poison the whole sweep.
+    stats: list[tuple[Path, float, int]] = []
+    for p in raw_entries:
+        if p.suffix != ".json":
+            continue
+        try:
+            st = p.stat()
+        except (FileNotFoundError, OSError):
+            continue
+        # st_mode bit 0o100000 == regular file; checking via S_ISREG keeps
+        # the race-window tight (one stat call instead of stat + is_file).
+        import stat as _stat_mod
+
+        if not _stat_mod.S_ISREG(st.st_mode):
+            continue
+        stats.append((p, st.st_mtime, st.st_size))
+
+    now = _time.time()
+
+    # --- TTL pass ---
+    if ttl_hours > 0:
+        cutoff = now - (ttl_hours * 3600)
+        survivors: list[tuple[Path, float, int]] = []
+        for p, mtime, size in stats:
+            if mtime < cutoff:
+                # Defensive: confirm the path is still inside handle_dir
+                # (parent matches) before unlinking. Belt-and-suspenders
+                # against any future caller passing a tainted path.
+                try:
+                    if p.parent.resolve() != handle_dir.resolve():
+                        survivors.append((p, mtime, size))
+                        continue
+                    p.unlink()
+                except (FileNotFoundError, OSError):
+                    # Already gone or unreadable — fine, skip.
+                    pass
+            else:
+                survivors.append((p, mtime, size))
+        stats = survivors
+
+    # --- Size pass ---
+    if max_bytes > 0:
+        total = sum(size for _p, _m, size in stats)
+        if total > max_bytes:
+            # Oldest-first eviction. mtime is the access proxy; with content
+            # addressing, "oldest" means "least recently regenerated".
+            stats.sort(key=lambda triple: triple[1])
+            for p, _mtime, size in stats:
+                if total <= max_bytes:
+                    break
+                try:
+                    if p.parent.resolve() != handle_dir.resolve():
+                        continue
+                    p.unlink()
+                    total -= size
+                except (FileNotFoundError, OSError):
+                    continue
+
+
+# Per-process counter used to amortise GC. Even when the dir is large,
+# we run cleanup at most once every N writes — prevents pathological
+# O(N) scans on every tool call in a hot loop.
+_HANDLE_GC_WRITE_COUNTER: dict[str, int] = {"n": 0}
+_HANDLE_GC_RUN_EVERY = 25
 
 
 def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
@@ -1158,7 +1286,19 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
     sha = _hashlib.sha256(encoded).hexdigest()[:16]
     handle_dir = _handle_storage_dir()
     try:
+        # First-creation: tighten the directory to 0o700 (owner-only).
+        # Handle payloads can include source excerpts, taint findings, and
+        # PageRank data — keep them confidential to the project owner.
+        # mkdir's mode arg is masked by umask, so chmod after creation.
+        was_new = not handle_dir.exists()
         handle_dir.mkdir(parents=True, exist_ok=True)
+        if was_new:
+            try:
+                handle_dir.chmod(0o700)
+            except OSError:
+                # POSIX-only semantics; on Windows chmod is a near no-op
+                # but the call shouldn't fail. Swallow and continue.
+                pass
         target = handle_dir / f"{sha}.json"
         # content-addressed → identical payload reuses the same file
         if not target.is_file():
@@ -1167,6 +1307,30 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
         # Read-only filesystem or permission issue — better to ship
         # the fat envelope than fail the call.
         return payload
+
+    # Amortised GC — cheap to skip in the hot path. Run when EITHER:
+    #   (a) directory has grown beyond the trigger threshold, OR
+    #   (b) we've written N times since the last GC pass.
+    # Both gates use try/except to keep GC opportunistic; a failure here
+    # never poisons the response we're about to return.
+    try:
+        _HANDLE_GC_WRITE_COUNTER["n"] += 1
+        run_gc = False
+        if _HANDLE_GC_WRITE_COUNTER["n"] >= _HANDLE_GC_RUN_EVERY:
+            run_gc = True
+        else:
+            try:
+                # Cheap len() check on listdir; bounded by directory size.
+                if len(os.listdir(handle_dir)) > _HANDLE_GC_MIN_FILES:
+                    run_gc = True
+            except OSError:
+                run_gc = False
+        if run_gc:
+            _HANDLE_GC_WRITE_COUNTER["n"] = 0
+            _gc_handle_dir(handle_dir)
+    except Exception:
+        # GC must never break the actual tool response.
+        pass
 
     # Build a tiny preview so the agent has orientation without
     # fetching the full payload. Keep this VERY small.
@@ -1195,8 +1359,7 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
         "fetch_with": f"roam_fetch_handle(handle='{sha}')",
         "summary": {
             "verdict": (
-                f"large response ({size:,} bytes) stored as handle {sha}; "
-                "fetch the full payload via roam_fetch_handle"
+                f"large response ({size:,} bytes) stored as handle {sha}; fetch the full payload via roam_fetch_handle"
             ),
             "byte_size": size,
             "handle": sha,
@@ -1218,16 +1381,19 @@ def _wrap_with_handle_off(name: str, fn):
     import inspect as _inspect
 
     if _inspect.iscoroutinefunction(fn):
+
         @_functools.wraps(fn)
         async def _async_wrapped(*args, **kwargs):
             r = await fn(*args, **kwargs)
             return _maybe_handle_off(r, tool_name=name)
+
         return _async_wrapped
 
     @_functools.wraps(fn)
     def _sync_wrapped(*args, **kwargs):
         r = fn(*args, **kwargs)
         return _maybe_handle_off(r, tool_name=name)
+
     return _sync_wrapped
 
 
@@ -2819,16 +2985,10 @@ def _vp_check_symbol_exists(symbol: str, root: str = ".") -> tuple[bool, list[di
     if not isinstance(matches, list):
         return False, []
     # Exact-name match first, qualified-name match second.
-    exact = [
-        m for m in matches
-        if isinstance(m, dict) and m.get("name") == symbol
-    ]
+    exact = [m for m in matches if isinstance(m, dict) and m.get("name") == symbol]
     if exact:
         return True, exact[:5]
-    qual = [
-        m for m in matches
-        if isinstance(m, dict) and m.get("qualified_name") == symbol
-    ]
+    qual = [m for m in matches if isinstance(m, dict) and m.get("qualified_name") == symbol]
     if qual:
         return True, qual[:5]
     return False, matches[:5] if isinstance(matches, list) else []
@@ -2864,6 +3024,7 @@ def _vp_check_target_file(file_path: str, must_exist: bool, root: str = ".") -> 
     a writable new path. For ``add`` we want it to NOT exist (would
     collide). The implementation is filesystem-only — fast, no DB hit."""
     from pathlib import Path as _Path
+
     if not file_path:
         return False, "file_path is empty"
     base = _Path(root).resolve() if root and root != "." else _Path.cwd()
@@ -2910,7 +3071,8 @@ def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
                     "SYMBOL_NOT_FOUND",
                     f"symbol {symbol!r} not in index — did you mean: "
                     + ", ".join(c.get("name") or c.get("qualified_name") or "?" for c in candidates[:3])
-                    if candidates else f"symbol {symbol!r} not in index",
+                    if candidates
+                    else f"symbol {symbol!r} not in index",
                 )
             else:
                 blast = _vp_blast_radius(symbol, root)
@@ -2959,8 +3121,7 @@ def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
         if isinstance(blast, int) and blast > 0:
             _block(
                 "REMOVE_HAS_CALLERS",
-                f"cannot remove {op.get('symbol')!r} — {blast} callers would break. "
-                "Migrate or update them first.",
+                f"cannot remove {op.get('symbol')!r} — {blast} callers would break. Migrate or update them first.",
             )
 
     elif kind == "modify":
@@ -3092,9 +3253,7 @@ def validate_plan(
                     "index": i,
                     "kind": "unknown",
                     "ok": False,
-                    "blockers": [
-                        {"code": "MALFORMED_OP", "detail": f"operation {i} is not an object"}
-                    ],
+                    "blockers": [{"code": "MALFORMED_OP", "detail": f"operation {i} is not an object"}],
                     "warnings": [],
                     "advice": [],
                     "facts": {},
@@ -3115,8 +3274,7 @@ def validate_plan(
         verdict = "ok"
 
     summary_text = (
-        f"{verdict}: {len(op_results)} operation(s), "
-        f"{total_blockers} blocker(s), {total_warnings} warning(s)"
+        f"{verdict}: {len(op_results)} operation(s), {total_blockers} blocker(s), {total_warnings} warning(s)"
     )
 
     return {
@@ -3182,8 +3340,7 @@ def fetch_handle(handle: str = "", root: str = ".", ctx: _Context | None = None)
                 "error": f"handle {handle!r} not found in {target.parent}",
                 "error_code": "NO_RESULTS",
                 "hint": (
-                    "the response may have been cleaned up. Re-run the "
-                    "original tool call to regenerate the handle."
+                    "the response may have been cleaned up. Re-run the original tool call to regenerate the handle."
                 ),
                 "command": "roam_fetch_handle",
             }

@@ -33,6 +33,17 @@ def agent_context(ctx, agent_id, n_agents):
     ``agent-plan`` for the complete multi-agent view) and assembles a
     focused context blob with write scope, read-only dependencies,
     interface contracts, and coordination instructions.
+
+    \b
+    Examples:
+      roam agent-context 1
+      roam agent-context 2 --agents 4
+      roam --json agent-context 3 --agents 6
+      roam --detail agent-context 1 --agents 3
+
+    See also ``agent-plan`` (full multi-agent dependency-ordered view),
+    ``orchestrate`` (operational dispatch with merge order), and
+    ``partition`` (analytical metrics for partition layout).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

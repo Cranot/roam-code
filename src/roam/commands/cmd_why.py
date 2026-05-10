@@ -286,9 +286,17 @@ def why(ctx, names):
     symbol's role (Hub/Bridge/Leaf), cluster cohesion, transitive reach, and
     generates a human-readable verdict.
 
-    Accepts multiple symbols for batch triage:
+    Accepts multiple symbols for batch triage.
 
-        roam why parseAmount formatNumber clearGrid
+    \b
+    Examples:
+      roam why parseAmount
+      roam why parseAmount formatNumber clearGrid
+      roam --json why login_user
+      roam --detail why build_symbol_graph
+
+    See also ``fan`` (raw connectivity ranking), ``preflight``
+    (blast-radius gate), and ``diagnose`` (root-cause ranking).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
