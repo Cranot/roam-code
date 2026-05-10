@@ -3101,3 +3101,46 @@ footer a { color: #fff; }
   }
 }
 
+/* ─── Pricing tier pills ───
+   Used on /pricing for the "Limits and definitions" sub-table so the
+   four tiers read as a hierarchy at a glance instead of plain row text.
+   Subtle colour ramp from soft → bold matching the four price points. */
+.tier-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 9px;
+  border-radius: 999px;
+  vertical-align: middle;
+  margin-right: 8px;
+  border: 1px solid transparent;
+  text-transform: uppercase;
+}
+.tier-pill--starter {
+  background: #e6f4ea;
+  color: #1f6f43;
+  border-color: #c4e3d0;
+}
+.tier-pill--team {
+  background: #e7eefb;
+  color: var(--accent);
+  border-color: #c8d6f2;
+}
+.tier-pill--business {
+  background: #efe4f6;
+  color: #6b3e9c;
+  border-color: #d8c3e6;
+}
+.tier-pill--scale {
+  background: #fbf2dc;
+  color: #876016;
+  border-color: #e8d39a;
+}
+.tier-price {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  font-feature-settings: 'tnum';
+}
