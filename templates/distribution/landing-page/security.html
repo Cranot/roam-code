@@ -144,13 +144,25 @@
         <a href="https://github.com/Cranot/roam-code">GitHub</a>.
       </p>
 
-      <h3>Supply-chain integrity</h3>
+      <h3 id="supply-chain">Supply-chain integrity</h3>
       <ul>
         <li>PyPI releases use OIDC <strong>Trusted Publishing</strong> (no long-lived API tokens) — see <a href="https://github.com/Cranot/roam-code/blob/main/.github/workflows/publish.yml"><code>.github/workflows/publish.yml</code></a></li>
         <li>Each release is built reproducibly from a tagged commit</li>
         <li>Sigstore attestations are produced by the publish workflow (verifiable provenance)</li>
+        <li>CycloneDX SBOM emitted on every release as a separate artifact (audit-grade dependency manifest)</li>
         <li>The repo enables Dependabot security updates + secret scanning + push-protection</li>
       </ul>
+      <p class="note">
+        For context on why this matters: in August 2025 a hosted code-review
+        vendor was compromised through a CI/CD path —
+        <a href="https://kudelskisecurity.com/research/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories">researchers
+        achieved RCE plus write access to roughly one million repositories</a>
+        (<a class="archive-link" href="https://web.archive.org/web/20260507124707/https://kudelskisecurity.com/research/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories" rel="external" aria-label="Wayback Machine archive">archive</a>).
+        Roam's CLI is open source and runs entirely on your machine — that
+        whole class of attack doesn't apply. The Sigstore + SBOM chain
+        above lets you verify the wheel you install matches the tagged
+        commit you can read.
+      </p>
 
       <h4>Verify a release yourself</h4>
       <p>

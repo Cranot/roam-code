@@ -277,10 +277,17 @@ a:hover {
 /* Single source of truth for focus-visible outlines. Any focusable element
    gets the same accent ring at the same offset; element-specific overrides
    are reserved for spaced-around components like .faq summary that need a
-   bit more breathing room (configured locally below). */
+   bit more breathing room (configured locally below).
+   Inputs, selects, textareas, and labels receive the same ring so keyboard
+   navigation through forms (mailto-builder dropdowns, future contact forms)
+   shows where focus lives. */
 a:focus-visible,
 button:focus-visible,
 summary:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+label:focus-within,
 [tabindex]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -3140,7 +3147,10 @@ footer a { color: #fff; }
 }
 .tier-pill--scale {
   background: #fbf2dc;
-  color: #876016;
+  /* Darkened from #876016 (5.14:1) to #6e4f12 (6.81:1) so 11px text
+     keeps WCAG AA margin under low-contrast monitors / sunlight.
+     Border kept warm so the pill still reads as the gold tier. */
+  color: #6e4f12;
   border-color: #e8d39a;
 }
 .tier-price {
