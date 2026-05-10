@@ -257,6 +257,17 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
     Composes hybrid first-stage (FTS5) + structural reranker (PageRank +
     clone-canonical signal) + token-budget cap. Output includes
     justification tags so callers can see *why* each span ranked.
+
+    \b
+    Examples:
+      roam retrieve "trace login flow"
+      roam retrieve "where is the n+1?" --k 10
+      roam retrieve "rate limit logic" --scope src/api/
+      roam retrieve "token refresh" --budget 2000
+
+    See also ``ask`` (recipe-driven dispatch — pick a recipe by intent),
+    ``search`` (exact-name lookup), and ``search-semantic`` (embedding-
+    based natural-language search).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     cli_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

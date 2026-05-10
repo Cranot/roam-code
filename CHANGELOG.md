@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Agent / MCP DX
 
+- **`roam_validate_plan` MCP tool.** Pre-apply validator for a multi-step change plan. Takes `[{kind: "rename", symbol, new_name}, …]` and returns a verdict (`ok` / `needs-review` / `blocked`) with per-operation blockers, warnings, and advice — symbol existence, name collisions, blast radius, target-file sanity, fitness violations. Cuts 4-call agent loops to one round-trip.
+- **`roam_for_<situation>` family.** Four situation-keyed compounds: `roam_for_new_feature` (understand + search + context + complexity), `roam_for_bug_fix` (diagnose + tests + diff + context), `roam_for_refactor` (preflight + impact + complexity + clones), `roam_for_security_review` (taint + vuln + critique + adversarial). Each bundles 3-4 inspect calls into one round-trip.
+- **Reference-based handles for >50KB envelopes.** Tools returning JSON > `ROAM_MCP_HANDLE_KB` (default 50) write the payload to `.roam/responses/<sha16>.json` and return a tiny envelope with `{handle, byte_size, preview}`. New `roam_fetch_handle(handle)` retrieves the full payload on demand. Content-addressed: identical responses share a handle. Stops a 70KB `roam_understand` envelope from blowing the agent's context budget when the agent only needs the summary.
 - **`roam_ask` MCP tool.** Wraps the 24-recipe TF-IDF intent dispatcher so agents on MCP clients can dispatch a recipe in one call instead of falling back to Grep+Read. Added to `_CORE_TOOLS`.
 - **`roam_session_metrics` MCP tool.** Local-only per-tool invocation telemetry (success / rate_limited / error counts). Helps answer "which tools are agents actually using?" without phoning home.
 - **`agent_contract` block on every JSON envelope.** ~200-token derived block: `{facts, risks, next_commands, confidence}` so context-budget-tight agents can read just this and skip the full payload. Opt-out via `ROAM_AGENT_CONTRACT_BLOCK=0`.
@@ -84,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **`tests/conftest.py:make_src_project`** writes `.gitignore` with `.roam/` so the dirty-tree refusal behaves the same in tests as in production.
 - **Categorise the formerly-orphan `lsp` command** under "Refactoring" alongside `stale-refs` (the LSP server is the same engine surfaced over JSON-RPC).
+- **Help-text template ratchet (R8.G9).** New `tests/test_command_help_template.py` pins a curated set of high-leverage commands (`init`, `doctor`, the five Start-here verbs, and daily staples — 12 today) to a consistent shape: 1-line summary, an `Examples:` block, and an inline "See also" cross-reference. The list grows incrementally; new commands are encouraged to match. Twelve commands polished in this round.
 
 ---
 

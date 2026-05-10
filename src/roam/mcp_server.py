@@ -130,6 +130,15 @@ _CORE_TOOLS = {
     "roam_ask",
     # v12.51 — local-only tool-usage telemetry (introspection)
     "roam_session_metrics",
+    # R8.E3 — pre-apply change-plan validator
+    "roam_validate_plan",
+    # R8.E4 — situation-keyed compound entry points
+    "roam_for_new_feature",
+    "roam_for_bug_fix",
+    "roam_for_refactor",
+    "roam_for_security_review",
+    # R8.E8 — large-response handle retrieval
+    "roam_fetch_handle",
 }
 
 _PRESETS: dict[str, set[str]] = {
@@ -840,6 +849,12 @@ def _tool(
         # semaphore acquire (sub-microsecond).
         from roam.mcp_extras.concurrency import wrap_with_guard
 
+        # R8.E8: post-process large returns into reference-based
+        # handles so the agent's context budget isn't blown by a
+        # single 50KB+ envelope. Wraps BEFORE the concurrency guard
+        # so the guard's BUSY error envelope passes through unchanged
+        # (errors are never handle-off'd).
+        fn = _wrap_with_handle_off(name, fn)
         fn = wrap_with_guard(name, fn)
         _REGISTERED_TOOLS.append(name)
         # extract richer metadata from the tool's docstring so
@@ -1048,6 +1063,151 @@ _SEVERITY_MAP: dict[str, str] = {
 # returns the moment a different error_code fires (resets the counter).
 _ERROR_STORM_THRESHOLD = 3
 _ERROR_STORM_STATE: dict[str, int] = {"_last_code": 0, "_count": 0}
+
+
+# ---------------------------------------------------------------------------
+# R8.E8 — reference-based result handles for large responses
+#
+# Some tools (roam_understand, roam_health, roam_taint) can produce
+# 50KB+ JSON envelopes. Returning the full blob over the MCP wire eats
+# the agent's context budget. With handle-off enabled, large responses
+# are written to ``.roam/responses/<sha16>.json`` and replaced with a
+# tiny envelope carrying just the handle, byte size, and a preview.
+# The agent fetches the full payload on demand via ``roam_fetch_handle``.
+#
+# Tunable via the ``ROAM_MCP_HANDLE_KB`` env var (default 50, 0 = disable).
+# ---------------------------------------------------------------------------
+
+
+def _handle_storage_dir() -> Path:
+    """Where large-response payloads are written. Relative to cwd so
+    each project's handles stay scoped to its workspace."""
+    return Path.cwd() / ".roam" / "responses"
+
+
+def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
+    """If ``payload`` JSON-serialises larger than the threshold, write
+    it to a content-addressed file and return a small handle envelope.
+    Otherwise return ``payload`` unchanged.
+
+    Inputs:
+      payload     — the dict the @_tool function returned
+      tool_name   — passed in by the wrapper; certain tools (notably
+                    ``roam_fetch_handle`` itself, and the meta-tool)
+                    bypass handle-off to avoid infinite recursion.
+
+    Threshold: ``ROAM_MCP_HANDLE_KB`` env var, default 50KB.
+    Set to 0 to disable for all tools.
+    """
+    import hashlib as _hashlib
+    import json as _json
+
+    if not isinstance(payload, dict):
+        return payload
+    # Don't handle-off errors — agent needs the full structured-error
+    # envelope to decide whether to retry.
+    if payload.get("isError"):
+        return payload
+    # Don't handle-off the fetch tool itself (would loop) or the meta-tool.
+    if tool_name in {"roam_fetch_handle", _META_TOOL}:
+        return payload
+    # Don't double-handle: if the payload already IS a handle envelope
+    # (e.g. an internal call composed from one), pass through.
+    if payload.get("is_handle"):
+        return payload
+
+    try:
+        threshold_kb = int(os.environ.get("ROAM_MCP_HANDLE_KB", "50"))
+    except ValueError:
+        threshold_kb = 50
+    if threshold_kb <= 0:
+        return payload
+    threshold = threshold_kb * 1024
+
+    try:
+        blob = _json.dumps(payload, default=str)
+    except (TypeError, ValueError):
+        # Unserialisable — let the regular code path raise the error.
+        return payload
+    encoded = blob.encode("utf-8")
+    size = len(encoded)
+    if size < threshold:
+        return payload
+
+    sha = _hashlib.sha256(encoded).hexdigest()[:16]
+    handle_dir = _handle_storage_dir()
+    try:
+        handle_dir.mkdir(parents=True, exist_ok=True)
+        target = handle_dir / f"{sha}.json"
+        # content-addressed → identical payload reuses the same file
+        if not target.is_file():
+            target.write_text(blob, encoding="utf-8")
+    except OSError:
+        # Read-only filesystem or permission issue — better to ship
+        # the fat envelope than fail the call.
+        return payload
+
+    # Build a tiny preview so the agent has orientation without
+    # fetching the full payload. Keep this VERY small.
+    preview: dict = {}
+    if isinstance(payload.get("summary"), dict):
+        preview["summary"] = payload["summary"]
+    for key in ("command", "schema", "schema_version", "version"):
+        if key in payload:
+            preview[key] = payload[key]
+    # If the payload has a list of "sections" (compound envelope),
+    # include their names so the agent knows what's inside.
+    if isinstance(payload.get("summary"), dict):
+        sections = payload["summary"].get("sections")
+        if isinstance(sections, list):
+            preview["sections"] = sections
+
+    return {
+        "schema": "roam-code.com/spec/handle/v1",
+        "schema_version": "1.0.0",
+        "is_handle": True,
+        "handle": sha,
+        "byte_size": size,
+        "stored_at": str(target),
+        "tool": tool_name,
+        "preview": preview,
+        "fetch_with": f"roam_fetch_handle(handle='{sha}')",
+        "summary": {
+            "verdict": (
+                f"large response ({size:,} bytes) stored as handle {sha}; "
+                "fetch the full payload via roam_fetch_handle"
+            ),
+            "byte_size": size,
+            "handle": sha,
+        },
+    }
+
+
+def _wrap_with_handle_off(name: str, fn):
+    """Wrap an MCP tool so its return value passes through
+    :func:`_maybe_handle_off`. Async-aware so coroutines stay
+    coroutines.
+
+    Uses ``functools.wraps`` so the wrapped function keeps its
+    annotations + signature — FastMCP / Pydantic introspect those to
+    derive the tool's input schema, and a bare ``*args, **kwargs``
+    wrapper would break schema generation.
+    """
+    import functools as _functools
+    import inspect as _inspect
+
+    if _inspect.iscoroutinefunction(fn):
+        @_functools.wraps(fn)
+        async def _async_wrapped(*args, **kwargs):
+            r = await fn(*args, **kwargs)
+            return _maybe_handle_off(r, tool_name=name)
+        return _async_wrapped
+
+    @_functools.wraps(fn)
+    def _sync_wrapped(*args, **kwargs):
+        r = fn(*args, **kwargs)
+        return _maybe_handle_off(r, tool_name=name)
+    return _sync_wrapped
 
 
 def _structured_error(error_dict: dict) -> dict:
@@ -2610,6 +2770,620 @@ def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
     if staged:
         args.append("--staged")
     return _run_roam(args, root)
+
+
+# ---------------------------------------------------------------------------
+# R8.E3 — pre-apply change-plan validator
+# ---------------------------------------------------------------------------
+
+
+def _vp_check_symbol_exists(symbol: str, root: str = ".") -> tuple[bool, list[dict]]:
+    """Return (found, candidates). Candidates are search-result rows
+    (subset) so the caller can suggest alternatives on miss.
+    """
+    if not symbol:
+        return False, []
+    res = _run_roam(["search", symbol], root)
+    if not isinstance(res, dict):
+        return False, []
+    matches = res.get("matches") or res.get("results") or []
+    if not isinstance(matches, list):
+        return False, []
+    # Exact-name match first, qualified-name match second.
+    exact = [
+        m for m in matches
+        if isinstance(m, dict) and m.get("name") == symbol
+    ]
+    if exact:
+        return True, exact[:5]
+    qual = [
+        m for m in matches
+        if isinstance(m, dict) and m.get("qualified_name") == symbol
+    ]
+    if qual:
+        return True, qual[:5]
+    return False, matches[:5] if isinstance(matches, list) else []
+
+
+def _vp_blast_radius(symbol: str, root: str = ".") -> int | None:
+    """Return number of incoming callers for ``symbol``, or None on
+    error / when impact data is unavailable.
+
+    The ``roam impact`` envelope exposes the count under
+    ``summary.affected_symbols``; the top-level ``direct_dependents``
+    and ``affected_symbols`` arrays are used as fallbacks if the
+    summary shape ever changes.
+    """
+    res = _run_roam(["impact", symbol], root)
+    if not isinstance(res, dict):
+        return None
+    summary = res.get("summary") or {}
+    if isinstance(summary, dict):
+        for key in ("affected_symbols", "callers_count", "affected", "total"):
+            n = summary.get(key)
+            if isinstance(n, int):
+                return n
+    for key in ("direct_dependents", "affected_symbols", "callers", "affected_callers"):
+        arr = res.get(key)
+        if isinstance(arr, list):
+            return len(arr)
+    return None
+
+
+def _vp_check_target_file(file_path: str, must_exist: bool, root: str = ".") -> tuple[bool, str]:
+    """Return (ok, reason). For ``move`` we want the file to exist OR be
+    a writable new path. For ``add`` we want it to NOT exist (would
+    collide). The implementation is filesystem-only — fast, no DB hit."""
+    from pathlib import Path as _Path
+    if not file_path:
+        return False, "file_path is empty"
+    base = _Path(root).resolve() if root and root != "." else _Path.cwd()
+    target = (base / file_path).resolve()
+    # Path-traversal guard: target must remain inside the project root.
+    try:
+        target.relative_to(base)
+    except ValueError:
+        return False, f"path escapes project root: {file_path}"
+    exists = target.is_file()
+    if must_exist and not exists:
+        return False, f"target file does not exist: {file_path}"
+    if (not must_exist) and exists:
+        return False, f"target file already exists: {file_path}"
+    if not target.parent.is_dir():
+        return False, f"parent directory missing: {target.parent}"
+    return True, "ok"
+
+
+def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
+    """Validate a single change-plan operation. See
+    :func:`validate_plan` for the operation schema."""
+    kind = (op.get("kind") or "").lower()
+    blockers: list[dict] = []
+    warnings: list[dict] = []
+    advice: list[str] = []
+    facts: dict = {}
+
+    def _block(code: str, detail: str) -> None:
+        blockers.append({"code": code, "detail": detail})
+
+    def _warn(code: str, detail: str) -> None:
+        warnings.append({"code": code, "detail": detail})
+
+    if kind in {"rename", "move", "remove", "modify"}:
+        symbol = op.get("symbol") or ""
+        if not symbol:
+            _block("MISSING_SYMBOL", f"{kind} requires 'symbol'")
+        else:
+            found, candidates = _vp_check_symbol_exists(symbol, root)
+            facts["symbol_found"] = found
+            if not found:
+                _block(
+                    "SYMBOL_NOT_FOUND",
+                    f"symbol {symbol!r} not in index — did you mean: "
+                    + ", ".join(c.get("name") or c.get("qualified_name") or "?" for c in candidates[:3])
+                    if candidates else f"symbol {symbol!r} not in index",
+                )
+            else:
+                blast = _vp_blast_radius(symbol, root)
+                facts["blast_radius"] = blast
+                if isinstance(blast, int):
+                    if blast > 50:
+                        _warn(
+                            "HIGH_BLAST_RADIUS",
+                            f"{symbol} has {blast} incoming callers — review impact before applying.",
+                        )
+                    elif blast > 10:
+                        _warn(
+                            "MEDIUM_BLAST_RADIUS",
+                            f"{symbol} has {blast} incoming callers — proceed with care.",
+                        )
+
+    if kind == "rename":
+        new_name = op.get("new_name") or ""
+        if not new_name:
+            _block("MISSING_NEW_NAME", "rename requires 'new_name'")
+        else:
+            new_found, _ = _vp_check_symbol_exists(new_name, root)
+            facts["new_name_collision"] = new_found
+            if new_found:
+                _warn(
+                    "NAME_COLLISION",
+                    f"another symbol already uses {new_name!r} — rename may shadow it.",
+                )
+                advice.append("run `roam search <new_name>` to inspect the collision.")
+
+    elif kind == "move":
+        target_file = op.get("target_file") or ""
+        if not target_file:
+            _block("MISSING_TARGET_FILE", "move requires 'target_file'")
+        else:
+            # For move, target file may or may not exist — both are
+            # valid (existing file means appending, new file means
+            # creating). Just verify the parent dir is sane.
+            ok, reason = _vp_check_target_file(target_file, must_exist=False, root=root)
+            facts["target_file_ok"] = ok
+            if not ok and "already exists" not in reason:
+                _block("INVALID_TARGET_FILE", reason)
+
+    elif kind == "remove":
+        blast = facts.get("blast_radius")
+        if isinstance(blast, int) and blast > 0:
+            _block(
+                "REMOVE_HAS_CALLERS",
+                f"cannot remove {op.get('symbol')!r} — {blast} callers would break. "
+                "Migrate or update them first.",
+            )
+
+    elif kind == "modify":
+        # Modify is a soft op — the agent is just signalling intent.
+        # We surface fitness/complexity from preflight as an advisory.
+        symbol = op.get("symbol") or ""
+        if symbol:
+            pre = _run_roam(["preflight", symbol], root)
+            if isinstance(pre, dict):
+                summary = pre.get("summary") or {}
+                if isinstance(summary, dict):
+                    facts["preflight_verdict"] = summary.get("verdict")
+                    fitness = summary.get("fitness_violations") or summary.get("violations")
+                    if isinstance(fitness, list) and fitness:
+                        _warn(
+                            "FITNESS_VIOLATIONS",
+                            f"{symbol} has {len(fitness)} fitness violation(s) — fix before adding new logic.",
+                        )
+
+    elif kind == "add":
+        file_path = op.get("file") or ""
+        if not file_path:
+            _block("MISSING_FILE", "add requires 'file'")
+        else:
+            ok, reason = _vp_check_target_file(file_path, must_exist=False, root=root)
+            facts["file_ok"] = ok
+            if not ok:
+                _block("INVALID_ADD_FILE", reason)
+
+    else:
+        _block("UNKNOWN_KIND", f"unsupported operation kind: {kind!r}")
+
+    return {
+        "index": idx,
+        "kind": kind,
+        "ok": not blockers,
+        "blockers": blockers,
+        "warnings": warnings,
+        "advice": advice,
+        "facts": facts,
+    }
+
+
+@_tool(
+    name="roam_validate_plan",
+    description="Pre-apply validator for a multi-step change plan. Returns blockers, warnings, advice per operation.",
+    version="1.0.0",
+)
+def validate_plan(
+    operations: list[dict] | None = None,
+    plan_json: str = "",
+    root: str = ".",
+    ctx: _Context | None = None,
+) -> dict:
+    """Validate a structured change plan BEFORE applying any operations.
+
+    WHEN TO USE: After you've drafted a multi-step refactor (rename +
+    move + remove + …) but BEFORE you start calling ``roam_mutate``.
+    This tool runs the right safety checks per operation in one
+    round-trip — symbol existence, name collisions, blast radius,
+    target-file sanity, fitness violations — and returns a verdict
+    plus per-operation findings.
+
+    Cheaper and safer than calling ``roam_preflight`` + ``roam_impact``
+    + ``roam_search_symbol`` separately for every operation in the plan.
+
+    Operation schemas:
+
+        {kind: "rename", symbol: "old_name", new_name: "new_name"}
+        {kind: "move",   symbol: "MyClass.method", target_file: "src/new.py"}
+        {kind: "remove", symbol: "deprecated_func"}
+        {kind: "modify", symbol: "complex_func"}
+        {kind: "add",    file: "src/new_module.py"}
+
+    Parameters
+    ----------
+    operations:
+        List of operation dicts. Pass this OR ``plan_json`` (not both).
+    plan_json:
+        Alternative: a JSON string with either ``[{...}, ...]`` or
+        ``{"operations": [...]}``. Useful when the agent has the plan
+        as a string already.
+    root:
+        Project root for the index lookup.
+
+    Returns: ``{summary: {verdict, blockers_count, warnings_count, ...},
+    operations: [...]}``. ``verdict`` is one of ``ok`` (no findings),
+    ``needs-review`` (warnings only), or ``blocked`` (any blocker —
+    do NOT call mutate until resolved).
+    """
+    import json as _json
+
+    if not operations and plan_json:
+        try:
+            parsed = _json.loads(plan_json)
+            if isinstance(parsed, list):
+                operations = parsed
+            elif isinstance(parsed, dict):
+                ops = parsed.get("operations")
+                if isinstance(ops, list):
+                    operations = ops
+        except _json.JSONDecodeError as e:
+            return _structured_error(
+                {
+                    "error": f"plan_json is not valid JSON: {e}",
+                    "error_code": "USAGE_ERROR",
+                    "hint": "pass operations=[{...}] or plan_json='{\"operations\":[...]}'",
+                    "command": "roam_validate_plan",
+                }
+            )
+
+    if not operations or not isinstance(operations, list):
+        return _structured_error(
+            {
+                "error": "no operations supplied",
+                "error_code": "USAGE_ERROR",
+                "hint": "pass operations=[{kind:'rename', symbol:'x', new_name:'y'}, ...]",
+                "command": "roam_validate_plan",
+            }
+        )
+
+    op_results: list[dict] = []
+    total_blockers = 0
+    total_warnings = 0
+    for i, op in enumerate(operations):
+        if not isinstance(op, dict):
+            op_results.append(
+                {
+                    "index": i,
+                    "kind": "unknown",
+                    "ok": False,
+                    "blockers": [
+                        {"code": "MALFORMED_OP", "detail": f"operation {i} is not an object"}
+                    ],
+                    "warnings": [],
+                    "advice": [],
+                    "facts": {},
+                }
+            )
+            total_blockers += 1
+            continue
+        result = _vp_validate_one(i, op, root)
+        op_results.append(result)
+        total_blockers += len(result.get("blockers", []))
+        total_warnings += len(result.get("warnings", []))
+
+    if total_blockers:
+        verdict = "blocked"
+    elif total_warnings:
+        verdict = "needs-review"
+    else:
+        verdict = "ok"
+
+    summary_text = (
+        f"{verdict}: {len(op_results)} operation(s), "
+        f"{total_blockers} blocker(s), {total_warnings} warning(s)"
+    )
+
+    return {
+        "schema": "roam-code.com/spec/validate-plan/v1",
+        "schema_version": "1.0.0",
+        "summary": {
+            "verdict": verdict,
+            "operations": len(op_results),
+            "blockers_count": total_blockers,
+            "warnings_count": total_warnings,
+            "verdict_text": summary_text,
+        },
+        "operations": op_results,
+    }
+
+
+# ---------------------------------------------------------------------------
+# R8.E8 — fetch a large response by handle
+# ---------------------------------------------------------------------------
+
+
+@_tool(
+    name="roam_fetch_handle",
+    description="Fetch the full payload for a handle returned by a large MCP tool response.",
+    version="1.0.0",
+)
+def fetch_handle(handle: str = "", root: str = ".", ctx: _Context | None = None) -> dict:
+    """Retrieve a large MCP response previously written to disk under a
+    content-addressed handle.
+
+    WHEN TO USE: When a tool returned a small envelope with
+    ``is_handle=true`` and a ``handle: "<sha16>"`` field, call this to
+    fetch the full payload. The preview block in the original envelope
+    tells you whether you actually need it — most agents can answer
+    from the preview alone.
+
+    Parameters
+    ----------
+    handle:
+        The 16-char hex handle returned by an earlier tool call. The
+        file must exist under ``.roam/responses/<handle>.json`` in the
+        current project.
+
+    Returns: the full original payload, or a structured error if the
+    handle is unknown / the file was deleted.
+    """
+    import json as _json
+    import re as _re
+
+    if not handle or not _re.fullmatch(r"[0-9a-f]{16}", handle):
+        return _structured_error(
+            {
+                "error": "handle must be a 16-char lowercase hex string",
+                "error_code": "USAGE_ERROR",
+                "hint": "pass the handle from a prior tool response — e.g. 'a1b2c3d4...' (16 chars).",
+                "command": "roam_fetch_handle",
+            }
+        )
+    target = _handle_storage_dir() / f"{handle}.json"
+    if not target.is_file():
+        return _structured_error(
+            {
+                "error": f"handle {handle!r} not found in {target.parent}",
+                "error_code": "NO_RESULTS",
+                "hint": (
+                    "the response may have been cleaned up. Re-run the "
+                    "original tool call to regenerate the handle."
+                ),
+                "command": "roam_fetch_handle",
+            }
+        )
+    try:
+        return _json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, _json.JSONDecodeError) as e:
+        return _structured_error(
+            {
+                "error": f"could not read handle file: {type(e).__name__}: {e}",
+                "error_code": "PERMISSION_DENIED" if isinstance(e, OSError) else "COMMAND_FAILED",
+                "hint": "check filesystem permissions on .roam/responses/, then retry.",
+                "command": "roam_fetch_handle",
+            }
+        )
+
+
+# ---------------------------------------------------------------------------
+# R8.E4 — situation-keyed compound entry points
+#
+# Each tool packages the 3-4 inspect/plan calls an agent typically makes for a
+# given engineering situation into one round-trip. Cuts agent-loop chatter
+# (and therefore tokens) without losing any signal — the agent gets the same
+# data, just in one envelope instead of four.
+#
+# All four delegate to ``_compound_envelope`` which already handles the
+# verdict aggregation + partial-success bookkeeping used by the existing
+# ``roam_explore`` / ``roam_diagnose_issue`` compounds.
+# ---------------------------------------------------------------------------
+
+
+def _safe_run(args: list[str], root: str) -> dict:
+    """Wrapper around _run_roam that converts exceptions into structured
+    error dicts so a partial failure in one sub-command doesn't poison
+    the whole compound envelope."""
+    try:
+        out = _run_roam(args, root)
+        if isinstance(out, dict):
+            return out
+        return {"error": f"unexpected return type: {type(out).__name__}"}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+@_tool(
+    name="roam_for_new_feature",
+    description="Compound: understand + search + context + complexity for an area you're about to add code to.",
+    version="1.0.0",
+)
+def for_new_feature(area: str = "", root: str = ".", ctx: _Context | None = None) -> dict:
+    """Bundle the calls an agent typically makes when starting a new feature.
+
+    WHEN TO USE: First tool to call when an agent gets a "build feature X"
+    task. Returns codebase orientation, related symbols matching ``area``,
+    the most relevant context block, and a complexity report so the agent
+    knows whether the surrounding code is hot or simple.
+
+    Parameters
+    ----------
+    area:
+        Free-form area / feature name — e.g. ``"authentication"`` or
+        ``"PaymentGateway"``. Used as the search query and (if it
+        matches a real symbol) as the context anchor. Empty is allowed:
+        the tool will return orientation + complexity-report only.
+
+    Returns: compound envelope with sections {understand, search,
+    context, complexity_report}. ``summary.verdict`` aggregates each
+    sub-verdict.
+    """
+    sections = [
+        ("understand", _safe_run(["understand"], root)),
+        ("complexity_report", _safe_run(["complexity", "--limit", "10"], root)),
+    ]
+    if area:
+        sections.append(("search", _safe_run(["search", area], root)))
+        # Only fetch context if search found a symbol — context for an
+        # unmatched query is wasted tokens.
+        search_res = sections[-1][1]
+        matches = []
+        if isinstance(search_res, dict):
+            matches = search_res.get("matches") or search_res.get("results") or []
+        if matches:
+            top = matches[0] if isinstance(matches, list) and matches else None
+            anchor = top.get("qualified_name") or top.get("name") if isinstance(top, dict) else None
+            if anchor:
+                sections.append(("context", _safe_run(["context", anchor], root)))
+    return _compound_envelope(
+        "for-new-feature",
+        sections,
+        situation="new_feature",
+        target=area,
+    )
+
+
+@_tool(
+    name="roam_for_bug_fix",
+    description="Compound: diagnose + affected_tests + diff + context for a symbol you're about to debug.",
+    version="1.0.0",
+)
+def for_bug_fix(symbol: str, root: str = ".", ctx: _Context | None = None) -> dict:
+    """Bundle the calls an agent typically makes when investigating a bug.
+
+    WHEN TO USE: When you've got a failing test or a reported bug and a
+    suspect symbol in hand. Returns root-cause ranking, recent diffs
+    that touched this area, the tests that cover it, and a context
+    deep-dive — everything you'd otherwise fetch in 4 separate calls.
+
+    Parameters
+    ----------
+    symbol:
+        Required — the symbol you suspect is the bug source.
+
+    Returns: compound envelope with sections {diagnose, affected_tests,
+    diff, context}.
+    """
+    if not symbol:
+        return _structured_error(
+            {
+                "error": "symbol is required for roam_for_bug_fix",
+                "error_code": "USAGE_ERROR",
+                "hint": "pass the symbol you suspect is the bug source — e.g. 'auth_handler' or 'User.save'.",
+                "command": "roam_for_bug_fix",
+            }
+        )
+    sections = [
+        ("diagnose", _safe_run(["diagnose", symbol], root)),
+        ("affected_tests", _safe_run(["affected-tests", symbol], root)),
+        # `roam diff` of the working tree shows what's recently been
+        # touched in the area — context for whether this is a new
+        # regression or a long-standing issue.
+        ("diff", _safe_run(["diff"], root)),
+        ("context", _safe_run(["context", symbol], root)),
+    ]
+    return _compound_envelope(
+        "for-bug-fix",
+        sections,
+        situation="bug_fix",
+        target=symbol,
+    )
+
+
+@_tool(
+    name="roam_for_refactor",
+    description="Compound: preflight + impact + complexity_report + clones for a symbol you're about to refactor.",
+    version="1.0.0",
+)
+def for_refactor(symbol: str, root: str = ".", ctx: _Context | None = None) -> dict:
+    """Bundle the calls an agent typically makes before refactoring.
+
+    WHEN TO USE: When the agent is about to restructure a symbol and
+    needs blast radius + complexity + duplicate detection in one go.
+    The output tells the agent (a) is this safe to touch, (b) is the
+    body too complex to refactor in one pass, (c) are there other
+    copies of this code that should be consolidated together.
+
+    Parameters
+    ----------
+    symbol:
+        Required — the symbol you're about to refactor.
+
+    Returns: compound envelope with sections {preflight, impact,
+    complexity_report, clones}.
+    """
+    if not symbol:
+        return _structured_error(
+            {
+                "error": "symbol is required for roam_for_refactor",
+                "error_code": "USAGE_ERROR",
+                "hint": "pass the symbol you're about to refactor.",
+                "command": "roam_for_refactor",
+            }
+        )
+    sections = [
+        ("preflight", _safe_run(["preflight", symbol], root)),
+        ("impact", _safe_run(["impact", symbol], root)),
+        ("complexity_report", _safe_run(["complexity-report", "--limit", "5"], root)),
+        # Cap at top-20 clone clusters; --top is the right flag (clones
+        # uses --top, not --limit; CLI surface drift caught here).
+        ("clones", _safe_run(["clones", "--top", "20"], root)),
+    ]
+    return _compound_envelope(
+        "for-refactor",
+        sections,
+        situation="refactor",
+        target=symbol,
+    )
+
+
+@_tool(
+    name="roam_for_security_review",
+    description="Compound: taint + vuln + critique + adversarial for a security review pass.",
+    version="1.0.0",
+)
+def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None = None) -> dict:
+    """Bundle the calls an agent typically makes during a security review.
+
+    WHEN TO USE: When the agent needs to assess attack surface — either
+    for a specific symbol (focused review) or across the whole codebase
+    (broad sweep). Returns taint flows, known vulnerabilities, the
+    critique of any staged diff, and an adversarial scan so the agent
+    can ladder findings into the right layer.
+
+    Parameters
+    ----------
+    symbol:
+        Optional — when provided, scopes the adversarial scan to this
+        symbol. Empty does a broad sweep.
+
+    Returns: compound envelope with sections {taint, vuln, critique,
+    adversarial}.
+    """
+    sections = [
+        ("taint", _safe_run(["taint"], root)),
+        ("vuln", _safe_run(["vuln", "list"], root)),
+        # ``critique`` reads the working-tree diff (and is a no-op if
+        # nothing's staged); it pairs naturally here because the agent
+        # is often reviewing a PR's worth of changes.
+        ("critique", _safe_run(["critique"], root)),
+    ]
+    adv_args = ["adversarial"]
+    if symbol:
+        adv_args.append(symbol)
+    sections.append(("adversarial", _safe_run(adv_args, root)))
+    return _compound_envelope(
+        "for-security-review",
+        sections,
+        situation="security_review",
+        target=symbol or "(full repo)",
+    )
 
 
 @_tool(

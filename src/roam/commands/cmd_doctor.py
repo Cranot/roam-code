@@ -740,6 +740,9 @@ def doctor(ctx, strict):
       roam doctor
       roam --json doctor
       roam doctor --strict   # CI mode
+
+    See also ``health`` (codebase quality), ``init`` (initial setup),
+    and ``mcp-setup`` (verify MCP server registration).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 

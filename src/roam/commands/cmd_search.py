@@ -213,6 +213,16 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
     Unlike ``grep`` (which searches file contents) and ``search-semantic``
     (which uses natural-language queries), this command finds symbols by
     exact name substring.
+
+    \b
+    Examples:
+      roam search Auth
+      roam search login --kind function
+      roam search "User\\.\\w+" --mode regex
+      roam search handle --recent-days 7
+
+    See also ``grep`` (file-content search), ``search-semantic``
+    (natural-language queries), and ``complete`` (prefix completion).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

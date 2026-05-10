@@ -304,6 +304,17 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text):
     Returns exit code 5 when at least one *high* severity finding is
     present (mirrors ``cmd_rules`` ``EXIT_GATE_FAILURE``) so CI can
     gate on it.
+
+    \b
+    Examples:
+      git diff | roam critique
+      git diff | roam critique --json
+      roam critique --input my.patch
+      roam critique --batch ./patches/   # process every diff in a dir
+
+    See also ``preflight`` (pre-change safety, before you've drafted a
+    diff), ``diff`` (blast radius of working-tree changes), and
+    ``rules`` (gate-style policy checks).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

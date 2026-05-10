@@ -316,6 +316,18 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
 
     Use --tests, --coupling, --fitness to add extra analysis sections,
     or --full to enable all three plus untruncated output.
+
+    \b
+    Examples:
+      roam diff
+      roam diff --staged                # only staged hunks
+      roam diff HEAD~3..HEAD            # range
+      roam diff --since-tag             # last release ➝ HEAD
+      roam diff --full                  # tests + coupling + fitness
+
+    See also ``critique`` (clones-not-edited gate on the same diff),
+    ``pr-risk`` (PR-level risk score), and ``impact`` (per-symbol
+    blast radius).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

@@ -628,6 +628,16 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
     Use --agent for a compact token-efficient prompt block suitable for an AI
     system prompt, --skeleton DIR to see the exported API of a directory, or
     --tour to append a guided reading order and entry points section.
+
+    \b
+    Examples:
+      roam understand
+      roam understand --agent           # compact prompt block
+      roam understand --skeleton src/   # exported API of a dir
+      roam understand --tour            # add reading order
+
+    See also ``context`` (drill into a specific symbol after orientation),
+    ``health`` (quality scores), and ``ask`` (free-form intent dispatch).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     cmd_name = ctx.info_name or "understand"
