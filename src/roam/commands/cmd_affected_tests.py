@@ -256,6 +256,15 @@ def affected_tests(ctx, target, staged, show_command):
 
     TARGET is a symbol name or file path.  Use --staged to automatically
     find tests for all staged changes.
+
+    \b
+    Examples:
+      roam affected-tests handle_login
+      roam affected-tests src/auth.py
+      roam affected-tests --staged --show-command
+
+    See also ``test-map`` (test topology for one symbol), ``preflight``
+    (pre-change safety), and ``pr-risk`` (overall PR risk score).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

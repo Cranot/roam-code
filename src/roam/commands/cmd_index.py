@@ -20,6 +20,16 @@ def index(ctx, force, verbose, quiet):
     Unlike ``init`` (which bootstraps the project with config files and
     workflows), this command only rebuilds the codebase index and metrics
     database.
+
+    \b
+    Examples:
+      roam index
+      roam index --force
+      roam index --verbose
+      roam index -q
+
+    See also ``init`` (first-run bootstrap), ``watch`` (auto-reindex
+    on file changes), and ``index-stats`` (DB size + symbol counts).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     include_excluded = ctx.obj.get("include_excluded") if ctx.obj else False

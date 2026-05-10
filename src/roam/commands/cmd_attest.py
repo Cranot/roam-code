@@ -627,13 +627,17 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
     this command assembles multiple independent evidence dimensions into
     one auditable artifact.
 
-    \\b
+    \b
     Examples:
       roam attest                          # attest uncommitted changes
       roam attest --staged                 # attest staged changes
       roam attest main..HEAD               # attest full branch
       roam attest --format markdown        # PR comment format
       roam attest --sign --output a.json   # signed JSON artifact
+
+    See also ``cga`` (CodeGraph attestation), ``pr-risk`` (single
+    composite risk score), and ``audit-trail-verify`` (verify a
+    previously-signed artifact).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     # --format json is equivalent to --json

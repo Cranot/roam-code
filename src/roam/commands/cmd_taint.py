@@ -104,6 +104,17 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
     them, and a flag indicating whether a sanitizer was on the path.
     Sanitized findings are kept (not dropped) so the attestation layer
     can later cite ``inline_mitigations_already_exist`` per OpenVEX.
+
+    \b
+    Examples:
+      roam taint
+      roam taint --rules-pack sqli
+      roam taint --max-hops 8 --ci
+      roam --sarif taint > taint.sarif
+
+    See also ``vuln-reach`` (CVE reachability), ``rules`` (rule
+    pack management), and ``cga`` (the audit-grade attestation
+    that cites taint findings).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False

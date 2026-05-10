@@ -194,6 +194,17 @@ def file_cmd(ctx, paths, full, changed, deps_of):
     Accepts one or more file paths.  With --changed, shows skeletons of all
     uncommitted changed files.  With --deps-of PATH, shows the skeleton of
     PATH plus every file it imports.
+
+    \b
+    Examples:
+      roam file src/auth.py
+      roam file src/auth.py src/session.py --full
+      roam file --changed
+      roam file --deps-of src/auth.py
+
+    See also ``context`` (files + line ranges for a symbol),
+    ``deps`` (raw imports/imported-by), and ``module`` (package-level
+    skeleton).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

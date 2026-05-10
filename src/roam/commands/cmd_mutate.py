@@ -63,6 +63,17 @@ def mutate(ctx):
     Move, rename, add calls, and extract symbols with automatic import
     rewriting and reference updates. Default is dry-run (preview).
     Use --apply to write changes to disk.
+
+    \b
+    Examples:
+      roam mutate move handle_login src/auth/login.py
+      roam mutate rename handle_login authenticate_user --apply
+      roam mutate add-call payment_flow log_event
+      roam mutate extract big_function 42-78 small_helper
+
+    See also ``simulate`` (predict metric impact without writing),
+    ``preflight`` (check before mutating), and ``critique``
+    (review the resulting diff).
     """
     ctx.ensure_object(dict)
 

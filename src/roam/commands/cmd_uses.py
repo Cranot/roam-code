@@ -59,6 +59,18 @@ def uses(ctx, name, full):
     Unlike ``impact`` (which computes transitive blast radius via graph
     traversal), this command lists direct consumers grouped by relationship
     type.
+
+    Also available as ``roam refs <name>`` — the grep-familiar alias.
+
+    \b
+    Examples:
+      roam uses handle_login
+      roam refs handle_login
+      roam uses UserService.create --full
+      roam --json uses authenticate
+
+    See also ``impact`` (transitive blast radius), ``deps`` (file-level
+    imports), and ``refs-text`` (string-literal audit with verdicts).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

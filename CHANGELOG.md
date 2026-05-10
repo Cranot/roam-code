@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Round 9 — code work + 5-pass cross-recheck
+
+- **R9.B7 — FTS5 incremental sync.** `build_fts_index` now diffs `symbol_fts` against `symbols` and only INSERTs new rowids / DELETEs stale ones instead of full DELETE+INSERT on every reindex. Synthetic 5,000-symbol benchmark: cold build 157ms, no-op incremental 15ms (10.5× speedup), 100-row diff 16ms (10.7×). Force-rebuild path retained for `roam index --rebuild`. New `tests/test_fts5_incremental.py` (5 tests) pins the convergence + cost properties.
+- **R9.A5 — Extracted baseline-diff branch from `health()`.** `cmd_health.py:health()` was 920 lines; the `if baseline_ref:` branch (125 lines) is now a dedicated `_emit_baseline_diff` helper. Function down to 822 lines. Snapshot tests pass byte-identical.
+- **R9.A2 — Numbered migration ledger.** `_MIGRATIONS = [(seq, name, fn), ...]` in `db/connection.py` is now the source of truth for schema migrations. `MIGRATION_OPS_COUNT = len(_MIGRATIONS)` (auto-derived); the previous hand-pinned constant was off by 5 (counted comment occurrences). New tests pin (a) the derivation, (b) seq monotonicity, (c) idempotency on a fresh DB.
+- **R9.G9+ — Help-template ratchet extended to 32 commands.** Added `tour`, `file`, `uses`, `trace`, `deps`, `health`, `diagnose`, `complexity`, `pr-risk`, `affected-tests`, `fan`, `hotspots`, `n1`, `clones`, `simulate`, `mutate`, `index`, `watch`, `surface`, `taint`, `vuln-reach`, `attest` (delegated to a parallel agent for the mechanical sweep). Each gets `\b` + `Examples:` + `See also` block. 96 generated tests pass.
+
+### Recheck-driven fixes (R9 cross-pass)
+
+- **`_strip_url_credentials` URL-bug fix.** Previous implementation used `rpartition("@")` over the whole post-`://` string, which finds the LAST `@` anywhere. URLs with `@` in the path or query (e.g. `?reviewer=a@b.com`, `@scope/pkg` paths) got rewritten to the wrong host, putting incorrect `subject.name` in every signed CGA. Fix: scope the credential strip to the authority slice only (per RFC 3986 §3). Regression test added.
+- **`_DOC_LINKS` + `_SEVERITY_MAP` plug 7 missing error codes.** `EMPTY_INPUT`, `INVALID_DIFF`, `RUN_FAILED`, `JSON_DECODE`, `ELICITATION_REQUIRED`, `FILE_NOT_FOUND`, `DIRTY_TREE` were emitted in production but absent from both maps — agents got generic UNKNOWN doc_links and default `error` severity for diff/critique paths. Both maps now carry every code in use.
+- **Error-storm trim preserves `retryable` + `doc_link`.** When the same `error_code` fires ≥3× the trimmed envelope used to drop both fields. Agents that branch on `retryable` (DB_LOCKED, INDEX_STALE) silently stopped retrying after 3 fires. Both fields are now always carried in the trimmed shape.
+- **`PRAGMA busy_timeout=30000` pinned explicitly.** Python's `sqlite3.connect(timeout=30)` sets the driver-level retry budget but not the engine's busy_timeout PRAGMA. Raw-sqlite3 consumers (test fixtures, MCP test paths) now see the same 30s budget as `open_db`.
+- **`cmd_pr_risk` early-return paths now wrap with `json_envelope()`.** Two `--json` exits previously emitted bare dicts (no schema_version / no summary.verdict), breaking downstream consumers expecting the contract.
+- **Surface-count drift cleaned up across docs.** `137 MCP tools` → `145`, `122 tools` → `145`, `5 prompts` → `6`, `25 default core tools` → `58`, `208 commands` → `211` (or `204 + 7 aliases`) — applied to README.md, CLAUDE.md, landing-page index.html, docs/index.html, docs/command-reference.html. CLAUDE.md Documentation Hub also re-pointed at the canonical `templates/distribution/landing-page/docs/` path (the deleted `docs/site/` was still referenced).
+- **Broken cookbook link removed** from docs/command-reference.html — `docs/cookbook/` was deleted in 12.50; replaced with a `roam ask --list` reference.
+
 ### Correctness
 
 - **Pure renames now recover affected-neighbor edges.** `indexer.py:1409` had `if not force and modified and changed_file_ids` — pure renames produce `modified=[]` and silently skipped neighbor recovery, leaving `roam impact <renamed_symbol>` reporting fewer callers than reality. Drop the spurious `and modified` clause; add `tests/test_index.py::test_pure_removal_invokes_affected_neighbor_recovery` as a spy-based regression guard.

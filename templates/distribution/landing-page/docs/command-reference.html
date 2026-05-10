@@ -204,7 +204,7 @@
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam mcp</code></td><td>Start the MCP server (stdio transport)</td></tr>
-          <tr><td><code>roam mcp --list-tools</code></td><td>Print all 137 MCP tools the server exposes</td></tr>
+          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 58 core tools; 145 in <code>full</code>)</td></tr>
           <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Gemini, Codex</td></tr>
           <tr><td><code>roam fleet plan</code></td><td>Partition work across N agents (Louvain + co-change + PageRank)</td></tr>
           <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with zero-conflict guarantees</td></tr>
@@ -232,7 +232,7 @@
       <ul>
         <li><strong>All 211 commands</strong>: run <code>roam --help</code> in a terminal.</li>
         <li><strong>Per-command flags</strong>: <code>roam &lt;cmd&gt; --help</code>.</li>
-        <li><strong>Cookbook recipes</strong>: <a href="https://github.com/Cranot/roam-code/tree/main/docs/cookbook">github.com/Cranot/roam-code/docs/cookbook</a>.</li>
+        <li><strong>Recipes</strong>: <code>roam ask --list</code> shows every dispatchable recipe; <code>roam ask "&lt;intent&gt;"</code> runs the closest match.</li>
         <li><strong>Source</strong>: each command lives in <code>src/roam/commands/cmd_*.py</code>. Apache 2.0.</li>
       </ul>
     </section>

@@ -996,6 +996,17 @@ _DOC_LINKS: dict[str, str] = {
     "PARTIAL_FAILURE": "https://roam-code.com/docs/troubleshooting",
     "RATE_LIMITED": "https://roam-code.com/docs/troubleshooting",
     "COMMAND_FAILED": "https://roam-code.com/docs/troubleshooting",
+    # R9 security recheck #4 — codes emitted by mcp_server.py that
+    # were missing from this map. Falling through to the generic page
+    # was lossy UX; agents got an "UNKNOWN" doc_link for diff/critique
+    # paths that hit these codes.
+    "EMPTY_INPUT": "https://roam-code.com/docs/troubleshooting",
+    "INVALID_DIFF": "https://roam-code.com/docs/troubleshooting",
+    "RUN_FAILED": "https://roam-code.com/docs/troubleshooting",
+    "JSON_DECODE": "https://roam-code.com/docs/troubleshooting",
+    "ELICITATION_REQUIRED": "https://roam-code.com/docs/troubleshooting",
+    "FILE_NOT_FOUND": "https://roam-code.com/docs/troubleshooting",
+    "DIRTY_TREE": "https://roam-code.com/docs/troubleshooting",
     "UNKNOWN": "https://roam-code.com/docs/troubleshooting",
 }
 
@@ -1052,6 +1063,16 @@ _SEVERITY_MAP: dict[str, str] = {
     "PARTIAL_FAILURE": "warning",
     "RATE_LIMITED": "warning",
     "COMMAND_FAILED": "error",
+    # R9 security recheck #4 — codes emitted by mcp_server.py that
+    # were falling through to the default "error" severity. Pin them
+    # so agents can branch on severity without parsing the message.
+    "EMPTY_INPUT": "error",       # missing required input
+    "INVALID_DIFF": "error",      # malformed git diff in critique
+    "RUN_FAILED": "error",        # subprocess returned non-zero
+    "JSON_DECODE": "error",       # downstream produced non-JSON
+    "ELICITATION_REQUIRED": "warning",  # awaits user response, retryable
+    "FILE_NOT_FOUND": "error",    # specific file missing
+    "DIRTY_TREE": "warning",      # uncommitted changes block emit
     "UNKNOWN": "error",
 }
 
@@ -1235,10 +1256,18 @@ def _structured_error(error_dict: dict) -> dict:
         _ERROR_STORM_STATE["_count"] = 1
     repeat = int(_ERROR_STORM_STATE["_count"])
     if repeat >= _ERROR_STORM_THRESHOLD:
+        # R9 security recheck #3: keep ``retryable`` and ``doc_link`` in
+        # the trimmed envelope. Agents that branch on ``retryable``
+        # (e.g. retry on ``DB_LOCKED`` / ``INDEX_STALE``) used to stop
+        # retrying after the third fire because the field went missing —
+        # silent behaviour change. Same for ``doc_link``: dropping it
+        # stripped the self-service URL from every recurring error.
         return {
             "isError": True,
             "error_code": code,
             "severity": error_dict["severity"],
+            "retryable": error_dict["retryable"],
+            "doc_link": error_dict["doc_link"],
             "repeat_count": repeat,
             "trimmed": True,
             "trimmed_hint": (

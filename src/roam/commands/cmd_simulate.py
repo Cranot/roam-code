@@ -225,6 +225,16 @@ def simulate(ctx):
 
     Test structural changes (move, extract, merge, delete) on the dependency
     graph and see predicted metric deltas before making actual code changes.
+
+    \b
+    Examples:
+      roam simulate move handle_login src/auth/login.py
+      roam simulate extract validate_input src/validation.py
+      roam simulate merge src/foo.py src/bar.py
+      roam simulate delete legacy_helper
+
+    See also ``mutate`` (apply real code transforms), ``preflight``
+    (combined pre-change safety), and ``impact`` (current blast radius).
     """
     ctx.ensure_object(dict)
 

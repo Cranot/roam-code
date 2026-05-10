@@ -136,6 +136,17 @@ def math_cmd(
     computational complexity.
 
     Primary name: algo. Alias: math (backward compat).
+
+    \b
+    Examples:
+      roam algo
+      roam algo --task linear-search
+      roam algo --confidence high --max-per-task 3
+      roam algo --framework django
+
+    See also ``smells`` (style + structural anti-patterns), ``n1``
+    (implicit ORM N+1 patterns), and ``complexity`` (per-symbol
+    cognitive metrics).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False

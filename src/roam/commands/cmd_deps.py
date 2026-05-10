@@ -20,6 +20,15 @@ def deps(ctx, path, full):
     Unlike ``uses`` (which shows symbol-level callers and consumers), this command shows
     file-level import and imported-by relationships, including which specific symbols are
     used from each imported file.
+
+    \b
+    Examples:
+      roam deps src/auth.py
+      roam deps src/auth.py --full
+      roam --json deps src/auth.py
+
+    See also ``uses`` (symbol-level refs), ``fan`` (fan-in/fan-out
+    hotspots), and ``impact`` (blast radius for a symbol).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     detail = ctx.obj.get("detail", False) if ctx.obj else False

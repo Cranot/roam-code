@@ -137,6 +137,13 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
     conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA temp_store=MEMORY")
+    # R9 perf recheck #5: pin busy_timeout via PRAGMA so consumers
+    # that connect to the DB directly (raw sqlite3.connect, MCP test
+    # fixtures) see the same retry budget as ``open_db``. Python's
+    # ``sqlite3.connect(timeout=30)`` only sets the *driver-level*
+    # timeout; PRAGMA busy_timeout is what the engine itself respects
+    # under contention.
+    conn.execute("PRAGMA busy_timeout=30000")
     # mmap_size tuned per audit B6: 256MB → 1GB. phiresky's reference
     # config (HN-cited) puts it at 30GB on 64-bit; 1GB is a conservative
     # bump that captures more of a 5M-LOC repo's working set without
@@ -175,82 +182,121 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
     return conn
 
 
+# R9.A2 — Sequence-numbered migration ledger.
+#
+# Each migration is a tuple ``(seq, name, fn)`` where ``fn(conn)`` is
+# idempotent (re-runnable without side effects on a DB that's already
+# at or past this seq). The list IS the source of truth: contributors
+# add one entry; ``MIGRATION_OPS_COUNT`` and the count test are both
+# derived from it. No more manual count drift.
+#
+# ``USER_VERSION`` is still managed by hand because it's a contract
+# with downstream consumers (manifest writer, bundle import, drift
+# detection in ``roam doctor``) — bumping it announces to those
+# consumers that the schema has changed in a way they should care
+# about. Internal column-add migrations don't always need that
+# announcement, hence the separation.
+#
+# The seq numbers are an internal sequence — adopting them now lets
+# us later add a per-seq applied-marker table for partial-failure
+# recovery without another refactor.
+
+
+def _alter(table: str, col: str, type_: str):
+    """Bind a ``_safe_alter`` call as a callable for the migration ledger."""
+    return lambda c: _safe_alter(c, table, col, type_)
+
+
+def _exec(sql: str):
+    """Bind a literal-SQL ``conn.execute`` as a callable for the ledger.
+
+    Only used for ``CREATE INDEX IF NOT EXISTS`` / ``DROP INDEX IF
+    EXISTS`` style idempotent statements; ``_alter`` is preferred for
+    column adds.
+    """
+    return lambda c: c.execute(sql)
+
+
+_MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
+    # symbols extras
+    (1, "symbols.default_value", _alter("symbols", "default_value", "TEXT")),
+    (2, "symbols.is_async", _alter("symbols", "is_async", "INTEGER DEFAULT 0")),
+    (3, "symbols.decorators", _alter("symbols", "decorators", "TEXT DEFAULT ''")),
+    # file_stats
+    (4, "file_stats.health_score", _alter("file_stats", "health_score", "REAL")),
+    (5, "file_stats.cochange_entropy", _alter("file_stats", "cochange_entropy", "REAL")),
+    (6, "file_stats.cognitive_load", _alter("file_stats", "cognitive_load", "REAL")),
+    (7, "file_stats.coverage_pct", _alter("file_stats", "coverage_pct", "REAL")),
+    (8, "file_stats.covered_lines", _alter("file_stats", "covered_lines", "INTEGER")),
+    (9, "file_stats.coverable_lines", _alter("file_stats", "coverable_lines", "INTEGER")),
+    # snapshots
+    (10, "snapshots.tangle_ratio", _alter("snapshots", "tangle_ratio", "REAL")),
+    (11, "snapshots.avg_complexity", _alter("snapshots", "avg_complexity", "REAL")),
+    (12, "snapshots.brain_methods", _alter("snapshots", "brain_methods", "INTEGER")),
+    # symbol_metrics — Halstead + cyclomatic density (v7.4)
+    (13, "symbol_metrics.cyclomatic_density", _alter("symbol_metrics", "cyclomatic_density", "REAL")),
+    (14, "symbol_metrics.halstead_volume", _alter("symbol_metrics", "halstead_volume", "REAL")),
+    (15, "symbol_metrics.halstead_difficulty", _alter("symbol_metrics", "halstead_difficulty", "REAL")),
+    (16, "symbol_metrics.halstead_effort", _alter("symbol_metrics", "halstead_effort", "REAL")),
+    (17, "symbol_metrics.halstead_bugs", _alter("symbol_metrics", "halstead_bugs", "REAL")),
+    (18, "symbol_metrics.coverage_pct", _alter("symbol_metrics", "coverage_pct", "REAL")),
+    (19, "symbol_metrics.covered_lines", _alter("symbol_metrics", "covered_lines", "INTEGER")),
+    (20, "symbol_metrics.coverable_lines", _alter("symbol_metrics", "coverable_lines", "INTEGER")),
+    # files (v7.6 file role)
+    (21, "files.file_role", _alter("files", "file_role", "TEXT DEFAULT 'source'")),
+    # math_signals — extended set (v8.4)
+    (22, "math_signals.self_call_count", _alter("math_signals", "self_call_count", "INTEGER DEFAULT 0")),
+    (23, "math_signals.str_concat_in_loop", _alter("math_signals", "str_concat_in_loop", "INTEGER DEFAULT 0")),
+    (24, "math_signals.loop_invariant_calls", _alter("math_signals", "loop_invariant_calls", "TEXT")),
+    (25, "math_signals.loop_bound_small", _alter("math_signals", "loop_bound_small", "INTEGER DEFAULT 0")),
+    (26, "math_signals.calls_in_loops_qualified", _alter("math_signals", "calls_in_loops_qualified", "TEXT")),
+    (27, "math_signals.loop_lookup_calls", _alter("math_signals", "loop_lookup_calls", "TEXT")),
+    (28, "math_signals.front_ops_in_loop", _alter("math_signals", "front_ops_in_loop", "INTEGER DEFAULT 0")),
+    (29, "math_signals.loop_with_multiplication", _alter("math_signals", "loop_with_multiplication", "INTEGER DEFAULT 0")),
+    (30, "math_signals.loop_with_modulo", _alter("math_signals", "loop_with_modulo", "INTEGER DEFAULT 0")),
+    # cross-language bridge metadata
+    (31, "edges.bridge", _alter("edges", "bridge", "TEXT")),
+    (32, "edges.confidence", _alter("edges", "confidence", "REAL")),
+    # v11 — source file tracking for O(changed) incremental edge rebuild.
+    # This column AND its supporting index must apply in this order
+    # (column first, index second) so the index references a real column.
+    (33, "edges.source_file_id", _alter("edges", "source_file_id", "INTEGER REFERENCES files(id) ON DELETE CASCADE")),
+    (34, "idx_edges_source_file", _exec("CREATE INDEX IF NOT EXISTS idx_edges_source_file ON edges(source_file_id)")),
+    # runtime_stats — OTel DB semantic attributes (v8.1)
+    (35, "runtime_stats.otel_db_system", _alter("runtime_stats", "otel_db_system", "TEXT")),
+    (36, "runtime_stats.otel_db_operation", _alter("runtime_stats", "otel_db_operation", "TEXT")),
+    (37, "runtime_stats.otel_db_statement_type", _alter("runtime_stats", "otel_db_statement_type", "TEXT")),
+    # graph_metrics — expanded SNA + composite debt score (v8.6)
+    (38, "graph_metrics.closeness", _alter("graph_metrics", "closeness", "REAL DEFAULT 0")),
+    (39, "graph_metrics.eigenvector", _alter("graph_metrics", "eigenvector", "REAL DEFAULT 0")),
+    (40, "graph_metrics.clustering_coefficient", _alter("graph_metrics", "clustering_coefficient", "REAL DEFAULT 0")),
+    (41, "graph_metrics.debt_score", _alter("graph_metrics", "debt_score", "REAL DEFAULT 0")),
+    # v12.1 — Django framework awareness (ported from upstream fork/roam-code)
+    (42, "symbols.framework_type", _alter("symbols", "framework_type", "TEXT")),
+    (43, "symbols.field_type", _alter("symbols", "field_type", "TEXT")),
+    (44, "symbols.field_base_type", _alter("symbols", "field_base_type", "TEXT")),
+    (45, "symbols.field_metadata", _alter("symbols", "field_metadata", "TEXT")),
+    (46, "edges.call_function", _alter("edges", "call_function", "TEXT")),
+    (47, "idx_symbols_framework_type", _exec("CREATE INDEX IF NOT EXISTS idx_symbols_framework_type ON symbols(framework_type)")),
+    # v11 — drop redundant idx_edges_kind (subsumed by idx_edges_kind_target)
+    (48, "drop idx_edges_kind", _exec("DROP INDEX IF EXISTS idx_edges_kind")),
+    # virtual / managed tables — both helpers are idempotent
+    (49, "_ensure_tfidf_cascade", lambda c: _ensure_tfidf_cascade(c)),
+    (50, "_ensure_fts5_table", lambda c: _ensure_fts5_table(c)),
+]
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create tables if they don't exist, and apply migrations."""
+    """Create tables if they don't exist, and apply migrations.
+
+    R9.A2: migrations now run from the ``_MIGRATIONS`` ledger above
+    so the contract (count, ordering, name → callable mapping) is
+    visible in one place. Each migration is idempotent — re-running
+    ``ensure_schema`` is safe at any seq.
+    """
     conn.executescript(SCHEMA_SQL)
-
-    # Migrations for columns added after initial schema
-    _safe_alter(conn, "symbols", "default_value", "TEXT")
-    # Python pivot v12.4: is_async + decorators on symbols
-    _safe_alter(conn, "symbols", "is_async", "INTEGER DEFAULT 0")
-    _safe_alter(conn, "symbols", "decorators", "TEXT DEFAULT ''")
-    _safe_alter(conn, "file_stats", "health_score", "REAL")
-    _safe_alter(conn, "file_stats", "cochange_entropy", "REAL")
-    _safe_alter(conn, "file_stats", "cognitive_load", "REAL")
-    _safe_alter(conn, "file_stats", "coverage_pct", "REAL")
-    _safe_alter(conn, "file_stats", "covered_lines", "INTEGER")
-    _safe_alter(conn, "file_stats", "coverable_lines", "INTEGER")
-    _safe_alter(conn, "snapshots", "tangle_ratio", "REAL")
-    _safe_alter(conn, "snapshots", "avg_complexity", "REAL")
-    _safe_alter(conn, "snapshots", "brain_methods", "INTEGER")
-    # v7.4: Halstead metrics + cyclomatic density
-    _safe_alter(conn, "symbol_metrics", "cyclomatic_density", "REAL")
-    _safe_alter(conn, "symbol_metrics", "halstead_volume", "REAL")
-    _safe_alter(conn, "symbol_metrics", "halstead_difficulty", "REAL")
-    _safe_alter(conn, "symbol_metrics", "halstead_effort", "REAL")
-    _safe_alter(conn, "symbol_metrics", "halstead_bugs", "REAL")
-    _safe_alter(conn, "symbol_metrics", "coverage_pct", "REAL")
-    _safe_alter(conn, "symbol_metrics", "covered_lines", "INTEGER")
-    _safe_alter(conn, "symbol_metrics", "coverable_lines", "INTEGER")
-    # v7.6: file role classification
-    _safe_alter(conn, "files", "file_role", "TEXT DEFAULT 'source'")
-    # v8.3: math_signals table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
-    # v8.4: extended math signals
-    _safe_alter(conn, "math_signals", "self_call_count", "INTEGER DEFAULT 0")
-    _safe_alter(conn, "math_signals", "str_concat_in_loop", "INTEGER DEFAULT 0")
-    _safe_alter(conn, "math_signals", "loop_invariant_calls", "TEXT")
-    _safe_alter(conn, "math_signals", "loop_bound_small", "INTEGER DEFAULT 0")
-    _safe_alter(conn, "math_signals", "calls_in_loops_qualified", "TEXT")
-    _safe_alter(conn, "math_signals", "loop_lookup_calls", "TEXT")
-    _safe_alter(conn, "math_signals", "front_ops_in_loop", "INTEGER DEFAULT 0")
-    _safe_alter(conn, "math_signals", "loop_with_multiplication", "INTEGER DEFAULT 0")
-    _safe_alter(conn, "math_signals", "loop_with_modulo", "INTEGER DEFAULT 0")
-    # Cross-language bridge metadata on edges
-    _safe_alter(conn, "edges", "bridge", "TEXT")
-    _safe_alter(conn, "edges", "confidence", "REAL")
-    # v11: source file tracking for O(changed) incremental edge rebuild
-    _safe_alter(conn, "edges", "source_file_id", "INTEGER REFERENCES files(id) ON DELETE CASCADE")
-    # v11: index for source_file_id (must be AFTER column migration above)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_source_file ON edges(source_file_id)")
-    # v9.0+: runtime_stats, vulnerabilities, symbol_tfidf, metric_snapshots tables
-    # are all defined in SCHEMA_SQL (CREATE TABLE IF NOT EXISTS) and created above
-    # by conn.executescript(SCHEMA_SQL). No inline duplicates needed here.
-    # v8.1: runtime_stats OTel DB semantic attributes
-    _safe_alter(conn, "runtime_stats", "otel_db_system", "TEXT")
-    _safe_alter(conn, "runtime_stats", "otel_db_operation", "TEXT")
-    _safe_alter(conn, "runtime_stats", "otel_db_statement_type", "TEXT")
-    # v8.6: expanded SNA metric vector + composite debt score
-    _safe_alter(conn, "graph_metrics", "closeness", "REAL DEFAULT 0")
-    _safe_alter(conn, "graph_metrics", "eigenvector", "REAL DEFAULT 0")
-    _safe_alter(conn, "graph_metrics", "clustering_coefficient", "REAL DEFAULT 0")
-    _safe_alter(conn, "graph_metrics", "debt_score", "REAL DEFAULT 0")
-
-    # v12.1: Django framework awareness (ported from upstream fork/roam-code)
-    _safe_alter(conn, "symbols", "framework_type", "TEXT")
-    _safe_alter(conn, "symbols", "field_type", "TEXT")
-    _safe_alter(conn, "symbols", "field_base_type", "TEXT")
-    _safe_alter(conn, "symbols", "field_metadata", "TEXT")
-    _safe_alter(conn, "edges", "call_function", "TEXT")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_framework_type ON symbols(framework_type)")
-
-    # v11: drop redundant idx_edges_kind (subsumed by idx_edges_kind_target)
-    conn.execute("DROP INDEX IF EXISTS idx_edges_kind")
-    # TF-IDF semantic search table — recreate with ON DELETE CASCADE if missing
-    # Drop and recreate to ensure proper FK constraint (data is recomputed on index)
-    _ensure_tfidf_cascade(conn)
-    # v11: FTS5 full-text search for symbols (BM25 ranking, all in C)
-    _ensure_fts5_table(conn)
-
+    for _seq, _name, fn in _MIGRATIONS:
+        fn(conn)
     # v12.x: index_manifest table is created in SCHEMA_SQL above. Bump
     # PRAGMA user_version so the manifest writer can mirror it. Migration
     # is idempotent — re-running ensure_schema() never lowers the value.
@@ -261,19 +307,17 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 # (manifest writer, bundle import, drift checks) need to detect. Mirrored
 # into ``index_manifest.schema_version`` on every index run.
 #
-# Discipline: every change to ``ensure_schema`` (new ``_safe_alter`` call,
-# new index, dropped index, ``_ensure_*`` helper invocation) must bump
-# this AND ``MIGRATION_OPS_COUNT`` below. ``test_db_user_version.py``
-# catches drift in either direction.
+# This is a CONTRACT version — separate from ``len(_MIGRATIONS)`` which
+# is the operation count. Bump USER_VERSION when downstream consumers
+# need to invalidate caches / re-attempt schema-aware logic, not on
+# every column add.
 USER_VERSION = 12
 
-# Number of schema-mutating operations performed inside ``ensure_schema``.
-# Counted: ``_safe_alter(`` calls + ``CREATE INDEX IF NOT EXISTS`` +
-# ``DROP INDEX IF EXISTS`` + ``_ensure_tfidf_cascade(`` + ``_ensure_fts5_table(``.
-# Pinned by a test so a contributor adding a migration is forced to either
-# (a) bump this number AND ``USER_VERSION``, or (b) explain in PR review
-# why the migration doesn't change the schema-version contract.
-MIGRATION_OPS_COUNT = 55
+# Derived from the ledger so adding/removing a migration auto-updates
+# the count without a manual touch. The pin test in
+# ``tests/test_db_user_version.py`` still catches "you added a migration
+# but forgot to bump USER_VERSION when consumers need to know".
+MIGRATION_OPS_COUNT = len(_MIGRATIONS)
 
 
 def _bump_user_version(conn: sqlite3.Connection, target: int) -> None:

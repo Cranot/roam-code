@@ -33,6 +33,9 @@ def vuln_reach(ctx, from_entry, cve_id):
         roam vuln-reach                          # all vulns with reachability
         roam vuln-reach --from handle_request    # from specific entry point
         roam vuln-reach --cve CVE-2024-1234      # specific vulnerability
+
+    See also ``vuln-map`` (ingest vulnerability data), ``vulns`` (list
+    known vulnerabilities), and ``taint`` (source-to-sink reach).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
