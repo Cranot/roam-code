@@ -151,13 +151,29 @@ def test_version():
 
 
 def test_help():
+    """``roam --help`` shows the Start-here panel — 5 verbs + init/doctor/ask."""
     result = subprocess.run(
         [sys.executable, "-m", "roam", "--help"],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0
-    assert "index" in result.stdout
-    assert "map" in result.stdout
-    assert "file" in result.stdout
-    assert "symbol" in result.stdout
+    # Start-here panel surfaces the 5-verb mental model.
+    for verb in ("init", "understand", "context", "preflight", "critique", "ask"):
+        assert verb in result.stdout, f"Start-here panel missing verb {verb!r}"
+    # Discoverability for the full surface.
+    assert "--help-all" in result.stdout
+
+
+def test_help_all():
+    """``roam --help-all`` exposes every command (~211 of them)."""
+    result = subprocess.run(
+        [sys.executable, "-m", "roam", "--help-all"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    # Long-tail commands that don't appear in the short Start-here panel
+    # must still be discoverable via --help-all.
+    for cmd in ("map", "file", "symbol", "trace", "deps"):
+        assert cmd in result.stdout, f"--help-all should expose {cmd!r}"

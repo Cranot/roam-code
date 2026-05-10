@@ -152,30 +152,106 @@ def find_changed_symbols(
     Files that do not resolve to any indexed file (untracked, generated,
     ignored) are silently skipped — the caller may treat that as a
     separate finding if desired.
+
+    Query shape: one bulk file-resolve plus one bulk symbols query —
+    constant in the number of changed files, instead of the previous
+    2 queries per region (the per-region pattern was an N+1 that
+    showed up flagged on roam itself).
     """
     if not regions:
         return []
 
-    out: list[ChangedSymbol] = []
+    # Step 1 — normalise paths once. Use a set for the dedup membership
+    # check (O(1) lookup) instead of a list (O(n) per check, which would
+    # make the loop O(n²) for large diffs).
+    seen_paths: set[str] = set()
+    norm_paths: list[str] = []
+    region_to_path: list[str] = []
     for region in regions:
         path = region.file_path.replace("\\", "/").lstrip("./")
+        if path and path not in seen_paths:
+            seen_paths.add(path)
+            norm_paths.append(path)
+        region_to_path.append(path)
+    if not norm_paths:
+        return []
+
+    # Step 2 — bulk exact-path resolve. One IN query covers every region.
+    path_to_fid: dict[str, int] = {}
+    from roam.db.connection import batched_in
+
+    rows = batched_in(
+        conn,
+        "SELECT id, path FROM files WHERE path IN ({ph})",
+        norm_paths,
+    )
+    for row in rows:
+        path_to_fid[row["path"]] = int(row["id"])
+
+    # Step 3 — anchored-suffix fallback for paths exact-match didn't
+    # catch (e.g. monorepo subroots). Single query with OR-chained LIKEs
+    # so the lookup stays constant in fallback count instead of issuing
+    # one query per unresolved path. Index unresolved paths by their
+    # suffix-key (basename or last-segment) so the result-walk is O(rows)
+    # instead of O(rows * unresolved).
+    unresolved = [p for p in norm_paths if p not in path_to_fid]
+    if unresolved:
+        like_clauses = " OR ".join("path LIKE ?" for _ in unresolved)
+        like_params = [f"%/{p}" for p in unresolved]
+        rows = conn.execute(
+            f"SELECT id, path FROM files WHERE {like_clauses} ORDER BY length(path) ASC",
+            like_params,
+        ).fetchall()
+        # Build a suffix lookup so we can match each row to its unresolved
+        # path in O(1) instead of scanning the unresolved list per row.
+        unresolved_set = set(unresolved)
+        for row in rows:
+            db_path = row["path"]
+            # The candidate unresolved key is whichever known unresolved
+            # suffix matches. We test "path == p" and "path endswith /p"
+            # via the set containment for the relative tail.
+            if db_path in unresolved_set and db_path not in path_to_fid:
+                path_to_fid[db_path] = int(row["id"])
+                continue
+            slash = db_path.rfind("/")
+            tail_key: str | None = None
+            while slash != -1:
+                cand = db_path[slash + 1 :]
+                if cand in unresolved_set and cand not in path_to_fid:
+                    tail_key = cand
+                    break
+                slash = db_path.rfind("/", 0, slash)
+            if tail_key is not None:
+                path_to_fid[tail_key] = int(row["id"])
+
+    if not path_to_fid:
+        return []
+
+    # Step 4 — bulk symbols-by-file query. One IN over every resolved
+    # file_id. Group rows by file_id in Python so the per-region hunk-
+    # overlap loop reads from a dict instead of re-querying.
+    sym_rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.qualified_name, s.kind, "
+        "       s.line_start, s.line_end, s.file_id, f.path AS file_path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.file_id IN ({ph}) AND s.line_start IS NOT NULL "
+        "ORDER BY s.file_id, s.line_start",
+        list(set(path_to_fid.values())),
+    )
+    by_fid: dict[int, list] = {}
+    for sym in sym_rows:
+        by_fid.setdefault(int(sym["file_id"]), []).append(sym)
+
+    # Step 5 — per-region hunk overlap (no DB queries here).
+    out: list[ChangedSymbol] = []
+    for region, path in zip(regions, region_to_path):
         if not path:
             continue
-
-        file_id = _resolve_file_id(conn, path)
-        if file_id is None:
+        fid = path_to_fid.get(path)
+        if fid is None:
             continue
-
-        candidates = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, "
-            "       s.line_start, s.line_end, f.path AS file_path "
-            "FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE s.file_id = ? AND s.line_start IS NOT NULL "
-            "ORDER BY s.line_start",
-            (file_id,),
-        ).fetchall()
-
-        for sym in candidates:
+        for sym in by_fid.get(fid, ()):
             sym_start = int(sym["line_start"])
             sym_end = int(sym["line_end"]) if sym["line_end"] is not None else sym_start
             for hunk_start, hunk_len in region.hunks:

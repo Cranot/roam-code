@@ -341,7 +341,10 @@ def index_import(ctx, bundle, force, no_verify_head, cosign_bundle_path, cosign_
     try:
         manifest = _verify_bundle(bundle_path)
     except ValueError as exc:
-        raise click.ClickException(f"bundle verification failed: {exc}") from exc
+        raise click.ClickException(
+            f"bundle verification failed: {exc}\n"
+            "  If this looks unexpected, run `roam doctor` to diagnose your install."
+        ) from exc
 
     # Schema version mismatch is a hard refuse — the index format changed.
     current_schema: int | None = None
@@ -396,7 +399,10 @@ def index_import(ctx, bundle, force, no_verify_head, cosign_bundle_path, cosign_
                     )
                     sig_verified = True
                 except Exception as exc:
-                    raise click.ClickException(f"cosign verify failed: {exc}") from exc
+                    raise click.ClickException(
+                        f"cosign verify failed: {exc}\n"
+                        "  If this looks unexpected, run `roam doctor` to diagnose your install."
+                    ) from exc
 
     # Refuse to overwrite without --force.
     if target_db.is_file() and not force:

@@ -30,6 +30,68 @@ def test_envelope_has_schema():
     assert env["schema"] == ENVELOPE_SCHEMA_NAME
 
 
+def test_envelope_has_agent_contract_block():
+    """Every envelope ships a derived ``agent_contract`` block — bounded
+    summary for tight-context agents that don't want to parse the full
+    payload. Opt-out via ``ROAM_AGENT_CONTRACT_BLOCK=0``.
+    """
+    env = json_envelope(
+        "test-cmd",
+        summary={"verdict": "Healthy 90/100", "health_score": 90, "confidence": 0.85},
+        errors=["one violation", {"message": "oops", "rule_id": "R1"}],
+        next_steps=["roam debt", {"command": "roam health --baseline last"}],
+    )
+    ac = env.get("agent_contract")
+    assert isinstance(ac, dict), f"agent_contract block missing or wrong type: {ac!r}"
+
+    # Verdict surfaces as the first fact.
+    assert ac["facts"][0].startswith("Healthy 90/100")
+    # Numeric summary fields become facts.
+    assert any("health_score: 90" in f for f in ac["facts"])
+    # Confidence pulled directly.
+    assert ac["confidence"] == 0.85
+    # Risks pulled from `errors` list, capped at 3, stringified for dicts.
+    assert "one violation" in ac["risks"]
+    assert any("oops" in r for r in ac["risks"])
+    # next_steps both string and dict forms surface in next_commands.
+    assert "roam debt" in ac["next_commands"]
+    assert any("roam health" in c for c in ac["next_commands"])
+
+
+def test_envelope_agent_contract_can_be_disabled():
+    """``ROAM_AGENT_CONTRACT_BLOCK=0`` opts out — envelope stays clean."""
+    import os
+
+    saved = os.environ.get("ROAM_AGENT_CONTRACT_BLOCK")
+    try:
+        os.environ["ROAM_AGENT_CONTRACT_BLOCK"] = "0"
+        env = json_envelope("test-cmd", summary={"verdict": "ok"})
+        assert "agent_contract" not in env, f"Disabling via env var should suppress block, got: {list(env.keys())}"
+    finally:
+        if saved is None:
+            os.environ.pop("ROAM_AGENT_CONTRACT_BLOCK", None)
+        else:
+            os.environ["ROAM_AGENT_CONTRACT_BLOCK"] = saved
+
+
+def test_envelope_agent_contract_bounded():
+    """The block is bounded ~200 tokens — facts ≤ 5, risks ≤ 3,
+    next_commands ≤ 5, individual strings truncated to 120 chars.
+    """
+    summary = {"verdict": "x" * 500, "confidence": 0.5}
+    # Add many numeric fields to test the facts cap.
+    summary.update({f"metric_{i}": i for i in range(20)})
+    errors = [f"error number {i}" for i in range(10)]
+    next_steps = [f"step {i}" for i in range(10)]
+    env = json_envelope("test-cmd", summary=summary, errors=errors, next_steps=next_steps)
+    ac = env["agent_contract"]
+    assert len(ac["facts"]) <= 5
+    assert len(ac["risks"]) <= 3
+    assert len(ac["next_commands"]) <= 5
+    # Long verdict gets truncated.
+    assert all(len(f) <= 120 for f in ac["facts"])
+
+
 # ============================================================================
 # 2. test_envelope_has_schema_version
 # ============================================================================

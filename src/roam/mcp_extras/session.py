@@ -97,6 +97,10 @@ def _empty_state() -> dict[str, Any]:
         "symbols": deque(maxlen=_MAX_SYMBOLS_PER_SESSION),
         "task_hint": "",
         "last_touch": time.time(),
+        # Map: target_string -> set of tool names called for that target.
+        # Used by ``contract_check`` to soft-enforce the agent contract on
+        # destructive tools (e.g. roam_mutate must follow roam_simulate).
+        "tool_calls": {},
     }
 
 
@@ -166,6 +170,120 @@ def reset_session(ctx: Any) -> None:
     sid = _get_session_id(ctx)
     if sid:
         _FALLBACK_STORE.pop(sid, None)
+
+
+def record_tool_call(ctx: Any, tool_name: str, target: str | None = None) -> None:
+    """Record that ``tool_name`` was called, optionally for ``target``.
+
+    Used by ``contract_check`` to soft-enforce the agent contract on
+    destructive tools — e.g. ``roam_mutate`` should follow a
+    ``roam_simulate`` for the same target. Calls without a target
+    (whole-repo tools like ``roam_understand``) are recorded under the
+    sentinel key ``""``.
+    """
+    if not tool_name or ctx is None:
+        return
+    state = _get_state(ctx)
+    if state is None:
+        state = _empty_state()
+    calls = state.setdefault("tool_calls", {})
+    if not isinstance(calls, dict):
+        calls = {}
+        state["tool_calls"] = calls
+    key = (target or "").strip()
+    bucket = calls.setdefault(key, set())
+    if not isinstance(bucket, set):
+        bucket = set(bucket or ())
+        calls[key] = bucket
+    bucket.add(tool_name)
+    state["last_touch"] = time.time()
+    _set_state(ctx, state)
+
+
+def tools_called_for(ctx: Any, target: str | None = None) -> set[str]:
+    """Return the set of tool names called against ``target`` this session.
+
+    With ``target=None`` returns the union across every recorded target,
+    including the no-target sentinel — useful for tools whose
+    prerequisites aren't target-specific (``ingest_trace``, ``vuln_map``).
+    """
+    state = _get_state(ctx)
+    if state is None:
+        return set()
+    calls = state.get("tool_calls", {})
+    if not isinstance(calls, dict):
+        return set()
+    if target is not None:
+        bucket = calls.get(target.strip(), set())
+        return set(bucket) if not isinstance(bucket, set) else set(bucket)
+    out: set[str] = set()
+    for bucket in calls.values():
+        if isinstance(bucket, set):
+            out.update(bucket)
+        elif isinstance(bucket, (list, tuple)):
+            out.update(bucket)
+    return out
+
+
+def contract_check(
+    ctx: Any,
+    *,
+    current_tool: str,
+    target: str | None,
+    prerequisites: tuple[str, ...],
+) -> dict[str, Any]:
+    """Build a soft-enforcement compliance dict for a destructive tool.
+
+    The agent contract says "before ``roam_mutate`` for symbol X, call
+    ``roam_simulate`` for X." This helper checks the session log and
+    returns a dict suitable for embedding under ``contract_compliance``
+    in the destructive tool's response. Soft enforcement only — we
+    never refuse the call. A warning lets the agent self-correct on
+    the next iteration without breaking workflows that legitimately
+    skip a step (e.g. confirmed dead-code sweep, test fixture cleanup).
+
+    Returns shape::
+
+        {
+            "current_tool": "roam_mutate",
+            "target": "UserSession",
+            "prerequisites_satisfied": ["roam_simulate"],
+            "prerequisites_skipped":  [],   # any missing prereqs
+            "advice": "..."                 # actionable hint when skipped
+        }
+    """
+    target_norm = (target or "").strip() or None
+
+    # Look at this target specifically; fall back to session-wide for
+    # tools where target isn't a meaningful key.
+    target_calls = tools_called_for(ctx, target_norm) if target_norm else tools_called_for(ctx, None)
+
+    satisfied = [p for p in prerequisites if p in target_calls]
+    skipped = [p for p in prerequisites if p not in target_calls]
+
+    advice = ""
+    if skipped:
+        if target_norm:
+            advice = (
+                f"{current_tool!r} is destructive — recommended to call "
+                f"{', '.join(repr(p) for p in skipped)} for {target_norm!r} "
+                f"first to verify the change is safe. Soft warning only; "
+                f"no action blocked."
+            )
+        else:
+            advice = (
+                f"{current_tool!r} is destructive — recommended to call "
+                f"{', '.join(repr(p) for p in skipped)} earlier in this "
+                f"session before applying. Soft warning only."
+            )
+
+    return {
+        "current_tool": current_tool,
+        "target": target_norm,
+        "prerequisites_satisfied": satisfied,
+        "prerequisites_skipped": skipped,
+        "advice": advice,
+    }
 
 
 def merge_with_explicit(

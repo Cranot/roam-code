@@ -6,6 +6,14 @@ from abc import ABC, abstractmethod
 class LanguageExtractor(ABC):
     """Base class for language-specific symbol extraction."""
 
+    # Audit A6: stamp the extractor version. When extraction logic
+    # changes (e.g. capturing decorator metadata that previous
+    # extractors didn't), the index built with the older version
+    # carries shape-incompatible symbol rows. Version mismatch tells
+    # consumers ``--rebuild`` is needed. Bump in subclasses when the
+    # extraction shape changes.
+    VERSION: str = "1.0.0"
+
     @property
     @abstractmethod
     def language_name(self) -> str: ...

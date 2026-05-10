@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -331,3 +332,71 @@ class TestVulnReachCLI:
         result = runner.invoke(cli, ["vuln-reach", "--help"])
         assert result.exit_code == 0
         assert "reachability" in result.output.lower() or "vuln" in result.output.lower()
+
+
+class TestVulnStoreInputGuards:
+    """Defensive guards on the ingest path:
+    - LIKE wildcards in package names match themselves (not every symbol)
+    - Hostile / malformed scanner reports >50MB are refused.
+    """
+
+    def test_like_wildcard_in_package_name_does_not_match_explode(self, vuln_project):
+        """A package_name containing ``_`` would, without ESCAPE, match
+        every single symbol whose qualified_name has ANY single character —
+        i.e. every symbol. Verify the ESCAPE clause keeps the match scoped.
+        """
+        import sqlite3
+
+        from roam.security.vuln_store import match_vuln_to_symbols
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(
+            """
+            CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
+            CREATE TABLE symbols (
+                id INTEGER PRIMARY KEY,
+                file_id INTEGER,
+                name TEXT,
+                qualified_name TEXT
+            );
+            INSERT INTO files (id, path) VALUES (1, 'src/a.py');
+            -- Three symbols, only one with a literal underscore in qname.
+            INSERT INTO symbols (id, file_id, name, qualified_name)
+            VALUES
+                (1, 1, 'foo', 'src.foo'),
+                (2, 1, 'bar', 'src.bar'),
+                (3, 1, 'foo_bar', 'src.foo_bar');
+            CREATE TABLE edges (id INTEGER PRIMARY KEY, source_id INTEGER, target_id INTEGER, kind TEXT);
+            """
+        )
+        # package_name = "_" — the LIKE wildcard. Without ESCAPE, this
+        # would match every symbol whose qname has any character (i.e. all
+        # three). With ESCAPE, only literal underscores match — so just
+        # `src.foo_bar`.
+        matches = match_vuln_to_symbols(conn, "_")
+        qnames = {m["qualified_name"] for m in matches}
+        assert qnames == {"src.foo_bar"}, (
+            f"LIKE wildcard match-explode: a package_name of '_' should only "
+            f"match qnames containing a literal underscore, got {qnames}"
+        )
+
+    def test_load_json_refuses_oversized_report(self, tmp_path):
+        """Hostile / malformed scanner output >50MB triggers a clean refusal,
+        not an OOM.
+        """
+        from roam.security import vuln_store
+
+        # Create a sparse oversized file without actually writing 50MB —
+        # ``stat().st_size`` only reads the inode metadata, so a truncated
+        # placeholder is enough to trigger the size guard.
+        path = tmp_path / "huge.json"
+        with path.open("wb") as fh:
+            fh.seek(vuln_store._MAX_REPORT_BYTES + 1)
+            fh.write(b"\0")
+
+        with pytest.raises(click.ClickException) as exc_info:
+            vuln_store._load_json(str(path))
+        msg = exc_info.value.message.lower()
+        assert "exceeding" in msg, f"size guard should fire, got: {msg}"
+        assert "cap" in msg, f"error should mention the cap, got: {msg}"

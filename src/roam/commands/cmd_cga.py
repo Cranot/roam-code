@@ -121,8 +121,19 @@ def _default_output_path(project_root: Path, statement: dict) -> Path:
         "Reference impl candidate for the in-toto attestation registry."
     ),
 )
+@click.option(
+    "--allow-dirty",
+    "allow_dirty",
+    is_flag=True,
+    help=(
+        "Emit even when the working tree has uncommitted changes. Default "
+        "behaviour refuses on a dirty tree because the resulting attestation "
+        "binds to a commit SHA that doesn't reflect the analysed state. "
+        "Pass this flag to record the dirty-hash in the predicate explicitly."
+    ),
+)
 @click.pass_context
-def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, key_path, keyless, aibom):
+def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, key_path, keyless, aibom, allow_dirty):
     """Emit a Code Graph Attestation (in-toto v1, optionally cosign-signed).
 
     With ``--aibom`` the predicate type promotes to
@@ -134,6 +145,24 @@ def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, k
 
     ensure_index()
     project_root = find_project_root()
+
+    # Refuse on dirty tree by default. The attestation binds to a commit
+    # SHA — emitting on uncommitted state produces a misleading receipt.
+    # --allow-dirty opts in (still records the dirty-hash in the predicate).
+    if not allow_dirty:
+        from roam.attest.cga import _git_dirty_hash
+
+        dirty = _git_dirty_hash(project_root)
+        if dirty is not None:
+            from roam.output.errors import DIRTY_TREE, structured_usage_error
+
+            raise structured_usage_error(
+                DIRTY_TREE,
+                "working tree has uncommitted changes — refusing to emit a CGA "
+                "that binds to a commit SHA but reflects un-committed state. "
+                "Either commit / stash your changes, or pass --allow-dirty to "
+                "record the dirty-hash in the predicate explicitly.",
+            )
 
     taint_findings = None
     if include_taint:
@@ -304,7 +333,11 @@ def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign):
             cosign_bundle = str(sibling)
 
     cosign_result: dict | None = None
-    if cosign_bundle and not no_cosign:
+    cosign_skipped_reason: str | None = None
+    if no_cosign:
+        # User explicitly opted out of cosign — predicate-only verdict.
+        cosign_skipped_reason = "skipped per --no-cosign"
+    elif cosign_bundle:
         cosign_ok, message = cosign_verify_statement(
             sp,
             bundle_path=Path(cosign_bundle) if cosign_bundle else None,
@@ -318,13 +351,27 @@ def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign):
         if not cosign_ok:
             errors = list(errors) + [f"cosign verification failed: {message[:200]}"]
             ok = False
+    else:
+        # FAIL CLOSED — load-bearing claim is "tamper-evident". Silently
+        # passing the predicate-only check while skipping cosign cryptography
+        # would let a downloaded statement read "verified" with no real
+        # signer-identity check. Force the user to acknowledge.
+        ok = False
+        errors = list(errors) + [
+            "cosign bundle not found alongside statement; pass --no-cosign "
+            "to acknowledge predicate-only verification, or --cosign-bundle PATH "
+            "to point at the bundle explicitly"
+        ]
 
-    verdict = (
-        "CGA verified — predicate matches live index"
-        + (" + cosign" if cosign_result and cosign_result["verified"] else "")
-        if ok
-        else f"CGA mismatch: {len(errors)} error(s)"
-    )
+    if ok:
+        if cosign_result and cosign_result["verified"]:
+            verdict = "CGA verified — predicate matches live index + cosign"
+        elif cosign_skipped_reason:
+            verdict = f"CGA verified — predicate matches live index (cosign {cosign_skipped_reason})"
+        else:
+            verdict = "CGA verified — predicate matches live index"
+    else:
+        verdict = f"CGA mismatch: {len(errors)} error(s)"
 
     if json_mode:
         click.echo(

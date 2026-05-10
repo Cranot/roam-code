@@ -22,11 +22,20 @@ def collect_git_stats(conn: sqlite3.Connection, project_root: Path):
     """Collect all git statistics and store them in the database.
 
     Silently skips if *project_root* is not inside a git repository.
+    Skip-the-pass optimisation (audit B5): if the manifest's recorded
+    HEAD matches the live HEAD, the commits / cochange / file_stats
+    / complexity tables are already current — re-running parse_git_log
+    + the four downstream passes is wasted work. Saves 1-10s per warm
+    ``roam index`` run on big-history repos.
     """
     project_root = Path(project_root).resolve()
 
     if not _is_git_repo(project_root):
         log.info("Not a git repository — skipping git stats")
+        return
+
+    if _head_unchanged_since_last_run(conn, project_root):
+        log.info("git HEAD unchanged since last index — skipping git stats pass")
         return
 
     commits = parse_git_log(project_root)
@@ -40,6 +49,54 @@ def collect_git_stats(conn: sqlite3.Connection, project_root: Path):
     compute_cochange(conn)
     compute_file_stats(conn)
     compute_complexity(conn, project_root)
+
+
+def _head_unchanged_since_last_run(conn: sqlite3.Connection, project_root: Path) -> bool:
+    """Return True when the latest manifest's git_head matches live HEAD.
+
+    Returns False (forces a re-run) when:
+      * the manifest table is missing or empty (first run)
+      * the manifest read fails for any reason (defensive: don't skip
+        on uncertainty — re-running is at most a few seconds wasted,
+        but missing a real change would silently stale the data)
+      * the live HEAD can't be resolved (non-git or detached)
+      * the recorded HEAD differs from the live HEAD
+    """
+    try:
+        from roam.index.manifest import latest_manifest
+    except Exception:
+        return False
+
+    try:
+        prev = latest_manifest(conn)
+    except Exception:
+        return False
+    if not prev:
+        return False
+
+    recorded_head = prev.get("git_head")
+    if not recorded_head:
+        return False
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    if result.returncode != 0:
+        return False
+    live_head = result.stdout.strip()
+    if not live_head:
+        return False
+
+    return live_head == recorded_head
 
 
 # ---------------------------------------------------------------------------

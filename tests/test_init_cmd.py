@@ -158,12 +158,49 @@ class TestInitSideEffects:
         fitness = fresh_project / ".roam" / "fitness.yaml"
         assert fitness.exists(), ".roam/fitness.yaml not created by init"
 
-    def test_github_workflow_created(self, cli_runner, fresh_project, monkeypatch):
+    def test_github_workflow_NOT_created_by_default(self, cli_runner, fresh_project, monkeypatch):
+        """Default ``roam init`` must NOT drop CI config in the repo.
+
+        Audit R1: writing ``.github/workflows/roam.yml`` unsolicited
+        on first init was the single biggest churn driver — users
+        evaluating roam in a private repo got "what is this YAML
+        file?" before they'd seen a single useful output. CI generation
+        must be explicit opt-in via ``--with-ci=github`` or the
+        existing ``roam ci-setup``.
+        """
         monkeypatch.chdir(fresh_project)
         result = invoke_cli(cli_runner, ["init"], cwd=fresh_project)
         assert result.exit_code == 0
         workflow = fresh_project / ".github" / "workflows" / "roam.yml"
-        assert workflow.exists(), ".github/workflows/roam.yml not created by init"
+        assert not workflow.exists(), (
+            ".github/workflows/roam.yml should NOT be created by default. "
+            "It's an unsolicited side-effect — use --with-ci=github to opt in."
+        )
+
+    def test_github_workflow_with_explicit_opt_in(self, cli_runner, fresh_project, monkeypatch):
+        """--with-ci=github creates the workflow file."""
+        monkeypatch.chdir(fresh_project)
+        result = invoke_cli(cli_runner, ["init", "--with-ci=github"], cwd=fresh_project)
+        assert result.exit_code == 0
+        workflow = fresh_project / ".github" / "workflows" / "roam.yml"
+        assert workflow.exists(), "--with-ci=github should create the workflow file"
+
+    def test_roamignore_template_created(self, cli_runner, fresh_project, monkeypatch):
+        """G14: starter .roamignore template is written when absent.
+        Every line commented out so the user opts in to what applies.
+        """
+        monkeypatch.chdir(fresh_project)
+        result = invoke_cli(cli_runner, ["init"], cwd=fresh_project)
+        assert result.exit_code == 0
+        roamignore = fresh_project / ".roamignore"
+        assert roamignore.exists(), ".roamignore template not created by init"
+        content = roamignore.read_text(encoding="utf-8")
+        # Every entry commented — user opts in.
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            assert stripped.startswith("#"), f"non-commented entry in template: {line!r}"
 
     def test_second_init_skips_existing_files(self, cli_runner, fresh_project, monkeypatch):
         """On the second run, already-created config files are skipped."""
@@ -176,3 +213,27 @@ class TestInitSideEffects:
         skipped = data["summary"]["skipped"]
         # At least one file should be reported as skipped on the second run
         assert len(skipped) >= 1, f"Expected skipped files on second init, got: {skipped}"
+
+
+class TestInitGuards:
+    """Guards added to prevent accidental misuse on first install."""
+
+    def test_init_refuses_outside_git_repo(self, cli_runner, tmp_path, monkeypatch):
+        """G6: ``roam init`` must fail-fast outside a git repository.
+
+        Pre-fix, running init in ``~/Downloads`` (no .git) would walk
+        the filesystem from there, drop ``.roam/`` in the user's home,
+        and create a confusing "wrong directory" loop. Post-fix:
+        structured DIRTY_TREE-style refusal.
+        """
+        non_git = tmp_path / "not_a_repo"
+        non_git.mkdir()
+        (non_git / "app.py").write_text("def x(): pass\n")
+        # Deliberately no git_init.
+        monkeypatch.chdir(non_git)
+        result = invoke_cli(cli_runner, ["init"], cwd=non_git)
+        assert result.exit_code != 0
+        # Friendly enough that the user knows what to do.
+        out = result.output.lower()
+        assert "git" in out
+        assert "git init" in out or "outside" in out or ".git" in out

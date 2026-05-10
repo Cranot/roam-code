@@ -113,11 +113,14 @@ def build_fts_index(conn: sqlite3.Connection, project_root: str | None = None):
             pass
         return
 
-    # Clear and rebuild β€” FTS5 doesn't support UPDATE well, full rebuild is fast
+    # Clear and rebuild — FTS5 doesn't support UPDATE well, full rebuild is fast.
+    # The symbol_fts schema now includes a ``docstring`` column (audit B8); the
+    # ensure_schema migration drops the old table and recreates it the first
+    # time this runs after the upgrade.
     conn.execute("DELETE FROM symbol_fts")
 
     rows = conn.execute(
-        "SELECT s.id, s.name, s.qualified_name, s.signature, s.kind, "
+        "SELECT s.id, s.name, s.qualified_name, s.signature, s.docstring, s.kind, "
         "f.path as file_path "
         "FROM symbols s JOIN files f ON s.file_id = f.id"
     ).fetchall()
@@ -125,7 +128,9 @@ def build_fts_index(conn: sqlite3.Connection, project_root: str | None = None):
     if not rows:
         return
 
-    # Insert with camelCase preprocessing for better tokenization
+    # Insert with camelCase preprocessing for better tokenization. Docstring
+    # is left as-is (no camel-split) — natural-language text doesn't benefit
+    # from token splitting and porter stemming handles it correctly.
     batch = []
     for row in rows:
         batch.append(
@@ -134,6 +139,7 @@ def build_fts_index(conn: sqlite3.Connection, project_root: str | None = None):
                 _camel_split(row["name"] or ""),
                 _camel_split(row["qualified_name"] or ""),
                 _camel_split(row["signature"] or ""),
+                row["docstring"] or "",
                 row["kind"] or "",
                 row["file_path"] or "",
             )
@@ -141,14 +147,15 @@ def build_fts_index(conn: sqlite3.Connection, project_root: str | None = None):
         if len(batch) >= 500:
             conn.executemany(
                 "INSERT INTO symbol_fts(rowid, name, qualified_name, "
-                "signature, kind, file_path) VALUES (?, ?, ?, ?, ?, ?)",
+                "signature, docstring, kind, file_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 batch,
             )
             batch.clear()
 
     if batch:
         conn.executemany(
-            "INSERT INTO symbol_fts(rowid, name, qualified_name, signature, kind, file_path) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO symbol_fts(rowid, name, qualified_name, signature, docstring, kind, file_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             batch,
         )
 
@@ -166,8 +173,12 @@ def build_fts_index(conn: sqlite3.Connection, project_root: str | None = None):
 # FTS5 search (primary path)
 # ---------------------------------------------------------------------------
 
-# BM25 column weights: name=10, qualified_name=5, signature=2, kind=1, file_path=3
-_BM25_WEIGHTS = "10.0, 5.0, 2.0, 1.0, 3.0"
+# BM25 column weights — order MUST match _FTS5_SCHEMA_COLUMNS in
+# db/connection.py: name, qualified_name, signature, docstring, kind, file_path.
+# Audit B8: docstring weight 4 — high enough that natural-language
+# queries match docstring text but lower than name/qname so a query
+# matching both still ranks the name-match higher.
+_BM25_WEIGHTS = "10.0, 5.0, 2.0, 4.0, 1.0, 3.0"
 
 # Hybrid fusion defaults (backlog #54).
 _HYBRID_LEXICAL_WEIGHT = 0.65

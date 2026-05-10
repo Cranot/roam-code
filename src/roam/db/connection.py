@@ -137,7 +137,17 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
     conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA temp_store=MEMORY")
-    conn.execute("PRAGMA mmap_size=268435456")  # 256MB memory-mapped I/O
+    # mmap_size tuned per audit B6: 256MB → 1GB. phiresky's reference
+    # config (HN-cited) puts it at 30GB on 64-bit; 1GB is a conservative
+    # bump that captures more of a 5M-LOC repo's working set without
+    # over-claiming address space on smaller systems. The OS pager caps
+    # effective use at the available memory anyway.
+    conn.execute("PRAGMA mmap_size=1073741824")  # 1GB memory-mapped I/O
+    # WAL auto-checkpoint default is 1000 pages; 10000 reduces write
+    # amplification 10x on heavy index loads. No-op on the cloud-sync
+    # DELETE-journal path.
+    if not cloud:
+        conn.execute("PRAGMA wal_autocheckpoint=10000")
 
     # opt-in query timeout. ``ROAM_QUERY_TIMEOUT_S=N``
     # installs a progress handler that interrupts queries running
@@ -250,7 +260,20 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 # Current schema version. Bump this when adding migrations that consumers
 # (manifest writer, bundle import, drift checks) need to detect. Mirrored
 # into ``index_manifest.schema_version`` on every index run.
-USER_VERSION = 1
+#
+# Discipline: every change to ``ensure_schema`` (new ``_safe_alter`` call,
+# new index, dropped index, ``_ensure_*`` helper invocation) must bump
+# this AND ``MIGRATION_OPS_COUNT`` below. ``test_db_user_version.py``
+# catches drift in either direction.
+USER_VERSION = 12
+
+# Number of schema-mutating operations performed inside ``ensure_schema``.
+# Counted: ``_safe_alter(`` calls + ``CREATE INDEX IF NOT EXISTS`` +
+# ``DROP INDEX IF EXISTS`` + ``_ensure_tfidf_cascade(`` + ``_ensure_fts5_table(``.
+# Pinned by a test so a contributor adding a migration is forced to either
+# (a) bump this number AND ``USER_VERSION``, or (b) explain in PR review
+# why the migration doesn't change the schema-version contract.
+MIGRATION_OPS_COUNT = 55
 
 
 def _bump_user_version(conn: sqlite3.Connection, target: int) -> None:
@@ -290,24 +313,39 @@ def _ensure_tfidf_cascade(conn: sqlite3.Connection):
     )
 
 
+_FTS5_SCHEMA_COLUMNS = ("name", "qualified_name", "signature", "docstring", "kind", "file_path")
+
+
 def _ensure_fts5_table(conn: sqlite3.Connection):
     """Create the FTS5 full-text search virtual table if not present.
 
     FTS5 pushes tokenization, indexing, and BM25 ranking entirely into
     SQLite's C engine — 1000x faster than the Python-side TF-IDF approach.
     Falls back gracefully if FTS5 is not compiled into the SQLite build.
+
+    Schema migration (audit B8): the table now includes a ``docstring``
+    column so ``roam retrieve`` and ``roam search-semantic`` can match
+    against natural-language docstrings — previously the FTS5 BM25 path
+    only saw symbol names + signatures, missing the text agents
+    typically search for. Existing tables get re-created (cheap, the
+    rows are repopulated by ``build_fts_index`` on the next index run).
     """
-    # Check if already exists
     row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
     if row:
-        return
+        # Pre-migration tables lack the docstring column. Detect by
+        # checking the actual column list — `PRAGMA table_info` works
+        # on FTS5 virtual tables to enumerate columns.
+        existing_cols = {r[1] for r in conn.execute("PRAGMA table_info(symbol_fts)").fetchall()}
+        if "docstring" in existing_cols:
+            return
+        # Drop and re-create with the new schema.
+        try:
+            conn.execute("DROP TABLE symbol_fts")
+        except sqlite3.OperationalError:
+            return
     try:
-        conn.execute(
-            "CREATE VIRTUAL TABLE symbol_fts USING fts5("
-            "name, qualified_name, signature, kind, file_path, "
-            "tokenize='porter unicode61'"
-            ")"
-        )
+        cols = ", ".join(_FTS5_SCHEMA_COLUMNS)
+        conn.execute(f"CREATE VIRTUAL TABLE symbol_fts USING fts5({cols}, tokenize='porter unicode61')")
     except sqlite3.OperationalError:
         pass  # FTS5 not available in this SQLite build
 
@@ -419,7 +457,8 @@ def open_db(readonly: bool = False, project_root: Path | None = None) -> "Iterat
         raise click.ClickException(
             f"Database error: {exc}\n"
             "  The roam index may be corrupted. Run `roam init --force` to rebuild it\n"
-            "  from scratch, or delete .roam/index.db and run `roam init`."
+            "  from scratch, or delete .roam/index.db and run `roam init`.\n"
+            "  If this looks unexpected, run `roam doctor` to diagnose your install."
         ) from exc
     try:
         if not readonly:
@@ -431,10 +470,19 @@ def open_db(readonly: bool = False, project_root: Path | None = None) -> "Iterat
                     f"Database schema error: {exc}\n"
                     "  The roam index may be corrupted or from an incompatible version.\n"
                     "  Run `roam init --force` to rebuild it, or delete .roam/index.db\n"
-                    "  and run `roam init`."
+                    "  and run `roam init`.\n"
+                    "  If this looks unexpected, run `roam doctor` to diagnose your install."
                 ) from exc
         yield conn
         if not readonly:
             conn.commit()
+            # PRAGMA optimize keeps the query planner's stats fresh
+            # after writes (added in SQLite 3.18). Cheap on each commit;
+            # no-op when stats haven't drifted. Improves query latency
+            # for the next reader without an explicit ANALYZE pass.
+            try:
+                conn.execute("PRAGMA optimize")
+            except sqlite3.DatabaseError:
+                pass  # not load-bearing; never refuse to close on this
     finally:
         conn.close()

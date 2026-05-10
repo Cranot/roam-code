@@ -532,9 +532,21 @@ def _check_index_manifest() -> dict:
         elif old_head and not new_head:
             hints.append(f"INFO: index was built at commit {old_head[:7]}; no git HEAD detectable now")
 
+    if "git_dirty_hash" in drift:
+        old_dirty, new_dirty = drift["git_dirty_hash"]
+        if old_dirty is None and new_dirty is not None:
+            hints.append("INFO: index was built on a clean tree; working tree now has uncommitted changes")
+        elif old_dirty is not None and new_dirty is None:
+            hints.append("INFO: index was built on a dirty tree; working tree is clean now")
+        else:
+            hints.append("INFO: working-tree dirty-hash differs from index time — uncommitted state has changed")
+
+    if "config_hash" in drift:
+        hints.append("WARN: roam config or .roamignore changed since last index — run `roam index --rebuild`")
+
     if hints:
         detail = base + "; " + "; ".join(hints)
-        passed = not (parser_drift or "schema_version" in drift or "roam_version" in drift)
+        passed = not (parser_drift or "schema_version" in drift or "roam_version" in drift or "config_hash" in drift)
     else:
         detail = base
         passed = True
@@ -676,9 +688,37 @@ def _check_optional_extras() -> dict:
 # ---------------------------------------------------------------------------
 
 
+# Checks whose failure is advisory — these don't block normal usage.
+# A failure here means "something to be aware of" rather than "roam is
+# broken." CI can still pass with advisory failures unless ``--strict``
+# is set. See cmd_doctor docstring for the full exit-code matrix.
+_ADVISORY_CHECK_NAMES = frozenset(
+    {
+        "Optional extras",  # graceful degradation when extras missing
+        "Cloud sync",  # OneDrive/Dropbox warning, not a hard break
+        "MCP backpressure",  # only matters for MCP server users
+        "MCP tool registry",  # only matters for MCP users
+        "Plugin discovery",  # plugins are optional
+        "Index exists",  # auto-created on first command
+        "Index freshness",  # stale index is still functional
+        "Index manifest",  # drift hints — informational
+    }
+)
+
+
 @click.command("doctor")
+@click.option(
+    "--strict",
+    is_flag=True,
+    help=(
+        "Promote advisory check failures to blocking. CI gates that "
+        "require zero drift use this; default behaviour treats advisory "
+        "failures as warnings (exit 1) so cache-age and cloud-sync "
+        "warnings don't fail every CI run."
+    ),
+)
 @click.pass_context
-def doctor(ctx):
+def doctor(ctx, strict):
     """Diagnose environment setup: Python, dependencies, and index state.
 
     Unlike ``health`` (which analyzes codebase structural quality), this command
@@ -689,12 +729,17 @@ def doctor(ctx):
     \b
     Exit codes:
       0  All checks passed.
-      1  One or more checks failed.
+      1  Only advisory checks failed (cache age, cloud sync, optional extras).
+      2  At least one blocking check failed (Python version, tree-sitter, ...).
+
+    With ``--strict``, advisory failures are promoted to blocking — any
+    failure exits 2. CI gates that require zero drift use this.
 
     \b
     Examples:
       roam doctor
       roam --json doctor
+      roam doctor --strict   # CI mode
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
@@ -724,17 +769,35 @@ def doctor(ctx):
     checks.append(_check_sqlite(db_path_str))
     checks.append(_check_index_manifest())
 
-    # --- Compute summary ---
+    # --- Compute summary, with advisory / blocking severity split ---
     total = len(checks)
     failed = [c for c in checks if not c["passed"]]
     passed_count = total - len(failed)
 
+    advisory_failed = [c for c in failed if c["name"] in _ADVISORY_CHECK_NAMES]
+    blocking_failed = [c for c in failed if c["name"] not in _ADVISORY_CHECK_NAMES]
+
     if not failed:
         verdict = f"all {total} checks passed"
-    elif len(failed) == 1:
+    elif blocking_failed and len(failed) == 1:
         verdict = f"1 check failed ({failed[0]['name']})"
+    elif blocking_failed:
+        verdict = f"{len(blocking_failed)} blocking, {len(advisory_failed)} advisory"
     else:
-        verdict = f"{len(failed)} checks failed"
+        verdict = f"{len(advisory_failed)} advisory check(s) — non-blocking"
+
+    # Issue-template-ready summary line: a single string capturing the
+    # diagnostic in copy-paste form, so users filing GitHub bugs can
+    # paste one line that contains all the relevant context.
+    import platform as _platform
+
+    issue_line = (
+        f"Roam {_get_roam_version()} · "
+        f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} · "
+        f"{_platform.system()} {_platform.release()} · "
+        f"{passed_count}/{total} checks pass · "
+        f"{len(advisory_failed)} advisory · {len(blocking_failed)} blocking"
+    )
 
     # Strip private keys (prefixed with _) before output
     clean_checks = [{k: v for k, v in c.items() if not k.startswith("_")} for c in checks]
@@ -746,31 +809,76 @@ def doctor(ctx):
                     "doctor",
                     summary={
                         "verdict": verdict,
+                        "issue_line": issue_line,
                         "total": total,
                         "passed": passed_count,
                         "failed": len(failed),
+                        "advisory_failed": len(advisory_failed),
+                        "blocking_failed": len(blocking_failed),
                         "all_passed": len(failed) == 0,
+                        "strict": bool(strict),
                     },
                     checks=clean_checks,
                     failed_checks=[c for c in clean_checks if not c["passed"]],
+                    advisory_failed=[c for c in clean_checks if c["name"] in _ADVISORY_CHECK_NAMES and not c["passed"]],
+                    blocking_failed=[
+                        c for c in clean_checks if c["name"] not in _ADVISORY_CHECK_NAMES and not c["passed"]
+                    ],
                 )
             )
         )
-        if failed:
-            from roam.exit_codes import EXIT_ERROR
-
-            ctx.exit(EXIT_ERROR)
+        # Three-tier exit codes:
+        #   0 = clean
+        #   1 = only advisory failures (CI users who want zero drift use --strict)
+        #   2 = blocking failures
+        # --strict promotes advisory to blocking.
+        if blocking_failed or (strict and advisory_failed):
+            ctx.exit(2)
+        elif advisory_failed:
+            ctx.exit(1)
         return
 
     # --- Text output ---
     click.echo(f"VERDICT: {verdict}\n")
     for c in clean_checks:
-        label = "PASS" if c["passed"] else "FAIL"
+        if c["passed"]:
+            label = "PASS"
+        elif c["name"] in _ADVISORY_CHECK_NAMES:
+            label = "WARN"  # advisory failures get distinct visual weight
+        else:
+            label = "FAIL"
         click.echo(f"  [{label}] {c['detail']}")
+
+    # One-line diagnostic, copy-pasteable into a GitHub issue or chat.
+    click.echo()
+    click.echo(f"  {issue_line}")
 
     if failed:
         click.echo()
-        click.echo(f"  {len(failed)} check{'s' if len(failed) != 1 else ''} failed.")
-        from roam.exit_codes import EXIT_ERROR
+        if blocking_failed and advisory_failed:
+            click.echo(f"  {len(blocking_failed)} blocking, {len(advisory_failed)} advisory.")
+        elif blocking_failed:
+            click.echo(f"  {len(blocking_failed)} check{'s' if len(blocking_failed) != 1 else ''} failed.")
+        else:
+            note = " (use --strict to fail CI on advisory)" if not strict else ""
+            click.echo(f"  {len(advisory_failed)} advisory check(s) — non-blocking{note}.")
 
-        ctx.exit(EXIT_ERROR)
+    if blocking_failed or (strict and advisory_failed):
+        ctx.exit(2)
+    elif advisory_failed:
+        ctx.exit(1)
+
+
+def _get_roam_version() -> str:
+    """Best-effort roam-code version string for the issue-line summary."""
+    try:
+        import importlib.metadata as _md
+
+        return _md.version("roam-code")
+    except Exception:
+        try:
+            from roam import __version__
+
+            return __version__
+        except Exception:
+            return "unknown"

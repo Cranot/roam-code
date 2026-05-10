@@ -9,7 +9,16 @@
   # govern. ``script-src 'self'`` is the tightest correct policy. The
   # historical sha256-allow-list got stale (every hash had been
   # collected from inline scripts that have since been removed).
-  Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  #
+  # Reporting: ``report-to csp-endpoint`` directs browsers to POST
+  # violation reports to the matching ``Reporting-Endpoints`` URL.
+  # The endpoint at ``/csp-report`` is currently a 404 (no CF worker
+  # provisioned yet); browsers will drop on failure. When a sink is
+  # wired up — Cloudflare Pages worker logging to a free Loki / Grafana
+  # endpoint, or a sentry CSP receiver — this header is already in
+  # place. Adds zero overhead until the receiver exists.
+  Reporting-Endpoints: csp-endpoint="/csp-report"
+  Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests; report-to csp-endpoint
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
   Cache-Control: public, max-age=300, s-maxage=86400

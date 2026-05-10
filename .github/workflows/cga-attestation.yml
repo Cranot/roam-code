@@ -82,11 +82,14 @@ jobs:
 
       - name: Tamper-detection sanity check
         run: |
-          # Mutate one byte in the predicate. Verify must exit 5.
+          # Mutate one byte in the predicate. Predicate-only verify must
+          # exit 5 (the digest re-derivation fails). --no-cosign makes the
+          # intent explicit: this test exercises predicate tamper, not
+          # cosign-signature tamper.
           cp .roam/cga-offline.intoto.json .roam/cga-tampered.intoto.json
           python -c "import json,pathlib; p=pathlib.Path('.roam/cga-tampered.intoto.json'); d=json.loads(p.read_text()); d['predicate']['edge_bundle_digest']='deadbeef'+d['predicate']['edge_bundle_digest'][8:]; p.write_text(json.dumps(d))"
           set +e
-          roam cga verify .roam/cga-tampered.intoto.json --cosign-key cosign.pub
+          roam cga verify .roam/cga-tampered.intoto.json --no-cosign
           rc=$?
           set -e
           if [ "$rc" != "5" ]; then

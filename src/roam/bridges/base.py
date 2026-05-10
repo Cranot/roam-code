@@ -15,6 +15,15 @@ class LanguageBridge(ABC):
     - OpenAPI spec -> client SDKs
     """
 
+    # Audit A6: every bridge stamps a version on its inference logic.
+    # When the resolver changes (e.g. learning to follow ``through=`` on
+    # Django M2M), the index built with the older bridge version may
+    # carry stale edges marked ``bridge='django'`` — version mismatch
+    # tells consumers to rebuild. Bump in subclasses when the
+    # resolution algorithm changes; default ``1.0.0`` covers the
+    # initial implementation of each bridge.
+    VERSION: str = "1.0.0"
+
     @property
     @abstractmethod
     def name(self) -> str:

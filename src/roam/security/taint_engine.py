@@ -73,6 +73,13 @@ class TaintFinding:
     sink_symbol: dict
     path_symbols: list[dict]  # ordered hops from source to sink
     sanitizer_in_path: bool
+    # True when the BFS exited via the max_hops or per-node fan-out cap
+    # rather than exhausting the graph. The "no path" return value of
+    # the search engine cannot distinguish "definitely not reachable"
+    # from "search hit a cap" without this flag — and downstream OpenVEX
+    # consumers need to know so they can map to ``under_investigation``
+    # rather than ``vulnerable_code_not_in_execute_path``.
+    path_truncated: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +233,9 @@ def _symbols_matching(
     ]
 
 
+_BFS_FAN_OUT_LIMIT = 200
+
+
 def _bfs_path(
     conn: sqlite3.Connection,
     start_ids: set[int],
@@ -233,29 +243,47 @@ def _bfs_path(
     sanitizer_ids: set[int],
     *,
     max_hops: int = 6,
-) -> tuple[list[int], bool] | None:
-    """BFS over `edges` from any *start* to any *goal*. Returns the
-    shortest path as a list of symbol ids and a flag indicating whether
-    a sanitizer node was on the path. Returns ``None`` if no path
-    exists within ``max_hops``.
+) -> tuple[list[int] | None, bool, bool]:
+    """BFS over ``edges`` from any *start* to any *goal*.
+
+    Returns a 3-tuple ``(path, has_sanitizer, truncated)``:
+
+    * ``path``: list of symbol ids from source to sink, or ``None`` when
+      no path exists within the bounds.
+    * ``has_sanitizer``: True when a sanitizer node lay on the returned
+      path (only meaningful when ``path`` is non-None).
+    * ``truncated``: True when the search was bounded by ``max_hops`` or
+      the per-node fan-out cap. When ``path is None and truncated``, the
+      caller cannot conclude "definitely not reachable" — only "no path
+      within the bounds." OpenVEX consumers must map this to
+      ``under_investigation`` rather than
+      ``vulnerable_code_not_in_execute_path``.
     """
     if not start_ids or not goal_ids:
-        return None
+        return None, False, False
 
     queue: list[tuple[int, list[int], bool]] = [(s, [s], s in sanitizer_ids) for s in start_ids]
     visited: set[int] = set(start_ids)
+    truncated = False
 
     while queue:
         node, path, has_sanitizer = queue.pop(0)
         if node in goal_ids and node not in start_ids:
-            return path, has_sanitizer
+            return path, has_sanitizer, truncated
         if len(path) > max_hops:
+            # We're bumping the hop ceiling — record and skip expansion.
+            truncated = True
             continue
 
         rows = conn.execute(
-            "SELECT target_id FROM edges WHERE source_id = ? AND kind IN ('calls', 'references') LIMIT 200",
-            (node,),
+            "SELECT target_id FROM edges WHERE source_id = ? AND kind IN ('calls', 'references') LIMIT ?",
+            (node, _BFS_FAN_OUT_LIMIT),
         ).fetchall()
+        if len(rows) >= _BFS_FAN_OUT_LIMIT:
+            # Hit the per-node fan-out cap — the path may exist beyond
+            # the truncated edge set. Mark and proceed (don't propagate
+            # within this branch — other branches may still find a path).
+            truncated = True
         for row in rows:
             tgt = int(row[0])
             if tgt in visited:
@@ -263,7 +291,7 @@ def _bfs_path(
             visited.add(tgt)
             queue.append((tgt, path + [tgt], has_sanitizer or tgt in sanitizer_ids))
 
-    return None
+    return None, False, truncated
 
 
 def _intraprocedural_co_calls(
@@ -388,10 +416,17 @@ def run_taint(
                 )
             )
 
-        result = _bfs_path(conn, source_ids, sink_ids, sanitizer_ids, max_hops=max_hops)
-        if result is None:
+        path_ids, has_sanitizer, path_truncated = _bfs_path(
+            conn, source_ids, sink_ids, sanitizer_ids, max_hops=max_hops
+        )
+        if path_ids is None:
+            # No path found within the search bounds. We don't emit a
+            # finding because there's no concrete path to point at;
+            # the truncated-negative case (search hit a cap so a real
+            # path may have been missed) is captured in the per-finding
+            # ``path_truncated`` flag for paths that DID resolve, where
+            # consumers need to know the search wasn't exhaustive.
             continue
-        path_ids, has_sanitizer = result
 
         # Hydrate any path nodes we don't already have metadata for.
         unknown = [pid for pid in path_ids if pid not in sym_meta]
@@ -422,6 +457,7 @@ def run_taint(
                 sink_symbol=path_symbols[-1],
                 path_symbols=path_symbols,
                 sanitizer_in_path=has_sanitizer,
+                path_truncated=path_truncated,
             )
         )
 

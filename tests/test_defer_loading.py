@@ -189,6 +189,9 @@ class TestDeferLoading:
             "roam_audit_trail_conformance_check",
             "roam_dogfood",
             "roam_metrics_push",
+            # v12.51 — free-form intent dispatcher + telemetry
+            "roam_ask",
+            "roam_session_metrics",
         }
         assert core_names == expected_core, (
             f"Core tools mismatch.\n  Extra: {core_names - expected_core}\n  Missing: {expected_core - core_names}"

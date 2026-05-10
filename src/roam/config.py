@@ -112,7 +112,8 @@ def load_config(project_root: Path | None = None) -> dict[str, dict[str, Any]]:
             f"Failed to parse {path}: {exc}\n"
             "  Check the file for unmatched brackets, missing quotes, or "
             "non-scalar values. roam config supports `[section]` headers "
-            "with `key = value` scalar entries only."
+            "with `key = value` scalar entries only.\n"
+            "  If this looks unexpected, run `roam doctor` to diagnose your install."
         ) from exc
 
     return _merge(_deepcopy_defaults(), raw)
