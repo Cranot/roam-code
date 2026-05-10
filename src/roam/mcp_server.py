@@ -960,19 +960,28 @@ _RETRYABLE_CODES = {"DB_LOCKED", "INDEX_STALE"}
 # Doc-link table — agents use this to fetch the full self-service playbook
 # for a given error code. Anchors point at the troubleshooting section of
 # the public docs site so the URL stays stable across roam versions.
+#
+# Only error codes whose remediation is captured in a dedicated section
+# carry a fragment. Codes without a matching section fall through to
+# the page-level URL (better than a broken fragment that scrolls
+# nowhere).
 _DOC_LINKS: dict[str, str] = {
-    "INDEX_NOT_FOUND": "https://roam-code.com/docs/troubleshooting#index-not-found",
+    # Both index errors share the rebuild-from-scratch playbook.
+    "INDEX_NOT_FOUND": "https://roam-code.com/docs/troubleshooting#index-stale",
     "INDEX_STALE": "https://roam-code.com/docs/troubleshooting#index-stale",
+    # DB_LOCKED is dominantly a cloud-sync conflict (OneDrive / Dropbox /
+    # iCloud racing the indexer for index.db); section 2 covers it.
     "DB_LOCKED": "https://roam-code.com/docs/troubleshooting#db-locked",
-    "NOT_GIT_REPO": "https://roam-code.com/docs/troubleshooting#not-a-git-repo",
     "PERMISSION_DENIED": "https://roam-code.com/docs/troubleshooting#permission-denied",
-    "NO_RESULTS": "https://roam-code.com/docs/troubleshooting#no-results",
-    "USAGE_ERROR": "https://roam-code.com/docs/troubleshooting#usage-error",
-    "GATE_FAILURE": "https://roam-code.com/docs/troubleshooting#gate-failure",
-    "PARTIAL_FAILURE": "https://roam-code.com/docs/troubleshooting#partial-failure",
-    "RATE_LIMITED": "https://roam-code.com/docs/troubleshooting#rate-limited",
-    "COMMAND_FAILED": "https://roam-code.com/docs/troubleshooting#command-failed",
-    "UNKNOWN": "https://roam-code.com/docs/troubleshooting.html",
+    # Page-level fallbacks (no section dedicated to this error code yet).
+    "NOT_GIT_REPO": "https://roam-code.com/docs/troubleshooting",
+    "NO_RESULTS": "https://roam-code.com/docs/troubleshooting",
+    "USAGE_ERROR": "https://roam-code.com/docs/troubleshooting",
+    "GATE_FAILURE": "https://roam-code.com/docs/troubleshooting",
+    "PARTIAL_FAILURE": "https://roam-code.com/docs/troubleshooting",
+    "RATE_LIMITED": "https://roam-code.com/docs/troubleshooting",
+    "COMMAND_FAILED": "https://roam-code.com/docs/troubleshooting",
+    "UNKNOWN": "https://roam-code.com/docs/troubleshooting",
 }
 
 

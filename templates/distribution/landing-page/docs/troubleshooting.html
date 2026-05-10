@@ -81,7 +81,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>1. Stale index after a pull, rename, or schema change</h2>
+        <h2 id="index-stale">1. Stale index after a pull, rename, or schema change</h2>
         <p>
           <strong>Symptom.</strong> Commands return symbols that don't
           exist anymore, miss new ones, or report a verdict that doesn't
@@ -105,7 +105,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>2. OneDrive / Dropbox / iCloud sync conflicts</h2>
+        <h2 id="db-locked">2. OneDrive / Dropbox / iCloud sync conflicts</h2>
         <p>
           <strong>Symptom.</strong> Random
           <code>database is locked</code> errors, partial writes,
@@ -134,7 +134,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>3. Missing optional extras</h2>
+        <h2 id="missing-extras">3. Missing optional extras</h2>
         <p>
           <strong>Symptom.</strong> An <code>ImportError</code> on
           startup, or a "feature unavailable — install
@@ -162,7 +162,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>4. Parser failures — zero symbols extracted from a file</h2>
+        <h2 id="parser-failures">4. Parser failures — zero symbols extracted from a file</h2>
         <p>
           <strong>Symptom.</strong> A file you know exists is missing
           from <code>roam search</code> results, or
@@ -189,7 +189,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>5. Agent doesn't see Roam's MCP tools</h2>
+        <h2 id="mcp-tools-missing">5. Agent doesn't see Roam's MCP tools</h2>
         <p>
           <strong>Symptom.</strong> Claude Code, Cursor, Codex, or your
           own MCP-aware agent has Roam configured but doesn't list the
@@ -216,7 +216,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>6. Cache or DB permission errors</h2>
+        <h2 id="permission-denied">6. Cache or DB permission errors</h2>
         <p>
           <strong>Symptom.</strong>
           <code>PermissionError</code> on <code>.roam/index.db</code>,
@@ -243,7 +243,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>7. Out-of-memory during indexing on a large monorepo</h2>
+        <h2 id="out-of-memory">7. Out-of-memory during indexing on a large monorepo</h2>
         <p>
           <strong>Symptom.</strong> Indexer is OOM-killed on a repo with
           hundreds of thousands of files, or RAM climbs past available
@@ -270,7 +270,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>8. <code>--json</code> output is too verbose / too slow</h2>
+        <h2 id="json-output">8. <code>--json</code> output is too verbose / too slow</h2>
         <p>
           <strong>Symptom.</strong> Piping
           <code>roam &lt;cmd&gt; --json</code> into an agent's context
