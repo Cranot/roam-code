@@ -33,6 +33,12 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, loc, to_json
 
+# Sentinel used by helpers that accept pre-fetched bulk data. Distinct from
+# ``None`` because ``None`` is a valid "caller pre-fetched and there's no
+# match" answer; the sentinel means "caller did NOT pre-fetch — fall back
+# to the per-model query".
+_BULK_NOT_FETCHED = object()
+
 # ---------------------------------------------------------------------------
 # Framework detection helpers
 # ---------------------------------------------------------------------------
@@ -290,32 +296,126 @@ def _find_model_classes(conn):
     return model_classes
 
 
-def _find_appends_properties(conn, model_id, model_info):
+def _bulk_fetch_appends_symbols(conn, model_ids, models):
+    """Bulk-fetch ``$appends`` / ``appends`` symbols for a list of model IDs.
+
+    Replaces the per-model 1-2 queries in :func:`_find_appends_properties`.
+    Issues two batched_in queries (parent_id-linked + file-range fallback)
+    plus a small companion fetch for file_id resolution. The total is
+    constant in ``len(model_ids)`` rather than 2N.
+
+    Returns a dict mapping ``model_id`` → appends-symbol row dict (or
+    ``None`` when no appends declaration was found for that model).
+    """
+    from roam.db.connection import batched_in
+
+    out: dict[int, dict | None] = {int(mid): None for mid in model_ids}
+    if not model_ids:
+        return out
+
+    # Strategy 1: parent_id-linked appends
+    for r in batched_in(
+        conn,
+        "SELECT s.parent_id, s.id, s.default_value, s.line_start, s.line_end, "
+        "f.path as file_path FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.parent_id IN ({ph}) AND s.name IN ('appends', '$appends')",
+        list(model_ids),
+    ):
+        out[int(r["parent_id"])] = {
+            "id": r["id"],
+            "default_value": r["default_value"],
+            "line_start": r["line_start"],
+            "line_end": r["line_end"],
+            "file_path": r["file_path"],
+        }
+
+    # Strategy 2: file-range fallback for models without parent_id-linked
+    # appends. Bulk-fetch model file_ids, then bulk-fetch all
+    # appends-named property symbols in those files, then match per-model
+    # by line range in Python.
+    missing = [mid for mid, v in out.items() if v is None]
+    if not missing:
+        return out
+
+    file_id_by_model: dict[int, int] = {}
+    for r in batched_in(
+        conn,
+        "SELECT id, file_id FROM symbols WHERE id IN ({ph})",
+        missing,
+    ):
+        file_id_by_model[int(r["id"])] = int(r["file_id"])
+
+    file_ids = list({fid for fid in file_id_by_model.values()})
+    if not file_ids:
+        return out
+
+    cands_by_file: dict[int, list] = {}
+    for r in batched_in(
+        conn,
+        "SELECT s.id, s.file_id, s.default_value, s.line_start, s.line_end, "
+        "f.path as file_path FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.file_id IN ({ph}) AND s.name IN ('appends', '$appends') "
+        "AND s.kind = 'property'",
+        file_ids,
+    ):
+        cands_by_file.setdefault(int(r["file_id"]), []).append(r)
+
+    for mid in missing:
+        fid = file_id_by_model.get(mid)
+        if fid is None:
+            continue
+        info = models.get(mid) or {}
+        ls = info.get("line_start", 0)
+        le = info.get("line_end") or 999999
+        for cand in cands_by_file.get(fid, []):
+            if ls <= cand["line_start"] <= le:
+                out[mid] = {
+                    "id": cand["id"],
+                    "default_value": cand["default_value"],
+                    "line_start": cand["line_start"],
+                    "line_end": cand["line_end"],
+                    "file_path": cand["file_path"],
+                }
+                break
+
+    return out
+
+
+def _find_appends_properties(conn, model_id, model_info, *, bulk_appends_sym=_BULK_NOT_FETCHED):
     """Find $appends array entries for a Laravel model.
 
     Returns list of appended attribute names (e.g., ['full_name', 'is_admin']).
     Handles both parent_id-linked and flat (same-file line range) symbol structures.
     If default_value is not captured by the parser, reads from source file.
-    """
-    # Try parent_id first
-    appends_sym = conn.execute(
-        "SELECT s.id, s.default_value, s.line_start, s.line_end, f.path as file_path "
-        "FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE s.parent_id = ? AND s.name IN ('appends', '$appends')",
-        (model_id,),
-    ).fetchone()
 
-    # Fallback: same file, within class line range
-    if not appends_sym:
+    When ``bulk_appends_sym`` is provided (any value other than the
+    sentinel — including ``None`` for "no appends found"), the helper
+    skips the per-model lookups and uses the pre-fetched row directly.
+    ``analyze_n1`` threads the bulk-fetched dict through to keep total
+    query count constant in the model count.
+    """
+    if bulk_appends_sym is _BULK_NOT_FETCHED:
+        # Try parent_id first
         appends_sym = conn.execute(
             "SELECT s.id, s.default_value, s.line_start, s.line_end, f.path as file_path "
             "FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE s.file_id = (SELECT file_id FROM symbols WHERE id = ?) "
-            "AND s.name IN ('appends', '$appends') "
-            "AND s.kind = 'property' "
-            "AND s.line_start >= ? AND s.line_start <= ?",
-            (model_id, model_info["line_start"], model_info.get("line_end") or 999999),
+            "WHERE s.parent_id = ? AND s.name IN ('appends', '$appends')",
+            (model_id,),
         ).fetchone()
+
+        # Fallback: same file, within class line range
+        if not appends_sym:
+            appends_sym = conn.execute(
+                "SELECT s.id, s.default_value, s.line_start, s.line_end, f.path as file_path "
+                "FROM symbols s JOIN files f ON s.file_id = f.id "
+                "WHERE s.file_id = (SELECT file_id FROM symbols WHERE id = ?) "
+                "AND s.name IN ('appends', '$appends') "
+                "AND s.kind = 'property' "
+                "AND s.line_start >= ? AND s.line_start <= ?",
+                (model_id, model_info["line_start"], model_info.get("line_end") or 999999),
+            ).fetchone()
+    else:
+        appends_sym = bulk_appends_sym
 
     if not appends_sym:
         return []
@@ -348,24 +448,61 @@ def _find_appends_properties(conn, model_id, model_info):
     return []
 
 
-def _find_accessor_methods(conn, model_id, model_info, appended_names):
+def _bulk_fetch_methods_with_locations(conn, model_ids):
+    """Bulk-fetch method symbols with full location columns for a list of
+    model IDs. Returns dict ``{model_id: [method_row_dict, ...]}``.
+
+    The base ``analyze_n1`` model-methods cache only carries
+    ``(id, name, kind, parent_id)``. ``_find_accessor_methods`` needs
+    ``qualified_name``, ``file_path``, ``line_start``, ``line_end`` too.
+    Rather than two bulk fetches, ``analyze_n1`` calls this once and
+    derives the lighter view from it.
+    """
+    from roam.db.connection import batched_in
+
+    out: dict[int, list] = {int(mid): [] for mid in model_ids}
+    if not model_ids:
+        return out
+    for r in batched_in(
+        conn,
+        "SELECT s.id, s.name, s.qualified_name, s.kind, s.parent_id, "
+        "f.path as file_path, s.line_start, s.line_end "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.parent_id IN ({ph}) AND s.kind = 'method'",
+        list(model_ids),
+    ):
+        out.setdefault(int(r["parent_id"]), []).append(dict(r))
+    return out
+
+
+def _find_accessor_methods(conn, model_id, model_info, appended_names, *, bulk_methods=_BULK_NOT_FETCHED):
     """Find accessor methods for appended attributes.
 
     For Laravel: get{StudlyName}Attribute methods.
     Returns list of (accessor_symbol_row, appended_name) tuples.
     Handles both parent_id-linked and flat symbol structures.
+
+    When ``bulk_methods`` is provided (the pre-fetched method list for
+    this model from :func:`_bulk_fetch_methods_with_locations`), the
+    per-model SELECTs are skipped. The fallback file-range query stays
+    on the per-model path because it only triggers when parent_id
+    linkage is absent — rare enough that caching it isn't worth the
+    extra plumbing.
     """
     accessors = []
 
-    # Get all methods in this class (try parent_id first, then line range)
-    methods = conn.execute(
-        "SELECT s.id, s.name, s.qualified_name, s.kind, "
-        "f.path as file_path, s.line_start, s.line_end "
-        "FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "WHERE s.parent_id = ? AND s.kind = 'method'",
-        (model_id,),
-    ).fetchall()
+    if bulk_methods is not _BULK_NOT_FETCHED:
+        methods = list(bulk_methods or [])
+    else:
+        # Get all methods in this class (try parent_id first, then line range)
+        methods = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, "
+            "f.path as file_path, s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.parent_id = ? AND s.kind = 'method'",
+            (model_id,),
+        ).fetchall()
 
     if not methods:
         # Fallback: same file, within class line range
@@ -446,28 +583,90 @@ _THIS_ACCESS_SKIP_METHODS = {
 }
 
 
-def _trace_io_via_edges(conn, accessor_id, model_method_names):
-    """Strategy 1: walk outgoing edges from the accessor to look for
-    relationship-defining methods or query-builder methods."""
-    io_chains: list[tuple[str, str]] = []
-    callees = conn.execute(
-        "SELECT t.id, t.name, t.qualified_name, t.kind, "
+def _bulk_fetch_accessor_edge_traces(conn, accessor_ids):
+    """Pre-fetch outgoing edges for a batch of accessor IDs *and* the
+    sub-edge target names of every callee that's a method.
+
+    Replaces the per-accessor 1 + N queries inside
+    :func:`_trace_io_via_edges`. Returns a 2-tuple of dicts:
+
+    * ``callees_by_accessor[int(accessor_id)]`` → list of edge-target row
+      dicts (id, name, qualified_name, kind, file_path, edge_kind).
+    * ``sub_callee_names[int(callee_id)]`` → set of target-symbol names
+      reached from that callee.
+
+    Only the first dict is keyed by accessor; the second is keyed by
+    callee_id because the same callee can be shared across accessors.
+    """
+    from roam.db.connection import batched_in
+
+    callees_by_accessor: dict[int, list[dict]] = {int(aid): [] for aid in accessor_ids}
+    sub_callee_names: dict[int, set[str]] = {}
+    if not accessor_ids:
+        return callees_by_accessor, sub_callee_names
+
+    callee_method_ids: set[int] = set()
+    for r in batched_in(
+        conn,
+        "SELECT e.source_id, t.id, t.name, t.qualified_name, t.kind, "
         "f.path as file_path, e.kind as edge_kind "
-        "FROM edges e "
-        "JOIN symbols t ON e.target_id = t.id "
+        "FROM edges e JOIN symbols t ON e.target_id = t.id "
         "JOIN files f ON t.file_id = f.id "
-        "WHERE e.source_id = ?",
-        (accessor_id,),
-    ).fetchall()
+        "WHERE e.source_id IN ({ph})",
+        list(accessor_ids),
+    ):
+        callees_by_accessor.setdefault(int(r["source_id"]), []).append(dict(r))
+        if r["kind"] == "method":
+            callee_method_ids.add(int(r["id"]))
+
+    if callee_method_ids:
+        for cid in callee_method_ids:
+            sub_callee_names.setdefault(cid, set())
+        for r in batched_in(
+            conn,
+            "SELECT e.source_id, t.name FROM edges e JOIN symbols t ON e.target_id = t.id "
+            "WHERE e.source_id IN ({ph})",
+            list(callee_method_ids),
+        ):
+            sub_callee_names.setdefault(int(r["source_id"]), set()).add(r["name"])
+
+    return callees_by_accessor, sub_callee_names
+
+
+def _trace_io_via_edges(conn, accessor_id, model_method_names, *,
+                        bulk_callees=_BULK_NOT_FETCHED, bulk_sub_names=_BULK_NOT_FETCHED):
+    """Strategy 1: walk outgoing edges from the accessor to look for
+    relationship-defining methods or query-builder methods.
+
+    When ``bulk_callees`` and ``bulk_sub_names`` are provided (from
+    :func:`_bulk_fetch_accessor_edge_traces`), the helper consults
+    in-memory dicts instead of issuing per-accessor queries.
+    """
+    io_chains: list[tuple[str, str]] = []
+    if bulk_callees is _BULK_NOT_FETCHED:
+        callees = conn.execute(
+            "SELECT t.id, t.name, t.qualified_name, t.kind, "
+            "f.path as file_path, e.kind as edge_kind "
+            "FROM edges e "
+            "JOIN symbols t ON e.target_id = t.id "
+            "JOIN files f ON t.file_id = f.id "
+            "WHERE e.source_id = ?",
+            (accessor_id,),
+        ).fetchall()
+    else:
+        callees = bulk_callees or []
 
     for callee in callees:
         name = callee["name"]
         if name in model_method_names and callee["kind"] == "method":
-            sub_callees = conn.execute(
-                "SELECT t.name FROM edges e JOIN symbols t ON e.target_id = t.id WHERE e.source_id = ?",
-                (callee["id"],),
-            ).fetchall()
-            sub_names = {r["name"] for r in sub_callees}
+            if bulk_sub_names is _BULK_NOT_FETCHED:
+                sub_callees = conn.execute(
+                    "SELECT t.name FROM edges e JOIN symbols t ON e.target_id = t.id WHERE e.source_id = ?",
+                    (callee["id"],),
+                ).fetchall()
+                sub_names = {r["name"] for r in sub_callees}
+            else:
+                sub_names = bulk_sub_names.get(int(callee["id"]), set())
             rel_methods = sub_names & _RELATIONSHIP_METHODS
             if rel_methods:
                 io_chains.append((name, f"relationship ({', '.join(rel_methods)})"))
@@ -538,7 +737,8 @@ def _trace_io_via_source(conn, accessor_info, model_methods, model_method_names)
     return io_chains
 
 
-def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
+def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods, *,
+                       bulk_callees=_BULK_NOT_FETCHED, bulk_sub_names=_BULK_NOT_FETCHED):
     """Trace an accessor method to see if it triggers I/O.
 
     Uses two strategies:
@@ -547,9 +747,17 @@ def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
        (needed for PHP where property access doesn't generate edges)
 
     Returns list of (relationship_name, io_type) tuples found.
+
+    ``bulk_callees`` / ``bulk_sub_names`` are forwarded to
+    :func:`_trace_io_via_edges` for batched execution; the source-based
+    fallback only reads the accessor's own file so it doesn't benefit
+    from bulk fetching.
     """
     model_method_names = {m["name"] for m in model_methods}
-    io_chains = _trace_io_via_edges(conn, accessor_id, model_method_names)
+    io_chains = _trace_io_via_edges(
+        conn, accessor_id, model_method_names,
+        bulk_callees=bulk_callees, bulk_sub_names=bulk_sub_names,
+    )
     if not io_chains:
         io_chains = _trace_io_via_source(conn, accessor_info, model_methods, model_method_names)
     return io_chains
@@ -725,23 +933,54 @@ def _extract_with_calls(content: str, model_name: str) -> set[str]:
     return rels
 
 
-def _find_collection_contexts(conn, model_id, model_name):
-    """Check if a model is used in collection/pagination contexts.
+def _bulk_fetch_incoming_refs(conn, model_ids):
+    """Pre-fetch incoming references (edges where target ∈ model_ids).
 
-    Returns list of locations where the model is paginated or collected.
+    Replaces the per-model query in :func:`_find_collection_contexts`.
+    Returns dict ``{model_id: [ref_row_dict, ...]}``.
     """
-    contexts = []
+    from roam.db.connection import batched_in
 
-    # Find references to this model class
-    refs = conn.execute(
-        "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
+    out: dict[int, list[dict]] = {int(mid): [] for mid in model_ids}
+    if not model_ids:
+        return out
+    for r in batched_in(
+        conn,
+        "SELECT e.target_id, s.name, s.qualified_name, s.kind, f.path as file_path, "
         "s.line_start, e.kind as edge_kind "
         "FROM edges e "
         "JOIN symbols s ON e.source_id = s.id "
         "JOIN files f ON s.file_id = f.id "
-        "WHERE e.target_id = ?",
-        (model_id,),
-    ).fetchall()
+        "WHERE e.target_id IN ({ph})",
+        list(model_ids),
+    ):
+        out.setdefault(int(r["target_id"]), []).append(dict(r))
+    return out
+
+
+def _find_collection_contexts(conn, model_id, model_name, *, bulk_refs=_BULK_NOT_FETCHED):
+    """Check if a model is used in collection/pagination contexts.
+
+    Returns list of locations where the model is paginated or collected.
+    When ``bulk_refs`` is provided (the pre-fetched incoming-ref list
+    for this model from :func:`_bulk_fetch_incoming_refs`), the
+    per-model query is skipped.
+    """
+    contexts = []
+
+    if bulk_refs is _BULK_NOT_FETCHED:
+        # Find references to this model class
+        refs = conn.execute(
+            "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
+            "s.line_start, e.kind as edge_kind "
+            "FROM edges e "
+            "JOIN symbols s ON e.source_id = s.id "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE e.target_id = ?",
+            (model_id,),
+        ).fetchall()
+    else:
+        refs = bulk_refs or []
 
     for ref in refs:
         path_lower = ref["file_path"].replace("\\", "/").lower()
@@ -792,23 +1031,22 @@ def analyze_n1(conn, confidence_filter=None):
     if not models:
         return findings, framework
 
-    # Pre-loop bulk fetch: get every method whose parent is one of the
-    # model symbols we're about to iterate. The previous per-model query
-    # made this an N+1 (1 query per model, flagged by `roam math` running
-    # against this file). Batched IN-clause turns N model queries into
-    # one. The file-range fallback below stays per-model since it's
-    # rarely-triggered (only when a model lacks parent_id-linked methods).
-    from roam.db.connection import batched_in
-
+    # Pre-loop bulk fetches collapse what used to be ~5 N+1 sites (one
+    # per helper × N models) into a constant number of batched_in
+    # queries. Each helper accepts the pre-fetched data through a
+    # keyword arg (``bulk_*``) and falls back to its per-model query
+    # when called ad-hoc by other code paths.
     model_ids = list(models.keys())
-    method_rows = batched_in(
-        conn,
-        "SELECT s.id, s.name, s.kind, s.parent_id FROM symbols s WHERE s.parent_id IN ({ph}) AND s.kind = 'method'",
-        model_ids,
-    )
-    methods_by_model: dict[int, list] = {}
-    for row in method_rows:
-        methods_by_model.setdefault(int(row["parent_id"]), []).append(row)
+
+    # methods (with full location columns — needed by _find_accessor_methods
+    # AND for the lighter ``model_method_names`` lookup below)
+    methods_by_model = _bulk_fetch_methods_with_locations(conn, model_ids)
+
+    # $appends symbols (replaces _find_appends_properties N+1)
+    appends_by_model = _bulk_fetch_appends_symbols(conn, model_ids, models)
+
+    # incoming refs to each model (replaces _find_collection_contexts N+1)
+    incoming_refs_by_model = _bulk_fetch_incoming_refs(conn, model_ids)
 
     # Pre-loop file-cache: ``_find_eager_loads`` reads every Laravel
     # controller (*.php with ``Controller`` in the path) per model.
@@ -816,17 +1054,18 @@ def analyze_n1(conn, confidence_filter=None):
     # Build the cache once here; per-model lookups become dict scans.
     controller_cache = _build_controller_cache(conn)
 
+    # First pass: filter to (model_id, model_info, accessors, model_methods)
+    # tuples we'll actually trace. We need this to know all accessor IDs
+    # before bulk-fetching their outgoing edges.
+    candidates: list[tuple[int, dict, list, list]] = []
     for model_id, model_info in models.items():
         if _is_test_path(model_info["file_path"]):
             continue
 
-        model_name = model_info["name"]
-
         # Get all methods on this model (for relationship detection).
-        # Lookup pre-fetched results first; fall back to file-range
-        # match for models without parent_id-linked methods.
         model_methods = methods_by_model.get(model_id, [])
         if not model_methods:
+            # File-range fallback for models without parent_id-linked methods.
             model_methods = conn.execute(
                 "SELECT s.id, s.name, s.kind FROM symbols s "
                 "WHERE s.file_id = ? AND s.kind = 'method' "
@@ -839,25 +1078,49 @@ def analyze_n1(conn, confidence_filter=None):
                 ),
             ).fetchall()
 
-        # Step 1: Find $appends / virtual properties
-        appended = _find_appends_properties(conn, model_id, model_info)
+        # Step 1: Find $appends / virtual properties (uses bulk-fetched row)
+        appended = _find_appends_properties(
+            conn, model_id, model_info,
+            bulk_appends_sym=appends_by_model.get(model_id),
+        )
         if not appended:
             continue
 
-        # Step 2: Find accessor methods for each appended attribute
-        accessors = _find_accessor_methods(conn, model_id, model_info, appended)
+        # Step 2: Find accessor methods (uses bulk-fetched methods)
+        accessors = _find_accessor_methods(
+            conn, model_id, model_info, appended,
+            bulk_methods=methods_by_model.get(model_id),
+        )
         if not accessors:
             continue
+
+        candidates.append((model_id, model_info, accessors, model_methods))
+
+    # Second pre-fetch: now that we know every accessor we'll trace,
+    # bulk-fetch their outgoing edges + sub-edges in two batched_in calls.
+    accessor_ids = [a[0]["id"] for _, _, accs, _ in candidates for a in accs]
+    callees_by_accessor, sub_callee_names = _bulk_fetch_accessor_edge_traces(conn, accessor_ids)
+
+    for model_id, model_info, accessors, model_methods in candidates:
+        model_name = model_info["name"]
 
         # Step 3: Find what's already eager loaded
         eager_loaded = _find_eager_loads(conn, model_name, controller_cache=controller_cache)
 
-        # Step 4: Find collection contexts
-        collection_ctxs = _find_collection_contexts(conn, model_id, model_name)
+        # Step 4: Find collection contexts (uses bulk-fetched refs)
+        collection_ctxs = _find_collection_contexts(
+            conn, model_id, model_name,
+            bulk_refs=incoming_refs_by_model.get(model_id),
+        )
 
-        # Step 5: For each accessor, trace I/O chains
+        # Step 5: For each accessor, trace I/O chains (uses bulk edge maps)
         for accessor_info, attr_name in accessors:
-            io_chains = _trace_accessor_io(conn, accessor_info["id"], accessor_info, model_methods)
+            aid = int(accessor_info["id"])
+            io_chains = _trace_accessor_io(
+                conn, aid, accessor_info, model_methods,
+                bulk_callees=callees_by_accessor.get(aid, []),
+                bulk_sub_names=sub_callee_names,
+            )
 
             if not io_chains:
                 continue

@@ -108,11 +108,15 @@ jobs:
 
   # -- Mode 2: keyless OIDC signing -----------------------------------------
   # Uses GitHub's OIDC token + Fulcio + Rekor. This is the real Sigstore
-  # path — exercises code that the unit tests mock. Allowed to fail (Rekor
-  # outages should not break the build) but logs the failure mode.
+  # path — exercises code that the unit tests mock. We trust the check:
+  # if Sigstore is reachable, a fresh sign+verify must succeed; if it
+  # isn't, the job fails loudly and we fix it. Hiding flakes behind
+  # ``continue-on-error`` masks real regressions in our own emit/verify
+  # code path. The offline-key job (above) is the deterministic gate
+  # that always runs without network — this one is the production-path
+  # smoke. If Sigstore has an outage, re-run the job after they recover.
   keyless-oidc:
     runs-on: ubuntu-latest
-    continue-on-error: true   # Sigstore network — soft gate
     steps:
       - uses: actions/checkout@v4
         with:

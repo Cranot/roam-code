@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Performance
 
 - **N+1 fixes (4 sites).** `_find_colocated_tests` (3 nested N+1 → 1 bulk fetch), `_print_mega_detail` (per-cluster → batched `IN`), `_against_mode` (per-fid co-change query → batched), `_find_eager_loads` (controller-file cache, 5-10× speedup on Laravel `roam n1`).
+- **N+1 fixes — `roam n1` deep pass (4 more sites).** `_find_appends_properties`, `_find_accessor_methods`, `_trace_io_via_edges`, `_find_collection_contexts` now drive off pre-loop `batched_in` fetches in `analyze_n1` instead of running 1-3 queries per model. `tests/test_n1_fixes.py::test_analyze_n1_appends_collection_edges_constant_query_count` pins constant-query behaviour from 1 to 50 models. Old per-loop overhead on a 100-model app: ~5 × 100 = 500 queries; now: 4-6 batched queries total.
+- **Inline phase progress on `roam index`.** Adds `[1/7]` … `[7/7]` markers before each pipeline phase (parse → resolve → graph metrics → git → effects/taint → health → search). First-time users now see what's happening instead of staring at a single progress bar.
 - **Skip git-history pass when HEAD unchanged.** Saves 1-10s per warm `roam index` on big-history repos. Manifest's recorded HEAD compared against live `git rev-parse HEAD`.
 - **SQLite pragmas tuned.** `mmap_size=1GB` (was 256MB), `wal_autocheckpoint=10000` (was 1000), `PRAGMA optimize` on commit. Closes p50 query-latency drift after heavy index loads.
 - **FTS5 schema gains `docstring` column.** `roam retrieve` and `roam search-semantic` now match against natural-language docstrings — previously the FTS5 BM25 path was blind to docstring text. Schema migration drops + recreates the table on first run after upgrade; build_fts_index repopulates. BM25 weight 4 (between qualified_name=5 and signature=2).
@@ -59,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Hash-pinned `mcp-server-card.json`.** New `tests/test_mcp_server_card_hash.py` fails CI on unintended drift — the agent-surface card is a real attack vector if tampered.
 - **CSP `Reporting-Endpoints` + `report-to`** wired in `_headers`. Endpoint at `/csp-report` is provisional (CF Pages will 404 until a worker is wired up) but the directive is in place.
 - **`dev/pin_github_actions.sh`** — one-shot script to pin every workflow action to a commit SHA via `gh api`. Defers actual pinning to a session with network; Dependabot's existing `github-actions` schedule maintains the pins thereafter.
+- **Keyless OIDC verification no longer hides under `continue-on-error`.** The `cga-attestation.yml` keyless-oidc job now fails loud if the production-path emit/verify breaks. Sigstore outages are real but rare; masking flakes there hid regressions in our own emit/verify code path. The offline-key job remains the deterministic gate that runs without network.
+- **CycloneDX SBOM generation in `publish.yml`.** Each PyPI release now ships an `sbom/roam-code-<version>.cdx.json` artifact built against a fresh venv with the just-built wheel installed (resolves to the *runtime* dependency closure, not the CI build env). Audit-trail product needs verifiable bills-of-materials; this is the foundation.
 
 ### Architecture substrate
 

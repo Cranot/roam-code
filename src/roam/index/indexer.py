@@ -1135,7 +1135,9 @@ class Indexer:
             file_id_by_path[row["path"]] = row["id"]
 
     def _resolve_and_store_edges(self, conn, all_references, all_symbol_rows, file_id_by_path) -> None:
-        self._log("Resolving references...")
+        # Phase header is emitted by ``_do_run`` via ``_begin_phase``; the
+        # per-method log only emits result counts now to avoid duplicate
+        # "Resolving references..." lines under inline-progress mode.
         symbols_by_name: dict[str, list[dict]] = {}
         for sym in all_symbol_rows.values():
             symbols_by_name.setdefault(sym["name"], []).append(sym)
@@ -1168,7 +1170,7 @@ class Indexer:
             self._log("Skipping graph metrics (module not available)")
             return G, _detect_clusters, _label_clusters, _store_clusters
 
-        self._log("Computing graph metrics...")
+        # Phase header emitted by _begin_phase in _do_run.
         try:
             G = build_symbol_graph(conn)
             _store_metrics(conn, G)
@@ -1241,7 +1243,7 @@ class Indexer:
             self._record_step("git_analysis", "skipped:module_missing")
             return
 
-        self._log("Analyzing git history...")
+        # Phase header emitted by _begin_phase in _do_run.
         try:
             analyze_git(conn, self.root)
             self._record_step("git_analysis", "ok")
@@ -1272,7 +1274,7 @@ class Indexer:
             self._record_step("effect_analysis", "skipped:module_missing")
             return
 
-        self._log("Classifying symbol effects...")
+        # Phase header emitted by _begin_phase in _do_run (effects + taint share phase 5).
         try:
             effects_fn(conn, self.root, G)
             effect_count = conn.execute("SELECT COUNT(*) FROM symbol_effects").fetchone()[0]
@@ -1289,7 +1291,7 @@ class Indexer:
             self._record_step("taint_analysis", "skipped:module_missing")
             return
 
-        self._log("Computing taint summaries...")
+        # Phase header emitted by _begin_phase in _do_run (effects + taint share phase 5).
         try:
             taint_fn(conn, self.root, G)
             taint_count = conn.execute("SELECT COUNT(*) FROM taint_findings").fetchone()[0]
@@ -1333,7 +1335,7 @@ class Indexer:
                 pass
 
     def _build_search_indexes(self, conn) -> None:
-        self._log("Building search index...")
+        # Phase header emitted by _begin_phase in _do_run.
         try:
             from roam.search.index_embeddings import build_fts_index, fts5_available
 
@@ -1421,6 +1423,22 @@ class Indexer:
             "up_to_date": False,
         }
 
+    # User-facing phase numbering for the inline progress log (G13).
+    # Kept in sync with the order of calls in ``_do_run`` below. The
+    # number is a hint for the user, not a contract — when phases
+    # split or merge, bump _PHASE_COUNT and update the calls below.
+    _PHASE_COUNT = 7
+
+    def _begin_phase(self, n: int, label: str) -> None:
+        """Emit a ``[n/N] label...`` line before the next pipeline step.
+
+        Skipped under ``--quiet``. Calls go to stderr (the same
+        channel as the click progressbar) so they interleave cleanly
+        in CI logs and don't pollute stdout JSON output.
+        """
+        if not self._quiet:
+            self._log(f"  [{n}/{self._PHASE_COUNT}] {label}")
+
     def _do_run(self, force: bool, verbose: bool = False, include_excluded: bool = False):
         t0 = time.monotonic()
         self._log("Discovering files...")
@@ -1468,6 +1486,7 @@ class Indexer:
 
             # 3-6. Parse, extract, store
             files_to_process = added + modified
+            self._begin_phase(1, f"Parsing & extracting symbols ({len(files_to_process)} files)...")
             all_symbol_rows, all_references, file_id_by_path = self._process_files(
                 conn,
                 files_to_process,
@@ -1493,17 +1512,23 @@ class Indexer:
                     verbose,
                 )
 
+            self._begin_phase(2, "Resolving references...")
             self._resolve_and_store_edges(conn, all_references, all_symbol_rows, file_id_by_path)
             self._run_django_post_resolver(conn)
             self._run_pytest_fixture_resolver(conn)
             self._run_registry_dispatch_resolver(conn)
+            self._begin_phase(3, "Computing graph metrics...")
             G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn)
+            self._begin_phase(4, "Analyzing git history...")
             self._run_git_analysis(conn)
             self._run_clustering(conn, G, detect_clusters, label_clusters, store_clusters)
+            self._begin_phase(5, "Computing effects & taint flow...")
             self._run_effect_analysis(conn, G)
             self._run_taint_analysis(conn, G)
+            self._begin_phase(6, "Computing health & cognitive load...")
             self._compute_health_and_load(conn, G)
             self._restore_or_relink_annotations(conn, force, saved_annotations)
+            self._begin_phase(7, "Building search indexes...")
             self._build_search_indexes(conn)
             self._log_parse_issues()
             self._set_completion_summary(conn, time.monotonic() - t0)
