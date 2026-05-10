@@ -107,3 +107,6 @@ dev/sample-audit-report.pdf
 dev/roam-self-audit-test.md
 dev/test-*.diff
 dev/test-rules*.yml
+
+# Recheck-agent scratch dirs
+.audit-tmp/
