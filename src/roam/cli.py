@@ -482,6 +482,7 @@ _CATEGORIES = {
         "doc-staleness",
         "docs-coverage",
         "stale-refs",
+        "lsp",
         "suggest-refactoring",
         "plan-refactor",
         "conventions",
@@ -704,16 +705,17 @@ class LazyGroup(click.Group):
             ctx.exit(EXIT_ERROR)
 
     def format_help(self, ctx, formatter):
-        """Categorized help display instead of flat alphabetical list. / 12.13 — performance: previously this method called
-        ``self.get_command()`` for each priority-category command,
-        which triggered ``importlib.import_module()`` on every cmd_*.py
-        in the priority list. That added ~3.5 seconds of Python
-        imports just to render the help banner. We now extract the
-        short-help via AST without importing — reading the source
-        file's first docstring is fast (sub-100ms for the whole
-        priority set) and produces the identical output. Falls back
-        to a live import only when AST extraction can't find the
-        docstring.
+        """Short "Start here" panel — the 5 verbs + init/doctor/ask.
+
+        The default ``roam --help`` was a 154-line flat dump that buried
+        the 5-verb mental model (the buyable narrative) under 38
+        "Getting Started" entries and a 73-name "More Commands" list.
+        First impression on a new install was "this is a lot of
+        commands" rather than "this is a clear 5-step workflow".
+
+        This panel surfaces only what a new user needs to start. Power
+        users use ``roam --help-all`` for the full categorised view, or
+        ``roam <command> --help`` for any specific command.
         """
         _ensure_plugin_commands_loaded()
         self.format_usage(ctx, formatter)
@@ -721,31 +723,31 @@ class LazyGroup(click.Group):
         if self.help:
             formatter.write(self.help + "\n\n")
 
-        # Show categorized commands (first 4 categories = ~20 commands)
-        shown = set()
-        priority_cats = ["Getting Started", "Daily Workflow", "Codebase Health", "Architecture"]
-        for cat_name in priority_cats:
-            cmds = _CATEGORIES.get(cat_name, [])
-            valid_cmds = [c for c in cmds if c in _COMMANDS and c not in shown]
-            if not valid_cmds:
-                continue
-            formatter.write(f"  {cat_name}:\n")
-            for cmd_name in valid_cmds:
-                help_text = _short_help_via_ast(cmd_name)
-                if help_text is None:
-                    cmd = self.get_command(ctx, cmd_name)
-                    help_text = cmd.get_short_help_str(limit=60) if cmd else ""
-                formatter.write(f"    {cmd_name:20s} {help_text}\n")
-                shown.add(cmd_name)
-            formatter.write("\n")
+        formatter.write("Start here — the 5 verbs cover ~80% of agent workflows:\n\n")
+        starter = [
+            ("roam init", "initialize this repo (one-time)"),
+            ("roam understand", "what is this codebase? (briefing)"),
+            ("roam context <symbol>", "files + lines to read before editing"),
+            ("roam preflight <symbol>", "what breaks if I change this?"),
+            ("git diff | roam critique", "review my patch before merge"),
+            ('roam ask "<question>"', "free-form intent — 24 recipes"),
+        ]
+        for cmd, blurb in starter:
+            formatter.write(f"  {cmd:30s} {blurb}\n")
 
-        remaining = sorted(c for c in _COMMANDS if c not in shown)
-        if remaining:
-            formatter.write(f"  More Commands ({len(remaining)}):\n")
-            formatter.write(f"    {', '.join(remaining)}\n\n")
+        formatter.write("\nCommon next steps:\n\n")
+        common = [
+            ("roam doctor", "diagnose your install (17 checks)"),
+            ("roam tour", "5-minute guided walkthrough"),
+            ("roam mcp-setup <editor>", "wire roam into your AI agent"),
+            ("roam --help-all", f"every command ({len(_COMMANDS)} total)"),
+        ]
+        for cmd, blurb in common:
+            formatter.write(f"  {cmd:30s} {blurb}\n")
 
-        formatter.write("  Run `roam <command> --help` for details on any command.\n")
-        # V6 — persist any newly-cached short-help entries.
+        formatter.write("\nDocs: https://roam-code.com/docs   ·   roam exit-codes for CI integration\n")
+        # V6 — persist any newly-cached short-help entries (kept for any
+        # call paths that still hit the AST extractor).
         _save_short_help_cache_if_dirty()
 
 

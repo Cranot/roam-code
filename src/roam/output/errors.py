@@ -32,6 +32,7 @@ FILE_NOT_FOUND = "FILE_NOT_FOUND"
 WORKSPACE_NOT_CONFIGURED = "WORKSPACE_NOT_CONFIGURED"
 RATE_LIMITED = "RATE_LIMITED"
 RUN_FAILED = "RUN_FAILED"
+DIRTY_TREE = "DIRTY_TREE"
 
 # Set of all defined codes — used by tests to enforce the prefix contract.
 ALL_CODES = frozenset(
@@ -52,6 +53,7 @@ ALL_CODES = frozenset(
         WORKSPACE_NOT_CONFIGURED,
         RATE_LIMITED,
         RUN_FAILED,
+        DIRTY_TREE,
     }
 )
 

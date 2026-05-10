@@ -478,37 +478,73 @@ class TestDoctorSQLiteCheck:
 
 
 class TestDoctorExitCodes:
+    """Three-tier exit codes: 0 = all clean, 1 = only advisory failures
+    (cache age, cloud-sync, optional extras), 2 = blocking failures.
+    ``--strict`` promotes advisory to blocking.
+    """
+
     def test_exit_0_when_all_pass(self):
-        """When all checks pass, exit code must be 0."""
+        """When no checks fail (no FAIL or WARN), exit code is 0."""
         runner = CliRunner()
         result = runner.invoke(cli, ["doctor"], catch_exceptions=False)
-        # This may fail if environment is missing something; we only test
-        # that exit code 0 occurs when no failures are reported
-        if "[FAIL]" not in result.output:
+        # Only assert the contract when the live env happens to be clean.
+        if "[FAIL]" not in result.output and "[WARN]" not in result.output:
             assert result.exit_code == 0
 
-    def test_exit_1_when_check_fails(self, tmp_path):
-        """When a check fails, exit code must be 1."""
-
+    def test_exit_2_when_blocking_check_fails(self, tmp_path):
+        """git executable missing is a BLOCKING failure → exit 2."""
         runner = CliRunner()
-        # Force a failure by making git unavailable
         with patch("shutil.which", return_value=None):
             result = runner.invoke(cli, ["doctor"], catch_exceptions=False)
-        assert result.exit_code == 1
+        assert result.exit_code == 2, f"git missing should exit 2 (blocking), got {result.exit_code}"
 
-    def test_json_exit_1_when_check_fails(self):
+    def test_strict_promotes_advisory_to_blocking(self):
+        """--strict makes any failure (advisory or blocking) exit 2."""
+        runner = CliRunner()
+        # Run with --strict on the live repo. If there's any advisory
+        # failure (cloud-sync on OneDrive, stale manifest), --strict
+        # should promote it. We can only assert the exit code maps
+        # consistently with the failure presence.
+        result = runner.invoke(cli, ["doctor", "--strict"], catch_exceptions=False)
+        if "[WARN]" in result.output or "[FAIL]" in result.output:
+            assert result.exit_code == 2
+        else:
+            assert result.exit_code == 0
+
+    def test_json_exit_2_when_blocking_check_fails(self):
         runner = CliRunner()
         with patch("shutil.which", return_value=None):
             result = runner.invoke(cli, ["--json", "doctor"], catch_exceptions=False)
-        assert result.exit_code == 1
+        assert result.exit_code == 2
 
     def test_json_exit_0_when_all_pass(self):
-        """JSON mode still exits 0 when all checks pass."""
+        """JSON mode exits 0 when all checks pass (no advisory or blocking)."""
         runner = CliRunner()
         result = runner.invoke(cli, ["--json", "doctor"], catch_exceptions=False)
         if result.exit_code == 0:
             data = json.loads(result.output)
             assert data["summary"]["all_passed"] is True
+            assert data["summary"]["advisory_failed"] == 0
+            assert data["summary"]["blocking_failed"] == 0
+
+    def test_json_envelope_carries_severity_split(self):
+        """JSON envelope must surface the advisory/blocking split so
+        CI tooling can branch on severity without parsing text.
+        """
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--json", "doctor"], catch_exceptions=False)
+        data = json.loads(result.output)
+        summary = data["summary"]
+        # New fields the three-tier exit code introduces.
+        assert "advisory_failed" in summary
+        assert "blocking_failed" in summary
+        assert "issue_line" in summary
+        # advisory_failed + blocking_failed must equal failed total.
+        assert summary["advisory_failed"] + summary["blocking_failed"] == summary["failed"]
+        # And the issue-template-ready single-line summary is present.
+        assert "Roam" in summary["issue_line"]
+        assert "Python" in summary["issue_line"]
+        assert "checks pass" in summary["issue_line"]
 
 
 # ---------------------------------------------------------------------------
@@ -518,16 +554,23 @@ class TestDoctorExitCodes:
 
 class TestDoctorVerdictFormat:
     def test_verdict_all_passed(self):
+        """When neither blocking [FAIL] nor advisory [WARN] entries appear,
+        the verdict must surface the all-passed message.
+        """
         runner = CliRunner()
         result = runner.invoke(cli, ["doctor"], catch_exceptions=False)
-        if "[FAIL]" not in result.output:
+        if "[FAIL]" not in result.output and "[WARN]" not in result.output:
             assert "all" in result.output and "passed" in result.output
 
     def test_verdict_one_failed(self):
+        """A blocking-check failure surfaces failure language —
+        either ``[FAIL]`` line or ``failed`` / ``blocking`` in verdict.
+        """
         runner = CliRunner()
         with patch("shutil.which", return_value=None):
             result = runner.invoke(cli, ["doctor"], catch_exceptions=False)
-        assert "failed" in result.output.lower()
+        out = result.output.lower()
+        assert "[fail]" in out or "blocking" in out or "failed" in out
 
     def test_json_all_passed_flag(self):
         runner = CliRunner()
@@ -590,3 +633,97 @@ class TestDoctorFailedChecksField:
         for check in data.get("checks", []):
             for key in check:
                 assert not key.startswith("_"), f"Private key '{key}' leaked into output"
+
+
+# ---------------------------------------------------------------------------
+# Index manifest check
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorIndexManifestCheck:
+    """The doctor reads the most recent index_manifest row, builds a
+    "what's true now" manifest, and surfaces drift fields as hints. Closes
+    the loop on the just-shipped manifest table.
+    """
+
+    def test_manifest_check_present(self):
+        result, data = invoke_doctor_json()
+        names = {c["name"] for c in data["checks"]}
+        assert "Index manifest" in names
+
+    def test_manifest_check_skips_when_no_db(self):
+        from roam.commands.cmd_doctor import _check_index_manifest
+
+        with patch("roam.db.connection.db_exists", return_value=False):
+            check = _check_index_manifest()
+        assert check["passed"] is True
+        assert "no index" in check["detail"].lower()
+
+    def test_manifest_drift_dirty_hash_hint(self, tmp_path):
+        """When the recorded manifest claims a clean tree but the live
+        tree is dirty (or vice versa), the check surfaces an INFO hint
+        pointing at the drift.
+        """
+        from roam.commands.cmd_doctor import _check_index_manifest
+
+        # Build two manifests that differ only in git_dirty_hash.
+        prev = {
+            "indexed_at": int(time.time()),
+            "roam_version": "test",
+            "schema_version": 12,
+            "parser_versions": {},
+            "grammar_versions": None,
+            "config_hash": "h1",
+            "git_head": "abc123",
+            "git_dirty_hash": None,  # clean at index time
+            "enabled_extras": [],
+            "index_profile": "all",
+        }
+        current = dict(prev)
+        current["git_dirty_hash"] = "deadbeef" * 8  # dirty now
+
+        with (
+            patch("roam.db.connection.db_exists", return_value=True),
+            patch("roam.index.manifest.latest_manifest", return_value=prev),
+            patch("roam.index.manifest.collect_manifest", return_value=current),
+            patch("roam.db.connection.find_project_root", return_value=tmp_path),
+            patch("roam.db.connection.open_db") as mock_open,
+        ):
+            # open_db is a context manager; just need it to not raise.
+            mock_open.return_value.__enter__.return_value = None
+            mock_open.return_value.__exit__.return_value = False
+            check = _check_index_manifest()
+        # git_dirty_hash drift is an INFO-level hint, not a blocker.
+        assert "uncommitted" in check["detail"].lower() or "dirty" in check["detail"].lower()
+
+    def test_manifest_drift_config_hash_warns(self, tmp_path):
+        """Config / .roamignore changes since index → WARN + check fails."""
+        from roam.commands.cmd_doctor import _check_index_manifest
+
+        prev = {
+            "indexed_at": int(time.time()),
+            "roam_version": "test",
+            "schema_version": 12,
+            "parser_versions": {},
+            "grammar_versions": None,
+            "config_hash": "h1",
+            "git_head": None,
+            "git_dirty_hash": None,
+            "enabled_extras": [],
+            "index_profile": "all",
+        }
+        current = dict(prev)
+        current["config_hash"] = "h2"  # config changed
+
+        with (
+            patch("roam.db.connection.db_exists", return_value=True),
+            patch("roam.index.manifest.latest_manifest", return_value=prev),
+            patch("roam.index.manifest.collect_manifest", return_value=current),
+            patch("roam.db.connection.find_project_root", return_value=tmp_path),
+            patch("roam.db.connection.open_db") as mock_open,
+        ):
+            mock_open.return_value.__enter__.return_value = None
+            mock_open.return_value.__exit__.return_value = False
+            check = _check_index_manifest()
+        assert check["passed"] is False
+        assert "config" in check["detail"].lower()

@@ -126,6 +126,10 @@ _CORE_TOOLS = {
     "roam_audit_trail_conformance_check",
     "roam_rules_validate",
     "roam_dogfood",
+    # v12.51 — free-form intent dispatcher (replaces Grep+Read fallback)
+    "roam_ask",
+    # v12.51 — local-only tool-usage telemetry (introspection)
+    "roam_session_metrics",
 }
 
 _PRESETS: dict[str, set[str]] = {
@@ -799,7 +803,13 @@ def _tool_annotations(name: str) -> dict:
     return annotations
 
 
-def _tool(name: str, description: str = "", output_schema: dict | None = None):
+def _tool(
+    name: str,
+    description: str = "",
+    output_schema: dict | None = None,
+    *,
+    version: str = "1.0.0",
+):
     """Register an MCP tool if it belongs to the active preset.
 
     Automatically sets ``deferLoading`` in MCP tool annotations:
@@ -808,6 +818,12 @@ def _tool(name: str, description: str = "", output_schema: dict | None = None):
 
     This enables Claude Code's Tool Search feature to achieve ~85% context
     reduction by only loading non-core tool descriptions when needed.
+
+    Per audit A7 / R8: every registered tool carries a ``version`` string
+    (semver). When a tool's input/output schema changes — meaning agents
+    holding cached schemas may misbehave — bump the version. ``roam_catalog``
+    surfaces the current version so agents can detect and refresh stale
+    schema caches without re-enumerating the whole surface.
     """
 
     def decorator(fn):
@@ -855,6 +871,10 @@ def _tool(name: str, description: str = "", output_schema: dict | None = None):
             "core": name in _CORE_TOOLS,
             "read_only": name not in _NON_READ_ONLY_TOOLS,
             "destructive": name in _DESTRUCTIVE_TOOLS,
+            # Version stamp — agents can compare against a cached value
+            # to detect schema drift without re-enumerating tools.
+            # Bump when the input or output schema for ``name`` changes.
+            "version": version,
         }
         kwargs: dict = {"name": name, "title": _tool_title(name)}
         if description:
@@ -1139,6 +1159,66 @@ def _index_mtime() -> float:
     return 0.0
 
 
+# Tool names whose response should NOT be decorated with the stale-index
+# banner — running these is the recovery path, so saying "INDEX STALE"
+# in the response would be both noisy and confusing.
+_STALE_BANNER_SKIP = frozenset({"index", "init", "reindex", "doctor", "watch"})
+
+_STALE_CHECK_CACHE: dict[str, tuple[float, bool, str | None]] = {}
+_STALE_CHECK_TTL_S = 30.0
+
+
+def _check_stale_with_cache() -> tuple[bool, str | None]:
+    """Cached wrapper around ``stale_index.check_stale`` for the MCP path.
+
+    Per audit E5: every read-only MCP tool should surface a stale-index
+    affordance — the agent shouldn't search a renamed symbol, get
+    nothing, and conclude the symbol doesn't exist. The full check
+    stats the DB and reads the manifest, so we cache for 30 seconds
+    to keep batch tool calls fast.
+    """
+    now = _time.time()
+    cached = _STALE_CHECK_CACHE.get("default")
+    if cached is not None:
+        ts, is_stale, reason = cached
+        if (now - ts) < _STALE_CHECK_TTL_S:
+            return is_stale, reason
+    try:
+        from roam.commands.stale_index import check_stale
+
+        is_stale, reason = check_stale(sensitivity="medium")
+    except Exception:
+        is_stale, reason = False, None
+    _STALE_CHECK_CACHE["default"] = (now, is_stale, reason)
+    return is_stale, reason
+
+
+def _annotate_stale(result: dict, command: str) -> dict:
+    """If the index is stale and *command* isn't a recovery tool,
+    prepend a banner to the verdict and stamp ``_meta.stale_index``.
+    """
+    if command in _STALE_BANNER_SKIP:
+        return result
+    if not isinstance(result, dict):
+        return result
+    is_stale, reason = _check_stale_with_cache()
+    if not is_stale:
+        return result
+
+    summary = result.get("summary")
+    if isinstance(summary, dict):
+        verdict = summary.get("verdict") or ""
+        banner = "INDEX STALE — call roam_reindex first."
+        if banner not in verdict:
+            summary["verdict"] = f"{banner} {verdict}".strip()
+    meta = dict(result.get("_meta") or {})
+    meta["stale_index"] = True
+    if reason:
+        meta["stale_reason"] = reason
+    result["_meta"] = meta
+    return result
+
+
 def _run_roam(args: list[str], root: str = ".") -> dict:
     """Run a roam CLI command with ``--json`` and return parsed output.
 
@@ -1149,9 +1229,14 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
     (TTL keyed on the index DB's mtime so any reindex invalidates the
     cache automatically). Same call within the window returns the
     same envelope without re-running the command.
+
+    v12.51: post-process responses with a stale-index banner so agents
+    don't search a renamed symbol, get nothing, and conclude the
+    symbol doesn't exist (audit E5).
     """
     if root != ".":
-        return _run_roam_subprocess(args, root)
+        result = _run_roam_subprocess(args, root)
+        return _annotate_stale(result, args[0] if args else "")
 
     # Cache lookup — only for read-only commands.
     if args and args[0] in _CACHEABLE_COMMANDS:
@@ -1169,12 +1254,13 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
                     meta = dict(out.get("_meta") or {})
                     meta["cache_hit"] = True
                     out["_meta"] = meta
-                    return out
+                    return _annotate_stale(out, args[0])
         result = _run_roam_inprocess(args)
         if isinstance(result, dict) and "error" not in result:
             _ROAM_RESULT_CACHE[cache_key] = (_time.time(), _index_mtime(), result)
-        return result
-    return _run_roam_inprocess(args)
+        return _annotate_stale(result, args[0] if args else "")
+    result = _run_roam_inprocess(args)
+    return _annotate_stale(result, args[0] if args else "")
 
 
 def _run_roam_inprocess(args: list[str]) -> dict:
@@ -1396,16 +1482,48 @@ def _coerce_yes_no(value) -> bool | None:
     return None
 
 
+def _default_summarize_enabled() -> bool:
+    """Default value for compound-tool ``summarize`` parameter.
+
+    Audit E6: when ``ROAM_AI_ENABLED=1`` is set the user has explicitly
+    consented to sampling, so the bigger compound tools
+    (``roam_explore`` / ``roam_understand`` / ``roam_health``) should
+    default to compressed responses — that's the 50:1 context budget
+    win the audit flagged. Without the env var, default stays False so
+    no payload leaves the local process.
+
+    The ``compliance`` preset is excluded — audit-trail evidence must
+    be deterministic, and sampled prose isn't.
+
+    ``ROAM_AI_DISABLED=1`` is the explicit opt-out for users who set
+    ROAM_AI_ENABLED globally but want a specific call uncompressed.
+    """
+    if os.environ.get("ROAM_AI_DISABLED", "").strip().lower() in {"1", "true", "yes"}:
+        return False
+    if os.environ.get("ROAM_AI_ENABLED", "").strip().lower() not in {"1", "true", "yes"}:
+        return False
+    if _ACTIVE_PRESET == "compliance":
+        return False
+    return True
+
+
 async def _maybe_summarize(
     result: dict,
     *,
     ctx: _Context | None,
-    summarize: bool,
+    summarize: bool | None,
     task: str = "",
     target: str = "",
 ) -> dict:
-    """Apply MCP sampling-driven compression when requested + supported."""
-    if not summarize or _mcp_sampling is None or ctx is None:
+    """Apply MCP sampling-driven compression when requested + supported.
+
+    ``summarize=None`` (the default for compound tools) resolves via
+    :func:`_default_summarize_enabled` so users with ``ROAM_AI_ENABLED=1``
+    set get compressed responses by default. Pass ``True`` / ``False``
+    explicitly to override.
+    """
+    effective = summarize if summarize is not None else _default_summarize_enabled()
+    if not effective or _mcp_sampling is None or ctx is None:
         return result
     if not isinstance(result, dict):
         return result
@@ -1619,7 +1737,7 @@ async def explore(
     budget: int = 0,
     session_hint: str = "",
     recent_symbols: str = "",
-    summarize: bool = False,
+    summarize: bool | None = None,
     root: str = ".",
     ctx: _Context | None = None,
 ) -> dict:
@@ -2309,7 +2427,7 @@ async def roam_reindex(
 )
 async def understand(
     root: str = ".",
-    summarize: bool = False,
+    summarize: bool | None = None,
     ctx: _Context | None = None,
 ) -> dict:
     """Get a full codebase briefing in a single call.
@@ -2351,13 +2469,71 @@ def onboard(detail: str = "normal", root: str = ".") -> dict:
 
 
 @_tool(
+    name="roam_ask",
+    description=(
+        "Free-form intent dispatcher: maps a natural-language question "
+        '("is it safe to delete X", "where does login validate", '
+        '"what just broke") to one of 24 pre-built recipes that compose '
+        "preflight / retrieve / critique / fleet / diagnose / trace / "
+        "trends / hotspots / debt / taint commands. Call this BEFORE "
+        "falling back to Grep+Read — the recipe registry covers most "
+        "common workflows in one tool call."
+    ),
+)
+def ask(
+    query: str,
+    recipe: str = "",
+    explain: bool = False,
+    list_recipes: bool = False,
+    root: str = ".",
+) -> dict:
+    """Run the recipe that matches a free-form query.
+
+    WHEN TO USE: when you have an intent ("is it safe to delete X",
+    "where does login validate", "what just broke") but don't know
+    which roam command(s) compose into the answer. Maps your query
+    to the right recipe via TF-IDF intent classification, runs the
+    chosen recipe, and returns the composed result.
+
+    Returns the standard ``ask`` envelope with ``summary.recipe``,
+    ``summary.confidence``, and per-step results in ``steps``. On
+    low confidence, returns the top-3 candidates with ``low_confidence``
+    flag — caller can re-call with explicit ``recipe=...`` to force one.
+
+    Parameters
+    ----------
+    query:
+        Free-form natural-language question.
+    recipe:
+        Force a specific recipe by name (skips classification). Use
+        ``list_recipes=True`` first to see available names.
+    explain:
+        Emit the recipe plan + intent + perspectives + gates without
+        running it. Useful when verifying intent classification.
+    list_recipes:
+        Return the full recipe registry instead of running anything.
+    """
+    args = ["ask"]
+    if list_recipes:
+        args.append("--list")
+    else:
+        if explain:
+            args.append("--explain")
+        if recipe:
+            args.extend(["--recipe", recipe])
+        if query:
+            args.append(query)
+    return _run_roam(args, root)
+
+
+@_tool(
     name="roam_health",
     description="Codebase health score (0-100) with issue breakdown, cycles, bottlenecks.",
     output_schema=_SCHEMA_HEALTH,
 )
 async def health(
     root: str = ".",
-    summarize: bool = False,
+    summarize: bool | None = None,
     ctx: _Context | None = None,
 ) -> dict:
     """Codebase health score (0-100) with issue breakdown.
@@ -3124,8 +3300,9 @@ def cga_emit(
     description=(
         "Verify a Code Graph Attestation — re-derives the Merkle root + "
         "edge-bundle digest from the live DB and compares to the bundled "
-        "predicate. Round-trips the cosign signature when a sibling "
-        "`.bundle` exists. Exits 5 on tamper (CI-gateable)."
+        "predicate, AND verifies the cosign signature on the sibling "
+        "`.bundle`. Fails closed (exit 5) when no bundle is present unless "
+        "no_cosign=True is passed to acknowledge predicate-only verification."
     ),
 )
 def cga_verify(
@@ -4153,7 +4330,7 @@ def hover_summary(symbol: str, root: str = ".") -> dict:
 )
 async def repo_map(
     budget: int = 0,
-    summarize: bool = False,
+    summarize: bool | None = None,
     root: str = ".",
     ctx: _Context | None = None,
 ) -> dict:
@@ -5048,6 +5225,7 @@ def simulate(
     file_a: str = "",
     file_b: str = "",
     root: str = ".",
+    ctx: _Context | None = None,
 ) -> dict:
     """Simulate a structural change and predict metric deltas.
 
@@ -5086,7 +5264,11 @@ def simulate(
     elif operation == "delete":
         if symbol:
             args.append(symbol)
-    return _run_roam(args, root)
+    result = _run_roam(args, root)
+    # Record this as a satisfied prerequisite for follow-up roam_mutate.
+    if _mcp_session is not None:
+        _mcp_session.record_tool_call(ctx, "roam_simulate", target=symbol or file_a or file_b)
+    return result
 
 
 @_tool(
@@ -5294,6 +5476,7 @@ def mutate(
     lines: str = "",
     apply: bool = False,
     root: str = ".",
+    ctx: _Context | None = None,
 ) -> dict:
     """Syntax-less agentic editing -- move, rename, add-call, extract symbols.
 
@@ -5353,7 +5536,25 @@ def mutate(
             cmd_args.extend(["--name", new_name])
     if apply:
         cmd_args.append("--apply")
-    return _run_roam(cmd_args, root)
+    result = _run_roam(cmd_args, root)
+
+    # Soft contract enforcement — a destructive operation should follow
+    # ``roam_simulate`` for the same target. Inject a compliance hint
+    # without refusing the call. Read-only (apply=False) is harmless;
+    # only the actual write needs the gate.
+    if apply and _mcp_session is not None:
+        compliance = _mcp_session.contract_check(
+            ctx,
+            current_tool="roam_mutate",
+            target=symbol or new_name or to_symbol,
+            prerequisites=("roam_simulate",),
+        )
+        if isinstance(result, dict):
+            result["contract_compliance"] = compliance
+        # Record this destructive call so a follow-up mutate can see it.
+        _mcp_session.record_tool_call(ctx, "roam_mutate", target=symbol or new_name or to_symbol)
+
+    return result
 
 
 @_tool(
@@ -6911,6 +7112,7 @@ def roam_clean(root: str = ".") -> dict:
                     "core": {"type": "boolean"},
                     "read_only": {"type": "boolean"},
                     "destructive": {"type": "boolean"},
+                    "version": {"type": "string"},
                 },
             },
         },
@@ -6965,6 +7167,66 @@ def roam_alerts(root: str = ".") -> dict:
     >>> roam alerts
     """
     return _run_roam(["alerts"], root)
+
+
+@_tool(
+    name="roam_session_metrics",
+    description=(
+        "Local-only telemetry: per-tool invocation counts grouped by "
+        "outcome (success / rate_limited / error). Helps answer "
+        '"which tools are agents actually using?" and "are 90 of '
+        'the 137 tools dead weight?". Never phones home — counters '
+        "live in the MCP server process and reset on restart."
+    ),
+)
+def roam_session_metrics(root: str = ".") -> dict:
+    """Return per-tool invocation counts since the MCP server started.
+
+    WHEN TO USE: at end-of-session or during dogfood to inspect which
+    tools were exercised and how. Pairs with the architect's-correction
+    plan from value-capture: tools at <0.1% over 30 days become
+    deprecation candidates.
+
+    Returns
+    -------
+    dict
+        ``invocations``: ``{tool_name: {outcome: count}}`` (only tools
+        called appear); ``concurrency``: snapshot of the
+        backpressure state (max_concurrent, in_flight, busy_responses_total).
+    """
+    from roam.mcp_extras.concurrency import metrics as concurrency_metrics
+    from roam.mcp_extras.concurrency import tool_invocation_summary
+    from roam.output.formatter import json_envelope, to_json
+
+    invocations = tool_invocation_summary()
+    concurrency = concurrency_metrics()
+
+    total_calls = sum(sum(v.values()) for v in invocations.values())
+    distinct_tools = len(invocations)
+    error_count = sum(v.get("error", 0) for v in invocations.values())
+    rate_limited_count = sum(v.get("rate_limited", 0) for v in invocations.values())
+
+    envelope = json_envelope(
+        "session-metrics",
+        summary={
+            "verdict": (
+                f"{distinct_tools} distinct tool(s) exercised, "
+                f"{total_calls} total call(s), {error_count} error(s), "
+                f"{rate_limited_count} rate-limited"
+            ),
+            "distinct_tools": distinct_tools,
+            "total_calls": total_calls,
+            "error_count": error_count,
+            "rate_limited_count": rate_limited_count,
+        },
+        invocations=invocations,
+        concurrency=concurrency,
+    )
+    # MCP wrappers return parsed dicts directly; serialise-then-parse
+    # keeps the shape consistent with _run_roam outputs.
+    import json as _json
+
+    return _json.loads(to_json(envelope))
 
 
 @_tool(
@@ -7135,7 +7397,9 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
 
     if mcp is None:
         click.echo(
-            "error: fastmcp is required for the MCP server.\ninstall it with:  pip install roam-code[mcp]",
+            "error: fastmcp is required for the MCP server.\n"
+            "install it with:  pip install roam-code[mcp]\n"
+            "if this looks unexpected, run `roam doctor` to diagnose your install.",
             err=True,
         )
         raise SystemExit(1)
@@ -7377,5 +7641,9 @@ else:
 
 if __name__ == "__main__":
     if mcp is None:
-        raise SystemExit("fastmcp is required for the MCP server.\nInstall it with:  pip install roam-code[mcp]")
+        raise SystemExit(
+            "fastmcp is required for the MCP server.\n"
+            "Install it with:  pip install roam-code[mcp]\n"
+            "If this looks unexpected, run `roam doctor` to diagnose your install."
+        )
     mcp.run()

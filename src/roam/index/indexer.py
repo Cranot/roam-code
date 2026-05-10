@@ -1216,21 +1216,43 @@ class Indexer:
         except Exception as e:
             self._log(f"  registry-dispatch resolver skipped: {e}")
 
+    def _record_step(self, step: str, status: str) -> None:
+        """Track which sub-step succeeded / failed / was skipped.
+
+        Audit A8: the indexer runs ~10 sub-steps with try/except
+        log-and-continue. Without per-step status, ``roam doctor``
+        can't tell "your index is missing taint analysis because
+        that step failed" from "everything ran cleanly." The
+        step-completion record lets the doctor surface specific
+        degraded-mode signals.
+
+        Persisted via ``_record_manifest`` into the manifest's
+        ``notes`` field as a JSON blob (no schema change required).
+        """
+        # Initialise lazily — keeps __init__ untouched.
+        if not hasattr(self, "_step_status") or self._step_status is None:
+            self._step_status = {}
+        self._step_status[step] = status
+
     def _run_git_analysis(self, conn) -> None:
         analyze_git = _try_import_git_stats()
         if analyze_git is None:
             self._log("Skipping git analysis (module not available)")
+            self._record_step("git_analysis", "skipped:module_missing")
             return
 
         self._log("Analyzing git history...")
         try:
             analyze_git(conn, self.root)
+            self._record_step("git_analysis", "ok")
         except Exception as e:
             self._log(f"  Git analysis failed: {e}")
+            self._record_step("git_analysis", f"failed:{type(e).__name__}")
 
     def _run_clustering(self, conn, G, detect_clusters, label_clusters, store_clusters) -> None:
         if detect_clusters is None or G is None:
             self._log("Skipping clustering (module not available)")
+            self._record_step("clustering", "skipped:module_missing" if detect_clusters is None else "skipped:no_graph")
             return
 
         self._log("Computing clusters...")
@@ -1239,12 +1261,15 @@ class Indexer:
             labels = label_clusters(cluster_map, conn)
             store_clusters(conn, cluster_map, labels)
             self._log(f"  {len(set(cluster_map.values()))} clusters")
+            self._record_step("clustering", "ok")
         except Exception as e:
             self._log(f"  Clustering failed: {e}")
+            self._record_step("clustering", f"failed:{type(e).__name__}")
 
     def _run_effect_analysis(self, conn, G) -> None:
         effects_fn = _try_import_effects()
         if effects_fn is None:
+            self._record_step("effect_analysis", "skipped:module_missing")
             return
 
         self._log("Classifying symbol effects...")
@@ -1253,12 +1278,15 @@ class Indexer:
             effect_count = conn.execute("SELECT COUNT(*) FROM symbol_effects").fetchone()[0]
             if effect_count:
                 self._log(f"  {_format_count(effect_count)} effects classified")
+            self._record_step("effect_analysis", "ok")
         except Exception as e:
             self._log(f"  Effect analysis failed: {e}")
+            self._record_step("effect_analysis", f"failed:{type(e).__name__}")
 
     def _run_taint_analysis(self, conn, G) -> None:
         taint_fn = _try_import_taint()
         if taint_fn is None:
+            self._record_step("taint_analysis", "skipped:module_missing")
             return
 
         self._log("Computing taint summaries...")
@@ -1267,21 +1295,27 @@ class Indexer:
             taint_count = conn.execute("SELECT COUNT(*) FROM taint_findings").fetchone()[0]
             if taint_count:
                 self._log(f"  {_format_count(taint_count)} taint findings")
+            self._record_step("taint_analysis", "ok")
         except Exception as e:
             self._log(f"  Taint analysis failed: {e}")
+            self._record_step("taint_analysis", f"failed:{type(e).__name__}")
 
     def _compute_health_and_load(self, conn, G) -> None:
         self._log("Computing health scores...")
         try:
             _compute_file_health_scores(conn, G)
+            self._record_step("health_scores", "ok")
         except Exception as e:
             self._log(f"  Health score computation failed: {e}")
+            self._record_step("health_scores", f"failed:{type(e).__name__}")
 
         self._log("Computing cognitive load...")
         try:
             _compute_cognitive_load(conn)
+            self._record_step("cognitive_load", "ok")
         except Exception as e:
             self._log(f"  Cognitive load computation failed: {e}")
+            self._record_step("cognitive_load", f"failed:{type(e).__name__}")
 
     def _restore_or_relink_annotations(self, conn, force: bool, saved_annotations: list[dict]) -> None:
         if force and saved_annotations:
@@ -1336,6 +1370,13 @@ class Indexer:
         never aborts indexing. The manifest is consumed by ``roam doctor``
         and bundle-import drift checks; missing it just means those
         consumers fall back to "no manifest".
+
+        Per-step status is persisted as a JSON blob in the manifest's
+        ``notes`` field (audit A8) so ``roam doctor`` can surface
+        "your index is missing taint analysis because that step failed"
+        rather than the generic stale-manifest signal. No schema change
+        — the ``notes`` field already exists and is documented as
+        free-form.
         """
         try:
             from roam.index.manifest import record_indexer_run
@@ -1348,11 +1389,18 @@ class Indexer:
             f"force={1 if force else 0}",
             f"include_excluded={1 if include_excluded else 0}",
         ]
+        notes = None
+        step_status = getattr(self, "_step_status", None)
+        if step_status:
+            import json as _json
+
+            notes = _json.dumps({"steps": step_status}, sort_keys=True)
         record_indexer_run(
             conn,
             self.root,
             profile="all",
             extra_config_inputs=flags,
+            notes=notes,
         )
 
     def _set_completion_summary(self, conn, elapsed: float) -> None:
@@ -1406,7 +1454,11 @@ class Indexer:
             changed_paths = removed + modified
             changed_file_ids = self._file_ids_for_paths(conn, changed_paths)
             affected_file_ids = set()
-            if not force and modified and changed_file_ids:
+            if not force and changed_file_ids:
+                # A pure rename (modified=[], removed=[old]) still needs neighbor
+                # recovery: edges into old.qualified_name are CASCADE-deleted, and
+                # the third-party callers must be re-extracted to point at the new
+                # symbol id. Gating on `modified` truthiness skipped that path.
                 affected_file_ids = self._find_affected_neighbor_files(conn, changed_file_ids)
 
             self._delete_changed_files(conn, changed_paths)

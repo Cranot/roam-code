@@ -7,7 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
+### Correctness
+
+- **Pure renames now recover affected-neighbor edges.** `indexer.py:1409` had `if not force and modified and changed_file_ids` — pure renames produce `modified=[]` and silently skipped neighbor recovery, leaving `roam impact <renamed_symbol>` reporting fewer callers than reality. Drop the spurious `and modified` clause; add `tests/test_index.py::test_pure_removal_invokes_affected_neighbor_recovery` as a spy-based regression guard.
+- **`roam cga verify` fails closed when no `.bundle` is present.** Previously: a downloaded statement without its sibling bundle reported `verified` while `cosign: null` — the cryptographic-trust half was silently skipped. Now: refuses unless `--no-cosign` is passed to acknowledge predicate-only verification.
+- **`git_dirty_hash` + `git_commit_sha1` bound into predicate verification.** Predicate now carries `git_dirty_hash`; verifier reads live values and refuses on mismatch (clean-vs-dirty, dirty-hash drift, commit-SHA mismatch). `roam cga emit` refuses on a dirty working tree by default — `--allow-dirty` records the dirty-hash and proceeds.
+- **`SQLite USER_VERSION` bumped 1 → 12 with a discipline pin.** New `MIGRATION_OPS_COUNT` constant + `tests/test_db_user_version.py` fail CI when `ensure_schema` gains a migration without a corresponding bump. Closes the loop on the existing `index_manifest.schema_version` writer.
+
+### Performance
+
+- **N+1 fixes (4 sites).** `_find_colocated_tests` (3 nested N+1 → 1 bulk fetch), `_print_mega_detail` (per-cluster → batched `IN`), `_against_mode` (per-fid co-change query → batched), `_find_eager_loads` (controller-file cache, 5-10× speedup on Laravel `roam n1`).
+- **Skip git-history pass when HEAD unchanged.** Saves 1-10s per warm `roam index` on big-history repos. Manifest's recorded HEAD compared against live `git rev-parse HEAD`.
+- **SQLite pragmas tuned.** `mmap_size=1GB` (was 256MB), `wal_autocheckpoint=10000` (was 1000), `PRAGMA optimize` on commit. Closes p50 query-latency drift after heavy index loads.
+- **FTS5 schema gains `docstring` column.** `roam retrieve` and `roam search-semantic` now match against natural-language docstrings — previously the FTS5 BM25 path was blind to docstring text. Schema migration drops + recreates the table on first run after upgrade; build_fts_index repopulates. BM25 weight 4 (between qualified_name=5 and signature=2).
+- **Memoize `_find_function_node` in `compute_and_store`.** Avoid the second AST descent per callable; ~10-15% indexing win on Python/TS files.
+
+### Agent / MCP DX
+
+- **`roam_ask` MCP tool.** Wraps the 24-recipe TF-IDF intent dispatcher so agents on MCP clients can dispatch a recipe in one call instead of falling back to Grep+Read. Added to `_CORE_TOOLS`.
+- **`roam_session_metrics` MCP tool.** Local-only per-tool invocation telemetry (success / rate_limited / error counts). Helps answer "which tools are agents actually using?" without phoning home.
+- **`agent_contract` block on every JSON envelope.** ~200-token derived block: `{facts, risks, next_commands, confidence}` so context-budget-tight agents can read just this and skip the full payload. Opt-out via `ROAM_AGENT_CONTRACT_BLOCK=0`.
+- **Soft contract enforcement on destructive tools.** `roam_mutate --apply` checks session memory for a prior `roam_simulate` call against the same target and injects a `contract_compliance` block with actionable advice when the prerequisite was skipped. Soft-warn only, never refuses.
+- **Stale-index affordance on every read-only MCP tool.** When the indexed DB is older than the manifest's recorded HEAD or older than the configured threshold, the response gets prefixed with `INDEX STALE — call roam_reindex first.` and a `_meta.stale_index` marker. Recovery commands (`index`, `reindex`, `init`, `doctor`, `watch`) skip the banner.
+- **`summarize=True` default for compound tools when `ROAM_AI_ENABLED=1`.** `roam_explore` / `roam_understand` / `roam_health` now compress responses by default for users who've explicitly consented to MCP sampling. `summarize=False` forces opt-out per call; `ROAM_AI_DISABLED=1` env var disables globally; the `compliance` preset always opts out (audit-trail evidence must be deterministic).
+- **`@_tool` decorator carries `version="1.0.0"`.** Surfaces in `roam_catalog` so agents can detect schema drift without re-enumerating every tool. Bump per-tool when the input/output schema changes.
+
+### Onboarding (`roam init`)
+
+- **No more unsolicited CI workflow file.** `roam init` previously dropped `.github/workflows/roam.yml` into every repo on first command — the single biggest first-run trust-damage signal flagged by the audit. Now requires `--with-ci=github` to opt in; the existing `roam ci-setup` remains the canonical path for full multi-platform CI generation.
+- **Refuses outside a git repository** (`FILE_NOT_FOUND` structured error). Prevents the spawn-`.roam/`-in-`~/Downloads` failure mode.
+- **Auto-writes a commented `.roamignore` template** when absent. Every entry commented out so the user opts in to the patterns that apply.
+- **Compact welcome banner** — 4 lines (stats + try-one + next + help), down from 20+ lines of agent-contract teaching at a moment when the user just wants "did it work?"
+
+### `roam doctor`
+
+- **Three-tier exit codes.** `0` = clean; `1` = only advisory failures (cache age, cloud-sync, optional extras); `2` = at least one blocking failure. `--strict` promotes advisory to blocking for CI gates that require zero drift. Closes a real CI-noise gap where stale-snapshot warnings spuriously failed every roam-on-roam run.
+- **Issue-template-ready summary line.** `Roam X · Python Y · OS Z · M/N checks pass · A advisory · B blocking` — paste-once into a bug report.
+- **Manifest drift hints expanded.** `git_dirty_hash` drift surfaces as INFO; `config_hash` drift (roam config / `.roamignore` changed) as WARN.
+- **`If this looks unexpected, run \`roam doctor\`" hint embedded in 4 environmental error paths** (DB open / schema corruption, config TOML parse failure, bundle verify failure, MCP missing-fastmcp error).
+
+### CLI surface
+
+- **`roam --help` collapsed to a 30-line Start-here panel.** Previously a 154-line dump that scattered the 5 verbs across 38 entries in "Getting Started" and a 73-name "More Commands" comma-list. Long surface still available behind `roam --help-all`.
+
+### Security tier-2
+
+- **Predicate IRI moved to `https://roam-code.com/spec/...`** — the owned, dereferenceable domain. Legacy `roam-code.dev` IRIs still verify via `_LEGACY_PREDICATE_TYPES` so old statements don't break.
+- **Strip `username:token@` from git remote URL in cga subject.** A repo cloned with `https://x:ghp_PAT@github.com/...` would otherwise leak the PAT verbatim into every signed CGA's `subject.name`.
+- **`vuln_store` ingest hardening.** 50 MB size cap on scanner reports (refuses with structured error before loading); `ESCAPE` clause + escaped LIKE patterns so a hostile package_name like `_` no longer match-explodes.
+- **`taint_engine` `path_truncated` flag.** When the BFS exits via `max_hops` or the per-node 200-edge fan-out cap, the finding carries `path_truncated=True` so OpenVEX consumers map to `under_investigation` rather than `vulnerable_code_not_in_execute_path`.
+- **Hash-pinned `mcp-server-card.json`.** New `tests/test_mcp_server_card_hash.py` fails CI on unintended drift — the agent-surface card is a real attack vector if tampered.
+- **CSP `Reporting-Endpoints` + `report-to`** wired in `_headers`. Endpoint at `/csp-report` is provisional (CF Pages will 404 until a worker is wired up) but the directive is in place.
+- **`dev/pin_github_actions.sh`** — one-shot script to pin every workflow action to a commit SHA via `gh api`. Defers actual pinning to a session with network; Dependabot's existing `github-actions` schedule maintains the pins thereafter.
+
+### Architecture substrate
+
+- **`@_tool` carries `version`** (see Agent / MCP DX above) — surfaces in `roam_catalog`.
+- **`LanguageBridge.VERSION` + `LanguageExtractor.VERSION`** ABCs gain a `1.0.0` semver class attribute. Bump in subclasses when inference logic changes; downstream drift detection compares stamps.
+- **`index_manifest` step-completion record.** Per-step `success / failed:<ExceptionName> / skipped:<reason>` status persisted as JSON in the manifest's `notes` field — `roam doctor` can later surface "your index is missing taint analysis because that step failed" instead of the generic stale-manifest signal.
+
+### Tests
+
+- **9 new test files**: `test_db_user_version`, `test_doctor_hints_in_errors`, `test_extension_versioning`, `test_mcp_contract_enforcement`, `test_mcp_server_card_hash`, `test_mcp_tool_telemetry`, `test_mcp_tool_versioning`, `test_n1_fixes`, `test_surface_consistency`.
+- **12 test files extended** with new cases for the corresponding source-side changes.
+- **Surface-consistency test** locks the 8-way split-brain dict invariants today (every `_COMMANDS` entry has a `_CATEGORIES` entry; every `_CORE_TOOLS` member is a real `@_tool` declaration; every `_DEPRECATED_COMMANDS.replacement` resolves) before the larger Capability Registry rework lands.
+- **CountingConn-based query-count regressions** for every N+1 fix — proves the batched form scales O(1) in input size.
+- 2,612 tests pass on the touched-areas parallel sweep; 1,495 on the focused sequential sweep.
+
+### Conventions
+
+- **`tests/conftest.py:make_src_project`** writes `.gitignore` with `.roam/` so the dirty-tree refusal behaves the same in tests as in production.
+- **Categorise the formerly-orphan `lsp` command** under "Refactoring" alongside `stale-refs` (the LSP server is the same engine surfaced over JSON-RPC).
+
+---
+
+### Earlier in the [Unreleased] window
 
 - **`roam surface`** — canonical capability registry as JSON or text. Source of truth for commands, aliases, MCP tools, presets, categories, maturity. `--filter stable|experimental|internal|deprecated` and `--category <name>` flags. Used by docs generation, contract tests, release notes, and the marketing/landscape surfaces.
 - **`roam explain-command <name>`** — per-command introspection: category, maturity, aliases, deprecation, MCP exposure, DB tables touched (best-effort source-grep), optional extras detected, stale-index sensitivity (high / medium / low / unknown).

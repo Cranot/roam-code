@@ -555,7 +555,37 @@ def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
     return io_chains
 
 
-def _find_eager_loads(conn, model_name):
+def _build_controller_cache(conn) -> dict[str, str]:
+    """Read every Laravel ``*Controller*.php`` file once and return
+    ``{path: content}`` for ``_find_eager_loads`` to query in-memory.
+
+    Pre-fix, ``_find_eager_loads`` issued the query AND read each
+    controller from disk per model — for a 100-model app with 50
+    controllers, that's 5000 ``read_text()`` calls (audit B2). Building
+    the cache once at the top of ``analyze_n1`` collapses that to 50.
+    """
+    from roam.db.connection import find_project_root
+
+    cache: dict[str, str] = {}
+    root = find_project_root()
+    if root is None:
+        return cache
+    rows = conn.execute(
+        "SELECT f.path FROM files f WHERE f.path LIKE '%Controller%' AND f.path LIKE '%.php'"
+    ).fetchall()
+    for row in rows:
+        rel = row["path"]
+        abs_path = root / rel
+        if not abs_path.is_file():
+            continue
+        try:
+            cache[rel] = abs_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return cache
+
+
+def _find_eager_loads(conn, model_name, controller_cache: dict[str, str] | None = None):
     """Find eager loading configuration for a model.
 
     Checks:
@@ -565,6 +595,15 @@ def _find_eager_loads(conn, model_name):
 
     For sources where the parser doesn't capture method chains as symbols,
     falls back to reading source files and pattern matching.
+
+    Parameters
+    ----------
+    controller_cache:
+        Pre-built ``{path: content}`` map from
+        :func:`_build_controller_cache`. When provided, the per-call
+        directory scan + per-controller ``read_text`` is skipped. Pass
+        ``None`` (default) for ad-hoc invocations; ``analyze_n1`` builds
+        the cache once and threads it through every per-model call.
 
     Returns set of relationship names that are eager loaded.
     """
@@ -635,33 +674,55 @@ def _find_eager_loads(conn, model_name):
             pass
 
     # --- 3. Check controller with() calls ---
-    # Look for Model::with(['rel']) or ->with(['rel']) near model references
-    controller_files = conn.execute(
+    # Look for Model::with(['rel']) or ->with(['rel']) near model references.
+    # Source contents come from either the pre-built cache (fast path,
+    # used by ``analyze_n1``) or a per-call directory scan + read_text
+    # (slow path, for ad-hoc callers without a cache).
+    if controller_cache is not None:
+        contents_iter = controller_cache.values()
+    else:
+        contents_iter = _iter_controller_contents(conn, root)
+
+    for content in contents_iter:
+        eager_loaded.update(_extract_with_calls(content, model_name))
+
+    return eager_loaded
+
+
+def _iter_controller_contents(conn, root):
+    """Stream controller-file contents on demand — fallback when no
+    pre-built cache is available. Skips files whose ``read_text`` fails.
+    """
+    if root is None:
+        return
+    rows = conn.execute(
         "SELECT f.path FROM files f WHERE f.path LIKE '%Controller%' AND f.path LIKE '%.php'"
     ).fetchall()
-
-    for cf in controller_files:
-        if not root:
-            continue
+    for cf in rows:
         abs_path = root / cf["path"]
         if not abs_path.is_file():
             continue
         try:
-            content = abs_path.read_text(encoding="utf-8", errors="replace")
-            if model_name not in content:
-                continue
-            # Find ::with(['rel1', 'rel2']) near model name
-            for match in re.finditer(
-                rf"{model_name}::with\(\s*\[(.*?)\]\s*\)",
-                content,
-                re.DOTALL,
-            ):
-                rels = re.findall(r"['\"](\w+)['\"]", match.group(1))
-                eager_loaded.update(rels)
+            yield abs_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
-            pass
+            continue
 
-    return eager_loaded
+
+def _extract_with_calls(content: str, model_name: str) -> set[str]:
+    """Pull relationship names out of ``Model::with([...])`` calls in
+    a single piece of PHP source. Returns the set of names found (may
+    be empty).
+    """
+    if model_name not in content:
+        return set()
+    rels: set[str] = set()
+    for match in re.finditer(
+        rf"{model_name}::with\(\s*\[(.*?)\]\s*\)",
+        content,
+        re.DOTALL,
+    ):
+        rels.update(re.findall(r"['\"](\w+)['\"]", match.group(1)))
+    return rels
 
 
 def _find_collection_contexts(conn, model_id, model_name):
@@ -731,18 +792,40 @@ def analyze_n1(conn, confidence_filter=None):
     if not models:
         return findings, framework
 
+    # Pre-loop bulk fetch: get every method whose parent is one of the
+    # model symbols we're about to iterate. The previous per-model query
+    # made this an N+1 (1 query per model, flagged by `roam math` running
+    # against this file). Batched IN-clause turns N model queries into
+    # one. The file-range fallback below stays per-model since it's
+    # rarely-triggered (only when a model lacks parent_id-linked methods).
+    from roam.db.connection import batched_in
+
+    model_ids = list(models.keys())
+    method_rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.kind, s.parent_id FROM symbols s WHERE s.parent_id IN ({ph}) AND s.kind = 'method'",
+        model_ids,
+    )
+    methods_by_model: dict[int, list] = {}
+    for row in method_rows:
+        methods_by_model.setdefault(int(row["parent_id"]), []).append(row)
+
+    # Pre-loop file-cache: ``_find_eager_loads`` reads every Laravel
+    # controller (*.php with ``Controller`` in the path) per model.
+    # On a 100-model × 50-controller app that's 5000 read_text calls.
+    # Build the cache once here; per-model lookups become dict scans.
+    controller_cache = _build_controller_cache(conn)
+
     for model_id, model_info in models.items():
         if _is_test_path(model_info["file_path"]):
             continue
 
         model_name = model_info["name"]
 
-        # Get all methods on this model (for relationship detection)
-        # Try parent_id first, then fall back to same-file line range
-        model_methods = conn.execute(
-            "SELECT s.id, s.name, s.kind FROM symbols s WHERE s.parent_id = ? AND s.kind = 'method'",
-            (model_id,),
-        ).fetchall()
+        # Get all methods on this model (for relationship detection).
+        # Lookup pre-fetched results first; fall back to file-range
+        # match for models without parent_id-linked methods.
+        model_methods = methods_by_model.get(model_id, [])
         if not model_methods:
             model_methods = conn.execute(
                 "SELECT s.id, s.name, s.kind FROM symbols s "
@@ -767,7 +850,7 @@ def analyze_n1(conn, confidence_filter=None):
             continue
 
         # Step 3: Find what's already eager loaded
-        eager_loaded = _find_eager_loads(conn, model_name)
+        eager_loaded = _find_eager_loads(conn, model_name, controller_cache=controller_cache)
 
         # Step 4: Find collection contexts
         collection_ctxs = _find_collection_contexts(conn, model_id, model_name)

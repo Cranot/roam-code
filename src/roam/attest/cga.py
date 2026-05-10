@@ -30,12 +30,27 @@ from typing import Any
 
 from roam.security.taint_engine import OPENVEX_JUSTIFICATIONS, OPENVEX_STATUSES
 
-PREDICATE_TYPE = "https://roam-code.dev/CodeGraph/v1"
+# Predicate type IRIs are served at https://roam-code.com/spec/... so
+# SLSA / in-toto consumers that dereference the IRI find a real
+# schema page (or at least a 200 from the canonical site, not a DNS
+# 000 from an unowned domain). Earlier statements used the .dev
+# domain which never resolved; verifier accepts both during the
+# transition (see ``_LEGACY_PREDICATE_TYPES`` below).
+PREDICATE_TYPE = "https://roam-code.com/spec/CodeGraph/v1"
 # v12.2: fused CodeGraph + AIBOM predicate. Owns the "structurally bound
 # AI authorship for tamper-evident codebases" lane that SLSA + SPDX +
 # CycloneDX 1.7 + OpenVEX leave gapped. Reference impl candidate for
 # the in-toto attestation registry.
-PREDICATE_TYPE_AIBOM = "https://roam-code.dev/CodeGraph-AIBOM/v1"
+PREDICATE_TYPE_AIBOM = "https://roam-code.com/spec/CodeGraph-AIBOM/v1"
+
+# Legacy IRIs accepted by the verifier so statements signed before
+# the .dev → .com migration still verify cleanly. Emitter never
+# uses these; they are read-only compatibility shims.
+_LEGACY_PREDICATE_TYPES = (
+    "https://roam-code.dev/CodeGraph/v1",
+    "https://roam-code.dev/CodeGraph-AIBOM/v1",
+)
+
 STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
 SCHEMA_VERSION = "1"
 
@@ -58,6 +73,57 @@ def _git_commit_sha(root: Path) -> str | None:
     return sha or None
 
 
+def _git_dirty_hash(root: Path) -> str | None:
+    """SHA-256 of ``git status --porcelain`` output, or None when clean
+    or non-git. Lets the predicate carry "tree was clean at sign time"
+    as a verifiable property rather than an assumption.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = proc.stdout
+    if not out.strip():
+        return None  # clean
+    return hashlib.sha256(out.encode("utf-8", "replace")).hexdigest()
+
+
+def _strip_url_credentials(url: str) -> str:
+    """Remove ``username:token@`` or ``token@`` userinfo from an HTTP(S) URL.
+
+    A repo cloned with ``https://x:ghp_PERSONAL_TOKEN@github.com/owner/repo``
+    would otherwise leak the token verbatim into ``subject.name`` of every
+    signed CGA. We rewrite to ``https://github.com/owner/repo`` so the
+    statement carries the repo identity but not the cloning credential.
+    SSH URLs (``git@host:owner/repo``) are left untouched — the ``git@``
+    prefix is conventional, not a credential.
+    """
+    # SSH form ``user@host:path`` — leave alone.
+    if "://" not in url:
+        return url
+    scheme, _, rest = url.partition("://")
+    # Find the userinfo segment (``user:token@``) before the first ``/``
+    # in the path. Strip it without touching the rest.
+    host_and_path = rest
+    if "@" in host_and_path:
+        userinfo, _, host_and_path = host_and_path.rpartition("@")
+        # Keep nothing of userinfo — both ``user`` alone and ``user:token``
+        # are credential-bearing in the HTTPS-clone context. (A bare ``user``
+        # could be re-added if a real customer flow needs it; today none does.)
+        del userinfo
+    return f"{scheme}://{host_and_path}"
+
+
 def _git_remote_url(root: Path) -> str | None:
     try:
         proc = subprocess.run(
@@ -72,7 +138,9 @@ def _git_remote_url(root: Path) -> str | None:
     if proc.returncode != 0:
         return None
     url = (proc.stdout or "").strip()
-    return url or None
+    if not url:
+        return None
+    return _strip_url_credentials(url)
 
 
 def _hash_hex(items: list[bytes]) -> str:
@@ -138,6 +206,7 @@ def build_cga_predicate(
     project_root: Path,
     tool_version: str | None = None,
     taint_findings: list | None = None,
+    dirty_hash: str | None = None,
 ) -> dict[str, Any]:
     """Build the predicate body for the Code Graph Attestation.
 
@@ -165,6 +234,13 @@ def build_cga_predicate(
         "edge_bundle_digest": edges_digest,
         "symbol_count": n_symbols,
         "edge_count": n_edges,
+        # Working-tree state at sign time. ``None`` means "clean" — anything
+        # else is a sha256 of ``git status --porcelain``. The verifier
+        # re-derives the live value and refuses on mismatch, so a CGA that
+        # asserts clean cannot quietly be produced on a dirty tree, and a
+        # signed-while-dirty statement can be re-verified against the same
+        # uncommitted state if needed.
+        "git_dirty_hash": dirty_hash,
         "languages": languages,
         "tool": {
             "name": "roam-code",
@@ -248,11 +324,13 @@ def build_cga_statement(
         "name": subject_name,
         "digest": {"git_commit_sha1": sha},
     }
+    dirty_hash = _git_dirty_hash(project_root)
     predicate = build_cga_predicate(
         conn,
         project_root=project_root,
         tool_version=tool_version,
         taint_findings=taint_findings,
+        dirty_hash=dirty_hash,
     )
     predicate_type = PREDICATE_TYPE
     if include_aibom:
@@ -292,7 +370,7 @@ def verify_cga_statement(
     errors: list[str] = []
     if statement.get("_type") != STATEMENT_TYPE:
         errors.append(f"_type mismatch: got {statement.get('_type')!r}, expected {STATEMENT_TYPE!r}")
-    accepted_types = (PREDICATE_TYPE, PREDICATE_TYPE_AIBOM)
+    accepted_types = (PREDICATE_TYPE, PREDICATE_TYPE_AIBOM, *_LEGACY_PREDICATE_TYPES)
     if statement.get("predicateType") not in accepted_types:
         errors.append(
             f"predicateType mismatch: got {statement.get('predicateType')!r}, expected one of {accepted_types!r}"
@@ -312,6 +390,44 @@ def verify_cga_statement(
         errors.append(f"symbol_count mismatch: got {predicate.get('symbol_count')}, live={n_symbols}")
     if int(predicate.get("edge_count") or 0) != n_edges:
         errors.append(f"edge_count mismatch: got {predicate.get('edge_count')}, live={n_edges}")
+
+    # Subject git_commit_sha1 — the statement claims it was signed against
+    # commit X. Refuse if the live tree is at commit Y. Older statements
+    # without a usable subject digest (sha == "unknown") are skipped to
+    # preserve forward compat with pre-bind statements; emitted statements
+    # always carry a usable SHA when in a git repo.
+    subject_list = statement.get("subject") or []
+    subject_sha = None
+    if subject_list and isinstance(subject_list[0], dict):
+        subject_sha = (subject_list[0].get("digest") or {}).get("git_commit_sha1")
+    live_sha = _git_commit_sha(project_root)
+    if subject_sha and subject_sha != "unknown" and live_sha and subject_sha != live_sha:
+        errors.append(
+            f"git_commit_sha1 mismatch — statement signed against {subject_sha[:12]}…, live tree is at {live_sha[:12]}…"
+        )
+
+    # Predicate git_dirty_hash — refuse if predicate claims clean but live
+    # tree is dirty, or vice versa. Pre-bind statements without the field
+    # get a soft note (forward compat); newly-emitted ones always include it.
+    if "git_dirty_hash" in predicate:
+        predicate_dirty = predicate.get("git_dirty_hash")
+        live_dirty = _git_dirty_hash(project_root)
+        if predicate_dirty != live_dirty:
+            if predicate_dirty is None and live_dirty is not None:
+                errors.append(
+                    "git_dirty_hash mismatch — predicate asserts clean tree, "
+                    "but the live working tree has uncommitted changes"
+                )
+            elif predicate_dirty is not None and live_dirty is None:
+                errors.append(
+                    "git_dirty_hash mismatch — predicate was signed against a "
+                    "dirty tree, but the live working tree is clean now"
+                )
+            else:
+                errors.append(
+                    "git_dirty_hash mismatch — predicate's dirty-tree digest "
+                    "does not match the live working tree's uncommitted state"
+                )
 
     return not errors, errors
 

@@ -1,4 +1,4 @@
-"""Initialize a project for Roam: index, config, CI workflow."""
+"""Initialize a project for Roam: index + config (no unsolicited CI)."""
 
 from __future__ import annotations
 
@@ -46,46 +46,107 @@ jobs:
       - run: roam pr-risk --json
 """
 
+# Conservative .roamignore template — every line commented out so the
+# user opts in to whatever applies. Faster to remove a `#` than to
+# rebuild the list.
+_ROAMIGNORE_TEMPLATE = """\
+# Roam ignore — gitignore syntax. Skip directories that bloat the
+# index without adding signal. Uncomment lines that apply to your repo.
+
+# Build outputs
+# dist/
+# build/
+# out/
+# target/
+# .next/
+# .nuxt/
+
+# Vendored deps
+# node_modules/
+# vendor/
+# bower_components/
+
+# Python virtualenvs + caches
+# .venv/
+# venv/
+# __pycache__/
+# .mypy_cache/
+# .pytest_cache/
+
+# Coverage / profiling
+# coverage/
+# htmlcov/
+# .coverage
+
+# Generated assets
+# *.min.js
+# *.min.css
+"""
+
 _WELCOME = """\
-Roam is ready. The five-rule agent contract:
+Roam is ready: {files} files, {symbols} symbols, {edges} edges. Health: {health}/100.
 
-  before EDIT       roam context <name>     -- files + lines to read
-  before DELETE     roam impact <name>      -- blast radius + safe-delete
-  before MERGE      git diff | roam critique -- structural patch review
-  before REFACTOR   roam simulate <op>      -- "what breaks?" before touching source
-  before OPTIMISE   roam math               -- accidental O(n^2), N+1, regex-in-loop
+Try one:    roam understand                    (briefing)
+Next:       git diff | roam critique           (the killer demo)
+Help:       roam ask "<question>"              roam --help
+Wire MCP:   roam mcp-setup <claude|cursor|codex|gemini|amp>"""
 
-Get oriented:
 
-  roam understand           -- the repo at a glance
-  roam tour                 -- 5-minute guided walk
-  roam health               -- score + top issues
+def _is_inside_git_repo(project_root) -> bool:
+    """Return True when ``project_root`` (or any ancestor) has a ``.git``.
 
-Wire it into your AI coding agent (one command per editor):
-
-  roam mcp-setup claude     -- Claude Code
-  roam mcp-setup cursor     -- Cursor
-  roam mcp-setup codex      -- Codex CLI
-
-Created:
-{created_lines}
-Tip: add a .roamignore (gitignore syntax) to skip generated files.
-Run `roam --help` for the full surface, or `roam --detail <cmd>` for one command."""
+    ``find_project_root`` already returns a usable path, but it falls
+    back to ``cwd`` when no .git is present — that's the spawn-in-Downloads
+    failure mode the audit flagged. Refuse to init outside a repo.
+    """
+    p = project_root.resolve()
+    while True:
+        if (p / ".git").exists():
+            return True
+        if p.parent == p:
+            return False
+        p = p.parent
 
 
 @click.command("init")
 @click.option("--root", default=".", help="Project root")
 @click.option("--yes", is_flag=True, help="Non-interactive, accept defaults")
+@click.option(
+    "--with-ci",
+    "with_ci",
+    type=click.Choice(["github"], case_sensitive=False),
+    default=None,
+    help=(
+        "Generate a CI workflow for the named platform. Default is no "
+        "CI write — explicit opt-in is required so `roam init` doesn't "
+        "drop foreign config into a repo the user is just evaluating. "
+        "For full multi-platform CI generation see `roam ci-setup`."
+    ),
+)
 @click.pass_context
-def init(ctx, root, yes):
-    """Initialize Roam for this project: index, config, CI workflow.
+def init(ctx, root, yes, with_ci):
+    """Initialize Roam for this project: index + config.
 
-    Indexes the project, creates .roam/ config directory and fitness.yaml.
-    For advanced CI pipeline generation across multiple platforms, see
-    ``ci-setup``.
+    Indexes the project, creates ``.roam/`` config directory with
+    ``fitness.yaml``, and (if absent) writes a starter ``.roamignore``
+    template at the project root. Refuses to run outside a git
+    repository — pass ``--with-ci=github`` to opt into a starter
+    GitHub Actions workflow. For full multi-platform CI generation
+    see ``roam ci-setup``.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     project_root = find_project_root(root)
+
+    if not _is_inside_git_repo(project_root):
+        from roam.output.errors import structured_usage_error
+
+        raise structured_usage_error(
+            "FILE_NOT_FOUND",
+            "no .git directory found at or above the project root. "
+            "`roam init` only runs inside a git repository — `git init` "
+            "first if you genuinely want roam to track a non-git tree, or "
+            "`cd` into the right project root.",
+        )
 
     created = []
     skipped = []
@@ -109,15 +170,30 @@ def init(ctx, root, yes):
     else:
         skipped.append(".roam/fitness.yaml")
 
-    # 4. Generate .github/workflows/roam.yml
-    workflow_dir = project_root / ".github" / "workflows"
-    workflow_path = workflow_dir / "roam.yml"
-    if not workflow_path.exists():
-        workflow_dir.mkdir(parents=True, exist_ok=True)
-        workflow_path.write_text(_GITHUB_WORKFLOW, encoding="utf-8")
-        created.append(".github/workflows/roam.yml")
+    # 4. .roamignore template — only when absent. Every line commented
+    # out so the user opts in. Don't write inside .roam/ (gitignored
+    # already); it lives at the project root next to .gitignore.
+    roamignore_path = project_root / ".roamignore"
+    if not roamignore_path.exists():
+        roamignore_path.write_text(_ROAMIGNORE_TEMPLATE, encoding="utf-8")
+        created.append(".roamignore")
     else:
-        skipped.append(".github/workflows/roam.yml")
+        skipped.append(".roamignore")
+
+    # 5. CI workflow — opt-in only. Audit R1: dropping foreign config
+    # files into the user's repo on first command was the single
+    # biggest churn driver. ``roam ci-setup`` is the canonical place
+    # for full multi-platform generation; this flag is just the
+    # one-line shortcut.
+    if with_ci == "github":
+        workflow_dir = project_root / ".github" / "workflows"
+        workflow_path = workflow_dir / "roam.yml"
+        if not workflow_path.exists():
+            workflow_dir.mkdir(parents=True, exist_ok=True)
+            workflow_path.write_text(_GITHUB_WORKFLOW, encoding="utf-8")
+            created.append(".github/workflows/roam.yml")
+        else:
+            skipped.append(".github/workflows/roam.yml")
 
     # 5. Quick health summary
     health_summary = {}
@@ -156,31 +232,20 @@ def init(ctx, root, yes):
         )
         return
 
-    # Text output
-    created_lines = []
-    for path in created:
-        pad = " " * (30 - len(path))
-        if path.endswith("fitness.yaml"):
-            created_lines.append(f"  {path}{pad}-- Architectural rules")
-        elif path.endswith("roam.yml"):
-            created_lines.append(f"  {path}{pad}-- CI workflow")
-        else:
-            created_lines.append(f"  {path}")
-
-    if skipped:
-        for path in skipped:
-            created_lines.append(f"  {path} (already exists, skipped)")
-
+    # Text output — compact welcome banner per audit R10. Older banner
+    # was 20+ lines of agent-contract teaching at a moment when the
+    # user just wants to see "did it work?" The contract belongs in
+    # docs and SKILL.md, not on every init.
     welcome = _WELCOME.format(
-        created_lines="\n".join(created_lines) if created_lines else "  (nothing new — all files already exist)",
+        files=health_summary.get("files", 0),
+        symbols=health_summary.get("symbols", 0),
+        edges=health_summary.get("edges", 0),
+        health=health_summary.get("health_score", "?"),
     )
     click.echo(f"VERDICT: {_verdict}\n")
     click.echo(welcome)
 
-    if health_summary:
-        click.echo(
-            f"\nHealth: {health_summary.get('health_score', '?')}/100  "
-            f"({health_summary.get('files', 0)} files, "
-            f"{health_summary.get('symbols', 0)} symbols, "
-            f"{health_summary.get('cycles', 0)} cycles)"
-        )
+    if created:
+        click.echo("\nCreated:")
+        for path in created:
+            click.echo(f"  {path}")

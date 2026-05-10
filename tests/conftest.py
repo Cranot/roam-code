@@ -327,6 +327,9 @@ def make_src_project(tmp_path, files, *, src_dir="src"):
     proj.mkdir()
     src = proj / src_dir
     src.mkdir()
+    # Match production conventions — users gitignore the index directory.
+    # Without this, indexer output marks the working tree as dirty in tests.
+    (proj / ".gitignore").write_text(".roam/\n", encoding="utf-8")
     for name, content in files.items():
         p = src / name
         p.parent.mkdir(parents=True, exist_ok=True)

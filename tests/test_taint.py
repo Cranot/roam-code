@@ -318,8 +318,14 @@ class TestTaintCLI:
         assert "rules-dir" in result.output
 
     def test_appears_in_help_security_section(self, taint_project):
+        """taint should appear in the full --help-all listing.
+
+        The short ``--help`` panel only surfaces the 5 verbs + start-here
+        commands; the long-tail surface (taint, vuln-map, etc.) is
+        discoverable via ``--help-all``.
+        """
         runner = CliRunner()
-        result = runner.invoke(cli, ["--help"])
+        result = runner.invoke(cli, ["--help-all"])
         assert "taint" in result.output
 
     def test_rules_pack_choice_advertised_in_help(self, taint_project):
@@ -387,3 +393,85 @@ class TestTaintCLI:
         # either way, the verdict shouldn't say "No rules in".
         verdict = data.get("summary", {}).get("verdict", "")
         assert "No rules" not in verdict, verdict
+
+
+class TestPathTruncation:
+    """The BFS engine bounds search depth (max_hops) and per-node fan-out
+    (200 edges). When either bound fires, downstream OpenVEX consumers
+    must distinguish "definitely not reachable" from "search hit a cap"
+    — the path_truncated flag carries that signal.
+    """
+
+    def test_bfs_path_returns_three_tuple(self):
+        """Contract: ``_bfs_path`` returns ``(path, has_sanitizer, truncated)``
+        where path may be None when no route exists within bounds.
+        """
+        import sqlite3
+
+        from roam.security.taint_engine import _bfs_path
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE edges(source_id INT, target_id INT, kind TEXT)")
+        # Direct edge: source 1 → sink 2.
+        conn.execute("INSERT INTO edges VALUES (1, 2, 'calls')")
+        conn.commit()
+
+        path, has_san, truncated = _bfs_path(conn, {1}, {2}, set(), max_hops=6)
+        assert path == [1, 2]
+        assert has_san is False
+        assert truncated is False  # found a path, no caps fired
+
+    def test_bfs_truncated_when_path_too_deep(self):
+        """When the goal lies beyond ``max_hops``, BFS returns
+        ``path=None, truncated=True`` so the caller knows the search
+        wasn't exhaustive.
+        """
+        import sqlite3
+
+        from roam.security.taint_engine import _bfs_path
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE edges(source_id INT, target_id INT, kind TEXT)")
+        # Long chain: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 (7 hops).
+        for i in range(1, 8):
+            conn.execute("INSERT INTO edges VALUES (?, ?, 'calls')", (i, i + 1))
+        conn.commit()
+
+        # max_hops=3 means we can only see the first 3 hops; the actual
+        # goal at depth 7 is unreachable within bounds.
+        path, _, truncated = _bfs_path(conn, {1}, {8}, set(), max_hops=3)
+        assert path is None
+        assert truncated is True, "search ran out of hops before finding the goal — must signal truncated"
+
+    def test_taint_finding_carries_path_truncated_field(self):
+        """``TaintFinding`` dataclass must carry the new ``path_truncated``
+        field so downstream OpenVEX consumers can map truncated paths to
+        ``under_investigation``.
+        """
+        from roam.security.taint_engine import TaintFinding
+
+        f = TaintFinding(
+            rule_id="R1",
+            severity="high",
+            cwe="CWE-89",
+            source_symbol={"id": 1},
+            sink_symbol={"id": 2},
+            path_symbols=[{"id": 1}, {"id": 2}],
+            sanitizer_in_path=False,
+        )
+        # Default is False (search exhausted).
+        assert f.path_truncated is False
+
+        f2 = TaintFinding(
+            rule_id="R2",
+            severity="medium",
+            cwe="CWE-79",
+            source_symbol={"id": 3},
+            sink_symbol={"id": 4},
+            path_symbols=[{"id": 3}, {"id": 4}],
+            sanitizer_in_path=False,
+            path_truncated=True,
+        )
+        assert f2.path_truncated is True

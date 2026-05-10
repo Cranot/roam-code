@@ -317,6 +317,9 @@ class TestToolDecorator:
             "roam_audit_trail_conformance_check",
             "roam_dogfood",
             "roam_metrics_push",
+            # v12.51 — free-form intent dispatcher + telemetry (2)
+            "roam_ask",
+            "roam_session_metrics",
         }
         assert _CORE_TOOLS == expected
 
@@ -324,8 +327,9 @@ class TestToolDecorator:
         from roam.mcp_server import _CORE_TOOLS
 
         # v12.1: 27 + 6 = 33; v12.6: +2 Python-pivot = 35; v12.16: +1 catalog = 36;
-        # v12.19: +5 agent wrappers = 41; v12.28: +8 Agent Review v2 = 49.
-        assert len(_CORE_TOOLS) == 49
+        # v12.19: +5 agent wrappers = 41; v12.28: +8 Agent Review v2 = 49;
+        # v12.51: +2 (roam_ask + roam_session_metrics) = 51.
+        assert len(_CORE_TOOLS) == 51
 
     def test_required_task_tools_declared(self):
         from roam.mcp_server import _TASK_REQUIRED_TOOLS
@@ -452,8 +456,9 @@ class TestExpandToolset:
         result = expand_toolset(preset="core")
         # v12.0=27, v12.1=33 (+5 oracles +taint_classify), v12.6=35
         # (+py-pivot 2), v12.16=36 (+roam_catalog), v12.19=41
-        # (+5 agent wrappers), v12.28=49 (+8 Agent Review v2 tools).
-        assert result["tool_count"] == 49
+        # (+5 agent wrappers), v12.28=49 (+8 Agent Review v2 tools),
+        # v12.51=51 (+roam_ask, +roam_session_metrics).
+        assert result["tool_count"] == 51
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset

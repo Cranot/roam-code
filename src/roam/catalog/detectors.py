@@ -600,7 +600,15 @@ def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
 
 def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
     """Nested loops with equality comparisons β€” structural pattern for
-    O(n^2) membership testing regardless of function name."""
+    O(n^2) membership testing regardless of function name.
+
+    Note on the LIKE patterns: ``_`` is a single-char wildcard in SQL
+    LIKE, so ``LIKE '%in_%'`` matches *any* identifier with "in" followed
+    by another char (``find_x``, ``intent``, ``something_else`` β€” all
+    spurious hits). We use ``ESCAPE '\\'`` and double-write the literal
+    ``\\_`` so we only match the intended idiomatic prefixes
+    (``has_x``, ``is_in_y``, ``contains_z``).
+    """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
         "s.line_start, ms.loop_with_compare, ms.subscript_in_loops, "
@@ -613,9 +621,10 @@ def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
         "AND ms.loop_with_compare = 1 "
         "AND ms.subscript_in_loops = 1 "
         "AND (s.name LIKE '%contain%' OR s.name LIKE '%member%' "
-        "  OR s.name LIKE '%exist%' OR s.name LIKE '%has_%' "
-        "  OR s.name LIKE '%in_%' OR s.name LIKE '%check%' "
-        "  OR s.name LIKE '%includes%' OR s.name LIKE '%Includes%')"
+        "  OR s.name LIKE '%exist%' OR s.name LIKE '%has\\_%' ESCAPE '\\' "
+        "  OR s.name LIKE '%in\\_%' ESCAPE '\\' OR s.name LIKE '%check%' "
+        "  OR s.name LIKE '%includes%' OR s.name LIKE '%Includes%' "
+        "  OR s.name LIKE '%lookup%' OR s.name LIKE '%match%')"
     ).fetchall()
 
     results = []
@@ -1083,8 +1092,12 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
         "AND sm.cognitive_complexity >= 8"
     ).fetchall()
 
-    # Names that suggest grid/matrix traversal (suppress these)
-    _GRID_NAMES = {
+    # Name hints that mean the nested-loop is the *algorithm*, not a
+    # latent N+1. The function is doing the work it's supposed to be
+    # doing — flagging it produces false positives that train users to
+    # ignore the detector.
+    _BOUNDED_NESTED_NAMES = {
+        # Grid / matrix traversal (original list)
         "matrix",
         "grid",
         "board",
@@ -1097,15 +1110,46 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
         "transpose",
         "rotate",
         "convolv",
+        # Diff / overlap / range-intersection — both sides bounded by
+        # the diff (typical PR: <50 files, <50 symbols, <10 hunks).
+        "changed_symbols",
+        "overlap",
+        "intersect",
+        "diff",
+        "hunk",
+        "region",
+        "interval",
+        "range_overlap",
+        # Graph clustering / labelling — n is the cluster cardinality,
+        # bounded small in practice (Louvain partitions are usually
+        # <100 clusters).
+        "label_cluster",
+        "cluster_label",
+        "cluster_assignment",
+        "cluster_match",
+        # Co-change / coupling — pair-iteration is the entire point of
+        # the analysis; n is the symbol count for one file, bounded.
+        "cochange",
+        "co_change",
+        "coupling_pair",
+        "pairwise",
+        # Detector dispatch / rule application — the outer loop is
+        # detectors, the inner loop is the rule's payload. Bounded by
+        # the size of the rule list.
+        "run_detector",
+        "apply_rule",
+        "for_each_detector",
+        "dispatch_rule",
     }
 
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
-        # Suppress grid/matrix traversal patterns
+        # Suppress bounded-nested patterns where O(n*m) IS the algorithm.
         name_lower = (r["name"] or "").lower()
-        if any(kw in name_lower for kw in _GRID_NAMES):
+        qname_lower = (r["qualified_name"] or "").lower() if "qualified_name" in r.keys() else ""
+        if any(kw in name_lower or kw in qname_lower for kw in _BOUNDED_NESTED_NAMES):
             continue
         results.append(
             _finding(
@@ -1492,6 +1536,17 @@ _IO_WRAPPER_NAMES = {
     "export",
     "sync_all",
     "backfill",
+    # Multi-database / multi-repo workspace patterns: each iteration
+    # opens a *different* DB file, so the per-iter query cannot be
+    # batched in SQL. Threadpool / async is the proper fix shape, not
+    # WHERE IN (...). Suppress so users aren't told to "use bulk query"
+    # on a fundamentally architectural per-database loop.
+    "cross_repo",
+    "per_repo",
+    "across_repos",
+    "multi_db",
+    "federated",
+    "for_each_repo",
 }
 
 # D body-level signals that the loop iterates CHUNKS, not

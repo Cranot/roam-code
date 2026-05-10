@@ -378,7 +378,7 @@ def _find_function_node(tree, line_start: int, line_end: int):
     return _search(root)
 
 
-def compute_symbol_complexity(tree, source: bytes, line_start: int, line_end: int) -> dict:
+def compute_symbol_complexity(tree, source: bytes, line_start: int, line_end: int, *, func_node=None) -> dict:
     """Compute complexity metrics for a single symbol.
 
     Args:
@@ -386,10 +386,15 @@ def compute_symbol_complexity(tree, source: bytes, line_start: int, line_end: in
         source: raw source bytes
         line_start: 1-indexed start line of the symbol
         line_end: 1-indexed end line of the symbol
+        func_node: pre-located function AST node. When supplied, skips the
+            ``_find_function_node`` lookup — caller has already done it
+            (e.g. ``compute_and_store`` which uses the same node twice
+            per iteration). Pass ``None`` to do the lookup here.
 
     Returns dict with all metric fields, or None if symbol node not found.
     """
-    func_node = _find_function_node(tree, line_start, line_end)
+    if func_node is None:
+        func_node = _find_function_node(tree, line_start, line_end)
     if func_node is None:
         # Fall back: compute from source line range
         return _complexity_from_source(source, line_start, line_end)
@@ -662,8 +667,52 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
 
         if ntype in _LOOP_NODES:
             new_depth, new_loop_vars = _enter_loop(node, source, loop_depth, loop_vars, state)
-            for child in node.children:
-                _walk(child, new_depth, new_loop_vars)
+            # Loop iterator expression vs loop body: the iterator (e.g.
+            # the ``conn.execute(...).fetchall()`` in
+            # ``for r in conn.execute(...).fetchall():``) is evaluated
+            # ONCE before the loop, not per-iteration. We must not count
+            # calls inside it as "calls in loop body" — that produces
+            # N+1 false positives for the canonical
+            # "for r in conn.execute(...).fetchall(): pure_python_work()"
+            # pattern.  Field-named children (Python: ``body``; Go:
+            # ``body``; JS / Java: a ``statement_block``) are the body;
+            # everything else is the head/iterator and walks at the
+            # OUTER loop depth.
+            body_node = None
+            try:
+                body_node = node.child_by_field_name("body")
+            except Exception:
+                body_node = None
+            if body_node is None:
+                # Fallback for grammars that don't expose ``body`` as a
+                # field: take the last block-like child as the body.
+                for child in reversed(node.children):
+                    if child.type in (
+                        "block",
+                        "compound_statement",
+                        "statement_block",
+                        "do_block",
+                        "suite",
+                    ):
+                        body_node = child
+                        break
+            if body_node is not None:
+                # ``==`` not ``is`` β€” tree-sitter returns a fresh Python
+                # wrapper from ``child_by_field_name`` even when the
+                # underlying C-level node is identical to one in
+                # ``.children``. Identity check would always be False
+                # and we'd walk the body at the outer depth.
+                for child in node.children:
+                    if child == body_node:
+                        _walk(child, new_depth, new_loop_vars)
+                    else:
+                        _walk(child, loop_depth, loop_vars)
+            else:
+                # Last-resort: preserve old behaviour (walk all children
+                # at increased depth) so we don't silently drop signals
+                # on languages whose grammar we don't recognise here.
+                for child in node.children:
+                    _walk(child, new_depth, new_loop_vars)
             return
 
         # nested function bodies establish a fresh scope:
@@ -1041,7 +1090,11 @@ def compute_and_store(
         if ls is None or le is None:
             continue
 
-        metrics = compute_symbol_complexity(tree, source, ls, le)
+        # Locate the function node ONCE — both complexity + math signals
+        # need it. Saves an entire AST descent per callable on big files.
+        func_node = _find_function_node(tree, ls, le)
+
+        metrics = compute_symbol_complexity(tree, source, ls, le, func_node=func_node)
         if metrics is None:
             continue
 
@@ -1063,8 +1116,7 @@ def compute_and_store(
             )
         )
 
-        # Extract math signals from same AST node
-        func_node = _find_function_node(tree, ls, le)
+        # Extract math signals from same AST node (re-using func_node).
         if func_node is not None:
             import json as _json_mod
 

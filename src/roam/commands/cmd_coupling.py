@@ -186,14 +186,35 @@ def _against_mode(conn, change_fids, file_map, min_strength, min_cochanges):
     missing = []
     included = []
 
+    # Bulk-fetch every co-change row touching any fid in file_map. The
+    # old per-fid SELECT was N+1 in len(file_map). One batched query
+    # returns the same rows; we group by which fid in file_map each row
+    # touches and walk per-path in Python.
+    all_fids = list({fid for fid in file_map.values() if fid is not None})
+    partners_by_fid: dict[int, list] = {fid: [] for fid in all_fids}
+    if all_fids:
+        from roam.db.connection import batched_in
+
+        rows = batched_in(
+            conn,
+            "SELECT file_id_a, file_id_b, cochange_count "
+            "FROM git_cochange "
+            "WHERE file_id_a IN ({ph}) OR file_id_b IN ({ph})",
+            all_fids,
+        )
+        in_map = set(all_fids)
+        for r in rows:
+            # A row might match either side (or both). Attach to every
+            # in-map fid the row touches so per-fid iteration below sees
+            # the same set of partners as the old per-fid query.
+            a, b = r["file_id_a"], r["file_id_b"]
+            if a in in_map:
+                partners_by_fid.setdefault(a, []).append(r)
+            if b in in_map and b != a:
+                partners_by_fid.setdefault(b, []).append(r)
+
     for path, fid in file_map.items():
-        # Get co-change partners
-        partners = conn.execute(
-            """SELECT file_id_a, file_id_b, cochange_count
-               FROM git_cochange
-               WHERE file_id_a = ? OR file_id_b = ?""",
-            (fid, fid),
-        ).fetchall()
+        partners = partners_by_fid.get(fid, ())
 
         for p in partners:
             partner_fid = p["file_id_b"] if p["file_id_a"] == fid else p["file_id_a"]

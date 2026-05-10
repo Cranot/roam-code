@@ -250,6 +250,119 @@ class TestIncrementalIndexing:
             names = {r["name"] for r in conn.execute("SELECT name FROM symbols").fetchall()}
             assert "hello" not in names, f"Symbol 'hello' from deleted file still present: {names}"
 
+    def test_rename_preserves_xfile_edges(self, tmp_path):
+        """Pure file rename triggers affected-neighbor recovery.
+
+        Regression test for the gating bug at indexer.py:1409 where
+        ``if not force and modified and changed_file_ids`` skipped recovery
+        on pure renames (modified=[], removed=[old], added=[new]). CASCADE
+        wiped edges into the renamed file's symbols, and unchanged callers
+        were never re-extracted, so new edges never got created.
+
+        Contract: after an incremental rename, edge count must match the
+        ``--force`` reindex of the same final state.
+        """
+        proj = tmp_path / "rename_proj"
+        proj.mkdir()
+        (proj / ".gitignore").write_text(".roam/\n")
+        # a.py defines hello(); lib.py calls hello() via `from a import`.
+        (proj / "a.py").write_text("def hello():\n    return 'world'\n")
+        (proj / "lib.py").write_text("from a import hello\n\ndef caller():\n    return hello()\n")
+        git_init(proj)
+
+        # Initial index — establishes the baseline edge from lib.caller -> a.hello.
+        out1, rc1 = index_in_process(proj)
+        assert rc1 == 0, f"Initial index failed:\n{out1}"
+
+        with _open_db_for(proj) as conn:
+            edges_before = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        assert edges_before > 0, "Initial index produced no edges; fixture is wrong"
+
+        # Pure rename: a.py -> c.py, AND update lib.py's import to match.
+        # We update lib.py too to keep the import resolvable; this also
+        # makes ``modified`` non-empty, so the test passes the gating check
+        # whether or not the bug is present. The point is to lock in the
+        # invariant that incremental rename produces the same edge graph
+        # as a force reindex of the final state.
+        time.sleep(0.1)  # ensure mtime differs
+        (proj / "a.py").unlink()
+        (proj / "c.py").write_text("def hello():\n    return 'world'\n")
+        (proj / "lib.py").write_text("from c import hello\n\ndef caller():\n    return hello()\n")
+        git_commit(proj, "rename a.py -> c.py")
+
+        # Incremental reindex.
+        out2, rc2 = index_in_process(proj)
+        assert rc2 == 0, f"Incremental rename index failed:\n{out2}"
+
+        with _open_db_for(proj) as conn:
+            edges_incremental = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+            paths_incremental = {r["path"] for r in conn.execute("SELECT path FROM files").fetchall()}
+
+        assert "a.py" not in paths_incremental
+        assert "c.py" in paths_incremental
+
+        # Force reindex of the same final state — the ground truth.
+        out3, rc3 = index_in_process(proj, "--force")
+        assert rc3 == 0, f"Force reindex failed:\n{out3}"
+
+        with _open_db_for(proj) as conn:
+            edges_force = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+
+        assert edges_incremental == edges_force, (
+            f"Incremental rename produced {edges_incremental} edges, "
+            f"--force produced {edges_force}. Affected-neighbor recovery "
+            f"likely skipped for the rename — see indexer.py:1409 gating."
+        )
+
+    def test_pure_removal_invokes_affected_neighbor_recovery(self, tmp_path, monkeypatch):
+        """Direct gating test: when removed != [] and modified == [],
+        ``_find_affected_neighbor_files`` MUST be called.
+
+        Spies the recovery function via monkeypatch so this test exercises
+        the gating clause at indexer.py:1409 specifically — independent of
+        whether the resulting edge graph differs. The bug pre-fix was that
+        the gate's ``and modified`` clause caused the entire recovery path
+        to be skipped on a pure deletion or pure rename.
+        """
+        from roam.index.indexer import Indexer
+
+        proj = tmp_path / "rec_proj"
+        proj.mkdir()
+        (proj / ".gitignore").write_text(".roam/\n")
+        (proj / "a.py").write_text("def hello():\n    return 1\n")
+        (proj / "lib.py").write_text("from a import hello\n\ndef caller():\n    return hello()\n")
+        git_init(proj)
+
+        # Initial index.
+        out1, rc1 = index_in_process(proj)
+        assert rc1 == 0, f"initial index failed: {out1}"
+
+        # Pure removal: delete a.py only, no other source modifications.
+        # Incremental will see modified=[], removed=[a.py].
+        (proj / "a.py").unlink()
+        git_commit(proj, "remove a.py")
+
+        # Spy on the recovery function. We're testing the gating decision,
+        # not the recovery's behaviour, so we wrap rather than replace.
+        original = Indexer._find_affected_neighbor_files
+        calls: list[tuple] = []
+
+        def spy(conn, changed_file_ids):
+            calls.append(("called", tuple(sorted(changed_file_ids))))
+            return original(conn, changed_file_ids)
+
+        monkeypatch.setattr(Indexer, "_find_affected_neighbor_files", staticmethod(spy))
+
+        out2, rc2 = index_in_process(proj)
+        assert rc2 == 0, f"incremental index after removal failed: {out2}"
+
+        assert calls, (
+            "_find_affected_neighbor_files was NEVER called during incremental "
+            "after a pure removal. This is the rename-no-recovery bug — "
+            "indexer.py:1409 had `if not force and modified and changed_file_ids`, "
+            "and modified=[] short-circuited the entire recovery path."
+        )
+
 
 # ===========================================================================
 # Language detection (4 tests)

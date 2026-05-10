@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json as _json
+import os
 import time
 from datetime import datetime, timezone
 
@@ -349,6 +350,107 @@ def _compact_mode_enabled() -> bool:
     return False
 
 
+# Bounds for the derived agent_contract block. Total target ~200 tokens
+# so the block stays useful for tight-context clients without becoming
+# yet another bulky payload.
+_AGENT_CONTRACT_MAX_FACTS = 5
+_AGENT_CONTRACT_MAX_RISKS = 3
+_AGENT_CONTRACT_MAX_NEXT = 5
+_AGENT_CONTRACT_STR_TRUNCATE = 120
+
+# Keys in the envelope payload that conventionally carry "things that
+# went wrong" — used to populate the ``risks`` list. Order is preference;
+# the first non-empty list wins.
+_RISK_KEYS = (
+    "errors",
+    "violations",
+    "blockers",
+    "issues",
+    "findings",
+)
+
+
+def _stringify_risk_item(item) -> str:
+    """Pull a short human-readable string out of an envelope risk-item.
+
+    Items are typically either bare strings or dicts with a ``message``
+    / ``title`` / ``description`` / ``rule_id`` field. Falls back to
+    ``str(item)`` when nothing useful is found.
+    """
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        for key in ("message", "title", "description", "verdict", "rule_id"):
+            v = item.get(key)
+            if isinstance(v, str) and v:
+                return v
+    return str(item)
+
+
+def _derive_agent_contract(out: dict, summary: dict) -> dict:
+    """Build the bounded ``agent_contract`` derived block.
+
+    Generic across all envelopes — pulls structural cues (verdict,
+    numeric counts in summary, error lists, next_steps) without
+    requiring per-command opt-in. Agents on tight context budgets can
+    read just this dict; full-payload consumers ignore it.
+    """
+    facts: list[str] = []
+    risks: list[str] = []
+    next_commands: list[str] = []
+    confidence: float | None = None
+
+    verdict = summary.get("verdict")
+    if isinstance(verdict, str) and verdict:
+        facts.append(verdict[:_AGENT_CONTRACT_STR_TRUNCATE])
+
+    # Numeric counts / scores from summary are high-signal facts.
+    for key, value in summary.items():
+        if key in ("verdict", "confidence"):
+            continue
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            facts.append(f"{key}: {value}")
+            if len(facts) >= _AGENT_CONTRACT_MAX_FACTS:
+                break
+
+    # Risks — first non-empty list among the conventional risk keys.
+    for key in _RISK_KEYS:
+        items = out.get(key)
+        if isinstance(items, list) and items:
+            for item in items[:_AGENT_CONTRACT_MAX_RISKS]:
+                msg = _stringify_risk_item(item)
+                risks.append(msg[:_AGENT_CONTRACT_STR_TRUNCATE])
+            break
+
+    # Confidence — pull from summary; either 0..1 float or a 0..100 int.
+    raw_conf = summary.get("confidence")
+    if isinstance(raw_conf, (int, float)) and not isinstance(raw_conf, bool):
+        confidence = float(raw_conf)
+
+    # Next steps — try the structured ``next_steps`` payload first,
+    # then ``summary.next_commands`` as a less-formal fallback.
+    next_source = out.get("next_steps")
+    if not isinstance(next_source, list):
+        next_source = summary.get("next_commands")
+    if isinstance(next_source, list):
+        for step in next_source[:_AGENT_CONTRACT_MAX_NEXT]:
+            if isinstance(step, dict):
+                cmd = step.get("command") or step.get("cmd") or step.get("action") or ""
+            else:
+                cmd = str(step)
+            if cmd:
+                next_commands.append(cmd[:_AGENT_CONTRACT_STR_TRUNCATE])
+
+    return {
+        "facts": facts,
+        "risks": risks,
+        "next_commands": next_commands,
+        "confidence": confidence,
+    }
+
+
 def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **payload) -> dict:
     """Wrap command output in a self-describing envelope.
 
@@ -399,6 +501,14 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
         "summary": summary or {},
     }
     out.update(payload)
+
+    # Derived ``agent_contract`` block — bounded ~200 tokens. Agents on
+    # tight context budgets can read just this and skip the full payload;
+    # full-payload consumers ignore it. Opt-out via env
+    # ``ROAM_AGENT_CONTRACT_BLOCK=0``.
+    if os.environ.get("ROAM_AGENT_CONTRACT_BLOCK", "1").lower() not in ("0", "false", "no"):
+        out["agent_contract"] = _derive_agent_contract(out, summary or {})
+
     # Non-deterministic metadata in _meta — kept separate so content
     # keys produce identical JSON across invocations (LLM cache-friendly).
     out["_meta"] = {

@@ -197,6 +197,103 @@ class TestVerification:
         assert not ok
         assert errors
 
+    def test_predicate_carries_git_dirty_hash_field(self, tmp_path):
+        """Newly-emitted predicates always include the dirty-hash field —
+        ``None`` for a clean tree, sha256 for a dirty one.
+        """
+        conn = _make_in_memory_db()
+        stmt = build_cga_statement(conn, project_root=tmp_path)
+        assert "git_dirty_hash" in stmt["predicate"], (
+            "predicate must carry git_dirty_hash so the verifier can re-derive "
+            "and compare. Pre-bind statements lacked this field; new emits must "
+            "always include it."
+        )
+
+    def test_dirty_hash_mismatch_fails_verification(self, tmp_path):
+        """Predicate asserting clean tree, live tree dirty → refuse.
+
+        Simulated by injecting a non-None dirty-hash into the predicate and
+        verifying against a clean (non-git) ``project_root``. The verifier
+        sees predicate=dirty, live=None and emits a mismatch error.
+        """
+        conn = _make_in_memory_db()
+        stmt = build_cga_statement(conn, project_root=tmp_path)
+        stmt["predicate"]["git_dirty_hash"] = "abc123" * 10  # pretend dirty
+        ok, errors = verify_cga_statement(stmt, conn, project_root=tmp_path)
+        assert not ok
+        assert any("git_dirty_hash" in e for e in errors), f"expected git_dirty_hash mismatch in errors, got: {errors}"
+
+    def test_strip_url_credentials_removes_token_userinfo(self):
+        """Personal-access-tokens cloned via HTTPS leak through
+        ``remote.origin.url``. The strip helper must remove userinfo so
+        the token never lands in a signed attestation's subject.name.
+        """
+        from roam.attest.cga import _strip_url_credentials
+
+        # Token-bearing HTTPS clone URLs
+        assert (
+            _strip_url_credentials("https://x:ghp_FAKETOKEN@github.com/owner/repo") == "https://github.com/owner/repo"
+        )
+        assert (
+            _strip_url_credentials("https://oauth2:VERY_SECRET_TOKEN@gitlab.com/group/proj.git")
+            == "https://gitlab.com/group/proj.git"
+        )
+        # Bare-user form (no token) — also stripped, since we treat any
+        # userinfo as credential-bearing in the HTTPS-clone context.
+        assert _strip_url_credentials("https://alice@github.com/owner/repo") == "https://github.com/owner/repo"
+
+    def test_legacy_dev_iri_still_verifies(self, tmp_path):
+        """Statements signed before the .dev → .com migration must still
+        verify cleanly so consumers don't have to rebuild the chain.
+        """
+        from roam.attest.cga import _LEGACY_PREDICATE_TYPES
+
+        conn = _make_in_memory_db()
+        stmt = build_cga_statement(conn, project_root=tmp_path)
+        # Spoof an old-style emit by swapping the predicate type back
+        # to the legacy ``.dev`` IRI.
+        stmt["predicateType"] = _LEGACY_PREDICATE_TYPES[0]
+        ok, errors = verify_cga_statement(stmt, conn, project_root=tmp_path)
+        assert ok, f"legacy IRI should verify, got errors: {errors}"
+
+    def test_predicate_type_now_uses_owned_domain(self, tmp_path):
+        """New emits must use the .com IRI — that's the served domain.
+        SLSA / in-toto consumers that dereference the IRI find a real
+        page (or at least a 200 from a canonical site).
+        """
+        conn = _make_in_memory_db()
+        stmt = build_cga_statement(conn, project_root=tmp_path)
+        assert stmt["predicateType"].startswith("https://roam-code.com/")
+        assert "roam-code.dev" not in stmt["predicateType"]
+
+    def test_strip_url_credentials_passes_through_clean_urls(self):
+        """No userinfo → return unchanged. SSH form likewise unchanged
+        (``git@`` is conventional, not a credential)."""
+        from roam.attest.cga import _strip_url_credentials
+
+        assert _strip_url_credentials("https://github.com/owner/repo") == "https://github.com/owner/repo"
+        assert _strip_url_credentials("git@github.com:owner/repo.git") == "git@github.com:owner/repo.git"
+        # Local file paths and other non-URL strings — pass through.
+        assert _strip_url_credentials("/Users/dev/proj") == "/Users/dev/proj"
+
+    def test_subject_sha_mismatch_fails_verification(self, tmp_path, monkeypatch):
+        """Statement signed against commit X, live tree at commit Y → refuse."""
+        from roam.attest import cga as cga_mod
+
+        conn = _make_in_memory_db()
+        stmt = build_cga_statement(conn, project_root=tmp_path)
+        # Force statement to claim a different commit SHA.
+        stmt["subject"][0]["digest"]["git_commit_sha1"] = "deadbeef" + "0" * 32
+
+        # Make _git_commit_sha return a known different value so verify
+        # can compare a real "live" SHA to the spoofed subject SHA.
+        monkeypatch.setattr(cga_mod, "_git_commit_sha", lambda root: "feedface" + "0" * 32)
+        ok, errors = verify_cga_statement(stmt, conn, project_root=tmp_path)
+        assert not ok
+        assert any("git_commit_sha1 mismatch" in e for e in errors), (
+            f"expected git_commit_sha1 mismatch in errors, got: {errors}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # CLI surface (end-to-end against a real indexed project)
@@ -257,7 +354,9 @@ class TestCGACLI:
         assert emit_result.exit_code == 0, emit_result.output
         assert out.exists()
 
-        verify_result = runner.invoke(cli, ["cga", "verify", str(out)])
+        # Unsigned emit -> no sibling bundle -> verify must fail-closed by
+        # default. Pass --no-cosign to acknowledge the predicate-only path.
+        verify_result = runner.invoke(cli, ["cga", "verify", str(out), "--no-cosign"])
         assert verify_result.exit_code == 0, verify_result.output
         assert "verified" in verify_result.output.lower()
 
@@ -583,15 +682,33 @@ class TestCosignWiring:
 
 
 class TestCosignVerifyWiring:
-    def test_verify_skips_cosign_when_no_bundle_present(self, cga_project, tmp_path):
-        """Verify a freshly-emitted (unsigned) statement — no sibling
-        bundle on disk → cosign step skipped, predicate-only verify
-        passes."""
+    def test_verify_fails_closed_when_no_bundle_and_no_optout(self, cga_project, tmp_path):
+        """Load-bearing claim is "tamper-evident". When no sibling bundle is
+        present and the user hasn't passed --no-cosign, verify must FAIL —
+        otherwise a downloaded statement reads "verified" while the
+        cryptographic-trust half is silently null.
+        """
         out = tmp_path / "cga.json"
         runner = CliRunner()
         emit = runner.invoke(cli, ["cga", "emit", "--output", str(out)])
         assert emit.exit_code == 0, emit.output
         verify = runner.invoke(cli, ["--json", "cga", "verify", str(out)])
+        assert verify.exit_code == 5, f"expected exit 5 (fail-closed), got {verify.exit_code}\n{verify.output}"
+        data = json.loads(verify.output)
+        assert data["summary"]["ok"] is False
+        # Verdict surfaces the actionable hint.
+        joined_errors = " ".join(data.get("errors", []))
+        assert "no-cosign" in joined_errors or "bundle not found" in joined_errors, (
+            f"expected fail-closed error to mention --no-cosign / bundle, got: {joined_errors}"
+        )
+
+    def test_verify_with_no_cosign_optout_passes_predicate_only(self, cga_project, tmp_path):
+        """Explicit --no-cosign acknowledges predicate-only verification."""
+        out = tmp_path / "cga.json"
+        runner = CliRunner()
+        emit = runner.invoke(cli, ["cga", "emit", "--output", str(out)])
+        assert emit.exit_code == 0, emit.output
+        verify = runner.invoke(cli, ["--json", "cga", "verify", str(out), "--no-cosign"])
         assert verify.exit_code == 0, verify.output
         data = json.loads(verify.output)
         assert data["summary"]["ok"] is True
@@ -609,6 +726,47 @@ class TestCosignVerifyWiring:
         data = json.loads(result.output)
         assert data["summary"]["ok"] is True
         assert data["summary"]["cosign_verified"] is False
+
+
+class TestDirtyTreeRefusal:
+    """Compliance officer expectation: emitting a CGA on a dirty tree
+    produces a misleading attestation (commit SHA in subject doesn't
+    reflect actual analysed state). Default behaviour refuses;
+    --allow-dirty opts in.
+    """
+
+    def test_emit_refuses_dirty_tree_by_default(self, cga_project, tmp_path):
+        """Adding an untracked file marks the tree dirty → emit refuses."""
+        # cga_project has .roam/ in .gitignore so it starts clean.
+        # Introduce a new untracked source file to dirty the tree.
+        (cga_project / "untracked.py").write_text("def newly_added(): pass\n", encoding="utf-8")
+        runner = CliRunner()
+        out = tmp_path / "cga.json"
+        result = runner.invoke(cli, ["cga", "emit", "--output", str(out)])
+        assert result.exit_code != 0, f"Dirty-tree emit should refuse, got exit {result.exit_code}\n{result.output}"
+        assert "DIRTY_TREE" in result.output or "dirty" in result.output.lower()
+
+    def test_emit_allow_dirty_proceeds_and_records_hash(self, cga_project, tmp_path):
+        """--allow-dirty opts in; predicate carries the dirty-hash."""
+        (cga_project / "untracked.py").write_text("def newly_added(): pass\n", encoding="utf-8")
+        runner = CliRunner()
+        out = tmp_path / "cga.json"
+        result = runner.invoke(cli, ["cga", "emit", "--output", str(out), "--allow-dirty"])
+        assert result.exit_code == 0, result.output
+        statement = json.loads(out.read_text(encoding="utf-8"))
+        dirty_hash = statement["predicate"].get("git_dirty_hash")
+        assert dirty_hash is not None and len(dirty_hash) == 64, (
+            f"--allow-dirty must record the dirty-hash in the predicate, got {dirty_hash!r}"
+        )
+
+    def test_clean_tree_emits_with_none_dirty_hash(self, cga_project, tmp_path):
+        """Clean tree → predicate's git_dirty_hash is None."""
+        runner = CliRunner()
+        out = tmp_path / "cga.json"
+        result = runner.invoke(cli, ["cga", "emit", "--output", str(out)])
+        assert result.exit_code == 0, result.output
+        statement = json.loads(out.read_text(encoding="utf-8"))
+        assert statement["predicate"]["git_dirty_hash"] is None
         """End-to-end guard: emit with --include-taint, verify the on-disk
         statement never contains the forbidden v11.x 'code_not_reachable'
         string anywhere."""

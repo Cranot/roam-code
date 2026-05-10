@@ -25,6 +25,7 @@ import inspect
 import json
 import os
 import threading
+from collections import Counter
 from contextlib import contextmanager
 
 # ---------------------------------------------------------------------------
@@ -84,15 +85,62 @@ _in_flight = 0
 _busy_responses = 0
 _metrics_lock = threading.Lock()
 
+# Per-tool invocation counters — local-only telemetry. Tracks how many
+# times each tool was called and how many returned each outcome
+# (success / rate_limited / error). Helps answer "is roam_ask actually
+# being used now that it's wired?" and "are 90 of the 137 tools dead
+# weight?" without phoning home.
+_tool_invocations: Counter[tuple[str, str]] = Counter()
+
+
+def record_tool_outcome(tool_name: str, outcome: str) -> None:
+    """Increment the invocation counter for ``(tool_name, outcome)``.
+
+    ``outcome`` is one of ``"success"`` / ``"rate_limited"`` / ``"error"``.
+    Local-only — never phones home. Inspect via ``metrics()`` or the
+    new ``roam_session_metrics`` MCP tool.
+    """
+    with _metrics_lock:
+        _tool_invocations[(tool_name, outcome)] += 1
+
+
+def tool_invocation_summary() -> dict[str, dict[str, int]]:
+    """Return per-tool invocation counts grouped by outcome.
+
+    Shape::
+
+        {
+          "roam_ask":      {"success": 12, "rate_limited": 0, "error": 1},
+          "roam_understand": {"success": 3, ...},
+          ...
+        }
+
+    Tools never invoked don't appear. Sorted alphabetically for
+    deterministic output across snapshots.
+    """
+    with _metrics_lock:
+        snapshot = dict(_tool_invocations)
+    out: dict[str, dict[str, int]] = {}
+    for (name, outcome), count in snapshot.items():
+        out.setdefault(name, {})[outcome] = count
+    return dict(sorted(out.items()))
+
 
 def metrics() -> dict:
-    """Return a snapshot of current backpressure state."""
+    """Return a snapshot of current backpressure state.
+
+    The ``invocations`` field is JSON-safe: tuple keys ``(tool, outcome)``
+    are flattened into ``"tool::outcome"`` strings. Use
+    :func:`tool_invocation_summary` for the grouped-by-tool view.
+    """
     with _metrics_lock:
+        flat_invocations = {f"{tool}::{outcome}": count for (tool, outcome), count in _tool_invocations.items()}
         return {
             "max_concurrent": _max_concurrent,
             "in_flight": _in_flight,
             "busy_responses_total": _busy_responses,
             "per_tool_limits": dict(_per_tool_overrides),
+            "invocations": flat_invocations,
         }
 
 
@@ -195,10 +243,16 @@ def wrap_with_guard(name: str, fn):
         async def async_wrapper(*args, **kwargs):
             acquired, per_tool = _try_acquire(name)
             if not acquired:
+                record_tool_outcome(name, "rate_limited")
                 return busy_envelope(name)
             with _track_in_flight():
                 try:
-                    return await fn(*args, **kwargs)
+                    result = await fn(*args, **kwargs)
+                    record_tool_outcome(name, "success")
+                    return result
+                except Exception:
+                    record_tool_outcome(name, "error")
+                    raise
                 finally:
                     _release(per_tool)
 
@@ -208,10 +262,16 @@ def wrap_with_guard(name: str, fn):
     def sync_wrapper(*args, **kwargs):
         acquired, per_tool = _try_acquire(name)
         if not acquired:
+            record_tool_outcome(name, "rate_limited")
             return busy_envelope(name)
         with _track_in_flight():
             try:
-                return fn(*args, **kwargs)
+                result = fn(*args, **kwargs)
+                record_tool_outcome(name, "success")
+                return result
+            except Exception:
+                record_tool_outcome(name, "error")
+                raise
             finally:
                 _release(per_tool)
 

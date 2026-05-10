@@ -6,6 +6,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import click
+
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -31,6 +33,19 @@ def ensure_vuln_table(conn: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _escape_like(pattern: str) -> str:
+    """Escape SQLite LIKE wildcards in a literal so they match themselves.
+
+    Without this, a package name containing ``_`` (single-char wildcard)
+    or ``%`` (multi-char wildcard) would match-explode against the
+    symbols table — a hostile or malformed scanner report with
+    ``package_name = "_"`` would match every symbol.
+
+    Used together with an explicit ``ESCAPE '\\'`` clause on the LIKE.
+    """
+    return pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[dict]:
     """Try to find symbols that reference or match the vulnerable package.
 
@@ -42,12 +57,13 @@ def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[d
     matches: list[dict] = []
     seen_ids: set[int] = set()
 
-    # Direct symbol name match
+    # Direct symbol name match. ESCAPE clause + escaped LIKE pattern means
+    # a package_name like ``_`` or ``foo%`` matches itself, not every symbol.
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, f.path AS file_path "
         "FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE s.name = ? OR s.qualified_name LIKE ?",
-        (package_name, f"%{package_name}%"),
+        "WHERE s.name = ? OR s.qualified_name LIKE ? ESCAPE '\\'",
+        (package_name, f"%{_escape_like(package_name)}%"),
     ).fetchall()
     for r in rows:
         if r["id"] not in seen_ids:
@@ -126,9 +142,37 @@ def _insert_vuln(
     }
 
 
+# Maximum size of a vulnerability scanner report we'll ingest. Real npm /
+# pip / trivy / osv outputs are typically <5 MB even on huge codebases;
+# 50 MB is a safe ceiling that catches hostile or malformed reports
+# (a 1 GB generic JSON would otherwise OOM the process).
+_MAX_REPORT_BYTES = 50 * 1024 * 1024
+
+
 def _load_json(report_path: str) -> object:
-    """Load a JSON file and return the parsed content."""
-    return json.loads(Path(report_path).read_text(encoding="utf-8"))
+    """Load a JSON scanner report from disk and return the parsed content.
+
+    Refuses to load files larger than ``_MAX_REPORT_BYTES`` to bound the
+    memory footprint — a hostile scanner output with a multi-GB JSON
+    payload would otherwise be loaded entirely into memory.
+    """
+    p = Path(report_path)
+    try:
+        size = p.stat().st_size
+    except OSError as exc:
+        raise click.ClickException(
+            f"could not stat scanner report {report_path}: {exc}\n"
+            "  If this looks unexpected, run `roam doctor` to diagnose your install."
+        ) from exc
+    if size > _MAX_REPORT_BYTES:
+        raise click.ClickException(
+            f"scanner report {report_path} is {size:,} bytes, exceeding the "
+            f"{_MAX_REPORT_BYTES:,}-byte cap. Real npm/pip/trivy/osv outputs "
+            f"are typically under 5 MB; a multi-GB report likely indicates "
+            f"a hostile or malformed file. Re-run the scanner or split the "
+            f"report into smaller chunks."
+        )
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------

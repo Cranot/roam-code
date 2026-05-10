@@ -79,41 +79,52 @@ def _find_colocated_tests(conn, file_paths):
     1. Colocated tests in the same directory (e.g., test_*.py / *_test.py)
     2. Convention-based test discovery (e.g., separate test projects for C#)
     """
-    # mechanism 1: colocated tests in same directory
+    # Pre-fetch the entire (path, language) map once. Replaces three
+    # nested N+1 queries (per-dir LIKE, per-file language lookup,
+    # per-candidate existence check) with a single SELECT and
+    # in-memory dict / set lookups.
+    path_to_language: dict[str, str | None] = {}
+    for r in conn.execute("SELECT path, language FROM files").fetchall():
+        path_to_language[r["path"]] = r["language"]
+    all_paths = set(path_to_language)
+    file_paths_set = set(file_paths)
+
+    # mechanism 1: colocated tests within the same directory subtree.
+    # Original code issued one ``WHERE path LIKE 'dir/%'`` per unique
+    # input directory — recursive prefix match. Replaced with a single
+    # in-memory scan over the pre-fetched all_paths set.
     dirs = set()
     for fp in file_paths:
         d = os.path.dirname(fp.replace("\\", "/"))
         if d:
             dirs.add(d)
 
+    # Pre-classify each path once: which input dirs contain it as a
+    # subtree descendant? For each path p, find the dirs in ``dirs``
+    # that p starts with (followed by ``/``). Total work is
+    # O(len(all_paths) * len(dirs)) but with zero DB round-trips.
     colocated = []
-    for d in dirs:
-        pattern = f"{d}/%"
-        rows = conn.execute("SELECT path FROM files WHERE path LIKE ?", (pattern,)).fetchall()
-        for r in rows:
-            p = r["path"]
-            if is_test_file(p) and p not in file_paths:
+    for p in all_paths:
+        if not is_test_file(p) or p in file_paths_set:
+            continue
+        p_norm = p.replace("\\", "/")
+        for d in dirs:
+            if p_norm.startswith(d + "/"):
                 colocated.append(p)
+                break
 
-    # mechanism 2: convention-based test discovery
+    # mechanism 2: convention-based test discovery.
+    # Use the pre-fetched dict for both the per-file language lookup
+    # and the per-candidate existence check — both were N+1 before.
     convention_tests = []
     for fp in file_paths:
-        # get the language for this file
-        row = conn.execute("SELECT language FROM files WHERE path = ?", (fp,)).fetchone()
-
-        if row and row["language"]:
-            language = row["language"]
-            # get test candidates from conventions
-            candidates = find_test_candidates(fp, language=language)
-
-            # check which candidates exist in the database
-            for candidate in candidates:
-                existing = conn.execute("SELECT path FROM files WHERE path = ?", (candidate,)).fetchone()
-
-                if existing:
-                    test_path = existing["path"]
-                    if is_test_file(test_path) and test_path not in file_paths:
-                        convention_tests.append(test_path)
+        language = path_to_language.get(fp)
+        if not language:
+            continue
+        candidates = find_test_candidates(fp, language=language)
+        for candidate in candidates:
+            if candidate in all_paths and is_test_file(candidate) and candidate not in file_paths_set:
+                convention_tests.append(candidate)
 
     return sorted(set(colocated + convention_tests))
 

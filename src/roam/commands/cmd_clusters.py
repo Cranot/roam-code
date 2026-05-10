@@ -53,6 +53,29 @@ def _compute_cohesion(conn):
 def _print_mega_detail(conn, visible, mega_ids, total_symbols, intra_count, total_count, median_cohesion, edges):
     """Print mega-cluster sub-directory breakdowns and coupling matrices."""
     click.echo("\n=== Mega-Cluster Detail ===")
+
+    # Pre-fetch all symbols belonging to any visible mega-cluster in a
+    # single batched query, then group by cluster_id in Python. Replaces
+    # the per-cluster SELECT that was an N+1 in the loop body below.
+    visible_mega_ids = [r["cluster_id"] for r in visible if r["cluster_id"] in mega_ids]
+    syms_by_cluster: dict[int, list] = {cid: [] for cid in visible_mega_ids}
+    if visible_mega_ids:
+        from roam.db.connection import batched_in
+
+        rows = batched_in(
+            conn,
+            "SELECT c.cluster_id, s.id, s.name, s.kind, f.path, "
+            "COALESCE(gm.pagerank, 0) as pagerank "
+            "FROM clusters c "
+            "JOIN symbols s ON c.symbol_id = s.id "
+            "JOIN files f ON s.file_id = f.id "
+            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+            "WHERE c.cluster_id IN ({ph})",
+            visible_mega_ids,
+        )
+        for row in rows:
+            syms_by_cluster.setdefault(row["cluster_id"], []).append(row)
+
     for r in visible:
         cid = r["cluster_id"]
         if cid not in mega_ids:
@@ -66,16 +89,7 @@ def _print_mega_detail(conn, visible, mega_ids, total_symbols, intra_count, tota
             f"cohesion {c_coh:.0f}% — {coh_ctx} median {median_cohesion:.0f}%)"
         )
 
-        c_syms = conn.execute(
-            "SELECT s.id, s.name, s.kind, f.path, "
-            "COALESCE(gm.pagerank, 0) as pagerank "
-            "FROM clusters c "
-            "JOIN symbols s ON c.symbol_id = s.id "
-            "JOIN files f ON s.file_id = f.id "
-            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-            "WHERE c.cluster_id = ?",
-            (cid,),
-        ).fetchall()
+        c_syms = syms_by_cluster.get(cid, [])
 
         dir_syms: dict[str, list] = {}
         for s in c_syms:
