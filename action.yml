@@ -107,7 +107,7 @@ runs:
     # ---- 2. Cache pip packages ----------------------------------------------
     - name: Cache pip packages
       if: inputs.cache == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/.cache/pip
         key: roam-pip-${{ runner.os }}-py${{ inputs.python-version }}-${{ inputs.version }}
@@ -117,7 +117,7 @@ runs:
     # ---- 3. Cache roam index (SQLite DB) ------------------------------------
     - name: Cache roam index
       if: inputs.cache == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: .roam/
         key: roam-index-${{ runner.os }}-${{ hashFiles('**/*.py', '**/*.js', '**/*.ts', '**/*.go', '**/*.rs', '**/*.java', '**/*.rb', '**/*.php', '**/*.cs', '**/*.c', '**/*.cpp') }}
