@@ -49,14 +49,11 @@ from roam.cli import _CATEGORIES, _COMMANDS, _DEPRECATED_COMMANDS
 # the allowlist.
 _INTENTIONALLY_UNCATEGORISED: dict[str, str] = {
     # Aliases pointing at canonical commands — we list the canonical name,
-    # not the alias, in _CATEGORIES.
-    "digest": "alias for 'trends --compare'",
-    "math": "alias for 'algo'",
-    "refs": "alias for 'uses'",
-    "snapshot": "alias for 'trends --save'",
-    "trend": "alias for 'trends'",
-    "onboard": "alias for 'understand'",
-    "churn": "alias for 'weather'",
+    # not the alias, in _CATEGORIES. The seven legacy aliases that used to
+    # live here (digest/math/refs/snapshot/trend/onboard/churn) graduated
+    # to `_DEPRECATED_COMMANDS` in v12.18; the deprecation surface (stderr
+    # note + JSON envelope `summary.deprecation_warning`) replaces this
+    # allowlist for them.
 }
 
 
@@ -72,19 +69,32 @@ def test_every_command_is_categorised_or_allowlisted():
 
     Either categorise the new command, or add it to the allowlist
     above with a documented reason.
+
+    Deprecated commands (members of ``_DEPRECATED_COMMANDS``) are
+    intentionally excluded — they surface in ``--help-all`` with a
+    ``(deprecated, use <canonical>)`` suffix and shouldn't pollute the
+    categorised ``--help`` panel.
     """
     categorised: set[str] = set()
     for bucket in _CATEGORIES.values():
         categorised.update(bucket)
 
-    uncategorised = [name for name in _COMMANDS if name not in categorised and name not in _INTENTIONALLY_UNCATEGORISED]
+    uncategorised = [
+        name
+        for name in _COMMANDS
+        if name not in categorised
+        and name not in _INTENTIONALLY_UNCATEGORISED
+        and name not in _DEPRECATED_COMMANDS
+    ]
     assert not uncategorised, (
         f"{len(uncategorised)} command(s) in _COMMANDS have no _CATEGORIES entry "
         f"and are not on the intentional allowlist:\n  {sorted(uncategorised)}\n\n"
         f"Either:\n"
         f"  1. Add them to a category in src/roam/cli.py:_CATEGORIES, or\n"
         f"  2. Add them to _INTENTIONALLY_UNCATEGORISED in this file with "
-        f"a documented reason."
+        f"a documented reason, or\n"
+        f"  3. Mark them deprecated by adding to _DEPRECATED_COMMANDS in "
+        f"src/roam/cli.py."
     )
 
 
@@ -215,4 +225,61 @@ def test_side_effect_and_task_tools_are_declared():
 
     assert not failures, "Side-effect / task metadata refers to tools without a @_tool declaration:\n" + "\n".join(
         failures
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6. Every _TOOL_METADATA key resolves to a declared @_tool
+# ---------------------------------------------------------------------------
+
+
+def test_tool_metadata_keys_are_declared():
+    """``_TOOL_METADATA`` is populated by the ``@_tool`` decorator at
+    import time; ``roam_catalog`` enumerates it as the agent-facing
+    catalog of tools. A key in ``_TOOL_METADATA`` without a matching
+    ``@_tool`` declaration would mean the catalog references a tool the
+    server doesn't actually expose — agents would surface it and then
+    fail at call time with "no such tool".
+
+    The dict is only populated when FastMCP is installed AND the active
+    preset accepts the tool. Under the default ``core`` preset only the
+    core set is registered, so we re-import the module under preset=full
+    to populate the full metadata view before checking.
+    """
+    import os
+
+    import roam.mcp_server as mcp
+
+    if mcp.FastMCP is None:
+        # The decorator early-returns when FastMCP is missing, so
+        # _TOOL_METADATA stays empty by design. The decorator-set check
+        # in test_core_tools_are_all_declared already covers the
+        # static-declaration side; nothing to verify here.
+        import pytest
+
+        pytest.skip("FastMCP not installed — _TOOL_METADATA is empty by design")
+
+    import importlib
+
+    old_preset = os.environ.get("ROAM_MCP_PRESET")
+    os.environ["ROAM_MCP_PRESET"] = "full"
+    try:
+        mcp = importlib.reload(mcp)
+    finally:
+        if old_preset is None:
+            os.environ.pop("ROAM_MCP_PRESET", None)
+        else:
+            os.environ["ROAM_MCP_PRESET"] = old_preset
+
+    declared = _declared_mcp_tools()
+    metadata_keys = set(mcp._TOOL_METADATA.keys())
+    # Allow the meta-tool (roam_expand_toolset), which is always
+    # registered regardless of preset and is itself a declared @_tool.
+    undeclared = sorted(metadata_keys - declared)
+    assert not undeclared, (
+        f"{len(undeclared)} key(s) in _TOOL_METADATA are not declared as @_tool in "
+        f"mcp_server.py:\n  {undeclared}\n\n"
+        f"The agent catalog (roam_catalog) would surface these to agents "
+        f"as available tools, but FastMCP has no registered handler — "
+        f"calls would fail with 'no such tool'."
     )

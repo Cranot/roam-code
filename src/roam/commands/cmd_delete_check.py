@@ -32,6 +32,7 @@ from roam.commands.grep_helpers import (
     indexed_file_scan,
     run_search,
 )
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.git_utils import worktree_git_env
@@ -170,6 +171,20 @@ def _parse_deletions(diff_text: str) -> tuple[list[str], list[tuple[str, int, st
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="delete-check",
+    category="refactoring",
+    summary="Gate the working diff on surviving references to deleted symbols / files",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("delete-check")
 @click.option(
     "--source",

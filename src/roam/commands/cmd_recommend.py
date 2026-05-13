@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -34,6 +35,20 @@ def _candidate_init() -> dict:
     return {"call": 0.0, "cochange": 0.0, "clone": 0.0}
 
 
+@roam_capability(
+    name="recommend",
+    category="workflow",
+    summary="Recommend related symbols using call-graph, co-change, and clone signals",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("symbol")
 @click.option("--limit", type=int, default=10, show_default=True, help="Top N recommendations.")

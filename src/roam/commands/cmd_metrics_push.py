@@ -25,6 +25,7 @@ from pathlib import Path
 import click
 from click.testing import CliRunner
 
+from roam.capability import roam_capability
 from roam.commands.git_helpers import detect_roam_version, git_metadata, utc_timestamp
 from roam.commands.resolve import ensure_index
 from roam.output.formatter import json_envelope, to_json
@@ -276,6 +277,20 @@ def _post_metrics(endpoint: str, token: str, payload: dict, timeout: int = HTTP_
 # -------------------------------------------------------------- main command ---
 
 
+@roam_capability(
+    name="metrics-push",
+    category="workflow",
+    summary="Push metrics-only summary to Roam Cloud Lite",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=False,
+    requires_index=True,
+)
 @click.command(name="metrics-push")
 @click.option(
     "--token",

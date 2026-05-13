@@ -21,6 +21,7 @@ import time
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.graph.stats import gini_coefficient as compute_gini
@@ -644,6 +645,20 @@ def analyse_ai_ratio(conn, since_days: int = 90) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="ai-ratio",
+    category="health",
+    summary="Estimate the percentage of AI-generated code from git patterns",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--since", default=90, type=int, help="Analyze commits from last N days (default: 90)")
 @click.option("--detail", is_flag=True, help="Show per-file breakdown")

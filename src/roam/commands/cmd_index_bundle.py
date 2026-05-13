@@ -31,6 +31,7 @@ from pathlib import Path
 import click
 
 from roam import __version__
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import get_connection
 from roam.output.formatter import json_envelope, to_json
@@ -181,6 +182,20 @@ def _verify_bundle(bundle_path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="index-export",
+    category="getting-started",
+    summary="Export the roam index as a portable, integrity-checked tarball",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("index-export")
 @click.argument("output", type=click.Path())
 @click.option(
@@ -298,6 +313,20 @@ def index_export(ctx, output, sign, key, keyless):
         click.echo(f"  signed via cosign ({sig_info['mode']}): {sig_info['signature']}")
 
 
+@roam_capability(
+    name="index-import",
+    category="getting-started",
+    summary="Import a portable roam index bundle into the current repo",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("index-import")
 @click.argument("bundle", type=click.Path(exists=True, dir_okay=False))
 @click.option(
@@ -413,7 +442,10 @@ def index_import(ctx, bundle, force, no_verify_head, cosign_bundle_path, cosign_
         member = tar.getmember("index.db")
         fh = tar.extractfile(member)
         if fh is None:
-            raise click.ClickException("could not extract index.db from bundle")
+            raise click.ClickException(
+                "could not extract index.db from bundle. "
+                "If this looks unexpected, run `roam doctor` to diagnose your install."
+            )
         with target_db.open("wb") as out:
             for chunk in iter(lambda: fh.read(1 << 20), b""):
                 out.write(chunk)

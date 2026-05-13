@@ -226,10 +226,15 @@ class TestBasicCommand:
         assert "vuln" in result.output.lower()
 
     def test_empty_inventory(self, empty_project):
+        """Fix E (Pattern 2): an empty inventory with no prior import must
+        report `no vulnerability scan available` (not the silent-fallback
+        `No vulnerabilities found` which could be read as "this codebase
+        is safe").
+        """
         result = _invoke(["vulns"], empty_project)
         assert result.exit_code == 0
         assert "VERDICT:" in result.output
-        assert "No vulnerabilities" in result.output
+        assert "no vulnerability scan available" in result.output
 
 
 # ===========================================================================
@@ -426,7 +431,9 @@ class TestReachableOnly:
         data = json.loads(result.output)
         # All returned vulns should be reachable (or none if graph doesn't connect)
         for v in data.get("vulnerabilities", []):
-            assert v["reachable"] == 1
+            # R22 confidence triple shape
+            assert v["value"]["reachable"] == 1
+            assert v["confidence"] in ("high", "medium", "low")
 
     def test_reachable_only_empty_inventory(self, empty_project):
         result = _invoke(["vulns", "--reachable-only"], empty_project, json_mode=True)
@@ -467,10 +474,14 @@ class TestJsonOutput:
         vulns = data.get("vulnerabilities", [])
         assert len(vulns) > 0
         for v in vulns:
-            assert "cve_id" in v
-            assert "package" in v
-            assert "severity" in v
-            assert "reachable" in v
+            # R22 confidence triple shape — the per-vuln dict is now
+            # {"value": {...flat record...}, "confidence": ..., "reason": ...}.
+            assert v["confidence"] in ("high", "medium", "low")
+            val = v["value"]
+            assert "cve_id" in val
+            assert "package" in val
+            assert "severity" in val
+            assert "reachable" in val
 
     def test_json_verdict_content(self, vuln_project, generic_report):
         result = _invoke(["vulns", "--import-file", generic_report], vuln_project, json_mode=True)
@@ -500,8 +511,11 @@ class TestTextOutput:
         assert "CRITICAL" in result.output or "HIGH" in result.output
 
     def test_empty_inventory_text(self, empty_project):
+        """Fix E (Pattern 2): empty inventory text must mention the no-scan
+        state, not the silent-fallback "No vulnerabilities" phrasing.
+        """
         result = _invoke(["vulns"], empty_project)
-        assert "No vulnerabilities" in result.output
+        assert "no vulnerability scan available" in result.output or "No vulnerability scan has been imported yet." in result.output
 
     def test_import_count_shown(self, vuln_project, generic_report):
         result = _invoke(["vulns", "--import-file", generic_report], vuln_project)
@@ -629,13 +643,21 @@ class TestMatchedFiles:
         result = _invoke(["vulns", "--import-file", generic_report], vuln_project, json_mode=True)
         data = json.loads(result.output)
         # merge_data matches a symbol in utils.py
-        merge_vulns = [v for v in data.get("vulnerabilities", []) if v["package"] == "merge_data"]
+        # R22 confidence triple shape — read package via .value
+        merge_vulns = [
+            v for v in data.get("vulnerabilities", [])
+            if v["value"]["package"] == "merge_data"
+        ]
         if merge_vulns:
-            assert merge_vulns[0].get("matched_file") is not None
+            assert merge_vulns[0]["value"].get("matched_file") is not None
 
     def test_unmatched_vulns_no_file(self, vuln_project, generic_report):
         result = _invoke(["vulns", "--import-file", generic_report], vuln_project, json_mode=True)
         data = json.loads(result.output)
-        unmatched = [v for v in data.get("vulnerabilities", []) if v["package"] == "nonexistent_pkg"]
+        # R22 confidence triple shape — read package via .value
+        unmatched = [
+            v for v in data.get("vulnerabilities", [])
+            if v["value"]["package"] == "nonexistent_pkg"
+        ]
         if unmatched:
-            assert unmatched[0].get("matched_file") is None
+            assert unmatched[0]["value"].get("matched_file") is None

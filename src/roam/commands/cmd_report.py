@@ -10,6 +10,7 @@ import time
 import click
 
 from roam.ask.workflow import workflow_metadata_for_recipe
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root
 from roam.output.formatter import json_envelope, to_json
@@ -196,6 +197,20 @@ def _workflow_for_preset(preset: str) -> dict | None:
     return workflow_metadata_for_recipe(recipe)
 
 
+@roam_capability(
+    name="report",
+    category="reports",
+    summary="Run a compound report preset — multiple commands in one shot",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("preset", required=False, default=None)
 @click.option("--list", "list_presets", is_flag=True, help="List available presets")

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.config import get_retrieve_config
 from roam.db.connection import open_db
@@ -196,6 +197,27 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     return label
 
 
+@roam_capability(
+    category="exploration",
+    summary="Retrieve a ranked, budget-bounded set of code spans for a free-form task.",
+    inputs=["task", "budget"],
+    outputs=["candidates", "verdict"],
+    examples=[
+        'roam retrieve "is it safe to delete UserSession"',
+        'roam retrieve "trace login flow" --seed-files src/auth.py',
+        'roam --json retrieve "n+1 query in checkout"',
+    ],
+    tags=["exploration", "retrieval", "agent"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.argument("task", nargs=-1, required=True)
 @click.option(

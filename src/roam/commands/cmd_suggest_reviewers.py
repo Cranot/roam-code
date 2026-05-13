@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
 from roam.commands.resolve import ensure_index
@@ -276,6 +277,20 @@ def _aggregate_reviewer_scores(
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="suggest-reviewers",
+    category="reports",
+    summary="Suggest optimal code reviewers for changed files",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("suggest-reviewers")
 @click.argument("files", nargs=-1)
 @click.option("--top", "top_n", type=int, default=3, help="Number of reviewers to suggest (default: 3)")

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, loc, to_json
@@ -32,7 +33,10 @@ _SKIP_NAMES = re.compile(
     re.IGNORECASE,
 )
 
-# Frontend file extensions to search
+# 9 frontend extensions scanned for route-name string literals: Vue SFC plus
+# the 8 JS/TS module variants (.ts/.tsx/.js/.jsx + the 4 m{ts,js}/c{ts,js}
+# ESM/CommonJS suffixes). Pairs with _BACKEND_EXTENSIONS below for the
+# Laravel-route consumer/producer split.
 _FRONTEND_EXTENSIONS = {
     ".vue",
     ".ts",
@@ -45,7 +49,9 @@ _FRONTEND_EXTENSIONS = {
     ".cjs",
 }
 
-# Backend-only file patterns (tests, seeders, etc.)
+# 1 backend extension (.php) — cmd_orphan_routes is scoped to Laravel route
+# discovery. Extending to other PHP-adjacent backends (Symfony, CodeIgniter)
+# requires no extension change; extending to Django/Rails/Express does.
 _BACKEND_EXTENSIONS = {".php"}
 
 _BACKEND_TEST_PATTERNS = re.compile(
@@ -568,6 +574,20 @@ def _analyse_orphan_routes(project_root: Path, conn, limit: int) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="orphan-routes",
+    category="reports",
+    summary="Find backend API routes that have no frontend consumers (dead endpoints)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("orphan-routes")
 @click.option("--limit", "-n", default=50, show_default=True, help="Maximum number of orphan findings to show")
 @click.option(

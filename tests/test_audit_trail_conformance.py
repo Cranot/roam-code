@@ -156,7 +156,11 @@ def test_cli_help():
     assert "--retention-days" in result.output
 
 
-def test_cli_missing_trail_returns_zero_score(tmp_path):
+def test_cli_missing_trail_returns_no_trail_state(tmp_path):
+    """Fix E: an absent trail should NOT silently report 0/100 — it should
+    emit an explicit "no audit trail to check" verdict so consumers can
+    distinguish "trail exists and fails" from "no trail exists at all".
+    """
     runner = CliRunner()
     from roam.cli import cli
 
@@ -165,7 +169,22 @@ def test_cli_missing_trail_returns_zero_score(tmp_path):
         ["audit-trail-conformance-check", "--input", str(tmp_path / "nope.jsonl")],
     )
     assert result.exit_code == 0
-    assert "score:   0/100" in result.output
+    assert "no audit trail to check" in result.output
+    assert "no_trail" in result.output
+
+    # JSON variant — assert the envelope shape
+    json_result = runner.invoke(
+        cli,
+        ["--json", "audit-trail-conformance-check", "--input", str(tmp_path / "nope.jsonl")],
+    )
+    assert json_result.exit_code == 0
+    env = _json.loads(json_result.output)
+    assert env["summary"]["verdict"] == "no audit trail to check"
+    assert env["summary"]["state"] == "no_trail"
+    assert env["summary"]["partial_success"] is True
+    assert env["summary"]["score"] is None
+    assert env["summary"]["total_records"] == 0
+    assert all(c.get("state") == "not_run" for c in env["checks"])
 
 
 def test_cli_missing_trail_with_gate_exits_5(tmp_path):

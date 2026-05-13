@@ -15,6 +15,7 @@ from roam.graph.spectral import (
     spectral_gap,
     verdict_from_gap,
 )
+from roam.capability import roam_capability
 from roam.output.formatter import format_table, json_envelope, to_json
 
 _MAX_GRAPH_SYMBOLS = 5000
@@ -68,6 +69,20 @@ def _compare_with_louvain(G, spectral_map):
     }
 
 
+@roam_capability(
+    name="spectral",
+    category="architecture",
+    summary="Spectral bisection: Fiedler vector partition tree",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--depth", default=3, show_default=True, help="Max recursion depth for bisection")
 @click.option("--compare", is_flag=True, help="Compare spectral vs Louvain (Adjusted Rand Index)")
@@ -88,16 +103,27 @@ def spectral(ctx, depth, compare, gap_only, k):
     with open_db(readonly=True) as conn:
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         if sym_count > _MAX_GRAPH_SYMBOLS:
+            # Dense Fiedler bisection is O(N^3) — at this size we point the
+            # caller at the sparse alternatives that already work:
+            # ``roam clusters`` (Louvain) and ``roam partition`` (graph-aware).
             msg = (
-                f"Graph too large ({sym_count} symbols) for spectral analysis. "
-                "Index a subdirectory to reduce graph size."
+                f"Run roam clusters or roam partition (graph has {sym_count} symbols, "
+                f"dense spectral threshold {_MAX_GRAPH_SYMBOLS}); spectral bisection "
+                "is O(N^3) without sparse Lanczos"
             )
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "spectral",
-                            summary={"verdict": msg, "symbol_count": sym_count},
+                            summary={
+                                "verdict": msg,
+                                "state": "graph_too_large_for_spectral_dense",
+                                "partial_success": True,
+                                "symbol_count": sym_count,
+                                "max_dense_symbols": _MAX_GRAPH_SYMBOLS,
+                                "suggested_commands": ["clusters", "partition"],
+                            },
                         )
                     )
                 )

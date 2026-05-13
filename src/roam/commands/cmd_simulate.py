@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -215,6 +216,20 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="simulate",
+    category="architecture",
+    summary="Counterfactual architecture simulator",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.group("simulate")
 @click.pass_context
 def simulate(ctx):

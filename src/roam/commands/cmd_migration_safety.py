@@ -43,6 +43,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -616,6 +617,20 @@ def analyze_migration_safety(conn, limit: int = 50, include_archive: bool = Fals
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="migration-safety",
+    category="reports",
+    summary="Check migration files for non-idempotent (unsafe if run twice) operations",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("migration-safety")
 @click.option("--limit", "-n", default=50, help="Max findings to show")
 @click.option(

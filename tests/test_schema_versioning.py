@@ -46,8 +46,10 @@ def test_envelope_has_agent_contract_block():
 
     # Verdict surfaces as the first fact.
     assert ac["facts"][0].startswith("Healthy 90/100")
-    # Numeric summary fields become facts.
-    assert any("health_score: 90" in f for f in ac["facts"])
+    # Numeric summary fields become facts. W13.4 humanized auto-derive:
+    # ``health_score: 90`` is now ``"health score 90"`` (measurement-suffix
+    # path) rather than the abstract ``key: value`` form.
+    assert any("health score 90" in f for f in ac["facts"])
     # Confidence pulled directly.
     assert ac["confidence"] == 0.85
     # Risks pulled from `errors` list, capped at 3, stringified for dicts.

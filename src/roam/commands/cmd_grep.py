@@ -29,6 +29,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.grep_helpers import (
     attach_blame,
@@ -111,6 +112,20 @@ def _read_patterns_file(p: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="grep",
+    category="exploration",
+    summary="Context-enriched grep with reachability, clone, and bridge annotations",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("grep")
 @click.argument("positional", required=False)
 @click.option(

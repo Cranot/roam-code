@@ -19,6 +19,7 @@ from roam.commands.suppression import (
     save_suppression,
     suppression_stats,
 )
+from roam.capability import roam_capability
 from roam.db.connection import find_project_root
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -27,6 +28,20 @@ from roam.output.formatter import format_table, json_envelope, to_json
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="triage",
+    category="workflow",
+    summary="Manage security finding suppressions",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "debug"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.group("triage")
 @click.pass_context
 def triage(ctx):

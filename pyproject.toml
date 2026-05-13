@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "12.50"
+version = "13.0"
 description = "The local structural intelligence layer for coding agents"
 readme = "README.md"
 requires-python = ">=3.9"

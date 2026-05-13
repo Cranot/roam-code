@@ -54,6 +54,34 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("Windows personal path", re.compile(r"C:\\Users\\Dimitris|D:\\OneDrive - CosmoHac")),
     # Real customer name (the user's day-job employer)
     ("Day-job customer name", re.compile(r"\bunion[- ]web\b|\bSecond-Repo\b", re.IGNORECASE)),
+    # Greek-domain example identifiers that leaked from the same day-job
+    # dogfood corpus as the customer name. Each one is a real symbol from
+    # the customer codebase and immediately identifies the project to anyone
+    # familiar with the Greek B2B accounting domain.
+    (
+        "Greek domain term — kiniseis",
+        re.compile(r"\bkiniseis\b|\bKiniseis\b|\buseKiniseisBalance\b", re.IGNORECASE),
+    ),
+    (
+        "Greek domain term — ergani",
+        re.compile(r"\bergani\b", re.IGNORECASE),
+    ),
+    (
+        "Greek domain term — pfpa",
+        re.compile(r"\bpfpa(_epil)?\b", re.IGNORECASE),
+    ),
+    (
+        "Greek domain term — bebaioseis",
+        re.compile(r"\bbebaioseis\b", re.IGNORECASE),
+    ),
+    # Standalone ``AFM`` (Greek tax-ID abbreviation). Allowed as part of
+    # arbitrary identifiers like ``AFM_xyz`` or ``provider_afm`` — the
+    # negative lookahead admits ``[`` for placeholder use, ``.``/``_``/``-``
+    # for code-style identifiers, and stops on a real standalone abbrev.
+    (
+        "Greek tax-ID standalone abbreviation",
+        re.compile(r"\bAFM\b(?![._\-])"),
+    ),
     # Internal session reports
     (
         "Internal session report filename",
@@ -140,6 +168,25 @@ WHITELIST_FILES = {
     "src/roam/security/aibom_extension.py",
     "tests/test_ai_ratio.py",
     "tests/test_v12_2.py",
+    # W41.1 temporary: ``src/roam/mcp_server.py`` contains four
+    # ``useKiniseisBalance`` docstring examples (lines 2869-2870 and
+    # 3043-3044) that explain why ``roam_batch_search`` switched to
+    # symbol-name-only matching. The current sprint forbids edits to
+    # ``mcp_server.py`` (all-sprint constraint). Remove from whitelist
+    # and scrub the docstring in a follow-up wave when the constraint
+    # is lifted.
+    "src/roam/mcp_server.py",
+    # Anchor-slugifier regression suite. ``PFPA_EPIL.IN_PFPA_EPIL-4.DBF``
+    # is a real header from the dogfood corpus that broke the slugifier
+    # by producing ``pfpaepilinpfpaepil-4dbf``; the test fixtures need
+    # the literal underscore-bearing identifier to assert the regression
+    # is fixed. Generic replacement names destroy the test signal.
+    "tests/test_stale_refs_dogfood_fixes.py",
+    # Public legal template that explains ``AFM`` is the Greek tax-ID
+    # abbreviation, with a bracketed placeholder ``[PROVIDER_AFM]`` for
+    # the SOW signatory to fill in. The mention is intentional and
+    # customer-facing, not a session-context leak.
+    "templates/legal/sow-pr-replay.md",
 }
 
 

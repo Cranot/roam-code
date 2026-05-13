@@ -195,7 +195,8 @@ CREATE TABLE IF NOT EXISTS math_signals (
     loop_invariant_calls TEXT,
     loop_lookup_calls TEXT,
     front_ops_in_loop INTEGER DEFAULT 0,
-    loop_bound_small INTEGER DEFAULT 0
+    loop_bound_small INTEGER DEFAULT 0,
+    loop_eq_with_dependent_write INTEGER DEFAULT 0
 );
 
 -- Agentic memory: persistent annotations on symbols and files

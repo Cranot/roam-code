@@ -1,0 +1,31 @@
+# Roam ignore — gitignore syntax. Skip directories that bloat the
+# index without adding signal. Uncomment lines that apply to your repo.
+
+# Build outputs
+# dist/
+# build/
+# out/
+# target/
+# .next/
+# .nuxt/
+
+# Vendored deps
+# node_modules/
+# vendor/
+# bower_components/
+
+# Python virtualenvs + caches
+# .venv/
+# venv/
+# __pycache__/
+# .mypy_cache/
+# .pytest_cache/
+
+# Coverage / profiling
+# coverage/
+# htmlcov/
+# .coverage
+
+# Generated assets
+# *.min.js
+# *.min.css

@@ -60,13 +60,33 @@ _HTML_ID_RE = re.compile(
 # markers, code-spans, link wrappers — and collapse to plain text before
 # slugifying. ``[text](url)`` becomes ``text``.
 _LINK_RE = re.compile(r"\[(?P<inner>[^\]\n]+)\]\([^)\n]+\)")
-_INLINE_FORMATTING_RE = re.compile(r"(\*\*|__|\*|_|`)")
+# Asterisk emphasis (``*foo*`` / ``**foo**``) and inline code (`` `foo` ``)
+# strip unconditionally — none of them are commonly intraword in
+# identifiers, so removing them everywhere matches what GitHub renders.
+_AST_BACKTICK_RE = re.compile(r"(\*\*|\*|`)")
+# Underscore emphasis is a different beast: GitHub-flavoured Markdown
+# (and CommonMark) only treats ``_`` as an emphasis marker when it's at
+# a *left-flanking* or *right-flanking* position, i.e. adjacent to a
+# non-word character (or string boundary) on at least one side.
+# ``foo_bar_baz`` is NOT emphasis — the underscores are intraword and
+# stay in the rendered HTML, which means GitHub's heading-id slugger
+# preserves them too. The pre-fix regex ``(\*\*|__|\*|_|`)`` stripped
+# every ``_`` indiscriminately, causing slugs like
+# ``inv_no_in_inv_no-4-dbf`` to collapse to ``invnoinvno-4-dbf``
+# and silently breaking every ``#inv_no`` reference on disk (Bug 8
+# from an external dogfood report, May 2026). The two halves of this
+# alternation strip ``_+`` only when at least one side is a non-word
+# character — covering ``_foo_`` (emphasis), ``__foo__`` (strong),
+# leading/trailing underscores around headers — but leaving every
+# intraword ``_`` exactly where the author wrote it.
+_UNDERSCORE_EMPHASIS_RE = re.compile(r"(?<!\w)_+|_+(?!\w)")
 
 
 def _strip_inline_markup(text: str) -> str:
     """Reduce a header line to the visible text, ready for slugifying."""
     text = _LINK_RE.sub(lambda m: m.group("inner"), text)
-    text = _INLINE_FORMATTING_RE.sub("", text)
+    text = _AST_BACKTICK_RE.sub("", text)
+    text = _UNDERSCORE_EMPHASIS_RE.sub("", text)
     return text
 
 
@@ -74,10 +94,18 @@ def slugify(text: str) -> str:
     """Convert header text to a GitHub-flavoured anchor slug.
 
     Rules (aligned with how GitHub renders ``id`` on headers as of
-    2024+):
+    2024+, via the Ruby ``html-pipeline`` / ``jch-algoritmo`` gem):
 
-    * Lowercase (``str.lower`` is Unicode-aware: ``Ü`` → ``ü``).
-    * Replace runs of whitespace with a single ``-``.
+    * Lowercase via ``str.lower`` — Unicode-aware (``Ü`` → ``ü``) and
+      crucially does NOT apply the JS-style terminal-sigma rule
+      (``Σ`` → ``σ`` everywhere, never ``ς``). Pre-fix we relied on
+      this implicitly; the comment below documents the invariant so a
+      well-meaning refactor doesn't reach for ``unicodedata`` or
+      ``casefold`` and silently regress non-Latin slugs.
+    * Replace EACH whitespace character with one ``-`` (not runs with a
+      single ``-``). GitHub's algorithm does a literal ``gsub(' ', '-')``;
+      collapsing runs would change ``"foo  bar"`` from ``foo--bar`` to
+      ``foo-bar`` and fail to match the deployed anchor (Bug 8 cousin).
     * Drop characters that aren't word characters (``\\w``, which
       Python 3 treats as Unicode-aware: includes letters from any
       language plus digits and underscore) or hyphen — emojis,
@@ -91,7 +119,10 @@ def slugify(text: str) -> str:
     """
     text = _strip_inline_markup(text)
     text = text.lower()
-    text = re.sub(r"\s+", "-", text)
+    # Replace each whitespace char individually — runs map to runs of
+    # dashes, matching GitHub's behaviour where multiple spaces in a
+    # heading produce ``--`` / ``---`` in the slug.
+    text = re.sub(r"\s", "-", text)
     # ``\w`` is Unicode-aware in Python 3 by default (no flag needed) and
     # matches any Unicode letter, digit, or underscore. Combined with the
     # explicit hyphen, we drop only emojis and punctuation.

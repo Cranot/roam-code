@@ -364,6 +364,12 @@ def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):
         pdf_written = _render_pdf_report(markdown_text, Path(pdf_path))
 
     if json_mode:
+        # W17.2 / Pattern 3c: name the compliance kind so consumers
+        # never confuse article-12-check (repo-level readiness) with
+        # audit-trail-conformance-check (chain integrity over recorded
+        # events). Both publish `compliance_kind` +
+        # `compliance_kind_definition` for unambiguous downstream use.
+        gov_score = round(100 * passed / total) if total else 0
         click.echo(
             to_json(
                 json_envelope(
@@ -372,6 +378,17 @@ def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):
                         "verdict": f"{passed}/{total} items passing",
                         "passed": passed,
                         "total": total,
+                        "governance_compliance_score": gov_score,
+                        "compliance_kind": "eu_ai_act_governance_readiness",
+                        "compliance_kind_definition": (
+                            "Repo-level readiness for EU AI Act Article 12: 6 "
+                            "artifact-existence checks (audit-trail directory, "
+                            "audit-trail records, retention policy doc, technical "
+                            "docs, attestation surface, high-risk classification). "
+                            "NOT the same as audit-trail-conformance-check, which "
+                            "scores per-record chain integrity. Reference: "
+                            "EU AI Act Article 12 (event logging)."
+                        ),
                         "high_risk_classification": next(
                             (r["evidence"] for r in results if "high-risk" in r["item"].lower()),
                             "unknown",

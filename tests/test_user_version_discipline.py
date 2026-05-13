@@ -1,0 +1,73 @@
+"""Lockstep discipline for schema.py and USER_VERSION.
+
+This test snapshots a hash of ``src/roam/db/schema.py``. If the hash
+drifts (i.e. the schema file has been edited), the test requires
+``USER_VERSION`` in ``connection.py`` to also have drifted from the
+snapshotted value below. The two MUST move together: editing the
+schema without bumping the contract version is a silent corruption
+hazard for downstream consumers (manifest writer, bundle import,
+``roam doctor`` drift checks).
+
+Workflow when this test fails:
+
+1. Edit ``src/roam/db/schema.py`` (e.g. add a column).
+2. Edit ``src/roam/db/connection.py`` and bump ``USER_VERSION``.
+3. Recompute the schema hash and update ``_SNAPSHOT_SCHEMA_HASH``
+   and ``_SNAPSHOT_USER_VERSION`` below. Both updates land in the
+   same commit.
+
+Companion to ``tests/test_db_user_version.py`` which enforces the
+``USER_VERSION > 1`` floor and the migration-ledger invariants.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+from roam.db.connection import USER_VERSION
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_SCHEMA_PATH = _REPO_ROOT / "src" / "roam" / "db" / "schema.py"
+
+# Snapshot captured at commit time. Update both values together when
+# schema.py legitimately changes. See module docstring for workflow.
+_SNAPSHOT_SCHEMA_HASH = "df3d5462893ad729"
+_SNAPSHOT_USER_VERSION = 13
+
+
+def _current_schema_hash() -> str:
+    return hashlib.sha256(_SCHEMA_PATH.read_bytes()).hexdigest()[:16]
+
+
+def test_schema_file_exists():
+    """Sanity check: the path we're hashing actually resolves."""
+    assert _SCHEMA_PATH.is_file(), (
+        f"Expected schema file at {_SCHEMA_PATH}, but it does not exist. "
+        "Has the schema been moved? Update _SCHEMA_PATH in this test."
+    )
+
+
+def test_user_version_bumps_when_schema_changes():
+    """If schema.py drifts from the snapshot, USER_VERSION must drift too.
+
+    This is the lockstep discipline. Either:
+
+    * schema.py is unchanged → USER_VERSION may stay at the snapshot;
+    * schema.py changed → USER_VERSION MUST differ from the snapshot.
+
+    A snapshot mismatch with a still-snapshot USER_VERSION is the
+    failure mode: someone edited schema.py and forgot the version bump.
+    """
+    current_hash = _current_schema_hash()
+    if current_hash == _SNAPSHOT_SCHEMA_HASH:
+        # Schema is unchanged from snapshot. Nothing further to enforce.
+        return
+
+    assert USER_VERSION != _SNAPSHOT_USER_VERSION, (
+        f"schema.py hash changed ({_SNAPSHOT_SCHEMA_HASH} -> {current_hash}) "
+        f"but USER_VERSION is still {USER_VERSION}. Bump USER_VERSION in "
+        f"src/roam/db/connection.py and update the snapshot values "
+        f"(_SNAPSHOT_SCHEMA_HASH, _SNAPSHOT_USER_VERSION) in this test."
+    )

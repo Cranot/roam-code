@@ -10,11 +10,26 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="disambiguate",
+    category="workflow",
+    summary="List every symbol matching <name> with disambiguators",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("name")
 @click.option("--limit", type=int, default=20, show_default=True, help="Max matches to display.")

@@ -6,6 +6,7 @@ from collections import deque
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
@@ -288,6 +289,20 @@ def _suggest_test_points(untested_paths, tested_set):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="path-coverage",
+    category="reports",
+    summary="Find critical untested paths from entry points to sensitive sinks",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("path-coverage")
 @click.option(
     "--from",

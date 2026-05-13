@@ -10,9 +10,18 @@ from __future__ import annotations
 import json as _json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+
+@pytest.fixture(autouse=True)
+def _enforcement_safe(monkeypatch):
+    """Pre-elect autonomous_pr so privileged commands (`pr-analyze`,
+    `audit-trail-*`, `rules-validate`) work under future
+    `ROAM_MODE_ENFORCEMENT` default-on (W23.3 staged-rollout PR-B)."""
+    monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
 from roam.commands.cmd_audit_trail_conformance import _check_retention
 from roam.commands.cmd_audit_trail_export import _aggregate_records, _filter_records
 from roam.commands.cmd_audit_trail_verify import _verify_chain

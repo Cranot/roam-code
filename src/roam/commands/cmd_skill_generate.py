@@ -19,9 +19,24 @@ from typing import Iterable
 
 import click
 
+from roam.capability import roam_capability
 from roam.capability import REGISTRY
 
 
+@roam_capability(
+    name="skill-generate",
+    category="workflow",
+    summary="Generate an agent-runtime skill manifest from the capability registry",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command(name="skill-generate")
 @click.option(
     "--target",

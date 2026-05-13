@@ -23,6 +23,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -297,6 +298,20 @@ def _evaluate_custom_rules(conn, rule_filter: str | None, severity_filter: str |
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="check-rules",
+    category="health",
+    summary="Run structural governance rules against the indexed codebase",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("check-rules")
 @click.option(
     "--rule",

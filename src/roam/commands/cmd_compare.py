@@ -26,9 +26,24 @@ from typing import Any
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="compare",
+    category="workflow",
+    summary="Structural diff between two roam indices",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command(name="compare")
 @click.argument("baseline", type=click.Path(exists=True, dir_okay=False))
 @click.argument("target", type=click.Path(exists=True, dir_okay=False))

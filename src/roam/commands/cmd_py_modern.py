@@ -28,6 +28,7 @@ import sqlite3
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -61,6 +62,20 @@ def _python_files_with_text(conn: sqlite3.Connection):
             continue
 
 
+@roam_capability(
+    name="py-modern",
+    category="health",
+    summary="Modern-Python adoption: walrus, match, PEP 604/585/695, f-strings",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("py-modern")
 @click.option("--detail", is_flag=True, help="Per-file breakdown of feature usage")
 @click.option("--top", "limit", default=10, type=int, show_default=True, help="Files to show in --detail mode")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import db_exists, find_project_root
 from roam.output.formatter import json_envelope, to_json
@@ -108,17 +109,36 @@ def _is_inside_git_repo(project_root) -> bool:
         p = p.parent
 
 
+@roam_capability(
+    name="init",
+    category="setup",
+    summary="Initialize Roam for this project: index + .roam config.",
+    inputs=["root"],
+    outputs=["verdict"],
+    examples=["roam init", "roam init --yes", "roam init --with-ci github"],
+    tags=["setup", "bootstrap"],
+    ai_safe=False,
+    requires_index=False,
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+)
 @click.command("init")
 @click.option("--root", default=".", help="Project root")
 @click.option("--yes", is_flag=True, help="Non-interactive, accept defaults")
 @click.option(
     "--with-ci",
     "with_ci",
-    type=click.Choice(["github"], case_sensitive=False),
-    default=None,
+    type=click.Choice(["github", "gitlab", "none"], case_sensitive=False),
+    default="none",
+    show_default=True,
     help=(
-        "Generate a CI workflow for the named platform. Default is no "
-        "CI write — explicit opt-in is required so `roam init` doesn't "
+        "Generate a CI workflow for the named platform. Default is "
+        "``none`` — explicit opt-in is required so `roam init` doesn't "
         "drop foreign config into a repo the user is just evaluating. "
         "For full multi-platform CI generation see `roam ci-setup`."
     ),
@@ -130,9 +150,10 @@ def init(ctx, root, yes, with_ci):
     Indexes the project, creates ``.roam/`` config directory with
     ``fitness.yaml``, and (if absent) writes a starter ``.roamignore``
     template at the project root. Refuses to run outside a git
-    repository — pass ``--with-ci=github`` to opt into a starter
-    GitHub Actions workflow. For full multi-platform CI generation
-    see ``roam ci-setup``.
+    repository. Default ``--with-ci=none`` writes no CI file; pass
+    ``--with-ci=github`` to opt into a starter GitHub Actions
+    workflow. For full multi-platform CI generation (including
+    GitLab), see ``roam ci-setup``.
 
     \b
     Examples:
@@ -155,7 +176,8 @@ def init(ctx, root, yes, with_ci):
             "no .git directory found at or above the project root. "
             "`roam init` only runs inside a git repository — `git init` "
             "first if you genuinely want roam to track a non-git tree, or "
-            "`cd` into the right project root.",
+            "`cd` into the right project root. "
+            "If this looks unexpected, run `roam doctor` to diagnose your install.",
         )
 
     created = []
@@ -194,8 +216,10 @@ def init(ctx, root, yes, with_ci):
     # files into the user's repo on first command was the single
     # biggest churn driver. ``roam ci-setup`` is the canonical place
     # for full multi-platform generation; this flag is just the
-    # one-line shortcut.
-    if with_ci == "github":
+    # one-line shortcut. Normalise None → "none" so the default never
+    # writes a workflow file regardless of how the option arrived.
+    with_ci_norm = (with_ci or "none").lower()
+    if with_ci_norm == "github":
         workflow_dir = project_root / ".github" / "workflows"
         workflow_path = workflow_dir / "roam.yml"
         if not workflow_path.exists():
@@ -204,6 +228,14 @@ def init(ctx, root, yes, with_ci):
             created.append(".github/workflows/roam.yml")
         else:
             skipped.append(".github/workflows/roam.yml")
+    elif with_ci_norm == "gitlab":
+        # Stub — full GitLab CI generation lives in ``roam ci-setup``.
+        # Point the user there instead of writing a half-baked template.
+        if not json_mode:
+            click.echo(
+                "Note: --with-ci=gitlab is not yet implemented in `init`. "
+                "Run `roam ci-setup gitlab` for the full GitLab CI generator."
+            )
 
     # 5. Quick health summary
     health_summary = {}
@@ -259,3 +291,9 @@ def init(ctx, root, yes, with_ci):
         click.echo("\nCreated:")
         for path in created:
             click.echo(f"  {path}")
+
+    # CI hint — only when no workflow was written this run. Keeps the
+    # "did roam touch my repo?" trust contract: nothing CI-shaped lands
+    # on disk unless the user explicitly asks via `--with-ci=...`.
+    if with_ci_norm == "none":
+        click.echo("\nTo generate CI integration: roam ci-setup")

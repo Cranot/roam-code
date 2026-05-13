@@ -140,45 +140,36 @@ _FILENAME_PREFIXES: list[tuple[str, str]] = [
     ("code_of_conduct", ROLE_DOCS),
 ]
 
-# Test filename patterns (compiled regex, matched against basename)
-_TEST_PATTERNS: list[re.Pattern[str]] = [
-    # Python: test_*.py, *_test.py
-    re.compile(r"^test_.*\.py$"),
-    re.compile(r"^.*_test\.py$"),
-    re.compile(r"^conftest\.py$"),
-    # Go: *_test.go
-    re.compile(r"^.*_test\.go$"),
-    # JavaScript / TypeScript: *.test.js, *.test.ts, *.test.jsx, *.test.tsx
-    re.compile(r"^.*\.test\.[jt]sx?$"),
-    # *.spec.js, *.spec.ts, *.spec.jsx, *.spec.tsx
-    re.compile(r"^.*\.spec\.[jt]sx?$"),
-    # Java: *Test.java, *Tests.java
-    re.compile(r"^.*Tests?\.java$"),
-    # Kotlin: *Test.kt, *Tests.kt
-    re.compile(r"^.*Tests?\.kt$"),
-    # C#: *Test.cs, *Tests.cs
-    re.compile(r"^.*Tests?\.cs$"),
-    # Ruby: *_spec.rb
-    re.compile(r"^.*_spec\.rb$"),
-    # PHP: *Test.php
-    re.compile(r"^.*Test\.php$"),
-    # Scala: *Test.scala, *Spec.scala
-    re.compile(r"^.*(?:Test|Spec)\.scala$"),
-    # Elixir: *_test.exs
-    re.compile(r"^.*_test\.exs$"),
-    # Dart: *_test.dart
-    re.compile(r"^.*_test\.dart$"),
-    # Salesforce Apex: *Test.cls
-    re.compile(r"^.*Test\.cls$"),
-    # Rust: tests are usually inline, but test files exist
-    re.compile(r"^.*_test\.rs$"),
-    # Swift: *Tests.swift, *Test.swift
-    re.compile(r"^.*Tests?\.swift$"),
-]
+# Test detection — re-exported from the canonical detector
+# (``roam.index.test_conventions``). W6.2 consolidated test-file
+# detection so this module no longer maintains its own pattern list.
+# Kept as aliases for backward compatibility with external callers that
+# import ``file_roles._TEST_PATTERNS`` or the kind constants.
+from roam.index.test_conventions import (  # noqa: E402 — re-export, must follow ROLE_* constants
+    DEFAULT_TEST_PATTERNS as _TEST_PATTERNS,
+    KIND_E2E as TEST_KIND_E2E,
+    KIND_INTEGRATION as TEST_KIND_INTEGRATION,
+    KIND_SMOKE as TEST_KIND_SMOKE,
+    KIND_UNIT as TEST_KIND_UNIT,
+    KIND_UNKNOWN as TEST_KIND_UNKNOWN,
+    classify_test_kind as _canonical_classify_test_kind,
+    is_test_file as _canonical_is_test_file,
+)
 
-# Extension-based classification (matched against lowercase extension)
-_DOC_EXTENSIONS = frozenset({".md", ".rst", ".adoc", ".asciidoc", ".txt"})
+# Extension-based classification (matched against lowercase extension).
+# Canonical documentation-file extensions used by the file-role classifier and
+# (since W37.5) re-exported as the single source of truth for cmd_intent and
+# cmd_secrets, which previously maintained 3 divergent copies (4-, 3-, and 5-
+# entry sets — the consolidation picked the 5-entry union). Public alias
+# `DOC_EXTENSIONS` exists for import; the underscored name is preserved for
+# backwards compatibility with intra-module callers.
+DOC_EXTENSIONS = frozenset({".md", ".rst", ".adoc", ".asciidoc", ".txt"})
+_DOC_EXTENSIONS = DOC_EXTENSIONS  # backwards-compat alias for in-module use
 
+# 11 extensions classified as configuration by the file-role tier-1 classifier
+# (consumed at file_roles.py:411). Augmented by _CONFIG_FILENAMES below for
+# extensionless config files (.gitignore, etc.). Adding an entry here changes
+# every role-driven verdict (dead-code, gates, conventions).
 _CONFIG_EXTENSIONS = frozenset(
     {
         ".json",
@@ -240,6 +231,11 @@ _CONFIG_FILENAMES = frozenset(
     }
 )
 
+# 60 binary/media/archive/database/compiled extensions classified as data assets
+# (consumed at file_roles.py:399). Broader than discovery.SKIP_EXTENSIONS (53)
+# because role-classification has stricter "not source" semantics — e.g. .csv,
+# .tsv, .parquet, .avro, .ppt, .pptx, .mkv, .ogg, .flac, .tiff, .psd are role-
+# data but discovery still walks them.
 _DATA_EXTENSIONS = frozenset(
     {
         ".png",
@@ -344,7 +340,11 @@ _GENERATED_MARKERS = re.compile(
 
 _SHEBANG_PATTERN = re.compile(r"^#!.*/")
 
-# Extensions eligible for minification detection
+# 2 extensions eligible for minification heuristics — JS/CSS bundles are the
+# only file types where the avg-line-length signal (threshold 110, see
+# _MINIFICATION_AVG_LINE_THRESHOLD below) is reliable. Other bundlers ship
+# alternate extensions (.min.js, .min.css) caught upstream by the filename
+# regex; this set covers the no-min-suffix case.
 _MINIFIABLE_EXTENSIONS = frozenset({".js", ".css"})
 
 _MINIFICATION_AVG_LINE_THRESHOLD = 110
@@ -544,58 +544,22 @@ def classify_file(path: str, content: str | None = None) -> str:
 def is_test(path: str) -> bool:
     """Check if a file is a test file.
 
-    Uses both path-based and filename-based patterns (Tier 1 + Tier 2).
+    Delegates to the canonical ``test_conventions.is_test_file`` detector
+    (W6.2 consolidation). Recognises ~16 test conventions including
+    Python pytest, Go ``*_test.go``, Vitest ``*.test.vue``, etc.
+
     Does not require file content.
     """
-    normalised = _normalise_path(path)
-    _dir, basename, _ext = _get_parts(normalised)
-
-    # Path-based check
-    for pattern, role in _PATH_PATTERNS:
-        if role == ROLE_TEST and pattern.search(normalised):
-            return True
-
-    # Filename-based check
-    for pattern in _TEST_PATTERNS:
-        if pattern.match(basename):
-            return True
-
-    return False
-
-
-# 12.15 — sub-classify test files into unit / integration / e2e / smoke.
-# Used by commands that benefit from the distinction (affected-tests
-# could prioritise unit tests; coverage-gaps could weight e2e differently).
-# Path-pattern based — content-aware classification can layer on later.
-TEST_KIND_UNIT = "unit"
-TEST_KIND_INTEGRATION = "integration"
-TEST_KIND_E2E = "e2e"
-TEST_KIND_SMOKE = "smoke"
-TEST_KIND_UNKNOWN = "unknown"
-
-_TEST_KIND_PATH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    # Most specific first.
-    (re.compile(r"(^|/)(e2e|end-to-end|cypress|playwright|selenium)/"), TEST_KIND_E2E),
-    (re.compile(r"(^|/)(integration|integ|int)/"), TEST_KIND_INTEGRATION),
-    (re.compile(r"(^|/)(unit)/"), TEST_KIND_UNIT),
-    (re.compile(r"(^|/)(smoke|sanity)/"), TEST_KIND_SMOKE),
-]
-_TEST_KIND_NAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"(?i)(^|[._-])(e2e|end[._-]to[._-]end)([._-]|$)"), TEST_KIND_E2E),
-    (re.compile(r"(?i)(^|[._-])(integration|integ)([._-]|$)"), TEST_KIND_INTEGRATION),
-    (re.compile(r"(?i)(^|[._-])(unit)([._-]|$)"), TEST_KIND_UNIT),
-    (re.compile(r"(?i)(^|[._-])(smoke|sanity)([._-]|$)"), TEST_KIND_SMOKE),
-]
+    return _canonical_is_test_file(path)
 
 
 def classify_test_kind(path: str) -> str:
     """Sub-classify a test file. Returns one of:
     ``unit``, ``integration``, ``e2e``, ``smoke``, or ``unknown``.
 
-    Path-pattern based. Falls back to ``unknown`` when the test file
-    has no kind hint in its path or name (most repos that don't
-    organise by kind end up here, which is fine — agents can ignore
-    the field when it's unknown).
+    Delegates to ``test_conventions.classify_test_kind`` (W6.2
+    consolidation). Path-pattern based with Vitest-aware fallback:
+    colocated ``*.test.{js,ts,jsx,tsx,vue}`` specs default to ``unit``.
 
     >>> classify_test_kind("tests/e2e/test_login.py")
     'e2e'
@@ -605,18 +569,12 @@ def classify_test_kind(path: str) -> str:
     'unknown'
     >>> classify_test_kind("test_e2e_signup.py")
     'e2e'
+    >>> classify_test_kind("src/composables/useFoo.test.ts")
+    'unit'
+    >>> classify_test_kind("src/components/Foo.test.vue")
+    'unit'
     """
-    if not is_test(path):
-        return TEST_KIND_UNKNOWN
-    normalised = _normalise_path(path)
-    _dir, basename, _ext = _get_parts(normalised)
-    for pattern, kind in _TEST_KIND_PATH_PATTERNS:
-        if pattern.search(normalised):
-            return kind
-    for pattern, kind in _TEST_KIND_NAME_PATTERNS:
-        if pattern.search(basename):
-            return kind
-    return TEST_KIND_UNKNOWN
+    return _canonical_classify_test_kind(path)
 
 
 def is_source(path: str) -> bool:

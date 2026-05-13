@@ -17,6 +17,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.fleet.adapters import ADAPTERS
@@ -24,6 +25,20 @@ from roam.fleet.manifest import build_fleet_manifest
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="fleet",
+    category="workflow",
+    summary="Graph-aware planner for multi-agent code work",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.group()
 def fleet():
     """Graph-aware planner for multi-agent code work."""

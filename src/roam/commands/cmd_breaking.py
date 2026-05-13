@@ -8,6 +8,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
@@ -328,6 +329,20 @@ def _get_current_symbols(conn, file_path: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="breaking",
+    category="reports",
+    summary="Detect potential breaking changes vs a git ref",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "review"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("breaking")
 @click.argument("target", required=False, default="HEAD~1")
 @click.pass_context

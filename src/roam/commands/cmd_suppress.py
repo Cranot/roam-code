@@ -19,6 +19,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.finding_suppress import DEFAULT_SUPPRESSIONS_PATH
 from roam.output.formatter import json_envelope, to_json
 
@@ -67,6 +68,20 @@ def _filter_findings(findings: list[dict], filter_expr: str | None) -> list[dict
     return [f for f in findings if str(f.get(key, "")) == val]
 
 
+@roam_capability(
+    name="suppress",
+    category="workflow",
+    summary="Suppress a math / over-fetch / missing-index / auth-gaps finding",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command(name="suppress")
 @click.argument("finding_id", required=True)
 @click.option(

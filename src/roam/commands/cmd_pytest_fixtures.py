@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -151,6 +152,20 @@ def _fetch_unused(conn) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+@roam_capability(
+    name="pytest-fixtures",
+    category="health",
+    summary="Show the pytest fixture chain for SYMBOL, or a project summary",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("pytest-fixtures")
 @click.argument("symbol", required=False)
 @click.option(

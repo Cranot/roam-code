@@ -130,6 +130,9 @@ jobs:
       - name: Surface-count drift gate
         run: python scripts/sync_surface_counts.py
 
+      - name: README/CLAUDE/llms-install count drift gate
+        run: python dev/build_readme_counts.py --check
+
       - name: Changelog-render drift gate
         run: python scripts/build_changelog_html.py
 

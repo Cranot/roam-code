@@ -4,12 +4,27 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="pr-diff",
+    category="workflow",
+    summary="Show structural impact of pending changes",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "review"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("pr-diff")
 @click.option("--staged", is_flag=True, help="Analyse staged changes only.")
 @click.option("--range", "commit_range", default=None, help="Git range, e.g. main..HEAD.")

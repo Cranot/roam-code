@@ -116,8 +116,11 @@ class TestDoctorCheckCoverage:
         # v12.16 / Pass 35 added two more (Plugin discovery + Required
         # tables) for a total of 13. Three more (optional extras, cloud
         # sync, cache permissions) bring it to 16; the manifest check
-        # makes it 17.
-        assert data["summary"]["total"] == 17
+        # makes it 17. S17 added the manifest-history cross-run drift
+        # check — total 18. W14.3 added the stale-install advisory
+        # ("Installed binary") — total 19. W38.x added the post-migration
+        # #51 stale-signal advisory ("Stale math_signals column") — total 20.
+        assert data["summary"]["total"] == 20
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()
@@ -727,3 +730,187 @@ class TestDoctorIndexManifestCheck:
             check = _check_index_manifest()
         assert check["passed"] is False
         assert "config" in check["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Index manifest history check (S17 — cross-run drift detector)
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorIndexManifestHistoryCheck:
+    """The doctor compares the two most recent index_manifest rows.
+
+    Three states:
+      * no_history    — 0 or 1 manifest rows (fresh DB / first index)
+      * stable        — 2+ rows, no drift fields differ
+      * drift_detected — 2+ rows, one or more drift fields differ
+    """
+
+    def _make_db_with_manifest(self, tmp_path, manifests):
+        """Create a SQLite DB at tmp_path with `index_manifest` rows.
+
+        Each entry in `manifests` is a dict supplying overrides for
+        the row. The schema is inlined here so the test doesn't have
+        to spin up a full roam index.
+        """
+        import sqlite3
+
+        db_path = tmp_path / "index.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            """
+            CREATE TABLE index_manifest (
+                id INTEGER PRIMARY KEY,
+                indexed_at INTEGER NOT NULL,
+                roam_version TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                parser_versions TEXT NOT NULL,
+                grammar_versions TEXT,
+                config_hash TEXT NOT NULL,
+                git_head TEXT,
+                git_dirty_hash TEXT,
+                enabled_extras TEXT NOT NULL,
+                index_profile TEXT DEFAULT 'all',
+                notes TEXT
+            )
+            """
+        )
+        base_at = int(time.time()) - 10_000
+        for i, m in enumerate(manifests):
+            conn.execute(
+                "INSERT INTO index_manifest (indexed_at, roam_version, schema_version, "
+                "parser_versions, grammar_versions, config_hash, git_head, "
+                "git_dirty_hash, enabled_extras, index_profile, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    m.get("indexed_at", base_at + i * 100),
+                    m.get("roam_version", "1.0.0"),
+                    m.get("schema_version", 12),
+                    m.get("parser_versions", "{}"),
+                    m.get("grammar_versions"),
+                    m.get("config_hash", "hash0"),
+                    m.get("git_head"),
+                    m.get("git_dirty_hash"),
+                    m.get("enabled_extras", "[]"),
+                    m.get("index_profile", "all"),
+                    m.get("notes"),
+                ),
+            )
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def test_history_check_present(self):
+        result, data = invoke_doctor_json()
+        names = {c["name"] for c in data["checks"]}
+        assert "Index manifest history" in names
+
+    def test_history_check_no_history_when_no_db(self):
+        from roam.commands.cmd_doctor import _check_index_manifest_history
+
+        with patch("roam.db.connection.db_exists", return_value=False):
+            check = _check_index_manifest_history()
+        assert check["passed"] is True
+        assert "no index" in check["detail"].lower()
+        assert check.get("_state") == "no_history"
+
+    def _fake_open_db(self, db_path):
+        """Build a fake `open_db` that yields a sqlite3 connection to db_path."""
+        import sqlite3
+
+        class _Ctx:
+            def __enter__(self_inner):
+                self_inner.conn = sqlite3.connect(str(db_path))
+                return self_inner.conn
+
+            def __exit__(self_inner, *a):
+                self_inner.conn.close()
+                return False
+
+        def _open_db(*args, **kwargs):
+            return _Ctx()
+
+        return _open_db
+
+    def test_history_check_no_history_with_zero_rows(self, tmp_path):
+        """0 manifest rows -> no_history, advisory pass."""
+        from roam.commands.cmd_doctor import _check_index_manifest_history
+
+        db_path = self._make_db_with_manifest(tmp_path, [])
+        with (
+            patch("roam.db.connection.db_exists", return_value=True),
+            patch("roam.db.connection.open_db", side_effect=self._fake_open_db(db_path)),
+        ):
+            check = _check_index_manifest_history()
+        assert check["passed"] is True
+        assert check.get("_state") == "no_history"
+        assert check.get("_row_count") == 0
+
+    def test_history_check_no_history_with_one_row(self, tmp_path):
+        """1 manifest row -> no_history (no prior run to diff)."""
+        from roam.commands.cmd_doctor import _check_index_manifest_history
+
+        db_path = self._make_db_with_manifest(tmp_path, [{"config_hash": "h1"}])
+        with (
+            patch("roam.db.connection.db_exists", return_value=True),
+            patch("roam.db.connection.open_db", side_effect=self._fake_open_db(db_path)),
+        ):
+            check = _check_index_manifest_history()
+        assert check["passed"] is True
+        assert check.get("_state") == "no_history"
+        assert check.get("_row_count") == 1
+        assert "no prior run" in check["detail"].lower()
+
+    def test_history_check_stable_when_two_identical_rows(self, tmp_path):
+        """2 identical rows -> stable."""
+        from roam.commands.cmd_doctor import _check_index_manifest_history
+
+        identical = {"roam_version": "1.0.0", "schema_version": 12, "config_hash": "h1"}
+        db_path = self._make_db_with_manifest(tmp_path, [identical, identical])
+        with (
+            patch("roam.db.connection.db_exists", return_value=True),
+            patch("roam.db.connection.open_db", side_effect=self._fake_open_db(db_path)),
+        ):
+            check = _check_index_manifest_history()
+        assert check["passed"] is True
+        assert check.get("_state") == "stable"
+        assert "identical" in check["detail"].lower() or "stable" in check["detail"].lower()
+
+    def test_history_check_drift_detected_on_config_change(self, tmp_path):
+        """2 rows where config_hash differs -> drift_detected."""
+        from roam.commands.cmd_doctor import _check_index_manifest_history
+
+        first = {"roam_version": "1.0.0", "schema_version": 12, "config_hash": "h1"}
+        second = {"roam_version": "1.0.0", "schema_version": 12, "config_hash": "h2"}
+        db_path = self._make_db_with_manifest(tmp_path, [first, second])
+        with (
+            patch("roam.db.connection.db_exists", return_value=True),
+            patch("roam.db.connection.open_db", side_effect=self._fake_open_db(db_path)),
+        ):
+            check = _check_index_manifest_history()
+        assert check["passed"] is False
+        assert check.get("_state") == "drift_detected"
+        assert "config_hash" in check.get("_drift_fields", [])
+        assert "config_hash" in check["detail"]
+
+    def test_history_check_drift_detected_on_roam_version_bump(self, tmp_path):
+        """A roam_version change between consecutive index runs -> drift."""
+        from roam.commands.cmd_doctor import _check_index_manifest_history
+
+        first = {"roam_version": "1.0.0", "schema_version": 12}
+        second = {"roam_version": "1.1.0", "schema_version": 12}
+        db_path = self._make_db_with_manifest(tmp_path, [first, second])
+        with (
+            patch("roam.db.connection.db_exists", return_value=True),
+            patch("roam.db.connection.open_db", side_effect=self._fake_open_db(db_path)),
+        ):
+            check = _check_index_manifest_history()
+        assert check["passed"] is False
+        assert check.get("_state") == "drift_detected"
+        assert "roam_version" in check.get("_drift_fields", [])
+
+    def test_history_check_is_advisory(self):
+        """A drift in history must NOT block doctor (advisory only)."""
+        from roam.commands.cmd_doctor import _ADVISORY_CHECK_NAMES
+
+        assert "Index manifest history" in _ADVISORY_CHECK_NAMES

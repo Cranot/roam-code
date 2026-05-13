@@ -10,6 +10,7 @@ import os
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
@@ -218,6 +219,20 @@ def _at_risk_symbols(conn, symbol_filter, min_slope, limit=20):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="forecast",
+    category="health",
+    summary="Predict when metrics will exceed thresholds using trend analysis",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("forecast")
 @click.option("--symbol", default=None, help="Filter to a specific symbol name")
 @click.option(
@@ -307,6 +322,19 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
                         "snapshots_available": n_snapshots,
                         "metrics_trending": metrics_trending,
                         "symbols_at_risk": symbols_at_risk,
+                    },
+                    # LAW 4 (W17.3): the auto-derive renders
+                    # ``symbols_at_risk`` as "N symbols at risk findings"
+                    # (terminal "risk" isn't a concrete plural). Pin a
+                    # clean fact set anchored on "forecast" + the verdict.
+                    agent_contract={
+                        "facts": [
+                            verdict,
+                            f"forecast scope: {n_snapshots} snapshot(s) available, "
+                            f"{metrics_trending} metric(s) trending",
+                            f"forecast risk: {symbols_at_risk} symbol(s) approaching "
+                            "complexity / churn thresholds",
+                        ],
                     },
                     budget=token_budget,
                     aggregate_trends=agg_trends,

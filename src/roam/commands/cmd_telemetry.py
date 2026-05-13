@@ -10,6 +10,7 @@ from datetime import datetime
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 from roam.telemetry import _enabled, fetch_recent, fetch_top_slow
 
@@ -21,6 +22,20 @@ def _fmt_ts(ts: float) -> str:
         return "?"
 
 
+@roam_capability(
+    name="telemetry",
+    category="getting-started",
+    summary="Show local telemetry: slowest commands + recent runs",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command()
 @click.option("--top", "top_n", type=int, default=10, show_default=True, help="Number of slowest calls to show.")
 @click.option("--recent", "recent_n", type=int, default=20, show_default=True, help="Number of recent calls to show.")

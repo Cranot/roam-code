@@ -125,49 +125,56 @@ class TestTestFileSuppression:
         """Files under tests/ should be suppressed by default."""
         result = _invoke(["secrets"], test_file_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         assert not any("tests/" in f for f in files)
 
     def test_test_dir_suppressed(self, test_file_project):
         """Files under test/ should be suppressed by default."""
         result = _invoke(["secrets"], test_file_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         assert not any("test/" in f for f in files)
 
     def test_dunder_tests_dir_suppressed(self, test_file_project):
         """Files under __tests__/ should be suppressed by default."""
         result = _invoke(["secrets"], test_file_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         assert not any("__tests__/" in f for f in files)
 
     def test_spec_dir_suppressed(self, test_file_project):
         """Files under spec/ should be suppressed by default."""
         result = _invoke(["secrets"], test_file_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         assert not any("spec/" in f for f in files)
 
     def test_fixtures_dir_suppressed(self, test_file_project):
         """Files under fixtures/ should be suppressed by default."""
         result = _invoke(["secrets"], test_file_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         assert not any("fixtures/" in f for f in files)
 
     def test_docs_md_suppressed(self, test_file_project):
         """Markdown files under docs/ should be suppressed by default."""
         result = _invoke(["secrets"], test_file_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         assert not any(f.endswith(".md") for f in files)
 
     def test_examples_dir_suppressed(self, test_file_project):
         """Files under examples/ should be suppressed by default."""
         result = _invoke(["secrets"], test_file_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         assert not any("examples/" in f for f in files)
 
     def test_no_findings_in_test_only_project(self, test_file_project):
@@ -195,7 +202,8 @@ class TestIncludeTestsFlag:
         """With --include-tests, test file paths should appear in findings."""
         result = _invoke(["secrets", "--include-tests"], test_file_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         test_files = [
             f
             for f in files
@@ -211,7 +219,8 @@ class TestIncludeTestsFlag:
         """Default: only source secrets, not test secrets."""
         result = _invoke(["secrets"], mixed_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         assert any("src/" in f for f in files)
         assert not any("tests/" in f for f in files)
 
@@ -219,7 +228,8 @@ class TestIncludeTestsFlag:
         """With --include-tests: both source and test secrets."""
         result = _invoke(["secrets", "--include-tests"], mixed_project, json_mode=True)
         data = json.loads(result.output)
-        files = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape
+        files = {f["value"]["file"] for f in data.get("findings", [])}
         assert any("src/" in f for f in files)
         assert any("tests/" in f for f in files)
 
@@ -328,27 +338,36 @@ class TestRemediation:
         """JSON findings should include a remediation field."""
         result = _invoke(["secrets"], remediation_project, json_mode=True)
         data = json.loads(result.output)
+        # R22 confidence triple shape
         for finding in data.get("findings", []):
-            assert "remediation" in finding
-            assert len(finding["remediation"]) > 0
+            # R22 confidence triple shape
+            assert "remediation" in finding["value"]
+            # R22 confidence triple shape
+            assert len(finding["value"]["remediation"]) > 0
 
     def test_remediation_aws_specific(self, remediation_project):
         """AWS findings should have AWS-specific remediation."""
         result = _invoke(["secrets"], remediation_project, json_mode=True)
         data = json.loads(result.output)
-        aws_findings = [f for f in data.get("findings", []) if "AWS" in f["pattern"]]
+        # R22 confidence triple shape — fields nested under value
+        aws_findings = [f for f in data.get("findings", []) if "AWS" in f["value"]["pattern"]]
         assert len(aws_findings) > 0
         for f in aws_findings:
-            assert "AWS" in f["remediation"] or "os.environ" in f["remediation"]
+            # R22 confidence triple shape
+            rem = f["value"]["remediation"]
+            assert "AWS" in rem or "os.environ" in rem
 
     def test_remediation_db_specific(self, remediation_project):
         """Database findings should have DB-specific remediation."""
         result = _invoke(["secrets"], remediation_project, json_mode=True)
         data = json.loads(result.output)
-        db_findings = [f for f in data.get("findings", []) if "Database" in f["pattern"]]
+        # R22 confidence triple shape — fields nested under value
+        db_findings = [f for f in data.get("findings", []) if "Database" in f["value"]["pattern"]]
         assert len(db_findings) > 0
         for f in db_findings:
-            assert "DSN" in f["remediation"] or "env" in f["remediation"].lower()
+            # R22 confidence triple shape
+            rem = f["value"]["remediation"]
+            assert "DSN" in rem or "env" in rem.lower()
 
     def test_remediation_in_text_output(self, remediation_project):
         """Text output should show per-pattern remediation."""

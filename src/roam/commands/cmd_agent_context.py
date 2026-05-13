@@ -4,12 +4,27 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.cmd_agent_plan import build_agent_plan
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import budget_truncate, json_envelope, to_json
 
 
+@roam_capability(
+    name="agent-context",
+    category="workflow",
+    summary="Generate per-worker context: write scope, read-only deps, and contracts",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("agent-context")
 @click.option(
     "--agent-id",

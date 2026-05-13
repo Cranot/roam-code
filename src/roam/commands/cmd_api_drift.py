@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -414,6 +415,20 @@ def _is_ts_type_path(path: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="api-drift",
+    category="reports",
+    summary="Detect mismatches between backend API responses and frontend type definitions",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("api-drift")
 @click.option("--limit", "-n", default=50, help="Max findings to show")
 @click.option(

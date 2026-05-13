@@ -166,7 +166,7 @@ def test_help():
 
 
 def test_help_all():
-    """``roam --help-all`` exposes every command (~211 of them)."""
+    """``roam --help-all`` exposes every command (~217 of them)."""
     result = subprocess.run(
         [sys.executable, "-m", "roam", "--help-all"],
         capture_output=True,

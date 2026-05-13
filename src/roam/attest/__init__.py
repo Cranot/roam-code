@@ -8,7 +8,7 @@ without re-indexing.
 This v12.0 scaffold ships:
 
 * :mod:`attest.cga` — build the in-toto v1 Statement + the
-  ``https://roam-code.dev/CodeGraph/v1`` predicate body. Merkle root
+  ``https://roam-code.com/spec/CodeGraph/v1`` predicate body. Merkle root
   over symbol fingerprints, edge bundle digest, language summary.
 * :mod:`commands.cmd_cga` — CLI to emit and verify unsigned
   attestations.

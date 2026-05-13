@@ -226,7 +226,7 @@ def test_command_help_invokes(name, cli_runner):
 
 
 # A small, hand-picked subset of commands that we exercise end-to-end with
-# `--json` in an empty dir. Iterating over all 211 would be very slow
+# `--json` in an empty dir. Iterating over all 217 would be very slow
 # (auto-index, file-system writes, etc.) and most lazy-loaded commands
 # share their failure mode. The picks cover the major dispatch paths:
 #   - simple read commands (version, schema, surface, doctor, exit-codes)
@@ -346,7 +346,7 @@ def test_surface_json_shape(cli_runner, empty_dir):
     assert "summary" in data and isinstance(data["summary"], dict)
     summary = data["summary"]
 
-    # Floor: 200+ commands. Today the registry has 211; we leave headroom
+    # Floor: 200+ commands. Today the registry has 217; we leave headroom
     # for future trims down to 200 before the test fails.
     assert summary["command_count"] >= 200, f"command_count={summary['command_count']} below 200 floor"
     assert summary["verdict"] == "OK"

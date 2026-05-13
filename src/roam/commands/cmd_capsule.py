@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -182,6 +183,20 @@ def _build_capsule(conn, redact_paths: bool, no_signatures: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="capsule",
+    category="reports",
+    summary="Export the structural graph as a portable JSON capsule",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("capsule")
 @click.option(
     "--redact-paths",

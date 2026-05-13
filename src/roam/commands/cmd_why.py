@@ -7,6 +7,7 @@ import re
 import click
 import networkx as nx
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import batched_in, open_db
 from roam.graph.builder import build_symbol_graph
@@ -272,6 +273,20 @@ def _emit_why_single(r: dict) -> None:
     click.echo()
 
 
+@roam_capability(
+    name="why",
+    category="refactoring",
+    summary="Explain why a symbol matters — role, reach, criticality, verdict",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "debug"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("names", nargs=-1, required=True)
 @click.pass_context

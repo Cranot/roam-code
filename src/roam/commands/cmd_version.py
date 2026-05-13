@@ -20,6 +20,7 @@ try:
 except ImportError:
     _HAVE_METADATA = False
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 _PYPI_URL = "https://pypi.org/pypi/roam-code/json"
@@ -45,6 +46,20 @@ def _pypi_latest() -> str | None:
         return None
 
 
+@roam_capability(
+    name="version",
+    category="getting-started",
+    summary="Print the installed roam-code version (and check PyPI with --check)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command()
 @click.option("--check", "do_check", is_flag=True, help="also query PyPI for the latest version.")
 @click.pass_context

@@ -61,11 +61,12 @@ def test_version():
 
 
 def test_help():
-    """roam --help exits 0 and includes command categories."""
+    """roam --help exits 0 and shows the 5-verb starter panel."""
     output, rc = roam("--help")
     assert rc == 0
-    # The categorized help should show at least one category
-    assert "Getting Started" in output or "Codebase Health" in output
+    # The default --help renders the 5-verb "Start here" panel
+    # (categorised view moved to `roam --help-all`).
+    assert "Start here" in output or "roam understand" in output
     # And the usage line
     assert "Usage" in output or "usage" in output.lower()
 

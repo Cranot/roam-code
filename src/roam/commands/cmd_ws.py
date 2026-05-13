@@ -8,6 +8,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -15,6 +16,20 @@ from roam.output.formatter import format_table, json_envelope, to_json
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="ws",
+    category="getting-started",
+    summary="Manage multi-repo workspaces with cross-repo dependency tracking",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.group("ws")
 @click.pass_context
 def ws(ctx) -> None:
@@ -278,6 +293,7 @@ def ws_resolve(ctx) -> None:
 
     from roam.workspace.api_scanner import (
         build_cross_repo_edges,
+        find_unmatched_calls,
         match_api_endpoints,
         scan_backend_routes,
         scan_frontend_api_calls,
@@ -315,6 +331,7 @@ def ws_resolve(ctx) -> None:
         total_be_routes = 0
         total_matched = 0
         all_matches = []
+        all_unmatched: list[dict] = []
 
         # Issue #18 guard: when `connections: []` is empty (the default
         # after `ws init`, or after the user edits roles by hand without
@@ -402,8 +419,79 @@ def ws_resolve(ctx) -> None:
 
             all_matches.extend(matched)
 
+            # Compute unmatched calls for this pair (potential 404s).
+            unmatched = find_unmatched_calls(fe_calls, be_routes, matched)
+            all_unmatched.extend(unmatched)
+
+    total_unmatched = len(all_unmatched)
+    match_pct = round(100 * total_matched / total_fe_calls) if total_fe_calls else 0
+    match_rate = (total_matched / total_fe_calls) if total_fe_calls else 0.0
+
+    # Pattern 2: explicit state when any unmatched URLs survive — never
+    # silently SAFE. Verdict standalone-readable per LAW 6.
+    if total_fe_calls == 0:
+        state = "no_frontend_calls"
+        verdict = "0 frontend calls discovered; nothing to resolve"
+        partial_success = False
+    elif total_unmatched == 0:
+        state = "ok"
+        verdict = f"{total_matched}/{total_fe_calls} frontend URLs match (100%); 0 unmatched"
+        partial_success = False
+    else:
+        state = "partial_match"
+        verdict = (
+            f"{total_matched} of {total_fe_calls} frontend URLs match "
+            f"({match_pct}%); {total_unmatched} unmatched POTENTIAL 404s"
+        )
+        partial_success = True
+
+    # Agent contract facts — flat, imperative, concrete.
+    facts: list[str] = []
+    if total_unmatched > 0:
+        facts.append(
+            f"{total_unmatched} frontend URLs do not match any backend route"
+        )
+        # Top reason breakdown (concrete noun anchor).
+        reason_counts: dict[str, int] = {}
+        for u in all_unmatched:
+            reason_counts[u["reason"]] = reason_counts.get(u["reason"], 0) + 1
+        top_reasons = sorted(reason_counts.items(), key=lambda x: -x[1])
+        for reason_name, count in top_reasons[:3]:
+            facts.append(f"{count} unmatched have reason `{reason_name}`")
+        # Top shared prefix among unmatched (LAW 4 — concrete noun).
+        prefix_counts: dict[str, int] = {}
+        for u in all_unmatched:
+            url = u["url"]
+            segs = [s for s in url.split("/") if s]
+            if len(segs) >= 2:
+                prefix = "/" + "/".join(segs[:2])
+                prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+            elif segs:
+                prefix = "/" + segs[0]
+                prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+        top_prefixes = sorted(prefix_counts.items(), key=lambda x: -x[1])
+        if top_prefixes and top_prefixes[0][1] >= 2:
+            p, n = top_prefixes[0]
+            facts.append(f"{n} unmatched URLs share the prefix `{p}/`")
+        first = all_unmatched[0]
+        facts.append(
+            f"Top unmatched: `{first['url']}` ({first['method'] or '?'})"
+        )
+    else:
+        facts.append(
+            f"All {total_fe_calls} frontend URLs match a backend route"
+        )
+
+    next_commands: list[str] = []
+    if total_unmatched > 0:
+        next_commands.append(
+            "roam --json ws resolve   # see the full unmatched list"
+        )
+        next_commands.append(
+            "roam endpoints --json    # inspect backend route inventory"
+        )
+
     if json_mode:
-        match_pct = round(100 * total_matched / total_fe_calls) if total_fe_calls else 0
         click.echo(
             to_json(
                 json_envelope(
@@ -412,8 +500,13 @@ def ws_resolve(ctx) -> None:
                         "frontend_calls": total_fe_calls,
                         "backend_routes": total_be_routes,
                         "matched": total_matched,
+                        "matched_count": total_matched,
+                        "unmatched_count": total_unmatched,
                         "match_pct": match_pct,
-                        "verdict": (f"{total_matched}/{total_fe_calls} frontend calls matched ({match_pct}%)"),
+                        "match_rate": round(match_rate, 4),
+                        "state": state,
+                        "partial_success": partial_success,
+                        "verdict": verdict,
                     },
                     matches=[
                         {
@@ -427,12 +520,18 @@ def ws_resolve(ctx) -> None:
                         }
                         for m in all_matches[:50]
                     ],
+                    unmatched=all_unmatched,
+                    agent_contract={
+                        "facts": facts,
+                        "next_commands": next_commands,
+                    },
                 )
             )
         )
         return
 
     click.echo()
+    click.echo(f"VERDICT: {verdict}")
     click.echo(f"Cross-repo edges: {total_matched} api_call edges stored")
     if all_matches:
         # Show top matches
@@ -443,6 +542,21 @@ def ws_resolve(ctx) -> None:
             click.echo(f"  {url:35s} {method:6s} -> {be_sym}")
         if len(all_matches) > 10:
             click.echo(f"  (+{len(all_matches) - 10} more)")
+
+    if all_unmatched:
+        click.echo()
+        click.echo(f"Unmatched: {total_unmatched} URLs (potential 404s)")
+        click.echo()
+        click.echo("Top unmatched URLs:")
+        for u in all_unmatched[:10]:
+            method = u["method"] or "?"
+            url = u["url"]
+            fe_file = u["frontend_file"]
+            click.echo(f"  {method:6s} {url:30s} -- {fe_file}")
+        if total_unmatched > 10:
+            click.echo(f"  (+{total_unmatched - 10} more)")
+        click.echo()
+        click.echo("Run `roam --json ws resolve` for full list.")
 
 
 # ---------------------------------------------------------------------------

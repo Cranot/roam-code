@@ -15,6 +15,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.cmd_surface import _build_surface
 from roam.output.formatter import json_envelope, to_json
 
@@ -131,6 +132,20 @@ def _scan_module_for_extras(module_path: Path) -> list[str]:
     return extras
 
 
+@roam_capability(
+    name="explain-command",
+    category="getting-started",
+    summary="Show what a command does, what it depends on, and how stale-index sensitive it is",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command("explain-command")
 @click.argument("name")
 @click.pass_context

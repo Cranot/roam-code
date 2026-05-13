@@ -6,11 +6,26 @@ from collections import Counter
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="dark-matter",
+    category="architecture",
+    summary="Detect dark matter: file pairs that co-change but have no structural link",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("-n", "limit", default=30, help="Max pairs to show")
 @click.option("--min-npmi", default=0.3, type=float, show_default=True, help="Minimum NPMI threshold")

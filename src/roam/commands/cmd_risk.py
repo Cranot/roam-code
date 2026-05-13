@@ -8,6 +8,7 @@ import re
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
@@ -115,7 +116,7 @@ def _load_custom_domains():
 # ---- Path-zone matching ----
 
 _DEFAULT_PATH_ZONES = {
-    "accounting": (("redacted/", "accounting/", "vat/", "ledger/", "journal/"), 10),
+    "accounting": (("transactions/", "accounting/", "vat/", "ledger/", "journal/", "entries/"), 10),
     "auth": (("auth/", "login/", "session/"), 8),
     "backup": (("backup/", "restore/"), 6),
     "data": (("migration", "seed"), 4),
@@ -169,6 +170,10 @@ _UI_PATH_PATTERNS = (
     "widgets/",
     "screens/",
 )
+# 4 UI-component extensions used (alongside _UI_PATH_PATTERNS above) to flag
+# files as UI-facing for blast-radius weighting in cmd_risk. Limited to
+# component-file formats; plain .js/.ts are not auto-UI (they need the path
+# pattern signal too).
 _UI_EXTENSIONS = (".vue", ".svelte", ".jsx", ".tsx")
 
 
@@ -267,6 +272,20 @@ def _callee_chain_domain(conn, symbol_id, domains, max_depth=3):
     return best_weight, best_match, best_via, best_chain
 
 
+@roam_capability(
+    name="risk",
+    category="reports",
+    summary="Show domain-weighted risk ranking of symbols",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("-n", "count", default=30, help="Number of symbols to show")
 @click.option(
@@ -313,7 +332,7 @@ def risk(ctx, count, domain_keywords, explain, include_tests, show_suppressed):
     Domain matching uses three sources (highest wins):
     - Symbol name keyword matching
     - Callee-chain analysis (what the symbol calls, up to 3 hops)
-    - File path zone matching (e.g. redacted/ -> accounting zone)
+    - File path zone matching (e.g. transactions/ -> accounting zone)
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

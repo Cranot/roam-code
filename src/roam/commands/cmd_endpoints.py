@@ -9,8 +9,10 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.index.test_conventions import is_test_file as _is_test_file
 from roam.output.formatter import format_table, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
@@ -548,11 +550,9 @@ _SKIP_PATH_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-_TEST_PATH_PATTERNS = re.compile(
-    r"[/\\](?:tests?|spec|__tests__|test_)[/\\]|"
-    r"(?:_test|_spec|\.test\.|\.spec\.)",
-    re.IGNORECASE,
-)
+# Note: test-file detection used to live here as a private
+# ``_TEST_PATH_PATTERNS`` regex. W6.2 consolidated test detection onto
+# the canonical ``test_conventions.is_test_file`` facade above.
 
 
 # ---------------------------------------------------------------------------
@@ -600,8 +600,10 @@ def _collect_endpoints(project_root: Path, file_paths: list[str], include_tests:
         if _SKIP_PATH_PATTERNS.search("/" + norm):
             continue
 
-        # Skip test files unless requested
-        if not include_tests and _TEST_PATH_PATTERNS.search("/" + norm):
+        # Skip test files unless requested. Uses the canonical
+        # test_conventions.is_test_file detector (W6.2) — recognises
+        # every supported test convention including Vitest / Vue SFC.
+        if not include_tests and _is_test_file(norm):
             continue
 
         full_path = project_root / rel_path
@@ -627,6 +629,20 @@ def _collect_endpoints(project_root: Path, file_paths: list[str], include_tests:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="endpoints",
+    category="exploration",
+    summary="List all detected REST/GraphQL/gRPC endpoints with handlers",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("endpoints")
 @click.option(
     "--framework",
@@ -711,6 +727,16 @@ def endpoints(ctx, framework, http_method, include_tests, group_by):
                         "count": n,
                         "frameworks": frameworks_found,
                         "framework_count": n_frameworks,
+                    },
+                    # LAW 4 (W17.3): bare ``count`` / ``framework_count``
+                    # keys auto-derive to awkward facts; pin explicit
+                    # concrete-noun facts here.
+                    agent_contract={
+                        "facts": [
+                            f"endpoints scan found {n} endpoint(s) across "
+                            f"{n_frameworks} framework(s)",
+                            f"endpoints scan frameworks: {', '.join(frameworks_found) or '(none)'}",
+                        ],
                     },
                     budget=token_budget,
                     endpoints=json_endpoints,

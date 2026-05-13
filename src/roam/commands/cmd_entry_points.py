@@ -7,6 +7,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.graph_helpers import bfs_reachable, build_forward_adj
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
@@ -255,6 +256,20 @@ def _compute_coverage(conn, entries, adj):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="entry-points",
+    category="architecture",
+    summary="Entry point catalog with protocol classification",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("entry-points")
 @click.option(
     "--protocol",

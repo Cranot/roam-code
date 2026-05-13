@@ -1080,14 +1080,22 @@ def _detect_rule_type(rule: dict) -> str:
 
     If ``type`` is explicitly set, it wins.
     Otherwise:
-    - ``from`` + ``to`` => path_match
-    - ``ast``           => ast_match
-    - ``dataflow``      => dataflow_match
-    - fallback          => symbol_match
+    - ``must`` / ``must_not`` block => graph_clause (R18)
+    - ``from`` + ``to``             => path_match
+    - ``ast``                       => ast_match
+    - ``dataflow``                  => dataflow_match
+    - fallback                      => symbol_match
     """
     explicit = rule.get("type")
     if isinstance(explicit, str) and explicit:
         return explicit
+
+    # R18: a rule carrying a `must:` or `must_not:` block is a graph-clause
+    # rule even when it also has a `when:` filter — the new clauses live
+    # only in those blocks. Detect them before the legacy path/ast/dataflow
+    # checks so a `when: {pattern: ...}` doesn't fall through to symbol_match.
+    if isinstance(rule.get("must"), dict) or isinstance(rule.get("must_not"), dict):
+        return "graph_clause"
 
     match = rule.get("match", {})
     if "from" in match and "to" in match:
@@ -1100,14 +1108,274 @@ def _detect_rule_type(rule: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Rule evaluation: graph_clause (R18)
+# ---------------------------------------------------------------------------
+
+
+def _candidate_files_for_when(conn, when: dict) -> list[dict]:
+    """Return file rows matching the ``when.pattern`` glob (R18 candidates)."""
+    pattern = when.get("pattern") or when.get("file_glob")
+    if not pattern:
+        return []
+    rows = conn.execute("SELECT id, path FROM files").fetchall()
+    return [dict(r) for r in rows if _matches_glob(r["path"], pattern)]
+
+
+def _candidate_symbols_for_when(conn, when: dict) -> list[dict]:
+    """Return symbol rows matching the ``when`` clause.
+
+    Supported keys: ``symbol`` (exact qname/name), ``symbol_kind`` (kind
+    filter; ``public_api`` is treated as is_exported=1).
+    """
+    name = when.get("symbol")
+    kind = when.get("symbol_kind") or when.get("kind")
+    pattern = when.get("pattern") or when.get("file_glob")
+    sql = (
+        "SELECT s.id, s.name, s.qualified_name, s.kind, s.line_start, "
+        "s.is_exported, f.path AS file_path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id WHERE 1=1"
+    )
+    params: list = []
+    if name:
+        sql += " AND (s.qualified_name = ? OR s.name = ?)"
+        params.extend([name, name])
+    if kind == "public_api":
+        sql += " AND s.is_exported = 1"
+    elif kind:
+        if isinstance(kind, str):
+            kind = [kind]
+        ph = ",".join("?" for _ in kind)
+        sql += f" AND s.kind IN ({ph})"
+        params.extend(kind)
+    rows = conn.execute(sql, params).fetchall()
+    if pattern:
+        rows = [r for r in rows if _matches_glob(r["file_path"], pattern)]
+    return [dict(r) for r in rows]
+
+
+def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: int = 100) -> dict:
+    """Evaluate an R18 graph-clause rule.
+
+    Rule shape::
+
+        when:
+          pattern: "src/handlers/**.py"   # file glob (file-scoped clauses)
+          symbol: "create_order"          # OR a specific symbol
+          symbol_kind: "public_api"       # OR a kind filter
+        must:
+          reachable_from: "src/db/__init__.py"
+        must_not:
+          imports_from: "src/legacy"
+        severity: high
+        message: "Handlers must use the canonical DB layer"
+
+    A single rule may carry either ``must`` or ``must_not`` (or both).
+    Each must-block contains exactly ONE of the four supported clause
+    names (``reachable_from`` / ``imports_from`` / ``clones_with`` /
+    ``tested_by``).
+    """
+    # Lazy import to keep the rules engine importable without the policy
+    # package on bare installs.
+    from roam.policy.graph_clauses import SUPPORTED_CLAUSES, evaluate_clause
+
+    name = rule.get("name") or rule.get("id") or "unnamed"
+    severity = rule.get("severity", "error")
+    message = rule.get("message", "")
+    when = rule.get("when") or {}
+    must = rule.get("must") or {}
+    must_not = rule.get("must_not") or {}
+    exempt = rule.get("exempt", {})
+
+    # Per-rule depth override (defensive — the CLI normally controls this).
+    rule_depth = rule.get("depth")
+    if isinstance(rule_depth, (int, float)) and int(rule_depth) > 0:
+        max_depth = int(rule_depth)
+
+    # Build the clause plan: (block_kind, clause_name, clause_arg)
+    plan: list[tuple[str, str, str]] = []
+    for block_kind, block in (("must", must), ("must_not", must_not)):
+        if not isinstance(block, dict):
+            continue
+        for cname, carg in block.items():
+            if cname not in SUPPORTED_CLAUSES:
+                return {
+                    "name": name,
+                    "severity": severity,
+                    "passed": False,
+                    "partial_success": True,
+                    "violations": [
+                        {
+                            "symbol": "",
+                            "file": rule.get("_file", ""),
+                            "line": None,
+                            "clause": cname,
+                            "reason": (
+                                f"unknown clause '{cname}' — supported: "
+                                f"{', '.join(SUPPORTED_CLAUSES)}"
+                            ),
+                        }
+                    ],
+                }
+            plan.append((block_kind, cname, str(carg)))
+
+    if not plan:
+        return {
+            "name": name,
+            "severity": severity,
+            "passed": True,
+            "violations": [],
+            "reason": "rule has no must / must_not clauses",
+        }
+
+    violations: list[dict] = []
+    partial = False
+
+    # ------------------------------------------------------------------
+    # Iterate over candidates. Resolution order:
+    #   - If when carries `symbol` / `symbol_kind`, iterate over matching symbols.
+    #   - Else if when carries `pattern`, iterate over matching files.
+    #   - Else: single synthetic "global" candidate (clause must self-target).
+    # ------------------------------------------------------------------
+    is_symbol_scoped = "symbol" in when or "symbol_kind" in when
+    is_file_scoped = "pattern" in when or "file_glob" in when
+
+    if is_symbol_scoped:
+        candidates_sym = _candidate_symbols_for_when(conn, when)
+        for sym in candidates_sym:
+            if _is_exempt(sym["name"], sym["file_path"], exempt):
+                continue
+            for block_kind, cname, carg in plan:
+                matches, evidence = evaluate_clause(
+                    cname,
+                    carg,
+                    conn=conn,
+                    target_symbol=sym.get("qualified_name") or sym.get("name"),
+                    target_file=sym.get("file_path"),
+                    max_depth=max_depth,
+                    max_nodes=max_nodes,
+                )
+                status = evidence.get("status", "ok") if isinstance(evidence, dict) else "ok"
+                if status not in ("ok",):
+                    partial = True
+                # must => clause must hold; must_not => clause must NOT hold.
+                fired = (block_kind == "must" and not matches) or (
+                    block_kind == "must_not" and matches
+                )
+                if fired:
+                    violations.append(
+                        {
+                            "symbol": sym.get("qualified_name") or sym.get("name"),
+                            "file": sym.get("file_path"),
+                            "line": sym.get("line_start"),
+                            "clause": cname,
+                            "block": block_kind,
+                            "evidence": evidence,
+                            "reason": _format_clause_reason(
+                                block_kind, cname, carg, sym, evidence, message
+                            ),
+                        }
+                    )
+    elif is_file_scoped:
+        candidates_file = _candidate_files_for_when(conn, when)
+        for f in candidates_file:
+            if _is_exempt("", f["path"], exempt):
+                continue
+            for block_kind, cname, carg in plan:
+                matches, evidence = evaluate_clause(
+                    cname,
+                    carg,
+                    conn=conn,
+                    target_file=f["path"],
+                    target_symbol=None,
+                    max_depth=max_depth,
+                    max_nodes=max_nodes,
+                )
+                status = evidence.get("status", "ok") if isinstance(evidence, dict) else "ok"
+                if status not in ("ok",):
+                    partial = True
+                fired = (block_kind == "must" and not matches) or (
+                    block_kind == "must_not" and matches
+                )
+                if fired:
+                    violations.append(
+                        {
+                            "symbol": "",
+                            "file": f["path"],
+                            "line": None,
+                            "clause": cname,
+                            "block": block_kind,
+                            "evidence": evidence,
+                            "reason": _format_clause_reason(
+                                block_kind,
+                                cname,
+                                carg,
+                                {"file_path": f["path"]},
+                                evidence,
+                                message,
+                            ),
+                        }
+                    )
+    else:
+        return {
+            "name": name,
+            "severity": severity,
+            "passed": False,
+            "partial_success": True,
+            "violations": [
+                {
+                    "symbol": "",
+                    "file": rule.get("_file", ""),
+                    "line": None,
+                    "clause": "",
+                    "reason": (
+                        "graph_clause rule has no `when` filter — add "
+                        "`when: {pattern: '...'}` or `when: {symbol: '...'}` "
+                        "to scope the rule"
+                    ),
+                }
+            ],
+        }
+
+    result = {
+        "name": name,
+        "severity": severity,
+        "passed": len(violations) == 0,
+        "violations": violations,
+    }
+    if partial:
+        result["partial_success"] = True
+    return result
+
+
+def _format_clause_reason(block_kind, cname, carg, candidate, evidence, message):
+    """One-line, paste-able violation reason that includes the message."""
+    where = candidate.get("file_path") or candidate.get("file") or "?"
+    sym = candidate.get("qualified_name") or candidate.get("name") or ""
+    head = sym if sym else where
+    status = (evidence or {}).get("status") if isinstance(evidence, dict) else None
+    if status and status != "ok":
+        return f"{head}: clause `{cname}` could not run ({status})"
+    if block_kind == "must":
+        base = f"{head}: must {cname}({carg}) — FAILED"
+    else:
+        base = f"{head}: must_not {cname}({carg}) — VIOLATED"
+    if message:
+        base += f" — {message}"
+    return base
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
-def evaluate_rule(rule: dict, conn, G=None) -> dict:
+def evaluate_rule(rule: dict, conn, G=None, *, max_depth: int = 3, max_nodes: int = 100) -> dict:
     """Evaluate a single rule against the indexed DB.
 
     Returns ``{name, severity, passed, violations: [{symbol, file, line, reason}]}``.
+
+    ``max_depth`` / ``max_nodes`` apply to graph-aware clauses (R18); they
+    are ignored by the legacy rule types.
     """
     # Handle parse errors
     if "_error" in rule:
@@ -1133,11 +1401,12 @@ def evaluate_rule(rule: dict, conn, G=None) -> dict:
         return _evaluate_ast_match(rule, conn)
     if rule_type == "dataflow_match":
         return _evaluate_dataflow_match(rule, conn)
-    else:
-        return _evaluate_symbol_match(rule, conn)
+    if rule_type == "graph_clause":
+        return _evaluate_graph_clause(rule, conn, max_depth=max_depth, max_nodes=max_nodes)
+    return _evaluate_symbol_match(rule, conn)
 
 
-def evaluate_all(rules_dir: Path, conn) -> list[dict]:
+def evaluate_all(rules_dir: Path, conn, *, max_depth: int = 3, max_nodes: int = 100) -> list[dict]:
     """Load and evaluate all rules from the rules directory.
 
     Returns a list of result dicts, one per rule.
@@ -1145,5 +1414,5 @@ def evaluate_all(rules_dir: Path, conn) -> list[dict]:
     rules = load_rules(rules_dir)
     results: list[dict] = []
     for rule in rules:
-        results.append(evaluate_rule(rule, conn))
+        results.append(evaluate_rule(rule, conn, max_depth=max_depth, max_nodes=max_nodes))
     return results

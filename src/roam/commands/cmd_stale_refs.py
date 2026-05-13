@@ -43,6 +43,8 @@ from pathlib import Path
 
 import click
 
+from roam.atomic_io import atomic_write_text
+from roam.capability import roam_capability
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.stale_refs_anchors import AnchorCache
 from roam.commands.stale_refs_hints import HintContext, best_hint
@@ -413,7 +415,12 @@ def _has_ref_triggers(content: str) -> bool:
     return any(ch in content for ch in _REF_TRIGGER_CHARS)
 
 
-def _extract_refs(content: str, *, prose_mode: bool) -> list[tuple[int, str, str]]:
+def _extract_refs(
+    content: str,
+    *,
+    prose_mode: bool,
+    scan_bare_backticks: bool = False,
+) -> list[tuple[int, str, str]]:
     """Extract ``(line_number, kind, url)`` triples from one file's text.
 
     Line numbers are 1-based. ``kind`` is one of ``md_inline``,
@@ -423,12 +430,38 @@ def _extract_refs(content: str, *, prose_mode: bool) -> list[tuple[int, str, str
     are extracted — markdown link syntax collides with regex character
     classes (``[^'"]+`` etc.) in code and produces a flood of false
     positives.
+
+    When *scan_bare_backticks* is ``False`` (the default), bare
+    backtick-wrapped paths in prose (e.g. `` `MyController.php` ``) are
+    NOT treated as filesystem references. They're inline code, not
+    structured link syntax — treating them as path claims produces ~39%
+    false-positive rate on real repos (see Bug 2 in the dogfood
+    findings).
+
+    Even when *scan_bare_backticks* is ``True``, backtick matches that
+    fall INSIDE the ``[display]`` portion of a markdown inline link are
+    suppressed. Otherwise ``[`code-map/X.md`](../code-map/X.md)`` would
+    extract both the display-string backtick AND the URL, and the
+    display half — never a real path — would silently corrupt the
+    rename-hint pipeline (Bug 1).
     """
     refs: list[tuple[int, str, str]] = []
     for lineno, line in enumerate(content.splitlines(), start=1):
+        # Collect markdown inline link spans first so we can suppress
+        # any nested backtick matches that fall inside their display
+        # text. Each span is a half-open ``(text_start, text_end)`` over
+        # the ``[display]`` portion, NOT the whole ``[display](url)``
+        # construct — backticks in the URL half are already a different
+        # extraction shape and don't collide here.
+        md_text_spans: list[tuple[int, int]] = []
         if prose_mode:
             for m in _MD_INLINE_RE.finditer(line):
                 refs.append((lineno, "md_inline", m.group("url")))
+                # Record the inner [text] span (between '[' and ']').
+                # ``m.start()`` points at the leading ``!`` / ``[``; the
+                # text group's span gives us the precise display range.
+                t_start, t_end = m.span("text")
+                md_text_spans.append((t_start, t_end))
             m_ref = _MD_REFERENCE_RE.match(line)
             if m_ref:
                 refs.append((lineno, "md_reference", m_ref.group("url")))
@@ -436,8 +469,24 @@ def _extract_refs(content: str, *, prose_mode: bool) -> list[tuple[int, str, str
                 url = m.group("v1") if m.group("v1") is not None else m.group("v2")
                 if url:
                     refs.append((lineno, "html_attr", url))
-        for m in _BACKTICK_PATH_RE.finditer(line):
-            refs.append((lineno, "backtick", m.group("path")))
+        # Bare backtick scanning is opt-in by default. In source-code
+        # files (non-prose), keep the historical behaviour: extract them
+        # so test fixtures referencing renamed files keep working — the
+        # placeholder filter in _resolve_backtick_target already trims
+        # the noise there.
+        if scan_bare_backticks or not prose_mode:
+            for m in _BACKTICK_PATH_RE.finditer(line):
+                # Bug 1 suppression: skip backticks whose match falls
+                # ENTIRELY within a markdown-link's display text. The
+                # URL half is the source of truth for liveness; the
+                # display half is cosmetic and may legitimately look
+                # like a path that doesn't exist relative to the source
+                # file's directory.
+                bt_start = m.start("path")
+                bt_end = m.end("path")
+                if any(s <= bt_start and bt_end <= e for s, e in md_text_spans):
+                    continue
+                refs.append((lineno, "backtick", m.group("path")))
     return refs
 
 
@@ -563,6 +612,7 @@ def _scan_project(
     ignore_source: tuple[str, ...] = (),
     ignore_target: tuple[str, ...] = (),
     check_anchors: bool = True,
+    scan_bare_backticks: bool = False,
 ) -> tuple[dict[str, list[dict]], int, int, dict[str, list[str]], AnchorCache]:
     """Walk the repo and collect every reference.
 
@@ -616,7 +666,11 @@ def _scan_project(
             continue
         prose_mode = ext in _PROSE_EXTS
 
-        for lineno, kind, raw_url in _extract_refs(content, prose_mode=prose_mode):
+        for lineno, kind, raw_url in _extract_refs(
+            content,
+            prose_mode=prose_mode,
+            scan_bare_backticks=scan_bare_backticks,
+        ):
             refs_seen += 1
             fragment = _extract_fragment(raw_url) if kind != "backtick" else ""
 
@@ -1060,11 +1114,104 @@ def _rank_targets_priority(
 # ---------------------------------------------------------------------------
 
 
+def _has_repeated_segment_run(rel_path: str) -> bool:
+    """True when *rel_path* contains the same directory segment run twice in
+    sequence (e.g. ``docs/legacy/docs/legacy/X.md``).
+
+    Belt-and-suspenders defense against Bug 1: if the rename-hint
+    pipeline ever proposes a path that resolves to a self-repeating
+    directory chain, refuse the edit. Real repos almost never have
+    such a layout; a proposed rewrite that produces one is almost
+    certainly the result of the display-string-as-path bug or a
+    cousin of it.
+
+    Detection strategy: find ANY pair of adjacent segment runs where
+    a run of length N >= 2 immediately repeats. ``docs/legacy/docs/legacy``
+    matches (run ``docs/legacy`` followed by ``docs/legacy``). A single
+    repeated segment like ``docs/docs/X.md`` ALSO matches (run of
+    length 1 at the start). We err on the side of refusal because the
+    legitimate-repeat case (``test/test/`` directories in some test
+    frameworks) is rare AND such a file would already exist on disk,
+    in which case the rewrite would not be needed.
+    """
+    norm = rel_path.replace("\\", "/").strip("/")
+    if not norm:
+        return False
+    segments = norm.split("/")
+    n = len(segments)
+    # Walk window sizes from 1..n//2; any window that matches the next
+    # window of the same size is a repeat.
+    for window in range(1, n // 2 + 1):
+        for start in range(0, n - 2 * window + 1):
+            if segments[start : start + window] == segments[start + window : start + 2 * window]:
+                return True
+    return False
+
+
+def _rewrite_is_safe(
+    source_file_rel: str,
+    raw_url: str,
+    replacement_url: str,
+    project_root: Path,
+) -> tuple[bool, str]:
+    """Decide whether a proposed URL rewrite is safe to apply.
+
+    Returns ``(safe, reason)``. ``reason`` is empty on success, a short
+    human-readable explanation on refusal.
+
+    The check runs three guards in order:
+
+    1. **No-op detection.** If ``raw_url`` already resolves to a live
+       target from the source file's directory, the rewrite is a
+       net-negative (the original was fine). Catches Bug 1's "URL
+       half was valid all along" case.
+    2. **Double-prefix detection.** If the rewritten path contains a
+       repeating directory chain (``docs/legacy/docs/legacy/``),
+       refuse — see :func:`_has_repeated_segment_run`.
+    3. **New-URL liveness.** The rewritten URL must resolve to an
+       existing file on disk from the source's directory. If it
+       doesn't, the rewrite is replacing one broken link with
+       another, which is exactly what we want to avoid.
+
+    Guards 1 and 3 are the load-bearing ones; guard 2 is defense in
+    depth in case the resolver produces a path that "exists" in some
+    unexpected manner (case-insensitive FS, symlink loops).
+    """
+    # Guard 1: original URL already resolved live → refuse.
+    original_target = _resolve_target(raw_url, source_file_rel, project_root)
+    if original_target is not None and original_target.exists():
+        return False, "REFUSED: original URL already resolves to a live target"
+
+    # Guard 2: rewrite produces a doubled-prefix path → refuse.
+    new_target = _resolve_target(replacement_url, source_file_rel, project_root)
+    if new_target is not None:
+        try:
+            rel_new = new_target.relative_to(project_root).as_posix()
+        except ValueError:
+            rel_new = str(new_target)
+        if _has_repeated_segment_run(rel_new):
+            return False, "REFUSED: would create double-prefix path"
+
+    # Guard 3: rewrite must resolve to an existing file.
+    if new_target is None or not new_target.exists():
+        # Anchor-only rewrites are validated separately (the path
+        # portion is unchanged and known-good); only enforce file
+        # existence when the path portion actually changes. The
+        # caller can pass the same value for raw and replacement
+        # when only the fragment differs, in which case ``new_target``
+        # still resolves (to the existing file) and we land in the
+        # "exists" branch.
+        return False, "REFUSED: rewritten URL does not resolve to an existing file"
+
+    return True, ""
+
+
 def _build_fix_edits(
     targets: list[dict],
     project_root: Path,
     *,
     include_medium: bool = False,
+    refused_log: list[str] | None = None,
 ) -> dict[str, list[dict]]:
     """Group HIGH-confidence (and optionally MEDIUM) rewrites by source file.
 
@@ -1141,6 +1288,20 @@ def _build_fix_edits(
             if "#" in raw and "#" not in replacement:
                 fragment = raw.split("#", 1)[1]
                 replacement = f"{replacement}#{fragment}"
+            # Belt-and-suspenders safety: re-simulate the rewrite from
+            # the source file's perspective and refuse the edit when:
+            #   - the ORIGINAL URL already resolves live (Bug 1 case
+            #     where the display string drove the false-positive),
+            #   - the new URL would produce a double-prefix path,
+            #   - the new URL doesn't resolve to an existing file.
+            safe, reason = _rewrite_is_safe(s["file"], raw, replacement, project_root)
+            if not safe:
+                if refused_log is not None:
+                    refused_log.append(
+                        f"{reason} (source={s['file']} line={s['line']} "
+                        f"raw={raw!r} replacement={replacement!r})"
+                    )
+                continue
             by_source[s["file"]].append(
                 {
                     "line": s["line"],
@@ -1247,35 +1408,6 @@ def _render_fix_diff(
     return "\n".join(chunks), files_touched, edits_planned
 
 
-def _atomic_write_text(target: Path, content: str) -> bool:
-    """Write *content* to *target* atomically.
-
-    Strategy: write to a sibling tempfile (same directory, so the rename
-    is intra-filesystem and atomic on every POSIX/Windows filesystem we
-    support), then ``os.replace`` it onto the destination. If the write
-    is interrupted, the original file remains intact. If the rename fails,
-    we clean up the tempfile and report failure rather than leaving
-    debris behind.
-    """
-    import os as _os
-    import tempfile as _tempfile
-
-    parent = target.parent
-    tmp_fd, tmp_name = _tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(parent))
-    try:
-        with _os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        _os.replace(tmp_name, str(target))
-        return True
-    except OSError:
-        # Best-effort cleanup; ignore errors removing the temp file.
-        try:
-            _os.unlink(tmp_name)
-        except OSError:
-            pass
-        return False
-
-
 def _apply_fixes_in_place(
     project_root: Path,
     edits_by_source: dict[str, list[dict]],
@@ -1308,7 +1440,12 @@ def _apply_fixes_in_place(
         new_content, applied = _apply_fix_to_text(original, edits)
         if applied == 0 or new_content == original:
             continue
-        if not _atomic_write_text(full, new_content):
+        # Windows DELETE_PENDING / locked-file errors must be recorded in
+        # ``locked_files`` rather than aborting the whole batch — wrap the
+        # canonical atomic_write_text (which raises) to swallow OSError.
+        try:
+            atomic_write_text(full, new_content)
+        except OSError:
             locked_files.append(src)
             continue
         files_written += 1
@@ -2061,6 +2198,20 @@ def _log_hint_acceptances(
         return
 
 
+# Predicate-type constants for the in-toto attestation. The producer
+# always emits ``_CURRENT_STALE_REFS_PREDICATE_TYPE`` (the .com URI). The
+# verifier accepts any IRI in ``_ACCEPTED_STALE_REFS_PREDICATE_TYPES`` so
+# attestations produced before the CGA migration to .com keep verifying.
+_CURRENT_STALE_REFS_PREDICATE_TYPE = "https://roam-code.com/StaleRefs/v1"
+_LEGACY_STALE_REFS_PREDICATE_TYPES = (
+    "https://roam-code.dev/StaleRefs/v1",  # legacy: pre-CGA-migration emissions
+)
+_ACCEPTED_STALE_REFS_PREDICATE_TYPES = (
+    _CURRENT_STALE_REFS_PREDICATE_TYPE,
+    *_LEGACY_STALE_REFS_PREDICATE_TYPES,
+)
+
+
 def build_stale_refs_attestation(
     *,
     project_root: Path,
@@ -2070,7 +2221,7 @@ def build_stale_refs_attestation(
 ) -> dict:
     """Build an in-toto v1 Statement wrapping a stale-refs scan.
 
-    Predicate type is ``https://roam-code.dev/StaleRefs/v1`` — distinct
+    Predicate type is ``https://roam-code.com/StaleRefs/v1`` — distinct
     from the CGA / CGA-AIBOM predicates so verifiers can tell the
     artifacts apart. Subject is the git commit SHA so the attestation
     binds to a specific repo state.
@@ -2113,12 +2264,12 @@ def build_stale_refs_attestation(
         "tool": {
             "name": "roam-stale-refs",
             "version": _detect_tool_version(),
-            "predicate_type": "https://roam-code.dev/StaleRefs/v1",
+            "predicate_type": _CURRENT_STALE_REFS_PREDICATE_TYPE,
         },
     }
     return {
         "_type": STATEMENT_TYPE,
-        "predicateType": "https://roam-code.dev/StaleRefs/v1",
+        "predicateType": _CURRENT_STALE_REFS_PREDICATE_TYPE,
         "subject": [{"name": subject_name, "digest": {"git_commit_sha1": sha}}],
         "predicate": predicate,
     }
@@ -2137,7 +2288,7 @@ def verify_stale_refs_attestation(
     """
     if not isinstance(statement, dict):
         return False, "statement is not an object"
-    if statement.get("predicateType") != "https://roam-code.dev/StaleRefs/v1":
+    if statement.get("predicateType") not in _ACCEPTED_STALE_REFS_PREDICATE_TYPES:
         return False, "wrong predicateType"
     subject = statement.get("subject") or []
     if not isinstance(subject, list) or len(subject) != 1:
@@ -2380,6 +2531,20 @@ def _compact_sources(sources: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="stale-refs",
+    category="refactoring",
+    summary="Find dangling file references — markdown links, HTML href/src, backtick paths",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("stale-refs")
 @click.option(
     "--limit",
@@ -2643,6 +2808,21 @@ def _compact_sources(sources: list[dict]) -> list[dict]:
     ),
 )
 @click.option(
+    "--scan-bare-backticks",
+    is_flag=True,
+    default=False,
+    help=(
+        "Treat bare backtick-wrapped strings in prose (e.g. "
+        "`` `docs/foo.md` ``) as filesystem references. Off by default "
+        "because backticks are inline code, not link syntax — on real "
+        "repos this produces ~39% false positives (prose mentions of "
+        "filenames that aren't claims about disk layout). Opt in when "
+        "you specifically want to audit narrative filename mentions, "
+        "e.g. after a large rename refactor. Hyperlinked references "
+        "(``[`x`](url)``) always use the URL half regardless of this flag."
+    ),
+)
+@click.option(
     "--init",
     is_flag=True,
     default=False,
@@ -2667,7 +2847,7 @@ def _compact_sources(sources: list[dict]) -> list[dict]:
     metavar="PATH",
     help=(
         "Write an in-toto v1 attestation of the scan results to PATH "
-        "(JSON, predicateType ``https://roam-code.dev/StaleRefs/v1``). "
+        "(JSON, predicateType ``https://roam-code.com/StaleRefs/v1``). "
         "Sign out-of-band with cosign for tamper-evident provenance. "
         "Pass ``-`` to write to stdout instead of a file."
     ),
@@ -2724,6 +2904,7 @@ def stale_refs(
     sort_by,
     fix,
     fix_medium,
+    scan_bare_backticks,
     init,
     init_force,
     attest_path,
@@ -2759,6 +2940,7 @@ def stale_refs(
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     include_excluded = ctx.obj.get("include_excluded", False) if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     if root_override:
         # ``--root foo/`` — treat the supplied path as the project
@@ -2856,6 +3038,7 @@ def stale_refs(
             ignore_source=tuple(ignore_source),
             ignore_target=tuple(ignore_target),
             check_anchors=not no_anchors,
+            scan_bare_backticks=scan_bare_backticks,
         )
 
         def _on_initial(stale_by_target_, files_scanned_, refs_seen_):
@@ -2899,6 +3082,7 @@ def stale_refs(
         ignore_source=tuple(ignore_source),
         ignore_target=tuple(ignore_target),
         check_anchors=not no_anchors,
+        scan_bare_backticks=scan_bare_backticks,
     )
     scan_seconds = round(time.perf_counter() - t_start, 3)
 
@@ -3095,7 +3279,13 @@ def stale_refs(
 
     # ---- --fix mode short-circuits all other output paths
     if fix is not None:
-        edits_by_source = _build_fix_edits(full_targets_with_hints, project_root, include_medium=fix_medium)
+        refused_log: list[str] = []
+        edits_by_source = _build_fix_edits(
+            full_targets_with_hints,
+            project_root,
+            include_medium=fix_medium,
+            refused_log=refused_log,
+        )
         if fix == "preview":
             diff_text, files_touched, edits_planned = _render_fix_diff(project_root, edits_by_source)
             if json_mode:
@@ -3115,8 +3305,11 @@ def stale_refs(
                                 "missing_targets": target_count,
                                 "stale_refs": total_refs,
                                 "scan_seconds": scan_seconds,
+                                "refused_count": len(refused_log),
                             },
+                            budget=token_budget,
                             diff=diff_text,
+                            refused=refused_log,
                         )
                     )
                 )
@@ -3125,6 +3318,17 @@ def stale_refs(
                     f"VERDICT: --fix preview · {edits_planned} edit(s) across "
                     f"{files_touched} file(s) (HIGH-confidence hints only)\n"
                 )
+                if refused_log:
+                    click.echo(
+                        f"Refused {len(refused_log)} unsafe rewrite(s) — these "
+                        "would have replaced a working link with a broken one "
+                        "or produced a double-prefix path:"
+                    )
+                    for line in refused_log[:10]:
+                        click.echo(f"  {line}")
+                    if len(refused_log) > 10:
+                        click.echo(f"  (+{len(refused_log) - 10} more)")
+                    click.echo()
                 if not edits_planned:
                     if target_count == 0:
                         click.echo("No findings to fix — all references resolve.")
@@ -3152,7 +3356,8 @@ def stale_refs(
         lock_note = ""
         if locked_files:
             lock_note = f" · {len(locked_files)} file(s) skipped due to file locks"
-        msg = f"--fix apply · wrote {edits_applied} edit(s) to {files_written} file(s){lock_note}"
+        refuse_note = f" · {len(refused_log)} unsafe rewrite(s) refused" if refused_log else ""
+        msg = f"--fix apply · wrote {edits_applied} edit(s) to {files_written} file(s){lock_note}{refuse_note}"
         if json_mode:
             click.echo(
                 to_json(
@@ -3167,13 +3372,26 @@ def stale_refs(
                             "missing_targets": target_count,
                             "stale_refs": total_refs,
                             "scan_seconds": scan_seconds,
+                            "refused_count": len(refused_log),
                         },
+                        budget=token_budget,
                         locked_files=locked_files,
+                        refused=refused_log,
                     )
                 )
             )
         else:
             click.echo(f"VERDICT: {msg}")
+            if refused_log:
+                click.echo(
+                    f"Refused {len(refused_log)} unsafe rewrite(s) (would have "
+                    "replaced a working link with a broken one or produced a "
+                    "double-prefix path):"
+                )
+                for line in refused_log[:10]:
+                    click.echo(f"  {line}")
+                if len(refused_log) > 10:
+                    click.echo(f"  (+{len(refused_log) - 10} more)")
             if locked_files:
                 click.echo(
                     f"Skipped {len(locked_files)} file(s) — another process "
@@ -3233,7 +3451,7 @@ def stale_refs(
         else:
             atomic_path = Path(attest_path)
             atomic_path.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_write_text(atomic_path, rendered + "\n")
+            atomic_write_text(atomic_path, rendered + "\n")
 
     # ---- --github-summary writes a markdown table for GitHub Actions ---
     # Runs alongside SARIF / JSON / text just like ``--attest``.
@@ -3310,6 +3528,7 @@ def stale_refs(
                 json_envelope(
                     "stale-refs",
                     summary=summary,
+                    budget=token_budget,
                     targets=displayed,
                 )
             )

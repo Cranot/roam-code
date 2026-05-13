@@ -8,13 +8,13 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from roam.output.formatter import json_envelope, summary_envelope
+from roam.output.formatter import json_envelope, strip_list_payloads
 
 # Import helpers from conftest
 from tests.conftest import invoke_cli
 
 # ---------------------------------------------------------------------------
-# Helper: build a minimal JSON envelope for testing summary_envelope
+# Helper: build a minimal JSON envelope for testing strip_list_payloads
 # ---------------------------------------------------------------------------
 
 
@@ -23,14 +23,14 @@ def _make_envelope(command="test", **extra):
 
 
 # ---------------------------------------------------------------------------
-# Unit tests for summary_envelope helper
+# Unit tests for strip_list_payloads helper
 # ---------------------------------------------------------------------------
 
 
-class TestSummaryEnvelope:
+class TestStripListPayloads:
     def test_strips_list_payloads(self):
         data = _make_envelope(items=[{"a": 1}, {"a": 2}], count=5)
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         # Lists should be replaced (not present as full lists)
         assert "items" not in result
         # count is a scalar, should remain
@@ -40,7 +40,7 @@ class TestSummaryEnvelope:
 
     def test_adds_detail_available_flag(self):
         data = _make_envelope(items=[{"a": 1}])
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         assert result["summary"]["detail_available"] is True
         # truncated is set only when non-empty lists were stripped
         assert result["summary"]["truncated"] is True
@@ -48,33 +48,33 @@ class TestSummaryEnvelope:
     def test_empty_lists_only_adds_detail_available_not_truncated(self):
         """When all lists are empty, only detail_available is added (no truncated)."""
         data = _make_envelope(items=[])
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         assert result["summary"]["detail_available"] is True
         # truncated should NOT be set since nothing was actually stripped
         assert result["summary"].get("truncated") is not True
 
     def test_non_empty_lists_cause_truncated_flag(self):
         data = _make_envelope(items=[1, 2, 3], other=[4, 5])
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         # Non-empty lists → truncated=True in summary
         assert result["summary"].get("truncated") is True
         assert result["summary"].get("detail_available") is True
 
     def test_preserves_scalar_payloads(self):
         data = _make_envelope(score=42, mode="full")
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         assert result.get("score") == 42
         assert result.get("mode") == "full"
 
     def test_preserves_envelope_fields(self):
         data = _make_envelope()
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         for field in ("command", "schema", "schema_version", "version", "project", "_meta"):
             assert field in result, f"expected {field} in summary envelope"
 
     def test_empty_lists_handled(self):
         data = _make_envelope(items=[])
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         # Empty list → stripped from result, detail_available is set
         assert "items" not in result
         assert result["summary"]["detail_available"] is True
@@ -84,19 +84,19 @@ class TestSummaryEnvelope:
     def test_no_lists_no_truncated_flag(self):
         """When there are no list-valued fields, truncated is not set."""
         data = _make_envelope(scalar=42)
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         assert result["summary"].get("truncated") is not True
         assert result["summary"]["detail_available"] is True
 
     def test_summary_dict_preserved_intact(self):
         data = _make_envelope(items=[1, 2])
         data["summary"]["health_score"] = 77
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         assert result["summary"]["health_score"] == 77
 
     def test_non_list_nested_payload_preserved(self):
         data = _make_envelope(thresholds={"p70": 10, "p90": 20})
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         assert result.get("thresholds") == {"p70": 10, "p90": 20}
 
 
@@ -139,15 +139,15 @@ class TestDetailFlagParsing:
 # ---------------------------------------------------------------------------
 
 
-class TestSummaryEnvelopeOutput:
-    """Test that summary_envelope JSON output is valid and compact."""
+class TestStripListPayloadsOutput:
+    """Test that strip_list_payloads JSON output is valid and compact."""
 
     def test_summary_json_is_valid_with_non_empty_lists(self):
         data = _make_envelope(
             cycles=[{"id": 1}, {"id": 2}],
             god_components=[{"name": "Foo"}],
         )
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         # Must be JSON-serializable
         serialized = json.dumps(result)
         parsed = json.loads(serialized)
@@ -161,7 +161,7 @@ class TestSummaryEnvelopeOutput:
     def test_summary_has_no_large_lists(self):
         many_items = [{"n": i} for i in range(100)]
         data = _make_envelope(items=many_items)
-        result = summary_envelope(data)
+        result = strip_list_payloads(data)
         # items list should not be in result (stripped to save tokens)
         assert "items" not in result
         # truncated flag should be set since we stripped a non-empty list
@@ -169,15 +169,15 @@ class TestSummaryEnvelopeOutput:
         assert result["summary"]["detail_available"] is True
 
     def test_detail_mode_keeps_lists_untouched(self):
-        """When summary_envelope is NOT called, full data remains."""
+        """When strip_list_payloads is NOT called, full data remains."""
         data = _make_envelope(items=[1, 2, 3])
-        # Without calling summary_envelope, lists stay
+        # Without calling strip_list_payloads, lists stay
         assert data["items"] == [1, 2, 3]
 
     def test_summary_is_subset_of_detail_keys(self):
         """Summary envelope should have a subset of detail envelope keys."""
         data = _make_envelope(items=[1, 2, 3], extra=[4, 5])
-        summary = summary_envelope(data)
+        summary = strip_list_payloads(data)
         # All keys in summary (except summary dict changes) should exist in original
         for k in summary:
             if k not in ("items", "extra"):  # these were stripped

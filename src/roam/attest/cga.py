@@ -3,7 +3,7 @@
 Per :mod:`roam.attest.__init__`:
 
 * In-toto v1 Statement envelope.
-* Predicate type ``https://roam-code.dev/CodeGraph/v1``.
+* Predicate type ``https://roam-code.com/spec/CodeGraph/v1``.
 * Merkle root over per-file symbol fingerprints.
 * Edge bundle digest over the call/import edge set.
 
@@ -317,7 +317,7 @@ def build_cga_statement(
     Statement shape:
         {
           "_type": "https://in-toto.io/Statement/v1",
-          "predicateType": "https://roam-code.dev/CodeGraph/v1",
+          "predicateType": "https://roam-code.com/spec/CodeGraph/v1",
                               # → CodeGraph-AIBOM/v1 when include_aibom=True
           "subject": [{"name": "...", "digest": {...}}],
           "predicate": {...}

@@ -8,6 +8,7 @@ import time
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import (
     get_changed_files,
     is_low_risk_file,
@@ -275,6 +276,20 @@ def _minor_contributor_risk(conn, author, changed_files):
     return risk, details
 
 
+@roam_capability(
+    name="pr-risk",
+    category="refactoring",
+    summary="Compute risk score for pending changes",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "review"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("pr-risk")
 @click.argument("commit_range", required=False, default=None)
 @click.option("--staged", is_flag=True, help="Analyze staged changes")

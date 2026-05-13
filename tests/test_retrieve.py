@@ -379,22 +379,25 @@ class TestRetrieveCLI:
         assert "pagerank" in first["justifications"] or "fts" in first["justifications"]
 
     def test_command_appears_in_help(self, indexed_project):
+        # W19.2 5-verb help redesign: compact `--help` only shows 5 verbs;
+        # full inventory lives in `--help-all` / `_COMMANDS`. Assert against
+        # the registry (source of truth) and `--help-all` (UX surface).
+        from roam.cli import _COMMANDS
+
+        assert "retrieve" in _COMMANDS
         runner = CliRunner()
-        result = runner.invoke(cli, ["--help"])
+        result = runner.invoke(cli, ["--help-all"])
         assert result.exit_code == 0, result.output
         assert "retrieve" in result.output
 
     def test_command_appears_in_workflow_category(self, indexed_project):
-        runner = CliRunner()
-        result = runner.invoke(cli, ["--help"])
-        assert result.exit_code == 0, result.output
-        # Must be under Daily Workflow
-        wf_idx = result.output.find("Daily Workflow")
-        retrieve_idx = result.output.find("retrieve")
-        next_section_idx = result.output.find("\n\n", wf_idx + 1)
-        if next_section_idx == -1:
-            next_section_idx = len(result.output)
-        assert wf_idx < retrieve_idx < next_section_idx
+        # W19.2 5-verb help redesign: legacy "Daily Workflow" category header
+        # no longer appears in compact `--help`. Verify `retrieve` is in the
+        # workflow category via the `_CATEGORIES` registry.
+        from roam.cli import _CATEGORIES
+
+        workflow_commands = _CATEGORIES.get("Daily Workflow", [])
+        assert "retrieve" in workflow_commands
 
 
 # ---------------------------------------------------------------------------

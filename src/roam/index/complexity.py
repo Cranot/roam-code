@@ -502,8 +502,13 @@ _SUBSCRIPT_NODES = {
     "bracket_access",
 }
 
-# Comparison operator tokens
-_COMPARE_OPS = {"<", ">", "<=", ">=", "==", "!=", "<>"}
+# Comparison operator tokens. ``===`` / ``!==`` are PHP/JS strict-
+# equality (semantically equality with type check); treating them as
+# "compare" lets PHP nested-lookup callers (e.g.
+# InsuranceReportController::annualFundSummary) reach the detector
+# triplet — without my new ``loop_eq_with_dependent_write`` signal they
+# wouldn't be useful FP-prone signals on their own.
+_COMPARE_OPS = {"<", ">", "<=", ">=", "==", "!=", "<>", "===", "!=="}
 
 # Augmented assignment node types and tokens
 _AUGMENTED_ASSIGN_NODES = {"augmented_assignment"}
@@ -545,6 +550,14 @@ class _MathSignalState:
     loop_lookup_calls: list[str] = field(default_factory=list)
     front_ops_in_loop: bool = False
     loop_bound_small: bool = False
+    # Discriminator for the nested-lookup detector: True iff some loop
+    # body contains an `if` whose condition is an equality comparing two
+    # DIFFERENT per-iteration variables and whose then-branch contains a
+    # write (assignment or call) that references at least one of those
+    # variables. This is the structural fingerprint of an O(n*m) hash-
+    # joinable lookup; streaming-output and matrix-traversal patterns
+    # never match. See `detect_nested_lookup` for usage.
+    loop_eq_with_dependent_write: bool = False
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -731,6 +744,14 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
 
         if loop_depth > 0:
             _record_loop_node(node, source, loop_vars, string_vars, state)
+            # Nested-lookup discriminator: when we see an ``if`` inside a
+            # loop body, check whether its condition compares two
+            # different loop iter vars for equality and whether the
+            # then-branch writes to one of them. This is the structural
+            # tell that separates a real hash-joinable lookup from a
+            # streaming-output O(n*m) (e.g. CSV row*col emission).
+            if ntype == "if_statement" and not state.loop_eq_with_dependent_write:
+                _check_equality_with_dependent_write(node, source, loop_vars, state)
         if loop_depth == 0 and ntype in ("call_expression", "call"):
             _record_self_call(node, source, state)
 
@@ -756,6 +777,7 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
         "loop_lookup_calls": _dedupe_preserve_order(state.loop_lookup_calls),
         "front_ops_in_loop": int(state.front_ops_in_loop),
         "loop_bound_small": int(state.loop_bound_small),
+        "loop_eq_with_dependent_write": int(state.loop_eq_with_dependent_write),
     }
 
 
@@ -886,12 +908,42 @@ def _augmented_assign_target(node, source: bytes) -> str:
 
 
 def _extract_loop_vars(loop_node, source: bytes) -> set[str]:
-    """Extract loop variable names from a for/foreach loop node."""
+    """Extract loop variable names from a for/foreach loop node.
+
+    Strips PHP's leading ``$`` so a foreach ``$templates as $t`` yields
+    ``{"t"}`` — matches identifier text we later see inside the body
+    (where the receiver of ``$t->code`` is a ``variable_name`` whose
+    inner ``name`` child reads as ``t``).
+    """
     result: set[str] = set()
     for child in loop_node.children:
         # Python: for x in ..., Go: for i, v := range ...
         if child.type in ("identifier",):
             result.add(source[child.start_byte : child.end_byte].decode("utf-8", errors="replace"))
+        # PHP: foreach ($templates as $t) — the iter var is a
+        # variable_name whose `name` field is the bare identifier.
+        elif child.type == "variable_name":
+            name_node = None
+            try:
+                name_node = child.child_by_field_name("name")
+            except Exception:
+                name_node = None
+            if name_node is None:
+                for sub in child.children:
+                    if sub.type == "name":
+                        name_node = sub
+                        break
+            if name_node is not None:
+                result.add(
+                    source[name_node.start_byte : name_node.end_byte].decode(
+                        "utf-8", errors="replace"
+                    )
+                )
+            else:
+                raw = source[child.start_byte : child.end_byte].decode(
+                    "utf-8", errors="replace"
+                )
+                result.add(raw.lstrip("$"))
         # Python pattern_list / tuple: for x, y in ...
         elif child.type in ("pattern_list", "tuple_pattern", "pair"):
             for sub in child.children:
@@ -924,11 +976,26 @@ def _call_uses_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
 
 
 def _node_has_loop_var(node, source: bytes, loop_vars: set[str]) -> bool:
-    """Return True when ``node`` references any variable from ``loop_vars``."""
-    if node.type == "identifier":
+    """Return True when ``node`` references any variable from ``loop_vars``.
+
+    Handles both bare ``identifier`` nodes (Python/JS/Go/Java/…) and PHP's
+    ``variable_name`` wrapper, whose inner ``name`` child holds the raw
+    identifier text without the ``$`` sigil.
+    """
+    ntype = node.type
+    if ntype == "identifier":
         name = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
         if name in loop_vars:
             return True
+    elif ntype == "variable_name":
+        # PHP: $t — the `name` child is the bare identifier we matched on
+        # in _extract_loop_vars (after stripping the `$`).
+        for sub in node.children:
+            if sub.type == "name":
+                name = source[sub.start_byte : sub.end_byte].decode("utf-8", errors="replace")
+                if name in loop_vars:
+                    return True
+                break
     for child in node.children:
         if _node_has_loop_var(child, source, loop_vars):
             return True
@@ -977,6 +1044,170 @@ def _call_arg_texts(call_node, source: bytes) -> list[str]:
         if child.is_named:
             out.append(source[child.start_byte : child.end_byte].decode("utf-8", errors="replace").strip())
     return out
+
+
+# ── Equality + dependent-write detection (nested-lookup discriminator) ──
+
+# AST node types that constitute "writes" inside an if-branch — used to
+# distinguish a real lookup pattern from streaming output.
+_WRITE_NODES = {
+    "assignment",
+    "assignment_expression",
+    "augmented_assignment",
+}
+_CALL_NODES = {"call", "call_expression"}
+# Equality operator tokens. PHP includes the strict variants ``===``/``!==``.
+_EQ_OPS = {"==", "===", "!=", "!==", "<>", "eq", "ne", "is", "is not"}
+
+
+def _equality_operands(cmp_node, source: bytes):
+    """If ``cmp_node`` is an equality comparison, return its two operand
+    nodes; otherwise ``None``. Handles tree-sitter's ``binary_expression``
+    (PHP/JS/Java/Go/C#) and Python's dedicated ``comparison_operator``."""
+    ntype = cmp_node.type
+    if ntype not in ("binary_expression", "comparison_operator"):
+        return None
+    named = [c for c in cmp_node.children if c.is_named]
+    # Find the operator token among the unnamed children.
+    op_tokens = [
+        source[c.start_byte : c.end_byte].decode("utf-8", errors="replace")
+        for c in cmp_node.children
+        if not c.is_named
+    ]
+    has_eq = any(t in _EQ_OPS for t in op_tokens)
+    if not has_eq:
+        return None
+    if len(named) < 2:
+        return None
+    return named[0], named[-1]
+
+
+def _root_var_name(node, source: bytes) -> str:
+    """Walk down the leftmost spine of ``node`` to find the root variable
+    that an expression like ``$e->code`` or ``a['id']`` is rooted at.
+    Returns the bare identifier text (no ``$``) or empty string."""
+    cur = node
+    # Descend until we hit a leaf identifier / variable_name.
+    while True:
+        ntype = cur.type
+        if ntype == "identifier":
+            return source[cur.start_byte : cur.end_byte].decode("utf-8", errors="replace")
+        if ntype == "variable_name":
+            for sub in cur.children:
+                if sub.type == "name":
+                    return source[sub.start_byte : sub.end_byte].decode("utf-8", errors="replace")
+            return source[cur.start_byte : cur.end_byte].decode("utf-8", errors="replace").lstrip("$")
+        # Descend into the leftmost named child.
+        next_child = None
+        for c in cur.children:
+            if c.is_named:
+                next_child = c
+                break
+        if next_child is None or next_child is cur:
+            return ""
+        cur = next_child
+
+
+def _if_condition_node(if_node):
+    """Return the condition expression node of an ``if`` statement
+    across language grammars. Handles Python's bare condition child,
+    PHP/JS/Java's parenthesized_expression wrapper, and Rust's
+    let_condition."""
+    try:
+        cond = if_node.child_by_field_name("condition")
+    except Exception:
+        cond = None
+    if cond is None:
+        # Fallback: first named child that's not an "if" keyword.
+        for c in if_node.children:
+            if c.is_named and c.type not in ("if", "else", "block", "compound_statement", "statement_block", "suite"):
+                cond = c
+                break
+    if cond is None:
+        return None
+    # Unwrap parenthesized_expression / parenthesized_expression-like wrappers.
+    if cond.type in ("parenthesized_expression", "parenthesized_expression",):
+        for c in cond.children:
+            if c.is_named:
+                return c
+    return cond
+
+
+def _if_consequence_nodes(if_node):
+    """Return the then-branch body node(s) of an ``if`` statement."""
+    try:
+        body = if_node.child_by_field_name("consequence")
+    except Exception:
+        body = None
+    if body is None:
+        try:
+            body = if_node.child_by_field_name("body")
+        except Exception:
+            body = None
+    if body is not None:
+        return [body]
+    # Fallback: take the first block-like child after the condition.
+    bodies = []
+    seen_cond = False
+    for c in if_node.children:
+        if c.type in ("block", "compound_statement", "statement_block", "suite"):
+            bodies.append(c)
+        if c.type in ("parenthesized_expression", "binary_expression", "comparison_operator"):
+            seen_cond = True
+    if not bodies and seen_cond:
+        return [c for c in if_node.children if c.is_named]
+    return bodies
+
+
+def _branch_has_dependent_write(branch_node, source: bytes, vars_of_interest: set[str]) -> bool:
+    """Walk ``branch_node`` recursively. Return True iff some assignment
+    or call subtree references one of ``vars_of_interest``."""
+    if branch_node is None or not vars_of_interest:
+        return False
+    ntype = branch_node.type
+    if ntype in _WRITE_NODES:
+        if _node_has_loop_var(branch_node, source, vars_of_interest):
+            return True
+    if ntype in _CALL_NODES:
+        if _node_has_loop_var(branch_node, source, vars_of_interest):
+            return True
+    for child in branch_node.children:
+        if _branch_has_dependent_write(child, source, vars_of_interest):
+            return True
+    return False
+
+
+def _check_equality_with_dependent_write(
+    if_node, source: bytes, loop_vars: set[str], state: _MathSignalState
+) -> None:
+    """If ``if_node`` is an if-statement whose condition compares two
+    different per-iteration variables for equality AND whose then-branch
+    writes to one of them, set the discriminator flag on ``state``."""
+    if state.loop_eq_with_dependent_write:
+        return  # short-circuit: one true match is enough
+    if not loop_vars:
+        return
+    cond = _if_condition_node(if_node)
+    if cond is None:
+        return
+    operands = _equality_operands(cond, source)
+    if operands is None:
+        return
+    left, right = operands
+    left_root = _root_var_name(left, source)
+    right_root = _root_var_name(right, source)
+    if not left_root or not right_root:
+        return
+    if left_root == right_root:
+        return  # equality on the same var (e.g. self-compare) — not a join
+    # Both roots must be loop iteration variables we've observed.
+    if left_root not in loop_vars or right_root not in loop_vars:
+        return
+    vars_of_interest = {left_root, right_root}
+    for branch in _if_consequence_nodes(if_node):
+        if _branch_has_dependent_write(branch, source, vars_of_interest):
+            state.loop_eq_with_dependent_write = True
+            return
 
 
 def _is_zero_literal(text: str) -> bool:
@@ -1140,6 +1371,7 @@ def compute_and_store(
                     _json_mod.dumps(msig["loop_lookup_calls"]),
                     msig["front_ops_in_loop"],
                     msig["loop_bound_small"],
+                    msig["loop_eq_with_dependent_write"],
                 )
             )
 
@@ -1162,7 +1394,8 @@ def compute_and_store(
                 loop_with_compare, loop_with_accumulator,
                 loop_with_multiplication, loop_with_modulo, self_call_count,
                 str_concat_in_loop, loop_invariant_calls, loop_lookup_calls,
-                front_ops_in_loop, loop_bound_small)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                front_ops_in_loop, loop_bound_small,
+                loop_eq_with_dependent_write)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             math_batch,
         )

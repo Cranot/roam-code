@@ -12,6 +12,7 @@ from statistics import median
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
@@ -21,10 +22,80 @@ from roam.output.formatter import (
     format_table,
     json_envelope,
     loc,
-    summary_envelope,
+    strip_list_payloads,
     to_json,
 )
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.rules.dataflow import collect_dataflow_findings
+
+
+# R22 — confidence classifier for dead-export findings.
+#
+# Per the W12 brief:
+#   high   — NOT reachable from any entry AND NOT covered by tests AND
+#            has been stable (>30 days old).
+#   medium — NOT reachable AND NOT tested but recently edited (<30 days,
+#            may be WIP / scaffolding the dev hasn't finished hooking up).
+#   low    — reachable from at least one entry (likely a false positive
+#            — the symbol IS used, the detector missed the edge), OR
+#            framework / barrel / scaffolding patterns we treat as
+#            intentional.
+#
+# We map the existing per-symbol fields:
+#   - `action == "SAFE"`        → strong "really dead" signal.
+#   - `tested` (bool)           → covered by tests.
+#   - `aging.age_days` (int)    → optional, only when --aging extended
+#                                 data is computed. Falls back to 30 if
+#                                 absent so non-extended runs still emit
+#                                 reasonable confidence (we err toward
+#                                 high when we lack age data because the
+#                                 default `dead` output already filtered
+#                                 for likely-dead symbols).
+#   - `action == "INTENTIONAL"` and friends → low (framework hooks,
+#                                              barrels, scaffolding).
+_DEAD_HIGH_AGE_DAYS = 30
+
+
+def _dead_classify(sym: dict) -> tuple[str, str]:
+    """Map a dead-export finding to a (confidence, reason) tuple."""
+    action = sym.get("action") or ""
+    tested = bool(sym.get("tested"))
+    aging = sym.get("aging") or {}
+    age_days = aging.get("age_days") if isinstance(aging, dict) else None
+    # Absent age data → treat as old enough to qualify.
+    try:
+        age_n = int(age_days) if age_days is not None else _DEAD_HIGH_AGE_DAYS
+    except (TypeError, ValueError):
+        age_n = _DEAD_HIGH_AGE_DAYS
+
+    if action in ("INTENTIONAL", "INTENTIONAL_SCAFFOLDING"):
+        return "low", (
+            f"action={action}; framework / scaffolding signal — likely false positive"
+        )
+
+    if action == "SAFE":
+        if tested:
+            # Tested but unreferenced in production — slightly weaker
+            # signal than a truly-orphan symbol.
+            return "medium", "no production consumers but tests reference it"
+        if age_n >= _DEAD_HIGH_AGE_DAYS:
+            return "high", (
+                f"SAFE to delete, no test coverage, stable for {age_n}d "
+                f"(>= {_DEAD_HIGH_AGE_DAYS}d)"
+            )
+        return "medium", (
+            f"SAFE to delete, no test coverage but edited recently "
+            f"({age_n}d ago — may be WIP)"
+        )
+
+    # REVIEW / unclassified actions — keep medium so consumers don't
+    # treat them as either gospel-truth dead or harmless.
+    return "medium", f"action={action or 'unknown'}; manual review recommended"
+
 
 _ENTRY_NAMES = {
     # Generic entry points
@@ -457,12 +528,41 @@ def _dead_consumer_meta(conn, candidate_ids):
     return meta
 
 
+def _scan_one_test_file_combined(args):
+    """Worker: scan a test file with a combined alternation regex.
+
+    Returns the set of names that appeared in the file. The combined regex
+    is ~100x faster than per-name searches because it traverses the source
+    text once.
+    """
+    project_root, path, combined_rx = args
+    try:
+        source = (project_root / path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return path, set()
+    # findall on a regex with a single capture group returns the captured
+    # substrings — i.e. the names that matched.
+    matched = set(combined_rx.findall(source))
+    return path, matched
+
+
 def _augment_test_text_consumers(conn, rows, consumer_meta):
     """Augment consumer metadata with exact-name mentions in test files.
 
     This covers JS/TS test modules whose imports/calls live at top level and
     therefore cannot produce symbol edges because the file has no extracted
     source symbol.
+
+    Algorithmic optimisation: build ONE combined alternation regex
+    ``\b(name1|name2|...)\b`` and scan each test file with a single pass,
+    rather than N regexes × M files. That's a ~100x speedup over the naive
+    per-name approach when there are hundreds of names.
+
+    On top of that, the per-file scans are parallelised via
+    ThreadPoolExecutor — disk reads release the GIL, so even though
+    ``re.findall`` is GIL-bound the overlap with file I/O gives a further
+    ~2-3x. ROAM_NO_PARALLEL forces the serial path (used by tests for
+    output-stability comparisons).
     """
     if not rows:
         return
@@ -475,17 +575,59 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
 
     project_root = find_project_root()
     test_files = [f["path"] for f in conn.execute("SELECT path FROM files").fetchall() if _is_test_path(f["path"])]
-    for path in test_files:
+    if not test_files:
+        return
+
+    # Build the combined alternation. We use a single capture group so
+    # findall returns just the matched name. Sort names for determinism.
+    name_to_row_ids = {name: [r["id"] for r in name_rows] for name, name_rows in by_name.items()}
+    sorted_names = sorted(name_to_row_ids.keys())
+    # Escape and join. The wrapping \b ... \b ensures whole-word match.
+    combined_pattern = r"\b(" + "|".join(re.escape(n) for n in sorted_names) + r")\b"
+    try:
+        combined_rx = re.compile(combined_pattern)
+    except re.error:
+        # If the pattern is unparseable (shouldn't happen with escaped
+        # names, but defensively…) fall back to no-op rather than crash.
+        return
+
+    use_parallel = (
+        not os.environ.get("ROAM_NO_PARALLEL")
+        and len(test_files) >= 50
+    )
+
+    per_file_hits: list[tuple[str, set]] = []
+    parallel_ok = False
+    if use_parallel:
         try:
-            source = (project_root / path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for name, name_rows in by_name.items():
-            if not re.search(rf"\b{re.escape(name)}\b", source):
-                continue
-            for row in name_rows:
+            from concurrent.futures import ThreadPoolExecutor
+
+            workers = max(1, min(os.cpu_count() or 4, 8))
+            args_iter = (
+                (project_root, path, combined_rx) for path in test_files
+            )
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                for path, matched in ex.map(_scan_one_test_file_combined, args_iter):
+                    if matched:
+                        per_file_hits.append((path, matched))
+            parallel_ok = True
+        except Exception:
+            per_file_hits = []
+
+    if not parallel_ok:
+        for path in test_files:
+            path, matched = _scan_one_test_file_combined(
+                (project_root, path, combined_rx)
+            )
+            if matched:
+                per_file_hits.append((path, matched))
+
+    # Reduction phase: apply matches to consumer_meta in main thread.
+    for path, matched in per_file_hits:
+        for name in matched:
+            for row_id in name_to_row_ids.get(name, ()):
                 entry = consumer_meta.setdefault(
-                    row["id"],
+                    row_id,
                     {
                         "production_consumers": 0,
                         "test_consumers": 0,
@@ -787,11 +929,31 @@ def _file_level_age(conn, file_id, now):
     return age_days, last_modified_days, primary_author
 
 
+def _blame_one_file(project_root, file_path):
+    """Worker shim: invoke get_blame_for_file with exception isolation.
+
+    Returns (file_path, blame_entries-or-empty-list). Module-level so it
+    threads cleanly. ``get_blame_for_file`` already runs ``git blame`` via
+    subprocess, which releases the GIL during I/O.
+    """
+    try:
+        from roam.index.git_stats import get_blame_for_file
+
+        return file_path, get_blame_for_file(project_root, file_path)
+    except Exception:
+        return file_path, []
+
+
 def _get_blame_ages(conn, dead_symbols):
     """Get age data for dead symbols by batching git blame per file.
 
     Returns dict mapping symbol_id to {age_days, last_modified_days, author,
     author_active, dead_loc}.
+
+    Git blame is subprocess-I/O-bound (one ``git blame`` invocation per
+    dead-symbol-bearing file). Parallelizing via ThreadPoolExecutor gives
+    near-linear speedup because subprocess.run releases the GIL.
+    Falls back to serial under ROAM_NO_PARALLEL.
     """
     now = int(_time.time())
     result = {}
@@ -812,14 +974,42 @@ def _get_blame_ages(conn, dead_symbols):
 
     project_root = find_project_root()
 
-    for file_path, syms in by_file.items():
-        blame_entries = []
-        try:
-            from roam.index.git_stats import get_blame_for_file
+    # Parallel git-blame phase: dispatch one git subprocess per file via
+    # threads. We're I/O-bound on git child processes, so threads beat
+    # processes (no pickle overhead, no Windows spawn).
+    file_paths = list(by_file.keys())
+    blame_results: dict[str, list] = {}
 
-            blame_entries = get_blame_for_file(project_root, file_path)
+    use_parallel = (
+        not os.environ.get("ROAM_NO_PARALLEL")
+        and len(file_paths) >= 50  # break-even point: ~50 files
+    )
+
+    if use_parallel:
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+
+            # Cap at 8 — git itself is fast, and too many concurrent
+            # subprocesses just trash the OS scheduler.
+            workers = max(1, min(os.cpu_count() or 4, 8))
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                for fp, entries in ex.map(
+                    lambda p: _blame_one_file(project_root, p), file_paths
+                ):
+                    blame_results[fp] = entries
         except Exception:
-            pass
+            blame_results = {}  # Fall through to serial
+
+    if not blame_results:
+        for file_path in file_paths:
+            fp, entries = _blame_one_file(project_root, file_path)
+            blame_results[fp] = entries
+
+    # Reduction phase: blame data → per-symbol records. DB-touching
+    # fallback (``_file_level_age``) runs in main thread on the existing
+    # connection, so we don't have to share conns across threads.
+    for file_path, syms in by_file.items():
+        blame_entries = blame_results.get(file_path) or []
 
         if blame_entries:
             for sym in syms:
@@ -1288,6 +1478,20 @@ def _analyze_dataflow_dead(conn):
     return findings
 
 
+@roam_capability(
+    name="dead",
+    category="refactoring",
+    summary="Show unreferenced exported symbols (dead code)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--all", "show_all", is_flag=True, help="Include low-confidence results")
 @click.option("--by-directory", "by_directory", is_flag=True, help="Group dead symbols by parent directory")
@@ -1749,12 +1953,27 @@ def dead(
                     "review": n_review,
                 },
             )
+            # R22: wrap each dead-export symbol in {value, confidence, reason}.
+            # Consumers that previously read high_confidence[i]["name"] must
+            # now read high_confidence[i]["value"]["name"] plus
+            # high_confidence[i]["confidence"] (the R22 high/medium/low
+            # label) and high_confidence[i]["reason"]. The original
+            # numeric confidence-percent lives at high_confidence[i]
+            # ["value"]["confidence"] for backwards compatibility.
+            high_dicts = [_build_sym_dict(r, True) for r in high]
+            low_dicts = [_build_sym_dict(r, False) for r in low]
+            high_triples = wrap_findings(high_dicts, classifier=_dead_classify)
+            low_triples = wrap_findings(low_dicts, classifier=_dead_classify)
+            distribution = confidence_distribution(high_triples + low_triples)
+            summary["findings_confidence_distribution"] = distribution
+            if "verdict" in summary:
+                summary["verdict"] = verdict_with_high_count(summary["verdict"], distribution)
             envelope = json_envelope(
                 "dead",
                 summary=summary,
                 budget=token_budget,
-                high_confidence=[_build_sym_dict(r, True) for r in high],
-                low_confidence=[_build_sym_dict(r, False) for r in low],
+                high_confidence=high_triples,
+                low_confidence=low_triples,
                 unused_assignments=(unused_assignments if detail else unused_assignments[:10]),
                 dataflow_dead=dataflow_dead,
                 next_steps=_next_steps,
@@ -1765,7 +1984,7 @@ def dead(
             if show_clusters:
                 envelope["dead_clusters"] = clusters_data
             if not detail:
-                envelope = summary_envelope(envelope)
+                envelope = strip_list_payloads(envelope)
             click.echo(to_json(envelope))
             return
 

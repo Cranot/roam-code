@@ -19,6 +19,7 @@ import re
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -80,6 +81,20 @@ def _signature_health(signature: str | None) -> dict:
     }
 
 
+@roam_capability(
+    name="py-types",
+    category="health",
+    summary="Show Python type-annotation health for the indexed project",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("py-types")
 @click.option("--detail", is_flag=True, help="Show per-file table of worst offenders")
 @click.option("--top", "limit", default=10, type=int, help="Number of worst-offending files to show")

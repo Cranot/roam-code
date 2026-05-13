@@ -117,7 +117,11 @@ GRAMMAR_ALIASES = {
     "mdx": "markdown",
 }
 
-# Languages that use regex-only extraction (no tree-sitter grammar)
+# 3 languages with regex-only extraction (no tree-sitter grammar in the pack).
+# Consumed by parser.py:288 (skip parse stage), languages/registry.py:165 (skip
+# extractor dispatch), cmd_syntax_check.py:114 (skip syntax-validation pass).
+# Adding a language here requires a corresponding regex-only *_lang.py
+# implementation in src/roam/languages/.
 REGEX_ONLY_LANGUAGES = frozenset({"foxpro", "yaml", "hcl"})
 
 # Track parse error stats

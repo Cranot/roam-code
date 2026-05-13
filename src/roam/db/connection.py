@@ -14,6 +14,44 @@ DEFAULT_DB_DIR = ".roam"
 DEFAULT_DB_NAME = "index.db"
 
 
+class StaleDbDirError(RuntimeError):
+    """Raised when a configured db_dir cannot be created or written to.
+
+    Carries the stale path + the config source (which file declared it)
+    + a remediation hint, so the surrounding error envelope can surface
+    something useful instead of opaque WinError text.
+    """
+
+    def __init__(self, db_dir: str, source: str, original_error: BaseException | None = None):
+        self.db_dir = db_dir
+        self.source = source
+        self.original_error = original_error
+        msg = (
+            f"db_dir {db_dir!r} (configured in {source}) is not usable: "
+            f"{original_error}. "
+            f"Remediate by editing {source} to remove the stale db_dir entry, "
+            f"or running `roam config db-dir --reset` to fall back to the project default. "
+            f"If this looks unexpected, run `roam doctor` to diagnose your install."
+        )
+        super().__init__(msg)
+
+
+def _safe_mkdir(db_dir: Path | str, source: str = "") -> Path:
+    """mkdir but raise StaleDbDirError on OSError/PermissionError.
+
+    The MCP subprocess wrapper otherwise sees an empty stdout + opaque
+    stderr (e.g. ``[WinError 5] Access denied``) when a stale ``db_dir``
+    from a different machine/user is configured. Raising a structured
+    exception lets the wrapper surface a remediation hint.
+    """
+    p = Path(db_dir)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except (OSError, PermissionError) as e:
+        raise StaleDbDirError(str(p), source or "<unknown>", e) from e
+    return p
+
+
 def find_project_root(start: str = ".") -> Path:
     """Find the project root by looking for .git directory."""
     current = Path(start).resolve()
@@ -72,19 +110,16 @@ def get_db_path(project_root: Path | None = None) -> Path:
     """
     override = os.environ.get("ROAM_DB_DIR")
     if override:
-        db_dir = Path(override)
-        db_dir.mkdir(parents=True, exist_ok=True)
+        db_dir = _safe_mkdir(override, source="ROAM_DB_DIR env")
         return db_dir / DEFAULT_DB_NAME
     if project_root is None:
         project_root = find_project_root()
     # Check .roam/config.json for a db_dir override
     config = _load_project_config(project_root)
     if config.get("db_dir"):
-        db_dir = Path(config["db_dir"])
-        db_dir.mkdir(parents=True, exist_ok=True)
+        db_dir = _safe_mkdir(config["db_dir"], source=".roam/config.json db_dir")
         return db_dir / DEFAULT_DB_NAME
-    db_dir = project_root / DEFAULT_DB_DIR
-    db_dir.mkdir(exist_ok=True)
+    db_dir = _safe_mkdir(project_root / DEFAULT_DB_DIR, source="<project default>")
     return db_dir / DEFAULT_DB_NAME
 
 
@@ -283,6 +318,16 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     # virtual / managed tables — both helpers are idempotent
     (49, "_ensure_tfidf_cascade", lambda c: _ensure_tfidf_cascade(c)),
     (50, "_ensure_fts5_table", lambda c: _ensure_fts5_table(c)),
+    # Nested-lookup discriminator: tightens detect_nested_lookup's
+    # predicate from the 3-signal triplet (nested_loops + subscript +
+    # loop_compare) to a 4-signal predicate that also requires the inner
+    # loop body to contain an equality test on two per-iteration keys
+    # AND a write gated on that equality. Cuts the ~85% PHP FP rate
+    # observed in the 2026-05 dogfood (streaming CSV / column-wise
+    # output / matrix render). Pre-existing rows default to 0; after a
+    # re-index the column reflects the actual structural signal.
+    (51, "math_signals.loop_eq_with_dependent_write",
+        _alter("math_signals", "loop_eq_with_dependent_write", "INTEGER DEFAULT 0")),
 ]
 
 
@@ -311,7 +356,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 # is the operation count. Bump USER_VERSION when downstream consumers
 # need to invalidate caches / re-attempt schema-aware logic, not on
 # every column add.
-USER_VERSION = 12
+#
+# USER_VERSION must be bumped on every change to src/roam/db/schema.py.
+# The CI check tests/test_user_version_discipline.py enforces this by
+# snapshotting a hash of schema.py; if the hash drifts, the test
+# requires USER_VERSION to drift too (lockstep updates).
+USER_VERSION = 13
 
 # Derived from the ledger so adding/removing a migration auto-updates
 # the count without a manual touch. The pin test in

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.db.queries import ALL_CLUSTERS
 from roam.graph.builder import build_symbol_graph
 from roam.graph.clusters import cluster_quality, compare_with_directories
-from roam.output.formatter import format_table, json_envelope, summary_envelope, to_json
+from roam.output.formatter import format_table, json_envelope, strip_list_payloads, to_json
 from roam.output.mermaid import (
     diagram as mdiagram,
 )
@@ -285,10 +286,24 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
         **extra,
     )
     if not detail:
-        envelope = summary_envelope(envelope)
+        envelope = strip_list_payloads(envelope)
     click.echo(to_json(envelope))
 
 
+@roam_capability(
+    name="clusters",
+    category="architecture",
+    summary="Show code clusters and directory mismatches",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--min-size", default=3, show_default=True, help="Hide clusters smaller than this")
 @click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram")

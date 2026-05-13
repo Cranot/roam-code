@@ -363,12 +363,14 @@ class TestDeadAgingJSON:
         data = parse_json_output(result, "dead --aging")
         # Check the envelope
         assert "summary" in data
-        # If there are dead symbols, they should have aging fields
+        # R22 confidence triple shape — aging is nested under value
         all_syms = data.get("high_confidence", []) + data.get("low_confidence", [])
         if all_syms:
             sym = all_syms[0]
-            assert "aging" in sym, f"Symbol missing 'aging' key: {list(sym.keys())}"
-            aging = sym["aging"]
+            assert set(sym.keys()) >= {"value", "confidence", "reason"}
+            value = sym["value"]
+            assert "aging" in value, f"Symbol value missing 'aging' key: {list(value.keys())}"
+            aging = value["aging"]
             assert "age_days" in aging
             assert "dead_loc" in aging
             assert "author_active" in aging
@@ -413,11 +415,13 @@ class TestDeadAgingJSON:
             json_mode=True,
         )
         data = parse_json_output(result, "dead --effort")
+        # R22 confidence triple shape — effort is nested under value
         all_syms = data.get("high_confidence", []) + data.get("low_confidence", [])
         if all_syms:
             sym = all_syms[0]
-            assert "effort" in sym, f"Symbol missing 'effort' key: {list(sym.keys())}"
-            effort = sym["effort"]
+            value = sym["value"]
+            assert "effort" in value, f"Symbol value missing 'effort' key: {list(value.keys())}"
+            effort = value["effort"]
             assert "removal_minutes" in effort
             assert effort["removal_minutes"] >= 0
 
@@ -431,11 +435,13 @@ class TestDeadAgingJSON:
             json_mode=True,
         )
         data = parse_json_output(result, "dead --decay")
+        # R22 confidence triple shape — decay_score is nested under value
         all_syms = data.get("high_confidence", []) + data.get("low_confidence", [])
         if all_syms:
             sym = all_syms[0]
-            assert "decay_score" in sym, f"Symbol missing 'decay_score': {list(sym.keys())}"
-            assert 0 <= sym["decay_score"] <= 100
+            value = sym["value"]
+            assert "decay_score" in value, f"Symbol value missing 'decay_score': {list(value.keys())}"
+            assert 0 <= value["decay_score"] <= 100
 
     def test_json_dead_summary_has_median_age(self, cli_runner, indexed_project, monkeypatch):
         """roam --json dead --aging summary includes median_age_days."""

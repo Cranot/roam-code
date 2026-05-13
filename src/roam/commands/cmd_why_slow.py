@@ -23,6 +23,7 @@ import math
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
@@ -95,6 +96,20 @@ def _query_hotspots(conn, top: int, changed_files: set[str] | None):
     return scored[:top]
 
 
+@roam_capability(
+    name="why-slow",
+    category="health",
+    summary="Find runtime hotspots — symbols slow under real production traffic",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "debug"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--top", default=20, type=int, help="Limit to top N hotspots (default 20)")
 @click.option("--changed", is_flag=True, help="Filter to symbols in changed files (vs base branch)")

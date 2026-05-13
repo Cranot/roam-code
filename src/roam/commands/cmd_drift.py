@@ -8,6 +8,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
@@ -130,6 +131,20 @@ def _top_contributor(ownership_shares: dict[str, float]) -> tuple[str, float]:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="drift",
+    category="reports",
+    summary="Detect ownership drift: where declared owners differ from actual contributors",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("drift")
 @click.option(
     "--threshold",

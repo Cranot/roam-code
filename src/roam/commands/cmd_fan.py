@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.file_role_hints import is_excluded_path
@@ -121,6 +122,27 @@ def _scope_flag(meta_entry, in_deg, out_deg):
     return ""
 
 
+@roam_capability(
+    category="architecture",
+    summary="Show fan-in/fan-out metrics ranking symbols or files by coupling.",
+    inputs=["mode"],
+    outputs=["rankings"],
+    examples=[
+        "roam fan",
+        "roam fan file -n 50",
+        "roam fan --no-framework",
+    ],
+    tags=["architecture", "metrics"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.argument("mode", default="symbol", type=click.Choice(["symbol", "file"]))
 @click.option("-n", "count", default=20, help="Number of items to show")
@@ -220,7 +242,12 @@ def fan(ctx, mode, count, no_framework, include_tooling):
                         json_envelope(
                             "fan",
                             budget=token_budget,
-                            summary={"verdict": _verdict, "mode": mode, "items": len(rows)},
+                            summary={
+                                "verdict": _verdict,
+                                "mode": mode,
+                                "items": len(rows),
+                                "caller_metric_definition": "direct_in_degree",
+                            },
                             mode=mode,
                             items=[
                                 {
@@ -353,7 +380,12 @@ def fan(ctx, mode, count, no_framework, include_tooling):
                         json_envelope(
                             "fan",
                             budget=token_budget,
-                            summary={"verdict": _verdict, "mode": mode, "items": len(rows)},
+                            summary={
+                                "verdict": _verdict,
+                                "mode": mode,
+                                "items": len(rows),
+                                "caller_metric_definition": "direct_in_degree (file-level: distinct source files)",
+                            },
                             mode=mode,
                             items=[
                                 {

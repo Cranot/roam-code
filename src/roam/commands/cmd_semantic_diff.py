@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
@@ -349,6 +350,20 @@ def _read_current_file(root: Path, file_path: str) -> bytes | None:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="semantic-diff",
+    category="workflow",
+    summary="Show structural change summary vs a git ref",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("semantic-diff")
 @click.option("--base", "base_ref", default="HEAD~1", help="Git ref to compare against (default: HEAD~1)")
 @click.pass_context

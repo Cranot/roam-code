@@ -670,14 +670,16 @@ class TestToolWrappers:
     def test_roam_symbol(self):
         from roam.mcp_server import roam_symbol
 
-        self._check_args(roam_symbol, {"name": "foo"}, ["symbol", "foo"])
+        # Fix D: canonical kwarg is ``symbol`` (legacy ``name`` still
+        # accepted via the alias wrapper when registered through @_tool).
+        self._check_args(roam_symbol, {"symbol": "foo"}, ["symbol", "foo"])
 
     def test_roam_symbol_full(self):
         from roam.mcp_server import roam_symbol
 
         self._check_args(
             roam_symbol,
-            {"name": "foo", "full": True},
+            {"symbol": "foo", "full": True},
             ["symbol", "foo", "--full"],
         )
 
@@ -689,7 +691,7 @@ class TestToolWrappers:
     def test_roam_uses(self):
         from roam.mcp_server import roam_uses
 
-        self._check_args(roam_uses, {"name": "open_db"}, ["uses", "open_db"])
+        self._check_args(roam_uses, {"symbol": "open_db"}, ["uses", "open_db"])
 
     def test_context_with_personalization(self):
         from roam.mcp_server import context

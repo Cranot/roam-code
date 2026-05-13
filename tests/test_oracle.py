@@ -344,6 +344,13 @@ class TestCLI:
         assert "VERDICT:" in result.output
 
     def test_oracle_in_help_listing(self, indexed_project):
+        # W19.2 5-verb help redesign: compact `--help` only shows 5 verbs;
+        # full inventory lives in `--help-all` / `_COMMANDS`. Assert against
+        # the registry (source of truth) and `--help-all` (UX surface).
+        from roam.cli import _COMMANDS
+
+        assert "oracle" in _COMMANDS
         runner = CliRunner()
-        result = runner.invoke(cli, ["--help"])
+        result = runner.invoke(cli, ["--help-all"])
+        assert result.exit_code == 0, result.output
         assert "oracle" in result.output

@@ -163,10 +163,17 @@ def parse_json_output(result, command=None):
         AssertionError with context on parse failure
     """
     assert result.exit_code == 0, f"Command {command or '?'} failed (exit {result.exit_code}):\n{result.output}"
+    # Click 8.3 always separates stdout/stderr — prefer result.stdout when
+    # available so a deprecation note (or any other err=True output) on
+    # stderr doesn't contaminate the JSON we're trying to parse. Older Click
+    # didn't expose stdout independently; fall back to result.output then.
+    raw = getattr(result, "stdout", None)
+    if raw is None:
+        raw = result.output
     try:
-        return json.loads(result.output)
+        return json.loads(raw)
     except json.JSONDecodeError as e:
-        pytest.fail(f"Invalid JSON from {command or '?'}: {e}\nOutput was:\n{result.output[:500]}")
+        pytest.fail(f"Invalid JSON from {command or '?'}: {e}\nOutput was:\n{raw[:500]}")
 
 
 def assert_json_envelope(data, command=None):

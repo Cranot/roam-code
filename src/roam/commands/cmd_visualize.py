@@ -10,6 +10,7 @@ import click
 if TYPE_CHECKING:
     import networkx as nx
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
 from roam.graph.builder import build_file_graph, build_symbol_graph
@@ -296,6 +297,20 @@ def _emit_flat_nodes_dot(G: nx.DiGraph, lines: list[str], is_file_level: bool) -
 # -- CLI command ---------------------------------------------------------------
 
 
+@roam_capability(
+    name="visualize",
+    category="architecture",
+    summary="Generate a Mermaid or DOT architecture diagram",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option(
     "--format",
@@ -373,7 +388,13 @@ def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level)
                     json_envelope(
                         "visualize",
                         summary={
-                            "verdict": "OK",
+                            # LAW 4 (W17.3): bare ``"OK"`` verdict is
+                            # abstract; name the analytical product.
+                            "verdict": (
+                                f"visualize rendered {fmt} diagram with "
+                                f"{node_count} nodes and {edge_count} edges"
+                                + (f" focused on {focus}" if focus else "")
+                            ),
                             "nodes": node_count,
                             "edges": edge_count,
                             "format": fmt,

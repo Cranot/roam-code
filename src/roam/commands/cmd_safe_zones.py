@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.graph_helpers import bfs_nx
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import batched_in, open_db
@@ -39,6 +40,20 @@ def _classify_zone(boundary_count):
     return "EXPOSED", f"{boundary_count} boundary symbols -- refactor carefully, many consumers"
 
 
+@roam_capability(
+    name="safe-zones",
+    category="architecture",
+    summary="Identify safe refactoring boundaries for a symbol or file",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("safe-zones")
 @click.argument("target")
 @click.option(

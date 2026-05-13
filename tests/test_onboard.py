@@ -177,7 +177,13 @@ class TestOnboardAlias:
         understand_result = invoke_cli(cli_runner, ["understand"], cwd=small_indexed_project)
         assert onboard_result.exit_code == 0
         assert understand_result.exit_code == 0
-        assert onboard_result.output == understand_result.output
+        # `onboard` is a deprecated alias for `understand`; the stderr
+        # deprecation note legitimately makes `result.output` (which Click
+        # 8.3 merges to include stderr) differ. Compare stdout-only so the
+        # canonical-command output is what's tested.
+        onboard_stdout = getattr(onboard_result, "stdout", None) or onboard_result.output
+        understand_stdout = getattr(understand_result, "stdout", None) or understand_result.output
+        assert onboard_stdout == understand_stdout
 
 
 # ============================================================================
@@ -242,7 +248,12 @@ class TestOnboardJSON:
         onboard_data = parse_json_output(onboard_result, "understand")
         understand_data = parse_json_output(understand_result, "understand")
         # Same structure (timestamp may differ, but summary, project, etc. should match)
-        assert onboard_data["summary"] == understand_data["summary"]
+        # `onboard` is now a deprecated alias for `understand`; its envelope
+        # legitimately includes `summary.deprecation_warning` while the
+        # canonical call doesn't. Strip that key before comparing so the
+        # rest of the summary contract is what's tested.
+        onboard_summary = {k: v for k, v in onboard_data["summary"].items() if k != "deprecation_warning"}
+        assert onboard_summary == understand_data["summary"]
         assert onboard_data["project"] == understand_data["project"]
 
 

@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
@@ -174,6 +175,20 @@ def _load_symbol_info(conn, sym_ids):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="fn-coupling",
+    category="refactoring",
+    summary="Show function-level temporal coupling (hidden dependencies)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("fn-coupling")
 @click.option("--min-count", default=3, type=int, show_default=True, help="Minimum co-change count to report")
 @click.option("--limit", "-n", default=20, type=int, show_default=True, help="Maximum number of pairs to show")

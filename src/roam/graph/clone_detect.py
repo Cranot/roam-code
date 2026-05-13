@@ -21,6 +21,7 @@ References:
 
 from __future__ import annotations
 
+import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -100,41 +101,71 @@ class CloneCluster:
 # ---------------------------------------------------------------------------
 
 
+def _stable_hash(value: bytes) -> int:
+    """Return a deterministic 64-bit hash of *value*.
+
+    Python's builtin ``hash()`` of strings/tuples-of-strings is randomized
+    per process (via ``PYTHONHASHSEED``), which makes hash bags from one
+    process incomparable with bags from another. We use the first 8 bytes
+    of SHA-1 instead so the bags pickle-round-trip cleanly across
+    ProcessPool workers.
+    """
+    import hashlib as _hashlib
+
+    return int.from_bytes(_hashlib.sha1(value).digest()[:8], "big", signed=False)
+
+
 def _ast_hash_bag(node) -> tuple[Counter, int]:
     """Collect a multiset of subtree hashes for a tree-sitter node.
 
     Returns (hash_bag, total_node_count).
     Normalizes identifiers and literals so structurally identical code
     with different names produces the same hashes.
+
+    Uses a stable cross-process hash so bags computed in different worker
+    processes (via ``_extract_func_records_pickleable``) compare correctly
+    when later passed to ``_jaccard_bags``.
     """
     bag: Counter = Counter()
     count = 0
+    _SKIP = b"_skip_"
 
     def walk(n) -> int:
         nonlocal count
 
         if n.type in _SKIP_TYPES:
-            return hash(("_skip_",))
+            return _stable_hash(_SKIP)
 
         count += 1
 
         if n.child_count == 0:
             # Leaf node
             if n.type in _NORMALIZED_LEAF_TYPES:
-                h = hash(("_leaf_", n.type))
+                h = _stable_hash(b"_leaf_:" + n.type.encode("utf-8", errors="replace"))
             else:
                 # Keywords, operators, punctuation — keep exact text
-                h = hash(("_tok_", n.type, n.text))
+                text = n.text if isinstance(n.text, bytes) else str(n.text).encode("utf-8", errors="replace")
+                h = _stable_hash(
+                    b"_tok_:"
+                    + n.type.encode("utf-8", errors="replace")
+                    + b":"
+                    + text
+                )
             bag[h] += 1
             return h
 
         # Internal node — hash based on type + children structure
-        child_hashes = []
+        child_hashes: list[int] = []
         for child in n.children:
             if child.type not in _SKIP_TYPES:
                 child_hashes.append(walk(child))
 
-        h = hash(("_node_", n.type, tuple(child_hashes)))
+        # Serialize child hashes as fixed-width little-endian bytes so the
+        # resulting hash is stable across processes.
+        children_bytes = b"".join(h.to_bytes(8, "big") for h in child_hashes)
+        h = _stable_hash(
+            b"_node_:" + n.type.encode("utf-8", errors="replace") + b":" + children_bytes
+        )
         bag[h] += 1
         return h
 
@@ -279,31 +310,32 @@ def _fetch_candidate_files(conn, scope: str | None):
     ).fetchall()
 
 
-def _extract_func_infos_from_file(file_row, min_lines: int, start_idx: int) -> list[_FuncInfo]:
-    """Re-parse a single file and yield its qualifying ``_FuncInfo``s.
+def _extract_func_records_pickleable(
+    file_path: str,
+    language: str | None,
+    project_root_str: str,
+    min_lines: int,
+) -> list[tuple]:
+    """Worker function: re-parse a single file and return picklable tuples.
 
-    Returns the list (possibly empty) and never raises — best-effort
-    extraction is the contract callers rely on.
+    Returns a list of (file_path, name, line_start, line_end, node_count,
+    hash_bag) tuples. Module-level so it can be pickled across processes.
     """
     from roam.index.parser import parse_file
 
-    file_path = file_row["path"]
     try:
         path = Path(file_path)
         if not path.is_absolute():
-            from roam.db.connection import find_project_root
-
-            path = find_project_root() / path
+            path = Path(project_root_str) / file_path
         if not path.exists():
             return []
-        tree, source, _lang = parse_file(path, file_row["language"])
+        tree, source, _lang = parse_file(path, language)
         if tree is None or source is None:
             return []
     except Exception:
         return []
 
-    out: list[_FuncInfo] = []
-    idx = start_idx
+    out: list[tuple] = []
     for fn_node in _find_function_nodes(tree):
         line_start = fn_node.start_point[0] + 1
         line_end = fn_node.end_point[0] + 1
@@ -314,6 +346,29 @@ def _extract_func_infos_from_file(file_row, min_lines: int, start_idx: int) -> l
         bag, node_count = _ast_hash_bag(body)
         if node_count < _MIN_AST_NODES:
             continue
+        # Counter pickles cleanly; basic types are JSON-safe.
+        out.append((file_path, name, line_start, line_end, node_count, bag))
+    return out
+
+
+def _extract_func_infos_from_file(file_row, min_lines: int, start_idx: int) -> list[_FuncInfo]:
+    """Re-parse a single file and yield its qualifying ``_FuncInfo``s.
+
+    Returns the list (possibly empty) and never raises — best-effort
+    extraction is the contract callers rely on. Thin wrapper around
+    ``_extract_func_records_pickleable`` that fills in ``idx``.
+    """
+    from roam.db.connection import find_project_root
+
+    file_path = file_row["path"]
+    project_root = find_project_root()
+    records = _extract_func_records_pickleable(
+        file_path, file_row["language"], str(project_root), min_lines
+    )
+
+    out: list[_FuncInfo] = []
+    idx = start_idx
+    for file_path, name, line_start, line_end, node_count, bag in records:
         out.append(
             _FuncInfo(
                 idx=idx,
@@ -328,6 +383,86 @@ def _extract_func_infos_from_file(file_row, min_lines: int, start_idx: int) -> l
         )
         idx += 1
     return out
+
+
+# Threshold: don't pay process-pool overhead on tiny projects.
+# ProcessPool spinup on Windows is ~1-2s per worker. We need enough work
+# to amortize ~8 × 1.5s = ~12s of fixed overhead. Empirically, ~500 files
+# is the break-even on roam-code; smaller projects parse faster serially.
+_PARALLEL_MIN_FILES = 500
+# Cap workers to avoid context-switch thrashing and Windows process explosion.
+_PARALLEL_MAX_WORKERS = 8
+
+
+def _parallel_extract_func_infos(
+    file_rows: list,
+    min_lines: int,
+) -> list[_FuncInfo]:
+    """Extract func infos across all files, optionally in parallel.
+
+    Falls back to serial when:
+    - ``ROAM_NO_PARALLEL`` env var is set
+    - fewer than ``_PARALLEL_MIN_FILES`` candidate files (process spinup > savings)
+
+    Numerical ``idx`` is assigned by main process post-collection so results
+    are deterministic regardless of worker completion order.
+    """
+    from roam.db.connection import find_project_root
+
+    project_root_str = str(find_project_root())
+
+    if os.environ.get("ROAM_NO_PARALLEL") or len(file_rows) < _PARALLEL_MIN_FILES:
+        # Serial path
+        all_records: list[tuple] = []
+        for fr in file_rows:
+            all_records.extend(
+                _extract_func_records_pickleable(
+                    fr["path"], fr["language"], project_root_str, min_lines
+                )
+            )
+    else:
+        # Parallel path — ProcessPool because work is CPU-bound (tree-sitter).
+        from concurrent.futures import ProcessPoolExecutor
+
+        workers = max(1, min(os.cpu_count() or 4, _PARALLEL_MAX_WORKERS))
+        all_records = []
+        args = [(fr["path"], fr["language"], project_root_str, min_lines) for fr in file_rows]
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as ex:
+                # ex.map returns in submission order, preserving determinism.
+                for recs in ex.map(_extract_func_records_pickleable_starmap, args):
+                    all_records.extend(recs)
+        except Exception:
+            # If process pool fails (sandbox/pickling), fall back to serial.
+            all_records = []
+            for fr in file_rows:
+                all_records.extend(
+                    _extract_func_records_pickleable(
+                        fr["path"], fr["language"], project_root_str, min_lines
+                    )
+                )
+
+    # Build _FuncInfo with deterministic idx assignment.
+    out: list[_FuncInfo] = []
+    for idx, (file_path, name, line_start, line_end, node_count, bag) in enumerate(all_records):
+        out.append(
+            _FuncInfo(
+                idx=idx,
+                file_path=file_path,
+                name=name,
+                qname=f"{file_path}:{name}",
+                line_start=line_start,
+                line_end=line_end,
+                node_count=node_count,
+                hash_bag=bag,
+            )
+        )
+    return out
+
+
+def _extract_func_records_pickleable_starmap(args: tuple) -> list[tuple]:
+    """Shim to pass tuple-of-args to ProcessPoolExecutor.map (no starmap)."""
+    return _extract_func_records_pickleable(*args)
 
 
 def _bucket_funcs_by_size(funcs: list[_FuncInfo]) -> dict[int, list[_FuncInfo]]:
@@ -367,16 +502,63 @@ def _compare_func_pair(a: _FuncInfo, b: _FuncInfo, min_similarity: float) -> Clo
     )
 
 
-def _find_clone_pairs(
-    funcs: list[_FuncInfo], min_similarity: float
-) -> tuple[list[ClonePair], _UnionFind, dict[tuple[int, int], float]]:
-    """Discover clone pairs by comparing functions inside the same bucket
-    and across adjacent buckets. Returns (pairs, union_find, pair_scores)."""
+# Worker-side cache populated by ``_pair_worker_init``. Lives in each
+# worker process for the duration of the pool.
+_PAIR_WORKER_FUNCS: dict[int, _FuncInfo] = {}
+_PAIR_WORKER_MIN_SIM: float = 0.0
+
+
+def _pair_worker_init(funcs_serialized: list, min_similarity: float) -> None:
+    """ProcessPool initializer: hydrate per-worker func cache once."""
+    global _PAIR_WORKER_FUNCS, _PAIR_WORKER_MIN_SIM
+    _PAIR_WORKER_FUNCS = {f.idx: f for f in funcs_serialized}
+    _PAIR_WORKER_MIN_SIM = min_similarity
+
+
+def _pair_worker_compare_batch(idx_pairs: list[tuple[int, int]]) -> list[tuple]:
+    """Worker: compare a batch of (idx_a, idx_b) pairs from the cached funcs.
+
+    Returns picklable tuples (idx_a, idx_b, ClonePair-as-tuple|None).
+    """
+    out: list[tuple] = []
+    funcs = _PAIR_WORKER_FUNCS
+    min_sim = _PAIR_WORKER_MIN_SIM
+    for ia, ib in idx_pairs:
+        a = funcs.get(ia)
+        b = funcs.get(ib)
+        if a is None or b is None:
+            continue
+        ratio = min(a.node_count, b.node_count) / max(a.node_count, b.node_count)
+        if ratio < 0.5:
+            continue
+        sim = _jaccard_bags(a.hash_bag, b.hash_bag)
+        if sim < min_sim:
+            continue
+        out.append(
+            (
+                ia,
+                ib,
+                round(sim, 3),
+                a.file_path,
+                a.name,
+                a.qname,
+                a.line_start,
+                a.line_end,
+                b.file_path,
+                b.name,
+                b.qname,
+                b.line_start,
+                b.line_end,
+            )
+        )
+    return out
+
+
+def _enumerate_candidate_pairs(funcs: list[_FuncInfo]) -> list[tuple[int, int]]:
+    """Build the deduplicated (idx_a, idx_b) pair list from bucketed funcs."""
     by_bucket = _bucket_funcs_by_size(funcs)
-    pairs: list[ClonePair] = []
-    uf = _UnionFind()
-    pair_scores: dict[tuple[int, int], float] = {}
-    checked: set[tuple[int, int]] = set()
+    seen: set[tuple[int, int]] = set()
+    pairs: list[tuple[int, int]] = []
     for bucket_key, members in by_bucket.items():
         candidates = list(members)
         for delta in (-1, 1):
@@ -387,14 +569,110 @@ def _find_clone_pairs(
             for j in range(i + 1, len(candidates)):
                 a, b = candidates[i], candidates[j]
                 key = (min(a.idx, b.idx), max(a.idx, b.idx))
-                if key in checked:
+                if key in seen:
                     continue
-                checked.add(key)
-                pair = _compare_func_pair(a, b, min_similarity)
-                if pair is not None:
-                    pairs.append(pair)
-                    pair_scores[key] = pair.similarity
-                    uf.union(a.idx, b.idx)
+                seen.add(key)
+                pairs.append(key)
+    return pairs
+
+
+def _find_clone_pairs(
+    funcs: list[_FuncInfo], min_similarity: float
+) -> tuple[list[ClonePair], _UnionFind, dict[tuple[int, int], float]]:
+    """Discover clone pairs by comparing functions inside the same bucket
+    and across adjacent buckets. Returns (pairs, union_find, pair_scores).
+
+    When ``ROAM_NO_PARALLEL`` is unset and the candidate pair count is large,
+    the pairwise Jaccard comparison is parallelized via ProcessPool. The
+    Union-Find merge and pair-list assembly remain serial in the main
+    process so output ordering is deterministic.
+    """
+    candidate_pairs = _enumerate_candidate_pairs(funcs)
+    pairs: list[ClonePair] = []
+    uf = _UnionFind()
+    pair_scores: dict[tuple[int, int], float] = {}
+
+    # Threshold: ProcessPool spinup is ~1-2s × 8 workers ≈ 12s of fixed
+    # overhead on Windows. We need enough pair-comparison work to amortize
+    # that. Empirically, ~100K candidate pairs is the break-even on
+    # roam-code (1.99M pairs took 125s serial → 30s parallel, ratio holds
+    # down to ~100K). Below that, the serial path wins.
+    parallel_threshold = 100_000
+    use_parallel = (
+        not os.environ.get("ROAM_NO_PARALLEL")
+        and len(candidate_pairs) >= parallel_threshold
+    )
+
+    if use_parallel:
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+
+            workers = max(1, min(os.cpu_count() or 4, _PARALLEL_MAX_WORKERS))
+            # Chunk pairs so each worker processes ~1000 comparisons per batch
+            # — minimizes IPC overhead while keeping load balanced.
+            chunk_size = max(500, len(candidate_pairs) // (workers * 4))
+            chunks = [
+                candidate_pairs[i : i + chunk_size]
+                for i in range(0, len(candidate_pairs), chunk_size)
+            ]
+            with ProcessPoolExecutor(
+                max_workers=workers,
+                initializer=_pair_worker_init,
+                initargs=(funcs, min_similarity),
+            ) as ex:
+                all_hits: list[tuple] = []
+                # ex.map preserves submission order — chunks are submitted
+                # in the same order as candidate_pairs was built, so the
+                # resulting Union-Find call order matches the serial path
+                # exactly. No extra sort needed.
+                for hits in ex.map(_pair_worker_compare_batch, chunks):
+                    all_hits.extend(hits)
+            for (
+                ia,
+                ib,
+                sim,
+                fa,
+                na,
+                qa,
+                la,
+                lea,
+                fb,
+                nb,
+                qb,
+                lb,
+                leb,
+            ) in all_hits:
+                pair = ClonePair(
+                    file_a=fa,
+                    func_a=na,
+                    qname_a=qa,
+                    line_a=la,
+                    line_end_a=lea,
+                    file_b=fb,
+                    func_b=nb,
+                    qname_b=qb,
+                    line_b=lb,
+                    line_end_b=leb,
+                    similarity=sim,
+                )
+                pairs.append(pair)
+                pair_scores[(ia, ib)] = sim
+                uf.union(ia, ib)
+            return pairs, uf, pair_scores
+        except Exception:
+            # Fall through to serial path on any pool failure.
+            pass
+
+    # Serial path
+    funcs_by_idx = {f.idx: f for f in funcs}
+    for ia, ib in candidate_pairs:
+        a = funcs_by_idx[ia]
+        b = funcs_by_idx[ib]
+        pair = _compare_func_pair(a, b, min_similarity)
+        if pair is not None:
+            pairs.append(pair)
+            pair_scores[(ia, ib)] = pair.similarity
+            uf.union(ia, ib)
     return pairs, uf, pair_scores
 
 
@@ -413,9 +691,10 @@ def detect_clones(
     """
     files = _fetch_candidate_files(conn, scope)
 
-    funcs: list[_FuncInfo] = []
-    for f in files:
-        funcs.extend(_extract_func_infos_from_file(f, min_lines, len(funcs)))
+    # Per-file parsing is CPU-bound (tree-sitter) and independent across
+    # files — parallelize via ProcessPool when there's enough work to
+    # amortize spinup cost. Falls back to serial under ROAM_NO_PARALLEL.
+    funcs: list[_FuncInfo] = _parallel_extract_func_infos(list(files), min_lines)
 
     if len(funcs) > max_functions:
         funcs.sort(key=lambda f: -f.node_count)

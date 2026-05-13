@@ -16,7 +16,7 @@ from roam.output.formatter import (
     format_table,
     json_envelope,
     loc,
-    summary_envelope,
+    strip_list_payloads,
     to_json,
     truncate_lines,
 )
@@ -29,6 +29,7 @@ from roam.output.mermaid import (
 from roam.output.mermaid import (
     node as mnode,
 )
+from roam.capability import roam_capability
 from roam.output.mermaid import (
     subgraph as msubgraph,
 )
@@ -121,7 +122,7 @@ def _layers_json(conn, formatted, layer_map, max_layer, violations, mermaid=None
         **extra,
     )
     if not detail:
-        envelope = summary_envelope(envelope)
+        envelope = strip_list_payloads(envelope)
     click.echo(to_json(envelope))
 
 
@@ -310,6 +311,20 @@ def _print_violations(conn, violations):
         click.echo(f"  (+{len(violations) - 30} more)")
 
 
+@roam_capability(
+    name="layers",
+    category="architecture",
+    summary="Show dependency layers and violations",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram")
 @click.pass_context

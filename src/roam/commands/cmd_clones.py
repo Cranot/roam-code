@@ -13,8 +13,14 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import (
     json_envelope,
     loc,
@@ -22,6 +28,51 @@ from roam.output.formatter import (
 )
 
 
+# R22 — confidence-derivation rule for clone clusters and pairs:
+#   similarity >= 0.90 → "high"  (near-identical, almost certainly a clone)
+#   similarity in [0.70, 0.90) → "medium"
+#   similarity < 0.70 → "low"  (structural skeleton match only; high FP)
+def _classify_similarity(sim: float) -> tuple[str, str]:
+    """Map a similarity score to a (confidence, reason) tuple."""
+    if sim >= 0.90:
+        return "high", f"similarity {sim:.2f} ≥ 0.90 — near-identical clone"
+    if sim >= 0.70:
+        return "medium", f"similarity {sim:.2f} in [0.70, 0.90) — likely clone"
+    return "low", f"similarity {sim:.2f} < 0.70 — structural skeleton only"
+
+
+def _cluster_classify(cluster: dict) -> tuple[str, str]:
+    sim = float(cluster.get("avg_similarity", 0.0) or 0.0)
+    return _classify_similarity(sim)
+
+
+def _pair_classify(pair: dict) -> tuple[str, str]:
+    sim = float(pair.get("similarity", 0.0) or 0.0)
+    return _classify_similarity(sim)
+
+
+@roam_capability(
+    name="clones",
+    category="health",
+    summary="Detect near-duplicate code via AST structural hashing (Type-2 clones).",
+    inputs=["repo_path"],
+    outputs=["clusters", "verdict"],
+    examples=[
+        "roam clones",
+        "roam clones --threshold 0.85 --min-lines 8",
+        "roam clones --persist",
+    ],
+    tags=["health", "duplication"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.option(
     "--threshold",
@@ -147,20 +198,25 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file):
             return
 
         if json_mode:
-            clusters_json = []
-            for c in clusters:
-                clusters_json.append(
-                    {
-                        "cluster_id": c.cluster_id,
-                        "avg_similarity": c.avg_similarity,
-                        "size": len(c.members),
-                        "members": c.members,
-                        "pattern": c.pattern,
-                        "suggestion": c.suggestion,
-                    }
-                )
+            # R22: wrap each cluster and pair in {value, confidence,
+            # reason} so consumers can weight signals. Consumers that
+            # previously read `clusters[i]["avg_similarity"]` must now
+            # read `clusters[i]["value"]["avg_similarity"]` plus
+            # `clusters[i]["confidence"]` / `clusters[i]["reason"]`.
+            cluster_values = [
+                {
+                    "cluster_id": c.cluster_id,
+                    "avg_similarity": c.avg_similarity,
+                    "size": len(c.members),
+                    "members": c.members,
+                    "pattern": c.pattern,
+                    "suggestion": c.suggestion,
+                }
+                for c in clusters
+            ]
+            cluster_triples = wrap_findings(cluster_values, classifier=_cluster_classify)
 
-            pairs_json = [
+            pair_values = [
                 {
                     "file_a": p.file_a,
                     "func_a": p.func_a,
@@ -172,22 +228,30 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file):
                 }
                 for p in pairs[:50]  # Cap pair output
             ]
+            pair_triples = wrap_findings(pair_values, classifier=_pair_classify)
+
+            # Combined distribution for the summary field (clusters +
+            # pairs counted together — both are "findings").
+            combined = cluster_triples + pair_triples
+            distribution = confidence_distribution(combined)
+            verdict_with_conf = verdict_with_high_count(verdict, distribution)
 
             click.echo(
                 to_json(
                     json_envelope(
                         "clones",
                         summary={
-                            "verdict": verdict,
+                            "verdict": verdict_with_conf,
                             "clusters": len(clusters),
                             "clone_pairs": total_pairs,
                             "total_functions": total_functions,
                             "avg_similarity": round(avg_sim, 3),
                             "estimated_reducible_lines": reducible_lines,
+                            "findings_confidence_distribution": distribution,
                         },
                         budget=token_budget,
-                        clusters=clusters_json,
-                        pairs=pairs_json,
+                        clusters=cluster_triples,
+                        pairs=pair_triples,
                     )
                 )
             )

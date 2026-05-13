@@ -12,6 +12,7 @@ from roam.output.formatter import (
     format_table,
     format_table_compact,
     indent,
+    json_envelope,
     loc,
     section,
     symbol_line,
@@ -413,3 +414,58 @@ class TestWsLoc:
 
     def test_without_line(self):
         assert ws_loc("myrepo", "src/main.py") == "[myrepo] src/main.py"
+
+
+# ── json_envelope: explicit agent_contract kwarg preservation ────────
+
+
+class TestJsonEnvelopeAgentContract:
+    def test_json_envelope_preserves_explicit_agent_contract_facts(self):
+        env = json_envelope(
+            "foo",
+            summary={"verdict": "x", "next_commands": ["roam y"]},
+            agent_contract={"facts": ["fact1", "fact2"]},
+        )
+        assert "agent_contract" in env
+        assert "fact1" in env["agent_contract"]["facts"]
+        assert "fact2" in env["agent_contract"]["facts"]
+        # next_commands still auto-derived from summary:
+        assert any(
+            "roam y" in nc for nc in env["agent_contract"].get("next_commands", [])
+        )
+
+    def test_json_envelope_explicit_next_commands_wins(self):
+        env = json_envelope(
+            "foo",
+            summary={"verdict": "x", "next_commands": ["roam auto"]},
+            agent_contract={
+                "facts": ["caller-supplied"],
+                "next_commands": ["roam explicit"],
+            },
+        )
+        nc = env["agent_contract"].get("next_commands", [])
+        assert "roam explicit" in nc
+        # explicit should win — auto-derived should NOT be merged in when
+        # caller supplied its own next_commands
+        assert "roam auto" not in nc
+
+    def test_json_envelope_no_explicit_contract_uses_auto(self):
+        env = json_envelope(
+            "foo",
+            summary={"verdict": "x", "next_commands": ["roam y"]},
+        )
+        assert env["agent_contract"]["facts"] == ["x"]
+        assert "roam y" in env["agent_contract"].get("next_commands", [])
+
+    def test_json_envelope_agent_contract_not_in_payload(self):
+        # The explicit agent_contract kwarg should be consumed, not also
+        # appear as a top-level payload key.
+        env = json_envelope(
+            "foo",
+            summary={"verdict": "x"},
+            agent_contract={"facts": ["a"]},
+            other_payload=[1, 2, 3],
+        )
+        # No duplicate stray key — agent_contract is the single canonical key.
+        assert env["agent_contract"]["facts"] == ["a"]
+        assert env["other_payload"] == [1, 2, 3]

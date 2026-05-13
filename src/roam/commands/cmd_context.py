@@ -7,6 +7,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.context_helpers import (
     batch_context,
@@ -815,6 +816,7 @@ def _render_single_json(data, budget=0):
     summary = {
         "verdict": verdict,
         "callers": len(non_test_callers),
+        "caller_metric_definition": "raw_edge_rows",
         "callees": len(callees),
         "tests": len(test_callers),
         "files_to_read": len(files_to_read),
@@ -994,6 +996,7 @@ def _render_file_json(data, budget=0):
         "verdict": verdict,
         "symbol_count": data["symbol_count"],
         "caller_files": len(data["callers"]),
+        "caller_metric_definition": "raw_edge_rows",
         "callee_files": len(data["callees"]),
         "test_files": len(data["tests"]),
         "coupling_partners": len(data["coupling"]),
@@ -1091,6 +1094,7 @@ def _render_batch_json(data, budget=0):
                     "shared_callers": len(shared_callers),
                     "shared_callees": len(shared_callees),
                     "files_to_read": len(scored_files),
+                    "caller_metric_definition": "raw_edge_rows",
                 },
                 mode="batch",
                 symbols=[
@@ -1162,6 +1166,20 @@ def _resolve_file(conn, path):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="context",
+    category="workflow",
+    summary="Get the minimal context needed to safely modify a symbol",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("names", nargs=-1)
 @click.option(

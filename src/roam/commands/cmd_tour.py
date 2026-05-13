@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.graph.builder import build_symbol_graph
@@ -341,6 +342,24 @@ def _tour_mermaid(conn, G, top, order):
     return mdiagram("TD", elements)
 
 
+@roam_capability(
+    name="tour",
+    category="exploration",
+    summary="Generate a guided reading-order tour: top symbols, entry points, layers.",
+    inputs=["repo_path"],
+    outputs=["top_symbols", "reading_order", "entry_points", "verdict"],
+    examples=["roam tour", "roam tour --write TOUR.md", "roam tour --mermaid"],
+    tags=["onboarding", "exploration"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.option(
     "--write",
@@ -380,6 +399,7 @@ def tour(ctx, write_file, mermaid_mode, focus_path):
     (compact codebase map), and ``describe`` (per-symbol explainer).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -437,6 +457,7 @@ def tour(ctx, write_file, mermaid_mode, focus_path):
                                 "languages": len(langs),
                                 "top_symbols": len(top),
                             },
+                            budget=token_budget,
                             languages=langs,
                             statistics=stats,
                             top_symbols=top,
@@ -462,6 +483,7 @@ def tour(ctx, write_file, mermaid_mode, focus_path):
                             "languages": len(langs),
                             "top_symbols": len(top),
                         },
+                        budget=token_budget,
                         languages=langs,
                         statistics=stats,
                         top_symbols=top,

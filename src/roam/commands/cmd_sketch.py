@@ -16,11 +16,26 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, format_signature, json_envelope, to_json
 
 
+@roam_capability(
+    name="sketch",
+    category="refactoring",
+    summary="Show compact structural skeleton of a directory",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("directory")
 @click.option("--full", is_flag=True, help="Show all symbols, not just exported")

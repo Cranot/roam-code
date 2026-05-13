@@ -13,6 +13,7 @@ _RE_INLINE_COMMENT = re.compile(r"\s+#.*$")
 _RE_REQUIREMENT = re.compile(r"^([A-Za-z0-9_.\-]+)(\[.*?\])?(.*)?$")
 
 from roam import __version__
+from roam.capability import roam_capability
 from roam.db.connection import find_project_root
 from roam.output.formatter import format_table, json_envelope, to_json
 from roam.output.sarif import to_sarif, write_sarif
@@ -528,6 +529,60 @@ def _parse_build_gradle(path: Path, source: str) -> list[Dependency]:
     return deps
 
 
+def _pin_status_composer(spec: str) -> str:
+    """Pin-status classifier for composer (PHP) version specifiers."""
+    if not spec or spec.strip() in ("*", ""):
+        return "unpinned"
+    s = spec.strip()
+    # Exact version: "1.2.3" or "=1.2.3" or "v1.2.3"
+    if re.match(r"^=?v?\d+\.\d+\.\d+", s):
+        return "exact"
+    if s.startswith(("^", "~")):
+        return "range"
+    if re.search(r"[><!]", s):
+        return "range"
+    if "*" in s:
+        return "unpinned"
+    return "range"
+
+
+def _parse_composer_json(path: Path, source: str) -> list[Dependency]:
+    """Parse a composer.json file -- `require` and `require-dev` sections."""
+    import json as _json
+
+    deps: list[Dependency] = []
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return deps
+    if not isinstance(data, dict):
+        return deps
+    for section, is_dev in [("require", False), ("require-dev", True)]:
+        block = data.get(section, {})
+        if not isinstance(block, dict):
+            continue
+        for name, spec in block.items():
+            if not isinstance(name, str):
+                continue
+            # Skip the PHP runtime + ext-* platform pseudo-packages
+            if name.lower() == "php" or name.lower().startswith("ext-"):
+                continue
+            spec_str = spec if isinstance(spec, str) else ""
+            pin = _pin_status_composer(spec_str)
+            deps.append(
+                Dependency(
+                    name=name,
+                    version_spec=spec_str,
+                    is_dev=is_dev,
+                    pin_status=pin,
+                    risk_level=_risk_level(pin, is_dev),
+                    source_file=source,
+                    ecosystem="php",
+                )
+            )
+    return deps
+
+
 def _parse_gemfile(path: Path, source: str) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
@@ -583,6 +638,7 @@ _DEP_FILES: dict[str, tuple] = {
     "build.gradle": (_parse_build_gradle, "java"),
     "build.gradle.kts": (_parse_build_gradle, "java"),
     "Gemfile": (_parse_gemfile, "ruby"),
+    "composer.json": (_parse_composer_json, "php"),
 }
 
 
@@ -596,8 +652,27 @@ _DEV_FILE_MARKERS = frozenset(
 )
 
 
+_SUBDIR_DEP_FILES: frozenset[str] = frozenset(
+    {"composer.json", "package.json", "go.mod", "Cargo.toml", "Gemfile"}
+)
+
+_SUBDIR_SKIP: frozenset[str] = frozenset(
+    {"node_modules", ".git", ".roam", "vendor", "dist", "build", "out", "coverage"}
+)
+
+
 def discover_and_parse(project_root: Path) -> list[Dependency]:
+    """Discover dependency manifests at the project root + 1-deep subdirs.
+
+    Root-level files are always scanned. For monorepos and backend/frontend
+    splits, we also scan 1-level subdirectories for a curated set of
+    manifest types (``composer.json``, ``package.json``, ``go.mod``,
+    ``Cargo.toml``, ``Gemfile``) so that, e.g., ``./backend/composer.json``
+    isn't invisible to ``supply-chain`` / ``sbom``.
+    """
     all_deps: list[Dependency] = []
+
+    # Root-level discovery (existing behaviour)
     for filename, (parser_fn, _eco) in _DEP_FILES.items():
         candidate = project_root / filename
         if candidate.is_file():
@@ -605,6 +680,23 @@ def discover_and_parse(project_root: Path) -> list[Dependency]:
             if filename in _DEV_FILE_MARKERS:
                 parsed = [d._replace(is_dev=True) for d in parsed]
             all_deps.extend(parsed)
+
+    # 1-deep subdir discovery for curated manifest types
+    if project_root.is_dir():
+        for sub in project_root.iterdir():
+            if not sub.is_dir():
+                continue
+            if sub.name in _SUBDIR_SKIP or sub.name.startswith("."):
+                continue
+            for filename, (parser_fn, _eco) in _DEP_FILES.items():
+                if filename not in _SUBDIR_DEP_FILES:
+                    continue
+                candidate = sub / filename
+                if candidate.is_file():
+                    rel_source = f"{sub.name}/{filename}"
+                    parsed = parser_fn(candidate, rel_source)
+                    all_deps.extend(parsed)
+
     seen: set[tuple[str, str, str]] = set()
     unique: list[Dependency] = []
     for dep in all_deps:
@@ -697,6 +789,20 @@ def supply_chain_to_sarif(deps: list[Dependency], score: int) -> dict:
     return to_sarif("roam-code", __version__, rules, results)
 
 
+@roam_capability(
+    name="supply-chain",
+    category="reports",
+    summary="Dependency risk dashboard: pin coverage, risk scoring, supply-chain health",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "compliance"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("supply-chain")
 @click.option("--top", default=5, show_default=True, help="Number of riskiest dependencies to highlight")
 @click.pass_context

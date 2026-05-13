@@ -6,6 +6,7 @@ from collections import Counter
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files
 from roam.commands.resolve import ensure_index, file_not_found_hint
 from roam.db.connection import find_project_root, open_db
@@ -167,6 +168,20 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="file",
+    category="exploration",
+    summary="Show file skeleton: all definitions with signatures",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("file")
 @click.argument("paths", nargs=-1)
 @click.option("--full", is_flag=True, help="Show all results without truncation")

@@ -4,11 +4,26 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 
+@roam_capability(
+    name="effects",
+    category="architecture",
+    summary="Show what functions DO — side-effect classification",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("effects")
 @click.argument("target", required=False, default=None)
 @click.option("--file", "file_path", default=None, help="Show effects per function in a file.")

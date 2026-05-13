@@ -16,6 +16,28 @@ if TYPE_CHECKING:
 # any internal code that references it directly, but it is now an alias.
 _EXTENSION_MAP: dict[str, str] = EXTENSION_MAP
 
+# JavaScript / TypeScript family — the set of ``files.language`` values whose
+# import graph should be treated as a single TypeScript-like ecosystem.
+# Vue / Svelte single-file components are stored with ``files.language='vue'``
+# / ``'svelte'`` in the DB, but their ``<script>`` blocks are extracted via
+# the TS/JS extractor and DO produce real symbol edges into ``.ts`` modules.
+# Any SQL query or filter that wants "all files that participate in the TS
+# import graph" must include vue / svelte or it will silently drop those
+# edges. Historic bug (W6.3 → orphan-imports / verify-imports, W19.x →
+# dead / vibe-check): 23 of 89 dead findings on a real Vue/TS codebase
+# (~26%) were TS exports actually consumed by .vue files but invisible
+# to the analyser.
+# A single canonical tuple is the prophylactic — use it instead of
+# hard-coding language lists in SQL.
+JS_FAMILY_LANGUAGES: tuple[str, ...] = (
+    "javascript",
+    "typescript",
+    "tsx",
+    "jsx",
+    "vue",
+    "svelte",
+)
+
 # Languages with dedicated extractors
 _DEDICATED_EXTRACTORS = frozenset(
     {
@@ -39,7 +61,13 @@ _DEDICATED_EXTRACTORS = frozenset(
     }
 )
 
-# All supported tree-sitter language names (includes aliased languages)
+# 28 language identifiers that roam can extract symbols from. Closed enumeration,
+# pinned to the installed tree-sitter-language-pack (>=0.6, see pyproject.toml).
+# Composition: 19 native tree-sitter grammars (python..svelte), 4 aliased SF
+# variants (apex/sfxml/aura/visualforce → java/html), 3 regex-only languages
+# (foxpro/yaml/hcl mirrored in parser.REGEX_ONLY_LANGUAGES), 2 aliased
+# JSON/Markdown variants (jsonc/mdx). Adding a language requires a *_lang.py
+# extractor under src/roam/languages/ AND a grammar in the language-pack.
 _SUPPORTED_LANGUAGES = frozenset(
     {
         "python",

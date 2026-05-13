@@ -4,12 +4,27 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, file_not_found_hint
 from roam.db.connection import open_db
 from roam.db.queries import FILE_BY_PATH, FILE_IMPORTED_BY, FILE_IMPORTS
-from roam.output.formatter import format_table, json_envelope, summary_envelope, to_json
+from roam.output.formatter import format_table, json_envelope, strip_list_payloads, to_json
 
 
+@roam_capability(
+    name="deps",
+    category="exploration",
+    summary="Show file import/imported-by relationships",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("path")
 @click.option("--full", is_flag=True, help="Show all results without truncation")
@@ -92,6 +107,7 @@ def deps(ctx, path, full):
                     "verdict": _verdict,
                     "imports": len(imports),
                     "imported_by": len(imported_by),
+                    "caller_metric_definition": "raw_edge_rows (file-level: file_edges)",
                 },
                 budget=token_budget,
                 path=frow["path"],
@@ -106,7 +122,7 @@ def deps(ctx, path, full):
                 imported_by=[{"path": i["path"], "symbol_count": i["symbol_count"]} for i in imported_by],
             )
             if not detail:
-                envelope = summary_envelope(envelope)
+                envelope = strip_list_payloads(envelope)
             click.echo(to_json(envelope))
             return
 

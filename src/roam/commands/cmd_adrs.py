@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -354,6 +355,20 @@ def _resolve_code_modules(conn, adrs: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="adrs",
+    category="getting-started",
+    summary="Discover Architecture Decision Records and link them to code modules",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("adrs")
 @click.option(
     "--status",

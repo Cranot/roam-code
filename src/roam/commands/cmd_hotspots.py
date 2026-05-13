@@ -7,10 +7,11 @@ from collections import defaultdict, deque
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
-from roam.output.formatter import json_envelope, summary_envelope, to_json
+from roam.output.formatter import json_envelope, strip_list_payloads, to_json
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2}
 _ENTRYPOINT_HINT = re.compile(
@@ -446,6 +447,20 @@ def _run_danger_mode(json_mode: bool, token_budget: int) -> None:
         )
 
 
+@roam_capability(
+    name="hotspots",
+    category="health",
+    summary="Show runtime hotspots comparing static analysis vs runtime data",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--runtime", "sort_runtime", is_flag=True, help="Sort by runtime metrics")
 @click.option("--discrepancy", is_flag=True, help="Only show static/runtime mismatches")
@@ -518,8 +533,10 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
         )
 
         if json_mode:
-            envelope = json_envelope(
-                "hotspots",
+            # W21.7 LAW 4: when nothing crossed the threshold, the auto-derive
+            # would emit ``"0 total findings"`` + ``"0 reachable findings"``
+            # etc. — pure noise. Pin an explicit healthy-codebase fact.
+            envelope_kwargs = dict(
                 budget=token_budget,
                 summary={
                     "verdict": verdict,
@@ -537,8 +554,16 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
                 },
                 hotspots=report["hotspots"],
             )
+            if total == 0:
+                envelope_kwargs["agent_contract"] = {
+                    "facts": [
+                        verdict,
+                        "no security hotspots above threshold; codebase is healthy",
+                    ],
+                }
+            envelope = json_envelope("hotspots", **envelope_kwargs)
             if not detail:
-                envelope = summary_envelope(envelope)
+                envelope = strip_list_payloads(envelope)
             click.echo(to_json(envelope))
             return
 
@@ -630,6 +655,16 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
                 "total": total,
             },
         )
+        # W21.7 LAW 4: explicit-facts when the runtime view is empty so we
+        # don't ship ``"0 total findings"`` / ``"0 upgrades findings"``.
+        envelope_extra = {}
+        if total == 0:
+            envelope_extra["agent_contract"] = {
+                "facts": [
+                    verdict,
+                    "no runtime hotspots to report; ingest traces or rerun against a populated dataset",
+                ],
+            }
         envelope = json_envelope(
             "hotspots",
             budget=token_budget,
@@ -640,6 +675,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
                 "confirmed": confirmed,
                 "downgrades": downgrades,
             },
+            **envelope_extra,
             hotspots=[
                 {
                     "symbol": h["symbol_name"],
@@ -658,7 +694,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
             next_steps=next_steps,
         )
         if not detail:
-            envelope = summary_envelope(envelope)
+            envelope = strip_list_payloads(envelope)
         click.echo(to_json(envelope))
         return
 

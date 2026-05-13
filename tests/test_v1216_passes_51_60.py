@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+
+@pytest.fixture(autouse=True)
+def _enforcement_safe(monkeypatch):
+    """Pre-elect autonomous_pr so privileged commands (`pr-prep`, `timeline`,
+    etc.) work under future `ROAM_MODE_ENFORCEMENT` default-on (W23.3
+    staged-rollout PR-B)."""
+    monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
 
 
 def test_pass51_timeline_for_indexed_symbol():

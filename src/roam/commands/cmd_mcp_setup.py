@@ -9,6 +9,7 @@ from typing import Any
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 # Platform config templates.
@@ -152,6 +153,20 @@ def _write_config(target: Path, json_config: dict) -> dict[str, Any]:
     }
 
 
+@roam_capability(
+    name="mcp-setup",
+    category="getting-started",
+    summary="Generate MCP server config for AI coding platforms",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=False,
+    requires_index=False,
+)
 @click.command("mcp-setup")
 @click.argument("platform", type=click.Choice(sorted(_CONFIGS.keys())), required=False)
 @click.option(

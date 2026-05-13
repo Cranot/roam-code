@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -118,6 +119,24 @@ CHECKS = (
 EXIT_GATE_FAILURE = 5
 
 
+@roam_capability(
+    name="db-check",
+    category="health",
+    summary="Integrity sweep over the local index: orphans, broken edges, missing FTS.",
+    inputs=[],
+    outputs=["findings", "verdict"],
+    examples=["roam db-check", "roam db-check --ci"],
+    tags=["diagnostics", "ci"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+)
 @click.command("db-check")
 @click.option("--ci", is_flag=True, help="Exit with code 5 on any high-severity finding (CI gate).")
 @click.pass_context

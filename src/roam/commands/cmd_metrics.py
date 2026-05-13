@@ -11,6 +11,7 @@ import sqlite3
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import (
@@ -486,6 +487,20 @@ def _resolve_target(conn: sqlite3.Connection, target: str) -> tuple[str, int | N
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="metrics",
+    category="exploration",
+    summary="Show unified metrics for a file or symbol",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("metrics")
 @click.argument("target")
 @click.pass_context
@@ -569,6 +584,7 @@ def _output_symbol_metrics(conn, symbol_id, target, json_mode, budget):
                         "target": display_name,
                         "target_type": "symbol",
                         "health": health,
+                        "caller_metric_definition": "direct_in_degree (fan_in from graph_metrics.in_degree, raw_edge_rows fallback)",
                     },
                     target_type="symbol",
                     name=display_name,
@@ -619,6 +635,7 @@ def _output_file_metrics(conn, file_id, target, json_mode, budget):
                         "target_type": "file",
                         "health": file_health,
                         "symbol_count": fm["symbol_count"],
+                        "caller_metric_definition": "direct_in_degree (per-symbol fan_in summed across file)",
                     },
                     target_type="file",
                     file=data["file"],

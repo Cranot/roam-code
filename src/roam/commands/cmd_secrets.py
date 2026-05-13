@@ -10,8 +10,14 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -169,59 +175,18 @@ _SKIP_DIRS = frozenset(
     }
 )
 
-# Binary file extensions to skip
-_BINARY_EXTENSIONS = frozenset(
-    {
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".bmp",
-        ".ico",
-        ".svg",
-        ".webp",
-        ".woff",
-        ".woff2",
-        ".ttf",
-        ".eot",
-        ".otf",
-        ".zip",
-        ".tar",
-        ".gz",
-        ".bz2",
-        ".xz",
-        ".7z",
-        ".rar",
-        ".exe",
-        ".dll",
-        ".so",
-        ".dylib",
-        ".o",
-        ".a",
-        ".lib",
-        ".pyc",
-        ".pyo",
-        ".class",
-        ".jar",
-        ".db",
-        ".sqlite",
-        ".sqlite3",
-        ".pdf",
-        ".doc",
-        ".docx",
-        ".xls",
-        ".xlsx",
-        ".mp3",
-        ".mp4",
-        ".wav",
-        ".avi",
-        ".mov",
-        ".bin",
-        ".dat",
-        ".pak",
-        ".wasm",
-    }
-)
+# _BINARY_EXTENSIONS is an alias of roam.index.discovery.SKIP_EXTENSIONS
+# (53 entries) after W39.4 collapse. History: W37.5 found _BINARY_EXTENSIONS
+# (48 entries) was a strict subset; W38.3 backfilled citations for both;
+# W39.4 collapsed to one source of truth on the rationale that the 5 extras
+# (.lock / .map / .min.js / .min.css / .sct) are low-value secrets-scan
+# targets: .lock files are also matched by SKIP_NAMES (package-lock.json,
+# yarn.lock, Cargo.lock, ...) so the lockfile-via-extension branch was
+# already redundant; .map and .min.* leaks would surface in the unminified
+# source the scanner does process; .sct is a Visual FoxPro companion file.
+# Kept as a named alias for backward compatibility with any external
+# consumers (no in-tree callers as of 2026-05-13).
+from roam.index.discovery import SKIP_EXTENSIONS as _BINARY_EXTENSIONS  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Environment-variable patterns — lines matching these are NOT hardcoded
@@ -260,7 +225,10 @@ _TEST_FILE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_DOC_EXTENSIONS = frozenset({".md", ".rst", ".txt"})
+# _DOC_EXTENSIONS re-exported from roam.index.file_roles (W37.5 consolidation —
+# was 1 of 3 divergent local copies before consolidation; now uses the 5-entry
+# canonical union from file_roles.DOC_EXTENSIONS).
+from roam.index.file_roles import DOC_EXTENSIONS as _DOC_EXTENSIONS  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Per-finding remediation suggestions
@@ -293,6 +261,74 @@ _REMEDIATION: dict[str, str] = {
     "Database Connection String": "Use connection pool with env-var DSN",
     "High Entropy String": "If this is a real secret, move to environment variable",
 }
+
+
+# ---------------------------------------------------------------------------
+# R22 — confidence classifier for secret findings.
+#
+# Confidence reflects how trustworthy the secret-detection signal is, NOT
+# the severity of the leak:
+#   high   — the matched value is a high-entropy random-looking string,
+#            which the regex was anchored to (e.g. "High Entropy String"
+#            pattern that passed the Shannon threshold). Very low false-
+#            positive rate.
+#   medium — the pattern is a known-prefix match (AKIA*, ghp_*, sk_live_*,
+#            etc.) — vendor-issued opaque tokens. Still very accurate but
+#            could conceivably be a placeholder of the same shape.
+#   low    — generic / structural patterns: password= assignments,
+#            base64-ish blobs, JWT shapes. These are easy to false-
+#            positive on test data, example configs, and constant strings.
+#
+# A patterns categorised as "high entropy" by name OR a regex with a
+# unique vendor prefix is high/medium; everything else lands in low.
+# ---------------------------------------------------------------------------
+
+_HIGH_ENTROPY_PATTERN_NAMES = frozenset({"High Entropy String"})
+
+# Vendor-prefixed tokens — distinctive enough to almost-always be real,
+# but technically a string of that shape could exist as a placeholder.
+_PREFIX_MATCH_PATTERN_NAMES = frozenset(
+    {
+        "AWS Access Key",
+        "AWS Secret Key",
+        "GitHub Token",
+        "GitHub Personal Access Token (classic)",
+        "GitLab Token",
+        "Slack Bot Token",
+        "Slack Webhook",
+        "Stripe Secret Key",
+        "Stripe Publishable Key",
+        "Google API Key",
+        "Heroku API Key",
+        "NPM Token",
+        "PyPI Token",
+        "SendGrid API Key",
+        "Twilio API Key",
+        "Mailgun API Key",
+        "Private Key",
+        "Database Connection String",
+    }
+)
+
+
+def _secrets_classify(finding: dict) -> tuple[str, str]:
+    """Map a secret finding to a (confidence, reason) tuple.
+
+    High-entropy passing matches get "high"; named vendor-prefix matches
+    get "medium"; everything else (generic regex, password assignments,
+    JWT shapes) lands in "low".
+    """
+    name = finding.get("pattern") or finding.get("pattern_name") or ""
+    matched = finding.get("matched_text") or ""
+    # The matched_text we ship is masked (e.g. "AKIA...XYZ4"). We still
+    # use it for length-based reasoning but cannot recompute entropy from
+    # a mask — the entropy gate has already been applied to keep this
+    # finding in the list, so trust the name as the dominant signal.
+    if name in _HIGH_ENTROPY_PATTERN_NAMES:
+        return "high", f"{name} pattern passed Shannon-entropy threshold {_ENTROPY_THRESHOLD}"
+    if name in _PREFIX_MATCH_PATTERN_NAMES:
+        return "medium", f"known-prefix match ({name}); length={len(matched)}"
+    return "low", f"generic / structural match ({name or 'unknown'}); manual review recommended"
 
 
 # ---------------------------------------------------------------------------
@@ -503,6 +539,20 @@ def _walk_for_files(root: Path) -> list[str]:
     return result
 
 
+@roam_capability(
+    name="secrets",
+    category="reports",
+    summary="Scan for hardcoded secrets, API keys, tokens, and passwords",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("secrets")
 @click.option(
     "--severity",
@@ -566,26 +616,35 @@ def secrets(ctx, severity, fail_on_found, include_tests):
 
     # --- JSON output ---
     if json_mode:
+        # R22: wrap each finding in {value, confidence, reason}. Consumers
+        # that previously read findings[i]["file"] must now read
+        # findings[i]["value"]["file"] plus findings[i]["confidence"] /
+        # findings[i]["reason"].
+        finding_values = [
+            {
+                "file": f["file"],
+                "line": f["line"],
+                "severity": f["severity"],
+                "pattern": f["pattern_name"],
+                "matched_text": f["matched_text"],
+                "remediation": f.get("remediation", ""),
+            }
+            for f in findings
+        ]
+        finding_triples = wrap_findings(finding_values, classifier=_secrets_classify)
+        distribution = confidence_distribution(finding_triples)
+        wrapped_verdict = verdict_with_high_count(verdict, distribution)
         envelope = json_envelope(
             "secrets",
             summary={
-                "verdict": verdict,
+                "verdict": wrapped_verdict,
                 "total_findings": total,
                 "files_affected": files_affected,
                 "by_severity": by_severity,
+                "findings_confidence_distribution": distribution,
             },
             budget=token_budget,
-            findings=[
-                {
-                    "file": f["file"],
-                    "line": f["line"],
-                    "severity": f["severity"],
-                    "pattern": f["pattern_name"],
-                    "matched_text": f["matched_text"],
-                    "remediation": f.get("remediation", ""),
-                }
-                for f in findings
-            ],
+            findings=finding_triples,
         )
         click.echo(to_json(envelope))
         if fail_on_found and total > 0:

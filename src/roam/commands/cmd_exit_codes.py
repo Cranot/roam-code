@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 _DESCRIPTIONS = {
@@ -21,6 +22,20 @@ _DESCRIPTIONS = {
 }
 
 
+@roam_capability(
+    name="exit-codes",
+    category="getting-started",
+    summary="List every roam exit code with its meaning",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command(name="exit-codes")
 @click.pass_context
 def exit_codes(ctx) -> None:

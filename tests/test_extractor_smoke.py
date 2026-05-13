@@ -219,9 +219,8 @@ SMOKE_MATRIX = [
         "html",
         1,
         "Invoice__c",
-        # _TAG_TO_KIND maps "object" → not present (key is "customobject"),
-        # so plain *.object-meta.xml falls through to the "metadata" default.
-        ("metadata",),
+        # _TAG_TO_KIND maps "object" → "object" (CustomObject root).
+        ("object",),
     ),
     # HCL — regex-only, tree=None. Canonical: the resource block.
     (

@@ -56,6 +56,15 @@ class Capability:
     deprecated: bool = False
     module: str = ""
     func_name: str = ""
+    # ROADMAP A1 — agent-OS control-plane fields. Defaults are conservative
+    # so existing decorators continue to work without modification.
+    maturity: str = "stable"  # "experimental" | "beta" | "stable" | "deprecated"
+    mcp_expose: bool = True  # whether to expose via MCP at default preset
+    mcp_preset: tuple[str, ...] = ("core",)  # which MCP presets include this tool
+    side_effect: bool = False  # writes to disk / fires HTTP / mutates state
+    task_required: bool = False  # required for task plans (validate_plan etc.)
+    destructive: bool = False  # rm-style operations
+    stale_sensitive: bool = True  # results invalidate when index goes stale
 
 
 @dataclass
@@ -109,6 +118,13 @@ class CapabilityRegistry:
                     "deprecated": cap.deprecated,
                     "module": cap.module,
                     "func_name": cap.func_name,
+                    "maturity": cap.maturity,
+                    "mcp_expose": cap.mcp_expose,
+                    "mcp_preset": list(cap.mcp_preset),
+                    "side_effect": cap.side_effect,
+                    "task_required": cap.task_required,
+                    "destructive": cap.destructive,
+                    "stale_sensitive": cap.stale_sensitive,
                 }
                 for cap in self.all()
             ],
@@ -116,6 +132,11 @@ class CapabilityRegistry:
 
 
 REGISTRY = CapabilityRegistry()
+
+# Alias the underlying name->Capability dict so consumers (CI test,
+# downstream tooling) have a stable handle to the registered set.
+# Mutating REGISTRY.items also mutates _CAPABILITIES — same object.
+_CAPABILITIES: dict[str, Capability] = REGISTRY.items
 
 
 def roam_capability(
@@ -131,6 +152,13 @@ def roam_capability(
     requires_index: bool = True,
     since: str | None = None,
     deprecated: bool = False,
+    maturity: str = "stable",
+    mcp_expose: bool = True,
+    mcp_preset: tuple[str, ...] | list[str] = ("core",),
+    side_effect: bool = False,
+    task_required: bool = False,
+    destructive: bool = False,
+    stale_sensitive: bool = True,
 ) -> Callable[[F], F]:
     """Mark a Click command as a capability for introspection.
 
@@ -159,6 +187,13 @@ def roam_capability(
             deprecated=deprecated,
             module=module,
             func_name=func_name,
+            maturity=maturity,
+            mcp_expose=mcp_expose,
+            mcp_preset=tuple(mcp_preset),
+            side_effect=side_effect,
+            task_required=task_required,
+            destructive=destructive,
+            stale_sensitive=stale_sensitive,
         )
         REGISTRY.register(cap)
         # Stash on the function for later introspection (e.g. roam capabilities --explain X)

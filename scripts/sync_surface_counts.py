@@ -4,8 +4,27 @@
 Single source of truth: ``roam.surface_counts.collect_surface_counts()``.
 This script reads the live counts and rewrites every doc-surface that
 quotes them: README.md, llms-install.md, server.json, mcp-server-card
-(both copies), the Cloudflare-served landing-page HTML / llms.txt, the
-Claude Code skill, and the in-repo CI integration doc.
+(both copies; see note below), the Cloudflare-served landing-page HTML /
+llms.txt, the Claude Code skill, and the in-repo CI integration doc.
+
+See also: ``dev/build_readme_counts.py``
+    The two scripts are intentional cousins, not duplicates. This one
+    (``sync_surface_counts.py``) handles **free-form prose surfaces**
+    via regex substitution: the landing-page HTML pages, llms.txt,
+    ``server.json``, ``skills/roam/SKILL.md``, ``competitor_site_data.py``,
+    and ``docs/ci-integration.md``. ``dev/build_readme_counts.py``
+    handles **marker-protected Markdown blocks** (README, CLAUDE,
+    llms-install) and the **two mcp-server-card.json files** (byte-
+    identical, required by ``test_bundled_card_matches_public_card``).
+    The mcp-server-card entries below are intentionally no-op
+    (``repl=None``) — those cards are owned by ``build_readme_counts.py``;
+    the entries are retained here only so reviewers can see the file is
+    explicitly covered elsewhere. README/llms-install overlap is benign
+    because the legacy regexes do not match the marker-block prose
+    shape that ``build_readme_counts.py`` writes.
+
+CI runs both scripts back-to-back in the ``doc-hygiene`` job
+(.github/workflows/roam-ci.yml). Either failing is a hard gate.
 
 Usage:
     python scripts/sync_surface_counts.py            # dry-run (report only)
@@ -62,32 +81,30 @@ def build_replacements(counts: dict, languages: int) -> None:
     spec = counts["specialised"]
     langs = languages
 
-    # README.md
+    # README.md and llms-install.md — owned by dev/build_readme_counts.py
+    # (marker-block writer). Retained here as inert (repl=None) entries
+    # so reviewers can see the files ARE covered. Same pattern as the
+    # mcp-server-card.json entries below. W23.1 reconciliation, 2026-05-13.
     REPLACEMENTS.append(
         (
             REPO_ROOT / "README.md",
             [
-                (
-                    re.compile(r"\*\d+ commands · \d+ MCP tools · \d+ languages"),
-                    f"*{cmds} commands · {mcp} MCP tools · {langs} languages",
-                ),
-                (re.compile(r"\bother \d+ specialised commands\b"), f"other {spec} specialised commands"),
-                (re.compile(r"\bremaining ~\d+ commands\b"), f"remaining ~{spec} commands"),
-                (re.compile(r"canonical surface is \*\*\d+ commands"), f"canonical surface is **{cmds} commands"),
+                # All None — see dev/build_readme_counts.py for the real writer.
+                (re.compile(r"\*\d+ commands · \d+ MCP tools · \d+ languages"), None),
+                (re.compile(r"\bother \d+ specialised commands\b"), None),
+                (re.compile(r"\bremaining ~\d+ commands\b"), None),
+                (re.compile(r"canonical surface is \*\*\d+ commands"), None),
             ],
         )
     )
 
-    # llms-install.md
     REPLACEMENTS.append(
         (
             REPO_ROOT / "llms-install.md",
             [
-                (
-                    re.compile(r"\b\d+ commands, \d+ MCP tools, \d+ languages\b"),
-                    f"{cmds} commands, {mcp} MCP tools, {langs} languages",
-                ),
-                (re.compile(r"all \d+ commands"), f"all {cmds} commands"),
+                # All None — see dev/build_readme_counts.py for the real writer.
+                (re.compile(r"\b\d+ commands, \d+ MCP tools, \d+ languages\b"), None),
+                (re.compile(r"all \d+ commands"), None),
             ],
         )
     )

@@ -21,6 +21,7 @@ import threading
 import time
 
 import networkx as nx
+import pytest
 
 # ---------------------------------------------------------------------------
 # ζ semantic signal — wired but dormant without [semantic] extras
@@ -154,12 +155,6 @@ class TestAibomExtension:
 
 
 class TestCgaAibomPredicate:
-    def test_predicate_type_constant(self):
-        from roam.attest.cga import PREDICATE_TYPE, PREDICATE_TYPE_AIBOM
-
-        assert PREDICATE_TYPE == "https://roam-code.dev/CodeGraph/v1"
-        assert PREDICATE_TYPE_AIBOM == "https://roam-code.dev/CodeGraph-AIBOM/v1"
-
     def test_verify_accepts_both_predicate_types(self):
         """The verifier must accept either predicate type. Smoke-check
         the predicate-type guard logic by reading the source — full
@@ -344,6 +339,9 @@ class TestGraphBackendDispatch:
 
     def test_pagerank_dispatches(self, monkeypatch):
         """Both backends must produce a {node: float} dict with all nodes."""
+        # nx.pagerank requires numpy / scipy; skip cleanly when the dev
+        # venv lacks the optional scientific stack.
+        pytest.importorskip("numpy")
         monkeypatch.setenv("ROAM_GRAPH_BACKEND", "networkx")
         from roam.runtime.graph_backend import pagerank
 

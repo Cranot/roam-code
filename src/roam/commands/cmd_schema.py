@@ -6,10 +6,25 @@ import json as _json
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 from roam.output.schema_registry import get_schema_info, validate_envelope
 
 
+@roam_capability(
+    name="schema",
+    category="getting-started",
+    summary="Show the roam JSON envelope schema and validate output files",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command("schema")
 @click.option(
     "--validate",

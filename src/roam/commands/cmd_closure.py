@@ -6,6 +6,7 @@ import os
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file as _is_test_file
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
@@ -172,6 +173,20 @@ def _closure_verdict(changes, sym_name):
     return f"closure for {sym_name} requires {len(changes)} change(s) in {len(file_set)} file(s)"
 
 
+@roam_capability(
+    name="closure",
+    category="refactoring",
+    summary="Compute the minimal set of changes needed when modifying a symbol",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("name")
 @click.option("--rename", default=None, help="New name for rename closure")

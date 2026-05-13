@@ -70,16 +70,16 @@ def workspace_root(tmp_path_factory):
         "\n"
         'const api = axios.create({ baseURL: "/api" });\n'
         "\n"
-        "export function fetchKiniseis() {\n"
-        '  return api.get("/redacted");\n'
+        "export function fetchTransactions() {\n"
+        '  return api.get("/transactions");\n'
         "}\n"
         "\n"
-        "export function saveKinisi(data) {\n"
-        '  return api.post("/redacted/save", data);\n'
+        "export function saveTransaction(data) {\n"
+        '  return api.post("/transactions/save", data);\n'
         "}\n"
         "\n"
-        "export function deleteKinisi(id) {\n"
-        "  return api.delete(`/redacted/${id}`);\n"
+        "export function deleteTransaction(id) {\n"
+        "  return api.delete(`/transactions/${id}`);\n"
         "}\n"
         "\n"
         "export function getArticle(id) {\n"
@@ -87,15 +87,15 @@ def workspace_root(tmp_path_factory):
         "}\n"
     )
     (fe_root / "src" / "store.js").write_text(
-        'import { fetchKiniseis, saveKinisi } from "./api";\n'
+        'import { fetchTransactions, saveTransaction } from "./api";\n'
         "\n"
-        "export class KinisiStore {\n"
+        "export class TransactionStore {\n"
         "  async load() {\n"
-        "    const result = await fetchKiniseis();\n"
+        "    const result = await fetchTransactions();\n"
         "    return result.data;\n"
         "  }\n"
         "  async save(data) {\n"
-        "    return saveKinisi(data);\n"
+        "    return saveTransaction(data);\n"
         "  }\n"
         "}\n"
     )
@@ -116,20 +116,20 @@ def workspace_root(tmp_path_factory):
     (be_root / "routes").mkdir()
     (be_root / "routes" / "api.php").write_text(
         "<?php\n"
-        "use App\\Http\\Controllers\\KinisiController;\n"
+        "use App\\Http\\Controllers\\TransactionController;\n"
         "use App\\Http\\Controllers\\ArticleController;\n"
         "\n"
-        "Route::get('/redacted', [KinisiController::class, 'index']);\n"
-        "Route::post('/redacted/save', [KinisiController::class, 'store']);\n"
-        "Route::delete('/redacted/{id}', [KinisiController::class, 'destroy']);\n"
+        "Route::get('/transactions', [TransactionController::class, 'index']);\n"
+        "Route::post('/transactions/save', [TransactionController::class, 'store']);\n"
+        "Route::delete('/transactions/{id}', [TransactionController::class, 'destroy']);\n"
         "Route::get('/articles/{id}', [ArticleController::class, 'show']);\n"
     )
     (be_root / "app").mkdir()
-    (be_root / "app" / "KinisiController.php").write_text(
+    (be_root / "app" / "TransactionController.php").write_text(
         "<?php\n"
         "namespace App\\Http\\Controllers;\n"
         "\n"
-        "class KinisiController {\n"
+        "class TransactionController {\n"
         "    public function index() { return []; }\n"
         "    public function store($request) { return null; }\n"
         "    public function destroy($id) { return null; }\n"
@@ -803,7 +803,7 @@ class TestWsContext:
 
     def test_ws_context_found(self, workspace_root):
         # This may or may not find the symbol depending on indexing
-        result = _run_roam(["ws", "context", "fetchKiniseis"], workspace_root)
+        result = _run_roam(["ws", "context", "fetchTransactions"], workspace_root)
         assert result.returncode == 0
 
     def test_ws_context_not_found(self, workspace_root):
@@ -822,7 +822,7 @@ class TestWsTrace:
     """Test `roam ws trace` command."""
 
     def test_ws_trace(self, workspace_root):
-        result = _run_roam(["ws", "trace", "KinisiStore", "KinisiController"], workspace_root)
+        result = _run_roam(["ws", "trace", "TransactionStore", "TransactionController"], workspace_root)
         assert result.returncode == 0
         assert "VERDICT" in result.stdout
 

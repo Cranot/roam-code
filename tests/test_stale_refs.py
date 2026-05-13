@@ -99,8 +99,22 @@ class TestStaleRefsDetection:
         assert "docs/strategy/cold-outreach.md" in result.output
 
     def test_finds_backtick_path(self, cli_runner, dangling_project, monkeypatch):
+        """Bare backtick strings in prose are inline code, not link syntax.
+        They're scanned only when ``--scan-bare-backticks`` is set. Without
+        the flag the historic bare-backtick path (``internal backlog``)
+        does NOT surface — see Bug 2 in the external dogfood findings
+        (cmd_stale_refs.py module docstring and
+        tests/test_stale_refs_corruption.py for context)."""
         monkeypatch.chdir(dangling_project)
+        # Default: bare backtick refs are NOT extracted.
         result = invoke_cli(cli_runner, ["stale-refs"], cwd=dangling_project)
+        assert "internal backlog" not in result.output
+        # Opt-in: re-enables the historical detection.
+        result = invoke_cli(
+            cli_runner,
+            ["stale-refs", "--scan-bare-backticks"],
+            cwd=dangling_project,
+        )
         assert "internal backlog" in result.output
 
     def test_finds_html_href(self, cli_runner, dangling_project, monkeypatch):
@@ -3381,7 +3395,7 @@ class TestRepoConfig:
         assert out_path.exists()
         statement = _json.loads(out_path.read_text(encoding="utf-8"))
         assert statement["_type"] == "https://in-toto.io/Statement/v1"
-        assert statement["predicateType"] == "https://roam-code.dev/StaleRefs/v1"
+        assert statement["predicateType"] == "https://roam-code.com/StaleRefs/v1"
         assert isinstance(statement["subject"], list) and len(statement["subject"]) == 1
         predicate = statement["predicate"]
         assert "scan_summary" in predicate
@@ -3404,7 +3418,7 @@ class TestRepoConfig:
             line = line.strip()
             if line.startswith("{") and line.endswith("}"):
                 statement = _json.loads(line)
-                assert statement["predicateType"] == "https://roam-code.dev/StaleRefs/v1"
+                assert statement["predicateType"] == "https://roam-code.com/StaleRefs/v1"
                 return
         raise AssertionError("no JSON statement found on stdout")
 
@@ -3606,7 +3620,7 @@ class TestRepoConfig:
         # Attestation on disk.
         assert out.exists()
         statement = _json.loads(out.read_text(encoding="utf-8"))
-        assert statement["predicateType"] == "https://roam-code.dev/StaleRefs/v1"
+        assert statement["predicateType"] == "https://roam-code.com/StaleRefs/v1"
 
     def test_attest_with_gate_returns_5_and_still_writes(self, cli_runner, dangling_project, tmp_path):
         """2A: ``--attest`` writes the statement BEFORE the gate exit."""
@@ -3623,7 +3637,7 @@ class TestRepoConfig:
         import json as _json
 
         statement = _json.loads(out_path.read_text(encoding="utf-8"))
-        assert statement["predicateType"] == "https://roam-code.dev/StaleRefs/v1"
+        assert statement["predicateType"] == "https://roam-code.com/StaleRefs/v1"
 
     def test_config_ignore_composes_with_fix_preview(self, cli_runner, dangling_project):
         """2A: Config-loaded ``ignore`` list is honoured by --fix preview, not just --json."""

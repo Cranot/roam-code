@@ -23,7 +23,58 @@ import click
 
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.languages import JS_FAMILY_LANGUAGES
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
+
+
+# R22 — confidence-derivation rule for orphan imports:
+#   "internal_typo" (Python: top-level package is indexed but the
+#     dotted submodule isn't) → "high". The package exists; this is
+#     almost surely a stale import or typo.
+#   "missing_package" (Python: importlib can't find anything matching
+#     even at top level) → "medium". Could be a typo, could be an
+#     uninstalled optional dep — agent should investigate.
+#   "missing_local" (JS/Go: relative path or local package not in
+#     indexed files) → "medium". Same uncertainty as missing_package
+#     but with slightly higher build-tool surface area.
+_ORPHAN_KIND_CONFIDENCE = {
+    "internal_typo": "high",
+    "missing_package": "medium",
+    "missing_local": "medium",
+}
+
+
+def _orphan_classify(o: dict) -> tuple[str, str]:
+    """Map an orphan-import finding to a (confidence, reason) tuple."""
+    kind = (o.get("kind") or "").lower()
+    conf = _ORPHAN_KIND_CONFIDENCE.get(kind, "low")
+    lang = o.get("language", "?")
+    module = o.get("module", "?")
+    if kind == "internal_typo":
+        reason = (
+            f"{lang}: top-level package for '{module}' is indexed but "
+            f"the full dotted path is not — almost certainly a typo or "
+            f"stale import"
+        )
+    elif kind == "missing_package":
+        reason = (
+            f"{lang}: '{module}' resolves neither in the index nor via "
+            f"importlib — likely typo or uninstalled dependency"
+        )
+    elif kind == "missing_local":
+        reason = (
+            f"{lang}: '{module}' is a path-style import that doesn't "
+            f"resolve to an indexed file — possible build-tool resolution"
+        )
+    else:
+        reason = f"{lang}: unknown orphan kind '{kind}'"
+    return conf, reason
 
 # Python ----------------------------------------------------------------------
 
@@ -158,7 +209,7 @@ def _indexed_python_modules(conn) -> set[str]:
 
 
 def _indexed_js_modules(conn) -> set[str]:
-    """Return path-style module identifiers for indexed JS/TS files.
+    """Return path-style module identifiers for indexed JS/TS/Vue/Svelte files.
 
     A JS import like ``./utils/format`` or ``../models/user`` resolves
     relative to the importing file. Path-relative imports we keep as-is
@@ -167,13 +218,28 @@ def _indexed_js_modules(conn) -> set[str]:
     flag them only when no node_modules signal exists. Indexed modules
     are accumulated as posix paths *without* extension so an import of
     ``./utils/format`` matches ``src/utils/format.ts``.
+
+    Vue/Svelte SFCs are first-class JS module citizens: importing a
+    ``.vue`` file resolves to the file path itself (the extension is
+    typically retained at the import site, e.g.
+    ``import Bar from './Bar.vue'``) and the extension-less variant
+    also resolves under common bundler configurations.
     """
     out: set[str] = set()
-    rows = conn.execute("SELECT path FROM files WHERE language IN ('javascript','typescript','tsx','jsx')").fetchall()
+    ph = ",".join("?" * len(JS_FAMILY_LANGUAGES))
+    rows = conn.execute(
+        f"SELECT path FROM files WHERE language IN ({ph})",
+        JS_FAMILY_LANGUAGES,
+    ).fetchall()
     for r in rows:
         path = (r[0] or "").replace("\\", "/")
-        # Strip extension and `index` filename
-        without_ext = re.sub(r"\.(js|jsx|ts|tsx|mjs|cjs)$", "", path)
+        # Register the path *with* the .vue / .svelte extension so explicit
+        # `import Bar from './Bar.vue'` resolves directly.
+        out.add(path)
+        # Strip extension and `index` filename so extension-less imports
+        # (`./utils/format`) match too. Includes .vue / .svelte for
+        # bundlers that allow omitting those extensions.
+        without_ext = re.sub(r"\.(js|jsx|ts|tsx|mjs|cjs|vue|svelte)$", "", path)
         out.add(without_ext)
         if without_ext.endswith("/index"):
             out.add(without_ext[: -len("/index")])
@@ -287,8 +353,10 @@ def _scan_python(conn) -> tuple[list[dict], int]:
 
 def _scan_javascript(conn) -> tuple[list[dict], int]:
     indexed = _indexed_js_modules(conn)
+    ph = ",".join("?" * len(JS_FAMILY_LANGUAGES))
     rows = conn.execute(
-        "SELECT path FROM files WHERE language IN ('javascript','typescript','tsx','jsx') ORDER BY path"
+        f"SELECT path FROM files WHERE language IN ({ph}) ORDER BY path",
+        JS_FAMILY_LANGUAGES,
     ).fetchall()
     orphans: list[dict] = []
     files_scanned = 0
@@ -392,6 +460,20 @@ _SCANNERS = {
 }
 
 
+@roam_capability(
+    name="orphan-imports",
+    category="refactoring",
+    summary="List imports that don't resolve to any indexed module / installed package",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command(name="orphan-imports")
 @click.option(
     "--lang",
@@ -426,17 +508,25 @@ def orphan_imports(ctx, lang) -> None:
     )
 
     if json_mode:
+        # R22: wrap each orphan in {value, confidence, reason}.
+        # Consumers that previously read `orphans[i]["module"]` must
+        # now read `orphans[i]["value"]["module"]` plus
+        # `orphans[i]["confidence"]` / `orphans[i]["reason"]`.
+        orphan_triples = wrap_findings(all_orphans[:200], classifier=_orphan_classify)
+        distribution = confidence_distribution(orphan_triples)
+        verdict_with_conf = verdict_with_high_count(verdict, distribution)
         click.echo(
             to_json(
                 json_envelope(
                     "orphan-imports",
                     summary={
-                        "verdict": verdict,
+                        "verdict": verdict_with_conf,
                         "count": len(all_orphans),
                         "files_scanned": files_scanned,
                         "languages": targets,
+                        "findings_confidence_distribution": distribution,
                     },
-                    orphans=all_orphans[:200],
+                    orphans=orphan_triples,
                 )
             )
         )

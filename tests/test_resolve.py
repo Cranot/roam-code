@@ -352,24 +352,24 @@ class TestMatchImportPath:
     """Verify _match_import_path filters candidates by import path."""
 
     def test_at_alias_path_match(self):
-        """@/composables/redacted matches src/composables/redacted/types.ts."""
+        """@/composables/transactions matches src/composables/transactions/types.ts."""
         candidates = [
-            {"file_path": "src/composables/redacted/types.ts", "is_exported": True},
-            {"file_path": "src/views/KiniseisView.vue", "is_exported": False},
+            {"file_path": "src/composables/transactions/types.ts", "is_exported": True},
+            {"file_path": "src/views/TransactionsView.vue", "is_exported": False},
         ]
-        matched = _match_import_path("@/composables/redacted", candidates)
+        matched = _match_import_path("@/composables/transactions", candidates)
         assert len(matched) == 1
-        assert matched[0]["file_path"] == "src/composables/redacted/types.ts"
+        assert matched[0]["file_path"] == "src/composables/transactions/types.ts"
 
     def test_at_alias_direct_file_match(self):
-        """@/composables/redacted/types matches the exact file."""
+        """@/composables/transactions/types matches the exact file."""
         candidates = [
-            {"file_path": "src/composables/redacted/types.ts", "is_exported": True},
-            {"file_path": "src/composables/redacted/balance.ts", "is_exported": True},
+            {"file_path": "src/composables/transactions/types.ts", "is_exported": True},
+            {"file_path": "src/composables/transactions/balance.ts", "is_exported": True},
         ]
-        matched = _match_import_path("@/composables/redacted/types", candidates)
+        matched = _match_import_path("@/composables/transactions/types", candidates)
         assert len(matched) == 1
-        assert matched[0]["file_path"] == "src/composables/redacted/types.ts"
+        assert matched[0]["file_path"] == "src/composables/transactions/types.ts"
 
     def test_relative_path_match(self):
         """./types matches a file in the same directory."""
@@ -386,7 +386,7 @@ class TestMatchImportPath:
         candidates = [
             {"file_path": "src/utils/helpers.ts", "is_exported": True},
         ]
-        matched = _match_import_path("@/composables/redacted", candidates)
+        matched = _match_import_path("@/composables/transactions", candidates)
         assert len(matched) == 0
 
     def test_empty_import_path_returns_empty(self):
@@ -397,9 +397,9 @@ class TestMatchImportPath:
     def test_backslash_normalization(self):
         """Windows backslash paths are normalized."""
         candidates = [
-            {"file_path": "src\\composables\\redacted\\types.ts", "is_exported": True},
+            {"file_path": "src\\composables\\transactions\\types.ts", "is_exported": True},
         ]
-        matched = _match_import_path("@/composables/redacted", candidates)
+        matched = _match_import_path("@/composables/transactions", candidates)
         assert len(matched) == 1
 
 

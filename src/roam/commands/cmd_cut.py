@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -11,6 +12,20 @@ from roam.output.formatter import json_envelope, to_json
 _MAX_GRAPH_SYMBOLS = 5000
 
 
+@roam_capability(
+    name="cut",
+    category="architecture",
+    summary="Minimum cut analysis — find fragile domain boundaries",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("cut")
 @click.option("--between", nargs=2, default=None, help="Analyze boundary between two clusters")
 @click.option("--leak-edges", "leak_edges", is_flag=True, help="Focus on leak edge analysis")

@@ -49,6 +49,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.cmd_stale_refs import (
     _BACKTICK_PATH_RE,
     _HTML_ATTR_RE,
@@ -859,6 +860,20 @@ def _handle_code_action(state: _ServerState, msg: dict, writer) -> None:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="lsp",
+    category="refactoring",
+    summary="Run the roam-stale-refs language server on stdin/stdout (LSP)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("lsp")
 @click.option(
     "--once",

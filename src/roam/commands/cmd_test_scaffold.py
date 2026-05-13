@@ -7,6 +7,7 @@ import posixpath
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
@@ -555,6 +556,20 @@ def _find_already_tested(conn, symbols, test_file_path):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="test-scaffold",
+    category="refactoring",
+    summary="Generate test file skeletons from indexed symbols",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("test-scaffold")
 @click.argument("name")
 @click.option("--write", is_flag=True, help="Write the scaffold to disk (default: dry-run)")

@@ -1,14 +1,31 @@
-"""Auto-detect implicit codebase conventions and patterns."""
+"""Auto-detect implicit codebase conventions and patterns.
+
+This module hosts the case-classification primitives
+(``classify_case``, ``_group_for_kind``, ``_LANGUAGE_KIND_DEFAULTS``,
+etc.) used everywhere in roam. The **canonical aggregator** that
+applies them and produces per-kind percentages lives in
+``roam.commands.conventions_helper`` — the standalone ``conventions``
+command, ``roam describe``, ``roam understand``, ``roam minimap``, and
+``roam preflight`` all delegate there so they agree on the same
+codebase.
+"""
 
 from __future__ import annotations
 
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.languages import JS_FAMILY_LANGUAGES
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import (
     abbrev_kind,
     format_table,
@@ -16,6 +33,48 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
+
+
+# R22 — confidence classifier for convention-violation findings.
+#
+# Each outlier carries the (family, group) it violated. The confidence
+# reflects how dominant the convention is in that group:
+#   high   — the convention is dominant in ≥90% of the group; this
+#            symbol is genuinely an outlier.
+#   medium — 70–89% dominance; convention is real but with notable
+#            minority styles, so the call is softer.
+#   low    — 50–69% dominance; the project doesn't have a clear
+#            convention, so flagging the symbol is mostly noise.
+#
+# We capture the group percent at envelope-build time and stash it on
+# each outlier so the classifier can read it without needing the
+# naming_summary dict.
+_CONVENTION_HIGH_PCT = 90.0
+_CONVENTION_MEDIUM_PCT = 70.0
+
+
+def _convention_classify(violation: dict) -> tuple[str, str]:
+    """Map a convention-violation finding to a (confidence, reason) tuple."""
+    pct = violation.get("group_dominant_pct")
+    expected = violation.get("expected_style") or "?"
+    actual = violation.get("actual_style") or "?"
+    try:
+        pct_f = float(pct) if pct is not None else 0.0
+    except (TypeError, ValueError):
+        pct_f = 0.0
+    if pct_f >= _CONVENTION_HIGH_PCT:
+        return "high", (
+            f"{expected} is dominant in {pct_f:.0f}% of its group; "
+            f"this {actual} symbol is a clear outlier"
+        )
+    if pct_f >= _CONVENTION_MEDIUM_PCT:
+        return "medium", (
+            f"{expected} dominant in {pct_f:.0f}% of its group; "
+            f"convention real but not unanimous"
+        )
+    return "low", (
+        f"{expected} only {pct_f:.0f}% dominant; convention is weak in this group"
+    )
 
 # ---------------------------------------------------------------------------
 # Case-style detection
@@ -442,15 +501,22 @@ def _analyze_exports(conn) -> dict:
         )
 
     # Detect default-export vs named-export preference for JS/TS
-    # Check if files have exactly one exported symbol (likely default export)
-    default_style_rows = conn.execute("""
+    # Check if files have exactly one exported symbol (likely default export).
+    # Vue / Svelte SFCs participate in the same import graph as .ts files
+    # (their ``<script>`` blocks compile down to ESM modules) so they're
+    # counted here — see ``roam.languages.JS_FAMILY_LANGUAGES``.
+    js_ph = ",".join("?" * len(JS_FAMILY_LANGUAGES))
+    default_style_rows = conn.execute(
+        f"""
         SELECT f.id, f.path, COUNT(*) as exported_count
         FROM symbols s
         JOIN files f ON s.file_id = f.id
         WHERE s.is_exported = 1
-          AND f.language IN ('typescript', 'javascript', 'tsx', 'jsx')
+          AND f.language IN ({js_ph})
         GROUP BY f.id
-    """).fetchall()
+    """,
+        JS_FAMILY_LANGUAGES,
+    ).fetchall()
 
     single_export_files = sum(1 for r in default_style_rows if r["exported_count"] == 1)
     multi_export_files = sum(1 for r in default_style_rows if r["exported_count"] > 1)
@@ -530,55 +596,37 @@ def _analyze_error_handling(conn) -> dict:
     }
 
 
-def _analyze_naming(conn) -> tuple[list, dict, list, dict]:
+def _analyze_naming(conn, exclude_paths=None) -> tuple[list, dict, list, dict]:
     """Discover dominant naming style per (language_family, kind_group) and
     surface symbols that violate it.
 
-    Returns ``(all_symbols, naming_summary, outliers, affixes)``.
+    Delegates to ``roam.commands.conventions_helper.compute_conventions``
+    so the standalone ``conventions`` command agrees with every other
+    roam command that mentions conventions. Excludes non-source-code
+    paths (``.github/``, ``.claude/``, ``docs/``, ``dist/``, …) by
+    default — Pattern 4 of the dogfood corpus showed standalone
+    conventions emitting 9014 outliers (51% of identifiers!) including
+    ``.github/workflows/setup-node``-style false positives.
+
+    Returns ``(all_symbols, naming_summary, outliers, affixes)`` to
+    preserve the historic call shape for backwards compatibility with
+    the JSON envelope.
     """
-    all_symbols = conn.execute("""
-        SELECT s.name, s.kind, s.line_start, f.path as file_path,
-               COALESCE(f.language, '') as language
-        FROM symbols s
-        JOIN files f ON s.file_id = f.id
-        WHERE s.kind IN ('function', 'method', 'class', 'interface',
-                         'struct', 'trait', 'enum', 'variable',
-                         'constant', 'property', 'field', 'type_alias')
-    """).fetchall()
+    # Inline import to avoid circular dependency at module load.
+    from roam.commands.conventions_helper import compute_conventions
 
-    # Group by (language_family, kind_group) — noted that
-    # imposing the codebase-wide dominant style on SQL files (which
-    # legitimately use snake_case for tables/views) produced 5384
-    # false-positive outliers. Each family has its own community
-    # default that we respect when computing "expected style".
-    group_cases: dict[tuple[str, str], Counter] = defaultdict(Counter)
-    symbol_details: list[dict] = []
+    result = compute_conventions(conn, exclude_paths=exclude_paths)
 
-    for sym in all_symbols:
-        group = _group_for_kind(sym["kind"])
-        style = classify_case(sym["name"])
-        family = _language_family(sym["language"])
-        if not style:
-            continue
-        group_cases[(family, group)][style] += 1
-        symbol_details.append(
-            {
-                "name": sym["name"],
-                "kind": sym["kind"],
-                "group": group,
-                "language_family": family,
-                "style": style,
-                "file": sym["file_path"],
-                "line": sym["line_start"],
-            }
-        )
-
-    naming_summary = _build_naming_summary(group_cases)
-    outliers = _find_naming_outliers(symbol_details, naming_summary)
-    all_names = [
-        sym["name"] for sym in all_symbols if len(sym["name"]) >= _MIN_NAME_LEN and sym["name"] not in _SKIP_NAMES
-    ]
-    affixes = _detect_affixes(all_names)
+    # all_symbols is returned for callers that needed the raw row list.
+    # The helper doesn't expose that anymore (since exclude filtering
+    # happens inside it), so we synthesise a compatible row count from
+    # the totals. Existing callers (this module's own ``conventions``
+    # command) only use ``naming_summary``, ``outliers``, and
+    # ``affixes`` — the raw list is kept as an empty placeholder.
+    all_symbols: list = []
+    naming_summary = result["by_family_group"]
+    outliers = result["outliers"]
+    affixes = result["affixes"]
     return all_symbols, naming_summary, outliers, affixes
 
 
@@ -638,6 +686,20 @@ def _find_naming_outliers(symbol_details: list[dict], naming_summary: dict[str, 
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="conventions",
+    category="refactoring",
+    summary="Auto-detect codebase naming, file, import, and export conventions",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("-n", "max_outliers", default=10, help="Maximum outliers to display per category")
 @click.pass_context
@@ -647,16 +709,33 @@ def conventions(ctx, max_outliers):
     Unlike ``verify`` (which enforces conventions on changed files) and
     ``check-rules`` (which evaluates governance rules), this command
     discovers what conventions the codebase actually follows.
+
+    Naming detection delegates to the canonical helper at
+    ``roam.commands.conventions_helper`` so this command's verdicts
+    agree with ``roam describe``, ``roam understand``, ``roam minimap``,
+    and ``roam preflight``.
+
+    By default the helper skips identifiers under ``.github/``,
+    ``.claude/``, ``docs/``, ``dist/``, ``build/``, ``node_modules/``,
+    ``vendor/``, and ``__pycache__/``. The global ``--include-excluded``
+    flag restores legacy scan-everything behaviour for users who need it.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    include_excluded = ctx.obj.get("include_excluded") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
         project = find_project_root().name
 
         # ---- 1. Naming conventions ----
-        all_symbols, naming_summary, outliers, affixes = _analyze_naming(conn)
+        # ``exclude_paths=()`` disables the default exclusion list so
+        # the legacy scan-everything behaviour is still available via
+        # the global ``--include-excluded`` flag.
+        exclude_paths = () if include_excluded else None
+        all_symbols, naming_summary, outliers, affixes = _analyze_naming(
+            conn, exclude_paths=exclude_paths
+        )
 
         # ---- 2. File organization ----
         file_rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
@@ -685,19 +764,40 @@ def conventions(ctx, max_outliers):
 
         # ---- JSON output ----
         if json_mode:
-            violation_list = [
-                {
-                    "name": o["name"],
-                    "kind": o["kind"],
-                    "actual_style": o["actual_style"],
-                    "expected_style": o["expected_style"],
-                    "file": o["file"],
-                    "line": o["line"],
-                }
-                for o in outliers
-            ]
+            # Annotate each outlier with the dominant-style percent of
+            # its (family, group) so the R22 classifier can derive a
+            # confidence label without needing naming_summary at hand.
+            violation_list = []
+            for o in outliers:
+                family = o.get("language_family", "unknown")
+                # Recover group by looking at the kind (we don't store
+                # group on the outlier directly).
+                kind = o.get("kind", "")
+                group = _group_for_kind(kind)
+                key = f"{family}/{group}" if family != "unknown" else group
+                grp_info = naming_summary.get(key) or {}
+                violation_list.append(
+                    {
+                        "name": o["name"],
+                        "kind": o["kind"],
+                        "actual_style": o["actual_style"],
+                        "expected_style": o["expected_style"],
+                        "file": o["file"],
+                        "line": o["line"],
+                        "group_dominant_pct": grp_info.get("percent"),
+                        "group_dominant_style": grp_info.get("dominant_style"),
+                        "naming_group": key,
+                    }
+                )
+            # R22: wrap each violation in {value, confidence, reason}.
+            # Consumers that previously read violations[i]["name"] must
+            # now read violations[i]["value"]["name"] plus
+            # violations[i]["confidence"] / violations[i]["reason"].
+            violation_triples = wrap_findings(violation_list, classifier=_convention_classify)
+            distribution = confidence_distribution(violation_triples)
+            wrapped_verdict = verdict_with_high_count(verdict, distribution)
             summary = {
-                "verdict": verdict,
+                "verdict": wrapped_verdict,
                 "total_symbols_analyzed": sum(g["total"] for g in naming_summary.values()),
                 "naming_groups": len(naming_summary),
                 "outlier_count": len(outliers),
@@ -706,6 +806,7 @@ def conventions(ctx, max_outliers):
                 "barrel_files": file_info["barrel_files"],
                 "import_style": import_info["style"],
                 "exported_pct": export_info["exported_pct"],
+                "findings_confidence_distribution": distribution,
             }
             click.echo(
                 to_json(
@@ -719,7 +820,7 @@ def conventions(ctx, max_outliers):
                         imports=import_info,
                         exports=export_info,
                         errors=error_info,
-                        violations=violation_list,
+                        violations=violation_triples,
                     )
                 )
             )

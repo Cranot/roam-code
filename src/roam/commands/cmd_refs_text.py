@@ -36,6 +36,7 @@ from roam.commands.grep_helpers import (
     lookup_clone_siblings,
     run_search,
 )
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, loc, to_json
@@ -89,6 +90,20 @@ def _classify_match(m: dict, reach_set: set[int] | None, orphans: set[int]) -> s
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="refs-text",
+    category="exploration",
+    summary="Audit literal strings across the project: per-surface refs + verdict",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("refs-text")
 @click.argument("strings", nargs=-1)
 @click.option("-e", "--regex", "extra", multiple=True, help="Additional string (repeatable). Same as positional args.")

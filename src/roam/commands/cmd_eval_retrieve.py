@@ -21,6 +21,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.eval.harness import (
@@ -38,6 +39,20 @@ def _default_task_path() -> Path:
     return Path("bench/retrieve/roam_self.jsonl")
 
 
+@roam_capability(
+    name="eval-retrieve",
+    category="health",
+    summary="Run the retrieval eval harness over a labeled task set",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("eval-retrieve")
 @click.option(
     "--tasks",

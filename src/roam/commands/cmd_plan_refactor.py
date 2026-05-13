@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.cmd_guard import _layer_analysis, _risk_score, _trim_signature
 from roam.commands.context_helpers import (
     gather_symbol_context,
@@ -265,6 +266,20 @@ def _build_steps(
     return steps
 
 
+@roam_capability(
+    name="plan-refactor",
+    category="refactoring",
+    summary="Build an ordered refactoring plan with risk, test, and impact context",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("plan-refactor")
 @click.argument("symbol")
 @click.option(
@@ -304,6 +319,15 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
     See also ``suggest-refactoring`` (codebase-wide candidate ranking),
     ``simulate`` (architecture what-if), and ``preflight`` (blast-radius
     gate before applying the plan).
+
+    \b
+    --detail semantics (W22.3 / Pattern 3 documentation):
+      The ``plan`` array is ALWAYS returned in full -- it is the
+      headline output. ``--detail`` toggles auxiliary list sizes
+      (tests 5 -> all, layer items 8 -> 20, simulation previews
+      first-only -> all) and, in text mode, expands each step with its
+      ``details`` line and ``run:`` command. This is in-place
+      truncation, NOT progressive-disclosure (``strip_list_payloads``).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
@@ -389,6 +413,7 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
                 "steps": len(plan_steps),
                 "selected_strategy": strategy,
                 "callers": len(context["non_test_callers"]),
+                "caller_metric_definition": "raw_edge_rows",
                 "callees": len(context["callees"]),
                 "test_files": total_test_files,
                 "dependent_symbols": int(blast.get("dependent_symbols") or 0),

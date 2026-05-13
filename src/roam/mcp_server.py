@@ -838,7 +838,19 @@ def _tool(
     def decorator(fn):
         if mcp is None:
             return fn
-        # Meta-tool is always registered; others filtered by preset
+        # R8.E8 / Fix F: apply the handle-off wrapper UP-FRONT, before the
+        # preset filter. Even when this tool is hidden by the active
+        # preset (so MCP-protocol registration is skipped), an in-process
+        # caller — including the compound tools (``for_*``, ``prepare_*``)
+        # and internal helpers that call the tool directly via module
+        # attribute — still benefits from automatic handle-off when the
+        # response exceeds ``ROAM_MCP_HANDLE_KB``. The cost is one extra
+        # function call when no handle-off fires (sub-microsecond).
+        fn = _wrap_with_handle_off(name, fn)
+
+        # Meta-tool is always registered; others filtered by preset.
+        # When filtered out, return the handle-off-wrapped function so
+        # in-process callers still get the same safety net as MCP clients.
         if name != _META_TOOL:
             if _ACTIVE_TOOLS and name not in _ACTIVE_TOOLS:
                 return fn
@@ -849,13 +861,12 @@ def _tool(
         # semaphore acquire (sub-microsecond).
         from roam.mcp_extras.concurrency import wrap_with_guard
 
-        # R8.E8: post-process large returns into reference-based
-        # handles so the agent's context budget isn't blown by a
-        # single 50KB+ envelope. Wraps BEFORE the concurrency guard
-        # so the guard's BUSY error envelope passes through unchanged
-        # (errors are never handle-off'd).
-        fn = _wrap_with_handle_off(name, fn)
         fn = wrap_with_guard(name, fn)
+        # Fix D: legacy-parameter-alias normalization. Sits OUTERMOST so it
+        # sees raw client kwargs before any other wrapper, and so the
+        # synthesised signature (canonical + aliases) is what FastMCP /
+        # Pydantic introspect when generating the tool's JSON schema.
+        fn = _wrap_with_alias_normalization(name, fn)
         _REGISTERED_TOOLS.append(name)
         # extract richer metadata from the tool's docstring so
         # ``roam_catalog`` consumers don't need to fetch each tool's
@@ -932,7 +943,11 @@ def _tool(
             seen.add(signature)
             try:
                 return mcp.tool(**attempt)(fn)
-            except (TypeError, ImportError) as exc:
+            except (TypeError, ImportError, ValueError) as exc:
+                # ValueError covers the FastMCP 2.14+ guard that rejects
+                # a sync function with task config enabled (the legacy
+                # fallback attempt — which strips ``task`` — will retry
+                # without it and succeed).
                 last_error = exc
                 continue
 
@@ -1011,6 +1026,10 @@ _DOC_LINKS: dict[str, str] = {
     # fails and the rollback path runs. Agents need a doc link to the
     # recovery playbook (verify rollback, re-stage, retry).
     "APPLY_FAILED": "https://roam-code.com/docs/troubleshooting",
+    # Task 2a — stale .roam/config.json db_dir (typically from a moved /
+    # deleted external drive). Section anchor is fall-through; the
+    # surrounding envelope's hint carries the per-config remediation.
+    "STALE_DB_DIR": "https://roam-code.com/docs/troubleshooting",
     "UNKNOWN": "https://roam-code.com/docs/troubleshooting",
 }
 
@@ -1081,6 +1100,10 @@ _SEVERITY_MAP: dict[str, str] = {
     # ``error`` because the working tree may carry partial edits even
     # after rollback; the agent must re-verify before retrying.
     "APPLY_FAILED": "error",
+    # Task 2a — stale db_dir is a config drift problem; severity is
+    # ``error`` because the request fully failed, but ``retryable`` is
+    # False so agents stop hammering the same broken path.
+    "STALE_DB_DIR": "error",
     "UNKNOWN": "error",
 }
 
@@ -1092,6 +1115,299 @@ _SEVERITY_MAP: dict[str, str] = {
 # returns the moment a different error_code fires (resets the counter).
 _ERROR_STORM_THRESHOLD = 3
 _ERROR_STORM_STATE: dict[str, int] = {"_last_code": 0, "_count": 0}
+
+# Task 2 (IMPLEMENTATION-2026-05-12) — preserve the FIRST error message
+# observed for a given error_code so trimmed-envelope replies still
+# carry the actionable stderr text. Without this cache the agent loop
+# loses the remediation hint after the 3rd fire (storm trim drops the
+# verbose `error` field) and has to guess from `error_code` alone.
+# Keyed by `error_code` — overwritten whenever a fresh first-occurrence
+# of that code is captured; cleared by `_reset_error_storm`.
+_first_error_message: dict[str, str] = {}
+
+# Fix E (Sub-task 4) — session-wide counter for ``partial_success: true``
+# envelopes. The ``session_metrics`` tool used to report
+# ``error_count: 0`` even when many calls in the session returned
+# ``summary.partial_success: true``; agents reading the metrics
+# concluded the session was clean when it wasn't. We increment this
+# counter at the central dispatch points (``_run_roam`` /
+# ``_compound_envelope``) so any envelope flowing through them is
+# observed exactly once.
+_session_partial_success_count: int = 0
+
+
+def _note_partial_success(envelope: dict | None) -> None:
+    """If *envelope* declares ``summary.partial_success: true``, tick the
+    session counter. Idempotent on non-dict inputs."""
+    global _session_partial_success_count
+    if not isinstance(envelope, dict):
+        return
+    summary = envelope.get("summary")
+    if isinstance(summary, dict) and summary.get("partial_success") is True:
+        _session_partial_success_count += 1
+
+
+def _reset_session_partial_success_count() -> None:
+    """Test helper — reset the session-wide partial_success counter."""
+    global _session_partial_success_count
+    _session_partial_success_count = 0
+
+
+# ---------------------------------------------------------------------------
+# Fix D (SYNTHESIS Pattern 3b — vocabulary harmonization at the MCP boundary)
+#
+# Different tools historically named the SAME concept differently:
+#   - symbol identifier:  ``symbol`` / ``name`` / ``target``
+#   - file location:      ``path`` / ``file`` / ``paths``
+#   - free-text query:    ``query`` / ``pattern`` / ``prefix``
+#
+# We pick a canonical name per concept (``symbol`` / ``path`` / ``query``) and
+# accept the historical aliases at the dispatch boundary, emitting a
+# deprecation warning so agents migrate without breaking. The alias layer is
+# ADDITIVE — no parameter is ever removed, only translated.
+#
+# Concepts intentionally NOT collapsed:
+#   - ``paths`` (plural list) vs ``path`` (singular) — semantically distinct
+#   - ``prefix`` — literal-prefix-match semantics, not free-text query
+#   - ``envelope_path`` — a specific JSON envelope file, not a generic path
+#   - ``trace_file`` — refers to an OTel/Jaeger/Zipkin trace, not source code
+#   - ``rules_dir`` / ``redact_paths`` — directories / flags, distinct concepts
+#   - ``from_pattern`` / ``to_pattern`` — regex patterns for path filtering
+# ---------------------------------------------------------------------------
+
+# Per-concept alias map: {canonical_name: {alias: canonical}}. The redundant
+# value half lets callers also do reverse lookup if needed; the helper only
+# uses the keys.
+_PARAM_ALIASES: dict[str, dict[str, str]] = {
+    "symbol": {"name": "symbol", "target": "symbol"},
+    "path": {"file": "path"},
+    "query": {"pattern": "query"},
+}
+
+
+def _normalize_aliases(
+    tool_name: str, kwargs: dict, accepted: set[str]
+) -> tuple[dict, list[str]]:
+    """Rewrite alias keys in ``kwargs`` to canonical names.
+
+    Parameters
+    ----------
+    tool_name:
+        MCP tool name (e.g. ``"roam_uses"``). Used for warning text only.
+    kwargs:
+        The keyword arguments the dispatcher received from the client.
+    accepted:
+        The canonical kwarg names the tool's Python signature actually
+        declares. Only aliases for keys in this set are rewritten — that
+        way a tool whose ``target`` parameter means "git ref" (not
+        "symbol") is unaffected because ``symbol`` is not in its
+        ``accepted`` set, so the ``target → symbol`` alias is skipped.
+
+    Returns
+    -------
+    (new_kwargs, warnings) — ``new_kwargs`` is a fresh dict with aliases
+    rewritten; ``warnings`` is a list of human-readable deprecation
+    strings (empty when no alias was used).
+
+    Rules
+    -----
+    1. If ONLY the alias is supplied (e.g. ``name=X``) and the canonical
+       (``symbol``) is not, the alias is renamed to canonical and a
+       deprecation warning is recorded.
+    2. If BOTH are supplied, the canonical wins and the alias is dropped
+       with a "duplicate / ignoring alias" warning. We never silently
+       merge or prefer the alias.
+    3. Aliases for canonicals NOT in ``accepted`` are left untouched —
+       same-named parameters with different semantics across tools stay
+       independent.
+    """
+    warnings: list[str] = []
+    out = dict(kwargs)
+    for canon, alias_map in _PARAM_ALIASES.items():
+        if canon not in accepted:
+            continue
+        for alias in alias_map:
+            if alias == canon:
+                # ``symbol → symbol`` is a no-op identity that lives in the
+                # map only for documentation; skip it.
+                continue
+            if alias in out and canon not in out:
+                out[canon] = out.pop(alias)
+                warnings.append(
+                    f"{tool_name}: param '{alias}' is deprecated; use '{canon}'"
+                )
+            elif alias in out and canon in out:
+                # Both supplied — canonical wins, alias is dropped loudly so
+                # the agent knows its alias was ignored (not silently merged).
+                out.pop(alias)
+                warnings.append(
+                    f"{tool_name}: ignoring '{alias}' (use '{canon}' only)"
+                )
+    return out, warnings
+
+
+def _attach_alias_warnings(result, warnings: list[str]):
+    """Surface alias-deprecation warnings inside the tool's envelope so the
+    agent sees them without scraping logs.
+
+    Mutates and returns ``result`` when it's a dict; otherwise returns it
+    unchanged (e.g. None, a non-dict primitive). Warnings land under
+    ``summary.alias_warnings`` — extending any existing list rather than
+    clobbering. Idempotent: calling with an empty warnings list is a no-op.
+    """
+    if not warnings:
+        return result
+    if not isinstance(result, dict):
+        return result
+    summary = result.get("summary")
+    if not isinstance(summary, dict):
+        summary = {}
+        result["summary"] = summary
+    existing = summary.get("alias_warnings")
+    if isinstance(existing, list):
+        existing.extend(warnings)
+    else:
+        summary["alias_warnings"] = list(warnings)
+    return result
+
+
+def _wrap_with_alias_normalization(name: str, fn):
+    """Wrap an MCP tool so legacy parameter aliases are accepted.
+
+    The wrapper:
+      1. Introspects the wrapped function's signature to discover which
+         canonical names (``symbol`` / ``path`` / ``query``) the tool
+         actually declares.
+      2. On call, rewrites legacy alias kwargs (``name`` → ``symbol``,
+         ``target`` → ``symbol``, ``file`` → ``path``, ``pattern`` →
+         ``query``) to their canonical names.
+      3. Synthesises a merged ``__signature__`` that exposes BOTH the
+         canonical params AND their aliases (all aliases marked optional
+         with ``None`` default), so FastMCP / Pydantic schema generation
+         advertises both spellings to the client.
+      4. Surfaces a deprecation warning under
+         ``summary.alias_warnings`` in the returned envelope.
+
+    Aliases that are positional in the wrapped function become keyword-only
+    in the synthesised signature — this avoids ambiguity when a caller
+    supplies both via positional + keyword. In practice clients call MCP
+    tools by keyword, so this has no observable cost.
+    """
+    import functools as _functools
+    import inspect as _inspect
+
+    try:
+        sig = _inspect.signature(fn)
+    except (TypeError, ValueError):
+        # Builtins / C-extensions don't expose a signature. Fall back to a
+        # pure passthrough — the alias layer can't help here, but we should
+        # never break the tool.
+        return fn
+
+    # Canonical names this tool declares (e.g. {"symbol", "path"}).
+    accepted: set[str] = {
+        p.name for p in sig.parameters.values() if p.name in _PARAM_ALIASES
+    }
+
+    if not accepted:
+        # Tool declares no canonical concept name — nothing to alias.
+        return fn
+
+    # Build the merged signature: original params + alias params (keyword-only,
+    # default None). Inserted right before any **kwargs sink (if present).
+    #
+    # IMPORTANT: any CANONICAL param that has at least one alias is ALSO
+    # demoted to "optional with default None" in the synthesised signature.
+    # Reason: when a client sends only the legacy alias (e.g. ``name=X``)
+    # the canonical (``symbol``) would otherwise be a required-positional,
+    # and FastMCP / Pydantic schema validation would reject the call BEFORE
+    # this wrapper runs. The wrapper body translates aliases → canonical
+    # and then calls the inner fn, which preserves the original semantics
+    # (the inner fn still treats ``symbol=""`` as the "no symbol" case).
+    new_params: list[_inspect.Parameter] = []
+    aliases_for_tool: list[str] = []
+    declared = {p.name for p in sig.parameters.values()}
+    for canon in accepted:
+        for alias in _PARAM_ALIASES[canon]:
+            if alias == canon or alias in declared:
+                continue
+            aliases_for_tool.append(alias)
+
+    canonicals_with_alias = {
+        canon for canon in accepted if any(a != canon for a in _PARAM_ALIASES[canon])
+    }
+
+    for p in sig.parameters.values():
+        if p.name in canonicals_with_alias and p.default is _inspect.Parameter.empty:
+            # Demote required canonical → optional so the alias-only client
+            # path passes schema validation. Default ``""`` matches the
+            # convention used elsewhere in this file for "no symbol".
+            new_params.append(p.replace(default=""))
+        else:
+            new_params.append(p)
+
+    var_keyword_idx = None
+    for i, p in enumerate(new_params):
+        if p.kind == _inspect.Parameter.VAR_KEYWORD:
+            var_keyword_idx = i
+            break
+    insert_at = len(new_params) if var_keyword_idx is None else var_keyword_idx
+
+    for alias in aliases_for_tool:
+        new_params.insert(
+            insert_at,
+            _inspect.Parameter(
+                alias,
+                kind=_inspect.Parameter.KEYWORD_ONLY,
+                default=None,
+                annotation=str,
+            ),
+        )
+        insert_at += 1
+
+    merged_signature = sig.replace(parameters=new_params)
+
+    # Build the matching __annotations__ dict — FastMCP / Pydantic
+    # call ``typing.get_type_hints(wrapper_fn)`` to derive the input
+    # schema, and ``get_type_hints`` looks at ``__annotations__``, NOT
+    # ``__signature__``. Without syncing the two, the synthesised alias
+    # params would be missing their type and pydantic raises
+    # ``KeyError: '<alias>'`` during schema generation.
+    merged_annotations: dict = dict(getattr(fn, "__annotations__", {}) or {})
+    for alias in aliases_for_tool:
+        merged_annotations[alias] = str
+
+    if _inspect.iscoroutinefunction(fn):
+
+        @_functools.wraps(fn)
+        async def _async_alias_wrapped(*args, **kwargs):
+            # Drop alias-only kwargs that are still ``None`` — they were
+            # injected by the synthetic signature but the client didn't
+            # actually pass them. Otherwise they'd shadow a canonical
+            # default and confuse the inner function.
+            for alias in aliases_for_tool:
+                if alias in kwargs and kwargs[alias] is None:
+                    kwargs.pop(alias)
+            kwargs, warns = _normalize_aliases(name, kwargs, accepted)
+            result = await fn(*args, **kwargs)
+            return _attach_alias_warnings(result, warns)
+
+        _async_alias_wrapped.__signature__ = merged_signature  # type: ignore[attr-defined]
+        _async_alias_wrapped.__annotations__ = merged_annotations
+        return _async_alias_wrapped
+
+    @_functools.wraps(fn)
+    def _sync_alias_wrapped(*args, **kwargs):
+        for alias in aliases_for_tool:
+            if alias in kwargs and kwargs[alias] is None:
+                kwargs.pop(alias)
+        kwargs, warns = _normalize_aliases(name, kwargs, accepted)
+        result = fn(*args, **kwargs)
+        return _attach_alias_warnings(result, warns)
+
+    _sync_alias_wrapped.__signature__ = merged_signature  # type: ignore[attr-defined]
+    _sync_alias_wrapped.__annotations__ = merged_annotations
+    return _sync_alias_wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -1418,9 +1734,24 @@ def _structured_error(error_dict: dict) -> dict:
     if _ERROR_STORM_STATE.get("_last_code") == code:
         _ERROR_STORM_STATE["_count"] = int(_ERROR_STORM_STATE.get("_count", 0)) + 1
     else:
+        # error_code changed — capture the new code's first message and
+        # drop any stale cache entry for the previous code so we never
+        # leak one code's text into another's trimmed envelope.
+        prev_code = _ERROR_STORM_STATE.get("_last_code")
+        if isinstance(prev_code, str) and prev_code != code:
+            _first_error_message.pop(prev_code, None)
         _ERROR_STORM_STATE["_last_code"] = code
         _ERROR_STORM_STATE["_count"] = 1
     repeat = int(_ERROR_STORM_STATE["_count"])
+    # Task 2 (IMPLEMENTATION-2026-05-12) — on the FIRST occurrence of a
+    # given error_code, snapshot the human-readable stderr message so we
+    # can replay it in trimmed envelopes that would otherwise drop the
+    # `error` field. Always overwrite on storm-reset so a stale first
+    # message doesn't survive a code change.
+    if repeat == 1:
+        msg = error_dict.get("error")
+        if isinstance(msg, str) and msg:
+            _first_error_message[code] = msg
     if repeat >= _ERROR_STORM_THRESHOLD:
         # R9 security recheck #3: keep ``retryable`` and ``doc_link`` in
         # the trimmed envelope. Agents that branch on ``retryable``
@@ -1428,7 +1759,7 @@ def _structured_error(error_dict: dict) -> dict:
         # retrying after the third fire because the field went missing —
         # silent behaviour change. Same for ``doc_link``: dropping it
         # stripped the self-service URL from every recurring error.
-        return {
+        trimmed = {
             "isError": True,
             "error_code": code,
             "severity": error_dict["severity"],
@@ -1441,13 +1772,27 @@ def _structured_error(error_dict: dict) -> dict:
                 "or by calling another tool first to reset the counter."
             ),
         }
+        # Task 2 — propagate the first occurrence's stderr text so the
+        # agent still sees WHY the storm started without having to break
+        # the storm to recover it.
+        first_msg = _first_error_message.get(code)
+        if first_msg:
+            trimmed["first_error_message"] = first_msg
+        return trimmed
     return error_dict
 
 
 def _reset_error_storm() -> None:
-    """Test helper — reset the storm counter."""
+    """Test helper — reset the storm counter.
+
+    Task 2 (IMPLEMENTATION-2026-05-12): also drop the first-error-message
+    cache. Otherwise a test that asserts a fresh error path would still
+    see a stale ``first_error_message`` from a previous test poisoning
+    its trimmed envelope.
+    """
     _ERROR_STORM_STATE["_last_code"] = 0
     _ERROR_STORM_STATE["_count"] = 0
+    _first_error_message.clear()
 
 
 def _ensure_fresh_index(root: str = ".") -> dict | None:
@@ -1560,7 +1905,14 @@ def _check_stale_with_cache() -> tuple[bool, str | None]:
 def _annotate_stale(result: dict, command: str) -> dict:
     """If the index is stale and *command* isn't a recovery tool,
     prepend a banner to the verdict and stamp ``_meta.stale_index``.
+
+    Fix E (Sub-task 4): _annotate_stale runs on every envelope returned
+    by ``_run_roam`` — both inprocess and subprocess paths. Tick the
+    session-wide ``partial_success`` counter here so the
+    ``session_metrics`` envelope reflects ANY partial-success envelope,
+    not just errors.
     """
+    _note_partial_success(result)
     if command in _STALE_BANNER_SKIP:
         return result
     if not isinstance(result, dict):
@@ -1630,12 +1982,47 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
 def _run_roam_inprocess(args: list[str]) -> dict:
     """Run a roam CLI command in-process via Click CliRunner (no subprocess)."""
     from roam.cli import cli as _cli
+    from roam.db.connection import StaleDbDirError
 
     runner = _CliRunner()
     cmd_args = ["--json"] + args
     try:
         result = runner.invoke(_cli, cmd_args, catch_exceptions=True)
+    except StaleDbDirError as exc:
+        # Task 2a — surface the stale-db-dir failure as a structured
+        # envelope so the agent gets the configured path + remediation
+        # hint instead of opaque WinError text. ``partial_success`` is
+        # True because the agent CAN still recover (edit the config) —
+        # the request itself just couldn't proceed.
+        return _structured_error(
+            {
+                "error": str(exc),
+                "error_code": "STALE_DB_DIR",
+                "state": "stale_db_dir",
+                "partial_success": True,
+                "hint": (
+                    f"db_dir {exc.db_dir!r} (from {exc.source}) is not writable — "
+                    "edit the config or run `roam config db-dir --reset` to fall back to the project default."
+                ),
+            }
+        )
     except Exception as exc:
+        # Defensive: CliRunner may swallow StaleDbDirError into result.exception
+        # when catch_exceptions=True is set. Re-raise the inner attribute path
+        # only when the surrogate text is unmistakable.
+        if isinstance(exc, StaleDbDirError):  # pragma: no cover (covered by branch above)
+            return _structured_error(
+                {
+                    "error": str(exc),
+                    "error_code": "STALE_DB_DIR",
+                    "state": "stale_db_dir",
+                    "partial_success": True,
+                    "hint": (
+                        f"db_dir {exc.db_dir!r} (from {exc.source}) is not writable — "
+                        "edit the config or run `roam config db-dir --reset` to fall back to the project default."
+                    ),
+                }
+            )
         return _structured_error(
             {
                 "error": str(exc),
@@ -1653,6 +2040,25 @@ def _run_roam_inprocess(args: list[str]) -> dict:
 
     _success_codes = {0, EXIT_GATE_FAILURE}
 
+    # Fix A (SYNTHESIS Pattern 1 — JSON-parse-on-empty-input):
+    # If the CLI succeeded but emitted no stdout (e.g. ``roam diff`` on a
+    # clean tree, ``roam file_info`` on a path with no symbols), feeding
+    # that to ``json.loads`` raises. Treat empty-on-success as the
+    # canonical no_data envelope so downstream compounds (for_bug_fix,
+    # pr_analyze) don't crash on it.
+    if result.exit_code in _success_codes and not output:
+        cmd_name = args[0] if args else ""
+        is_diff_like = "diff" in cmd_name
+        return {
+            "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
+            "summary": {
+                "verdict": "no changes" if is_diff_like else "no data",
+                "state": "no_data",
+                "partial_success": False,
+            },
+            "data": [],
+        }
+
     # Successful JSON output — look for JSON object in output
     if result.exit_code in _success_codes and output:
         try:
@@ -1662,15 +2068,43 @@ def _run_roam_inprocess(args: list[str]) -> dict:
                 parsed["exit_code"] = EXIT_GATE_FAILURE
             return parsed
         except json.JSONDecodeError as exc:
-            return _structured_error(
-                {
-                    "error": f"Failed to parse JSON output: {exc}",
-                    "error_code": "COMMAND_FAILED",
-                    "hint": "command produced invalid JSON output.",
-                }
-            )
+            # Fix A — distinguish empty (handled above) from corrupted
+            # output. Corrupted JSON gets an INVALID_JSON envelope with a
+            # preview so the agent can see what came back.
+            cmd_name = args[0] if args else ""
+            return {
+                "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
+                "summary": {
+                    "verdict": "invalid output from underlying command",
+                    "state": "invalid_output",
+                    "partial_success": True,
+                },
+                "error_code": "INVALID_JSON",
+                "error": f"Failed to parse JSON output: {exc}",
+                "raw_stdout_preview": output[:500],
+            }
 
-    # Error path — classify and return structured error
+    # Error path — classify and return structured error.
+    # Task 2a: CliRunner(catch_exceptions=True) parks the raised exception
+    # on ``result.exception``. Recover StaleDbDirError out of that slot so
+    # the surrounding storm-rate-limited envelope still carries the
+    # configured-path + remediation hint instead of opaque WinError text.
+    if isinstance(result.exception, StaleDbDirError):
+        sde = result.exception
+        return _structured_error(
+            {
+                "error": str(sde),
+                "error_code": "STALE_DB_DIR",
+                "state": "stale_db_dir",
+                "partial_success": True,
+                "hint": (
+                    f"db_dir {sde.db_dir!r} (from {sde.source}) is not writable — "
+                    "edit the config or run `roam config db-dir --reset` to fall back to the project default."
+                ),
+                "exit_code": result.exit_code,
+                "command": "roam --json " + " ".join(args),
+            }
+        )
     error_text = output
     if result.exception:
         error_text = error_text or str(result.exception)
@@ -1704,8 +2138,38 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
             cwd=root,
             timeout=60,
         )
-        if result.returncode in _success_codes and result.stdout.strip():
-            parsed = json.loads(result.stdout)
+        stdout_text = (result.stdout or "").strip()
+        # Fix A (SYNTHESIS Pattern 1) — success + empty stdout returns a
+        # no_data envelope rather than crashing the wrapper on
+        # ``json.loads("")``.
+        if result.returncode in _success_codes and not stdout_text:
+            cmd_name = args[0] if args else ""
+            is_diff_like = "diff" in cmd_name
+            return {
+                "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
+                "summary": {
+                    "verdict": "no changes" if is_diff_like else "no data",
+                    "state": "no_data",
+                    "partial_success": False,
+                },
+                "data": [],
+            }
+        if result.returncode in _success_codes and stdout_text:
+            try:
+                parsed = json.loads(stdout_text)
+            except json.JSONDecodeError as exc:
+                cmd_name = args[0] if args else ""
+                return {
+                    "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
+                    "summary": {
+                        "verdict": "invalid output from underlying command",
+                        "state": "invalid_output",
+                        "partial_success": True,
+                    },
+                    "error_code": "INVALID_JSON",
+                    "error": str(exc),
+                    "raw_stdout_preview": stdout_text[:500],
+                }
             if result.returncode == EXIT_GATE_FAILURE:
                 parsed["gate_failure"] = True
                 parsed["exit_code"] = EXIT_GATE_FAILURE
@@ -1761,17 +2225,37 @@ def _parse_subprocess_result(args: list[str], exit_code: int, stdout: str, stder
     from roam.exit_codes import EXIT_GATE_FAILURE
 
     success_codes = {0, EXIT_GATE_FAILURE}
-    if exit_code in success_codes and stdout.strip():
+    stdout_text = (stdout or "").strip()
+    # Fix A (SYNTHESIS Pattern 1) — empty-stdout-on-success emits a
+    # no_data envelope instead of falling into the error path.
+    if exit_code in success_codes and not stdout_text:
+        cmd_name = args[0] if args else ""
+        is_diff_like = "diff" in cmd_name
+        return {
+            "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
+            "summary": {
+                "verdict": "no changes" if is_diff_like else "no data",
+                "state": "no_data",
+                "partial_success": False,
+            },
+            "data": [],
+        }
+    if exit_code in success_codes and stdout_text:
         try:
-            parsed = json.loads(stdout)
+            parsed = json.loads(stdout_text)
         except json.JSONDecodeError as exc:
-            return _structured_error(
-                {
-                    "error": f"Failed to parse JSON output: {exc}",
-                    "error_code": "COMMAND_FAILED",
-                    "hint": "command produced invalid JSON output.",
-                }
-            )
+            cmd_name = args[0] if args else ""
+            return {
+                "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
+                "summary": {
+                    "verdict": "invalid output from underlying command",
+                    "state": "invalid_output",
+                    "partial_success": True,
+                },
+                "error_code": "INVALID_JSON",
+                "error": f"Failed to parse JSON output: {exc}",
+                "raw_stdout_preview": stdout_text[:500],
+            }
         if exit_code == EXIT_GATE_FAILURE:
             parsed["gate_failure"] = True
             parsed["exit_code"] = EXIT_GATE_FAILURE
@@ -2032,11 +2516,30 @@ def _compound_envelope(
                 verdicts.append(f"{name}: {summary['verdict']}")
 
     failed_subcommands = [e.get("command", "?") for e in errors] if errors else []
-    partial_success = bool(failed_subcommands) and bool(sections)
+    # SYNTHESIS Pattern 2 (silent fallback) — partial_success MUST flip
+    # True whenever ANY subcommand failed, not only the mixed-result
+    # case. ``for_refactor`` previously reported ``partial_success:
+    # False`` while 4/4 subcommands errored because ``and bool(sections)``
+    # required at least one survivor. Drop the guard so an all-failed
+    # compound is correctly partial_success=True.
+    partial_success = bool(failed_subcommands)
+    all_failed = bool(failed_subcommands) and not bool(sections)
+    # Default verdict pick: aggregate sub-verdicts; fall back to a
+    # diagnostic string that names the count instead of the silent
+    # "compound operation completed" that lied about all-failed runs.
+    if verdicts:
+        default_verdict = " | ".join(verdicts)
+    elif all_failed:
+        default_verdict = (
+            f"compound operation: {len(failed_subcommands)} subcommand(s) failed "
+            f"({', '.join(failed_subcommands)})"
+        )
+    else:
+        default_verdict = "compound operation completed"
     result: dict = {
         "command": command,
         "summary": {
-            "verdict": " | ".join(verdicts) if verdicts else "compound operation completed",
+            "verdict": default_verdict,
             "sections": list(sections.keys()),
             "errors": len(errors),
             # Round 4 #8, N: surface partial failure at the top level so
@@ -2047,9 +2550,10 @@ def _compound_envelope(
             **meta,
         },
     }
-    if partial_success:
+    if partial_success and bool(sections):
         # Mention the failures explicitly in the verdict line so an LLM
-        # reading just the summary doesn't miss them.
+        # reading just the summary doesn't miss them. (All-failed runs
+        # already get the count-in-the-verdict treatment above.)
         prefix = f"PARTIAL ({len(failed_subcommands)} failed: {', '.join(failed_subcommands)}) — "
         result["summary"]["verdict"] = prefix + result["summary"]["verdict"]
     workflow = workflow_metadata_for_recipe(str(workflow_recipe)) if workflow_recipe else None
@@ -2062,6 +2566,11 @@ def _compound_envelope(
     if errors:
         result["_errors"] = errors
 
+    # Fix E (Sub-task 4) — compound envelopes don't all flow back
+    # through ``_run_roam`` / ``_annotate_stale``. Tick the session-wide
+    # counter here too so the session_metrics envelope reflects partial
+    # compound outcomes.
+    _note_partial_success(result)
     return result
 
 
@@ -2354,14 +2863,34 @@ _BATCH_FTS_SQL = (
     "LIMIT ?"
 )
 
-# Fallback LIKE SQL when FTS5 is unavailable or returns nothing
+# Fallback LIKE SQL when FTS5 is unavailable or returns nothing.
+# Default (symbol-only) matches the CLI ``batch-search`` contract — name
+# OR qualified_name only, never file path. Path-substring matches caused
+# false positives like ``redacted`` returning ``setup`` from
+# ``tests/.../redacted.test.ts`` (W3.1 bug fix).
 _BATCH_LIKE_SQL = (
     "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
     "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
     "FROM symbols s "
     "JOIN files f ON s.file_id = f.id "
     "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-    "WHERE s.name LIKE ? COLLATE NOCASE "
+    "WHERE (s.name LIKE ? COLLATE NOCASE "
+    "    OR s.qualified_name LIKE ? COLLATE NOCASE) "
+    "ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name "
+    "LIMIT ?"
+)
+
+# Opt-in wider match — includes file path. Restores the legacy behaviour
+# for users who deliberately want to find fixtures by directory name.
+_BATCH_LIKE_WITH_PATHS_SQL = (
+    "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
+    "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
+    "FROM symbols s "
+    "JOIN files f ON s.file_id = f.id "
+    "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+    "WHERE (s.name LIKE ? COLLATE NOCASE "
+    "    OR s.qualified_name LIKE ? COLLATE NOCASE "
+    "    OR f.path LIKE ? COLLATE NOCASE) "
     "ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name "
     "LIMIT ?"
 )
@@ -2375,22 +2904,39 @@ def _fts_query_for(q: str) -> str:
     return f'"{q}"*'
 
 
-def _batch_search_one(conn, q: str, limit: int) -> tuple[list, str | None]:
+def _batch_search_one(conn, q: str, limit: int, include_paths: bool = False) -> tuple[list, str | None]:
     """Search for one query in an open DB connection.
 
     Returns (rows, error_or_None).  Rows are plain dicts.
-    Tries FTS5 first; falls back to LIKE match if FTS5 is unavailable.
+
+    Match mode parity with ``roam batch-search`` CLI:
+    - default (include_paths=False): matches symbol name / qualified_name only
+    - include_paths=True: legacy wide match (name OR qualified_name OR file path)
+
+    FTS5 is tried first only when ``include_paths`` is True (the FTS5 index
+    over symbol_fts already implicitly indexes the symbol name, but its
+    camelCase tokenizer would over-match for the symbol-only path — for
+    that path we go directly to the strict LIKE query).
     """
     rows: list = []
-    try:
-        fts_q = _fts_query_for(q)
-        rows = conn.execute(_BATCH_FTS_SQL, (fts_q, limit)).fetchall()
-    except Exception:
-        rows = []
+    like = f"%{q}%"
 
-    if not rows:
+    if include_paths:
+        # Wide LIKE-only — matches the CLI ``--include-paths`` contract
+        # exactly (name OR qualified_name OR file path). FTS5 is
+        # deliberately NOT used here: its symbol_fts index doesn't
+        # index file paths, so combining it with the path-aware LIKE
+        # would yield non-deterministic ordering and miss path-only
+        # matches when FTS5 returns ANY symbol row.
         try:
-            rows = conn.execute(_BATCH_LIKE_SQL, (f"%{q}%", limit)).fetchall()
+            rows = conn.execute(_BATCH_LIKE_WITH_PATHS_SQL, (like, like, like, limit)).fetchall()
+        except Exception as exc:
+            return [], str(exc)
+    else:
+        # Strict symbol-only LIKE. No FTS5 — its camelCase tokenizer
+        # would expand ``MyUseFoo`` -> ``My Use Foo`` and over-match.
+        try:
+            rows = conn.execute(_BATCH_LIKE_SQL, (like, like, limit)).fetchall()
         except Exception as exc:
             return [], str(exc)
 
@@ -2470,7 +3016,12 @@ def _batch_get_one(conn, sym: str) -> tuple[dict | None, str | None]:
     description="Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls.",
     output_schema=_SCHEMA_BATCH_SEARCH,
 )
-def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> dict:
+def batch_search(
+    queries: list,
+    limit_per_query: int = 5,
+    include_paths: bool = False,
+    root: str = ".",
+) -> dict:
     """Batch symbol search: run multiple name queries in one MCP call.
 
     WHEN TO USE: Use this instead of calling roam_search_symbol 3+ times
@@ -2485,6 +3036,13 @@ def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> di
         treated the same as a single roam_search_symbol query.
     limit_per_query:
         Max results per query (default 5, max 50).
+    include_paths:
+        If True, also match against file paths. Off by default — the
+        previous wide-match behaviour caused spurious matches when a
+        query string happened to appear in a directory or fixture name
+        (e.g. ``redacted`` matching ``setup`` from
+        ``tests/composables/redacted/redacted.test.ts``).
+        Mirrors the ``--include-paths`` flag on the CLI.
     root:
         Project root directory (default ".").
 
@@ -2498,6 +3056,7 @@ def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> di
 
     queries_list: list[str] = [str(q) for q in (queries or [])][:_MAX_BATCH_QUERIES]
     limit = max(1, min(int(limit_per_query), 50))
+    include_paths_flag = bool(include_paths)
 
     results: dict = {}
     errors: dict = {}
@@ -2509,6 +3068,8 @@ def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> di
                 "verdict": "no queries provided",
                 "queries_executed": 0,
                 "total_matches": 0,
+                "include_paths": include_paths_flag,
+                "match_mode": "name+path" if include_paths_flag else "name-only",
             },
             "results": {},
             "errors": {},
@@ -2517,7 +3078,7 @@ def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> di
     try:
         with open_db(readonly=True) as conn:
             for q in queries_list:
-                rows, err = _batch_search_one(conn, q, limit)
+                rows, err = _batch_search_one(conn, q, limit, include_paths=include_paths_flag)
                 if err:
                     errors[q] = err
                 else:
@@ -2530,6 +3091,8 @@ def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> di
                 "verdict": f"batch search failed: {exc}",
                 "queries_executed": 0,
                 "total_matches": 0,
+                "include_paths": include_paths_flag,
+                "match_mode": "name+path" if include_paths_flag else "name-only",
             },
             "results": {},
             "errors": {"_fatal": str(exc)},
@@ -2546,6 +3109,8 @@ def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> di
             "verdict": verdict,
             "queries_executed": len(queries_list),
             "total_matches": total_matches,
+            "include_paths": include_paths_flag,
+            "match_mode": "name+path" if include_paths_flag else "name-only",
         },
         "results": results,
     }
@@ -2952,16 +3517,20 @@ async def health(
     description="Pre-change safety check: blast radius, tests, complexity, fitness. Call BEFORE modifying code.",
     output_schema=_SCHEMA_PREFLIGHT,
 )
-def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
+def preflight(symbol: str = "", staged: bool = False, root: str = ".") -> dict:
     """Pre-change safety check. Call this BEFORE modifying any symbol or file.
 
     Combines blast radius, affected tests, complexity, coupling, and
     fitness violations in one call. Replaces 5-6 separate tool calls.
     Do NOT call context, impact, affected_tests, or complexity_report
-    separately if preflight covers your need."""
+    separately if preflight covers your need.
+
+    Fix D: legacy alias ``target`` is still accepted (translates to
+    ``symbol``) with a deprecation warning in ``summary.alias_warnings``.
+    """
     args = ["preflight"]
-    if target:
-        args.append(target)
+    if symbol:
+        args.append(symbol)
     if staged:
         args.append("--staged")
     return _run_roam(args, root)
@@ -3044,6 +3613,20 @@ def _vp_check_target_file(file_path: str, must_exist: bool, root: str = ".") -> 
     return True, "ok"
 
 
+# Fix E (Sub-task 4) — registry of supported plan-operation kinds and
+# the fields each one EXPECTS so the ``UNKNOWN_KIND`` blocker can name
+# the alternatives instead of forcing the agent to guess. Keep the
+# field lists short: the canonical schema lives in the validate_plan
+# docstring; this registry is just the LLM-facing hint.
+_VP_PLAN_KIND_FIELDS: dict[str, list[str]] = {
+    "rename": ["kind", "symbol", "new_name"],
+    "move": ["kind", "symbol", "target_file"],
+    "remove": ["kind", "symbol"],
+    "modify": ["kind", "symbol"],
+    "add": ["kind", "file"],
+}
+
+
 def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
     """Validate a single change-plan operation. See
     :func:`validate_plan` for the operation schema."""
@@ -3053,8 +3636,10 @@ def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
     advice: list[str] = []
     facts: dict = {}
 
-    def _block(code: str, detail: str) -> None:
-        blockers.append({"code": code, "detail": detail})
+    def _block(code: str, detail: str, **extras) -> None:
+        b = {"code": code, "detail": detail}
+        b.update(extras)
+        blockers.append(b)
 
     def _warn(code: str, detail: str) -> None:
         warnings.append({"code": code, "detail": detail})
@@ -3152,7 +3737,19 @@ def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
                 _block("INVALID_ADD_FILE", reason)
 
     else:
-        _block("UNKNOWN_KIND", f"unsupported operation kind: {kind!r}")
+        # Fix E (Sub-task 4) — enumerate the supported kinds and their
+        # expected fields so the agent can recover without dipping into
+        # docs. Per-kind field lists come from ``_VP_PLAN_KIND_FIELDS``.
+        supported = sorted(_VP_PLAN_KIND_FIELDS.keys())
+        _block(
+            "UNKNOWN_KIND",
+            (
+                f"unsupported operation kind: {kind!r}. "
+                f"supported kinds: {', '.join(supported)}."
+            ),
+            supported_kinds=supported,
+            expected_fields=dict(_VP_PLAN_KIND_FIELDS),
+        )
 
     return {
         "index": idx,
@@ -3296,30 +3893,162 @@ def validate_plan(
 # ---------------------------------------------------------------------------
 
 
+# Default byte limit returned by fetch_handle when no slice / section /
+# jq projection is specified. Picked to fit comfortably inside the
+# 100KB MCP envelope cap while still giving an agent a useful chunk.
+_FETCH_HANDLE_DEFAULT_LIMIT = 20000
+_FETCH_HANDLE_MAX_LIMIT = 200000  # hard cap so an agent can't ask for 10MB
+
+
+def _apply_jq_projection(payload: object, expr: str) -> tuple[object, str | None]:
+    """Apply a jq-style projection expression to ``payload``.
+
+    Returns ``(result, error_or_None)``. If the optional ``jq`` library is
+    importable we delegate to it; otherwise we fall back to a tiny built-in
+    parser that supports a useful subset:
+
+      - ``.``                       — identity
+      - ``.field`` / ``.field.sub`` — nested object key access
+      - ``[N]`` / ``[-N]``          — list index
+      - ``[start:end]``             — list slice
+      - mixed e.g. ``.context.callers[0].name``, ``.list[:5]``
+
+    Anything outside that subset (filters, pipes, functions, ``select``,
+    arithmetic, etc.) returns a clean error envelope rather than crashing.
+    """
+    expr = (expr or "").strip()
+    if not expr:
+        return payload, None
+
+    # Prefer the real jq library when available — handles the full language.
+    try:
+        import jq as _jq  # type: ignore[import-not-found]
+
+        try:
+            return _jq.compile(expr).input(payload).first(), None
+        except Exception as exc:  # noqa: BLE001 — surface to caller
+            return None, f"jq evaluation failed: {exc}"
+    except ImportError:
+        pass
+
+    # --- minimal jq subset ------------------------------------------------
+    # Token stream: alternating ".field" and "[index|slice]" segments.
+    # Validate up-front so we can return a clean USAGE_ERROR before
+    # touching the payload.
+    import re as _re_jq
+
+    if expr == ".":
+        return payload, None
+    if not expr.startswith("."):
+        return None, (
+            f"unsupported jq expression {expr!r}: must start with '.' (try '.field' or '.list[0]'); "
+            "install the optional 'jq' Python package for full jq support."
+        )
+
+    # Strip the leading '.' so we can split into segments.
+    rest = expr[1:]
+    # Token regex: a field name, or a bracket expression (int, neg-int, slice).
+    token_re = _re_jq.compile(r"(?P<field>[A-Za-z_][A-Za-z0-9_]*)|\[(?P<idx>-?\d+)\]|\[(?P<a>-?\d*):(?P<b>-?\d*)\]|\.")
+
+    pos = 0
+    tokens: list[tuple[str, object]] = []  # (kind, value)
+    while pos < len(rest):
+        m = token_re.match(rest, pos)
+        if not m or m.start() != pos:
+            return None, (
+                f"unsupported jq token at {expr[pos + 1 :]!r}: only '.field', '[N]', '[a:b]' subset is supported. "
+                "Install the optional 'jq' Python package for full jq support."
+            )
+        if m.group("field") is not None:
+            tokens.append(("field", m.group("field")))
+        elif m.group("idx") is not None:
+            tokens.append(("idx", int(m.group("idx"))))
+        elif m.group("a") is not None or m.group("b") is not None:
+            a_raw = m.group("a")
+            b_raw = m.group("b")
+            a = int(a_raw) if a_raw else None
+            b = int(b_raw) if b_raw else None
+            tokens.append(("slice", (a, b)))
+        # group "." (literal dot) is just a separator; no token emitted.
+        pos = m.end()
+
+    cur: object = payload
+    for kind, val in tokens:
+        if kind == "field":
+            if not isinstance(cur, dict):
+                return None, f"cannot apply .{val} to non-object (got {type(cur).__name__})"
+            if val not in cur:
+                return None, f"key {val!r} not found in object (available: {sorted(cur.keys())[:10]!r})"
+            cur = cur[val]
+        elif kind == "idx":
+            if not isinstance(cur, list):
+                return None, f"cannot apply [{val}] to non-array (got {type(cur).__name__})"
+            try:
+                cur = cur[val]  # type: ignore[index]
+            except IndexError:
+                return None, f"index {val} out of range for array of length {len(cur)}"
+        elif kind == "slice":
+            if not isinstance(cur, list):
+                return None, f"cannot apply slice to non-array (got {type(cur).__name__})"
+            a, b = val  # type: ignore[misc]
+            cur = cur[a:b]  # type: ignore[index]
+    return cur, None
+
+
 @_tool(
     name="roam_fetch_handle",
-    description="Fetch the full payload for a handle returned by a large MCP tool response.",
-    version="1.0.0",
+    description="Fetch all or part of a large payload by handle — supports byte slice, section pick, jq projection.",
+    version="2.0.0",
 )
-def fetch_handle(handle: str = "", root: str = ".", ctx: _Context | None = None) -> dict:
+def fetch_handle(
+    handle: str = "",
+    offset: int = 0,
+    limit: int = 0,
+    section: str = "",
+    jq: str = "",
+    root: str = ".",
+    ctx: _Context | None = None,
+) -> dict:
     """Retrieve a large MCP response previously written to disk under a
-    content-addressed handle.
+    content-addressed handle. Supports chunked / projected retrieval so
+    the agent never has to re-load the full 1MB+ payload in one shot.
 
     WHEN TO USE: When a tool returned a small envelope with
     ``is_handle=true`` and a ``handle: "<sha16>"`` field, call this to
-    fetch the full payload. The preview block in the original envelope
-    tells you whether you actually need it — most agents can answer
-    from the preview alone.
+    fetch part or all of the payload. Pick the retrieval mode that
+    matches what you need:
+
+    - **No params** (default): returns the first 20000 bytes of the
+      serialised payload along with ``has_more`` and ``next_offset`` so
+      you can page through with subsequent calls.
+    - ``offset=N, limit=M``: returns the byte slice ``data[N:N+M]``.
+    - ``section="key"``: returns the value of one top-level key (plus
+      ``total_keys`` so you know what else is available).
+    - ``jq=".context.callers[:10]"``: jq-style projection. Uses the
+      ``jq`` Python library when available; otherwise falls back to a
+      built-in subset covering ``.field``, ``.field.sub``, ``[N]``,
+      ``[start:end]``.
 
     Parameters
     ----------
     handle:
-        The 16-char hex handle returned by an earlier tool call. The
-        file must exist under ``.roam/responses/<handle>.json`` in the
-        current project.
+        The 16-char hex handle returned by an earlier tool call.
+    offset:
+        Starting byte offset for the byte-slice mode (default 0).
+    limit:
+        Max bytes to return in byte-slice mode. 0 (default) means
+        "use the safe default of 20000 bytes".
+    section:
+        Top-level key to extract. Mutually exclusive with ``jq``.
+    jq:
+        jq-style projection expression. Mutually exclusive with
+        ``section``.
+    root:
+        Project root for the handle store (default ".").
 
-    Returns: the full original payload, or a structured error if the
-    handle is unknown / the file was deleted.
+    Returns: an envelope containing the requested slice/section/projection
+    plus pagination metadata, or a structured error if the handle is
+    unknown / arguments conflict.
     """
     import json as _json
     import re as _re
@@ -3333,6 +4062,16 @@ def fetch_handle(handle: str = "", root: str = ".", ctx: _Context | None = None)
                 "command": "roam_fetch_handle",
             }
         )
+    if section and jq:
+        return _structured_error(
+            {
+                "error": "section and jq are mutually exclusive",
+                "error_code": "USAGE_ERROR",
+                "hint": "pick one retrieval mode: section= picks one top-level key, jq= applies a projection.",
+                "command": "roam_fetch_handle",
+            }
+        )
+
     target = _handle_storage_dir() / f"{handle}.json"
     if not target.is_file():
         return _structured_error(
@@ -3346,7 +4085,8 @@ def fetch_handle(handle: str = "", root: str = ".", ctx: _Context | None = None)
             }
         )
     try:
-        return _json.loads(target.read_text(encoding="utf-8"))
+        raw_text = target.read_text(encoding="utf-8")
+        payload = _json.loads(raw_text)
     except (OSError, _json.JSONDecodeError) as e:
         return _structured_error(
             {
@@ -3356,6 +4096,149 @@ def fetch_handle(handle: str = "", root: str = ".", ctx: _Context | None = None)
                 "command": "roam_fetch_handle",
             }
         )
+
+    raw_bytes = raw_text.encode("utf-8")
+    total_size = len(raw_bytes)
+    top_keys: list[str] = sorted(payload.keys()) if isinstance(payload, dict) else []
+
+    # --- section pick ----------------------------------------------------
+    if section:
+        if not isinstance(payload, dict):
+            return _structured_error(
+                {
+                    "error": f"section= requires the stored payload to be a JSON object (got {type(payload).__name__})",
+                    "error_code": "USAGE_ERROR",
+                    "hint": "use jq= for non-object payloads, or omit section= to get the byte-sliced default.",
+                    "command": "roam_fetch_handle",
+                }
+            )
+        if section not in payload:
+            return _structured_error(
+                {
+                    "error": f"section {section!r} not found in payload",
+                    "error_code": "NO_RESULTS",
+                    "hint": f"available top-level keys: {top_keys[:20]!r}",
+                    "command": "roam_fetch_handle",
+                    "total_keys": top_keys,
+                }
+            )
+        return {
+            "command": "roam_fetch_handle",
+            "summary": {
+                "verdict": f"section {section!r} of handle {handle}",
+                "mode": "section",
+                "section": section,
+                "total_size": total_size,
+                "total_keys": top_keys,
+            },
+            "handle": handle,
+            "section": section,
+            "total_keys": top_keys,
+            "data": payload[section],
+        }
+
+    # --- jq projection ---------------------------------------------------
+    if jq:
+        result, err = _apply_jq_projection(payload, jq)
+        if err is not None:
+            return _structured_error(
+                {
+                    "error": err,
+                    "error_code": "USAGE_ERROR",
+                    "hint": (
+                        "supported subset: '.field', '.field.sub', '[N]', '[start:end]'. "
+                        "Install the optional 'jq' Python package for full jq language support."
+                    ),
+                    "command": "roam_fetch_handle",
+                    "jq": jq,
+                }
+            )
+        return {
+            "command": "roam_fetch_handle",
+            "summary": {
+                "verdict": f"jq {jq!r} on handle {handle}",
+                "mode": "jq",
+                "jq": jq,
+                "total_size": total_size,
+                "total_keys": top_keys,
+            },
+            "handle": handle,
+            "jq": jq,
+            "total_keys": top_keys,
+            "data": result,
+        }
+
+    # --- byte slice (default) -------------------------------------------
+    if offset < 0:
+        return _structured_error(
+            {
+                "error": f"offset must be >= 0 (got {offset})",
+                "error_code": "USAGE_ERROR",
+                "hint": "use offset=0 for the start of the payload; chain calls with next_offset to page through.",
+                "command": "roam_fetch_handle",
+            }
+        )
+    if limit < 0:
+        return _structured_error(
+            {
+                "error": f"limit must be >= 0 (got {limit})",
+                "error_code": "USAGE_ERROR",
+                "hint": "use limit=0 for the safe default (20000 bytes), or a positive int for a custom chunk.",
+                "command": "roam_fetch_handle",
+            }
+        )
+    effective_limit = _FETCH_HANDLE_DEFAULT_LIMIT if limit == 0 else min(int(limit), _FETCH_HANDLE_MAX_LIMIT)
+    end = min(offset + effective_limit, total_size)
+    slice_bytes = raw_bytes[offset:end]
+    has_more = end < total_size
+    next_offset = end if has_more else None
+
+    # Decode defensively — split at the offset boundary may produce
+    # half a UTF-8 codepoint. Use replacement so we never crash on a
+    # partial codepoint at the trailing edge.
+    try:
+        slice_text = slice_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        slice_text = slice_bytes.decode("utf-8", errors="replace")
+
+    # If the slice happens to cover the entire payload, also return the
+    # parsed JSON for convenience (parity with the v1 fetch_handle).
+    parsed_full: object | None = None
+    if offset == 0 and not has_more:
+        try:
+            parsed_full = _json.loads(slice_text)
+        except _json.JSONDecodeError:
+            parsed_full = None
+
+    envelope: dict = {
+        "command": "roam_fetch_handle",
+        "summary": {
+            "verdict": (
+                f"bytes [{offset}:{end}] of handle {handle} ({total_size:,} bytes total)"
+                + (" — more available" if has_more else " — full payload returned")
+            ),
+            "mode": "byte_slice",
+            "offset": offset,
+            "limit": effective_limit,
+            "end": end,
+            "total_size": total_size,
+            "has_more": has_more,
+            "next_offset": next_offset,
+            "total_keys": top_keys,
+            "partial_success": has_more,
+        },
+        "handle": handle,
+        "offset": offset,
+        "end": end,
+        "total_size": total_size,
+        "has_more": has_more,
+        "next_offset": next_offset,
+        "total_keys": top_keys,
+        "data": slice_text,
+    }
+    if parsed_full is not None:
+        envelope["parsed"] = parsed_full
+    return envelope
 
 
 # ---------------------------------------------------------------------------
@@ -3385,6 +4268,87 @@ def _safe_run(args: list[str], root: str) -> dict:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
+# ---------------------------------------------------------------------------
+# Fix B (SYNTHESIS Pattern 5) — Compound recipe registry
+#
+# Every internal subcommand referenced by a compound recipe (for_refactor,
+# for_security_review, for_bug_fix, …) MUST go through this map. The map's
+# values are the CLI keys in ``roam.cli._COMMANDS``; the import-time
+# sanity check below fails fast if a value drifts out of the registry.
+#
+# Why a registry instead of literal strings inline?
+#   * The 212-eval dogfood caught two compound bugs that shipped silently:
+#       - ``for_security_review`` called ``roam vuln`` (CLI key is
+#         ``vulns``)
+#       - ``for_refactor`` called ``roam complexity-report`` (CLI key is
+#         ``complexity``)
+#     A registry-key lookup raises ``ImportError`` at module load when
+#     either value disappears from the CLI surface, so the next typo
+#     never ships.
+# ---------------------------------------------------------------------------
+
+_COMPOUND_REGISTRY: dict[str, str] = {
+    # safety / preflight gates
+    "preflight": "preflight",
+    "impact": "impact",
+    "fitness": "fitness",
+    "diff": "diff",
+    "critique": "critique",
+    # analysis
+    "complexity": "complexity",  # was: complexity-report (typo)
+    "clones": "clones",
+    "taint": "taint",
+    "vulns": "vulns",  # was: vuln (typo)
+    "adversarial": "adversarial",
+    # navigation
+    "understand": "understand",
+    "search": "search",
+    "context": "context",
+    "diagnose": "diagnose",
+    "affected-tests": "affected-tests",
+    # destructive helpers
+    "safe-delete": "safe-delete",
+}
+
+
+def _verify_compound_registry() -> None:
+    """Import-time gate: every registry value must be a live CLI command.
+
+    Fail-fast prevents the ``vuln``/``vulns``-class typo from ever
+    shipping again — the module won't import if a compound recipe key
+    references a command that isn't in ``roam.cli._COMMANDS``.
+    """
+    from roam.cli import _COMMANDS  # local import to avoid module-load cycle
+
+    missing = [v for v in _COMPOUND_REGISTRY.values() if v not in _COMMANDS]
+    if missing:
+        raise ImportError(
+            "_COMPOUND_REGISTRY references CLI commands that don't exist: "
+            f"{missing}. Update src/roam/mcp_server.py:_COMPOUND_REGISTRY or "
+            "add the missing commands to src/roam/cli.py:_COMMANDS."
+        )
+
+
+_verify_compound_registry()
+
+
+def _cr(key: str) -> str:
+    """Resolve a compound-registry key to its live CLI command name.
+
+    Raises ``KeyError`` (with the missing key) if a compound author
+    references an unregistered key — caught immediately during the
+    compound-level test rather than emitting a partial-success envelope
+    with an opaque sub-error.
+    """
+    if key not in _COMPOUND_REGISTRY:
+        raise KeyError(
+            f"_COMPOUND_REGISTRY missing key {key!r} — add it to the "
+            "registry in src/roam/mcp_server.py before invoking from a "
+            "compound recipe."
+        )
+    return _COMPOUND_REGISTRY[key]
+
+
 @_tool(
     name="roam_for_new_feature",
     description="Compound: understand + search + context + complexity for an area you're about to add code to.",
@@ -3411,11 +4375,11 @@ def for_new_feature(area: str = "", root: str = ".", ctx: _Context | None = None
     sub-verdict.
     """
     sections = [
-        ("understand", _safe_run(["understand"], root)),
-        ("complexity_report", _safe_run(["complexity", "--limit", "10"], root)),
+        ("understand", _safe_run([_cr("understand")], root)),
+        ("complexity_report", _safe_run([_cr("complexity"), "--limit", "10"], root)),
     ]
     if area:
-        sections.append(("search", _safe_run(["search", area], root)))
+        sections.append(("search", _safe_run([_cr("search"), area], root)))
         # Only fetch context if search found a symbol — context for an
         # unmatched query is wasted tokens.
         search_res = sections[-1][1]
@@ -3426,7 +4390,7 @@ def for_new_feature(area: str = "", root: str = ".", ctx: _Context | None = None
             top = matches[0] if isinstance(matches, list) and matches else None
             anchor = top.get("qualified_name") or top.get("name") if isinstance(top, dict) else None
             if anchor:
-                sections.append(("context", _safe_run(["context", anchor], root)))
+                sections.append(("context", _safe_run([_cr("context"), anchor], root)))
     return _compound_envelope(
         "for-new-feature",
         sections,
@@ -3466,13 +4430,13 @@ def for_bug_fix(symbol: str, root: str = ".", ctx: _Context | None = None) -> di
             }
         )
     sections = [
-        ("diagnose", _safe_run(["diagnose", symbol], root)),
-        ("affected_tests", _safe_run(["affected-tests", symbol], root)),
+        ("diagnose", _safe_run([_cr("diagnose"), symbol], root)),
+        ("affected_tests", _safe_run([_cr("affected-tests"), symbol], root)),
         # `roam diff` of the working tree shows what's recently been
         # touched in the area — context for whether this is a new
         # regression or a long-standing issue.
-        ("diff", _safe_run(["diff"], root)),
-        ("context", _safe_run(["context", symbol], root)),
+        ("diff", _safe_run([_cr("diff")], root)),
+        ("context", _safe_run([_cr("context"), symbol], root)),
     ]
     return _compound_envelope(
         "for-bug-fix",
@@ -3513,13 +4477,16 @@ def for_refactor(symbol: str, root: str = ".", ctx: _Context | None = None) -> d
                 "command": "roam_for_refactor",
             }
         )
+    # Fix B — go through ``_cr`` so the ``complexity-report`` typo can
+    # never come back: any drift between this dict and the live CLI
+    # surface raises ImportError at module load.
     sections = [
-        ("preflight", _safe_run(["preflight", symbol], root)),
-        ("impact", _safe_run(["impact", symbol], root)),
-        ("complexity_report", _safe_run(["complexity-report", "--limit", "5"], root)),
+        ("preflight", _safe_run([_cr("preflight"), symbol], root)),
+        ("impact", _safe_run([_cr("impact"), symbol], root)),
+        ("complexity_report", _safe_run([_cr("complexity"), "--limit", "5"], root)),
         # Cap at top-20 clone clusters; --top is the right flag (clones
         # uses --top, not --limit; CLI surface drift caught here).
-        ("clones", _safe_run(["clones", "--top", "20"], root)),
+        ("clones", _safe_run([_cr("clones"), "--top", "20"], root)),
     ]
     return _compound_envelope(
         "for-refactor",
@@ -3552,15 +4519,18 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
     Returns: compound envelope with sections {taint, vuln, critique,
     adversarial}.
     """
+    # Fix B — go through ``_cr`` so the ``vuln`` typo (CLI key is
+    # ``vulns``) can never come back. ``vulns list`` is the
+    # subcommand-style invocation the CLI expects.
     sections = [
-        ("taint", _safe_run(["taint"], root)),
-        ("vuln", _safe_run(["vuln", "list"], root)),
+        ("taint", _safe_run([_cr("taint")], root)),
+        ("vulns", _safe_run([_cr("vulns"), "list"], root)),
         # ``critique`` reads the working-tree diff (and is a no-op if
         # nothing's staged); it pairs naturally here because the agent
         # is often reviewing a PR's worth of changes.
-        ("critique", _safe_run(["critique"], root)),
+        ("critique", _safe_run([_cr("critique")], root)),
     ]
-    adv_args = ["adversarial"]
+    adv_args = [_cr("adversarial")]
     if symbol:
         adv_args.append(symbol)
     sections.append(("adversarial", _safe_run(adv_args, root)))
@@ -3620,14 +4590,43 @@ def complete(prefix: str, kind: str = "symbol", limit: int = 30, root: str = "."
                 "command": "roam_complete",
             }
         )
-    payload = _mcp_completions.complete_prefix(prefix, kind=kind, limit=limit, root=root)
+    # W3.1 parity fix: for ``kind == 'symbol'`` we go through the CLI's
+    # strict LIKE-based prefix matcher (``_prefix_symbols``) instead of
+    # the FTS5-backed helper. FTS5's camelCase tokenizer expands
+    # ``MyUseFoo`` -> ``My Use Foo``, so a ``use*`` query would return
+    # ``MyUseFoo`` even though its NAME doesn't start with "use" —
+    # violating the literal-left-anchored-prefix contract this tool
+    # promises. Mirrors the CLI ``roam complete`` semantics exactly.
+    kind_norm = (kind or "symbol").lower()
+    limit_clamped = max(1, int(limit))
+
+    payload: dict[str, list[str]] = {}
+    if kind_norm in ("symbol", "all"):
+        try:
+            from roam.commands.cmd_complete import _prefix_symbols
+        except Exception:
+            _prefix_symbols = None  # type: ignore[assignment]
+        if _prefix_symbols is not None:
+            try:
+                payload["symbols"] = _prefix_symbols(prefix, limit=limit_clamped)
+            except Exception:
+                payload["symbols"] = []
+        else:
+            payload["symbols"] = []
+    if kind_norm in ("path", "all"):
+        payload["paths"] = _mcp_completions.complete_paths(prefix, limit=limit_clamped, root=root)
+    if kind_norm in ("command", "all"):
+        payload["commands"] = _mcp_completions.complete_commands(prefix, limit=limit_clamped)
+
     total = sum(len(v) for v in payload.values())
     return {
         "command": "roam_complete",
         "summary": {
             "verdict": f"{total} completion{'s' if total != 1 else ''} for {prefix!r}",
             "prefix": prefix,
-            "kind": kind,
+            "kind": kind_norm,
+            "match_mode": "prefix",
+            "total": total,
         },
         **payload,
     }
@@ -3927,7 +4926,7 @@ def critique_patch(
     name="roam_oracle_symbol_exists",
     description="Boolean oracle: does any symbol with this name (or qualified name) exist in the indexed graph?",
 )
-def oracle_symbol_exists(name: str, root: str = ".") -> dict:
+def oracle_symbol_exists(symbol: str, root: str = ".") -> dict:
     """Yes/no: is there an indexed symbol matching this name?
 
     WHEN TO USE: cheapest possible existence check before generating
@@ -3937,8 +4936,12 @@ def oracle_symbol_exists(name: str, root: str = ".") -> dict:
     Differs from ``roam_search_symbol`` (which lists matches with metadata)
     — this returns just a boolean for tight agent prompts. Matches name OR
     qualified_name OR ``%.<name>`` suffix on qualified_name.
+
+    Fix D: legacy alias ``name`` is still accepted (translates to
+    ``symbol``) with a deprecation warning surfaced in
+    ``summary.alias_warnings``.
     """
-    return _run_roam(["oracle", "symbol-exists", name], root)
+    return _run_roam(["oracle", "symbol-exists", symbol], root)
 
 
 @_tool(
@@ -3961,7 +4964,7 @@ def oracle_route_exists(path: str, root: str = ".") -> dict:
     name="roam_oracle_is_test_only",
     description="Boolean oracle: are ALL callers of this symbol in test files?",
 )
-def oracle_is_test_only(name: str, root: str = ".") -> dict:
+def oracle_is_test_only(symbol: str, root: str = ".") -> dict:
     """Yes/no/indeterminate: do all callers of this symbol live in test files?
 
     WHEN TO USE: before deleting a symbol or marking it as dead. A
@@ -3972,30 +4975,34 @@ def oracle_is_test_only(name: str, root: str = ".") -> dict:
     Tri-state: orphan symbols (no callers at all) return ``value=null``
     with ``reason_class="indeterminate_no_data"`` rather than collapsing
     to ``False`` — there's no evidence either way.
+
+    Fix D: legacy alias ``name`` is still accepted.
     """
-    return _run_roam(["oracle", "is-test-only", name], root)
+    return _run_roam(["oracle", "is-test-only", symbol], root)
 
 
 @_tool(
     name="roam_oracle_test_only",
     description="Alias of roam_oracle_is_test_only — preserves the shorter name agents sometimes guess.",
 )
-def oracle_test_only_alias(name: str, root: str = ".") -> dict:
+def oracle_test_only_alias(symbol: str, root: str = ".") -> dict:
     """Alias of :func:`oracle_is_test_only`.
 
     Round 4 #15 reported agents calling ``roam_oracle_test_only``
     (without the ``is_`` prefix) and getting ``No such tool``. The alias
     keeps the canonical name discoverable while accepting the shorter
     form so a typo doesn't cost an MCP round-trip.
+
+    Fix D: legacy alias ``name`` is still accepted.
     """
-    return _run_roam(["oracle", "is-test-only", name], root)
+    return _run_roam(["oracle", "is-test-only", symbol], root)
 
 
 @_tool(
     name="roam_oracle_is_reachable_from_entry",
     description="Boolean oracle: can BFS reach this symbol from any entry point in the call graph?",
 )
-def oracle_is_reachable_from_entry(name: str, max_hops: int = 10, root: str = ".") -> dict:
+def oracle_is_reachable_from_entry(symbol: str, max_hops: int = 10, root: str = ".") -> dict:
     """Yes/no: is this symbol reachable from any entry-point symbol?
 
     WHEN TO USE: before treating a symbol as "live code" — confirm the
@@ -4012,8 +5019,10 @@ def oracle_is_reachable_from_entry(name: str, max_hops: int = 10, root: str = ".
     ----------
     max_hops: BFS depth cap (default 10). Increase for very deep graphs;
         decrease for quick sanity checks.
+
+    Fix D: legacy alias ``name`` is still accepted.
     """
-    args = ["oracle", "is-reachable-from-entry", name]
+    args = ["oracle", "is-reachable-from-entry", symbol]
     if max_hops != 10:
         args.extend(["--max-hops", str(max_hops)])
     return _run_roam(args, root)
@@ -4023,15 +5032,17 @@ def oracle_is_reachable_from_entry(name: str, max_hops: int = 10, root: str = ".
     name="roam_oracle_is_clone_of",
     description="Boolean oracle: does this symbol participate in a persisted clone cluster?",
 )
-def oracle_is_clone_of(name: str, root: str = ".") -> dict:
+def oracle_is_clone_of(symbol: str, root: str = ".") -> dict:
     """Yes/no: does this symbol have persisted clone siblings?
 
     WHEN TO USE: before editing a symbol — if it's a clone, the same fix
     likely needs to land on its siblings. Reads ``clone_pairs`` (populated
     by ``roam clones --persist``); returns ``False`` with a hint when the
     table is empty.
+
+    Fix D: legacy alias ``name`` is still accepted.
     """
-    return _run_roam(["oracle", "is-clone-of", name], root)
+    return _run_roam(["oracle", "is-clone-of", symbol], root)
 
 
 @_tool(
@@ -4426,8 +5437,59 @@ def file_info(path: str, root: str = ".") -> dict:
     """Show a file skeleton: every symbol definition with its signature.
 
     Call this to understand what a file contains without reading the
-    full source. More useful than Read for getting a file overview."""
-    return _run_roam(["file", path], root)
+    full source. More useful than Read for getting a file overview.
+
+    Fix A (SYNTHESIS Pattern 1 — JSON-parse-on-empty-input): pre-validate
+    that *path* is non-empty and exists; emit a clean ``state=no_data``
+    envelope instead of letting the downstream CLI emit empty stdout
+    that the agent would then feed to ``json.loads`` and crash on.
+    """
+    if not path or not isinstance(path, str) or not path.strip():
+        return {
+            "command": "roam_file_info",
+            "summary": {
+                "verdict": "no data",
+                "state": "no_data",
+                "partial_success": False,
+            },
+            "data": [],
+            "hint": "pass a project-relative file path — e.g. src/roam/cli.py",
+        }
+    # Resolve under root so a non-default project cwd still validates.
+    try:
+        candidate = Path(root) / path if root and root != "." else Path(path)
+        candidate_exists = candidate.exists()
+    except OSError:
+        candidate_exists = False
+    if not candidate_exists:
+        return {
+            "command": "roam_file_info",
+            "summary": {
+                "verdict": "no data",
+                "state": "no_data",
+                "partial_success": False,
+            },
+            "data": [],
+            "path": path,
+            "hint": f"path {path!r} does not exist under root {root!r}",
+        }
+    result = _run_roam(["file", path], root)
+    # Belt-and-braces: if the CLI surfaced an empty list (no symbols
+    # extracted, e.g. a YAML/JSON file with no roam-known symbols), still
+    # return the structured no_data shape rather than letting an agent
+    # parse a thin envelope as "the file has no content".
+    if isinstance(result, dict):
+        symbols = result.get("symbols") or result.get("data") or []
+        if isinstance(symbols, list) and not symbols and "error" not in result:
+            summary = result.get("summary")
+            if not isinstance(summary, dict):
+                summary = {}
+            summary.setdefault("verdict", "no data")
+            summary.setdefault("state", "no_data")
+            summary.setdefault("partial_success", False)
+            result["summary"] = summary
+            result.setdefault("data", [])
+    return result
 
 
 # ===================================================================
@@ -4871,6 +5933,141 @@ def api_changes(base: str = "HEAD~1", severity: str = "warning", root: str = "."
     return _run_roam(args, root)
 
 
+# ---------------------------------------------------------------------------
+# Fix F (Pattern 6) — MCP wrappers for the four large-response CLI commands
+# that previously had no MCP surface. Without these, agents can't invoke
+# ``api`` / ``conventions`` / ``verify-imports`` / ``changelog`` through MCP
+# at all (only via shell-out). Wrapping them via ``_run_roam`` routes their
+# response through the @_tool decorator's ``_wrap_with_handle_off``, which
+# auto-stores any >50KB envelope under ``.roam/responses/<sha>.json`` and
+# replaces the wire response with a tiny handle envelope. Closes the
+# capsule/partition/conventions/verify-imports/api/changelog leg of the
+# response-volume audit findings.
+# ---------------------------------------------------------------------------
+
+
+@_tool(
+    name="roam_api",
+    description="List the public API surface — exported public symbols with signatures and docs.",
+)
+def api(limit: int = 0, scope: str = "", root: str = ".") -> dict:
+    """List the public API surface (exported public symbols).
+
+    WHEN TO USE: Call this to enumerate the symbols a downstream
+    consumer can rely on — what's exported, what their signatures are,
+    and what their docstrings say. Pair with ``roam_api_changes`` to
+    audit breaking changes vs a git ref.
+
+    Parameters
+    ----------
+    limit:
+        Cap output to the first ``limit`` symbols (0 = no cap).
+    scope:
+        Restrict to symbols whose file path begins with this prefix
+        (e.g. ``src/auth/``).
+
+    Returns: list of public symbols with name, kind, qualified_name,
+    signature, docstring head, file path, and line.
+    Large payloads auto-handle-off to ``.roam/responses/``.
+    """
+    args = ["api"]
+    if limit and limit > 0:
+        args.extend(["--limit", str(int(limit))])
+    if scope:
+        args.extend(["--scope", scope])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_conventions",
+    description="Auto-detect codebase naming, file, import, and export conventions with outliers.",
+)
+def conventions(max_outliers: int = 10, root: str = ".") -> dict:
+    """Auto-detect codebase conventions.
+
+    WHEN TO USE: Call this on a new-to-you codebase to learn its
+    actual naming/import/export style before generating code, or as
+    a one-shot audit when you need a structured catalog of the
+    codebase's conventions (instead of the lighter rollup inside
+    ``roam_understand`` / ``roam_describe``).
+
+    Note: ``roam_understand`` uses the same canonical detector, so
+    the verdicts on naming/style agree. Use ``roam_understand`` when
+    you also want hotspots and tech stack; use this when you want
+    the full convention catalog with per-category outliers.
+
+    Parameters
+    ----------
+    max_outliers:
+        Max outliers shown per category (default 10).
+
+    Returns: per-category conventions with detected style, dominant
+    pattern, confidence, and outliers. Large payloads auto-handle-off.
+    """
+    args = ["conventions"]
+    if max_outliers != 10:
+        args.extend(["-n", str(int(max_outliers))])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_verify_imports",
+    description="Hallucination firewall: validate import statements resolve to indexed symbols.",
+)
+def verify_imports(file: str = "", root: str = ".") -> dict:
+    """Validate import/require statements against the indexed symbol table.
+
+    WHEN TO USE: Call this after an AI generates code with imports, OR
+    before merging a PR, to catch hallucinated / typo'd imports that
+    don't actually resolve. Flags unresolvable imports and suggests
+    corrections via fuzzy matching against the real symbol table.
+
+    Parameters
+    ----------
+    file:
+        Optional file path to limit verification to a single file.
+        Fix D: legacy alias ``file_path`` accepted.
+
+    Returns: per-file import lists tagged resolved/unresolved with
+    fuzzy correction suggestions. Large payloads auto-handle-off.
+    """
+    args = ["verify-imports"]
+    if file:
+        args.extend(["--file", file])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_changelog",
+    description="List commits since last tag, optionally formatted as a markdown CHANGELOG draft.",
+)
+def changelog(since: str = "", suggest: bool = False, root: str = ".") -> dict:
+    """List commits since the last tag, optionally as a markdown draft.
+
+    WHEN TO USE: Call this when cutting a release to enumerate
+    commits since the prior tag, or with ``suggest=True`` to also
+    bucket them by Conventional Commit type and emit a ready-to-paste
+    ``## [Unreleased]`` section for CHANGELOG.md.
+
+    Parameters
+    ----------
+    since:
+        Git rev to start from (default: last tag, or HEAD~30 if no tag).
+    suggest:
+        If True, emit a draft markdown CHANGELOG section grouped by
+        Conventional Commit buckets.
+
+    Returns: commit list (or grouped buckets + markdown draft if
+    suggest=True). Large payloads auto-handle-off.
+    """
+    args = ["changelog"]
+    if since:
+        args.extend(["--since", since])
+    if suggest:
+        args.append("--suggest")
+    return _run_roam(args, root)
+
+
 @_tool(
     name="roam_affected_tests",
     description="Test files that exercise changed code, with hop distance.",
@@ -4996,7 +6193,14 @@ def dead_code(root: str = ".") -> dict:
 
 
 @_tool(name="roam_duplicates")
-def duplicates_tool(threshold: float = 0.75, min_lines: int = 5, scope: str = "", root: str = ".") -> dict:
+def duplicates_tool(
+    threshold: float = 0.75,
+    min_lines: int = 5,
+    scope: str = "",
+    sample: int = 0,
+    max_pairs: int = 1000,
+    root: str = ".",
+) -> dict:
     """Detect semantically duplicate functions via structural similarity.
 
     WHEN TO USE: Call this to find functions with similar structure that
@@ -5011,6 +6215,11 @@ def duplicates_tool(threshold: float = 0.75, min_lines: int = 5, scope: str = ""
         Minimum function size to consider (default 5).
     scope:
         Limit analysis to files under this path prefix.
+    sample:
+        Deterministically sample at most N candidates (0=disabled, use all).
+    max_pairs:
+        Cap on number of duplicate-pair clusters reported (default 1000,
+        0=unlimited).
 
     Returns: duplicate clusters with similarity scores, shared patterns,
     and refactoring suggestions.
@@ -5018,6 +6227,12 @@ def duplicates_tool(threshold: float = 0.75, min_lines: int = 5, scope: str = ""
     args = ["duplicates", "--threshold", str(threshold), "--min-lines", str(min_lines)]
     if scope:
         args.extend(["--scope", scope])
+    if sample:
+        args.extend(["--sample", str(sample)])
+    # max_pairs default in CLI is 1000; only pass when caller explicitly
+    # overrides (preserves existing behavior + allows unlimited via 0).
+    if max_pairs != 1000:
+        args.extend(["--max-pairs", str(max_pairs)])
     return _run_roam(args, root)
 
 
@@ -5776,7 +6991,7 @@ def pr_diff(staged: bool = False, commit_range: str = "", root: str = ".") -> di
     name="roam_effects",
     description="Side effects of functions: DB writes, network, filesystem (direct + transitive).",
 )
-def effects(target: str = "", file: str = "", effect_type: str = "", root: str = ".") -> dict:
+def effects(symbol: str = "", path: str = "", effect_type: str = "", root: str = ".") -> dict:
     """Show side effects of functions (DB writes, network, filesystem, etc.).
 
     WHEN TO USE: Call this to understand what a function actually DOES
@@ -5786,10 +7001,12 @@ def effects(target: str = "", file: str = "", effect_type: str = "", root: str =
 
     Parameters
     ----------
-    target:
+    symbol:
         Symbol name to inspect effects for.
-    file:
+        Fix D: legacy alias ``target`` still accepted.
+    path:
         File path to show effects per function.
+        Fix D: legacy alias ``file`` still accepted.
     effect_type:
         Filter by effect type (e.g. "writes_db", "network").
 
@@ -5797,10 +7014,10 @@ def effects(target: str = "", file: str = "", effect_type: str = "", root: str =
     file, or entire codebase.
     """
     args = ["effects"]
-    if target:
-        args.append(target)
-    if file:
-        args.extend(["--file", file])
+    if symbol:
+        args.append(symbol)
+    if path:
+        args.extend(["--file", path])
     if effect_type:
         args.extend(["--type", effect_type])
     return _run_roam(args, root)
@@ -6759,7 +7976,7 @@ def roam_diff(commit_range: str = "", staged: bool = False, root: str = ".") -> 
     name="roam_symbol",
     description="Symbol definition, callers, callees, PageRank, fan-in/out metrics.",
 )
-def roam_symbol(name: str, full: bool = False, root: str = ".") -> dict:
+def roam_symbol(symbol: str, full: bool = False, root: str = ".") -> dict:
     """Symbol definition, callers, callees, and graph metrics.
 
     WHEN TO USE: when you need detailed info about a specific symbol --
@@ -6768,8 +7985,9 @@ def roam_symbol(name: str, full: bool = False, root: str = ".") -> dict:
 
     Parameters
     ----------
-    name:
+    symbol:
         Symbol name. Supports ``file:symbol`` for disambiguation.
+        Fix D: legacy alias ``name`` still accepted.
     full:
         Show all callers/callees without truncation.
     root:
@@ -6778,7 +7996,7 @@ def roam_symbol(name: str, full: bool = False, root: str = ".") -> dict:
     Returns: name, kind, signature, location, docstring, PageRank,
     in_degree, out_degree, callers list, callees list.
     """
-    args = ["symbol", name]
+    args = ["symbol", symbol]
     if full:
         args.append("--full")
     return _run_roam(args, root)
@@ -6807,7 +8025,7 @@ def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
         "For 3+ symbols call `roam_batch_get` (one round-trip) instead."
     ),
 )
-def roam_uses(name: str, full: bool = False, root: str = ".") -> dict:
+def roam_uses(symbol: str, full: bool = False, root: str = ".") -> dict:
     """All consumers of a symbol: callers, importers, inheritors.
 
     WHEN TO USE: this is the right tool for "find every reference to X"
@@ -6823,8 +8041,12 @@ def roam_uses(name: str, full: bool = False, root: str = ".") -> dict:
 
     For verifying multiple symbols (a typical "is X really dead?"
     sweep), call ``roam_batch_get`` instead — one round-trip resolves
-    up to 50 symbols with full caller/callee metadata."""
-    args = ["uses", name]
+    up to 50 symbols with full caller/callee metadata.
+
+    Fix D: legacy alias ``name`` is still accepted (translates to
+    ``symbol``) with a deprecation warning in ``summary.alias_warnings``.
+    """
+    args = ["uses", symbol]
     if full:
         args.append("--full")
     result = _run_roam(args, root)
@@ -8172,20 +9394,38 @@ def roam_session_metrics(root: str = ".") -> dict:
 
     total_calls = sum(sum(v.values()) for v in invocations.values())
     distinct_tools = len(invocations)
-    error_count = sum(v.get("error", 0) for v in invocations.values())
+    # ``command_error_count`` counts tools that raised an EXCEPTION (the
+    # ``"error"`` outcome bucket from ``record_tool_outcome``). This is
+    # DISTINCT from ``partial_success_count`` below — a tool can return
+    # ``summary.partial_success: true`` (e.g. one of four compound
+    # subcommands failed) and still record ``outcome="success"`` because
+    # the wrapper didn't raise. The previous ``error_count`` field
+    # conflated the two and made compound failures invisible to agents
+    # reading the session report.
+    command_error_count = sum(v.get("error", 0) for v in invocations.values())
     rate_limited_count = sum(v.get("rate_limited", 0) for v in invocations.values())
+    partial_success_count = _session_partial_success_count
 
     envelope = json_envelope(
         "session-metrics",
         summary={
             "verdict": (
                 f"{distinct_tools} distinct tool(s) exercised, "
-                f"{total_calls} total call(s), {error_count} error(s), "
+                f"{total_calls} total call(s), {command_error_count} exception(s), "
+                f"{partial_success_count} partial-success envelope(s), "
                 f"{rate_limited_count} rate-limited"
             ),
             "distinct_tools": distinct_tools,
             "total_calls": total_calls,
-            "error_count": error_count,
+            # NOTE (Fix E): ``error_count`` was renamed to
+            # ``command_error_count`` to disambiguate from the new
+            # ``partial_success_count`` field. Both are preserved here
+            # to give agents a backward-compatible read path while we
+            # roll the new name out across the dogfood corpus.
+            "command_error_count": command_error_count,
+            "partial_success_count": partial_success_count,
+            # Legacy alias — agents reading the old field still work.
+            "error_count": command_error_count,
             "rate_limited_count": rate_limited_count,
         },
         invocations=invocations,
@@ -8240,15 +9480,17 @@ def roam_test_impact(commit_range: str = "", max_hops: int = 5, root: str = ".")
     description="List every symbol matching a name with file/line/kind/signature/PageRank — pick the right overload.",
     output_schema=_ENVELOPE_SCHEMA,
 )
-def roam_disambiguate(name: str, limit: int = 20, root: str = ".") -> dict:
+def roam_disambiguate(symbol: str, limit: int = 20, root: str = ".") -> dict:
     """List every symbol matching a name with disambiguators.
 
     WHEN TO USE: when search returns multiple matches and you need to
     pick the right one. Saves an agent from picking the wrong overload.
 
+    Fix D: legacy alias ``name`` is still accepted.
+
     >>> roam disambiguate handle_login
     """
-    args = ["disambiguate", name, "--limit", str(limit)]
+    args = ["disambiguate", symbol, "--limit", str(limit)]
     return _run_roam(args, root)
 
 

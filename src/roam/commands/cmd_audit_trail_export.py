@@ -19,6 +19,7 @@ from roam.commands.audit_trail_helpers import (
     DEFAULT_AUDIT_TRAIL_PATH,
     INTEGRITY_SUMMARY_SCHEMA,
 )
+from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import load_records as _load_records
 from roam.output.formatter import json_envelope, to_json
 
@@ -318,6 +319,20 @@ def _render_aggregate_csv(agg: dict) -> str:
     return buf.getvalue()
 
 
+@roam_capability(
+    name="audit-trail-export",
+    category="workflow",
+    summary="Export the audit trail for procurement / compliance review",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "compliance"),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=False,
+    requires_index=True,
+)
 @click.command(name="audit-trail-export")
 @click.option(
     "--input",

@@ -7,6 +7,7 @@ import re
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, loc, to_json
@@ -89,16 +90,264 @@ _NON_AUTH_GUARD_RE = re.compile(
 _AUTHORIZATION_RE = re.compile(
     r"""
     \$this\s*->\s*authorize\s*\(         # $this->authorize(
-    | Gate\s*::\s*(?:allows|denies|check|authorize|inspect)\s*\(  # Gate::allows(
+    | Gate\s*::\s*(?:allows|denies|check|authorize|inspect|any|none)\s*\(  # Gate::allows( / Gate::any(
     | \$request\s*->\s*user\s*\(\s*\)\s*->\s*can\s*\(             # $request->user()->can(
     | \$user\s*->\s*can\s*\(                                       # $user->can(
     | auth\s*\(\s*\)\s*->\s*user\s*\(\s*\)\s*->\s*can\s*\(       # auth()->user()->can(
     | \$this\s*->\s*authorizeResource\s*\(                         # $this->authorizeResource(
+    | \$this\s*->\s*authorizeForUser\s*\(                          # $this->authorizeForUser(
     | Policy\s*::\s*authorize\s*\(                                 # Policy::authorize(
     | can\s*\(\s*['"]                                              # can('...')
     | cannot\s*\(\s*['"]                                           # cannot('...')
     """,
     re.IGNORECASE | re.VERBOSE,
+)
+
+# Dogfood #6 — helper-method indirection. Controllers commonly wrap
+# `$this->authorize()` in a project-specific helper (`authorizeIfPolicyExists`,
+# `requireAuthorization`, ...) defined on a base controller. The intra-method
+# regex above can't see through that helper, so every CRUD method that goes
+# through it gets falsely flagged. Two compounding fixes:
+#
+#   (1) Allowlist of well-known helper names that, when called as
+#       `$this->X(` / `static::X(` / `self::X(`, are treated as proof of
+#       authorization without any further analysis. Covers the common Laravel
+#       conventions and the dogfood-cited `authorizeIfPolicyExists`.
+#
+#   (2) One-level intra-class descent (see `_method_has_authorize`): when a
+#       method calls `$this->someHelper()` AND `someHelper` is defined on
+#       this class OR one of its ancestors (using the existing
+#       `class_source_map`), we re-check `someHelper`'s body for the literal
+#       authorize regex / allowlist hit.
+#
+# Both layers stay conservative: if a project ships an unfamiliar helper that
+# isn't in the allowlist and isn't defined in any indexed PHP file (e.g.
+# trait-only methods, magic __call), we still flag the calling method. This
+# preserves the "false negative > false positive" bias the rest of the
+# detector follows.
+#
+# Project-specific helpers can be added to a future `.roam-config.yml`
+# (extension point not yet wired). For now, edit `_AUTHORIZE_HELPER_NAMES`
+# below or rely on layer (2)'s descent to discover them automatically.
+_AUTHORIZE_HELPER_NAMES = frozenset(
+    {
+        # Literal Laravel-baseline helpers (also caught by _AUTHORIZATION_RE)
+        "authorize",
+        "authorizeResource",
+        "authorizeForUser",
+        # Dogfood #6 — observed in real Laravel codebases
+        "authorizeIfPolicyExists",
+        "requireAuthorization",
+        "requireAuth",
+        "requireAuthorized",
+        "mustBeAllowed",
+        "mustAuthorize",
+        "checkPolicy",
+        "checkAuthorization",
+        "checkAccess",
+        "ensureAuthorized",
+        "ensureCan",
+        "guardAgainst",
+        "abortUnlessAuthorized",
+    }
+)
+
+# Match `$this->name(` / `static::name(` / `self::name(` / `parent::name(`.
+# Used both to detect helper-name matches and to enumerate intra-class call
+# targets for the one-level descent.
+_RE_SELF_CALL = re.compile(
+    r"""(?:\$this\s*->|static\s*::|self\s*::|parent\s*::)\s*(\w+)\s*\(""",
+)
+
+# Prefix forms that almost always indicate an authorize helper, regardless of
+# the exact name. Examples observed in production Laravel codebases:
+#   $this->authorizeFoo(...)   -> "authorize"-prefixed
+#   $this->gateFoo(...)        -> "gate"-prefixed
+# Conservative: only matches when the prefix is followed by another
+# capital letter / digit / underscore (so plain `authorize(` stays in the
+# explicit regex, not here).
+_RE_AUTHORIZE_PREFIX_HELPER = re.compile(
+    r"""(?:\$this\s*->|static\s*::|self\s*::|parent\s*::)\s*(?:authorize|gate)[A-Z0-9_]\w*\s*\(""",
+)
+
+
+def _body_has_inline_authorization(body: str) -> bool:
+    """Cheap, regex-only authorization check on a single method body.
+
+    Mirrors what `_AUTHORIZATION_RE` did before dogfood #6 — kept as a
+    standalone helper so the one-level-descent path (which has already
+    spent the lookup cost) can reuse it on a helper's body without paying
+    the full helper-resolution price a second time.
+    """
+    if _AUTHORIZATION_RE.search(body):
+        return True
+    if _RE_AUTHORIZE_PREFIX_HELPER.search(body):
+        return True
+    # Allowlist match — `$this->authorizeIfPolicyExists(`, etc.
+    for m in _RE_SELF_CALL.finditer(body):
+        if m.group(1) in _AUTHORIZE_HELPER_NAMES:
+            return True
+    return False
+
+
+_HELPER_DESCENT_MAX_DEPTH = 2  # W36.10: bumped from 1 -> 2 to cover 2-deep
+                               # wrapper chains (AdminController extends
+                               # ResourceController extends BaseController where
+                               # the authorize call lives 2 hops up). Do NOT
+                               # bump beyond 2 — the dogfood corpus only
+                               # justifies depth-1; depth-2 is a conservative
+                               # extension. Depth-3+ risks FP via spurious
+                               # `authorize` matches in unrelated ancestor
+                               # methods of deep framework hierarchies.
+
+
+def _method_has_authorize(
+    body: str,
+    own_class_methods: dict[str, str] | None = None,
+    class_source_map: dict[str, str] | None = None,
+    source: str | None = None,
+    _depth: int = _HELPER_DESCENT_MAX_DEPTH,
+) -> bool:
+    """Decide whether *body* should count as authorized.
+
+    Three layers, evaluated cheapest-first:
+
+      1. Inline literal authorize calls / allowlist helpers / prefix-helpers
+         (`_body_has_inline_authorization`).
+      2. Intra-class descent: for each `$this->X(` in *body* that resolves to
+         a method defined ON THIS CLASS, re-run the check on X's body. This
+         catches the dogfood-cited `BaseResourceController::authorizeIfPolicyExists`
+         pattern when the helper happens to live in the same file.
+      3. Ancestor descent: same as (2) but the helper is resolved on a parent
+         class via the existing `class_source_map` + `_RE_CLASS_EXTENDS`
+         walker. Capped at the same 3-ancestor depth as the constructor-
+         middleware walker — Laravel projects rarely go deeper.
+
+    Depth is hard-capped at ``_HELPER_DESCENT_MAX_DEPTH`` descent layers
+    (W36.10 — bumped from 1 to 2). The dogfood corpus reported depth-1
+    covers ~95% of real-world cases; depth-2 lifts that to handle the
+    common 2-deep wrapper chain (``AdminController -> ResourceController
+    -> BaseController``). Deeper recursion buys little and risks cycles
+    plus false positives from unrelated `authorize` calls in deep
+    framework hierarchies.
+    """
+    if _body_has_inline_authorization(body):
+        return True
+    if own_class_methods is None and class_source_map is None:
+        return False
+    if _depth <= 0:
+        return False
+
+    # Collect `$this->X(` call targets in this method body.
+    self_call_targets: list[str] = []
+    for m in _RE_SELF_CALL.finditer(body):
+        target = m.group(1)
+        # Layer 1 already covered allowlist hits; skip them to avoid wasted
+        # work but stay correct if a project overrides one of these names.
+        if target in _AUTHORIZE_HELPER_NAMES:
+            return True
+        self_call_targets.append(target)
+
+    if not self_call_targets:
+        return False
+
+    # Layer 2 — same-class helpers. Recurse so a 2-deep chain
+    # (caller -> helperA -> helperB[auth]) resolves at _depth=2.
+    if own_class_methods:
+        for target in self_call_targets:
+            helper_body = own_class_methods.get(target)
+            if helper_body is None:
+                continue
+            if _method_has_authorize(
+                helper_body,
+                own_class_methods=own_class_methods,
+                class_source_map=class_source_map,
+                source=source,
+                _depth=_depth - 1,
+            ):
+                return True
+
+    # Layer 3 — ancestor helpers via class_source_map. Recurse so a 2-deep
+    # ancestor wrapper chain (helper -> deeper helper[auth]) resolves.
+    if class_source_map and source:
+        ancestor_methods = _collect_ancestor_methods(source, class_source_map)
+        for target in self_call_targets:
+            helper_body = ancestor_methods.get(target)
+            if helper_body is None:
+                continue
+            if _method_has_authorize(
+                helper_body,
+                own_class_methods=own_class_methods,
+                class_source_map=class_source_map,
+                source=source,
+                _depth=_depth - 1,
+            ):
+                return True
+
+    return False
+
+
+def _collect_ancestor_methods(
+    source: str,
+    class_source_map: dict[str, str],
+    depth: int = 3,
+) -> dict[str, str]:
+    """Return a {method_name: body} map gathered from *source*'s ancestors.
+
+    Mirrors `_ancestor_has_constructor_auth`'s walking strategy but collects
+    every public/protected method body it can find. Capped at the same
+    3-ancestor depth so a long Laravel framework chain doesn't dominate.
+    """
+    methods: dict[str, str] = {}
+    visited: set[str] = set()
+    current_source: str | None = source
+    while current_source is not None and depth > 0:
+        extends_match = _RE_CLASS_EXTENDS.search(current_source)
+        if not extends_match:
+            break
+        parent_fqn = extends_match.group(2)
+        parent_short = parent_fqn.replace("\\", "/").rsplit("/", 1)[-1]
+        if parent_short in visited:
+            break
+        visited.add(parent_short)
+        parent_source = class_source_map.get(parent_short)
+        if parent_source is None:
+            break
+        for m in _PROTECTED_OR_PUBLIC_METHOD_RE.finditer(parent_source):
+            name = m.group(1)
+            methods.setdefault(name, _extract_method_body_at(parent_source, m.start()))
+        current_source = parent_source
+        depth -= 1
+    return methods
+
+
+def _extract_method_body_at(source: str, start_offset: int) -> str:
+    """Return the textual body of the method whose declaration begins at *start_offset*.
+
+    Walks character-by-character until brace-depth returns to 0. Returns an
+    empty string if the body never opens (interface methods, abstract
+    methods, syntax errors).
+    """
+    text = source[start_offset:]
+    brace_depth = 0
+    found_open = False
+    out: list[str] = []
+    for ch in text:
+        out.append(ch)
+        if ch == "{":
+            brace_depth += 1
+            found_open = True
+        elif ch == "}":
+            brace_depth -= 1
+            if found_open and brace_depth == 0:
+                return "".join(out)
+    return "".join(out)
+
+
+# Matches `public function X(` / `protected function X(` / `private function X(`.
+# Used to collect ancestor-class method bodies for one-level intra-class descent.
+_PROTECTED_OR_PUBLIC_METHOD_RE = re.compile(
+    r"""\b(?:public|protected|private)\s+(?:static\s+)?function\s+(\w+)\s*\(""",
 )
 
 # M11 — tenant-scoped query patterns. When a controller method scopes its
@@ -463,6 +712,25 @@ def _extract_method_bodies(source: str) -> list[dict]:
     return methods
 
 
+def _collect_all_methods(source: str) -> dict[str, str]:
+    """Return ``{method_name: body}`` for every method in *source*.
+
+    Unlike ``_extract_method_bodies`` (which only looks at lines that *start*
+    with ``public function``), this captures public/protected/private and
+    static variants — needed for dogfood #6's one-level intra-class
+    descent, since the wrapped authorize-helper is typically ``protected``.
+    """
+    methods: dict[str, str] = {}
+    for m in _PROTECTED_OR_PUBLIC_METHOD_RE.finditer(source):
+        name = m.group(1)
+        # Skip duplicates so the FIRST definition wins (PHP doesn't allow
+        # overload anyway, and trait-merging is out of scope).
+        if name in methods:
+            continue
+        methods[name] = _extract_method_body_at(source, m.start())
+    return methods
+
+
 # E2 — class-source map: short-class-name -> source. Built once per
 # `auth-gaps` invocation by walking every controller file in the project
 # so the inheritance walker has O(1) lookup instead of re-reading files.
@@ -552,6 +820,10 @@ def _analyze_controller_file(
         has_constructor_auth = _ancestor_has_constructor_auth(source, class_source_map)
 
     methods = _extract_method_bodies(source)
+    # Dogfood #6 — pre-build a {name: body} map of ALL methods (public,
+    # protected, private) on this class so the one-level descent can find
+    # same-class helpers like `protected function authorizeIfPolicyExists`.
+    own_class_methods = _collect_all_methods(source)
     for method in methods:
         name = method["name"]
         body = method["body"]
@@ -569,8 +841,16 @@ def _analyze_controller_file(
         if not is_crud and not is_read:
             continue
 
-        # Check for explicit authorization call in the method body
-        has_auth_check = bool(_AUTHORIZATION_RE.search(body))
+        # Check for explicit authorization call in the method body. Dogfood
+        # #6: extend beyond a single regex by also (a) recognising a small
+        # allowlist of common helper names, (b) descending one level into
+        # `$this->X(` helpers defined on this class or its ancestors.
+        has_auth_check = _method_has_authorize(
+            body,
+            own_class_methods=own_class_methods,
+            class_source_map=class_source_map,
+            source=source,
+        )
 
         # M11 — tenant-scoped query patterns count as authorization-equivalent.
         # When a method is route-auth-protected AND scopes its query to the
@@ -757,6 +1037,20 @@ def _analyze_service_provider(file_path: str, source: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="auth-gaps",
+    category="reports",
+    summary="Find endpoints missing authentication or authorization checks",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("auth-gaps")
 @click.option("--limit", "-n", default=50, show_default=True, help="Max findings to display")
 @click.option(
@@ -882,12 +1176,23 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
 
     # --- JSON output ---
     if json_mode:
+        verdict = f"{total} auth gap(s) found"
+        # W21.7 LAW 4: suppress zero-severity rows from the auto-derived
+        # ``agent_contract.facts`` so we don't ship noise like
+        # ``"0 high findings"`` / ``"0 medium findings"`` /
+        # ``"0 low findings"``. Build the contract explicitly: verdict +
+        # only the non-zero severity buckets. When everything is zero the
+        # facts list contains only the verdict ("0 auth gap(s) found").
+        explicit_facts = [verdict]
+        for sev, n in (("high", n_high), ("medium", n_medium), ("low", n_low)):
+            if n > 0:
+                explicit_facts.append(f"{n} {sev}-severity auth gaps")
         click.echo(
             to_json(
                 json_envelope(
                     "auth-gaps",
                     summary={
-                        "verdict": f"{total} auth gap(s) found",
+                        "verdict": verdict,
                         "total": total,
                         "high": n_high,
                         "medium": n_medium,
@@ -895,6 +1200,7 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
                         "route_gaps": len(route_findings),
                         "controller_gaps": len(ctrl_findings),
                     },
+                    agent_contract={"facts": explicit_facts},
                     route_gaps=route_findings[:limit],
                     controller_gaps=ctrl_findings[:limit],
                 )

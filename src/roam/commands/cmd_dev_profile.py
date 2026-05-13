@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 import click
 
+from roam.capability import roam_capability
 from roam.graph.stats import gini_coefficient
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -350,6 +351,20 @@ def build_author_profile(
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="dev-profile",
+    category="reports",
+    summary="Analyze developer commit patterns and behavioral metrics",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("dev-profile")
 @click.argument("author", required=False)
 @click.option("--days", default=90, show_default=True, help="Lookback window in days.")

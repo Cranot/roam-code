@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [13.0] — 2026-05-13
+
+### Substrate evolution
+- R20 ledger HMAC chain with CGA signing
+- R21 multi-agent lease system
+- R25 plugin substrate validated end-to-end via Rails Path A clean cut
+- atomic_io consolidation across writers
+- Constitution/policy unified single source of truth
+- World model: side-effects, idempotency, causal graph, tx-boundaries classifiers
+
+### Mode enforcement (staged rollout, opt-in)
+- `_MODE_ALWAYS_ALLOWED` bootstrap allowlist (`index`/`init`/`reindex`)
+- Test fixture sweep across 10 privileged-command test files
+- Classification coverage for 8 additional commands
+- Empirically validated: 251/252 pass with `ROAM_MODE_ENFORCEMENT=1`
+
+### Real-world feedback fixes
+- `stale-refs` heading-slugger now matches GitHub's algorithm (underscore + whitespace)
+- `stale-refs --fix` corruption guards: URL-half resolution + bare-backtick suppression
+- `algo` nested-lookup dataflow predicate + PHP `===`/`!==` detection
+- `auth-gaps` helper indirection (2-level same-class + ancestor descent)
+- 7 of 8 Laravel dynamic-dispatch idioms detected (Route/Eloquent-scope/Policy/
+  Observer/Job/Queue/Artisan) via new `roam/index/laravel_post.py`
+- `over-fetch` 3-state classification (BARE / GUARDED_RELATION / UNGUARDED_RELATION)
+- `pr-bundle --strict-resolved` flag + `--ci` global mode integration
+- `ws resolve` exposes unmatched URLs with reason classification
+
+### New commands
+- `roam brief`, `roam next`, `roam mode`, `roam constitution`, `roam laws`
+- `roam memory`, `roam lease`, `roam runs`, `roam replay`, `roam agent-score`
+- `roam agents-md`, `roam architecture-drift`, `roam graph-diff`
+- `roam side-effects`, `roam idempotency`, `roam causal-graph`, `roam tx-boundaries`
+- `roam batch-search`, `roam complete`, `roam mcp`
+
+### Drift-guard infrastructure
+- LAW 4 anchor lint + AST-pinned `CLAUDE.md` count assertions
+- Capability registry auto-derive (eliminated 531 LOC of bookkeeping)
+- `README.md` marker-based count auto-generation + doc-hygiene CI workflow
+- `--sarif` consumer drift-guard + `--budget` coverage survey
+- Canonical-constant citation lint (load-bearing, allowlist empty)
+- Extension-constant consolidation (`DOC_EXTENSIONS` canonical;
+  `_BINARY_EXTENSIONS` aliased to `SKIP_EXTENSIONS`)
+- Anti-leak CI gate extended with domain-term patterns
+
+### Renamed
+- `summary_envelope` → `strip_list_payloads` (name reflects contract)
+
+### Schema
+- USER_VERSION 12 → 13 (migration #51: `loop_eq_with_dependent_write` column for
+  algo nested-lookup dataflow predicate)
+
 ### Round 10/11 — 9-agent parallel hardening pass
 
 Nine Opus agents in two parallel waves closed the gaps surfaced by the R9 cross-rechecks. All landed in the working tree; none lost when the host PC died mid-flight.

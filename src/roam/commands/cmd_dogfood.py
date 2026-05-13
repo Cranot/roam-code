@@ -17,6 +17,7 @@ import json as _json
 import click
 from click.testing import CliRunner
 
+from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.commands.git_helpers import git_metadata
 from roam.commands.resolve import ensure_index
@@ -39,6 +40,24 @@ def _run_subcommand(args: list[str]) -> dict:
         }
 
 
+@roam_capability(
+    name="dogfood",
+    category="health",
+    summary="Run the v2 stack on the current repo: audit + pr-analyze + audit-trail.",
+    inputs=[],
+    outputs=["audit", "pr_analyze", "audit_trail", "verdict"],
+    examples=["roam dogfood", "roam --json dogfood", "roam dogfood --no-audit-trail"],
+    tags=["health", "demo"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command(name="dogfood")
 @click.option(
     "--audit/--no-audit",

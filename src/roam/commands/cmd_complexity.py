@@ -9,9 +9,41 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+
+
+# R22 — confidence-derivation rule for complexity rankings:
+#   cognitive_complexity is a deterministic, well-validated metric, so
+#   "confidence" here reflects whether the score crosses a threshold
+#   that empirically predicts maintainability pain — not whether the
+#   number is trustworthy (it always is).
+#
+#   severity CRITICAL or HIGH (score >= 15) → "high"  (refactor target)
+#   severity MEDIUM  (8 <= score < 15)       → "medium" (monitor)
+#   severity LOW     (score < 8)             → "low"    (no action)
+_COMPLEXITY_SEVERITY_TO_CONFIDENCE = {
+    "CRITICAL": "high",
+    "HIGH": "high",
+    "MEDIUM": "medium",
+    "LOW": "low",
+}
+
+
+def _complexity_classify(sym: dict) -> tuple[str, str]:
+    """Map a complexity ranking entry to a (confidence, reason) tuple."""
+    score = sym.get("cognitive_complexity", 0) or 0
+    severity = sym.get("severity") or _severity(score)
+    conf = _COMPLEXITY_SEVERITY_TO_CONFIDENCE.get(severity, "low")
+    reason = f"cognitive complexity {score:.0f} → {severity} (refactor signal)"
+    return conf, reason
 
 
 def _safe_metric(row, key, default=0.0):
@@ -39,6 +71,27 @@ def _severity_icon(sev: str) -> str:
     return icons.get(sev, "  ")
 
 
+@roam_capability(
+    category="health",
+    summary="Show per-symbol cognitive complexity rankings.",
+    inputs=["target"],
+    outputs=["complexity_rankings", "verdict"],
+    examples=[
+        "roam complexity",
+        "roam complexity --top 50",
+        "roam complexity my_module",
+    ],
+    tags=["health", "metrics"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command("complexity")
 @click.argument("target", required=False, default=None)
 @click.option(
@@ -255,6 +308,35 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 f"{critical_count} critical, {high_count} high; "
                 f"worst: {_worst_name}({_worst_cc:.0f})"
             )
+            # R22: wrap each symbol in {value, confidence, reason}.
+            # Consumers that previously read `symbols[i]["name"]` must
+            # now read `symbols[i]["value"]["name"]` plus
+            # `symbols[i]["confidence"]` / `symbols[i]["reason"]`.
+            symbol_values = [
+                {
+                    "name": r["qualified_name"] or r["name"],
+                    "kind": r["kind"],
+                    "file": r["file_path"],
+                    "line": r["line_start"],
+                    "cognitive_complexity": r["cognitive_complexity"],
+                    "nesting_depth": r["nesting_depth"],
+                    "param_count": r["param_count"],
+                    "line_count": r["line_count"],
+                    "return_count": r["return_count"],
+                    "bool_op_count": r["bool_op_count"],
+                    "callback_depth": r["callback_depth"],
+                    "cyclomatic_density": _safe_metric(r, "cyclomatic_density"),
+                    "halstead_volume": _safe_metric(r, "halstead_volume"),
+                    "halstead_difficulty": _safe_metric(r, "halstead_difficulty"),
+                    "halstead_effort": _safe_metric(r, "halstead_effort"),
+                    "halstead_bugs": _safe_metric(r, "halstead_bugs"),
+                    "severity": _severity(r["cognitive_complexity"]),
+                }
+                for r in rows
+            ]
+            symbol_triples = wrap_findings(symbol_values, classifier=_complexity_classify)
+            distribution = confidence_distribution(symbol_triples)
+            _cx_verdict = verdict_with_high_count(_cx_verdict, distribution)
             click.echo(
                 to_json(
                     json_envelope(
@@ -267,30 +349,10 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                             "critical_count": critical_count,
                             "high_count": high_count,
                             "showing": len(rows),
+                            "findings_confidence_distribution": distribution,
                         },
                         budget=token_budget,
-                        symbols=[
-                            {
-                                "name": r["qualified_name"] or r["name"],
-                                "kind": r["kind"],
-                                "file": r["file_path"],
-                                "line": r["line_start"],
-                                "cognitive_complexity": r["cognitive_complexity"],
-                                "nesting_depth": r["nesting_depth"],
-                                "param_count": r["param_count"],
-                                "line_count": r["line_count"],
-                                "return_count": r["return_count"],
-                                "bool_op_count": r["bool_op_count"],
-                                "callback_depth": r["callback_depth"],
-                                "cyclomatic_density": _safe_metric(r, "cyclomatic_density"),
-                                "halstead_volume": _safe_metric(r, "halstead_volume"),
-                                "halstead_difficulty": _safe_metric(r, "halstead_difficulty"),
-                                "halstead_effort": _safe_metric(r, "halstead_effort"),
-                                "halstead_bugs": _safe_metric(r, "halstead_bugs"),
-                                "severity": _severity(r["cognitive_complexity"]),
-                            }
-                            for r in rows
-                        ],
+                        symbols=symbol_triples,
                     )
                 )
             )

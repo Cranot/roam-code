@@ -15,6 +15,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files
 from roam.db.connection import find_project_root
 from roam.index.parser import (
@@ -154,6 +155,20 @@ def _get_changed_files() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="syntax-check",
+    category="workflow",
+    summary="Check files for syntax errors using tree-sitter AST parsing",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("syntax-check")
 @click.argument("paths", nargs=-1)
 @click.option("--changed", is_flag=True, help="Check only git-changed files (unstaged + staged + untracked).")

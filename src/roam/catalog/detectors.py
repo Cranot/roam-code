@@ -22,6 +22,15 @@ import re
 import sqlite3
 
 from roam.catalog.tasks import best_way
+from roam.languages import JS_FAMILY_LANGUAGES
+
+# Inline-bound SQL fragment for JS-family language filters. Catalog
+# detectors that target the TS / JS / Vue / Svelte ecosystem use this
+# instead of hand-written `'javascript', 'typescript', ...` tuples so
+# the .vue / .svelte SFCs aren't silently dropped from anti-pattern
+# matching. ``files.language`` stores 'vue' / 'svelte' for SFCs, even
+# though their ``<script>`` blocks are parsed and indexed as TS/JS.
+_JS_FAMILY_SQL_TUPLE = "(" + ", ".join(f"'{lang}'" for lang in JS_FAMILY_LANGUAGES) + ")"
 
 
 def _is_test_path(path: str) -> bool:
@@ -1071,16 +1080,36 @@ def detect_naive_fibonacci(conn: sqlite3.Connection) -> list[dict]:
 
 
 def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
-    """Nested loops with subscript access and comparisons β€” O(n*m) lookup.
+    """Nested loops that match the hash-joinable lookup fingerprint.
 
-    Suppresses known false positives: grid/matrix traversal (name hints),
-    and requires both nested loops AND comparisons (not just nested loops
-    with subscript access, which could be matrix operations).
+    The historical triplet (nested_loops + subscript_in_loops + loop_compare)
+    flagged ~85% false positives on PHP because both streaming output
+    (``foreach rows × cols`` CSV emission) and matrix traversal share the
+    same surface signals. The 2026-05 dogfood quantified this and named
+    the discriminator:
+
+    A real O(n*m) hash-joinable lookup contains BOTH
+
+      1. an equality comparison on per-iteration keys
+         (``$a->id === $b->id`` / ``a['k'] == b['k']``), AND
+      2. an accumulator write gated by that equality
+         (``$matched[$t->id] = $e`` / ``results.append((a, b))``).
+
+    The new ``loop_eq_with_dependent_write`` math-signal captures that
+    structural fingerprint at index time (single AST walk). This detector
+    now requires the signal, on top of the historical triplet. Suppresses
+    known FP names (matrix / grid / format_table / co-change / …) on top.
+
+    Note: legacy DBs (indexed before the W36 sprint) will have
+    ``loop_eq_with_dependent_write = 0`` for every row and report zero
+    findings. A re-index repopulates the column; this is the same
+    behaviour the schema-versioned ``index_manifest`` already advertises
+    to bundle/doctor consumers.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
         "s.line_start, ms.has_nested_loops, ms.subscript_in_loops, "
-        "ms.loop_with_compare "
+        "ms.loop_with_compare, ms.loop_eq_with_dependent_write "
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "JOIN math_signals ms ON ms.symbol_id = s.id "
@@ -1089,6 +1118,7 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
         "AND ms.has_nested_loops = 1 "
         "AND ms.subscript_in_loops = 1 "
         "AND ms.loop_with_compare = 1 "
+        "AND ms.loop_eq_with_dependent_write = 1 "
         "AND sm.cognitive_complexity >= 8"
     ).fetchall()
 
@@ -1140,6 +1170,20 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
         "apply_rule",
         "for_each_detector",
         "dispatch_rule",
+        # Rendering / formatting — cell-formatting loops over a 2D
+        # structure (rows × cols) are intrinsically O(n*m). A hash-map
+        # join cannot apply to layout work.
+        "format_table",
+        "format_grid",
+        "render_table",
+        "render_grid",
+        "render_matrix",
+        "print_table",
+        "print_grid",
+        "emit_table",
+        "draw_grid",
+        "draw_table",
+        "tabulate",
     }
 
     results = []
@@ -1795,10 +1839,38 @@ def autodetect_framework_profile() -> str | None:
     if "django" in req_text or '"django' in pyp_text or "'django" in pyp_text:
         return "django"
 
-    # X9 — Ruby/Rails: Gemfile lists `gem 'rails'`.
-    gemfile = _read_text(_os.path.join(cwd, "Gemfile"))
-    if "gem 'rails'" in gemfile or 'gem "rails"' in gemfile:
-        return "rails"
+    # Ruby/Rails detection lives in the ``roam-plugin-rails`` plugin
+    # under ``dev/example-plugin/roam_plugin_rails`` (W28.2 Path A
+    # clean-cut extraction). Core no longer ships a built-in
+    # ``Gemfile`` check — load the plugin to restore detection::
+    #
+    #     PYTHONPATH=dev/example-plugin \
+    #     ROAM_PLUGIN_MODULES=roam_plugin_rails \
+    #     roam <subcommand>
+    #
+    # The ``rails`` *profile* (in-memory I/O allowlist for N+1) still
+    # lives in ``_FRAMEWORK_PROFILES`` so ``--framework rails`` keeps
+    # working even when the detector plugin is absent.
+
+    # Plugin-contributed framework detectors. Built-ins win first
+    # (deterministic for the bundled profiles); plugins are consulted
+    # only if nothing built-in matched. Each detector is wrapped in a
+    # try/except so a buggy plugin can't break detection.
+    try:
+        from pathlib import Path
+
+        from roam.plugins import get_plugin_framework_detectors
+
+        root = Path(cwd)
+        for detect in get_plugin_framework_detectors():
+            try:
+                result = detect(root)
+            except Exception:
+                continue
+            if result:
+                return str(result)
+    except Exception:
+        pass
 
     return None
 
@@ -2412,7 +2484,7 @@ def detect_serial_await_loop(conn: sqlite3.Connection) -> list[dict]:
         "JOIN math_signals ms ON ms.symbol_id = s.id "
         "WHERE s.kind IN ('function', 'method') "
         "AND ms.loop_depth >= 1 "
-        "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+        "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
     ).fetchall()
 
     results = []
@@ -2783,7 +2855,7 @@ def detect_spread_accumulator(conn: sqlite3.Connection) -> list[dict]:
             "FROM symbols s "
             "JOIN files f ON s.file_id = f.id "
             "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
         ).fetchall()
     except Exception:
         return []
@@ -2911,7 +2983,7 @@ def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
             "FROM symbols s "
             "JOIN files f ON s.file_id = f.id "
             "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
         ).fetchall()
     except Exception:
         return []
@@ -2978,7 +3050,7 @@ def detect_useeffect_missing_deps(conn: sqlite3.Connection) -> list[dict]:
             "FROM symbols s "
             "JOIN files f ON s.file_id = f.id "
             "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
         ).fetchall()
     except Exception:
         return []
@@ -3102,7 +3174,7 @@ def detect_unremoved_event_listener(conn: sqlite3.Connection) -> list[dict]:
             "FROM symbols s "
             "JOIN files f ON s.file_id = f.id "
             "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
         ).fetchall()
     except Exception:
         return []

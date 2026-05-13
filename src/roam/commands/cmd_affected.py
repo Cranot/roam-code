@@ -18,6 +18,7 @@ from roam.commands.changed_files import (
     is_test_file,
     resolve_changed_to_db,
 )
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
@@ -150,6 +151,20 @@ def _group_by_module(changed_files, affected_files):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="affected",
+    category="workflow",
+    summary="Identify affected files/modules from a git diff via dependency graph",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("affected")
 @click.option("--base", "base_ref", default="HEAD~1", help="Git ref to diff against (default: HEAD~1)")
 @click.option(

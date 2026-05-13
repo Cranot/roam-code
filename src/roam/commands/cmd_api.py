@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -21,6 +22,20 @@ from roam.output.formatter import json_envelope, to_json
 _PUBLIC_KINDS = ("function", "method", "class", "interface", "enum")
 
 
+@roam_capability(
+    name="api",
+    category="workflow",
+    summary="List the public API surface (exported public symbols)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--limit", type=int, default=0, show_default=True, help="Cap output (0=all).")
 @click.option(
@@ -81,11 +96,25 @@ def api(ctx, limit, scope) -> None:
     verdict = f"{len(items)} public symbol(s) in API surface"
 
     if json_mode:
+        # W17.2 / Pattern 3c: name the inclusion criterion so consumers
+        # know which subset of "public symbols" they are looking at.
+        # `api` reports the syntactic (no-underscore) subset; the
+        # semantic (export-marker) subset is what `docs-coverage` reports.
+        from roam.quality.public_symbols import (
+            CRITERION_NO_UNDERSCORE,
+            definition as _ps_def,
+        )
+
         click.echo(
             to_json(
                 json_envelope(
                     "api",
-                    summary={"verdict": verdict, "count": len(items)},
+                    summary={
+                        "verdict": verdict,
+                        "count": len(items),
+                        "public_symbols_inclusion_criterion": CRITERION_NO_UNDERSCORE,
+                        "public_symbols_definition": _ps_def(),
+                    },
                     api=items,
                 )
             )

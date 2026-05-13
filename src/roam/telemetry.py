@@ -37,19 +37,37 @@ def _db_path() -> Path:
 
 
 def _open() -> sqlite3.Connection | None:
+    """Open the telemetry SQLite DB, creating the schema on first use.
+
+    The schema-create is wrapped in an explicit transaction (``with conn:``)
+    so the DDL commits atomically — protecting against a torn schema on
+    concurrent first-use across processes and silencing the
+    ``roam tx-boundaries`` ``unsafe_mutation`` heuristic that flagged the
+    bare ``conn.execute`` form (R28 substrate dogfood).
+
+    SQLite itself uses a write-ahead log / rollback journal under the hood,
+    so a crash mid-INSERT in :func:`record` cannot tear a row — that
+    durability lives in the engine. The change here is the
+    schema-creation step explicitly opting into a transaction so the
+    intent is visible at the call site, not implicit.
+    """
     try:
         path = _db_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(path), timeout=2.0)
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS calls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts REAL NOT NULL,
-                command TEXT NOT NULL,
-                duration_ms INTEGER NOT NULL,
-                exit_code INTEGER NOT NULL
-            )"""
-        )
+        # Explicit transaction for the DDL — ``with conn:`` commits on
+        # success, rolls back on exception. Idempotent because of
+        # ``IF NOT EXISTS``.
+        with conn:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS calls (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL NOT NULL,
+                    command TEXT NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    exit_code INTEGER NOT NULL
+                )"""
+            )
         return conn
     except Exception:
         return None
@@ -66,17 +84,23 @@ def record(command: str, duration_ms: int, exit_code: int) -> None:
     if conn is None:
         return
     try:
-        conn.execute(
-            "INSERT INTO calls (ts, command, duration_ms, exit_code) VALUES (?, ?, ?, ?)",
-            (time.time(), command, int(duration_ms), int(exit_code)),
-        )
-        # Ring-buffer pruning: drop everything older than the most recent
-        # _RING_LIMIT rows. Cheap and bounded.
-        conn.execute(
-            "DELETE FROM calls WHERE id NOT IN (SELECT id FROM calls ORDER BY id DESC LIMIT ?)",
-            (_RING_LIMIT,),
-        )
-        conn.commit()
+        # Explicit transaction around the insert + prune so the two
+        # statements commit atomically. ``with conn:`` calls
+        # ``conn.commit()`` on clean exit and ``conn.rollback()`` on
+        # exception — replaces the manual ``conn.commit()`` and pairs
+        # the begin with an explicit close so heuristic scanners
+        # (``roam tx-boundaries``) classify this as ``transactional``.
+        with conn:
+            conn.execute(
+                "INSERT INTO calls (ts, command, duration_ms, exit_code) VALUES (?, ?, ?, ?)",
+                (time.time(), command, int(duration_ms), int(exit_code)),
+            )
+            # Ring-buffer pruning: drop everything older than the most recent
+            # _RING_LIMIT rows. Cheap and bounded.
+            conn.execute(
+                "DELETE FROM calls WHERE id NOT IN (SELECT id FROM calls ORDER BY id DESC LIMIT ?)",
+                (_RING_LIMIT,),
+            )
     except Exception:
         pass
     finally:

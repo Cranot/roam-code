@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -461,8 +462,23 @@ def oracle_is_clone_of(conn: sqlite3.Connection, name: str) -> OracleResult:
 # ---------------------------------------------------------------------------
 
 
-def _emit(ctx, oracle_name: str, result: OracleResult, **extra) -> None:
-    """Render the tri-state verdict (true | false | indeterminate)."""
+def _emit(
+    ctx,
+    oracle_name: str,
+    result: OracleResult,
+    *,
+    caller_metric_definition: str | None = None,
+    **extra,
+) -> None:
+    """Render the tri-state verdict (true | false | indeterminate).
+
+    *caller_metric_definition* — when the oracle's answer is derived from
+    a caller / reach computation, callers can pass a short label
+    identifying which metric was used (see ``docs/concepts/caller-metrics.md``).
+    The label is added to ``summary`` so downstream consumers know
+    whether the oracle counted distinct caller tuples, raw edge rows,
+    or a BFS reach set.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     if result.value is True:
         verdict = "true"
@@ -471,17 +487,20 @@ def _emit(ctx, oracle_name: str, result: OracleResult, **extra) -> None:
     else:
         verdict = "indeterminate"
     if json_mode:
+        summary = {
+            "verdict": verdict,
+            "value": result.value,
+            "reason": result.reason,
+            "reason_class": result.reason_class,
+            "confidence": result.confidence,
+        }
+        if caller_metric_definition is not None:
+            summary["caller_metric_definition"] = caller_metric_definition
         click.echo(
             to_json(
                 json_envelope(
                     f"oracle:{oracle_name}",
-                    summary={
-                        "verdict": verdict,
-                        "value": result.value,
-                        "reason": result.reason,
-                        "reason_class": result.reason_class,
-                        "confidence": result.confidence,
-                    },
+                    summary=summary,
                     **extra,
                 )
             )
@@ -492,6 +511,20 @@ def _emit(ctx, oracle_name: str, result: OracleResult, **extra) -> None:
         click.echo(f"  reason_class: {result.reason_class}, confidence: {result.confidence}")
 
 
+@roam_capability(
+    name="oracle",
+    category="workflow",
+    summary="Container for the five v12.1 boolean oracles",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.group(name="oracle", help="Boolean oracles — quick yes/no answers for agents.")
 def oracle() -> None:
     """Container for the five v12.1 boolean oracles."""
@@ -527,7 +560,13 @@ def is_test_only_cmd(ctx, name: str) -> None:
     ensure_index()
     with open_db(readonly=True) as conn:
         result = oracle_is_test_only(conn, name)
-    _emit(ctx, "is-test-only", result, name=name)
+    _emit(
+        ctx,
+        "is-test-only",
+        result,
+        name=name,
+        caller_metric_definition="distinct_caller_tuples",
+    )
 
 
 @oracle.command("is-reachable-from-entry")
@@ -539,7 +578,14 @@ def is_reachable_cmd(ctx, name: str, max_hops: int) -> None:
     ensure_index()
     with open_db(readonly=True) as conn:
         result = oracle_is_reachable_from_entry(conn, name, max_hops=max_hops)
-    _emit(ctx, "is-reachable-from-entry", result, name=name, max_hops=max_hops)
+    _emit(
+        ctx,
+        "is-reachable-from-entry",
+        result,
+        name=name,
+        max_hops=max_hops,
+        caller_metric_definition="transitive_bfs_from_entry",
+    )
 
 
 @oracle.command("is-clone-of")

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.context_helpers import (
     gather_symbol_context,
     get_affected_tests_bfs,
@@ -273,6 +274,20 @@ def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
     }
 
 
+@roam_capability(
+    name="guard",
+    category="workflow",
+    summary="Check breaking-change risk for a symbol before editing",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("guard")
 @click.argument("name")
 @click.pass_context
@@ -287,6 +302,15 @@ def guard(ctx, name):
     coupling, convention, and fitness checks), this command provides
     deeper per-symbol analysis with a quantified risk score and
     move-sensitive edge detection.
+
+    \b
+    --detail semantics (W22.3 / Pattern 3 documentation):
+      Default mode trims caller/callee/test/layer lists to 8/8/8/6 items
+      so the envelope stays under the ~2K-token sub-agent budget.
+      ``--detail`` raises the caps to 15/15/20/20 but keeps the same
+      schema. This is in-place truncation, NOT progressive-disclosure
+      (``strip_list_payloads``). Counts in summary always reflect the
+      untruncated totals.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     detail = ctx.obj.get("detail", False) if ctx.obj else False
@@ -352,6 +376,7 @@ def guard(ctx, name):
                     "risk_score": risk_score,
                     "risk_level": risk_level,
                     "callers": len(context["non_test_callers"]),
+                    "caller_metric_definition": "raw_edge_rows",
                     "callees": len(context["callees"]),
                     "test_files": total_test_files,
                     "layer_violations": layers["violation_count"],

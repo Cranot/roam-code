@@ -169,6 +169,7 @@ def _claim_index_lock(lock_path: Path) -> bool:
         lock_path.write_text(str(os.getpid()))
     except OSError as exc:
         _log(f"Could not claim index lock: {exc}")
+        _log("  If this looks unexpected, run `roam doctor` to diagnose your install.")
         return False
     return True
 
@@ -1208,6 +1209,16 @@ class Indexer:
         except Exception as e:
             self._log(f"  pytest fixture resolver skipped: {e}")
 
+    def _run_laravel_post_resolver(self, conn) -> None:
+        try:
+            from roam.index.laravel_post import resolve_laravel_dispatch
+
+            laravel_edges = resolve_laravel_dispatch(conn, self.root)
+            if laravel_edges:
+                self._log(f"  Laravel dispatch: {laravel_edges} edge(s)")
+        except Exception as e:
+            self._log(f"  Laravel post-resolver skipped: {e}")
+
     def _run_registry_dispatch_resolver(self, conn) -> None:
         try:
             from roam.index.registry_dispatch import resolve_registry_dispatch
@@ -1614,8 +1625,16 @@ class Indexer:
             self._refresh_file_id_map(conn, file_id_by_path)
 
             # Fix incremental edge loss: re-extract only affected neighbors
-            # instead of all unchanged files (O(affected) vs O(N))
-            if not force and modified and affected_file_ids:
+            # instead of all unchanged files (O(affected) vs O(N)).
+            #
+            # Drop the historical `and modified` clause: a pure rename
+            # (added=[new], removed=[old], modified=[]) still CASCADE-deletes
+            # the old symbol rows, which removes edges into them. The neighbor
+            # callers must be re-extracted to retarget the new symbol ids, or
+            # `roam impact <renamed_symbol>` silently under-reports callers.
+            # `affected_file_ids` already encodes "anything to re-extract";
+            # `changed_file_ids` is its source and is non-empty for renames too.
+            if not force and affected_file_ids:
                 self._re_extract_affected(
                     conn,
                     affected_file_ids,
@@ -1629,6 +1648,7 @@ class Indexer:
             self._run_django_post_resolver(conn)
             self._run_pytest_fixture_resolver(conn)
             self._run_registry_dispatch_resolver(conn)
+            self._run_laravel_post_resolver(conn)
             self._begin_phase(3, "Computing graph metrics...")
             G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn)
             self._begin_phase(4, "Analyzing git history...")

@@ -22,7 +22,80 @@ import click
 #   {"replacement": str, "reason": str, "removal_version": str}
 # Backwards-compat: a bare-string value still works (treated as
 # `{"replacement": <string>}`).
-_DEPRECATED_COMMANDS: dict[str, dict] = {}
+#
+# Seven legacy aliases land here in v12.18: they continue to work but emit
+# a deprecation note (stderr) and, in --json mode, a `summary.deprecation_warning`
+# entry in the envelope. Removal is planned for a future major release;
+# leave `removal_version` unset until a target is firm so we don't promise
+# a version we haven't agreed to ship.
+_DEPRECATED_COMMANDS: dict[str, dict] = {
+    "digest": {"replacement": "trends", "reason": "alias for 'trends'"},
+    "math": {"replacement": "algo", "reason": "alias for 'algo'"},
+    "refs": {"replacement": "uses", "reason": "alias for 'uses'"},
+    "snapshot": {"replacement": "trends", "reason": "alias for 'trends'"},
+    "trend": {"replacement": "trends", "reason": "alias for 'trends'"},
+    "onboard": {"replacement": "understand", "reason": "alias for 'understand'"},
+    "churn": {"replacement": "weather", "reason": "alias for 'weather'"},
+}
+
+# Module-level cross-talk slot read by `roam.output.formatter.json_envelope`
+# to inject `summary.deprecation_warning` when a deprecated alias was the
+# invoked name. Reset on each cli() entry. Lives at module level (not on
+# ctx.obj) so the formatter — which has no Click context — can read it.
+_ACTIVE_DEPRECATION_NOTICE: str | None = None
+
+# Canonical, alphabetically-sorted list of commands that honour the global
+# `--sarif` flag. Surfaced in help text (avoids the "lists 7, supports 14"
+# drift caught by W22.3) and enforced by tests/test_sarif_consumer_list.py
+# (AST-scans cmd_*.py for `ctx.obj["sarif"]` consumers and asserts the set
+# matches this tuple exactly). Adding a new SARIF consumer means adding it
+# here AND in the consumer module — the test fails on either drift.
+# Per CLAUDE.md Constraint 8: closed enumeration over free string composition.
+_SARIF_CONSUMERS: tuple[str, ...] = (
+    "algo",
+    "audit-trail-conformance-check",
+    "check-rules",
+    "complexity",
+    "dead",
+    "health",
+    "py-modern",
+    "py-types",
+    "rules",
+    "secrets",
+    "stale-refs",
+    "supply-chain",
+    "taint",
+    "vulns",
+)
+
+
+def _set_active_deprecation_notice(text: str | None) -> None:
+    """Set the deprecation-notice string visible to the JSON envelope builder."""
+    global _ACTIVE_DEPRECATION_NOTICE
+    _ACTIVE_DEPRECATION_NOTICE = text
+
+
+def _get_active_deprecation_notice() -> str | None:
+    """Return the active deprecation notice (or None) for the current invocation."""
+    return _ACTIVE_DEPRECATION_NOTICE
+
+
+def _format_deprecation_notice(name: str, record: dict) -> str:
+    """Build the canonical deprecation-warning string for *name*.
+
+    Format matches the contract documented in CLAUDE.md/the W3.3 ticket:
+        DEPRECATION: 'math' is an alias for 'algo' and will be removed
+        in a future release. Use `roam algo` instead.
+    """
+    replacement = record.get("replacement") or ""
+    msg = (
+        f"DEPRECATION: '{name}' is an alias for '{replacement}' "
+        f"and will be removed in a future release. "
+        f"Use `roam {replacement}` instead."
+    )
+    if record.get("removal_version"):
+        msg += f" Removal target: v{record['removal_version']}."
+    return msg
 
 
 def _deprecation_replacement(name: str) -> str | None:
@@ -144,6 +217,10 @@ _COMMANDS = {
     "pr-diff": ("roam.commands.cmd_pr_diff", "pr_diff"),
     "budget": ("roam.commands.cmd_budget", "budget"),
     "effects": ("roam.commands.cmd_effects", "effects"),
+    "side-effects": ("roam.commands.cmd_side_effects", "side_effects_cmd"),
+    "idempotency": ("roam.commands.cmd_idempotency", "idempotency_cmd"),
+    "causal-graph": ("roam.commands.cmd_causal_graph", "causal_graph_cmd"),
+    "tx-boundaries": ("roam.commands.cmd_tx_boundaries", "tx_boundaries_cmd"),
     "attest": ("roam.commands.cmd_attest", "attest"),
     "capsule": ("roam.commands.cmd_capsule", "capsule"),
     "path-coverage": ("roam.commands.cmd_path_coverage", "path_coverage"),
@@ -155,10 +232,13 @@ _COMMANDS = {
     "changelog": ("roam.commands.cmd_changelog", "changelog"),
     "graph-export": ("roam.commands.cmd_graph_export", "graph_export"),
     "graph-stats": ("roam.commands.cmd_graph_stats", "graph_stats"),
+    "graph-diff": ("roam.commands.cmd_graph_diff", "graph_diff_cmd"),
+    "architecture-drift": ("roam.commands.cmd_architecture_drift", "architecture_drift_cmd"),
     "help-search": ("roam.commands.cmd_help_search", "help_search"),
     "timeline": ("roam.commands.cmd_timeline", "timeline"),
     "pr-prep": ("roam.commands.cmd_pr_prep", "pr_prep"),
     "pr-analyze": ("roam.commands.cmd_pr_analyze", "pr_analyze"),
+    "pr-bundle": ("roam.commands.cmd_pr_bundle", "pr_bundle_group"),
     "pr-comment-render": ("roam.commands.cmd_pr_comment_render", "pr_comment_render"),
     "metrics-push": ("roam.commands.cmd_metrics_push", "metrics_push"),
     "audit-trail-verify": ("roam.commands.cmd_audit_trail_verify", "audit_trail_verify"),
@@ -169,6 +249,7 @@ _COMMANDS = {
     ),
     "rules-validate": ("roam.commands.cmd_rules_validate", "rules_validate"),
     "dogfood": ("roam.commands.cmd_dogfood", "dogfood"),
+    "dogfood-aggregate": ("roam.commands.cmd_dogfood_aggregate", "dogfood_aggregate"),
     "suppress": ("roam.commands.cmd_suppress", "suppress"),
     "stats": ("roam.commands.cmd_stats", "stats"),
     "why-fail": ("roam.commands.cmd_why_fail", "why_fail"),
@@ -207,6 +288,7 @@ _COMMANDS = {
     "agent-export": ("roam.commands.cmd_agent_export", "agent_export"),
     "agent-plan": ("roam.commands.cmd_agent_plan", "agent_plan"),
     "agent-context": ("roam.commands.cmd_agent_context", "agent_context"),
+    "agents-md": ("roam.commands.cmd_agents_md", "agents_md_cmd"),
     "syntax-check": ("roam.commands.cmd_syntax_check", "syntax_check"),
     "vibe-check": ("roam.commands.cmd_vibe_check", "vibe_check"),
     "ai-readiness": ("roam.commands.cmd_ai_readiness", "ai_readiness"),
@@ -237,7 +319,14 @@ _COMMANDS = {
     "snapshot": ("roam.commands.cmd_trends", "trends"),
     "endpoints": ("roam.commands.cmd_endpoints", "endpoints"),
     "watch": ("roam.commands.cmd_watch", "watch"),
-    "mcp": ("roam.mcp_server", "mcp_cmd"),
+    # ``cmd_mcp`` is a thin Click wrapper around ``mcp_server.mcp_cmd``
+    # that swaps the synchronous full-reindex freshness check for a
+    # fast mtime check (typically <100 ms). On large indexes the legacy
+    # path spent ~36 s in ``_ensure_fresh_index`` which blew past Claude
+    # Code's 30 s MCP connect timeout. The wrapper imports
+    # ``roam.mcp_server`` lazily inside the function body so info-only
+    # paths (``--help``, ``--card``, ``--list-tools``) stay cheap.
+    "mcp": ("roam.commands.cmd_mcp", "mcp"),
     "doctor": ("roam.commands.cmd_doctor", "doctor"),
     "reset": ("roam.commands.cmd_reset", "reset"),
     "clean": ("roam.commands.cmd_clean", "clean"),
@@ -272,6 +361,19 @@ _COMMANDS = {
     "surface": ("roam.commands.cmd_surface", "surface"),
     "explain-command": ("roam.commands.cmd_explain_command", "explain_command"),
     "db-check": ("roam.commands.cmd_db_check", "db_check"),
+    "batch-search": ("roam.commands.cmd_batch_search", "batch_search"),
+    "complete": ("roam.commands.cmd_complete", "complete"),
+    "memory": ("roam.commands.cmd_memory", "memory_group"),
+    "runs": ("roam.commands.cmd_runs", "runs_group"),
+    "laws": ("roam.commands.cmd_laws", "laws_group"),
+    "constitution": ("roam.commands.cmd_constitution", "constitution_group"),
+    "next": ("roam.commands.cmd_next", "next_cmd"),
+    "brief": ("roam.commands.cmd_brief", "brief_cmd"),
+    "replay": ("roam.commands.cmd_replay", "replay_cmd"),
+    "agent-score": ("roam.commands.cmd_agent_score", "agent_score_cmd"),
+    "mode": ("roam.commands.cmd_mode", "mode_cmd"),
+    "intent-check": ("roam.commands.cmd_intent_check", "intent_check_cmd"),
+    "lease": ("roam.commands.cmd_lease", "lease_group"),
 }
 
 # Command categories for organized --help display
@@ -290,7 +392,9 @@ _CATEGORIES = {
         "config",
         "doctor",
         "understand",
-        "onboard",
+        # `onboard` lives in _DEPRECATED_COMMANDS (use `understand`); kept
+        # invokable, but removed from the categorised --help panel so it
+        # no longer reads as a recommended starting verb.
         "dashboard",
         "tour",
         "describe",
@@ -329,6 +433,7 @@ _CATEGORIES = {
         "pr-risk",
         "pr-prep",
         "pr-analyze",
+        "pr-bundle",
         "pr-comment-render",
         "rules-validate",
         "metrics-push",
@@ -341,6 +446,7 @@ _CATEGORIES = {
         "compare",
         "migration-plan",
         "dogfood",
+        "dogfood-aggregate",
         "suppress",
         "pr-diff",
         "api-changes",
@@ -370,6 +476,18 @@ _CATEGORIES = {
         "syntax-check",
         "triage",
         "oracle",
+        "memory",
+        "runs",
+        "laws",
+        "constitution",
+        "agents-md",
+        "next",
+        "brief",
+        "replay",
+        "agent-score",
+        "mode",
+        "intent-check",
+        "lease",
     ],
     "Codebase Health": [
         "health",
@@ -380,7 +498,8 @@ _CATEGORIES = {
         "ai-ratio",
         "trends",
         "weather",
-        "churn",
+        # `churn` lives in _DEPRECATED_COMMANDS (use `weather`); kept
+        # invokable but removed from the categorised --help panel.
         "timeline",
         "debt",
         "complexity",
@@ -404,12 +523,18 @@ _CATEGORIES = {
         "map",
         "graph-export",
         "graph-stats",
+        "graph-diff",
+        "architecture-drift",
         "layers",
         "clusters",
         "spectral",
         "coupling",
         "dark-matter",
         "effects",
+        "side-effects",
+        "idempotency",
+        "causal-graph",
+        "tx-boundaries",
         "cut",
         "simulate",
         "orchestrate",
@@ -425,6 +550,8 @@ _CATEGORIES = {
     "Exploration": [
         "search",
         "search-semantic",
+        "batch-search",
+        "complete",
         "grep",
         "refs-text",
         "history-grep",
@@ -573,9 +700,25 @@ class LazyGroup(click.Group):
         moved: list[str] = []
         kept: list[str] = []
         idx = 0
+        # Global flags that are ambiguous with subcommand value options.
+        # ``--agent`` is a top-level flag, but ``roam runs start --agent NAME``
+        # uses it as an option-with-value owned by the subcommand. When the
+        # next token is a non-flag value, leave the pair for the subcommand
+        # parser to handle. Top-level usage (``roam health --agent`` /
+        # ``roam --agent health``) is unaffected.
+        _AMBIGUOUS_FLAG_VS_VALUE = {"--agent"}
         while idx < len(after):
             token = after[idx]
             if token in self._GLOBAL_FLAGS:
+                if (
+                    token in _AMBIGUOUS_FLAG_VS_VALUE
+                    and idx + 1 < len(after)
+                    and not after[idx + 1].startswith("-")
+                ):
+                    # Treat as subcommand-owned ``--agent VALUE`` and leave alone.
+                    kept.append(token)
+                    idx += 1
+                    continue
                 moved.append(token)
                 idx += 1
                 continue
@@ -629,17 +772,22 @@ class LazyGroup(click.Group):
         invoked command is in ``_DEPRECATED_COMMANDS`` so users know
         about a planned rename / replacement.
         """
+        # Clear any leftover notice from a previous invocation in the same
+        # Python process (matters for `CliRunner`-driven tests where many
+        # commands run inside one interpreter).
+        _set_active_deprecation_notice(None)
         # pre-resolve deprecation hint.
         if args:
             cmd_name = args[0]
             record = _deprecation_record(cmd_name)
             if record and record.get("replacement"):
-                msg = f"NOTE: `roam {cmd_name}` is deprecated — use `roam {record['replacement']}` instead."
-                if record.get("removal_version"):
-                    msg += f" Will be removed in v{record['removal_version']}."
-                if record.get("reason"):
-                    msg += f" ({record['reason']})"
+                msg = _format_deprecation_notice(cmd_name, record)
                 click.echo(msg, err=True)
+                # Stash the notice so the JSON envelope builder
+                # (`roam.output.formatter.json_envelope`) can surface it as
+                # `summary.deprecation_warning` for downstream JSON consumers
+                # who never see stderr.
+                _set_active_deprecation_notice(msg)
         try:
             return super().resolve_command(ctx, args)
         except click.UsageError as exc:
@@ -689,6 +837,10 @@ class LazyGroup(click.Group):
         This override catches *unexpected* exceptions (KeyError, TypeError, etc.)
         and maps them to EXIT_ERROR (1) instead of letting Python print a traceback
         with exit code 1 (which is ambiguous).
+
+        The mode-enforcement gate (W13.2) runs inside the group
+        callback (`cli()` below) — not here — because that's when
+        ``ctx.obj`` (and the ``--override-mode`` flag) is populated.
         """
         try:
             return super().invoke(ctx)
@@ -745,10 +897,222 @@ class LazyGroup(click.Group):
         for cmd, blurb in common:
             formatter.write(f"  {cmd:30s} {blurb}\n")
 
+        # Global options — these are flags on the `roam` group itself, valid
+        # before OR after the subcommand (see LazyGroup._normalise_global_option_position).
+        # Surfaced here so `--detail`, `--json`, `--agent` etc. are discoverable
+        # from the short help. The previous custom panel omitted them entirely;
+        # W19.2 flagged `--detail` in particular as accepted-but-undocumented.
+        formatter.write("\nGlobal options (work with any command):\n\n")
+        global_opts = [
+            ("--json", "output JSON envelope instead of text"),
+            ("--compact", "compact output (TSV tables, minimal envelope)"),
+            ("--agent", "agent mode (JSON + compact + 500-token budget)"),
+            ("--detail", "show full detailed output instead of compact summary"),
+            ("--sarif", f"SARIF 2.1.0 output (supported by: {', '.join(_SARIF_CONSUMERS)})"),
+            ("--budget N", "max output tokens (0 = unlimited)"),
+            ("--include-excluded", "include files normally excluded by .roamignore"),
+            ("--override-mode", "bypass mode-based command blocking (logs to audit trail)"),
+            ("--ci", "CI mode: stricter defaults (over-fetch --leaks-only, pr-bundle --strict)"),
+            ("--help-all", "list every command (no categories)"),
+        ]
+        for flag, blurb in global_opts:
+            formatter.write(f"  {flag:30s} {blurb}\n")
+
         formatter.write("\nDocs: https://roam-code.com/docs   ·   roam exit-codes for CI integration\n")
         # V6 — persist any newly-cached short-help entries (kept for any
         # call paths that still hit the AST extractor).
         _save_short_help_cache_if_dirty()
+
+
+# ---------------------------------------------------------------------------
+# Mode enforcement at dispatch (W13.2 follow-through)
+# ---------------------------------------------------------------------------
+#
+# `roam.modes.policy.check_command_allowed()` (R16 substrate) was only
+# consumed by `roam mode --check` and `roam intent-check`. Today it is
+# wired into the LazyGroup.invoke() so that any command can be blocked
+# when the active mode doesn't allow it.
+#
+# Two intentional constraints, both per the task spec:
+#
+#   1. Enforcement is OPT-IN via `ROAM_MODE_ENFORCEMENT=1`. Flipping it
+#      on by default would break long-standing workflows where a repo
+#      has a stale `.roam/active_mode = read_only` from a previous
+#      session and the next `roam attest` call expects to run, not
+#      exit 5. The opt-in keeps the substrate ready for agents that
+#      WANT a hard gate while leaving humans/CI on the permissive path.
+#
+#   2. Meta-commands ALWAYS run, even with enforcement on. These are
+#      the commands an agent needs to recover from a wrong-mode state:
+#      `mode`, `intent-check`, `surface`, `doctor`, plus help/version
+#      affordances. Without these the gate becomes a deadlock (you
+#      can't switch mode without running `roam mode`, and `roam mode`
+#      itself would be blocked).
+#
+# The gate is also fail-open: if `find_project_root()` raises, if the
+# policy module is unimportable, or anything else trips, we let the
+# command through and emit a stderr hint. Never block dispatch over a
+# gate bug — that would be worse than the bug it's protecting against.
+
+_MODE_ALWAYS_ALLOWED: frozenset[str] = frozenset(
+    {
+        # Meta / discovery
+        "mode",
+        "intent-check",
+        "help",
+        "help-search",
+        "help-all",
+        "surface",
+        "doctor",
+        "exit-codes",
+        "version",
+        "recipes",
+        "explain-command",
+        "db-check",
+        "telemetry",
+        "config",
+        # Bootstrap: an agent stuck in the wrong mode still needs to
+        # be able to wire the harness up. Keep these uncategorised
+        # meta operations available regardless.
+        "plugins",
+        "mcp-status",
+        # Index bootstrap: an agent that can't index can't do anything
+        # else. A fresh repo has no `.roam/active_mode`, so the default
+        # resolves to `safe_edit`, which does not list `init`/`index`
+        # in its allow-set. Without these here, exporting
+        # `ROAM_MODE_ENFORCEMENT=1` (e.g. in CI) creates a
+        # chicken-and-egg deadlock: the user can't initialise the
+        # index, and can't switch mode meaningfully until they have
+        # one. Keep these always-on so the bootstrap path is reachable
+        # from any mode in any repo state.
+        "init",
+        "index",
+    }
+)
+
+
+def _resolve_invoked_command_name(ctx: click.Context) -> str | None:
+    """Best-effort resolution of the bare subcommand for *ctx*.
+
+    Returns ``None`` when no subcommand can be identified — the caller
+    treats ``None`` as "let Click handle whatever it is", which is the
+    right thing to do for ``roam`` with no args or ``roam --help``.
+    """
+    name = getattr(ctx, "invoked_subcommand", None)
+    if name:
+        return name
+    # Fallback: peek at ctx.protected_args / ctx.args. These hold the
+    # tokens Click hasn't consumed yet at the point invoke() runs.
+    args = list(getattr(ctx, "protected_args", []) or []) + list(getattr(ctx, "args", []) or [])
+    for tok in args:
+        if tok and not tok.startswith("-"):
+            return tok
+    return None
+
+
+def _enforce_mode_gate(ctx: click.Context) -> None:
+    """Run the mode-enforcement gate. Aborts dispatch on a blocked command.
+
+    Behaviour matrix:
+
+      * Enforcement off (default) -> noop.
+      * Enforcement on, command in always-allowed set -> noop.
+      * Enforcement on, command not in _COMMANDS -> noop (let Click
+        produce its own unknown-command error).
+      * Enforcement on, command allowed by active mode -> noop.
+      * Enforcement on, command BLOCKED:
+          - if `--override-mode` was passed -> emit stderr warning,
+            opportunistically log the override to the active run, and
+            allow dispatch to proceed.
+          - else -> emit stderr error, exit 5 (gate-failure).
+    """
+    # Opt-in: leave the dispatch path alone unless the user / harness
+    # has explicitly asked for enforcement.
+    if os.environ.get("ROAM_MODE_ENFORCEMENT", "").strip() not in {"1", "true", "yes", "on"}:
+        return
+
+    cmd_name = _resolve_invoked_command_name(ctx)
+    if not cmd_name:
+        return
+
+    # Resolve deprecated aliases to their canonical name so a policy
+    # written for `weather` covers `churn`, etc. We don't strip the
+    # alias from the invocation — Click still dispatches to the alias
+    # entry — we just check the canonical name.
+    canonical = _deprecation_replacement(cmd_name) or cmd_name
+
+    if canonical in _MODE_ALWAYS_ALLOWED or cmd_name in _MODE_ALWAYS_ALLOWED:
+        return
+    if canonical not in _COMMANDS and cmd_name not in _COMMANDS:
+        # Unknown command: Click will produce a UsageError. Don't
+        # double-error from the gate.
+        return
+
+    # Best-effort policy check. ANY error here -> fail-open.
+    try:
+        from roam.db.connection import find_project_root
+        from roam.modes import check_command_allowed
+    except Exception:
+        return
+    try:
+        repo_root = find_project_root()
+    except Exception:
+        return
+    try:
+        allowed, reason = check_command_allowed(repo_root, canonical)
+    except Exception:
+        return
+
+    if allowed:
+        return
+
+    # ---- Blocked. Look at the override flag.
+    obj = ctx.ensure_object(dict)
+    override = bool(obj.get("override_mode", False))
+    if override:
+        try:
+            from roam.modes import resolve_mode
+
+            active_name = resolve_mode(repo_root).name
+        except Exception:
+            active_name = "<unknown>"
+        click.echo(
+            f"WARNING: Mode enforcement overridden. "
+            f"Active mode: {active_name}. Command: {canonical}.",
+            err=True,
+        )
+        # Opportunistically log the override into the active run so
+        # `roam replay` shows the policy exception. Failure here is a
+        # no-op: we never let logging derail dispatch.
+        try:
+            from roam.runs.helpers import auto_log
+
+            auto_log(
+                {
+                    "command": canonical,
+                    "summary": {
+                        "verdict": f"override-mode used: active={active_name}",
+                        "partial_success": True,
+                    },
+                },
+                action="mode-override",
+                target=canonical,
+                repo_root=repo_root,
+            )
+        except Exception:
+            pass
+        return
+
+    # Blocked + no override -> exit 5 with a clear stderr message.
+    from roam.exit_codes import EXIT_GATE_FAILURE
+
+    click.echo(f"BLOCKED: {reason}", err=True)
+    click.echo(
+        "Pass `--override-mode` to bypass for this one call, or "
+        "`roam mode <name>` to switch modes.",
+        err=True,
+    )
+    ctx.exit(EXIT_GATE_FAILURE)
 
 
 # `_short_help_via_ast` is called 126x by `roam --help`,
@@ -774,17 +1138,29 @@ def _load_short_help_cache() -> dict:
 
 
 def _save_short_help_cache_if_dirty() -> None:
+    """Persist the in-memory short-help cache to disk atomically.
+
+    Two parallel ``roam --help`` invocations used to race on the naked
+    ``open(path, "w")``: one writer's bytes could land mid-stream of the
+    other's, producing a file that ``json.load`` rejected on next read
+    (and silently nuked via the ``except (OSError, ValueError)`` in
+    ``_load_short_help_cache``). The atomic temp-file + rename pattern
+    closes the window — the last writer's payload wins cleanly, and no
+    intermediate state is ever visible to a reader.
+    """
     global _short_help_disk_cache_dirty
     if not _short_help_disk_cache_dirty or _short_help_disk_cache is None:
         return
     try:
-        import json as _json
+        # W17.1 atomic_io consolidation — use shared helper (was local _atomic_write_json).
+        from roam.atomic_io import atomic_write_json
 
-        os.makedirs(os.path.dirname(_SHORT_HELP_CACHE_PATH), exist_ok=True)
-        with open(_SHORT_HELP_CACHE_PATH, "w", encoding="utf-8") as fh:
-            _json.dump(_short_help_disk_cache, fh)
+        atomic_write_json(_SHORT_HELP_CACHE_PATH, _short_help_disk_cache, indent=None)
         _short_help_disk_cache_dirty = False
     except OSError:
+        # Cache is best-effort: a write failure means the next CLI
+        # invocation will re-parse the AST. Never fail the parent
+        # command on a cache hiccup.
         pass
 
 
@@ -953,7 +1329,29 @@ def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> No
     click.echo(f"All {len(_COMMANDS)} invokable command names:\n")
     for cmd_name in sorted(_COMMANDS):
         help_text = _short_help_via_ast(cmd_name) or ""
-        click.echo(f"  {cmd_name:32s} {help_text}")
+        record = _deprecation_record(cmd_name)
+        if record and record.get("replacement"):
+            suffix = f"  (deprecated, use {record['replacement']})"
+            click.echo(f"  {cmd_name:32s} {help_text}{suffix}")
+        else:
+            click.echo(f"  {cmd_name:32s} {help_text}")
+    click.echo()
+    # Global options block — mirrors the panel in `format_help` so `--help-all`
+    # is self-contained (agents that pipe `--help-all` to `grep` find the
+    # global flags without needing a second call). W19.2: `--detail` was
+    # accepted but undocumented; documenting all global options here too.
+    click.echo("Global options (work with any command):\n")
+    for flag, blurb in (
+        ("--json", "output JSON envelope instead of text"),
+        ("--compact", "compact output (TSV tables, minimal envelope)"),
+        ("--agent", "agent mode (JSON + compact + 500-token budget)"),
+        ("--detail", "show full detailed output instead of compact summary"),
+        ("--sarif", f"SARIF 2.1.0 output (supported by: {', '.join(_SARIF_CONSUMERS)})"),
+        ("--budget N", "max output tokens (0 = unlimited)"),
+        ("--include-excluded", "include files normally excluded by .roamignore"),
+        ("--override-mode", "bypass mode-based command blocking (logs to audit trail)"),
+    ):
+        click.echo(f"  {flag:30s} {blurb}")
     click.echo()
     click.echo("Run `roam <command> --help` for details on any command.")
     ctx.exit(0)
@@ -985,7 +1383,7 @@ def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> No
     "--sarif",
     "sarif_mode",
     is_flag=True,
-    help="Output in SARIF 2.1.0 format (for dead, health, complexity, rules, secrets, algo, stale-refs)",
+    help=f"Output in SARIF 2.1.0 format. Supported by: {', '.join(_SARIF_CONSUMERS)}.",
 )
 @click.option("--budget", type=int, default=0, help="Max output tokens (0=unlimited)")
 @click.option(
@@ -994,8 +1392,31 @@ def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> No
     help="Include files normally excluded by .roamignore / config / built-in patterns",
 )
 @click.option("--detail", is_flag=True, help="Show full detailed output instead of compact summary")
+@click.option(
+    "--override-mode",
+    "override_mode",
+    is_flag=True,
+    default=False,
+    help=(
+        "Bypass mode-based command blocking for this invocation. "
+        "Emits a stderr warning and logs an `override` event to the "
+        "active run. Use sparingly — every override leaves a trail."
+    ),
+)
+@click.option(
+    "--ci",
+    "ci_mode",
+    is_flag=True,
+    default=False,
+    help=(
+        "CI mode: stricter defaults across subcommands "
+        "(over-fetch --leaks-only, pr-bundle --strict, machine-friendly output). "
+        "Per-command flags ALWAYS override these implications. "
+        "Also enabled by ROAM_CI=1 in the environment."
+    ),
+)
 @click.pass_context
-def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, detail):
+def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, detail, override_mode, ci_mode):
     """Roam: Codebase comprehension tool."""
     if agent and sarif_mode:
         raise click.UsageError("--agent cannot be combined with --sarif")
@@ -1018,6 +1439,41 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
     ctx.obj["budget"] = budget
     ctx.obj["include_excluded"] = include_excluded
     ctx.obj["detail"] = detail
+    ctx.obj["override_mode"] = bool(override_mode)
+
+    # W21.6: --ci is the single semantic "I'm running in CI" lever. It's a
+    # composition over the existing per-command flags (over-fetch
+    # --leaks-only, pr-bundle --strict, etc.). Subcommands consult
+    # ctx.obj["ci_mode"] and flip THEIR LOCAL DEFAULTS — explicit user
+    # flags still win (LAW 11: user intent > inference). Also pickable up
+    # via ROAM_CI=1 so workflows that already export it (GitHub Actions,
+    # GitLab) don't have to thread the flag through every roam call.
+    if not ci_mode:
+        env_ci = (os.environ.get("ROAM_CI") or "").strip().lower()
+        if env_ci in {"1", "true", "yes", "on"}:
+            ci_mode = True
+    ctx.obj["ci_mode"] = bool(ci_mode)
+
+    # Mode-enforcement gate (W13.2). Opt-in via ROAM_MODE_ENFORCEMENT=1.
+    # Defensive: ANY exception inside the gate leaves dispatch
+    # untouched — the gate must never prevent commands because of its
+    # own bug. See `_enforce_mode_gate` for the full rule set.
+    # `ctx.exit(...)` inside the gate raises click.exceptions.Exit;
+    # let that propagate so the gate's exit code reaches the shell.
+    try:
+        _enforce_mode_gate(ctx)
+    except click.exceptions.Exit:
+        raise
+    except Exception:
+        try:
+            click.echo("WARNING: mode-enforcement gate skipped (internal error)", err=True)
+        except Exception:
+            pass
+
+    # `_ACTIVE_DEPRECATION_NOTICE` is set by `resolve_command` *before* the
+    # group callback runs (Click resolves the subcommand first). Don't reset
+    # it here, or the envelope injector will never see the notice. Leave the
+    # slot alone — it's cleared at the start of `resolve_command` itself.
 
     # opt-in local telemetry. Records (cmd, duration_ms,
     # exit_code) when ROAM_TELEMETRY_LOCAL=1. Strictly local; no

@@ -11,6 +11,7 @@ from roam.db.queries import (
     CALLERS_OF,
     METRICS_FOR_SYMBOL,
 )
+from roam.capability import roam_capability
 from roam.output.formatter import (
     abbrev_kind,
     format_edge_kind,
@@ -36,6 +37,20 @@ def _dedup_edges(edges):
     return [v[0] for v in best.values()]
 
 
+@roam_capability(
+    name="symbol",
+    category="exploration",
+    summary="Show symbol definition, callers, and callees",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("name")
 @click.option("--full", is_flag=True, help="Show all results without truncation")
@@ -105,6 +120,7 @@ def symbol(ctx, name, full):
                             "verdict": _verdict,
                             "callers": len(deduped_callers),
                             "callees": len(deduped_callees),
+                            "caller_metric_definition": "direct_in_degree",
                         },
                         **data,
                     )

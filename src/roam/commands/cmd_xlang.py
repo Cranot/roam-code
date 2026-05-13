@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -19,7 +20,17 @@ def _xlang_verdict(bridge_summaries, all_links) -> str:
     return f"{len(bridge_summaries)} bridges ({bnames}), {len(all_links)} links"
 
 
-def _emit_xlang_envelope(verdict: str, bridge_summaries, all_links, *, warning: str | None = None) -> None:
+def _emit_xlang_envelope(
+    verdict: str,
+    bridge_summaries,
+    all_links,
+    *,
+    warning: str | None = None,
+    state: str | None = None,
+    partial_success: bool = False,
+    recommended_scope: str | None = None,
+    bridge_files: int | None = None,
+) -> None:
     """JSON envelope output for x-lang."""
     summary = {
         "verdict": verdict,
@@ -28,6 +39,14 @@ def _emit_xlang_envelope(verdict: str, bridge_summaries, all_links, *, warning: 
     }
     if warning is not None:
         summary["warning"] = warning
+    if state is not None:
+        summary["state"] = state
+    if partial_success:
+        summary["partial_success"] = True
+    if recommended_scope is not None:
+        summary["recommended_scope"] = recommended_scope
+    if bridge_files is not None:
+        summary["bridge_files"] = bridge_files
     click.echo(
         to_json(
             json_envelope(
@@ -117,9 +136,47 @@ def _emit_xlang_text(bridge_summaries, all_links) -> None:
             click.echo(f"\n  (+{len(all_links) - shown} more)")
 
 
+def _suggest_scope(file_paths: list[str]) -> str:
+    """Suggest a reasonable --scope prefix from the indexed file paths.
+
+    Picks the most populous top-level directory, falling back to ``"src/"``.
+    """
+    from collections import Counter
+
+    top: Counter = Counter()
+    for p in file_paths:
+        norm = p.replace("\\", "/")
+        head = norm.split("/", 1)[0] if "/" in norm else norm
+        if head and not head.startswith("."):
+            top[head + "/"] += 1
+    if not top:
+        return "src/"
+    return top.most_common(1)[0][0]
+
+
+@roam_capability(
+    name="x-lang",
+    category="architecture",
+    summary="Show cross-language symbol bridges detected in the project",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("x-lang")
+@click.option(
+    "--scope",
+    default=None,
+    type=str,
+    help="Restrict analysis to files whose path starts with this prefix (e.g. 'src/').",
+)
 @click.pass_context
-def xlang(ctx):
+def xlang(ctx, scope):
     """Show cross-language symbol bridges detected in the project.
 
     Detects and reports cross-language boundaries such as:
@@ -128,7 +185,8 @@ def xlang(ctx):
 
     Shows cross-language symbol links discovered by active bridges (Protobuf,
     Salesforce Apex, REST API, template, config). Use ``bridges`` to see which
-    bridge types are available.
+    bridge types are available.  On large repos, pass ``--scope <prefix>`` to
+    restrict analysis to a subtree (e.g. ``--scope src/``).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -144,6 +202,23 @@ def xlang(ctx):
                 click.echo("No files indexed.")
             return
 
+        # Apply --scope filter to the file list before bridge detection.
+        if scope:
+            scope_norm = scope.replace("\\", "/").lstrip("./")
+            file_paths = [
+                p for p in file_paths if p.replace("\\", "/").startswith(scope_norm)
+            ]
+            if not file_paths:
+                verdict = f"no files under scope '{scope}'"
+                if json_mode:
+                    _emit_xlang_envelope(
+                        verdict, [], [], state="empty_scope", partial_success=True
+                    )
+                else:
+                    click.echo(f"VERDICT: {verdict}\n")
+                    click.echo(f"No files matched scope prefix '{scope}'.")
+                return
+
         from roam.bridges.registry import detect_bridges
 
         active = detect_bridges(file_paths)
@@ -157,16 +232,27 @@ def xlang(ctx):
             return
 
         # Performance guard: cap total source+target file count.
+        # When the scan would be too wide, emit a `state: "consider_scope"`
+        # envelope naming the recommended scope rather than running unbounded.
         total_bridge_files = sum(_bridge_files_count(b, file_paths) for b in active)
-        if total_bridge_files > _MAX_BRIDGE_FILES:
-            warning = (
-                f"Too many bridge files ({total_bridge_files} source+target) for cross-language analysis. "
-                "Index a subdirectory to reduce scope."
+        if total_bridge_files > _MAX_BRIDGE_FILES and not scope:
+            recommended = _suggest_scope(file_paths)
+            verdict = (
+                f"Run roam x-lang --scope {recommended} to analyze cross-language "
+                f"bridges (graph has {total_bridge_files} bridge files, threshold {_MAX_BRIDGE_FILES})"
             )
             if json_mode:
-                _emit_xlang_envelope(f"skipped: {warning}", [], [], warning=warning)
+                _emit_xlang_envelope(
+                    verdict,
+                    [],
+                    [],
+                    state="consider_scope",
+                    partial_success=True,
+                    recommended_scope=recommended,
+                    bridge_files=total_bridge_files,
+                )
             else:
-                click.echo(f"WARNING: {warning}")
+                click.echo(f"VERDICT: {verdict}")
             return
 
         all_links: list = []

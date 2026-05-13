@@ -7,6 +7,7 @@ import click
 from roam.ask.recipes import RECIPES, Recipe, by_name
 from roam.ask.runner import extract_symbol, fill_args
 from roam.ask.workflow import recipe_workflow_metadata
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 
@@ -105,6 +106,20 @@ _NEXT_HINTS: dict[str, list[str]] = {
 }
 
 
+@roam_capability(
+    name="workflow",
+    category="getting-started",
+    summary="Inspect a workflow recipe DAG, review lenses, and next commands",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("workflow")
 @click.argument("recipe_name", required=False)
 @click.option("--list", "list_recipes", is_flag=True, help="List available workflow recipes.")

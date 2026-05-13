@@ -28,6 +28,7 @@ import json as _json
 import click
 from click.testing import CliRunner
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.output.formatter import json_envelope, to_json
 
@@ -62,6 +63,24 @@ def _summary_field(payload: dict, *keys: str, default=None):
     return default
 
 
+@roam_capability(
+    name="audit",
+    category="health",
+    summary="One-shot architecture audit: health, debt, dead, risk, test pyramid, coverage, API.",
+    inputs=["repo_path"],
+    outputs=["health", "debt", "dead", "risk", "verdict"],
+    examples=["roam audit", "roam audit --brief"],
+    tags=["health", "audit", "ci"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.option(
     "--brief",
@@ -158,6 +177,28 @@ def audit(ctx, brief) -> None:
         "stale_refs": stale_refs if not brief else {"summary": stale_refs.get("summary", {})},
     }
 
+    # Unique-signal discovery hints (LAW 11: server-side hints teaching
+    # better tools).  Several commands produce signal not available
+    # elsewhere — surface them as imperative pointers so agents reading
+    # the audit envelope discover them without scraping prose.  See
+    # ``internal/dogfood/SYNTHESIS-2026-05-12.md`` section "NEW in v3".
+    discoverable_via = {
+        "danger_score": "roam metrics-push --dry-run",
+        "algo_anti_patterns": "roam algo",
+        "ai_generated_percentage": "roam ai-ratio",
+        "ai_readiness_score": "roam ai-readiness",
+        "ai_rot_score": "roam vibe-check",
+        "module_cohesion_pct": "roam module <module>",
+        "health_30d_forecast": "roam forecast",
+    }
+    next_steps = [
+        "roam vibe-check",
+        "roam ai-readiness",
+        "roam ai-ratio",
+        "roam algo",
+        "roam forecast",
+    ]
+
     if json_mode:
         click.echo(
             to_json(
@@ -166,6 +207,8 @@ def audit(ctx, brief) -> None:
                     summary=summary,
                     sections=sections,
                     api_count=api_count,
+                    discoverable_via=discoverable_via,
+                    next_steps=next_steps,
                 )
             )
         )
@@ -188,3 +231,15 @@ def audit(ctx, brief) -> None:
         ("stale doc refs", stale_ref_count),
     ]:
         click.echo(f"{label:<28}  {value}")
+
+    # Advanced discovery — server-side hints (LAW 11).  Commands that
+    # produce signal not surfaced by the audit sections themselves.
+    click.echo()
+    click.echo("Advanced discovery (unique signals):")
+    click.echo("  roam metrics-push --dry-run   -- danger_score per file (churn × complexity × fan_in)")
+    click.echo("  roam algo                     -- algorithmic anti-patterns")
+    click.echo("  roam vibe-check               -- AI-rot score + pattern breakdown")
+    click.echo("  roam ai-ratio                 -- ai_generated_percentage")
+    click.echo("  roam ai-readiness             -- ai_readiness_score")
+    click.echo("  roam module <dir>             -- cohesion_pct + API surface")
+    click.echo("  roam forecast                 -- 30d health projection")

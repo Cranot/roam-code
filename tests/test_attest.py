@@ -22,6 +22,14 @@ from conftest import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _enforcement_safe(monkeypatch):
+    """Pre-elect autonomous_pr so privileged `roam attest` works under future
+    `ROAM_MODE_ENFORCEMENT` default-on (W23.3 staged-rollout PR-B). All tests
+    in this file invoke `roam attest`, which is gated under `safe_edit`."""
+    monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
+
+
 @pytest.fixture
 def cli_runner():
     from click.testing import CliRunner

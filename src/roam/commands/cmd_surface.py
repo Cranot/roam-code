@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 # Command maturity overlay. Default: "stable". Override only the exceptions.
@@ -105,6 +106,20 @@ def _build_surface() -> dict:
     }
 
 
+@roam_capability(
+    name="surface",
+    category="getting-started",
+    summary="Print the canonical capability surface (commands, aliases, MCP tools, maturity)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command("surface")
 @click.option(
     "--filter",

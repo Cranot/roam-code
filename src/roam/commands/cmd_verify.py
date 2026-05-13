@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.cmd_conventions import (
     _MIN_NAME_LEN,
@@ -19,6 +20,7 @@ from roam.commands.cmd_conventions import (
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import json_envelope, loc, to_json
+from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -637,6 +639,20 @@ def _compute_composite(categories: dict[str, dict]) -> int:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="verify",
+    category="workflow",
+    summary="Verify changed files follow codebase conventions",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option(
     "--changed",
@@ -682,23 +698,21 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
         # No changed files
         score = 100
         verdict = "PASS"
+        _verify_empty_envelope = json_envelope(
+            "verify",
+            summary={
+                "verdict": verdict,
+                "score": score,
+                "threshold": threshold,
+                "files_checked": 0,
+                "violation_count": 0,
+            },
+            categories={cat: {"score": 100, "violations": []} for cat in _CATEGORY_WEIGHTS},
+            violations=[],
+        )
+        auto_log(_verify_empty_envelope, action="verify", target="")
         if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "verify",
-                        summary={
-                            "verdict": verdict,
-                            "score": score,
-                            "threshold": threshold,
-                            "files_checked": 0,
-                            "violation_count": 0,
-                        },
-                        categories={cat: {"score": 100, "violations": []} for cat in _CATEGORY_WEIGHTS},
-                        violations=[],
-                    )
-                )
-            )
+            click.echo(to_json(_verify_empty_envelope))
             return
         click.echo(f"VERDICT: {verdict} (score {score}/100) -- no changed files")
         return
@@ -735,33 +749,35 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
         violation_count = len(all_violations)
         files_checked = len(file_map)
 
+        # Build category summary (used by JSON output + auto-log).
+        cat_summary = {}
+        for cat_name, cat_result in categories.items():
+            cat_summary[cat_name] = {
+                "score": cat_result["score"],
+                "violation_count": len(cat_result.get("violations", [])),
+                "violations": cat_result.get("violations", []),
+            }
+
+        verify_envelope = json_envelope(
+            "verify",
+            summary={
+                "verdict": verdict,
+                "score": score,
+                "threshold": threshold,
+                "files_checked": files_checked,
+                "violation_count": violation_count,
+            },
+            categories=cat_summary,
+            violations=all_violations,
+        )
+        # Auto-log into the active run; target is the first file path or
+        # empty when the gate ran on the staged set.
+        _verify_target = (target_paths[0] if target_paths else "") or ""
+        auto_log(verify_envelope, action="verify", target=_verify_target)
+
         # JSON output
         if json_mode:
-            # Build category summary for JSON
-            cat_summary = {}
-            for cat_name, cat_result in categories.items():
-                cat_summary[cat_name] = {
-                    "score": cat_result["score"],
-                    "violation_count": len(cat_result.get("violations", [])),
-                    "violations": cat_result.get("violations", []),
-                }
-
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "verify",
-                        summary={
-                            "verdict": verdict,
-                            "score": score,
-                            "threshold": threshold,
-                            "files_checked": files_checked,
-                            "violation_count": violation_count,
-                        },
-                        categories=cat_summary,
-                        violations=all_violations,
-                    )
-                )
-            )
+            click.echo(to_json(verify_envelope))
 
             if score < threshold:
                 ctx.exit(EXIT_GATE_FAILURE)

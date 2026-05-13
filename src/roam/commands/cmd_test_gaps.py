@@ -12,6 +12,7 @@ from roam.commands.changed_files import (
     is_test_file,
     resolve_changed_to_db,
 )
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import load_symbol_coverage_map
 from roam.db.connection import batched_in, find_project_root, open_db
@@ -184,6 +185,20 @@ def _classify_severity(symbol_row, pagerank):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="test-gaps",
+    category="workflow",
+    summary="Map changed symbols to missing test coverage",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("test-gaps")
 @click.argument("files", nargs=-1, required=False)
 @click.option("--changed", is_flag=True, help="Use `git diff --name-only` to get changed files")

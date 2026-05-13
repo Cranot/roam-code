@@ -27,6 +27,16 @@ from roam.commands.cmd_pr_analyze import (  # noqa: E402
     _load_rules_yaml,
 )
 
+
+@pytest.fixture(autouse=True)
+def _enforcement_safe(monkeypatch):
+    """Pre-elect autonomous_pr so privileged `roam pr-analyze` and
+    `roam pr-comment-render` work under future `ROAM_MODE_ENFORCEMENT`
+    default-on (W23.3 staged-rollout PR-B). Pure-Python unit tests are
+    unaffected; CLI tests read the env var at gate-check time."""
+    monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
+
+
 # ---------------------------------------------------------------------------
 # pr-analyze edge cases
 # ---------------------------------------------------------------------------

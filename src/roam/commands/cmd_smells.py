@@ -6,14 +6,52 @@ from collections import Counter
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import (
     format_table,
     json_envelope,
-    summary_envelope,
+    strip_list_payloads,
     to_json,
 )
+
+
+# R22 — confidence-derivation rule for smells:
+#   critical-severity smells (brain-method, god-class, large-class) have
+#     low FP rate and are structural → "high".
+#   warning-severity smells (deep-nesting, long-params, feature-envy,
+#     shotgun-surgery, low-cohesion) are heuristic but well-validated →
+#     "medium".
+#   info-severity smells (data-clumps, dead-params, message-chain,
+#     placeholders) are exploratory and prone to FP → "low".
+_SMELL_SEVERITY_TO_CONFIDENCE = {
+    "critical": "high",
+    "warning": "medium",
+    "info": "low",
+}
+
+
+def _smell_classify(finding: dict) -> tuple[str, str]:
+    """Map a smell finding to a (confidence, reason) tuple.
+
+    Reason names the signal used: severity label + metric vs threshold.
+    """
+    sev = (finding.get("severity") or "info").lower()
+    conf = _SMELL_SEVERITY_TO_CONFIDENCE.get(sev, "low")
+    metric = finding.get("metric_value")
+    threshold = finding.get("threshold")
+    smell_id = finding.get("smell_id", "unknown")
+    if metric is not None and threshold is not None:
+        reason = f"{smell_id}: {sev} severity; metric={metric} vs threshold={threshold}"
+    else:
+        reason = f"{smell_id}: {sev} severity"
+    return conf, reason
 
 _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
@@ -48,6 +86,28 @@ def _short_loc(location: str) -> str:
     return tail
 
 
+@roam_capability(
+    name="smells",
+    category="health",
+    summary="Detect code smells: brain methods, god classes, deep nesting.",
+    inputs=["repo_path"],
+    outputs=["smells", "verdict"],
+    examples=[
+        "roam smells",
+        "roam smells --min-severity warning",
+        "roam smells --file src/auth.py",
+    ],
+    tags=["health", "smells"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.option(
     "--file",
@@ -164,32 +224,43 @@ def smells(ctx, file_path, min_severity, include_tooling):
             )
 
         if json_mode:
+            # R22: wrap each smell in {value, confidence, reason} so
+            # consumers can weight signals. Consumers that previously
+            # read `smells[i]["symbol_name"]` must now read
+            # `smells[i]["value"]["symbol_name"]` and may inspect
+            # `smells[i]["confidence"]` ("high"|"medium"|"low") and
+            # `smells[i]["reason"]`.
+            smell_values = [
+                {
+                    "smell_id": f["smell_id"],
+                    "severity": f["severity"],
+                    "symbol_name": f["symbol_name"],
+                    "kind": f["kind"],
+                    "location": f["location"],
+                    "metric_value": f["metric_value"],
+                    "threshold": f["threshold"],
+                    "description": f["description"],
+                }
+                for f in findings
+            ]
+            smell_triples = wrap_findings(smell_values, classifier=_smell_classify)
+            distribution = confidence_distribution(smell_triples)
+            verdict_with_conf = verdict_with_high_count(verdict, distribution)
             envelope = json_envelope(
                 "smells",
                 budget=token_budget,
                 summary={
-                    "verdict": verdict,
+                    "verdict": verdict_with_conf,
                     "total_smells": total_smells,
                     "severity": dict(severity_counts),
                     "smell_types": dict(smell_types),
                     "files_affected": files_affected,
+                    "findings_confidence_distribution": distribution,
                 },
-                smells=[
-                    {
-                        "smell_id": f["smell_id"],
-                        "severity": f["severity"],
-                        "symbol_name": f["symbol_name"],
-                        "kind": f["kind"],
-                        "location": f["location"],
-                        "metric_value": f["metric_value"],
-                        "threshold": f["threshold"],
-                        "description": f["description"],
-                    }
-                    for f in findings
-                ],
+                smells=smell_triples,
             )
             if not detail:
-                envelope = summary_envelope(envelope)
+                envelope = strip_list_payloads(envelope)
             click.echo(to_json(envelope))
             return
 

@@ -29,9 +29,11 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
+from roam.quality.ai_rot import DEFINITION as AI_ROT_DEFINITION
 
 # ---------------------------------------------------------------------------
 # Severity labels
@@ -59,8 +61,31 @@ def _severity_label(score: int) -> str:
 def _detect_dead_exports(conn) -> tuple[int, int]:
     """Count public symbols with zero incoming edges.
 
-    Excludes test files, dunders, CLI command files, and entry-point names
-    to reduce false positives (matching roam dead heuristics).
+    This is a deliberately COARSER metric than ``roam dead``. The two
+    commands disagree by design on the same codebase — known divergence
+    (W19) of ~3.4x on a PHP backend (2936 here vs 855 from ``roam
+    dead``). Three documented reasons for the gap:
+
+    1. ``vibe-check`` counts ALL incoming-edge=0 symbols as dead. ``roam
+       dead`` only counts symbols with zero *production* consumers
+       (test-only consumers move it to REVIEW, not SAFE).
+    2. ``vibe-check`` does NOT apply the ``is_excluded_path`` filter
+       (``dev/``, ``examples/``, ``vendor/``, ``benchmarks/``,
+       ``generated/``, ``docs/``, ``fixtures/``, ``samples/``, etc.).
+       ``roam dead`` does, so symbols in those trees are invisible.
+    3. ``vibe-check`` does NOT apply the transitively-alive filter (a
+       symbol consumed by a barrel re-exporter whose own consumer
+       still uses it through a downstream import chain). ``roam dead``
+       does, so barrel-routed exports don't show up.
+
+    The vibe-check number is a HEALTH SIGNAL (rough rot proxy). The
+    ``roam dead`` number is an ACTIONABLE deletion list. Both numbers
+    are correct under their own definitions; they answer different
+    questions, so labelling them with a ``_definition`` field is the
+    fix per CLAUDE.md Pattern 3.
+
+    Excludes test files, dunders, CLI command files, and entry-point
+    names to reduce false positives common to AI-generated code.
 
     Returns (found, total_public_symbols).
     """
@@ -674,6 +699,21 @@ _PATTERN_NAMES = {
     "copy_paste": "Copy-paste functions",
 }
 
+# Pattern 3 / W19: Where two commands compute the "same" metric
+# differently, label every field with its precise definition so
+# downstream consumers don't conflate them. Numbers are intentionally
+# coarser than ``roam dead`` — see ``_detect_dead_exports`` docstring.
+_DEAD_EXPORTS_DEFINITION = (
+    "Public exported function/class/method symbols with ZERO incoming "
+    "edges of any kind. Coarser than ``roam dead`` which requires zero "
+    "*production* consumers AND survives the tooling-path exclusion "
+    "(dev/, examples/, vendor/, etc.) AND the transitively-alive filter "
+    "(barrel re-export survival). On a PHP-only codebase, vibe-check's "
+    "count is typically 2-4x ``roam dead`` because of those three "
+    "filters; both numbers are correct under their own definition. "
+    "Use ``roam dead`` for an actionable deletion list."
+)
+
 
 def _compute_score(patterns: dict[str, dict]) -> int:
     """Compute weighted composite AI rot score (0-100)."""
@@ -742,6 +782,20 @@ def _aggregate_worst_files(all_details: dict[str, list[dict]], limit: int = 5) -
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="vibe-check",
+    category="health",
+    summary="Detect AI code anti-patterns and compute AI rot score",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("vibe-check")
 @click.option("--threshold", type=int, default=0, help="Fail if AI rot score exceeds threshold (0=no gate)")
 @click.pass_context
@@ -874,9 +928,38 @@ def vibe_check(ctx, threshold):
                     "verdict": verdict,
                     "score": score,
                     "severity": severity,
+                    # W17.2 / Pattern 3c: name the axis the severity label
+                    # measures. vibe-check's severity is rot-axis (higher
+                    # score = more rot = worse); dashboard's `health.label`
+                    # is health-axis (higher score = healthier = better).
+                    # The label words coincidentally overlap ("HEALTHY")
+                    # but mean opposite things — agents that confuse them
+                    # ship bad decisions, so name the axis explicitly.
+                    "label_axis": "ai_rot_score",
+                    "label_axis_definition": (
+                        "Severity label on the AI-rot axis (0-100, lower "
+                        "= healthier). Bands: HEALTHY <=15, LOW <=35, "
+                        "MODERATE <=55, HIGH <=75, CRITICAL >75. NOT the "
+                        "same axis as dashboard's `health.label` "
+                        "(project-health, higher = healthier)."
+                    ),
                     "total_issues": total_issues,
                     "files_scanned": files_scanned,
                     "patterns_detected": sum(1 for p in patterns.values() if p["found"] > 0),
+                    # Pattern 3 label fix — vibe-check is the CANONICAL
+                    # source for AI rot. Downstream consumers (dashboard,
+                    # audit aggregates) read this label to confirm they
+                    # agree on what the number means. See
+                    # ``internal/dogfood/SYNTHESIS-2026-05-12.md`` Pattern 3.
+                    "ai_rot_score": score,
+                    "ai_rot_definition": AI_ROT_DEFINITION,
+                    # W19 / Pattern 3: the ``dead_exports`` count here
+                    # is COARSER than ``roam dead``'s by design (3.4x
+                    # observed on a PHP backend dogfood). Surface the
+                    # definition at envelope level so an agent reading
+                    # just the summary doesn't conflate the metrics.
+                    "dead_exports_metric_definition": _DEAD_EXPORTS_DEFINITION,
+                    "dead_exports_canonical_command": "roam dead",
                 },
                 patterns=[
                     {
@@ -887,11 +970,25 @@ def vibe_check(ctx, threshold):
                         "rate": pdata["rate"],
                         "severity": pdata["severity"],
                         "weight": _WEIGHTS[key],
+                        # Per-pattern definition: only ``dead_exports``
+                        # has a documented W19 divergence right now;
+                        # others may follow as we surface them.
+                        **(
+                            {"metric_definition": _DEAD_EXPORTS_DEFINITION}
+                            if key == "dead_exports"
+                            else {}
+                        ),
                     }
                     for key, pdata in patterns.items()
                 ],
                 worst_files=worst_files,
                 recommendations=recommendations,
+                # LAW 11: surface the aggregate command so an agent
+                # holding only the vibe-check envelope discovers
+                # ``roam dashboard`` for the project-level summary.
+                next_steps=[
+                    "roam dashboard for project-level summary",
+                ],
             )
             click.echo(to_json(envelope))
 

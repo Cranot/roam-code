@@ -460,17 +460,23 @@ class TestCommandRegistration:
 
     def test_reset_is_registered(self, cli_runner):
         """roam reset should appear in the CLI command list."""
-        from roam.cli import cli
+        # W19.2 5-verb help redesign: compact `--help` only shows 5 verbs;
+        # full inventory lives in `--help-all` / `_COMMANDS`.
+        from roam.cli import _COMMANDS, cli
 
-        result = cli_runner.invoke(cli, ["--help"])
+        assert "reset" in _COMMANDS
+        result = cli_runner.invoke(cli, ["--help-all"])
         assert result.exit_code == 0
         assert "reset" in result.output
 
     def test_clean_is_registered(self, cli_runner):
         """roam clean should appear in the CLI command list."""
-        from roam.cli import cli
+        # W19.2 5-verb help redesign: compact `--help` only shows 5 verbs;
+        # full inventory lives in `--help-all` / `_COMMANDS`.
+        from roam.cli import _COMMANDS, cli
 
-        result = cli_runner.invoke(cli, ["--help"])
+        assert "clean" in _COMMANDS
+        result = cli_runner.invoke(cli, ["--help-all"])
         assert result.exit_code == 0
         assert "clean" in result.output
 

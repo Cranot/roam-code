@@ -10,6 +10,7 @@ from roam.db.queries import (
     FILES_IN_DIR,
     SYMBOLS_IN_DIR,
 )
+from roam.capability import roam_capability
 from roam.output.formatter import (
     abbrev_kind,
     format_signature,
@@ -95,6 +96,20 @@ def _module_cohesion(conn, all_sym_ids):
     return cohesion, internal_edges, total_edges
 
 
+@roam_capability(
+    name="module",
+    category="exploration",
+    summary="Show directory contents: exports, signatures, deps",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("path")
 @click.pass_context

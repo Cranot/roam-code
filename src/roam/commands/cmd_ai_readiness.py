@@ -22,6 +22,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -645,6 +646,20 @@ def _generate_recommendations(dimensions: dict[str, int], details: dict[str, dic
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="ai-readiness",
+    category="health",
+    summary="Estimate how effectively AI agents can work on this codebase (0-100)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("ai-readiness")
 @click.option(
     "--threshold",

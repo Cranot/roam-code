@@ -126,7 +126,7 @@ def scan_frontend_api_calls(repo_db_path: Path, repo_root: Path) -> list[dict[st
             )
 
         # Also scan for string literals that look like API paths in source
-        # This catches patterns like: api.get('/redacted/save')
+        # This catches patterns like: api.get('/transactions/save')
         file_rows = conn.execute(
             "SELECT id, path FROM files WHERE language IN ('typescript', 'javascript', 'vue', 'tsx', 'jsx')"
         ).fetchall()
@@ -268,6 +268,119 @@ def match_api_endpoints(
             seen[key] = m
 
     return sorted(seen.values(), key=lambda m: m["score"], reverse=True)
+
+
+def find_unmatched_calls(
+    frontend_calls: list[dict[str, Any]],
+    backend_routes: list[dict[str, Any]],
+    matches: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return frontend calls that did not match any backend route.
+
+    Each entry is a dict with keys ``frontend_file``, ``url``, ``method``,
+    ``symbol_name``, ``line``, and ``reason``. The ``reason`` field
+    classifies *why* the call is unmatched, drawn from a closed enum:
+
+    - ``"method_mismatch"`` — URL path matches a backend route but the
+      HTTP method differs.
+    - ``"unknown_path"`` — URL path does not match any backend route,
+      and no backend route shares the same prefix (top URL segment).
+    - ``"path_variable_mismatch"`` — Path's leading segment matches at
+      least one backend route, but no full path (including variable
+      slots) lines up.
+
+    Unmatched is computed against the *matched-pair* list rather than
+    re-running the matcher, so the input/output contract of
+    :func:`match_api_endpoints` is unchanged.
+    """
+    if not frontend_calls:
+        return []
+
+    # Set of (file_path, line) for calls that DID match. A single call
+    # may match multiple backend routes; we only care that it matched
+    # at least one.
+    matched_call_keys: set[tuple[str, int]] = set()
+    for m in matches:
+        fe = m.get("frontend", {})
+        key = (fe.get("file_path", ""), fe.get("line", 0))
+        matched_call_keys.add(key)
+
+    # Build lookups for "why didn't this match" classification.
+    backend_normalized: dict[str, list[dict[str, Any]]] = {}
+    backend_prefixes: dict[str, list[dict[str, Any]]] = {}
+    for route in backend_routes:
+        norm = _normalize_url(route["url_pattern"])
+        backend_normalized.setdefault(norm, []).append(route)
+        # First non-empty path segment is the "prefix" we cluster on.
+        segs = [s for s in norm.split("/") if s]
+        if segs:
+            backend_prefixes.setdefault("/" + segs[0], []).append(route)
+
+    unmatched: list[dict[str, Any]] = []
+    for call in frontend_calls:
+        key = (call.get("file_path", ""), call.get("line", 0))
+        if key in matched_call_keys:
+            continue
+
+        normalized = _normalize_url(call["url_pattern"])
+        call_method = (call.get("http_method") or "").upper()
+
+        # Classify reason. Order matters: method_mismatch is the
+        # most actionable, then path_variable_mismatch, then the
+        # default unknown_path.
+        path_candidates = list(backend_normalized.get(normalized, []))
+        if not path_candidates:
+            path_candidates.extend(_fuzzy_url_match(normalized, backend_normalized))
+
+        reason: str
+        reason_detail: str
+        if path_candidates:
+            # Path matches at least one backend route — must be method.
+            backend_methods = sorted(
+                {(r.get("http_method") or "").upper() for r in path_candidates if r.get("http_method")}
+            )
+            reason = "method_mismatch"
+            method_list = ", ".join(backend_methods) if backend_methods else "?"
+            reason_detail = (
+                f"backend route `{call['url_pattern']}` exists but accepts "
+                f"{method_list}, not {call_method or '?'}"
+            )
+        else:
+            # No exact / fuzzy URL match. Is there a sibling under the
+            # same top-level prefix? If so, it's a path-variable shape
+            # mismatch; otherwise the prefix itself is unknown.
+            segs = [s for s in normalized.split("/") if s]
+            prefix_key = ("/" + segs[0]) if segs else ""
+            if prefix_key and prefix_key in backend_prefixes:
+                reason = "path_variable_mismatch"
+                sample = backend_prefixes[prefix_key][0]
+                reason_detail = (
+                    f"no backend route matches `{call['url_pattern']}` for method "
+                    f"{call_method or '?'}; closest sibling under `{prefix_key}` "
+                    f"is `{sample['url_pattern']}`"
+                )
+            else:
+                reason = "unknown_path"
+                reason_detail = (
+                    f"no backend route matches `{call['url_pattern']}` for method "
+                    f"{call_method or '?'}"
+                )
+
+        unmatched.append(
+            {
+                "frontend_file": call.get("file_path", ""),
+                "url": call["url_pattern"],
+                "method": call_method or "",
+                "symbol_name": call.get("symbol_name", ""),
+                "line": call.get("line", 0),
+                "reason": reason,
+                "reason_detail": reason_detail,
+            }
+        )
+
+    # Stable ordering: by file then line.
+    unmatched.sort(key=lambda u: (u["frontend_file"], u["line"]))
+    return unmatched
 
 
 def build_cross_repo_edges(
