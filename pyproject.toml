@@ -34,7 +34,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "click>=8.0",
+    "click>=8.1.8",
     "tree-sitter>=0.23",
     # Pinned upper bound: 1.6.3's cp312 wheel ships a manylinux_2_34
     # tarball that fails to register the ``tree_sitter_language_pack``
