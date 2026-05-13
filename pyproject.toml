@@ -120,7 +120,7 @@ dev = [
     # PyYAML dep being unavailable on 3.9.
     "pyyaml>=6.0",
     "ruff>=0.4",
-    "build>=1.0",
+    "build>=1.4.4",
     "twine>=5.0",
 ]
 
