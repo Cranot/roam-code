@@ -12,6 +12,7 @@ from roam.commands.changed_files import (
     is_test_file,
     resolve_changed_to_db,
 )
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.index.test_conventions import find_test_candidates
@@ -238,6 +239,20 @@ def _looks_like_file(target):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="affected-tests",
+    category="workflow",
+    summary="Trace from a changed symbol or file to test files that exercise it",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("affected-tests")
 @click.argument("target", required=False, default=None)
 @click.option("--staged", is_flag=True, help="Find tests for staged changes")

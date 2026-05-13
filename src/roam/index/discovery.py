@@ -7,7 +7,14 @@ import os
 import subprocess
 from pathlib import Path
 
-# Extensions that are not source code
+# 53 extensions the discovery walker skips as non-source: binaries, lockfiles,
+# minified bundles, source-maps, archives, media, fonts, compiled artefacts, and
+# document formats. Single source of truth — cmd_secrets._BINARY_EXTENSIONS is
+# an alias of this set (W39.4 collapse; previously a 48-entry binary-only subset
+# kept distinct from this superset, but the 5 extras .lock/.map/.min.js/.min.css/
+# .sct turned out to be low-value secrets-scan targets — .lock files are also
+# filtered by SKIP_NAMES below, and .map/.min.* leaks surface in unminified
+# source). Re-counted via len(); keep this comment in sync if entries change.
 SKIP_EXTENSIONS = frozenset(
     {
         ".lock",

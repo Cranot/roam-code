@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
@@ -496,6 +497,20 @@ def _format_markdown(challenges, verdict, changed_files_count):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="adversarial",
+    category="workflow",
+    summary="Adversarial architecture review -- challenge your changes",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("adversarial")
 @click.option("--staged", is_flag=True, help="Review staged changes only")
 @click.option(
@@ -670,6 +685,37 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # Output
         # ------------------------------------------------------------------
         if json_mode:
+            # LAW 4 (CLAUDE.md): supply explicit agent_contract.facts anchored
+            # on the concrete subject ("adversarial review") with an
+            # analytical verb. Auto-derive would emit "critical: 5",
+            # "high: 12" — abstract key:value pairs that fail to activate
+            # analytical mode on the consumer.
+            facts: list[str] = [verdict]
+            if critical:
+                facts.append(
+                    f"adversarial review flagged {critical} CRITICAL "
+                    f"architectural challenges across {len(file_map)} changed files"
+                )
+            if high:
+                facts.append(
+                    f"adversarial review flagged {high} HIGH-severity challenges"
+                )
+            if warning:
+                facts.append(
+                    f"adversarial review surfaced {warning} warning(s)"
+                )
+            if challenges:
+                top = challenges[0]
+                top_title = (
+                    top.get("title") or top.get("message") or top.get("category") or "?"
+                )
+                facts.append(
+                    f"highest-priority challenge: [{top.get('severity', '?')}] "
+                    f"{top_title}"
+                )
+            next_commands: list[str] = ["roam preflight", "roam critique"]
+            if critical:
+                next_commands.insert(0, "roam diff")
             click.echo(
                 to_json(
                     json_envelope(
@@ -685,6 +731,10 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                         },
                         budget=token_budget,
                         challenges=challenges,
+                        agent_contract={
+                            "facts": facts,
+                            "next_commands": next_commands,
+                        },
                     )
                 )
             )

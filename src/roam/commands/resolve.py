@@ -162,7 +162,8 @@ def ensure_index(quiet: bool = False) -> None:
             click.echo(
                 "No roam index found. Run `roam init` to create one.\n"
                 "  Tip: If you already ran `roam init`, your current directory may be\n"
-                "       outside the project root. cd into the project root and retry."
+                "       outside the project root. cd into the project root and retry.\n"
+                "  If this looks unexpected, run `roam doctor` to diagnose your install."
             )
         from roam.index.indexer import Indexer
 

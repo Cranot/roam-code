@@ -11,6 +11,11 @@ file (CLAUDE.md, AGENTS.md, .cursor/rules, etc.).
 Helper functions in this module (``_agent_prompt_data``,
 ``_format_agent_prompt``) are imported by ``roam.commands.cmd_understand``
 and must not be removed.
+
+Naming-conventions detection lives in
+``roam.commands.conventions_helper`` (the canonical detector shared by
+describe, understand, minimap, preflight, and the standalone
+``conventions`` command). Do not re-implement it here.
 """
 
 from __future__ import annotations
@@ -21,6 +26,11 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
+from roam.commands.conventions_helper import (
+    compute_conventions,
+    short_conventions_string,
+)
 from roam.commands.resolve import detect_entry_points, ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -128,12 +138,16 @@ def _section_key_abstractions(conn):
 
 
 def _section_architecture(conn):
-    """Layer count, shape, and cycle count."""
+    """Layer count, shape, and cycle count.
+
+    W17.2 / Pattern 3c: cycle count comes from `roam.quality.cycles` so
+    `describe` and `health` always agree on `cycles_total`.
+    """
     lines = ["", "## Architecture", ""]
     try:
         from roam.graph.builder import build_symbol_graph
-        from roam.graph.cycles import find_cycles
         from roam.graph.layers import detect_layers
+        from roam.quality.cycles import cycles_summary
 
         G = build_symbol_graph(conn)
         if len(G) == 0:
@@ -141,11 +155,13 @@ def _section_architecture(conn):
             return lines
 
         layers = detect_layers(G)
-        cycles = find_cycles(G)
+        csum = cycles_summary(conn)
 
         max_layer = max(layers.values()) if layers else 0
         lines.append(f"- **Dependency layers:** {max_layer + 1}")
-        lines.append(f"- **Cycles (SCCs):** {len(cycles)}")
+        lines.append(
+            f"- **Cycles (SCCs):** {csum.total} total, {csum.actionable} actionable"
+        )
 
         if layers:
             layer_counts = Counter(layers.values())
@@ -483,36 +499,28 @@ def _section_domain(conn):
 
 
 def _section_conventions(conn):
-    """Document detected coding conventions for agents to follow."""
-    import re
+    """Document detected coding conventions for agents to follow.
 
+    Delegates to ``roam.commands.conventions_helper.compute_conventions``
+    so this section agrees with ``roam conventions``, ``roam understand``,
+    ``roam minimap``, and ``roam preflight``.
+    """
     lines = ["", "## Coding Conventions", ""]
     lines.append("Follow these conventions when writing code in this project:")
     lines.append("")
 
-    _SNAKE = re.compile(r"^[a-z_][a-z0-9_]*$")
-    _CAMEL = re.compile(r"^[a-z][a-zA-Z0-9]*$")
-    _PASCAL = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
+    result = compute_conventions(conn)
+    by_kind = result["by_kind"]
 
     for kind, label in [("function", "Functions"), ("class", "Classes"), ("method", "Methods")]:
-        rows = conn.execute("SELECT name FROM symbols WHERE kind = ?", (kind,)).fetchall()
-        if not rows:
+        info = by_kind.get(kind)
+        if not info:
             continue
-        names = [r["name"] for r in rows]
-        counts = {"snake_case": 0, "camelCase": 0, "PascalCase": 0}
-        for n in names:
-            if _PASCAL.match(n):
-                counts["PascalCase"] += 1
-            elif _SNAKE.match(n):
-                counts["snake_case"] += 1
-            elif _CAMEL.match(n):
-                counts["camelCase"] += 1
-        dominant = max(counts, key=counts.get)
-        total = len(names)
-        pct = round(counts[dominant] * 100 / total) if total else 0
-        if pct >= 80:
-            kind_plural = "classes" if kind == "class" else f"{kind}s"
-            lines.append(f"- **{label}:** Use `{dominant}` ({pct}% of {total} {kind_plural})")
+        if info["pct"] >= 80:
+            lines.append(
+                f"- **{label}:** Use `{info['style']}` "
+                f"({info['pct']}% of {info['total']} {info['label']})"
+            )
 
     # Import style
     try:
@@ -623,8 +631,6 @@ def _section_dependencies(conn):
 
 def _agent_prompt_data(conn):
     """Gather compact data for --agent-prompt output."""
-    import re
-
     data = {}
 
     # ── Project overview ─────────────────────────────────────────────
@@ -647,58 +653,24 @@ def _agent_prompt_data(conn):
     data["symbols"] = total_symbols
     data["languages"] = languages
 
-    # ── Stack / key dependencies (from most-imported files) ──────────
-    try:
-        top_imports = conn.execute("""
-            SELECT f.path, COUNT(*) as import_count
-            FROM file_edges fe
-            JOIN files f ON fe.target_file_id = f.id
-            GROUP BY fe.target_file_id
-            ORDER BY import_count DESC
-            LIMIT 10
-        """).fetchall()
-        stack_items = []
-        for r in top_imports:
-            p = r["path"].replace("\\", "/")
-            # Use top-level directory or filename as dependency hint
-            parts = p.split("/")
-            stack_items.append(parts[0] if len(parts) > 1 else p)
-        # Deduplicate preserving order
-        seen = set()
-        stack_deduped = []
-        for s in stack_items:
-            if s not in seen:
-                seen.add(s)
-                stack_deduped.append(s)
-        data["stack"] = ", ".join(stack_deduped[:8])
-    except Exception:
-        data["stack"] = ""
+    # ── Stack / key dependencies ──────────────────────────────────────
+    # Previous implementation extracted top-level directories from the
+    # most-imported files and emitted them as "Stack: src" on any
+    # monorepo where local imports dominated. The language list above
+    # already conveys the same info more accurately, so we no longer
+    # emit a Stack line in the agent-prompt text (research note:
+    # internal/dogfood/research/roam-describe-stack-directory-leak-2026-05-12.md).
+    # JSON consumers that historically read `stack` get an empty
+    # string — same as the previous failure-path default — to preserve
+    # envelope shape without leaking directory names.
+    data["stack"] = ""
 
     # ── Conventions ──────────────────────────────────────────────────
-    _SNAKE = re.compile(r"^[a-z_][a-z0-9_]*$")
-    _CAMEL = re.compile(r"^[a-z][a-zA-Z0-9]*$")
-    _PASCAL = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
-
-    conventions = []
-    for kind, label in [("function", "functions"), ("class", "classes"), ("method", "methods")]:
-        rows = conn.execute("SELECT name FROM symbols WHERE kind = ?", (kind,)).fetchall()
-        if not rows:
-            continue
-        counts = {"snake_case": 0, "camelCase": 0, "PascalCase": 0}
-        for r in rows:
-            n = r["name"]
-            if _PASCAL.match(n):
-                counts["PascalCase"] += 1
-            elif _SNAKE.match(n):
-                counts["snake_case"] += 1
-            elif _CAMEL.match(n):
-                counts["camelCase"] += 1
-        dominant = max(counts, key=counts.get)
-        total = len(rows)
-        pct = round(counts[dominant] * 100 / total) if total else 0
-        if pct >= 70:
-            conventions.append(f"{label}={dominant}")
-    data["conventions"] = ", ".join(conventions) if conventions else "mixed"
+    # Delegate to the canonical detector — every command (describe,
+    # understand, minimap, preflight, conventions) shares this code path
+    # so they all agree on the same codebase.
+    _conv = compute_conventions(conn)
+    data["conventions"] = short_conventions_string(_conv["by_kind"], min_pct=70) or "mixed"
 
     # ── Directory structure ──────────────────────────────────────────
     dir_rows = conn.execute("""
@@ -754,17 +726,26 @@ def _agent_prompt_data(conn):
         log_swallowed("cmd_describe:section", _exc)
     data["hotspots"] = hotspots
 
-    # ── Cycle-only health estimate + actionable cycle count ─────────
+    # ── Cycle-only health estimate + canonical cycle counts ────────
     # This is intentionally a *cheap* estimate and NOT the same number
     # `roam health` reports (which weights god components, bottlenecks,
     # and layer violations on top of cycles). Round 4 #17 noted the
     # name collision was misleading agents — both reads are valid, but
     # they measure different things.
+    #
+    # W17.2 / Pattern 3c: route the cycle-count via `roam.quality.cycles`
+    # so `describe`, `health`, and `agent-export` always agree on the
+    # actionable + total numbers. `data["cycles"]` keeps reporting the
+    # actionable count (legacy), and we add `cycles_actionable` /
+    # `cycles_total` + a definition label.
     data["cycle_health_estimate"] = "N/A"
     data["cycles"] = "N/A"
+    data["cycles_actionable"] = "N/A"
+    data["cycles_total"] = "N/A"
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import find_cycles, format_cycles, mark_actionable_cycles
+        from roam.quality.cycles import cycles_summary, definition as _cyc_def
 
         G = build_symbol_graph(conn)
         total_syms = len(G)
@@ -772,12 +753,17 @@ def _agent_prompt_data(conn):
             cycles = find_cycles(G)
             formatted = format_cycles(cycles, conn) if cycles else []
             mark_actionable_cycles(formatted)
-            actionable = [c for c in formatted if c.get("actionable")]
             actionable_syms = sum(len(scc) for scc, fc in zip(cycles, formatted) if fc.get("actionable"))
             cycle_pct = (actionable_syms / total_syms * 100) if total_syms else 0
             score = max(0, 100 - int(cycle_pct * 2))
             data["cycle_health_estimate"] = score
-            data["cycles"] = len(actionable)
+            # Use the canonical summary so describe agrees with health.
+            csum = cycles_summary(conn)
+            data["cycles"] = csum.actionable
+            data["cycles_actionable"] = csum.actionable
+            data["cycles_total"] = csum.total
+            data["cycles_informational"] = csum.informational
+            data["cycles_definition"] = _cyc_def()
             # Keep the legacy alias around so existing tooling doesn't break.
             data["health_score"] = score
     except Exception as _exc:  # noqa: BLE001 — defensive
@@ -823,8 +809,9 @@ def _format_agent_prompt(data: dict) -> str:
     """Format agent-prompt data as compact plain text."""
     lines = []
     lines.append(f"Project: {data['project']} ({data['files']} files, {data['symbols']} symbols, {data['languages']})")
-    if data.get("stack"):
-        lines.append(f"Stack: {data['stack']}")
+    # Stack line removed — the language list already covers what the
+    # Stack heuristic tried to surface, and the old detector leaked raw
+    # directory names ("Stack: src") on monorepos.
     lines.append(f"Conventions: {data['conventions']}")
     lines.append(f"Structure: {data['structure']}")
 
@@ -902,6 +889,20 @@ def _detect_agent_config(root: "Path") -> "Path":
     return root / "CLAUDE.md"
 
 
+@roam_capability(
+    name="describe",
+    category="getting-started",
+    summary="Auto-generate a project description for AI coding agents",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--write", is_flag=True, help="Write output to the detected agent config file")
 @click.option("--force", is_flag=True, help="Overwrite existing file without confirmation")
@@ -979,11 +980,27 @@ def describe(ctx, write, force, agent_prompt, out_file):
     _desc_verdict = f"{_top_lang} project, {_total_files} files, {_n_langs} languages"
 
     if json_mode:
+        # W17.2 / Pattern 3c: include canonical cycle metric definition
+        # so the describe envelope agrees with health/agent-export on
+        # what "cycles" means even when only the markdown blob is read.
+        from roam.quality.cycles import (
+            cycles_summary as _cs,
+            definition as _cyc_def,
+        )
+
+        with open_db(readonly=True) as _c2:
+            _csum = _cs(_c2)
         click.echo(
             to_json(
                 json_envelope(
                     "describe",
-                    summary={"verdict": _desc_verdict, "length": len(output)},
+                    summary={
+                        "verdict": _desc_verdict,
+                        "length": len(output),
+                        "cycles_total": _csum.total,
+                        "cycles_actionable": _csum.actionable,
+                        "cycles_definition": _cyc_def(),
+                    },
                     markdown=output,
                 )
             )

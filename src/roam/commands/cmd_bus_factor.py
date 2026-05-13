@@ -7,6 +7,11 @@ import time
 
 import click
 
+from roam.capability import roam_capability
+from roam.commands.conventions_helper import (
+    DEFAULT_EXCLUDE_PREFIXES,
+    is_excluded_path,
+)
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -94,10 +99,26 @@ def _risk_label(score: float) -> str:
     return "LOW"
 
 
-def _analyse_bus_factor(conn, stale_months: int):
+def _analyse_bus_factor(
+    conn,
+    stale_months: int,
+    exclude_prefixes: tuple[str, ...] = DEFAULT_EXCLUDE_PREFIXES,
+):
     """Run the bus-factor analysis across all directories.
 
-    Returns a list of dicts sorted by risk score descending.
+    Args:
+        conn: open SQLite connection.
+        stale_months: months of inactivity before flagging a primary
+            author as stale.
+        exclude_prefixes: tuple of path prefixes to skip. Defaults to
+            :data:`DEFAULT_EXCLUDE_PREFIXES` (``.github/``, ``.claude/``,
+            ``docs/``, ``dist/``, ``node_modules/`` etc.) so non-source
+            paths don't dominate the ranking. Pass ``()`` to disable.
+
+    Returns:
+        (results, excluded_files): ``results`` is a list of per-directory
+        dicts sorted by risk score descending; ``excluded_files`` is the
+        number of distinct file paths that were skipped by the filter.
     """
     # Fetch per-file author contribution data with timestamps
     rows = conn.execute("""
@@ -113,11 +134,28 @@ def _analyse_bus_factor(conn, stale_months: int):
     """).fetchall()
 
     if not rows:
-        return []
+        return [], 0
+
+    # SYNTHESIS Rank 16: drop non-source paths (``.github/``, ``.claude/``,
+    # ``docs/``, ``dist/``, ``node_modules/`` ...) before aggregating so
+    # bus-factor doesn't surface CI workflows or vendored deps as a
+    # knowledge risk. Honored via the global ``--include-excluded`` flag
+    # in the click command below.
+    excluded_paths: set[str] = set()
+    filtered_rows = []
+    for r in rows:
+        path = r["path"] or ""
+        if exclude_prefixes and is_excluded_path(path, exclude_prefixes):
+            excluded_paths.add(path)
+            continue
+        filtered_rows.append(r)
+
+    if not filtered_rows:
+        return [], len(excluded_paths)
 
     # Aggregate by directory
     dir_data = {}  # dir -> { author -> {commits, churn, last_active} }
-    for r in rows:
+    for r in filtered_rows:
         d = _extract_directory(r["path"])
         if d not in dir_data:
             dir_data[d] = {}
@@ -229,7 +267,7 @@ def _analyse_bus_factor(conn, stale_months: int):
 
     # Sort by risk score descending (highest risk first)
     results.sort(key=lambda r: r["risk_score"], reverse=True)
-    return results
+    return results, len(excluded_paths)
 
 
 def _query_brain_methods(conn):
@@ -256,6 +294,20 @@ def _query_brain_methods(conn):
     ]
 
 
+@roam_capability(
+    name="bus-factor",
+    category="reports",
+    summary="Detect knowledge loss risk per module (bus factor analysis)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--limit", default=20, help="Number of directories to show")
 @click.option("--stale-months", default=6, help="Months of inactivity before flagging stale knowledge")
@@ -289,15 +341,29 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
       roam bus-factor --brain-methods
       roam bus-factor --force-team-mode
 
+    By default the scan skips identifiers under ``.github/``, ``.claude/``,
+    ``docs/``, ``dist/``, ``build/``, ``node_modules/``, ``vendor/``, and
+    ``__pycache__/`` so CI workflows and vendored deps don't dominate the
+    ranking. The global ``--include-excluded`` flag restores legacy
+    scan-everything behaviour.
+
     See also ``simulate-departure`` (impact of a specific developer
     leaving), ``drift`` (CODEOWNERS divergence), and ``owner``
     (per-symbol ownership lookup).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    # SYNTHESIS Rank 16: honor the global ``--include-excluded`` flag so
+    # users can opt back into the legacy "scan everything" behaviour.
+    # Default is to skip ``.github/``, ``.claude/``, ``docs/``, ``dist/``,
+    # ``node_modules/``, etc. — see ``conventions_helper`` for the canon.
+    include_excluded = ctx.obj.get("include_excluded", False) if ctx.obj else False
+    exclude_prefixes: tuple[str, ...] = () if include_excluded else DEFAULT_EXCLUDE_PREFIXES
     ensure_index()
 
     with open_db(readonly=True) as conn:
-        results = _analyse_bus_factor(conn, stale_months)
+        results, excluded_files_count = _analyse_bus_factor(
+            conn, stale_months, exclude_prefixes=exclude_prefixes
+        )
         brain_list = _query_brain_methods(conn) if brain_methods else []
 
         # Round 4 #13, Q: detect single-author projects so we don't flood
@@ -323,7 +389,17 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
             no_data_verdict = "no git history data available"
             if json_mode:
                 envelope_kwargs = dict(
-                    summary={"verdict": no_data_verdict, "directory_count": 0, "high_risk": 0},
+                    summary={
+                        "verdict": no_data_verdict,
+                        # W21.7 LAW 4 rename: ``directory_count: N`` rendered
+                        # awkwardly as ``"directory count N"``. The new key
+                        # humanizes to ``"N directories analyzed"`` — a clean
+                        # concrete-noun anchor.
+                        "directories_analyzed": 0,
+                        "high_risk": 0,
+                        "excluded_files_count": excluded_files_count,
+                        "exclude_prefixes_active": list(exclude_prefixes),
+                    },
                     directories=[],
                 )
                 if brain_methods:
@@ -358,7 +434,10 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
         if json_mode:
             summary = {
                 "verdict": bus_verdict,
-                "directory_count": len(results),
+                # W21.7 LAW 4 rename: ``directory_count`` → ``directories_analyzed``
+                # so the auto-derived fact reads ``"N directories analyzed"``
+                # instead of ``"directory count N"``.
+                "directories_analyzed": len(results),
                 "high_risk": high_risk,
                 "medium_risk": medium_risk,
                 "concentrated": concentrated_count,
@@ -366,6 +445,8 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
                 "critical_entropy": critical_entropy_count,
                 "project_team_size": getattr(shape, "team_size", "unknown") if shape else "unknown",
                 "single_author_mode": single_author_mode,
+                "excluded_files_count": excluded_files_count,
+                "exclude_prefixes_active": list(exclude_prefixes),
             }
             if brain_methods:
                 summary["brain_method_count"] = len(brain_list)
@@ -409,6 +490,11 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
             f"{concentrated_count} concentrated, "
             f"{stale_count} stale)"
         )
+        if excluded_files_count and not include_excluded:
+            click.echo(
+                f"  ({excluded_files_count} files excluded by default — "
+                f"use --include-excluded to scan everything)"
+            )
         click.echo()
 
         for r in limited:

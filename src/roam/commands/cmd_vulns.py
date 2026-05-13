@@ -8,9 +8,66 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import format_table, json_envelope, to_json
+
+
+# R22 — confidence-derivation rule for vulnerabilities:
+#   Two signals combined — ingestion source (curated CVE DB vs generic
+#   user-supplied JSON) and reachability (does an entry point reach
+#   the matched symbol?).
+#
+#   source ∈ {npm-audit, pip-audit} → "high"   (curated, authoritative)
+#   source ∈ {trivy, osv}            → "medium" (broad-scanner, some FP)
+#   source ∈ {generic, unknown}      → "low"    (raw user JSON; no curation)
+#
+#   Reachability tightens or loosens the source-based label:
+#   - reachable == 1  → keep or upgrade (medium → high)
+#   - reachable == -1 → downgrade one level (high → medium, medium → low)
+#   - reachable == 0  → no analysis ran; keep source-based label
+_SOURCE_CONFIDENCE = {
+    "npm-audit": "high",
+    "npm_audit": "high",
+    "pip-audit": "high",
+    "pip_audit": "high",
+    "trivy": "medium",
+    "osv": "medium",
+    "generic": "low",
+}
+_LEVEL_ORDER = ["low", "medium", "high"]
+
+
+def _adjust_level(level: str, delta: int) -> str:
+    try:
+        idx = _LEVEL_ORDER.index(level)
+    except ValueError:
+        idx = 1  # medium
+    new_idx = max(0, min(2, idx + delta))
+    return _LEVEL_ORDER[new_idx]
+
+
+def _vuln_classify(v: dict) -> tuple[str, str]:
+    """Map a vuln finding to a (confidence, reason) tuple."""
+    source = (v.get("source") or "generic").lower()
+    base = _SOURCE_CONFIDENCE.get(source, "low")
+    reach = v.get("reachable", 0)
+    if reach == 1:
+        final = _adjust_level(base, +1)
+        reason = f"source={source} + reachable from entry point"
+    elif reach == -1:
+        final = _adjust_level(base, -1)
+        reason = f"source={source} but unreachable from any entry point"
+    else:
+        final = base
+        reason = f"source={source}; reachability not analyzed"
+    return final, reason
 
 # ---------------------------------------------------------------------------
 # Format auto-detection
@@ -192,6 +249,20 @@ def _vulns_to_sarif(vulns: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="vulns",
+    category="reports",
+    summary="Scan and manage vulnerability inventory",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "compliance"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("vulns")
 @click.option(
     "--import-file",
@@ -331,7 +402,29 @@ def _output_results(
     by_severity = _severity_breakdown(vulns)
     reachable_count = sum(1 for v in vulns if v.get("reachable") == 1)
 
-    if total == 0:
+    # Fix E (Pattern 2: silent fallbacks) — distinguish "scan ran and found
+    # 0 vulnerabilities" from "no scan has ever been imported / no
+    # vulnerability data exists in the DB". The previous code reported
+    # "No vulnerabilities found" in BOTH cases, which silently hid the
+    # no-scan scenario from consumers and could be read as "this codebase
+    # is safe" when in fact no scanner has touched it.
+    #
+    # Heuristic: if no records in `vulnerabilities` AND the caller did not
+    # just import a report (extra_summary["imported"] is unset), we are in
+    # the no-scan state. An import that found zero rows is still a scan.
+    just_imported = bool(extra_summary and extra_summary.get("imported") is not None)
+    state = "scanned"
+    partial_success = False
+
+    if total == 0 and not just_imported:
+        state = "no_scan"
+        partial_success = True
+        verdict = (
+            "no vulnerability scan available (vulnerabilities table is empty; "
+            "run `roam vulns --import-file <report.json>` to ingest npm-audit, "
+            "pip-audit, trivy, or osv output)"
+        )
+    elif total == 0:
         verdict = "No vulnerabilities found"
     else:
         sev_parts = []
@@ -354,15 +447,12 @@ def _output_results(
 
     # --- JSON output ---
     if json_mode:
-        summary: dict = {
-            "verdict": verdict,
-            "total": total,
-            "by_severity": by_severity,
-            "reachable_count": reachable_count,
-        }
-        if extra_summary:
-            summary.update(extra_summary)
-
+        # R22: wrap each vuln in {value, confidence, reason}. Consumers
+        # that previously read `vulnerabilities[i]["cve_id"]` must now
+        # read `vulnerabilities[i]["value"]["cve_id"]` plus
+        # `vulnerabilities[i]["confidence"]` / `vulnerabilities[i]["reason"]`.
+        # We build the raw records first (so the classifier sees source+
+        # reachable), then wrap.
         vuln_records = []
         for v in vulns:
             rec: dict = {
@@ -380,11 +470,27 @@ def _output_results(
                 rec["hop_count"] = v["hop_count"]
             vuln_records.append(rec)
 
+        vuln_triples = wrap_findings(vuln_records, classifier=_vuln_classify)
+        distribution = confidence_distribution(vuln_triples)
+        verdict_with_conf = verdict_with_high_count(verdict, distribution)
+
+        summary: dict = {
+            "verdict": verdict_with_conf,
+            "state": state,
+            "partial_success": partial_success,
+            "total": total,
+            "by_severity": by_severity,
+            "reachable_count": reachable_count,
+            "findings_confidence_distribution": distribution,
+        }
+        if extra_summary:
+            summary.update(extra_summary)
+
         envelope = json_envelope(
             "vulns",
             summary=summary,
             budget=token_budget,
-            vulnerabilities=vuln_records,
+            vulnerabilities=vuln_triples,
         )
         click.echo(to_json(envelope))
         return
@@ -426,5 +532,8 @@ def _output_results(
         if extra_summary and extra_summary.get("imported"):
             click.echo(f"  Imported {extra_summary['imported']} from {extra_summary['import_file']}")
     else:
-        click.echo("  No vulnerabilities in the database.")
+        if state == "no_scan":
+            click.echo("  No vulnerability scan has been imported yet.")
+        else:
+            click.echo("  No vulnerabilities in the database.")
         click.echo("  Import a report: roam vulns --import-file <report.json>")

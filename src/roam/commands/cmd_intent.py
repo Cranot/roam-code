@@ -9,11 +9,14 @@ import time
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.index.file_roles import DOC_EXTENSIONS as _DOC_EXTENSIONS
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
-_DOC_EXTENSIONS = {".md", ".txt", ".rst", ".adoc"}
+# _DOC_EXTENSIONS re-exported from roam.index.file_roles (W37.5 consolidation —
+# was 1 of 3 divergent local copies before consolidation).
 _SKIP_DIRS = {"node_modules", ".roam", ".git", "__pycache__", "vendor", "dist", "build"}
 _MIN_NAME_LEN = 3  # skip very short names to avoid false positives
 
@@ -106,6 +109,20 @@ def _scan_doc_for_potential_symbols(root, doc_path):
     return potential
 
 
+@roam_capability(
+    name="intent",
+    category="refactoring",
+    summary="Link documentation to code -- find what docs describe what code",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("intent")
 @click.option("--symbol", "symbol_name", default=None, help="Find docs mentioning this symbol")
 @click.option("--doc", "doc_path", default=None, help="Find code referenced by this doc")

@@ -12,6 +12,7 @@ import re
 
 import click
 
+from roam.capability import roam_capability
 from roam.cli import _COMMANDS, _ensure_plugin_commands_loaded, _short_help_via_ast
 from roam.output.formatter import json_envelope, to_json
 
@@ -47,6 +48,20 @@ def _score(query: str, name: str, help_text: str) -> int:
     return score
 
 
+@roam_capability(
+    name="help-search",
+    category="getting-started",
+    summary="Fuzzy search across every command's help text",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command(name="help-search")
 @click.argument("query", nargs=-1, required=True)
 @click.option(

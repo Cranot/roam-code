@@ -1,12 +1,66 @@
-"""Pluggable test naming convention adapters.
+"""Pluggable test naming convention adapters + canonical test-detection facade.
 
-Each adapter maps source files → expected test file paths and vice versa,
-based on language/framework conventions.
+This module is the **single source of truth** for "is this a test file" and
+"what kind of test is it" detection across roam-code. Before W6.2 there
+were two parallel implementations: this file's per-language adapters and
+``file_roles._TEST_PATTERNS`` (a flat global regex list). Consumer commands
+called whichever happened to be imported, producing inconsistent
+classifications (Pattern 4 from ``internal/dogfood/SYNTHESIS-2026-05-12.md``,
+mirror of the naming-conventions divergence Fix G addressed).
 
-Supported conventions:
+Two-layer API
+-------------
+
+* **Canonical facade** (module-level functions — **use these from CLI
+  commands and consumer code**): ``is_test_file``, ``classify_test_kind``,
+  ``source_for_test``, ``language_for_test``. These dispatch to the
+  appropriate per-language adapter based on the path's extension so the
+  same input always returns the same classification regardless of which
+  consumer asks. **This is the canonical entry point — every command
+  that classifies a test file MUST go through here.**
+
+* **Adapter layer** (one class per convention): ``PythonConvention``,
+  ``GoConvention``, ``JavaScriptConvention``, ``JavaMavenConvention``,
+  ``RubyConvention``, ``ApexConvention``, ``CSharpConvention``. Each
+  exposes ``is_test_file``, ``classify_kind``, ``source_to_test_paths``,
+  and ``test_to_source_paths``. **Do not call these directly from
+  consumer commands** — use the facade instead. The adapters are
+  implementation details that the facade dispatches to; calling them
+  directly bypasses the cross-language fallback rules and re-introduces
+  Pattern 4 (conventions detector inconsistency).
+
+  Exception: ``find_test_candidates`` / ``find_source_candidates`` /
+  ``get_conventions`` / ``get_convention_for_language`` legitimately need
+  to enumerate / pick a specific adapter (e.g. for source ↔ test path
+  mapping, which is intrinsically language-specific). Those helpers are
+  part of the public facade.
+
+Facade ↔ adapter parity guarantee (W12.x)
+-----------------------------------------
+
+For every path whose extension belongs to a registered adapter, the
+facade and that adapter return the **same** classification. The
+``test_test_detection_consolidation.py`` parity suite pins this. The
+adapter's ``classify_kind`` is treated as the canonical implementation
+for its language (e.g. Vitest's "colocated spec defaults to unit"
+convention lives on ``JavaScriptConvention`` and the facade delegates to
+it for ``.js/.ts/.jsx/.tsx/.mjs/.cjs/.mts/.cts/.vue`` paths). For
+extensions without a registered adapter (Kotlin, Scala, Elixir, Dart,
+PHP, Swift, Rust, ...), the facade applies the cross-language fallback
+rules in ``_TEST_KIND_PATH_PATTERNS`` / ``_TEST_KIND_NAME_PATTERNS``.
+
+The facade consults the adapter list in registry order and falls back to
+``DEFAULT_TEST_PATTERNS`` (a flat regex list covering ~16 conventions —
+Python, Go, JS/TS/Vitest/Vue, Java, Kotlin, C#, Ruby, PHP, Scala, Elixir,
+Dart, Apex, Rust, Swift) for "any language" callers that don't know the
+language ahead of time.
+
+Supported conventions
+---------------------
   - Python: test_*.py / *_test.py in tests/ or same directory
   - Go: *_test.go colocated with source
-  - JavaScript/TypeScript: *.test.{js,ts,jsx,tsx} / *.spec.{js,ts,jsx,tsx}
+  - JavaScript/TypeScript/Vitest: *.test.{js,ts,jsx,tsx,vue} /
+    *.spec.{js,ts,jsx,tsx,vue} (Vitest also covers Vue SFC tests)
   - Java: src/test/java mirrors src/main/java, *Test.java
   - Rust: inline #[test] mod + tests/ directory
   - Ruby: spec/*_spec.rb mirrors lib/
@@ -19,6 +73,15 @@ from __future__ import annotations
 import os
 import re
 from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Optional, Union
+
+# Test-kind labels — kept in sync with file_roles.TEST_KIND_*
+KIND_UNIT = "unit"
+KIND_INTEGRATION = "integration"
+KIND_E2E = "e2e"
+KIND_SMOKE = "smoke"
+KIND_UNKNOWN = "unknown"
 
 
 class TestConvention(ABC):
@@ -45,6 +108,45 @@ class TestConvention(ABC):
     @abstractmethod
     def is_test_file(self, path: str) -> bool:
         """Check if a path is a test file under this convention."""
+
+    # ------------------------------------------------------------------
+    # Default implementations for kind classification + reverse helper.
+    # Subclasses may override classify_kind for framework-specific logic
+    # (e.g. Vitest colocation defaults to unit).
+    # ------------------------------------------------------------------
+
+    def classify_kind(self, path: str) -> str:
+        """Classify a test file as ``unit``, ``integration``, ``e2e``, or
+        ``unknown``. Default implementation is path-pattern based.
+
+        Subclasses with framework-specific colocation conventions (e.g.
+        Vitest, which defaults colocated specs to ``unit``) should
+        override.
+        """
+        if not self.is_test_file(path):
+            return KIND_UNKNOWN
+        p = path.replace("\\", "/").lower()
+        base = os.path.basename(p)
+        # Directory-based: most specific first.
+        if re.search(r"(^|/)(e2e|end-to-end|cypress|playwright|selenium)/", p):
+            return KIND_E2E
+        if re.search(r"(^|/)(integration|integ)/", p):
+            return KIND_INTEGRATION
+        if re.search(r"(^|/)unit/", p):
+            return KIND_UNIT
+        # Name-based: .e2e. / .integration. / .unit. infixes.
+        if re.search(r"(?:^|[._-])(e2e|end[._-]to[._-]end)(?:[._-]|$)", base):
+            return KIND_E2E
+        if re.search(r"(?:^|[._-])(integration|integ)(?:[._-]|$)", base):
+            return KIND_INTEGRATION
+        if re.search(r"(?:^|[._-])unit(?:[._-]|$)", base):
+            return KIND_UNIT
+        return KIND_UNKNOWN
+
+    def source_for_test(self, test_path: str) -> Optional[str]:
+        """Return the first source-file candidate for a test, or None."""
+        cands = self.test_to_source_paths(test_path)
+        return cands[0] if cands else None
 
 
 class PythonConvention(TestConvention):
@@ -142,15 +244,71 @@ class GoConvention(TestConvention):
 
 
 class JavaScriptConvention(TestConvention):
+    """JavaScript / TypeScript / Vitest test convention.
+
+    Covers Jest, Vitest, Mocha, Cypress, and Playwright naming. Vitest
+    adds two things over the classic Jest pattern that matter here:
+
+    * ``.test.vue`` / ``.spec.vue`` for Vue SFC component tests.
+    * Colocated specs default to ``unit`` (e.g.
+      ``src/composables/useFoo.test.ts`` is a unit test even though no
+      ``unit/`` directory is in the path).
+
+    The base ``classify_kind`` only recognises ``unit/`` / ``integration/``
+    / ``e2e/`` directories; the override below treats colocated and
+    ``__tests__/`` specs as unit and detects ``tests/integration/``,
+    ``tests/e2e/``, ``playwright/``, ``cypress/``, ``tests/smoke/`` as
+    their respective kinds.
+
+    The module-level facade ``classify_test_kind`` delegates to this
+    override for every JS/TS/Vue path so consumers using either entry
+    point get the same answer (W12.x parity fix). The override therefore
+    must be a strict **superset** of the cross-language fallback —
+    every directory / name pattern recognised by the facade must also
+    be recognised here, OR the facade-delegates-to-adapter path will
+    silently downgrade a classification.
+    """
+
     @property
     def name(self):
         return "javascript"
 
     @property
     def languages(self):
-        return frozenset({"javascript", "typescript"})
+        return frozenset({"javascript", "typescript", "vue"})
 
-    _TEST_PATTERN = re.compile(r"^.*\.(test|spec)\.[jt]sx?$")
+    # File extension alternation matches: .js / .jsx / .ts / .tsx / .mjs /
+    # .cjs / .mts / .cts / .vue. Order doesn't matter inside the group.
+    _TEST_PATTERN = re.compile(
+        r"^.*\.(?:test|spec)\.(?:[jt]sx?|[mc][jt]s|vue)$"
+    )
+    _TEST_PARSE_PATTERN = re.compile(
+        r"^(.*)\.(test|spec)(\.(?:[jt]sx?|[mc][jt]s|vue))$"
+    )
+
+    # Directory hints for kind classification (Vitest-aware). Mirrors the
+    # facade's ``_TEST_KIND_PATH_PATTERNS`` so the adapter is a strict
+    # superset of the cross-language fallback for JS/TS/Vue paths — the
+    # facade can therefore delegate to this adapter without losing the
+    # ``smoke`` / ``sanity`` classification.
+    _E2E_DIR_RE = re.compile(
+        r"(^|/)(e2e|end-to-end|cypress|playwright|selenium)/", re.IGNORECASE
+    )
+    _INTEGRATION_DIR_RE = re.compile(
+        r"(^|/)(integration|integ)/", re.IGNORECASE
+    )
+    _SMOKE_DIR_RE = re.compile(
+        r"(^|/)(smoke|sanity)/", re.IGNORECASE
+    )
+    _E2E_NAME_RE = re.compile(
+        r"(?:^|[._-])(e2e|end[._-]to[._-]end)(?:[._-]|$)", re.IGNORECASE
+    )
+    _INTEGRATION_NAME_RE = re.compile(
+        r"(?:^|[._-])(integration|integ)(?:[._-]|$)", re.IGNORECASE
+    )
+    _SMOKE_NAME_RE = re.compile(
+        r"(?:^|[._-])(smoke|sanity)(?:[._-]|$)", re.IGNORECASE
+    )
 
     def source_to_test_paths(self, source_path):
         p = source_path.replace("\\", "/")
@@ -173,7 +331,7 @@ class JavaScriptConvention(TestConvention):
     def test_to_source_paths(self, test_path):
         p = test_path.replace("\\", "/")
         base = os.path.basename(p)
-        m = re.match(r"^(.*)\.(test|spec)(\.[jt]sx?)$", base)
+        m = self._TEST_PARSE_PATTERN.match(base)
         if not m:
             return []
         name, _, ext = m.groups()
@@ -189,7 +347,46 @@ class JavaScriptConvention(TestConvention):
         return candidates
 
     def is_test_file(self, path):
-        return bool(self._TEST_PATTERN.match(os.path.basename(path)))
+        return bool(self._TEST_PATTERN.match(os.path.basename(str(path))))
+
+    def classify_kind(self, path, all_files=None) -> str:  # noqa: ARG002 — accepted for facade-parity signature
+        """Vitest-aware kind classification.
+
+        Rules (most specific first):
+
+        1. ``tests/e2e/``, ``e2e/``, ``cypress/``, ``playwright/``,
+           ``selenium/`` → ``e2e``.
+        2. ``tests/integration/``, ``integration/``, ``integ/`` → ``integration``.
+        3. ``tests/smoke/``, ``smoke/``, ``sanity/`` → ``smoke``.
+        4. ``.e2e.`` infix in filename → ``e2e``.
+        5. ``.integration.`` infix in filename → ``integration``.
+        6. ``.smoke.`` / ``.sanity.`` infix in filename → ``smoke``.
+        7. Otherwise: ``unit`` (Vitest convention — colocated and
+           ``__tests__/`` specs are unit tests by default).
+
+        The ``all_files`` parameter is accepted (and ignored) so the
+        signature matches the module-level facade ``classify_test_kind``
+        — the facade can delegate to this method without an adapter shim.
+        """
+        p = str(path).replace("\\", "/")
+        if not self.is_test_file(p):
+            return KIND_UNKNOWN
+        base = os.path.basename(p)
+        if self._E2E_DIR_RE.search(p):
+            return KIND_E2E
+        if self._INTEGRATION_DIR_RE.search(p):
+            return KIND_INTEGRATION
+        if self._SMOKE_DIR_RE.search(p):
+            return KIND_SMOKE
+        if self._E2E_NAME_RE.search(base):
+            return KIND_E2E
+        if self._INTEGRATION_NAME_RE.search(base):
+            return KIND_INTEGRATION
+        if self._SMOKE_NAME_RE.search(base):
+            return KIND_SMOKE
+        # Vitest default: colocated / __tests__/ / generic tests/ dir
+        # specs are unit tests.
+        return KIND_UNIT
 
 
 class JavaMavenConvention(TestConvention):
@@ -463,6 +660,15 @@ _ALL_CONVENTIONS: list[TestConvention] = [
 ]
 
 
+# Pre-built singletons the facade uses for per-extension dispatch. Keep
+# these as module-level constants so ``classify_test_kind`` doesn't pay
+# the construction cost on every call (the facade is hot — called once
+# per indexed file by ``test-pyramid``, ``endpoints``, ``n1`` etc.).
+_JS_CONVENTION = next(
+    c for c in _ALL_CONVENTIONS if isinstance(c, JavaScriptConvention)
+)
+
+
 def get_conventions() -> list[TestConvention]:
     """Return all registered test conventions."""
     return list(_ALL_CONVENTIONS)
@@ -506,3 +712,307 @@ def find_source_candidates(test_path: str, language: str | None = None) -> list[
     for conv in _ALL_CONVENTIONS:
         candidates.extend(conv.test_to_source_paths(test_path))
     return list(dict.fromkeys(candidates))
+
+
+# ---------------------------------------------------------------------------
+# Canonical facade — "is this a test file" + kind classification
+# ---------------------------------------------------------------------------
+#
+# This is the **public API** other modules should call. It consults the
+# adapter list above (which handles per-language quirks) and falls back to
+# a flat list of regex patterns covering languages without a dedicated
+# adapter (Kotlin, Scala, Elixir, Dart, Swift, Rust, PHP, ...).
+#
+# The two parallel sources of truth (this module's adapters and
+# ``file_roles._TEST_PATTERNS``) used to disagree — W6.2 consolidates them
+# here. ``file_roles.is_test`` / ``file_roles.classify_test_kind`` now
+# delegate to the facade defined below.
+
+
+# Canonical pattern set covering all conventions roam-code recognises.
+# Matched against the **basename** of a path (case-sensitive for Java/C#
+# camelCase suffixes; lowercase for ext suffixes). Ordered most-specific
+# first so the adapter routing can short-circuit.
+DEFAULT_TEST_PATTERNS: list[re.Pattern[str]] = [
+    # Python: test_*.py, *_test.py, conftest.py
+    re.compile(r"^test_.*\.py$"),
+    re.compile(r"^.*_test\.py$"),
+    re.compile(r"^conftest\.py$"),
+    # Go: *_test.go
+    re.compile(r"^.*_test\.go$"),
+    # JavaScript / TypeScript / Vitest / Vue SFC:
+    # *.test.{js,ts,jsx,tsx,mjs,cjs,mts,cts,vue}
+    re.compile(r"^.*\.test\.(?:[jt]sx?|[mc][jt]s|vue)$"),
+    re.compile(r"^.*\.spec\.(?:[jt]sx?|[mc][jt]s|vue)$"),
+    # Java: *Test.java, *Tests.java
+    re.compile(r"^.*Tests?\.java$"),
+    # Kotlin: *Test.kt, *Tests.kt
+    re.compile(r"^.*Tests?\.kt$"),
+    # C#: *Test.cs, *Tests.cs
+    re.compile(r"^.*Tests?\.cs$"),
+    # Ruby: *_spec.rb
+    re.compile(r"^.*_spec\.rb$"),
+    # PHP: *Test.php
+    re.compile(r"^.*Test\.php$"),
+    # Scala: *Test.scala, *Spec.scala
+    re.compile(r"^.*(?:Test|Spec)\.scala$"),
+    # Elixir: *_test.exs
+    re.compile(r"^.*_test\.exs$"),
+    # Dart: *_test.dart
+    re.compile(r"^.*_test\.dart$"),
+    # Salesforce Apex: *Test.cls
+    re.compile(r"^.*Test\.cls$"),
+    # Rust: tests are usually inline, but *_test.rs files exist too
+    re.compile(r"^.*_test\.rs$"),
+    # Swift: *Tests.swift, *Test.swift
+    re.compile(r"^.*Tests?\.swift$"),
+]
+
+
+# Directory-path patterns that mark a file as a test even when its name
+# doesn't match (e.g. ``tests/helpers.py`` — not "test_*.py" but inside
+# a test directory). Mirrors the test-related entries in
+# ``file_roles._PATH_PATTERNS``.
+_TEST_DIR_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"(^|/)tests/"),
+    re.compile(r"(^|/)test/"),
+    re.compile(r"(^|/)__tests__/"),
+    re.compile(r"(^|/)spec/"),
+    re.compile(r"(^|/)testing/"),
+]
+
+
+# Kind classification (path-pattern based, used by the facade when no
+# adapter override applies).
+_TEST_KIND_PATH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # Most specific first.
+    (re.compile(r"(^|/)(e2e|end-to-end|cypress|playwright|selenium)/"), KIND_E2E),
+    (re.compile(r"(^|/)(integration|integ|int)/"), KIND_INTEGRATION),
+    (re.compile(r"(^|/)(unit)/"), KIND_UNIT),
+    (re.compile(r"(^|/)(smoke|sanity)/"), KIND_SMOKE),
+]
+_TEST_KIND_NAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?i)(^|[._-])(e2e|end[._-]to[._-]end)([._-]|$)"), KIND_E2E),
+    (re.compile(r"(?i)(^|[._-])(integration|integ)([._-]|$)"), KIND_INTEGRATION),
+    (re.compile(r"(?i)(^|[._-])(unit)([._-]|$)"), KIND_UNIT),
+    (re.compile(r"(?i)(^|[._-])(smoke|sanity)([._-]|$)"), KIND_SMOKE),
+]
+
+# File extensions whose ``.test.<ext>`` / ``.spec.<ext>`` infix is the
+# Vitest/Jest/Mocha convention. Colocated specs of these kinds default
+# to ``unit`` when no other directory hint is present.
+_VITEST_LIKE_EXTS = frozenset(
+    {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue"}
+)
+_VITEST_INFIX_RE = re.compile(r"\.(test|spec)\.")
+
+
+# Map of "extension → language label" used by ``language_for_test``.
+_EXT_TO_LANG: dict[str, str] = {
+    ".py": "python",
+    ".go": "go",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    ".vue": "vue",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".scala": "scala",
+    ".exs": "elixir",
+    ".dart": "dart",
+    ".cls": "apex",
+    ".rs": "rust",
+    ".swift": "swift",
+}
+
+
+PathLike = Union[str, "Path"]
+
+
+def _norm(path: PathLike) -> str:
+    """Normalise a Path-or-str input to a forward-slash string."""
+    return str(path).replace("\\", "/")
+
+
+def is_test_file(path: PathLike) -> bool:
+    """Return True if *path* is a test file under any supported convention.
+
+    This is the canonical detector. It checks (1) any path component
+    matching ``tests/``, ``test/``, ``__tests__/``, ``spec/``,
+    ``testing/`` and (2) basename matching any pattern in
+    ``DEFAULT_TEST_PATTERNS``. Per-language adapters in this module
+    delegate to this function for the cross-language case but may have
+    stricter checks for their own language.
+
+    >>> is_test_file("tests/test_auth.py")
+    True
+    >>> is_test_file("src/composables/useFoo.test.ts")
+    True
+    >>> is_test_file("src/components/Foo.test.vue")
+    True
+    >>> is_test_file("src/main.py")
+    False
+    >>> is_test_file("src/components/Foo.vue")
+    False
+    """
+    norm = _norm(path)
+    # Test directory anywhere in the path
+    for pattern in _TEST_DIR_PATTERNS:
+        if pattern.search(norm):
+            return True
+    # Test filename pattern on the basename
+    basename = os.path.basename(norm)
+    for pattern in DEFAULT_TEST_PATTERNS:
+        if pattern.match(basename):
+            return True
+    return False
+
+
+def classify_test_kind(
+    path: PathLike,
+    all_files: Optional[set[Path]] = None,  # noqa: ARG001 — reserved for future content checks
+) -> str:
+    """Classify a test file as ``unit | integration | e2e | smoke | unknown``.
+
+    Returns ``unknown`` for non-test files.
+
+    This is the **canonical entry point**. It dispatches to per-language
+    adapters by the path's extension so the same input always produces
+    the same classification across every consumer command. In particular:
+
+    * **JS / TS / Vue paths** (extensions ``.js`` / ``.jsx`` / ``.ts`` /
+      ``.tsx`` / ``.mjs`` / ``.cjs`` / ``.mts`` / ``.cts`` / ``.vue``)
+      delegate to :class:`JavaScriptConvention.classify_kind`, which
+      applies the Vitest-aware rules (colocated and ``__tests__/`` specs
+      default to ``unit``).
+    * **Other extensions** fall through to the cross-language fallback
+      below (path-pattern → name-pattern → Vitest-infix-defaults-to-unit).
+
+    Path patterns win over name patterns (most-specific first).
+
+    The ``all_files`` parameter is reserved for future cross-file
+    inference (e.g. "this test imports from a service so it's
+    integration") and is currently ignored. Pass-through is kept stable
+    so callers can adopt the future signature without churn.
+
+    >>> classify_test_kind("tests/e2e/login.test.ts")
+    'e2e'
+    >>> classify_test_kind("tests/integration/db.test.py")
+    'integration'
+    >>> classify_test_kind("src/composables/useFoo.test.ts")
+    'unit'
+    >>> classify_test_kind("src/components/Foo.test.vue")
+    'unit'
+    >>> classify_test_kind("tests/smoke/sanity.test.ts")
+    'smoke'
+    >>> classify_test_kind("tests/test_auth.py")
+    'unknown'
+    >>> classify_test_kind("src/main.py")
+    'unknown'
+    """
+    norm = _norm(path)
+    basename = os.path.basename(norm)
+    ext = os.path.splitext(basename)[1].lower()
+
+    # JS / TS / Vue: delegate to the Vitest-aware adapter. Its
+    # ``classify_kind`` is a strict superset of the cross-language
+    # fallback (it handles unit/integration/e2e/smoke directories +
+    # name infixes AND adds the Vitest "colocated spec defaults to
+    # unit" rule). Keeping the dispatch in one place is the W12.x
+    # parity fix — every consumer hitting this facade now sees the
+    # same classification as anyone who called the adapter directly.
+    if ext in _VITEST_LIKE_EXTS:
+        return _JS_CONVENTION.classify_kind(norm)
+
+    if not is_test_file(norm):
+        return KIND_UNKNOWN
+
+    for pattern, kind in _TEST_KIND_PATH_PATTERNS:
+        if pattern.search(norm):
+            return kind
+    for pattern, kind in _TEST_KIND_NAME_PATTERNS:
+        if pattern.search(basename):
+            return kind
+
+    # Vitest fallback for non-JS/TS extensions that nonetheless use
+    # ``.test.<ext>`` / ``.spec.<ext>``. Defensive — _VITEST_LIKE_EXTS
+    # already covers the canonical set; this branch only fires for
+    # extensions added to _VITEST_LIKE_EXTS without also getting their
+    # own adapter.
+    if ext in _VITEST_LIKE_EXTS and _VITEST_INFIX_RE.search(basename):
+        return KIND_UNIT
+    return KIND_UNKNOWN
+
+
+def language_for_test(path: PathLike) -> str:
+    """Return the language label for a test file.
+
+    Returns one of: ``python | javascript | typescript | vue | go |
+    java | kotlin | csharp | ruby | php | scala | elixir | dart | apex |
+    rust | swift | unknown``.
+
+    Non-test files still get a language label based on extension; the
+    ``unknown`` return is reserved for extensions roam-code doesn't
+    recognise.
+
+    >>> language_for_test("test_foo.py")
+    'python'
+    >>> language_for_test("Foo.test.vue")
+    'vue'
+    >>> language_for_test("Foo.test.ts")
+    'typescript'
+    """
+    norm = _norm(path)
+    ext = os.path.splitext(norm)[1].lower()
+    return _EXT_TO_LANG.get(ext, "unknown")
+
+
+def source_for_test(
+    test_path: PathLike,
+    all_files: Optional[set[Path]] = None,
+) -> Optional[Path]:
+    """Return the first source-file candidate for a test, or None.
+
+    Routes to the adapter for the test's language. If ``all_files`` is
+    provided, returns only candidates that exist in the set (a Path-set
+    of project files). Otherwise returns the first candidate the adapter
+    produces.
+
+    >>> source_for_test("tests/test_models.py") is not None
+    True
+    >>> source_for_test("src/main.py") is None
+    True
+    """
+    norm = _norm(test_path)
+    if not is_test_file(norm):
+        return None
+    lang = language_for_test(norm)
+    conv = get_convention_for_language(lang)
+    if conv is None:
+        # Try every adapter — first hit wins.
+        for c in _ALL_CONVENTIONS:
+            candidates = c.test_to_source_paths(norm)
+            if candidates:
+                if all_files is None:
+                    return Path(candidates[0])
+                for cand in candidates:
+                    if Path(cand) in all_files:
+                        return Path(cand)
+        return None
+    candidates = conv.test_to_source_paths(norm)
+    if not candidates:
+        return None
+    if all_files is None:
+        return Path(candidates[0])
+    for cand in candidates:
+        if Path(cand) in all_files:
+            return Path(cand)
+    return None

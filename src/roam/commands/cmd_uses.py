@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
 from roam.db.connection import find_project_root, open_db
+from roam.languages import JS_FAMILY_LANGUAGES
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 
 
@@ -49,6 +51,26 @@ def _test_text_consumers(conn, name: str, existing_files: set[str]) -> list[dict
     return consumers
 
 
+@roam_capability(
+    category="exploration",
+    summary="Show all consumers of a symbol: callers, importers, inheritors.",
+    inputs=["name"],
+    outputs=["consumers"],
+    examples=[
+        "roam uses handleSave",
+        "roam uses AuthService --full",
+    ],
+    tags=["exploration", "consumers"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.argument("name")
 @click.option("--full", is_flag=True, help="Show all results without truncation")
@@ -150,8 +172,7 @@ def uses(ctx, name, full):
             target_ids,
         ).fetchall()
         target_langs = {(r["language"] or "").lower() for r in target_files}
-        _JS_FAMILY = {"javascript", "typescript", "tsx", "jsx", "vue", "svelte"}
-        if target_langs & _JS_FAMILY:
+        if target_langs & set(JS_FAMILY_LANGUAGES):
             rows.extend(
                 _test_text_consumers(
                     conn,
@@ -173,6 +194,7 @@ def uses(ctx, name, full):
                                 "test_consumers": 0,
                                 "tested": False,
                                 "total_files": 0,
+                                "caller_metric_definition": "raw_edge_rows",
                             },
                             symbol=name,
                             consumers={},
@@ -247,6 +269,7 @@ def uses(ctx, name, full):
                             "test_consumers": len(test_rows),
                             "tested": bool(test_rows),
                             "total_files": len(files),
+                            "caller_metric_definition": "raw_edge_rows",
                         },
                         budget=token_budget,
                         symbol=name,

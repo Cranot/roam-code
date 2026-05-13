@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.index.git_stats import get_blame_for_file
@@ -53,6 +54,20 @@ def _ownership_for_file(project_root, file_path):
     }
 
 
+@roam_capability(
+    name="owner",
+    category="reports",
+    summary="Show code ownership: who owns a file or directory",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("path")
 @click.pass_context

@@ -11,6 +11,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import format_table, json_envelope, loc, to_json
@@ -496,6 +497,20 @@ def _group_by_directory(items):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="debt",
+    category="health",
+    summary="Hotspot-weighted technical debt prioritization",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--limit", "-n", default=20, help="Number of files to show (default 20)")
 @click.option("--by-kind", "by_kind", is_flag=True, help="Group results by parent directory")

@@ -16,9 +16,24 @@ import os
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="mcp-status",
+    category="getting-started",
+    summary="Report MCP server status: preset, tools, backpressure, cache, watcher",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command(name="mcp-status")
 @click.pass_context
 def mcp_status(ctx) -> None:

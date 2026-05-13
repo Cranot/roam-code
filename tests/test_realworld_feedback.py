@@ -74,12 +74,14 @@ def test_dead_reports_test_only_consumers_separately(project_factory, cli_runner
     result = invoke_cli(cli_runner, ["--detail", "dead"], cwd=proj, json_mode=True)
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
+    # R22 confidence triple shape — original fields nested under value
     items = data.get("high_confidence", []) + data.get("low_confidence", [])
-    target = next(item for item in items if item["name"] == "isSnakeCase")
-    assert target["tested"] is True
-    assert target["test_consumers"] >= 1
-    assert target["production_consumers"] == 0
-    assert target["action"] == "REVIEW"
+    target = next(item for item in items if item["value"]["name"] == "isSnakeCase")
+    value = target["value"]
+    assert value["tested"] is True
+    assert value["test_consumers"] >= 1
+    assert value["production_consumers"] == 0
+    assert value["action"] == "REVIEW"
 
 
 def test_uses_splits_test_consumers_from_production(project_factory, cli_runner, monkeypatch):

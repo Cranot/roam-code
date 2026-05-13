@@ -8,6 +8,7 @@ from collections import Counter
 import click
 import networkx as nx
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, file_not_found_hint
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
@@ -83,6 +84,20 @@ def _label_suffix(symbols, exclude_word):
     return top[0][0]
 
 
+@roam_capability(
+    name="split",
+    category="refactoring",
+    summary="Analyze a file's internal structure and suggest how to split it",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("path")
 @click.option("--min-group", default=2, show_default=True, help="Minimum symbols per group")

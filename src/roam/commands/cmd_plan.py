@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.cmd_affected_tests import (
     _gather_affected_tests,
     _looks_like_file,
@@ -451,6 +452,20 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="plan",
+    category="workflow",
+    summary="Generate a structured execution plan for modifying code",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("plan")
 @click.argument("target", required=False, default=None)
 @click.option(

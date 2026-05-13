@@ -10,9 +10,24 @@ from __future__ import annotations
 import click
 
 from roam.ask.recipes import RECIPES
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="recipes",
+    category="getting-started",
+    summary="List every ``roam ask`` recipe with intent + example queries",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command()
 @click.pass_context
 def recipes(ctx) -> None:

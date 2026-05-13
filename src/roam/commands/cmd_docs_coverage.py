@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.cmd_doc_staleness import _analyze_staleness
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
@@ -132,6 +133,20 @@ def _stale_docs(symbols: list[dict], threshold_days: int) -> list[dict]:
     return _analyze_staleness(by_file, find_project_root(), threshold_days)
 
 
+@roam_capability(
+    name="docs-coverage",
+    category="refactoring",
+    summary="Analyze exported-symbol doc coverage and stale docs in one report",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("docs-coverage")
 @click.option(
     "--limit",
@@ -207,8 +222,20 @@ def docs_coverage(ctx, limit, days, threshold, quality):
         gate_passed = False
 
     if json_mode:
+        # W17.2 / Pattern 3c: name the inclusion criterion so consumers
+        # know that `docs-coverage`'s "public_symbols" count is the
+        # export-marker subset (smaller than `api`'s no-underscore
+        # subset). The two counts differ for a reason — label the
+        # difference rather than hiding it.
+        from roam.quality.public_symbols import (
+            CRITERION_HAS_EXPORT_MARKER,
+            definition as _ps_def,
+        )
+
         summary_payload = {
             "public_symbols": total_public,
+            "public_symbols_inclusion_criterion": CRITERION_HAS_EXPORT_MARKER,
+            "public_symbols_definition": _ps_def(),
             "documented_symbols": documented_public,
             "coverage_pct": coverage_pct,
             "missing_docs": len(missing),

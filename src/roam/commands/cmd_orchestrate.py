@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -54,6 +55,20 @@ def _resolve_target_files(conn, file_args, staged, root):
     return sorted(set(target_files)) if target_files else []
 
 
+@roam_capability(
+    name="orchestrate",
+    category="architecture",
+    summary="Partition the codebase for parallel multi-agent work",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("orchestrate")
 @click.option(
     "--agents",

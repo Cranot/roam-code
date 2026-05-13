@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from roam import __version__
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -24,6 +25,7 @@ _ECOSYSTEM_PURL_TYPE: dict[str, str] = {
     "rust": "cargo",
     "java": "maven",
     "ruby": "gem",
+    "php": "composer",
 }
 
 
@@ -266,12 +268,16 @@ def _generate_cyclonedx(
             is_reachable = reach_info.get("reachable", False)
             entry_points = reach_info.get("entry_points", [])
             matched_syms = reach_info.get("matched_symbols", [])
+            sources = reach_info.get("sources", [])
+            confidence = reach_info.get("confidence", "indirect")
 
             component["properties"].extend(
                 [
                     {"name": "roam:reachable", "value": str(is_reachable).lower()},
                     {"name": "roam:entry_points", "value": "; ".join(entry_points[:10]) if entry_points else ""},
                     {"name": "roam:matched_symbols", "value": str(len(matched_syms))},
+                    {"name": "roam:reach_confidence", "value": confidence},
+                    {"name": "roam:reach_sources", "value": "; ".join(sources[:5]) if sources else ""},
                 ]
             )
 
@@ -320,7 +326,7 @@ def _generate_spdx(
     """
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-    doc_namespace = f"https://roam-code.dev/spdx/{project_name}/{uuid.uuid4()}"
+    doc_namespace = f"https://roam-code.com/spdx/{project_name}/{uuid.uuid4()}"
 
     packages: list[dict] = []
     relationships: list[dict] = []
@@ -406,6 +412,20 @@ def _generate_spdx(
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="sbom",
+    category="reports",
+    summary="Generate a Software Bill of Materials (SBOM) enriched with call-graph reachability",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "compliance"),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("sbom")
 @click.option(
     "--format",
@@ -478,15 +498,38 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
     deps = discover_and_parse(project_root)
 
     # Reachability analysis
+    # Graph-based check (symbol graph reachability) AND filesystem-based
+    # heuristics (CSS @import, dynamic import(), config files, package.json
+    # scripts, known TS loaders). The filesystem layer closes 5 systematic
+    # false-positive categories the graph misses.
     reachability: dict[str, dict] | None = None
     if not no_reachability and deps:
+        from roam.security.sbom_reachability import (
+            compute_filesystem_reachability,
+            merge_reachability,
+        )
+
+        dep_names = [d.name for d in deps]
+
+        # Graph-based reachability (may fail if index is unavailable)
+        graph_reach: dict[str, dict] = {}
         try:
             ensure_index()
             with open_db(readonly=True) as conn:
-                dep_names = [d.name for d in deps]
-                reachability = _compute_reachability(conn, dep_names)
+                graph_reach = _compute_reachability(conn, dep_names)
         except Exception:
-            # Gracefully degrade -- produce SBOM without reachability
+            graph_reach = {}
+
+        # Filesystem-based reachability (cheap, independent of index)
+        try:
+            fs_reach = compute_filesystem_reachability(project_root, dep_names)
+        except Exception:
+            fs_reach = {}
+
+        reachability = merge_reachability(graph_reach, fs_reach)
+        # If both layers returned empty, fall back to None so callers can
+        # tell reachability wasn't actually computed.
+        if not reachability:
             reachability = None
 
     # Generate SBOM
@@ -508,36 +551,85 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
         except Exception as exc:
             sbom_data["aibom"] = {"error": str(exc), "version": "0.1"}
 
-    # Build summary for verdict / JSON envelope
+    # Build summary for verdict / JSON envelope.
+    #
+    # W18.2 LAW 12 — confidence bucketing. The reachability dict tags every
+    # match with a 6-level confidence label (``direct`` > ``config_import`` >
+    # ``script_consumer`` > ``loader`` > ``css_import`` > ``dynamic_import``
+    # > ``indirect``). Collapse to 2 macro-buckets in the verdict so an
+    # agent can tell a graph-traced hit apart from a filesystem deduction:
+    #
+    # * ``direct`` — graph-traced reach (the symbol graph had a path)
+    # * ``heuristic`` — everything else (config / script / loader / css /
+    #   dynamic-import deductions)
+    #
+    # ``reachable_count`` / ``phantom_count`` stay so pre-W18.2 consumers
+    # keep working; the two new counts are additive.
     total_deps = len(deps)
     reachable_count = 0
     phantom_count = 0
+    reachable_direct_count = 0
+    reachable_heuristic_count = 0
     if reachability is not None:
-        reachable_count = sum(1 for v in reachability.values() if v.get("reachable"))
+        for v in reachability.values():
+            if v.get("reachable"):
+                reachable_count += 1
+                if v.get("confidence") == "direct":
+                    reachable_direct_count += 1
+                else:
+                    reachable_heuristic_count += 1
         phantom_count = total_deps - reachable_count
 
     if total_deps == 0:
         verdict = "No dependencies found -- empty SBOM generated"
     elif reachability is not None:
-        verdict = f"SBOM generated: {total_deps} dependencies, {reachable_count} reachable, {phantom_count} phantom"
+        verdict = (
+            f"{reachable_count} reachable "
+            f"({reachable_direct_count} direct, "
+            f"{reachable_heuristic_count} heuristic), "
+            f"{phantom_count} phantom"
+        )
     else:
         verdict = f"SBOM generated: {total_deps} dependencies (reachability not computed)"
 
+    # Concrete-noun facts (LAW 4): each fact names the analytical subject
+    # in the body so an agent reading only the facts list knows what the
+    # count refers to. Built only when reachability ran — when it didn't,
+    # the auto-derived facts cover the no-data branch.
+    explicit_facts: list[str] | None = None
+    if reachability is not None and total_deps > 0:
+        explicit_facts = [
+            verdict,
+            f"{reachable_direct_count} packages directly imported from source",
+            f"{reachable_heuristic_count} packages reached via heuristic "
+            f"(config files, scripts, loaders)",
+            f"{phantom_count} phantom packages "
+            f"(deps in package.json with no consumer)",
+        ]
+
     # Output
     if json_mode:
-        envelope = json_envelope(
-            "sbom",
-            summary={
+        envelope_kwargs: dict = {
+            "summary": {
                 "verdict": verdict,
                 "format": fmt.lower(),
                 "total_dependencies": total_deps,
                 "reachable_count": reachable_count if reachability else None,
                 "phantom_count": phantom_count if reachability else None,
+                "reachable_direct_count": (
+                    reachable_direct_count if reachability else None
+                ),
+                "reachable_heuristic_count": (
+                    reachable_heuristic_count if reachability else None
+                ),
                 "reachability_computed": reachability is not None,
             },
-            budget=token_budget,
-            sbom=sbom_data,
-        )
+            "budget": token_budget,
+            "sbom": sbom_data,
+        }
+        if explicit_facts is not None:
+            envelope_kwargs["agent_contract"] = {"facts": explicit_facts}
+        envelope = json_envelope("sbom", **envelope_kwargs)
         output_text = to_json(envelope)
     else:
         output_text = to_json(sbom_data)

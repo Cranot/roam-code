@@ -8,6 +8,7 @@ from collections import Counter, defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
@@ -617,6 +618,20 @@ def _to_claude_teams(manifest: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="partition",
+    category="architecture",
+    summary="Generate a multi-agent partition manifest with conflict analysis",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("partition")
 @click.option(
     "--agents",

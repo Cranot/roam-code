@@ -208,15 +208,20 @@ class TestN1JSON:
         findings = data.get("findings", [])
         if not findings:
             pytest.skip("No N+1 findings detected in fixture -- skipping field check")
-        required_keys = {
+        # R22 confidence triple shape — value carries the original
+        # finding fields; confidence/reason live at the triple level.
+        triple_keys = {"value", "confidence", "reason"}
+        value_required_keys = {
             "model_name",
             "accessor_name",
             "appended_attribute",
-            "confidence",
         }
         for finding in findings:
-            missing = required_keys - set(finding.keys())
-            assert not missing, f"Finding missing keys: {missing}"
+            assert triple_keys.issubset(set(finding.keys())), (
+                f"Triple missing keys: {triple_keys - set(finding.keys())}"
+            )
+            missing = value_required_keys - set(finding["value"].keys())
+            assert not missing, f"Value missing keys: {missing}"
 
     def test_json_command_field_is_n1(self, cli_runner, laravel_project, monkeypatch):
         monkeypatch.chdir(laravel_project)

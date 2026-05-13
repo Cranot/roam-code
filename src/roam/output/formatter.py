@@ -29,6 +29,48 @@ _NON_CACHEABLE_COMMANDS = {
 }
 _VOLATILE_COMMANDS = {"diff", "pr-risk", "pr-diff", "affected", "affected-tests", "weather"}
 
+# Commands whose envelopes should NOT be written to .roam/responses/ even when
+# ROAM_RUN_ID is set. These either log the act of logging (creating feedback
+# loops) or own the responses directory themselves (pr-bundle auto-collect
+# would double-count its own emit envelope).
+_EXCLUDED_COMMANDS_FROM_RESPONSES_WRITE = {
+    # runs telemetry — already persisted to .roam/runs/
+    "runs-start",
+    "runs-log",
+    "runs-end",
+    "runs-list",
+    "runs-show",
+    # agent memory — already persisted to .roam/memory.jsonl
+    "memory-add",
+    "memory-list",
+    "memory-relevant",
+    # constitution — wave 10.1 owns its own persistence
+    "constitution-init",
+    "constitution-check",
+    "constitution-show",
+    "constitution-apply",
+    "constitution-where",
+    # pr-bundle reads .roam/responses/; writing its own envelopes here would
+    # double-count on subsequent auto-collect runs. Covers all command_label
+    # values emitted by `_build_envelope` in cmd_pr_bundle.py — see that file
+    # if a new subcommand label appears.
+    "pr-bundle",
+    "pr-bundle-init",
+    "pr-bundle-emit",
+    "pr-bundle-validate",
+    "pr-bundle-add",
+    "pr-bundle-set",
+    "pr-bundle-set-intent",
+    "pr-bundle-add-affected",
+    "pr-bundle-add-risk",
+    "pr-bundle-add-test-required",
+    "pr-bundle-add-test-run",
+    "pr-bundle-add-non-goal",
+    "pr-bundle-add-context-cmd",
+    "pr-bundle-add-context-symbol",
+    "pr-bundle-add-context-file",
+}
+
 KIND_ABBREV = {
     "function": "fn",
     "class": "cls",
@@ -410,11 +452,235 @@ def _stringify_risk_item(item) -> str:
     if isinstance(item, str):
         return item
     if isinstance(item, dict):
-        for key in ("message", "title", "description", "verdict", "rule_id"):
+        for key in ("message", "title", "description", "verdict", "observation", "rule_id"):
             v = item.get(key)
             if isinstance(v, str) and v:
                 return v
     return str(item)
+
+
+# Keys that carry envelope state metadata, NOT user-facing analytical
+# facts. These stay in ``summary`` for full-envelope consumers but never
+# pollute the bounded ``agent_contract.facts`` list — they are abstract
+# state-machine annotations, not concrete-noun analytical claims (LAW 4).
+_AGENT_CONTRACT_FACT_SKIP_KEYS = frozenset(
+    {
+        "verdict",
+        "confidence",
+        "state",
+        "partial_success",
+        # Envelope plumbing — never analytical facts. ``schema`` /
+        # ``schema_version`` shouldn't even land in ``summary`` but the
+        # extra defense costs nothing.
+        "schema",
+        "schema_version",
+        "version",
+        "project",
+        # Progress / truncation telemetry — bookkeeping, not analytical.
+        "truncated",
+        "budget_tokens",
+        "full_output_tokens",
+        "omitted_low_importance_nodes",
+        "kept_highest_importance",
+        "detail_available",
+        # Notice slots that some commands attach to ``summary`` — these
+        # are advisory strings, not concrete facts about the analytical
+        # subject.
+        "deprecation_warning",
+        "next_commands",
+        # Hints / human-readable preamble — sit in summary for plain
+        # readers but would just leak as a verbose fact otherwise.
+        "hint",
+        "note",
+    }
+)
+
+
+def _humanize_summary_fact(key: str, value: int | float) -> str:
+    """Turn a ``(key, numeric)`` summary entry into a concrete-noun fact.
+
+    LAW 4 (CLAUDE.md): facts must anchor on concrete nouns, not abstract
+    ``key: value`` pairs. ``critical: 5`` → ``"5 critical findings"``;
+    ``health_score: 90`` → ``"health_score 90"``.
+
+    Heuristic decision tree (W17.3 refinement):
+
+    1. **Trailing ``_total`` quantifier** (``runs_total``, ``files_total``):
+       these read as "<noun> total", so we strip the suffix, count-first,
+       and append " total" — ``runs_total: 5`` → ``"5 runs total"``.
+    2. **Measurement suffix** (``score`` / ``count`` / ``size`` /
+       ``depth`` / ``ratio`` / ``rate``): the key NAMES a measurement;
+       keep ``label value`` order — ``health_score: 90`` → ``"health
+       score 90"``.
+    3. **Pre-pluralised concrete nouns** (``files`` / ``symbols`` /
+       ``edges`` / ``snapshots`` / ``hotspots`` / ``secrets`` / ...):
+       the label already reads as a noun, appending "findings" would
+       double it (``"3722 total files findings"`` reads as garbage).
+       Emit ``N <label>`` with no suffix — ``total_files: 3722`` →
+       ``"3722 total files"``.
+    4. **Otherwise** (count-noun like ``critical`` / ``warning`` /
+       ``info``): count-first + generic ``"findings"`` anchor so the
+       string reads as a sentence — ``critical: 5`` → ``"5 critical
+       findings"``.
+
+    Examples::
+
+        ("critical", 5)            -> "5 critical findings"
+        ("warning", 12)            -> "12 warning findings"
+        ("info", 3)                -> "3 info findings"
+        ("health_score", 90)       -> "health score 90"
+        ("symbol_count", 217)      -> "symbol count 217"
+        ("runs_total", 5)          -> "5 runs total"
+        ("total_files", 3722)      -> "3722 total files"
+        ("symbols_with_effects", 8459)
+                                   -> "8459 symbols with effects"
+    """
+    label = key.replace("_", " ").strip()
+    if not label:
+        return f"{value}"
+
+    last_token = label.rsplit(" ", 1)[-1].lower()
+
+    # (1) ``_total`` quantifier suffix: rewrite as count-first "<noun(s)>
+    # total". The label keeps any preceding tokens but the trailing
+    # "total" reads naturally only after the count.
+    if last_token == "total" and " " in label:
+        head = label.rsplit(" ", 1)[0]
+        return f"{value} {head} total"
+
+    # (2) Measurement-naming suffixes — key NAMES a measurement, value
+    # is its reading. Keep ``label value`` order. ``total`` is here as a
+    # standalone key (e.g. ``{"total": 7}``); the compound ``foo_total``
+    # case was already peeled above into the ``"N foo total"`` form.
+    measurement_suffixes = (
+        "score",
+        "count",
+        "total",
+        "size",
+        "depth",
+        "ratio",
+        "rate",
+        "pct",
+        "percent",
+        "percentage",
+        "ms",
+        "bytes",
+        "kb",
+        "mb",
+    )
+    if last_token in measurement_suffixes or label.endswith("_id"):
+        return f"{label} {value}"
+
+    # (3) Pre-pluralised concrete nouns — appending "findings" would
+    # double-noun the fact. The auto-derive emits a clean ``N <label>``
+    # so commands whose summary keys are already concrete plurals
+    # produce readable facts without needing per-command overrides.
+    concrete_plural_terminals = (
+        # Concrete plural nouns: appending "findings" would double-noun.
+        "files",
+        "symbols",
+        "edges",
+        "nodes",
+        "cycles",
+        "clusters",
+        "layers",
+        "smells",
+        "snapshots",
+        "hotspots",
+        "secrets",
+        "endpoints",
+        "agents",
+        "rules",
+        "commits",
+        "tests",
+        "dependencies",
+        "modules",
+        "directories",
+        "patterns",
+        "alerts",
+        "issues",
+        "findings",
+        "violations",
+        "warnings",
+        "errors",
+        "matches",
+        "effects",
+        "events",
+        "queries",
+        "shifts",
+        "moves",
+        "imports",
+        "callers",
+        "callees",
+        "branches",
+        "paths",
+        "routes",
+        "annotations",
+        "types",
+        "languages",
+        "owners",
+        "users",
+        "frameworks",
+        "vulnerabilities",
+        "challenges",
+        "keys",
+        "values",
+        "chars",
+        "characters",
+        "lines",
+        "tokens",
+        "bytes",
+        "items",
+        "entries",
+        "records",
+        "fields",
+        "options",
+        "flags",
+        "subcommands",
+        "scenarios",
+        "actions",
+        "exits",
+        "leaks",
+        "gaps",
+        "movers",
+        # Past-participle / state qualifiers used as terminal tokens
+        # (``files_passed`` / ``symbols_failed`` / ``runs_skipped``).
+        # The preceding noun is the analytical subject; appending
+        # "findings" would still read awkwardly.
+        "passed",
+        "failed",
+        "scanned",
+        "checked",
+        "owned",
+        "analysed",
+        "analyzed",
+        "removed",
+        "added",
+        "skipped",
+        "affected",
+        "available",
+        "trending",
+        "scored",
+        "confirmed",
+        "upgrades",
+        "downgrades",
+        # Time units used as terminal nouns (``window_days`` etc.).
+        "days",
+        "weeks",
+        "months",
+        "years",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+    )
+    if last_token in concrete_plural_terminals:
+        return f"{value} {label}"
+
+    # (4) Default: count-noun form. Numbers first, then label, then a
+    # generic noun anchor so the string reads as a fact rather than
+    # bare numerics.
+    return f"{value} {label} findings"
 
 
 def _derive_agent_contract(out: dict, summary: dict) -> dict:
@@ -434,14 +700,27 @@ def _derive_agent_contract(out: dict, summary: dict) -> dict:
     if isinstance(verdict, str) and verdict:
         facts.append(verdict[:_AGENT_CONTRACT_STR_TRUNCATE])
 
-    # Numeric counts / scores from summary are high-signal facts.
+    # Numeric counts / scores from summary become concrete-noun facts.
+    # LAW 4 (CLAUDE.md): humanize ``critical: 5`` → ``"5 critical
+    # findings"``. State / metadata keys (state, partial_success, etc.)
+    # stay in ``summary`` but do NOT pollute ``facts``. Dict/list values
+    # are skipped — they aren't auto-summarizable.
     for key, value in summary.items():
-        if key in ("verdict", "confidence"):
+        if key in _AGENT_CONTRACT_FACT_SKIP_KEYS:
+            continue
+        # Convention: leading-underscore keys are private metadata; never
+        # surface them as user-facing facts. Covers ``_meta``, ``_trace``,
+        # and any future internal annotation.
+        if key.startswith("_"):
             continue
         if isinstance(value, bool):
             continue
+        if key.endswith("_definition") or key.endswith("_distribution"):
+            continue
         if isinstance(value, (int, float)):
-            facts.append(f"{key}: {value}")
+            facts.append(
+                _humanize_summary_fact(key, value)[:_AGENT_CONTRACT_STR_TRUNCATE]
+            )
             if len(facts) >= _AGENT_CONTRACT_MAX_FACTS:
                 break
 
@@ -481,6 +760,104 @@ def _derive_agent_contract(out: dict, summary: dict) -> dict:
     }
 
 
+def _has_active_bundle(repo_root) -> bool:
+    """Return True iff a ``.roam/pr-bundles/*.json`` file exists.
+
+    Signal: "an agent is actively building a PR bundle in this repo."
+    Best-effort — any I/O failure (permission, missing root) returns False.
+    """
+    try:
+        from pathlib import Path as _Path
+
+        if not isinstance(repo_root, _Path):
+            return False
+        bundle_dir = repo_root / ".roam" / "pr-bundles"
+        if not bundle_dir.is_dir():
+            return False
+        # ``any(...)`` short-circuits as soon as one .json is found.
+        return any(p.suffix == ".json" and p.is_file() for p in bundle_dir.iterdir())
+    except Exception:
+        return False
+
+
+def _write_response_to_responses_dir(envelope: dict) -> None:
+    """Write *envelope* to ``.roam/responses/<sha>.json`` when an agent is active.
+
+    Closes the gap surfaced by Wave 9.1 + W14.1: ``roam pr-bundle --auto-collect``
+    walks ``.roam/responses/*.json`` but ONLY the MCP handle-off used to write
+    there. CLI invocations of ``roam --json preflight X`` produced no envelopes
+    for auto-collect to fold.
+
+    The helper fires when EITHER trigger says an agent is actively building
+    state worth folding into a PR bundle:
+
+      1. ``ROAM_RUN_ID`` env var is set (explicit signal: a run is open).
+      2. A PR bundle exists at ``.roam/pr-bundles/*.json`` (W15.2 followup:
+         the bundle's existence is itself a signal — the agent is actively
+         preparing a PR even if no run was opened, so the natural workflow
+         ``pr-bundle init → preflight → pr-bundle emit --auto-collect`` no
+         longer needs ROAM_RUN_ID threaded through it).
+
+    Either signal alone is sufficient. Both still write only once per command
+    invocation (the content-hash dedup prevents duplicates).
+
+    Best-effort: silently no-ops on any failure — never break the parent
+    command just because we couldn't write a side-car file.
+
+    Gates (all of these must pass before either trigger can fire):
+      - envelope must carry the canonical ``schema`` marker
+      - envelope's command must NOT be in the exclusion list (avoids feedback
+        loops with runs/memory/constitution/pr-bundle commands)
+      - current working dir must be inside a roam project
+    """
+    if not isinstance(envelope, dict):
+        return
+    if envelope.get("schema") != ENVELOPE_SCHEMA_NAME:
+        return
+    command = envelope.get("command", "")
+    if not isinstance(command, str) or not command:
+        return
+    if command in _EXCLUDED_COMMANDS_FROM_RESPONSES_WRITE:
+        return
+    try:
+        import hashlib
+        from pathlib import Path
+
+        from roam.db.connection import find_project_root
+
+        repo_root = find_project_root()
+        # Refuse to write outside a roam project root.
+        if not isinstance(repo_root, Path) or not repo_root.exists():
+            return
+        # Either trigger fires. Check env first (cheap) then disk (cheap-ish).
+        env_signal = bool(os.environ.get("ROAM_RUN_ID"))
+        bundle_signal = False
+        if not env_signal:
+            # Only probe the filesystem when the env didn't already authorise
+            # the write. Keeps the no-active-state path zero-overhead.
+            bundle_signal = _has_active_bundle(repo_root)
+        if not (env_signal or bundle_signal):
+            return
+        responses_dir = repo_root / ".roam" / "responses"
+        responses_dir.mkdir(parents=True, exist_ok=True)
+        # Content-hash the envelope so re-running the same command with the
+        # same inputs dedupes naturally (the bundle's auto-collect should not
+        # see N copies of the same `roam health` run).
+        h = hashlib.sha256(
+            _json.dumps(envelope, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:12]
+        # Sanitise command for filename use (slashes / spaces would be odd
+        # but we have e.g. "pr-bundle-emit" already — slugify defensively).
+        safe_cmd = "".join(c if (c.isalnum() or c in "-_") else "_" for c in command)
+        out_path = responses_dir / f"{safe_cmd}_{h}.json"
+        out_path.write_text(
+            _json.dumps(envelope, indent=2, default=str), encoding="utf-8"
+        )
+    except Exception:
+        # Best-effort. Never break the parent command.
+        return
+
+
 def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **payload) -> dict:
     """Wrap command output in a self-describing envelope.
 
@@ -511,8 +888,23 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
             ...payload
         }
     """
+    # If a deprecated alias was used to invoke roam, surface the notice in
+    # `summary.deprecation_warning` so JSON consumers (who never see stderr)
+    # can detect it. The slot is set by `roam.cli.resolve_command` and
+    # cleared at the start of each new invocation. Defensive try/except: this
+    # injection must never break envelope generation for non-CLI callers.
+    summary = dict(summary) if summary else {}
+    try:
+        from roam.cli import _get_active_deprecation_notice
+
+        _depr_notice = _get_active_deprecation_notice()
+        if _depr_notice and "deprecation_warning" not in summary:
+            summary["deprecation_warning"] = _depr_notice
+    except Exception:
+        pass
+
     if _compact_mode_enabled():
-        compact = compact_json_envelope(command, summary=summary or {}, **payload)
+        compact = compact_json_envelope(command, summary=summary, **payload)
         if budget > 0:
             compact = budget_truncate_json(compact, budget)
         return compact
@@ -522,13 +914,17 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
 
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
+    # Pull explicit agent_contract kwarg BEFORE updating payload, so the
+    # auto-derive block can merge it instead of clobbering it.
+    explicit_contract = payload.pop("agent_contract", None)
+
     out: dict = {
         "schema": ENVELOPE_SCHEMA_NAME,
         "schema_version": ENVELOPE_SCHEMA_VERSION,
         "command": command,
         "version": version,
         "project": _project_name(),
-        "summary": summary or {},
+        "summary": summary,
     }
     out.update(payload)
 
@@ -537,7 +933,24 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
     # full-payload consumers ignore it. Opt-out via env
     # ``ROAM_AGENT_CONTRACT_BLOCK=0``.
     if os.environ.get("ROAM_AGENT_CONTRACT_BLOCK", "1").lower() not in ("0", "false", "no"):
-        out["agent_contract"] = _derive_agent_contract(out, summary or {})
+        auto_contract = _derive_agent_contract(out, summary or {})
+        if isinstance(explicit_contract, dict) and explicit_contract:
+            # Merge: explicit fields win, auto-derived fills gaps. Always
+            # keep auto-derived ``next_commands`` when caller did not
+            # supply its own — agents rely on the auto-derived list when
+            # ``summary.next_commands`` is set.
+            merged = dict(auto_contract)
+            for k, v in explicit_contract.items():
+                if v is not None:
+                    merged[k] = v
+            if (
+                "next_commands" not in explicit_contract
+                and auto_contract.get("next_commands")
+            ):
+                merged["next_commands"] = auto_contract["next_commands"]
+            out["agent_contract"] = merged
+        else:
+            out["agent_contract"] = auto_contract
 
     # Non-deterministic metadata in _meta — kept separate so content
     # keys produce identical JSON across invocations (LLM cache-friendly).
@@ -559,6 +972,17 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
     else:
         out["_meta"]["cacheable"] = True
         out["_meta"]["cache_ttl_s"] = 300
+
+    # Best-effort side-car write to `.roam/responses/` so `pr-bundle
+    # --auto-collect` can fold this envelope into the bundle later. Fires
+    # when EITHER ROAM_RUN_ID is set OR a `.roam/pr-bundles/*.json` exists
+    # (W15.2 followup: bundle existence is now a sufficient trigger so the
+    # natural ``pr-bundle init → preflight → pr-bundle emit --auto-collect``
+    # workflow no longer requires threading ROAM_RUN_ID through). Silent no-op
+    # otherwise. Writes the full untruncated envelope so downstream auto-collect
+    # sees complete fields. Wrapped in try/except inside the helper — must
+    # NEVER break envelope generation.
+    _write_response_to_responses_dir(out)
 
     if budget > 0:
         out = budget_truncate_json(out, budget)
@@ -632,14 +1056,19 @@ def ws_json_envelope(command: str, workspace: str, summary: dict | None = None, 
     return out
 
 
-def summary_envelope(data: dict, keep_summary: bool = True) -> dict:
-    """Strip list payloads from a JSON envelope, keeping only summary data.
+def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
+    """Strip list-valued payload fields from a JSON envelope in default mode.
 
-    Used by ``--detail``-aware commands to produce compact JSON output when
-    ``--detail`` is not passed.  Always drops all list-valued payload fields
-    to save tokens.  Adds ``detail_available: true`` to the summary dict so
-    callers know full data is available via ``--detail``.  When non-empty
-    lists were stripped, also sets ``truncated: true`` in the summary.
+    Used by ``--detail``-aware commands whose headline output is NOT itself a
+    list.  Full payloads return when ``--detail`` is set; in default mode the
+    dropped fields are summarized via the ``detail_available`` flag on the
+    summary dict.  When non-empty lists were stripped, also sets
+    ``truncated: true`` in the summary.
+
+    NOTE: this helper is only appropriate for commands whose primary signal is
+    in scalar/dict summary fields.  Commands whose headline payload IS a list
+    (e.g. ``guard``, ``plan-refactor``, ``suggest-refactoring``) must use
+    custom caps instead -- stripping their lists would erase the headline.
 
     Parameters
     ----------

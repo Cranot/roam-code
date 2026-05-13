@@ -7,6 +7,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -168,6 +169,20 @@ def _compute_congestion(
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="congestion",
+    category="reports",
+    summary="Detect developer congestion: files with too many concurrent authors",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("congestion")
 @click.option(
     "--window",

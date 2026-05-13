@@ -110,3 +110,8 @@ dev/test-rules*.yml
 
 # Recheck-agent scratch dirs
 .audit-tmp/
+
+# Scratch / temporary — surface inventory dumps + ad-hoc memcheck output
+.surface.json
+tmp_surface.json
+.tmp-memcheck/

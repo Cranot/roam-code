@@ -216,13 +216,20 @@ class TestBusFactorJSON:
         assert isinstance(summary["verdict"], str)
 
     def test_json_summary_has_directory_count(self, cli_runner, bus_project, monkeypatch):
-        """JSON summary contains a directory_count field."""
+        """JSON summary contains the directories-analyzed count field.
+
+        W21.7 field rename: ``directory_count`` → ``directories_analyzed`` so
+        the LAW 4 humanizer produces ``"N directories analyzed"`` instead of
+        the awkward ``"directory count N"``.
+        """
         monkeypatch.chdir(bus_project)
         result = invoke_cli(cli_runner, ["bus-factor"], cwd=bus_project, json_mode=True)
         data = parse_json_output(result, "bus-factor")
         summary = data.get("summary", {})
-        assert "directory_count" in summary, f"Missing 'directory_count': {list(summary.keys())}"
-        assert isinstance(summary["directory_count"], int)
+        assert "directories_analyzed" in summary, (
+            f"Missing 'directories_analyzed': {list(summary.keys())}"
+        )
+        assert isinstance(summary["directories_analyzed"], int)
 
     def test_json_summary_has_high_risk(self, cli_runner, bus_project, monkeypatch):
         """JSON summary contains a high_risk count."""

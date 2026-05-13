@@ -11,10 +11,25 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.capability import REGISTRY, emit_yaml
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="capabilities",
+    category="workflow",
+    summary="Emit the capability registry — every command's machine-readable shape",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command()
 @click.option(
     "--emit",
@@ -71,13 +86,34 @@ def capabilities_cmd(ctx, emit: str, category: str | None, ai_safe_only: bool) -
         click.echo(emit_yaml())
         return
     if emit == "json" or json_mode:
+        # LAW 4 (W17.3): give the bare "count" verdict a concrete-noun
+        # anchor and add an actionable next step. Without this the
+        # auto-derived facts read as just ``["count 10"]``.
+        ai_safe_count = sum(1 for c in items if c.ai_safe)
+        verdict = (
+            f"{len(items)} registered capabilities"
+            + (f" in category '{category}'" if category else "")
+            + (f" ({ai_safe_count} AI-safe)" if not ai_safe_only else "")
+        )
+        # W21.7 LAW 4: the verdict already names both counts. Pin explicit
+        # facts so the auto-derive doesn't bolt on a redundant
+        # ``"count 10"`` fact alongside the concrete verdict. The
+        # AI-safe-share fact terminates on the ``capabilities`` anchor
+        # (in the LAW 4 noun set) so the runtime lint accepts it.
+        explicit_facts = [verdict]
+        if not ai_safe_only and len(items) > 0:
+            explicit_facts.append(
+                f"{ai_safe_count} of {len(items)} AI-safe capabilities"
+            )
         envelope = json_envelope(
             "capabilities",
             summary={
+                "verdict": verdict,
                 "count": len(items),
                 "category_filter": category,
                 "ai_safe_only": ai_safe_only,
             },
+            agent_contract={"facts": explicit_facts},
             capabilities=[
                 {
                     "name": c.name,

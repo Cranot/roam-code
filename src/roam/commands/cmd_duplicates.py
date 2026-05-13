@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
@@ -255,6 +256,20 @@ def _suggest_refactor(names: list[str], pattern: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="duplicates",
+    category="refactoring",
+    summary="Detect semantically duplicate functions via structural similarity",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option(
     "--threshold",
@@ -265,8 +280,22 @@ def _suggest_refactor(names: list[str], pattern: str) -> str:
 )
 @click.option("--min-lines", default=5, show_default=True, type=int, help="Minimum function size to consider")
 @click.option("--scope", default=None, type=str, help="Limit analysis to files under this path")
+@click.option(
+    "--sample",
+    default=0,
+    show_default=True,
+    type=int,
+    help="Deterministically sample at most N candidates (0=disabled, use all)",
+)
+@click.option(
+    "--max-pairs",
+    default=1000,
+    show_default=True,
+    type=int,
+    help="Cap on number of duplicate-pair clusters reported (0=unlimited)",
+)
 @click.pass_context
-def duplicates(ctx, threshold, min_lines, scope):
+def duplicates(ctx, threshold, min_lines, scope, sample, max_pairs):
     """Detect semantically duplicate functions via structural similarity.
 
     Unlike ``smells`` (which detects structural anti-patterns like god classes),
@@ -334,31 +363,37 @@ def duplicates(ctx, threshold, min_lines, scope):
                 click.echo(f"VERDICT: {verdict}")
             return
 
-        # ── Performance guard: cap candidates to avoid O(n^2) blowup ──
-        _MAX_CANDIDATES = 2000
-        if len(candidates) > _MAX_CANDIDATES and not scope:
-            warning = (
-                f"Too many candidates ({len(candidates)} functions) for duplicate detection. "
-                "Use --scope to limit scope."
-            )
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "duplicates",
-                            summary={
-                                "verdict": warning,
-                                "total_clusters": 0,
-                                "total_functions": 0,
-                                "estimated_reducible_lines": 0,
-                            },
-                            clusters=[],
-                        )
-                    )
-                )
-            else:
-                click.echo(f"VERDICT: {warning}")
-            return
+        # ── Performance guard: bucket-based pair generation already prunes
+        # the candidate space heavily (param_count, line_count bands).  At
+        # 50K candidates the bucketed pair scan stays well under the
+        # O(n^2) worst case in practice; beyond that the algorithm needs
+        # explicit sampling to keep the work bounded.
+        _MAX_CANDIDATES = 50000
+        _HARD_LIMIT = _MAX_CANDIDATES
+        original_candidate_count = len(candidates)
+        partial_success = False
+        sampled = False
+        sample_size = 0
+
+        if sample and sample > 0 and len(candidates) > sample:
+            # Deterministic sample: sort by id then take every k-th row.
+            ordered = sorted(candidates, key=lambda r: r["id"])
+            step = max(1, len(ordered) // sample)
+            candidates = ordered[::step][:sample]
+            sampled = True
+            sample_size = len(candidates)
+            partial_success = True
+        elif len(candidates) > _HARD_LIMIT and not scope:
+            # Hard cap: deterministic stride sample down to _HARD_LIMIT so
+            # the command produces useful signal instead of bailing out
+            # entirely.  Caller can re-run with --scope or --sample to
+            # control the trade-off explicitly.
+            ordered = sorted(candidates, key=lambda r: r["id"])
+            step = max(1, len(ordered) // _HARD_LIMIT)
+            candidates = ordered[::step][:_HARD_LIMIT]
+            sampled = True
+            sample_size = len(candidates)
+            partial_success = True
 
         # Build lookup
         by_id = {r["id"]: r for r in candidates}
@@ -472,10 +507,9 @@ def duplicates(ctx, threshold, min_lines, scope):
                     )
                     if pk in pair_scores:
                         sims.append(pair_scores[pk])
-                    else:
-                        # Compute on the fly for transitive members
-                        s = _compute_similarity(member_rows[i], member_rows[j])
-                        sims.append(s)
+                    # W20.1 fix: skip transitive (non-scored) pairs to avoid
+                    # O(n^2) blow-up on large clusters; the cluster is already
+                    # union-find-connected via above-threshold edges.
             avg_sim = sum(sims) / len(sims) if sims else 0.0
 
             # Combined PageRank
@@ -503,6 +537,14 @@ def duplicates(ctx, threshold, min_lines, scope):
         # Sort by: size desc, similarity desc, pagerank desc
         cluster_list.sort(key=lambda c: (-c["size"], -c["similarity"], -c["total_pagerank"]))
 
+        # ── 5b. Apply --max-pairs truncation ─────────────────────────
+        total_clusters_found = len(cluster_list)
+        truncated = False
+        if max_pairs and max_pairs > 0 and len(cluster_list) > max_pairs:
+            cluster_list = cluster_list[:max_pairs]
+            truncated = True
+            partial_success = True
+
         # ── 6. Compute summary stats ────────────────────────────────
         total_functions = sum(c["size"] for c in cluster_list)
         estimated_lines = 0
@@ -512,12 +554,23 @@ def duplicates(ctx, threshold, min_lines, scope):
             if len(lines) > 1:
                 estimated_lines += sum(lines[:-1])  # keep the longest
 
-        verdict = (
-            f"{len(cluster_list)} duplicate cluster{'s' if len(cluster_list) != 1 else ''} "
-            f"found ({total_functions} functions)"
-            if cluster_list
-            else "No semantic duplicates detected"
-        )
+        verdict_parts: list[str] = []
+        if cluster_list:
+            verdict_parts.append(
+                f"{len(cluster_list)} duplicate cluster"
+                f"{'s' if len(cluster_list) != 1 else ''} found ({total_functions} functions)"
+            )
+        else:
+            verdict_parts.append("No semantic duplicates detected")
+        if sampled:
+            verdict_parts.append(
+                f"sampled {sample_size}/{original_candidate_count} candidates"
+            )
+        if truncated:
+            verdict_parts.append(
+                f"truncated to top {len(cluster_list)}/{total_clusters_found} clusters"
+            )
+        verdict = "; ".join(verdict_parts)
 
         # ── 7. Output ───────────────────────────────────────────────
         if json_mode:
@@ -545,16 +598,28 @@ def duplicates(ctx, threshold, min_lines, scope):
                     }
                 )
 
+            summary_payload = {
+                "verdict": verdict,
+                "total_clusters": len(cluster_list),
+                "total_functions": total_functions,
+                "estimated_reducible_lines": estimated_lines,
+                "candidate_count": original_candidate_count,
+            }
+            if partial_success:
+                summary_payload["partial_success"] = True
+            if sampled:
+                summary_payload["sampled"] = True
+                summary_payload["sample_size"] = sample_size
+                summary_payload["candidates_total"] = original_candidate_count
+            if truncated:
+                summary_payload["truncated"] = True
+                summary_payload["clusters_total"] = total_clusters_found
+                summary_payload["max_pairs"] = max_pairs
             click.echo(
                 to_json(
                     json_envelope(
                         "duplicates",
-                        summary={
-                            "verdict": verdict,
-                            "total_clusters": len(cluster_list),
-                            "total_functions": total_functions,
-                            "estimated_reducible_lines": estimated_lines,
-                        },
+                        summary=summary_payload,
                         budget=token_budget,
                         clusters=clusters_json,
                     )

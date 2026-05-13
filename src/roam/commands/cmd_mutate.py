@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -51,6 +52,20 @@ def _truncate(text: str, max_len: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="mutate",
+    category="refactoring",
+    summary="Syntax-less agentic editing",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.group("mutate")
 @click.pass_context
 def mutate(ctx):

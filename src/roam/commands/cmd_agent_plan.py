@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.cmd_partition import compute_partition_manifest
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
@@ -225,6 +226,20 @@ def build_agent_plan(
     }
 
 
+@roam_capability(
+    name="agent-plan",
+    category="workflow",
+    summary="Decompose partitions into dependency-ordered multi-agent tasks",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("agent-plan")
 @click.option(
     "--agents",

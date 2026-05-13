@@ -10,6 +10,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import (
     get_changed_files,
     is_test_file,
@@ -18,6 +19,7 @@ from roam.commands.changed_files import (
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
+from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
 # Evidence collectors
@@ -609,6 +611,20 @@ def _format_markdown(attestation, evidence, verdict):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="attest",
+    category="workflow",
+    summary="Generate a proof-carrying PR attestation",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core", "compliance"),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=False,
+    requires_index=True,
+)
 @click.command("attest")
 @click.argument("commit_range", required=False, default=None)
 @click.option("--staged", is_flag=True, help="Attest staged changes only.")
@@ -659,15 +675,13 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
     changed = get_changed_files(root, staged=staged, commit_range=commit_range)
     if not changed:
         label = commit_range or ("staged" if staged else "uncommitted")
+        _attest_empty_envelope = json_envelope(
+            "attest",
+            summary={"verdict": f"no changes found for {label}", "safe_to_merge": True},
+        )
+        auto_log(_attest_empty_envelope, action="attest", target=label, repo_root=root)
         if json_mode or output_format == "json":
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "attest",
-                        summary={"verdict": f"no changes found for {label}", "safe_to_merge": True},
-                    )
-                )
-            )
+            click.echo(to_json(_attest_empty_envelope))
         else:
             click.echo(f"No changes found for {label}.")
         return
@@ -739,6 +753,30 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
 
         verdict = _compute_verdict(risk, breaking, fitness, budget)
 
+        # ── Envelope (built unconditionally so we can auto-log it) ───
+        attest_envelope = json_envelope(
+            "attest",
+            summary={
+                "verdict": _make_verdict_str(verdict, risk),
+                "safe_to_merge": verdict["safe_to_merge"],
+                "risk_score": risk["score"] if risk else None,
+                "risk_level": risk["level"] if risk else None,
+                "breaking_changes": (
+                    len(breaking.get("removed", []))
+                    + len(breaking.get("signature_changed", []))
+                    + len(breaking.get("renamed", []))
+                ),
+                "budget_failed": budget.get("failed", 0),
+                "affected_tests": tests.get("selected", 0),
+                "effects_count": len(effects),
+            },
+            attestation=attestation,
+            evidence=evidence,
+            verdict=verdict,
+        )
+        _attest_target = commit_range or ("staged" if staged else "uncommitted")
+        auto_log(attest_envelope, action="attest", target=_attest_target, repo_root=root)
+
         # ── Output ────────────────────────────────────────────────────
 
         if output_format == "markdown":
@@ -751,27 +789,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
             return
 
         if json_mode or output_format == "json":
-            envelope = json_envelope(
-                "attest",
-                summary={
-                    "verdict": _make_verdict_str(verdict, risk),
-                    "safe_to_merge": verdict["safe_to_merge"],
-                    "risk_score": risk["score"] if risk else None,
-                    "risk_level": risk["level"] if risk else None,
-                    "breaking_changes": (
-                        len(breaking.get("removed", []))
-                        + len(breaking.get("signature_changed", []))
-                        + len(breaking.get("renamed", []))
-                    ),
-                    "budget_failed": budget.get("failed", 0),
-                    "affected_tests": tests.get("selected", 0),
-                    "effects_count": len(effects),
-                },
-                attestation=attestation,
-                evidence=evidence,
-                verdict=verdict,
-            )
-            output = to_json(envelope)
+            output = to_json(attest_envelope)
             if output_file:
                 Path(output_file).write_text(output, encoding="utf-8")
                 click.echo(f"Attestation written to {output_file}")

@@ -13,6 +13,7 @@ import os
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import get_db_path, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -28,6 +29,20 @@ def _humanize(bytes_: int) -> str:
     return f"{f:.1f} {units[-1]}"
 
 
+@roam_capability(
+    name="index-stats",
+    category="getting-started",
+    summary="Report .roam index size, row counts, and fragmentation",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command(name="index-stats")
 @click.pass_context
 def index_stats(ctx) -> None:

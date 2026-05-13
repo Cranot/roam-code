@@ -16,6 +16,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.output.formatter import json_envelope, to_json
 
@@ -74,6 +75,20 @@ def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
     return records, issues
 
 
+@roam_capability(
+    name="audit-trail-verify",
+    category="workflow",
+    summary="Verify SHA-256 chain integrity of a roam audit trail",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "compliance"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=False,
+    requires_index=True,
+)
 @click.command(name="audit-trail-verify")
 @click.option(
     "--input",
@@ -105,16 +120,41 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool) -> None:
     path = Path(input_path) if input_path else DEFAULT_AUDIT_TRAIL_PATH
     records, issues = _verify_chain(path)
 
-    chain_valid = len(issues) == 0 and bool(records)
-    if not records and not issues:
-        verdict = f"audit trail empty or missing: {path}"
+    # Fix E (Pattern 2: silent fallbacks) — distinguish "trail does not exist
+    # yet" (state=uninitialized) from "trail exists but is corrupted"
+    # (state=broken). The previous code reported "chain BROKEN (1 issue
+    # across 0 records)" for an absent trail, which misled consumers into
+    # thinking a real tamper had been detected. Match the article-12-check
+    # two-state pattern: directory/file exists vs file populated.
+    trail_missing = not path.exists()
+    has_records = bool(records)
+    has_real_issues = any("not found" not in i.get("issue", "") for i in issues)
+
+    chain_valid = len(issues) == 0 and has_records
+    partial_success = False
+    state = "valid"
+
+    if trail_missing:
+        state = "uninitialized"
+        partial_success = True
+        verdict = f"chain not initialized (no audit trail at {path})"
+    elif not has_records and not has_real_issues:
+        # File exists but is empty (zero records, no parse errors)
+        state = "uninitialized"
+        partial_success = True
+        verdict = f"chain not initialized (audit trail at {path} is empty)"
     elif chain_valid:
+        state = "valid"
         verdict = f"chain valid ({len(records)} records)"
     else:
+        state = "broken"
+        partial_success = True
         verdict = f"chain BROKEN ({len(issues)} issue(s) across {len(records)} record(s))"
 
     summary = {
         "verdict": verdict,
+        "state": state,
+        "partial_success": partial_success,
         "chain_valid": chain_valid,
         "total_records": len(records),
         "issues_count": len(issues),

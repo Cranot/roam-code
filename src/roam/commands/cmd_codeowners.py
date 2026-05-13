@@ -13,6 +13,7 @@ from roam.commands.codeowners_helpers import (  # noqa: F401 — re-exported for
     parse_codeowners,
     resolve_owners,
 )
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -67,6 +68,20 @@ def _get_blame_top_contributor(conn, file_id: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="codeowners",
+    category="reports",
+    summary="Analyze CODEOWNERS coverage and ownership distribution",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("codeowners")
 @click.option("--unowned", is_flag=True, help="Show only unowned files")
 @click.option("--owner", default="", help="Filter by specific owner")

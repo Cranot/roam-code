@@ -599,6 +599,68 @@ class TestDetectors:
             # matrix_multiply should be suppressed due to "matrix" in name
             assert len(hits) == 0
 
+    def test_nested_lookup_suppresses_format_table(self, project_factory, monkeypatch):
+        """Cell-formatting loops over a 2D structure are intrinsically
+        O(rows*cols); a hash-map join cannot apply to layout work.
+        format_table / render_grid / similar names should be suppressed.
+        """
+        proj = project_factory(
+            {
+                "render.py": (
+                    "def format_table(headers, rows):\n"
+                    "    widths = [len(h) for h in headers]\n"
+                    "    for row in rows:\n"
+                    "        for i in range(len(headers)):\n"
+                    "            if row[i] is not None:\n"
+                    "                cell = str(row[i])\n"
+                    "                if len(cell) > widths[i]:\n"
+                    "                    widths[i] = len(cell)\n"
+                    "    return widths\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_nested_lookup
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_nested_lookup(conn)
+            assert len(hits) == 0, (
+                f"format_table is a rendering loop, should not flag nested-lookup: {hits}"
+            )
+
+    def test_nested_loop_with_real_inefficiency_still_flagged(self, project_factory, monkeypatch):
+        """Skip-list must not suppress genuine n*m cross-product bugs.
+        A user-lookup function with nested loops over two unrelated lists
+        is the canonical case for a hash-map join.
+        """
+        proj = project_factory(
+            {
+                "lookup.py": (
+                    "def find_matching_users(users, orders):\n"
+                    "    matches = []\n"
+                    "    for user in users:\n"
+                    "        for order in orders:\n"
+                    "            if user['id'] == order['user_id']:\n"
+                    "                if user['active']:\n"
+                    "                    matches.append((user, order))\n"
+                    "                else:\n"
+                    "                    continue\n"
+                    "    return matches\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_nested_lookup
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_nested_lookup(conn)
+            assert len(hits) >= 1, (
+                "Genuine O(n*m) cross-product join must still be flagged"
+            )
+            assert hits[0]["task_id"] == "nested-lookup"
+
     def test_skips_test_files(self, project_factory, monkeypatch):
         """Detectors should skip test files."""
         proj = project_factory(

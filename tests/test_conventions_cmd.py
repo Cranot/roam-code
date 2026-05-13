@@ -408,11 +408,13 @@ class TestConventionsNaming:
         violations = data.get("violations", [])
         if not violations:
             pytest.skip("No violations detected")
+        # R22 confidence triple shape — original fields nested under value
         for v in violations:
-            assert "name" in v, f"Missing 'name' in violation: {v}"
-            assert "actual_style" in v, f"Missing 'actual_style' in violation: {v}"
-            assert "expected_style" in v, f"Missing 'expected_style' in violation: {v}"
-            assert "file" in v, f"Missing 'file' in violation: {v}"
+            assert "value" in v and "confidence" in v and "reason" in v
+            assert "name" in v["value"], f"Missing 'name' in violation value: {v}"
+            assert "actual_style" in v["value"], f"Missing 'actual_style' in violation value: {v}"
+            assert "expected_style" in v["value"], f"Missing 'expected_style' in violation value: {v}"
+            assert "file" in v["value"], f"Missing 'file' in violation value: {v}"
 
 
 # ---------------------------------------------------------------------------

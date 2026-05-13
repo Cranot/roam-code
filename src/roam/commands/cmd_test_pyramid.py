@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.index.file_roles import ROLE_TEST, classify_test_kind
+from roam.index.file_roles import ROLE_TEST
+from roam.index.test_conventions import classify_test_kind
 from roam.output.formatter import json_envelope, to_json
 
 
@@ -36,6 +38,20 @@ def _verdict(counts: dict) -> str:
     return f"OK — {unit} unit / {integ} integration / {e2e} e2e / {smoke} smoke"
 
 
+@roam_capability(
+    name="test-pyramid",
+    category="refactoring",
+    summary="Count tests by kind (unit/integration/e2e/smoke), flag inverted pyramids",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.pass_context
 def test_pyramid(ctx) -> None:

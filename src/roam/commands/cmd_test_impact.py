@@ -13,6 +13,7 @@ import subprocess
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.index.file_roles import is_test
@@ -40,6 +41,20 @@ def _changed_files(commit_range: str | None) -> list[str]:
     return [ln.strip().replace("\\", "/") for ln in proc.stdout.splitlines() if ln.strip()]
 
 
+@roam_capability(
+    name="test-impact",
+    category="workflow",
+    summary="List tests transitively reachable from symbols changed in <range>",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command(name="test-impact")
 @click.argument("commit_range", required=False, default=None)
 @click.option("--max-hops", type=int, default=5, show_default=True, help="BFS depth from each changed symbol.")

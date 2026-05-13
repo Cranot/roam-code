@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.metrics_history import append_snapshot, collect_metrics, get_snapshots
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
@@ -816,9 +817,13 @@ def _render_timeline_json(
     fail_on_anomaly,
 ):
     """Render JSON output for the timeline mode."""
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     summary = {
         "snapshots": len(snap_dicts),
-        "latest_health": snap_dicts[0]["health_score"] if snap_dicts else None,
+        # LAW 4 (W17.3): renamed from ``latest_health`` so the
+        # humanizer renders "latest health score 75" not "75 latest
+        # health findings".
+        "latest_health_score": snap_dicts[0]["health_score"] if snap_dicts else None,
     }
     if analysis:
         verdict = _trend_verdict(analysis)
@@ -829,6 +834,7 @@ def _render_timeline_json(
     envelope = json_envelope(
         cmd_name,
         summary=summary,
+        budget=token_budget,
         snapshots=snap_dicts,
     )
     if assertions:
@@ -952,6 +958,20 @@ def _render_timeline_text(snap_dicts, chrono, assertions, assertion_results, ana
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="trends",
+    category="health",
+    summary="Health trend timeline, anomaly detection, per-metric tracking, and CI gates",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 # Timeline / snapshot options
 @click.option("--range", "count", default=10, help="Number of snapshots for timeline view")
@@ -1196,6 +1216,7 @@ def _build_compare_recommendations(deltas):
 
 def _handle_record(ctx, cmd_name, json_mode):
     """Record mode: store a metric snapshot."""
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     with open_db() as conn:
         recorded = _record_snapshot(conn)
 
@@ -1208,6 +1229,7 @@ def _handle_record(ctx, cmd_name, json_mode):
                         "verdict": "Snapshot recorded",
                         "metrics_recorded": len(recorded),
                     },
+                    budget=token_budget,
                     action="record",
                     metrics=recorded,
                 )
@@ -1222,6 +1244,7 @@ def _handle_record(ctx, cmd_name, json_mode):
 
 def _handle_cohort(ctx, cmd_name, json_mode, days):
     """Cohort analysis mode: AI vs human degradation trajectories."""
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     with open_db(readonly=True) as conn:
         cohort = _build_cohort_analysis(conn, days=max(days, 1))
 
@@ -1236,6 +1259,7 @@ def _handle_cohort(ctx, cmd_name, json_mode, days):
                             "mode": "cohort-by-author",
                             "days": days,
                         },
+                        budget=token_budget,
                         mode="cohort-by-author",
                         days=days,
                         cohorts={},
@@ -1260,6 +1284,7 @@ def _handle_cohort(ctx, cmd_name, json_mode, days):
                         "days": cohort["window_days"],
                         "files_analyzed": cohort["files_analyzed"],
                     },
+                    budget=token_budget,
                     mode="cohort-by-author",
                     days=cohort["window_days"],
                     files_analyzed=cohort["files_analyzed"],
@@ -1330,6 +1355,7 @@ def _handle_cohort(ctx, cmd_name, json_mode, days):
 
 def _handle_metric_view(ctx, cmd_name, json_mode, days, metric):
     """Per-metric trends from the metric_snapshots table."""
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     with open_db(readonly=True) as conn:
         if metric not in _METRIC_DEFS:
             available = ", ".join(sorted(_METRIC_DEFS.keys()))
@@ -1380,6 +1406,7 @@ def _handle_metric_view(ctx, cmd_name, json_mode, days, metric):
                             "metrics": [],
                             "alerts": [],
                         },
+                        budget=token_budget,
                         days=days,
                         snapshots_count=0,
                         metrics=[],
@@ -1424,6 +1451,7 @@ def _handle_metric_view(ctx, cmd_name, json_mode, days, metric):
                         "improving": improving,
                         "worsening": worsening,
                     },
+                    budget=token_budget,
                     days=days,
                     snapshots_count=total_snapshots,
                     metrics=[
@@ -1474,6 +1502,7 @@ def _handle_metric_view(ctx, cmd_name, json_mode, days, metric):
 
 def _handle_save(ctx, cmd_name, json_mode, tag):
     """Save mode: persist a snapshot of current health metrics."""
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     with open_db() as conn:
         result = append_snapshot(conn, tag=tag, source="snapshot")
 
@@ -1494,6 +1523,7 @@ def _handle_save(ctx, cmd_name, json_mode, tag):
                         "tag": tag,
                         "mode": "save",
                     },
+                    budget=token_budget,
                     mode="save",
                     **result,
                 )
@@ -1515,6 +1545,7 @@ def _handle_save(ctx, cmd_name, json_mode, tag):
 
 def _handle_compare(ctx, cmd_name, json_mode, since_tag):
     """Compare mode: show deltas between current metrics and last (or tagged) snapshot."""
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     with open_db(readonly=True) as conn:
         current = collect_metrics(conn)
 
@@ -1526,6 +1557,7 @@ def _handle_compare(ctx, cmd_name, json_mode, since_tag):
                         json_envelope(
                             cmd_name,
                             summary={"verdict": "no snapshots found", "error": "No snapshots found", "mode": "compare"},
+                            budget=token_budget,
                             current=current,
                             previous=None,
                             deltas=None,
@@ -1553,6 +1585,7 @@ def _handle_compare(ctx, cmd_name, json_mode, since_tag):
                             json_envelope(
                                 cmd_name,
                                 summary={"error": f"Tag '{since_tag}' not found", "mode": "compare"},
+                                budget=token_budget,
                                 available_tags=tags[:20],
                             )
                         )
@@ -1599,6 +1632,7 @@ def _handle_compare(ctx, cmd_name, json_mode, since_tag):
                         "snapshot_tag": snap_tag,
                         "mode": "compare",
                     },
+                    budget=token_budget,
                     mode="compare",
                     current=current,
                     previous={k: previous.get(k) for k, _ in _DIGEST_METRICS},
@@ -1645,6 +1679,7 @@ def _handle_timeline(
     sensitivity,
 ):
     """Default mode: health snapshot timeline with optional anomaly detection."""
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     do_analysis = analyze_flag or anomalies_flag or do_forecast or fail_on_anomaly
 
     since_ts = None
@@ -1666,6 +1701,7 @@ def _handle_timeline(
                         json_envelope(
                             cmd_name,
                             summary={"snapshots": 0},
+                            budget=token_budget,
                             snapshots=[],
                         )
                     )

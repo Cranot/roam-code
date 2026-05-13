@@ -12,8 +12,10 @@ import subprocess
 import click
 from click.testing import CliRunner
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.output.formatter import json_envelope, to_json
+from roam.runs.helpers import auto_log
 
 
 def _capture_json_subcommand(args: list[str]) -> dict:
@@ -62,6 +64,20 @@ def _git_diff_text(commit_range: str | None) -> str:
     return proc.stdout
 
 
+@roam_capability(
+    name="pr-prep",
+    category="workflow",
+    summary="One-shot pre-PR fitness check: diff + critique + pr-risk",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "review"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("pr-prep")
 @click.argument("commit_range", required=False, default=None)
 @click.option(
@@ -153,8 +169,10 @@ def pr_prep(ctx, commit_range, high_callers) -> None:
         "critique": critique_payload,
         "pr_risk": pr_risk_payload,
     }
+    pr_prep_envelope = json_envelope("pr-prep", **bundle)
+    auto_log(pr_prep_envelope, action="pr-prep", target=commit_range or "")
     if json_mode:
-        click.echo(to_json(json_envelope("pr-prep", **bundle)))
+        click.echo(to_json(pr_prep_envelope))
         return
 
     click.echo(f"VERDICT: {verdict}")

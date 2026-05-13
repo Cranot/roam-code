@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
@@ -60,6 +61,20 @@ def _top_neighbour(conn, sym_id: int, *, direction: str) -> dict | None:
     }
 
 
+@roam_capability(
+    name="hover",
+    category="workflow",
+    summary="Show a one-line architectural summary for SYMBOL",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("symbol")
 @click.pass_context

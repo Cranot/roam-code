@@ -9,6 +9,7 @@ import sys
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -268,8 +269,49 @@ def _extract_import_names_from_line(line: str, language: str | None) -> list[str
     """Extract imported symbol/module names from a single source line.
 
     Returns a list of name strings that should be validated against the index.
+
+    Language is checked first so JS-style imports (``import Bar from 'x'``)
+    in ``.js``/``.ts``/``.vue``/``.svelte`` files don't accidentally hit
+    the Python ``import Bar`` regex — that misattribution made every Vue
+    SFC import look like a 1-name Python import and dropped the module
+    path entirely.
     """
     names: list[str] = []
+    lang = (language or "").lower()
+    is_js_like = lang in (
+        "javascript",
+        "typescript",
+        "tsx",
+        "jsx",
+        "vue",
+        "svelte",
+    )
+
+    # JavaScript / TypeScript / Vue SFC / Svelte: try JS shapes first.
+    if is_js_like:
+        m = _JS_IMPORT_FROM.match(line)
+        if m:
+            braced = m.group(1)
+            default = m.group(2)
+            module_path = m.group(3)
+            names.append(module_path.split("/")[-1])  # last segment
+            if braced:
+                for part in braced.split(","):
+                    part = part.strip()
+                    if part:
+                        name = part.split(" as ")[0].strip() if " as " in part else part
+                        names.append(name)
+            if default:
+                names.append(default)
+            return names
+
+        m = _JS_REQUIRE.search(line)
+        if m:
+            module_path = m.group(1)
+            names.append(module_path.split("/")[-1])
+            return names
+        # JS-like files don't fall through to the Python regex.
+        return names
 
     # Python
     m = _PY_FROM_IMPORT.match(line)
@@ -290,7 +332,7 @@ def _extract_import_names_from_line(line: str, language: str | None) -> list[str
         names.append(m.group(1))
         return names
 
-    # JavaScript / TypeScript
+    # JavaScript / TypeScript (fallback for files of unknown language)
     m = _JS_IMPORT_FROM.match(line)
     if m:
         braced = m.group(1)
@@ -314,7 +356,7 @@ def _extract_import_names_from_line(line: str, language: str | None) -> list[str
         return names
 
     # Go
-    if language in ("go", "Go"):
+    if lang in ("go",):
         m = _GO_IMPORT.match(line)
         if m:
             pkg = m.group(1)
@@ -339,6 +381,28 @@ def _check_name_exists(conn: sqlite3.Connection, name: str) -> bool:
     ).fetchone()
     if row:
         return True
+
+    # Vue / Svelte SFC import: name retains the extension
+    # (e.g. ``import Bar from '@/components/Bar.vue'`` extracts ``Bar.vue``).
+    # Match the file by exact filename (``%/Bar.vue`` or ``Bar.vue``) and,
+    # for the symbol form, by stem (``Bar`` is synthesised as a component
+    # symbol by the TypeScript extractor for every .vue / .svelte file).
+    lower = name.lower()
+    if lower.endswith(".vue") or lower.endswith(".svelte"):
+        row = conn.execute(
+            "SELECT 1 FROM files WHERE path LIKE ? OR path = ? LIMIT 1",
+            (f"%/{name}", name),
+        ).fetchone()
+        if row:
+            return True
+        # Fallback: synthesised component symbol uses the stem
+        stem = name.rsplit(".", 1)[0]
+        row = conn.execute(
+            "SELECT 1 FROM symbols WHERE name = ? LIMIT 1",
+            (stem,),
+        ).fetchone()
+        if row:
+            return True
 
     # Check if it matches a file path (module name -> file)
     # e.g. "models" -> "models.py" or "src/models.py"
@@ -601,6 +665,20 @@ def verify_imports(
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="verify-imports",
+    category="workflow",
+    summary="Validate import/require statements against the indexed symbol table",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("verify-imports")
 @click.option("--file", "file_path", default=None, help="Restrict verification to a single file path.")
 @click.pass_context

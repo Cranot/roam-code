@@ -40,7 +40,9 @@ companion `roam lsp` server for editor squiggles. See
 
 Roam is the **engineering-judgment layer for coding agents**. AI agents can write code; they can't see what else the code touches, which tests cover it, which loop just went quadratic, or whether they're editing one of three near-identical clones. Roam exposes that judgment as deterministic local tools the agent calls — *before* it edits, *during* generation, and *after* the patch lands.
 
-Mechanically: Roam parses your repo once, stores structural facts in a local SQLite graph (symbols, dependencies, call graphs, architecture layers, git history, runtime traces), and exposes the graph through 211 commands and 145 MCP tools across 28 languages.
+<!-- BEGIN auto-count:readme-headline-prose -->
+Mechanically: Roam parses your repo once, stores structural facts in a local SQLite graph (symbols, dependencies, call graphs, architecture layers, git history, runtime traces), and exposes the graph through 233 commands and 149 MCP tools across 28 languages.
+<!-- END auto-count:readme-headline-prose -->
 
 ### The senses your agent doesn't have
 
@@ -322,7 +324,9 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~206 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **211 commands organised into 7 categories** (plus 7 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+<!-- BEGIN auto-count:readme-canonical-mention -->
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~228 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **233 commands (226 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+<!-- END auto-count:readme-canonical-mention -->
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -394,6 +398,9 @@ roam health
 | `roam mcp-status` | MCP server health: preset, registered tools, backpressure limits, cache entries, watcher state |
 | `roam test-impact [<range>]` | Tests transitively reachable from changed symbols (sharper scope than `affected-tests`) |
 | `roam recipes` | List every `roam ask` recipe with intent + example queries (sugar over `ask --list`) |
+| `roam surface [--filter F] [--category C]` | Print the canonical capability surface (commands, aliases, MCP tools, maturity) for inventory and JSON consumption |
+| `roam explain-command <name>` | Show what a command does, what it depends on, and how stale-index sensitive it is |
+| `roam db-check` | Integrity sweep over the local index. Reports orphans, broken edges, missing FTS, and other structural issues |
 
 ### Daily Workflow
 
@@ -428,6 +435,7 @@ roam health
 | `roam test-gaps [REV_RANGE]` | Changed-symbol test gap detection: what changed and what still lacks test coverage |
 | `roam affected [REV_RANGE]` | Monorepo/package impact analysis: what components are affected by a change |
 | `roam attest [REV_RANGE] [--format markdown] [--sign]` | Proof-carrying PR attestation: bundles blast radius, risk, breaking changes, fitness, budget, tests, effects into one verifiable artifact |
+| `roam pr-bundle init\|set\|add\|emit\|validate` | Build a proof-carrying PR bundle (intent + context + affected symbols + risks + tests + non-goals). `--auto-collect` folds in envelopes from prior roam runs. CI-gateable via `validate` |
 | `roam annotate <symbol> <note>` | Attach persistent notes to symbols (agentic memory across sessions) |
 | `roam annotations [--file F] [--symbol S]` | View stored annotations |
 | `roam diagnose <symbol> [--depth N]` | Root cause analysis: ranks suspects by z-score normalized risk |
@@ -435,6 +443,7 @@ roam health
 | `roam guard <symbol>` | Compact sub-agent preflight bundle: definition, 1-hop callers/callees, test files, breaking-risk score, and layer signals |
 | `roam agent-plan --agents N` | Decompose partitions into dependency-ordered agent tasks with merge sequencing and handoffs |
 | `roam agent-context --agent-id N [--agents M]` | Generate per-agent execution context: write scope, read-only dependencies, and interface contracts |
+| `roam agent-score [--agent A] [--since N]` | Composite per-agent score (0-100) over the `.roam/runs/` ledger: completion rate + clean-signal rate + breadth, with low-confidence flag for <2 runs |
 | `roam syntax-check [--changed] [PATHS...]` | Tree-sitter syntax integrity check for changed files and multi-agent judge workflows |
 | `roam verify [--threshold N]` | Pre-commit AI-code consistency check across naming, imports, error handling, and duplication signals |
 | `roam verify-imports [--file F]` | Import hallucination firewall: validate all imports against indexed symbol table, suggest corrections via FTS5 fuzzy matching |
@@ -445,6 +454,18 @@ roam health
 | `roam plan [--staged] [--range R] [--agents N]` | Agent work planner: decompose changes into sequenced, dependency-aware steps |
 | `roam closure <symbol> [--rename] [--delete]` | Minimal-change synthesis: all files to touch for a safe rename/delete |
 | `roam mutate move\|rename\|add-call\|extract` | Graph-level code editing: move symbols, rename across codebase, add calls, extract functions. Dry-run by default |
+| `roam dogfood-aggregate [--all] [--status S] [--severity H\|M\|L] [--type T]` | Aggregate the dogfood eval corpus into a backlog/triage view — surface open findings, filter by status/severity/type |
+| `roam memory add\|list\|relevant` | Repo-local agent memory at `.roam/memory.jsonl` — portable across agent vendors, travels with checkouts. `add` records, `list` filters by recency, `relevant` ranks against a query |
+| `roam runs start\|log\|end\|list\|show\|verify` | Per-agent-run event ledger at `.roam/runs/<run_id>/` — `start` opens a run, `log` appends events, `end` closes it, `list`/`show` inspect, `verify` checks HMAC chain integrity. Substrate for replay / agent-score / audit-trail |
+| `roam replay <run_id> [--execute --dry-run\|--no-dry-run]` | Re-narrate a past agent run from the ledger: numbered timeline + per-step verdicts. `--execute` re-runs the logged commands (refuses bare `--execute` to prevent accidental state mutation) |
+| `roam constitution init\|check\|show\|apply\|where` | Manage the repo-local agent constitution at `.roam/constitution.yml` — the single declarative file an agent reads first. Points at laws/rules/memory/runs and enforces per-gate policy thresholds |
+| `roam laws mine\|check\|list\|explain` | Self-installing constitution: mine repo invariants from index + tests + git history into `roam-laws.yml`, then `check` enforces them against a diff (exit 5 on violation) |
+| `roam agents-md` | Generate AGENTS.md from indexed conventions, danger zones, constitution, and capability registry |
+| `roam brief` | One-page agent briefing covering mode / next / highlights / pr-bundle / runs |
+| `roam intent-check <command>` | Check if an intended command is allowed by the active mode |
+| `roam lease claim\|release\|list\|show\|gc` | Multi-agent lease system: coordinate parallel agents on the same repo by reserving file/symbol scopes. `claim` opens, `release` drops, `gc` expires stale leases |
+| `roam mode [MODE] [--check CMD] [--list]` | Show or switch active mode (read_only / safe_edit / migration / autonomous_pr) |
+| `roam next` | Suggest the next roam command based on current repo state (index presence, staleness, working-tree dirtiness, recent envelope/memory). Bounded under 200ms |
 
 ### Codebase Health
 
@@ -630,11 +651,17 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam patterns` | Architectural pattern recognition: Strategy, Factory, Observer, etc. |
 | `roam visualize [--format mermaid\|dot] [--focus NAME] [--limit N]` | Generate Mermaid or DOT architecture diagrams. Smart filtering via PageRank, cluster grouping, cycle highlighting |
 | `roam effects [TARGET] [--file F] [--type T]` | Side-effect classification: DB writes, network I/O, filesystem, global mutation. Direct + transitive effects through call graph |
+| `roam side-effects [SYMBOL] [--kind K] [--top N]` | Classify symbol side-effects (io_read / io_write / mutation / process / none) — coarse, agent-friendly verdict that composes with `roam idempotency` |
+| `roam idempotency [SYMBOL] [--kind K] [--top N]` | Classify symbol idempotency (idempotent / non_idempotent / unknown) — is this symbol safe to call twice? Builds on `roam side-effects` |
+| `roam tx-boundaries [SYMBOL] [--classification C] [--top N]` | Classify functions by transactional safety (transactional / partial_transactional / unsafe_mutation / unmatched_begin / unmatched_commit / non_transactional / unknown). Composes with `roam idempotency` for retry-safety reasoning |
+| `roam causal-graph [SYMBOL] [--kind K] [--top N]` | Build per-symbol causal graphs: trace input-to-sink data dependencies (param/global/env flowing into side-effect / return / raise / mutation). Heuristic — false negatives expected |
 | `roam dark-matter [--min-cochanges N]` | Detect hidden co-change couplings not explained by import/call edges |
 | `roam simulate move\|extract\|merge\|delete` | Counterfactual architecture simulator: test refactoring ideas in-memory, see metric deltas before writing code |
 | `roam orchestrate --agents N [--files P]` | Multi-agent swarm partitioning: split codebase for parallel agents with zero-conflict guarantees |
 | `roam partition [--agents N]` | Multi-agent partition manifest: conflict risk, complexity, and suggested ownership splits |
 | `roam fingerprint [--compact] [--compare F]` | Topology fingerprint: extract/compare architectural signatures across repos |
+| `roam graph-diff [--base L] [--head L] [--save-snapshot N]` | Structural diff between two graph snapshots: added/removed symbols, edge churn, new cycles, layer migrations, likely-move rename heuristics. Persists snapshots under `.roam/snapshots/` |
+| `roam architecture-drift [--window 30d]` | Time-series structural-drift detection over `.roam/snapshots/`: classifies trend as improving / degrading / stable based on cycle counts, edge churn, and cohesion proxy |
 | `roam cut <target> [--depth N]` | Minimum graph cuts: find critical edges whose removal disconnects components |
 | `roam safe-zones` | Graph-based containment boundaries |
 | `roam coverage-gaps` | Unprotected entry points with no path to gate symbols |
@@ -668,6 +695,8 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam search-semantic <query>` | Hybrid semantic search: BM25 + TF-IDF + optional local ONNX vectors (select via `--backend`) with framework/library packs |
 | `roam intent [--staged] [--range R]` | Doc-to-code linking: match documentation to symbols, detect drift |
 | `roam x-lang [--bridges] [--edges]` | Cross-language edge browser: inspect bridge-resolved connections |
+| `roam batch-search <pattern1> <pattern2> ... [--limit-per-query N] [--include-paths]` | Run up to 10 symbol-name pattern searches in one DB connection. Replaces 10 sequential `roam search` calls; results grouped by query |
+| `roam complete <prefix> [--kind symbol\|path\|command\|all] [--limit N]` | Left-anchored prefix completions (FTS5-backed). Use `roam search` for substring matches and `roam search-semantic` for natural-language queries |
 
 ### Reports & CI
 
@@ -995,7 +1024,9 @@ roam mcp
 - **Symbol & path completions** -- new `roam_complete(prefix, kind, limit)` tool returns just names from the FTS5 index (cheaper than `roam_search_symbol`). A protocol-level handler is also installed for clients that support `completion/complete`.
 - **Reactive resource invalidation** (opt-in) -- set `ROAM_MCP_WATCH=1` and the server watches the working tree, runs incremental reindex on file changes, and emits `notifications/resources/updated` for `roam://health`, `roam://summary`, etc., so subscribed clients see fresh data without polling.
 
+<!-- BEGIN auto-count:readme-default-preset -->
 **Default preset:** `core` (58 tools: 57 core + `roam_expand_toolset` meta-tool).
+<!-- END auto-count:readme-default-preset -->
 
 ```bash
 # Default
@@ -1011,7 +1042,7 @@ ROAM_MCP_LITE=0 roam mcp
 Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
 
 <details>
-<summary><strong>MCP tool list (all 137)</strong></summary>
+<summary><strong>MCP tool list (all 149)</strong></summary>
 
 *New in v12.26: `roam_pr_analyze`, `roam_pr_comment_render`, `roam_metrics_push`, `roam_audit_trail_verify`, `roam_audit_trail_export`, `roam_audit_trail_conformance_check`, `roam_rules_validate`, `roam_dogfood` — Roam Review + Cloud engines + governance audit-trail toolkit + production-grade rules linting + one-shot v2 stack runner.*
 
@@ -1154,6 +1185,18 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_batch_search` | Batch symbol search: run multiple pattern queries in a single call |
 | `roam_batch_get` | Batch context retrieval: fetch multiple symbols/files in a single call |
 | `roam_dev_profile` | Developer productivity profile: commit patterns, specialization, and impact |
+| `roam_api` | List the public API surface — exported public symbols with signatures and docs |
+| `roam_ask` | Free-form intent dispatcher: map a natural-language question to one of 24+ pre-built recipes (preflight / retrieve / critique / fleet / diagnose / trace / trends / hotspots / debt / taint) |
+| `roam_changelog` | List commits since the last tag, optionally formatted as a Conventional-Commits markdown CHANGELOG draft |
+| `roam_conventions` | Auto-detect codebase naming, file, import, and export conventions with per-category outliers |
+| `roam_fetch_handle` | Fetch all or part of a large MCP payload by handle — supports byte slice, section pick, jq projection |
+| `roam_for_bug_fix` | Compound: diagnose + affected_tests + diff + context for a symbol you are about to debug |
+| `roam_for_new_feature` | Compound: understand + search + context + complexity_report for an area you are about to add code to |
+| `roam_for_refactor` | Compound: preflight + impact + complexity_report + clones for a symbol you are about to refactor |
+| `roam_for_security_review` | Compound: taint + vulns + critique + adversarial for a security review pass |
+| `roam_session_metrics` | Local-only telemetry: per-tool invocation counts grouped by outcome (success / rate_limited / error). Never phones home |
+| `roam_validate_plan` | Pre-apply validator for a multi-step change plan: per-operation blockers, warnings, and advice before any mutation |
+| `roam_verify_imports` | Hallucination firewall: validate import/require statements resolve to indexed symbols with fuzzy correction suggestions |
 
 **Resources:** `roam://health` (current health score), `roam://summary` (project overview)
 

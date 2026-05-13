@@ -130,37 +130,43 @@ class TestPatternDetection:
     def test_aws_access_key_detected(self, secrets_project):
         result = _invoke(["secrets"], secrets_project, json_mode=True)
         data = json.loads(result.output)
-        names = [f["pattern"] for f in data.get("findings", [])]
+        # R22 confidence triple shape — pattern is nested under value
+        names = [f["value"]["pattern"] for f in data.get("findings", [])]
         assert "AWS Access Key" in names
 
     def test_github_token_detected(self, secrets_project):
         result = _invoke(["secrets"], secrets_project, json_mode=True)
         data = json.loads(result.output)
-        names = [f["pattern"] for f in data.get("findings", [])]
+        # R22 confidence triple shape
+        names = [f["value"]["pattern"] for f in data.get("findings", [])]
         assert "GitHub Personal Access Token (classic)" in names
 
     def test_sendgrid_key_detected(self, secrets_project):
         result = _invoke(["secrets"], secrets_project, json_mode=True)
         data = json.loads(result.output)
-        names = [f["pattern"] for f in data.get("findings", [])]
+        # R22 confidence triple shape
+        names = [f["value"]["pattern"] for f in data.get("findings", [])]
         assert "SendGrid API Key" in names
 
     def test_password_detected(self, secrets_project):
         result = _invoke(["secrets"], secrets_project, json_mode=True)
         data = json.loads(result.output)
-        names = [f["pattern"] for f in data.get("findings", [])]
+        # R22 confidence triple shape
+        names = [f["value"]["pattern"] for f in data.get("findings", [])]
         assert "Generic Password Assignment" in names
 
     def test_database_connection_string_detected(self, secrets_project):
         result = _invoke(["secrets"], secrets_project, json_mode=True)
         data = json.loads(result.output)
-        names = [f["pattern"] for f in data.get("findings", [])]
+        # R22 confidence triple shape
+        names = [f["value"]["pattern"] for f in data.get("findings", [])]
         assert "Database Connection String" in names
 
     def test_private_key_detected(self, secrets_project):
         result = _invoke(["secrets"], secrets_project, json_mode=True)
         data = json.loads(result.output)
-        names = [f["pattern"] for f in data.get("findings", [])]
+        # R22 confidence triple shape
+        names = [f["value"]["pattern"] for f in data.get("findings", [])]
         assert "Private Key" in names
 
     def test_clean_project_no_findings(self, clean_project):
@@ -181,8 +187,9 @@ class TestSecretMasking:
     def test_masked_output_contains_ellipsis(self, secrets_project):
         result = _invoke(["secrets"], secrets_project, json_mode=True)
         data = json.loads(result.output)
+        # R22 confidence triple shape — matched_text is nested under value
         for finding in data.get("findings", []):
-            matched = finding["matched_text"]
+            matched = finding["value"]["matched_text"]
             # All masked values should contain "..."
             assert "..." in matched, f"Unmasked secret in output: {matched}"
 
@@ -225,13 +232,15 @@ class TestSeverityFilter:
     def test_filter_high_only(self, secrets_project):
         result = _invoke(["secrets", "--severity", "high"], secrets_project, json_mode=True)
         data = json.loads(result.output)
+        # R22 confidence triple shape — severity is nested under value
         for finding in data.get("findings", []):
-            assert finding["severity"] == "high"
+            assert finding["value"]["severity"] == "high"
 
     def test_filter_medium_includes_high(self, secrets_project):
         result = _invoke(["secrets", "--severity", "medium"], secrets_project, json_mode=True)
         data = json.loads(result.output)
-        severities = {f["severity"] for f in data.get("findings", [])}
+        # R22 confidence triple shape — severity is nested under value
+        severities = {f["value"]["severity"] for f in data.get("findings", [])}
         # Medium filter means medium and above (high)
         assert severities <= {"high", "medium"}
 
@@ -294,8 +303,8 @@ class TestBinarySkipping:
     def test_binary_files_skipped(self, binary_project):
         result = _invoke(["secrets"], binary_project, json_mode=True)
         data = json.loads(result.output)
-        # Should find the secret in app.py but not try to scan .png or .zip
-        files_found = {f["file"] for f in data.get("findings", [])}
+        # R22 confidence triple shape — file is nested under value
+        files_found = {f["value"]["file"] for f in data.get("findings", [])}
         assert not any(f.endswith(".png") for f in files_found)
         assert not any(f.endswith(".zip") for f in files_found)
 
@@ -366,19 +375,25 @@ class TestJsonOutput:
         data = json.loads(result.output)
         findings = data.get("findings", [])
         assert len(findings) > 0
+        # R22 confidence triple shape
         f = findings[0]
-        assert "file" in f
-        assert "line" in f
-        assert "severity" in f
-        assert "pattern" in f
-        assert "matched_text" in f
+        assert "value" in f
+        assert "confidence" in f
+        assert "reason" in f
+        v = f["value"]
+        assert "file" in v
+        assert "line" in v
+        assert "severity" in v
+        assert "pattern" in v
+        assert "matched_text" in v
 
     def test_json_findings_sorted_by_severity(self, secrets_project):
         result = _invoke(["secrets"], secrets_project, json_mode=True)
         data = json.loads(result.output)
         findings = data.get("findings", [])
         severity_order = {"high": 3, "medium": 2, "low": 1}
-        severities = [severity_order.get(f["severity"], 0) for f in findings]
+        # R22 confidence triple shape — severity is now nested under value
+        severities = [severity_order.get(f["value"]["severity"], 0) for f in findings]
         # Should be sorted descending (high first)
         assert severities == sorted(severities, reverse=True)
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -218,6 +219,20 @@ def _uninstall_hook(hook_path: Path) -> tuple[str, str | None]:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="hooks",
+    category="getting-started",
+    summary="Manage git hook integration for automatic re-indexing",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=False,
+    requires_index=False,
+)
 @click.group("hooks")
 @click.pass_context
 def hooks(ctx):

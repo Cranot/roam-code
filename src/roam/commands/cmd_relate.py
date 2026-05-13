@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found_hint
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -173,6 +174,20 @@ def _compute_cohesion(distance_matrix, input_count):
     return min(1.0, max(0.0, cohesion))
 
 
+@roam_capability(
+    name="relate",
+    category="exploration",
+    summary="Show how a set of symbols relate to each other",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("symbols", nargs=-1)
 @click.option("--file", "files", multiple=True, help="Include symbols from file/dir path")

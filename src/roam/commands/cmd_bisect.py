@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -80,6 +81,20 @@ def _compute_deltas(snapshots, metric):
     return deltas
 
 
+@roam_capability(
+    name="bisect",
+    category="health",
+    summary="Find which snapshots caused architectural degradation",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "debug"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("bisect")
 @click.option(
     "--metric",

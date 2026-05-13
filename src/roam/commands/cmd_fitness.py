@@ -61,9 +61,52 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import json_envelope, loc, to_json
+
+
+# R22 — confidence classifier for fitness violations.
+#
+# Each fitness rule may carry an explicit severity:
+#   high   — severity "error" (CI-blocking architecture violation)
+#   medium — severity "warning" (regression / drift signal)
+#   low    — severity "info" (advisory)
+#
+# Most rules don't currently set a severity field; we infer one from
+# rule type + threshold direction so existing configs still produce
+# reasonable confidence labels without requiring config changes:
+#   - dependency-allow-false → error (an explicit forbidden edge fired)
+#   - metric over a hard max (cycles > 0, complexity > 25) → error
+#   - trend regressions → warning
+#   - naming-convention drifts → info
+def _fitness_classify(violation: dict) -> tuple[str, str]:
+    """Map a fitness violation to a (confidence, reason) tuple."""
+    severity = (violation.get("severity") or "").lower()
+    vtype = (violation.get("type") or "").lower()
+    if severity == "error":
+        return "high", f"rule severity=error ({vtype} rule)"
+    if severity == "warning":
+        return "medium", f"rule severity=warning ({vtype} rule)"
+    if severity == "info":
+        return "low", f"rule severity=info ({vtype} rule)"
+    # No explicit severity — infer from rule type. Hard architecture
+    # gates default to high, drift / advisory rules to medium / low.
+    if vtype == "dependency":
+        return "high", "dependency-rule violation (no explicit severity; inferred)"
+    if vtype == "metric":
+        return "high", "metric-threshold violation (no explicit severity; inferred)"
+    if vtype == "trend":
+        return "medium", "trend regression (no explicit severity; inferred)"
+    if vtype == "naming":
+        return "low", "naming-convention violation (no explicit severity; inferred)"
+    return "medium", "unknown rule type; defaulting to medium"
 
 
 def _load_rules(project_root: Path) -> list[dict]:
@@ -674,7 +717,17 @@ def _maybe_write_baseline(
 def _fitness_summary(
     rule_results, passed: int, failed: int, all_violations, baseline_info, written_baseline_path
 ) -> dict:
+    # Mirror the text-mode verdict so JSON consumers don't have to
+    # re-derive the bottom line — and so :func:`verdict_with_high_count`
+    # has something to append the high-count suffix to.
+    if failed == 0:
+        verdict = f"all {passed} fitness rule(s) pass"
+    elif passed == 0:
+        verdict = f"all {failed} fitness rule(s) fail ({len(all_violations)} violation(s))"
+    else:
+        verdict = f"{failed} of {passed + failed} fitness rule(s) fail ({len(all_violations)} violation(s))"
     summary = {
+        "verdict": verdict,
         "rules_checked": len(rule_results),
         "passed": passed,
         "failed": failed,
@@ -692,14 +745,27 @@ def _json_violations(violations: list[dict]) -> list[dict]:
 
 
 def _emit_fitness_json(summary, rule_results, all_violations, new_violations) -> None:
+    # R22: wrap each violation in {value, confidence, reason}.
+    # Consumers that previously read violations[i]["rule"] must now
+    # read violations[i]["value"]["rule"] plus
+    # violations[i]["confidence"] / violations[i]["reason"].
+    violation_values = _json_violations(all_violations)
+    new_violation_values = _json_violations(new_violations)
+    violation_triples = wrap_findings(violation_values, classifier=_fitness_classify)
+    new_violation_triples = wrap_findings(new_violation_values, classifier=_fitness_classify)
+    distribution = confidence_distribution(violation_triples)
+    enriched_summary = dict(summary)
+    enriched_summary["findings_confidence_distribution"] = distribution
+    if "verdict" in enriched_summary:
+        enriched_summary["verdict"] = verdict_with_high_count(enriched_summary["verdict"], distribution)
     click.echo(
         to_json(
             json_envelope(
                 "fitness",
-                summary=summary,
+                summary=enriched_summary,
                 rules=rule_results,
-                violations=_json_violations(all_violations),
-                new_violations=_json_violations(new_violations),
+                violations=violation_triples,
+                new_violations=new_violation_triples,
             )
         )
     )
@@ -789,6 +855,20 @@ def _finish_fitness(write_baseline: bool, baseline_info: dict | None, failed: in
 # ── CLI command ──────────────────────────────────────────────────────
 
 
+@roam_capability(
+    name="fitness",
+    category="health",
+    summary="Run architectural fitness functions from .roam/fitness.yaml",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("fitness")
 @click.option("--init", "do_init", is_flag=True, help="Create a starter fitness.yaml")
 @click.option("--rule", "rule_filter", default=None, help="Run only rules matching this name")

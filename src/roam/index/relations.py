@@ -257,8 +257,8 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
     Handles:
     - @/ alias → src/ (Vue convention)
     - ./ and ../ relative prefixes (stripped for suffix matching)
-    - Barrel exports: import from '@/composables/kiniseis' matches
-      'src/composables/kiniseis/types.ts'
+    - Barrel exports: import from '@/composables/transactions' matches
+      'src/composables/transactions/types.ts'
     - File extension stripping on candidates
     """
     if not import_path:

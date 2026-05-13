@@ -6,12 +6,27 @@ import os
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file as _is_test_file
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 
 
+@roam_capability(
+    name="safe-delete",
+    category="refactoring",
+    summary="Check if a symbol can be safely deleted",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("safe-delete")
 @click.argument("name")
 @click.pass_context

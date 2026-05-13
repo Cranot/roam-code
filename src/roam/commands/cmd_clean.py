@@ -6,11 +6,26 @@ import os
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="clean",
+    category="getting-started",
+    summary="Remove orphaned entries from the index (files no longer on disk)",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=True,
+    stale_sensitive=False,
+    ai_safe=False,
+    requires_index=False,
+)
 @click.command("clean")
 @click.pass_context
 def clean(ctx):

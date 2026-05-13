@@ -8,6 +8,7 @@ import re
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
@@ -263,6 +264,20 @@ def _against_mode(conn, change_fids, file_map, min_strength, min_cochanges):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="coupling",
+    category="architecture",
+    summary="Show temporal coupling: file pairs that change together",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option(
     "-n",

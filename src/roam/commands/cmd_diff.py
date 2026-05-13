@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
+from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
 # Affected tests helper
@@ -287,6 +289,27 @@ def _check_naming_rule_scoped(rule, conn, changed_fids):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    category="review",
+    summary="Show blast radius of uncommitted or ranged git changes.",
+    inputs=["commit_range"],
+    outputs=["affected_files", "verdict"],
+    examples=[
+        "roam diff",
+        "roam diff --staged",
+        "roam diff main..HEAD",
+    ],
+    tags=["review", "git"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+)
 @click.command("diff")
 @click.argument("commit_range", required=False, default=None)
 @click.option("--staged", is_flag=True, help="Analyze staged changes instead of unstaged")
@@ -363,6 +386,36 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
     changed = get_changed_files(root, staged=staged, commit_range=commit_range)
     if not changed:
         label = commit_range or ("staged" if staged else "unstaged")
+        # Pattern 1 fix (Fix A from internal/dogfood/SYNTHESIS-2026-05-12.md):
+        # never emit empty stdout in --json mode. MCP wrappers crash with
+        # `Expecting value: line 1 column 1 (char 0)` when given empty
+        # output. Always emit a structured envelope. Mirrors the shape
+        # `pr-risk` uses on clean tree.
+        _no_changes_envelope = json_envelope(
+            "diff",
+            budget=token_budget,
+            summary={
+                "verdict": "no changes",
+                "state": "no_changes",
+                "partial_success": False,
+                "changed_files": 0,
+                "affected_symbols": 0,
+                "affected_files": 0,
+                "label": label,
+            },
+            label=label,
+            changed_files=0,
+            symbols_defined=0,
+            affected_symbols=0,
+            affected_files=0,
+            per_file=[],
+            blast_radius=[],
+            message=f"No changes found for {label}.",
+        )
+        auto_log(_no_changes_envelope, action="diff", target=label, repo_root=root)
+        if json_mode:
+            click.echo(to_json(_no_changes_envelope))
+            return
         click.echo(f"No changes found for {label}.")
         return
 
@@ -371,6 +424,41 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         file_map = resolve_changed_to_db(conn, changed)
 
         if not file_map:
+            # Pattern 1 fix: --json mode must never emit empty stdout.
+            # The working tree has changes but they don't intersect the
+            # index — surface this explicitly as ``index_stale`` so
+            # consumers don't conflate it with ``no_changes``.
+            label = commit_range or ("staged" if staged else "unstaged")
+            _stale_envelope = json_envelope(
+                "diff",
+                budget=token_budget,
+                summary={
+                    "verdict": "changed files not in index",
+                    "state": "index_stale",
+                    "partial_success": True,
+                    "changed_files": 0,
+                    "affected_symbols": 0,
+                    "affected_files": 0,
+                    "label": label,
+                    "hint": "Run `roam index` to refresh.",
+                },
+                label=label,
+                changed_files=0,
+                symbols_defined=0,
+                affected_symbols=0,
+                affected_files=0,
+                per_file=[],
+                blast_radius=[],
+                files_not_in_index=len(changed),
+                message=(
+                    f"Changed files not found in index ({len(changed)} files changed). "
+                    "Try running `roam index` first."
+                ),
+            )
+            auto_log(_stale_envelope, action="diff", target=label, repo_root=root)
+            if json_mode:
+                click.echo(to_json(_stale_envelope))
+                return
             click.echo(f"Changed files not found in index ({len(changed)} files changed).")
             click.echo("Try running `roam index` first.")
             return
@@ -454,85 +542,89 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             except Exception:
                 pass  # fitness.yaml may not exist
 
+        # ── Envelope construction (used by JSON output + auto-log) ───
+
+        _diff_verdict = (
+            f"{len(file_map)} files changed, "
+            f"{len(all_affected_syms)} symbols affected, "
+            f"{len(all_affected_files)} files in blast radius"
+        )
+        _diff_label = commit_range or ("staged" if staged else "unstaged")
+        envelope_data = dict(
+            label=_diff_label,
+            changed_files=len(file_map),
+            symbols_defined=total_syms,
+            affected_symbols=len(all_affected_syms),
+            affected_files=len(all_affected_files),
+            per_file=file_impacts,
+            blast_radius=sorted(all_affected_files),
+        )
+
+        summary = {
+            "verdict": _diff_verdict,
+            "changed_files": len(file_map),
+            "affected_symbols": len(all_affected_syms),
+            "affected_files": len(all_affected_files),
+        }
+
+        if tests:
+            direct = sum(1 for t in test_results if t["kind"] == "DIRECT")
+            transitive = sum(1 for t in test_results if t["kind"] == "TRANSITIVE")
+            colocated = sum(1 for t in test_results if t["kind"] == "COLOCATED")
+            test_files = []
+            seen = set()
+            for t in test_results:
+                if t["file"] not in seen:
+                    seen.add(t["file"])
+                    test_files.append(t["file"])
+
+            summary["affected_tests"] = len(test_results)
+            envelope_data["affected_tests"] = {
+                "total": len(test_results),
+                "direct": direct,
+                "transitive": transitive,
+                "colocated": colocated,
+                "test_files": test_files,
+                "pytest_command": pytest_cmd,
+                "tests": [
+                    {
+                        "file": t["file"],
+                        "symbol": t["symbol"],
+                        "kind": t["kind"],
+                        "hops": t["hops"],
+                        "via": t["via"],
+                    }
+                    for t in test_results
+                ],
+            }
+
+        if coupling:
+            summary["coupling_warnings"] = len(coupling_warnings)
+            envelope_data["coupling_warnings"] = coupling_warnings
+
+        if fitness:
+            failed_count = sum(1 for r in fitness_rule_results if r["status"] == "FAIL")
+            summary["fitness_violations"] = len(fitness_violations)
+            summary["fitness_rules_failed"] = failed_count
+            envelope_data["fitness_violations"] = {
+                "rules": fitness_rule_results,
+                "violations": fitness_violations[:100],
+            }
+
+        diff_envelope = json_envelope(
+            "diff",
+            budget=token_budget,
+            summary=summary,
+            **envelope_data,
+        )
+
+        # Auto-log into the active run (silent no-op when no run is active).
+        auto_log(diff_envelope, action="diff", target=_diff_label, repo_root=root)
+
         # ── JSON output ──────────────────────────────────────────────
 
         if json_mode:
-            _diff_verdict = (
-                f"{len(file_map)} files changed, "
-                f"{len(all_affected_syms)} symbols affected, "
-                f"{len(all_affected_files)} files in blast radius"
-            )
-            envelope_data = dict(
-                label=commit_range or ("staged" if staged else "unstaged"),
-                changed_files=len(file_map),
-                symbols_defined=total_syms,
-                affected_symbols=len(all_affected_syms),
-                affected_files=len(all_affected_files),
-                per_file=file_impacts,
-                blast_radius=sorted(all_affected_files),
-            )
-
-            summary = {
-                "verdict": _diff_verdict,
-                "changed_files": len(file_map),
-                "affected_symbols": len(all_affected_syms),
-                "affected_files": len(all_affected_files),
-            }
-
-            if tests:
-                direct = sum(1 for t in test_results if t["kind"] == "DIRECT")
-                transitive = sum(1 for t in test_results if t["kind"] == "TRANSITIVE")
-                colocated = sum(1 for t in test_results if t["kind"] == "COLOCATED")
-                test_files = []
-                seen = set()
-                for t in test_results:
-                    if t["file"] not in seen:
-                        seen.add(t["file"])
-                        test_files.append(t["file"])
-
-                summary["affected_tests"] = len(test_results)
-                envelope_data["affected_tests"] = {
-                    "total": len(test_results),
-                    "direct": direct,
-                    "transitive": transitive,
-                    "colocated": colocated,
-                    "test_files": test_files,
-                    "pytest_command": pytest_cmd,
-                    "tests": [
-                        {
-                            "file": t["file"],
-                            "symbol": t["symbol"],
-                            "kind": t["kind"],
-                            "hops": t["hops"],
-                            "via": t["via"],
-                        }
-                        for t in test_results
-                    ],
-                }
-
-            if coupling:
-                summary["coupling_warnings"] = len(coupling_warnings)
-                envelope_data["coupling_warnings"] = coupling_warnings
-
-            if fitness:
-                failed_count = sum(1 for r in fitness_rule_results if r["status"] == "FAIL")
-                summary["fitness_violations"] = len(fitness_violations)
-                summary["fitness_rules_failed"] = failed_count
-                envelope_data["fitness_violations"] = {
-                    "rules": fitness_rule_results,
-                    "violations": fitness_violations[:100],
-                }
-
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "diff",
-                        budget=token_budget,
-                        summary=summary,
-                        **envelope_data,
-                    )
-                )
-            )
+            click.echo(to_json(diff_envelope))
             return
 
         # ── Text output ──────────────────────────────────────────────

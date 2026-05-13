@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.catalog.smells import run_all_detectors
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
@@ -294,6 +295,20 @@ def _reasons(
     return reasons
 
 
+@roam_capability(
+    name="suggest-refactoring",
+    category="refactoring",
+    summary="Rank symbols that are likely to yield high-value refactoring wins",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("suggest-refactoring")
 @click.option(
     "-n",
@@ -327,6 +342,14 @@ def suggest_refactoring(ctx, limit, min_score):
     See also ``plan-refactor`` (build a step-by-step plan for one
     target), ``debt`` (remediation effort + ROI), and ``smells`` (style
     + structural anti-patterns).
+
+    \b
+    --detail semantics (W22.3 / Pattern 3 documentation):
+      The ``recommendations`` array is ALWAYS returned in full -- it
+      is the headline output. ``--detail`` adds the ``scoring``
+      sub-object (signal weights) to JSON and, in text mode, prints
+      all reasons per row instead of the top two. This is in-place
+      truncation, NOT progressive-disclosure (``strip_list_payloads``).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

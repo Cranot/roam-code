@@ -4,11 +4,26 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 
 
+@roam_capability(
+    name="ingest-trace",
+    category="health",
+    summary="Ingest runtime trace data and match spans to symbols",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("trace_file", required=False, default=None)
 @click.option("--otel", "otel_file", default=None, help="OpenTelemetry JSON trace file")

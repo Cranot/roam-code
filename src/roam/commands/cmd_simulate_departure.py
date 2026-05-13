@@ -21,6 +21,7 @@ from roam.commands.codeowners_helpers import (
 from roam.commands.codeowners_helpers import (
     parse_codeowners as _parse_codeowners_file,
 )
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import (
@@ -401,6 +402,20 @@ def _generate_recommendations(critical, high, medium, affected_clusters):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="simulate-departure",
+    category="reports",
+    summary="Simulate what happens when a developer leaves the team",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("developers", nargs=-1, required=True)
 @click.option(

@@ -293,8 +293,12 @@ class TestMissingIndexJSON:
         result = invoke_cli(cli_runner, ["missing-index"], cwd=php_project, json_mode=True)
         data = parse_json_output(result, "missing-index")
         findings = data["findings"]
-        # At least one finding should reference the 'phone' column
-        phone_findings = [f for f in findings if "phone" in f.get("columns", []) or "phone" in str(f.get("issue", ""))]
+        # R22 confidence triple shape — original fields nested under "value"
+        phone_findings = [
+            f
+            for f in findings
+            if "phone" in f["value"].get("columns", []) or "phone" in str(f["value"].get("issue", ""))
+        ]
         assert len(phone_findings) >= 1, f"Expected a finding for unindexed 'phone' column. All findings: {findings}"
 
     def test_json_finding_has_required_keys(self, cli_runner, php_project, monkeypatch):
@@ -305,10 +309,15 @@ class TestMissingIndexJSON:
         findings = data["findings"]
         if not findings:
             pytest.skip("No findings produced — cannot check finding structure")
-        required_keys = {"confidence", "columns", "issue", "query_location", "suggestion"}
+        # R22 confidence triple shape
+        triple_keys = {"value", "confidence", "reason"}
+        value_required_keys = {"columns", "issue", "query_location", "suggestion"}
         for f in findings:
-            missing = required_keys - set(f.keys())
-            assert not missing, f"Finding missing keys {missing}: {f}"
+            assert triple_keys.issubset(set(f.keys())), (
+                f"Triple missing keys: {triple_keys - set(f.keys())}"
+            )
+            missing = value_required_keys - set(f["value"].keys())
+            assert not missing, f"Finding value missing keys {missing}: {f}"
 
     def test_json_finding_confidence_values(self, cli_runner, php_project, monkeypatch):
         """All finding confidence values are one of: high, medium, low."""
@@ -366,8 +375,11 @@ class TestMissingIndexJSON:
             json_mode=True,
         )
         data = parse_json_output(result, "missing-index")
+        # R22 confidence triple shape — table is nested under value
         for f in data["findings"]:
-            assert f.get("table") == "users", f"Expected only 'users' table with --table users, got: {f.get('table')}"
+            assert f["value"].get("table") == "users", (
+                f"Expected only 'users' table with --table users, got: {f['value'].get('table')}"
+            )
 
     def test_json_table_filter_no_results_unknown_table(self, cli_runner, php_project, monkeypatch):
         """--table on a non-existent table yields zero findings."""
@@ -437,12 +449,15 @@ class TestMissingIndexText:
         )
 
     def test_verdict_no_findings_non_php(self, cli_runner, non_php_project, monkeypatch):
-        """Non-PHP project verdict says no missing indexes detected."""
+        """Non-PHP project should report 'no migrations scanned' (no input), NOT
+        'No missing indexes detected' (which would be a silent fallback per
+        Fix E / Pattern 2 — making consumers think a scan ran and passed).
+        """
         monkeypatch.chdir(non_php_project)
         result = invoke_cli(cli_runner, ["missing-index"], cwd=non_php_project)
         assert result.exit_code == 0
         assert "VERDICT:" in result.output
-        assert "No missing indexes detected" in result.output
+        assert "no migrations scanned" in result.output
 
     def test_phone_column_in_findings_text(self, cli_runner, php_project, monkeypatch):
         """Text output mentions the 'phone' column that lacks an index."""

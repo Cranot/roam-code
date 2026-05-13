@@ -11,6 +11,7 @@ import time
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -162,53 +163,63 @@ def _risk_areas(conn):
     }
 
 
-def _vibe_check_fast(conn):
-    """Lightweight vibe-check using DB-only detectors (no file I/O).
+def _vibe_check_canonical(conn):
+    """Compute AI rot via the canonical 8-pattern algorithm.
 
-    Computes a rough AI rot score from the two DB-only patterns
-    (dead exports, hallucinated imports) and returns the score plus
-    top category counts.  Falls back gracefully if data is missing.
+    Pattern 3 reconciliation (W16.3): previously this function ran a
+    2-pattern approximation (dead exports + hallucinated imports only)
+    that produced a DIFFERENT number from ``roam vibe-check`` on the
+    same codebase — flagged in the 212-eval corpus as the "AI rot 7
+    vs 4" mismatch. We now delegate to ``roam.quality.ai_rot`` which
+    runs the FULL 8-detector pipeline, the same code vibe-check uses.
+
+    Cost: a few hundred ms on roam-sized repos (file-scanning detectors
+    for empty handlers, stubs, comments, copy-paste). Acceptable price
+    for one canonical number across the suite.
+
+    Returns ``None`` on any failure so the dashboard never crashes on a
+    partial / corrupt index.
     """
     try:
-        from roam.commands.cmd_vibe_check import (
-            _detect_dead_exports,
-            _detect_hallucinated_imports,
-            _severity_label,
-        )
+        from roam.quality.ai_rot import compute_ai_rot_score
     except ImportError:
         return None
 
     try:
-        p1_found, p1_total = _detect_dead_exports(conn)
-        p5_found, p5_total, _ = _detect_hallucinated_imports(conn)
+        result = compute_ai_rot_score(conn)
     except Exception:
         return None
 
-    # Simple approximation of the full score using only DB patterns
-    def _rate(found, total):
-        return round(found / max(total, 1) * 100, 1)
-
-    rate_dead = _rate(p1_found, p1_total)
-    rate_halluc = _rate(p5_found, p5_total)
-
-    # Weighted average (simplified from full 8-pattern score)
-    approx_score = min(100, int(round((rate_dead * 15 + rate_halluc * 15) / 30)))
-    severity = _severity_label(approx_score)
-    total_issues = p1_found + p5_found
-
-    categories = []
-    if p1_found > 0:
-        categories.append({"name": "Dead exports", "count": p1_found})
-    if p5_found > 0:
-        categories.append({"name": "Hallucinated imports", "count": p5_found})
+    # Build the categories list dashboard displayed previously, now
+    # populated from the full 8-pattern breakdown rather than the
+    # 2-pattern approximation. Keep the same shape so JSON consumers
+    # don't break.
+    categories: list[dict] = []
+    for key, pdata in result.patterns.items():
+        if pdata["found"] > 0:
+            categories.append({"name": pdata["label"], "count": pdata["found"]})
+    # Sort highest-count first; cap to top 5 to keep dashboard compact.
+    categories.sort(key=lambda c: c["count"], reverse=True)
+    categories = categories[:5]
 
     return {
-        "score": approx_score,
-        "severity": severity,
-        "total_issues": total_issues,
+        "score": result.score,
+        "severity": result.severity,
+        "total_issues": result.total_issues,
         "categories": categories,
-        "approximate": True,
+        # ``approximate`` was true under the old 2-pattern computation.
+        # Now we delegate to the canonical detector so it's exact.
+        "approximate": False,
+        # Pattern 3 label fix — every envelope reporting an AI rot
+        # number carries the definition string so downstream consumers
+        # confirm both commands agree on the same metric.
+        "ai_rot_definition": result.definition,
     }
+
+
+# Back-compat alias so any external caller / test that imported the old
+# name keeps working. Same behaviour as ``_vibe_check_canonical``.
+_vibe_check_fast = _vibe_check_canonical
 
 
 def _health_label(score):
@@ -224,10 +235,113 @@ def _health_label(score):
 
 
 # ---------------------------------------------------------------------------
+# Unique-signal discovery hints (LAW 11 — server-side hints teaching better
+# tools).  Several commands produce signal not available anywhere else; agents
+# never discover them by name.  Surface them here as imperative pointers
+# rather than replicating their full output (which would blow the response
+# budget).  See ``internal/dogfood/SYNTHESIS-2026-05-12.md`` section "NEW in v3".
+# ---------------------------------------------------------------------------
+
+
+def _unique_signal_hints() -> dict:
+    """Map unique-signal metric name -> imperative roam command that exposes it.
+
+    Each entry is copy-paste-executable (CONSTRAINT 12) so an agent that
+    skims only the verdict / discoverable_via block has a literal command
+    to run for the underlying detail.
+    """
+    return {
+        "danger_score": "roam metrics-push --dry-run",
+        "algo_anti_patterns": "roam algo",
+        "ai_generated_percentage": "roam ai-ratio",
+        "ai_readiness_score": "roam ai-readiness",
+        "ai_rot_score": "roam vibe-check",
+        "module_cohesion_pct": "roam module <module>",
+        "health_30d_forecast": "roam forecast",
+    }
+
+
+def _top_danger_files(conn, limit: int = 5) -> list[dict]:
+    """Cheap top-N approximation of the ``hotspots --danger`` ranking.
+
+    Uses the same DB columns the full danger-zone computation reads
+    (``file_stats`` + max ``graph_metrics.in_degree`` per file) but
+    skips the p75 thresholding — we just rank by churn × complexity ×
+    max_fan_in for the headline.  Filters to source files and excludes
+    tests.  Returns ``[]`` on any DB error so dashboard never crashes
+    on a partial / corrupt index.
+
+    Single SQL query, ~ms-scale even on roam-sized repos.  Safe to call
+    inline from ``roam dashboard``.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT f.path,
+                   COALESCE(fs.total_churn, 0) AS churn,
+                   COALESCE(fs.complexity, 0)  AS complexity,
+                   (SELECT COALESCE(MAX(gm.in_degree), 0)
+                      FROM symbols s
+                      JOIN graph_metrics gm ON gm.symbol_id = s.id
+                     WHERE s.file_id = f.id) AS max_fan_in
+              FROM files f
+              LEFT JOIN file_stats fs ON fs.file_id = f.id
+             WHERE COALESCE(f.file_role, 'source') = 'source'
+               AND COALESCE(fs.total_churn, 0)  > 0
+               AND COALESCE(fs.complexity, 0)   > 0
+            """
+        ).fetchall()
+    except Exception:
+        return []
+
+    out: list[dict] = []
+    for r in rows:
+        churn = r["churn"] or 0
+        complexity = r["complexity"] or 0.0
+        fan_in = r["max_fan_in"] or 0
+        if fan_in <= 0:
+            continue
+        # Same shape as `roam metrics-push --dry-run` hotspots block:
+        # raw churn × complexity × fan_in (LAW 4: concrete nouns, not
+        # normalized scores).  Agents can still rank by this number.
+        score = churn * complexity * fan_in
+        out.append(
+            {
+                "path": r["path"],
+                "danger_score": round(score, 1),
+                "churn": churn,
+                "complexity": round(complexity, 1),
+                "max_fan_in": fan_in,
+            }
+        )
+
+    out.sort(key=lambda d: d["danger_score"], reverse=True)
+    return out[:limit]
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="dashboard",
+    category="exploration",
+    summary="Unified codebase status: health, hotspots, debt, bus factor, AI rot.",
+    inputs=["repo_path"],
+    outputs=["overview", "health", "hotspots", "verdict"],
+    examples=["roam dashboard"],
+    tags=["overview", "health"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command("dashboard")
 @click.pass_context
 def dashboard(ctx):
@@ -256,8 +370,18 @@ def dashboard(ctx):
         # -- Risk areas --
         risks = _risk_areas(conn)
 
-        # -- Vibe-check (fast, DB-only) --
-        vibe = _vibe_check_fast(conn)
+        # -- Vibe-check (canonical 8-pattern algorithm via roam.quality.ai_rot) --
+        # Pattern 3 reconciliation: this used to run a 2-pattern
+        # approximation that disagreed with `roam vibe-check`. Now
+        # delegates to the same code path vibe-check uses.
+        vibe = _vibe_check_canonical(conn)
+
+        # -- Unique-signal discovery (LAW 11: server-side hints) --
+        # `discoverable_via` is the canonical block; `danger_score_top_5`
+        # is the one inline-cheap headline pulled from the same DB
+        # columns the full `metrics-push` / `hotspots --danger` chain reads.
+        discoverable_via = _unique_signal_hints()
+        danger_top = _top_danger_files(conn, limit=5)
 
         # -- Build verdict --
         hs = health["health_score"]
@@ -269,20 +393,59 @@ def dashboard(ctx):
 
         # -- JSON output --
         if json_mode:
+            unique_signals = {
+                # Concrete numeric headline that callers can act on; the
+                # full per-file list lives behind `roam metrics-push --dry-run`
+                # (linked via discoverable_via).  Empty list is a valid
+                # signal (no danger-zone files) — never crash on it.
+                "danger_score_top_5": danger_top,
+                # Server-side teaching block: tells agents *which command*
+                # produces each metric they'd otherwise have to guess at.
+                "discoverable_via": discoverable_via,
+            }
+            # Pattern 3 reconciliation (W16.3): expose the AI rot score
+            # at a top-level path AND attach the canonical definition
+            # label. Old consumers continue reading ``vibe_check.score``;
+            # new consumers can rely on ``summary.ai_rot_score`` plus
+            # ``summary.ai_rot_definition`` to confirm they're seeing
+            # the canonical 8-pattern number.
+            ai_rot_score_top = vibe["score"] if vibe is not None else None
+            ai_rot_definition_top = (
+                vibe.get("ai_rot_definition") if vibe is not None else None
+            )
+
+            summary_block = {
+                "verdict": verdict,
+                "health_score": hs,
+                "files": overview["files"],
+                "symbols": overview["symbols"],
+                "edges": overview["edges"],
+                "danger_zone_count": len(danger_top),
+            }
+            if ai_rot_score_top is not None:
+                summary_block["ai_rot_score"] = ai_rot_score_top
+            if ai_rot_definition_top is not None:
+                summary_block["ai_rot_definition"] = ai_rot_definition_top
+
+            # W17.2 / Pattern 3c: name the axis the health label measures
+            # so consumers never confuse it with vibe-check's rot-axis
+            # severity (which also uses "HEALTHY" but on a different scale).
             envelope = json_envelope(
                 "dashboard",
                 budget=budget,
-                summary={
-                    "verdict": verdict,
-                    "health_score": hs,
-                    "files": overview["files"],
-                    "symbols": overview["symbols"],
-                    "edges": overview["edges"],
-                },
+                summary=summary_block,
                 overview=overview,
                 health={
                     "score": hs,
                     "label": h_label,
+                    "label_axis": "project_health_score",
+                    "label_axis_definition": (
+                        "Project-health label derived from composite health "
+                        "score (0-100, higher = healthier). Bands: HEALTHY "
+                        ">=80, FAIR >=60, NEEDS ATTENTION >=40, UNHEALTHY <40. "
+                        "NOT the same axis as vibe-check's severity label "
+                        "(rot-axis, 0-100 lower = healthier)."
+                    ),
                     "tangle_ratio": health.get("tangle_ratio", 0),
                     "cycles": health.get("cycles", 0),
                     "god_components": health.get("god_components", 0),
@@ -302,6 +465,20 @@ def dashboard(ctx):
                 ],
                 risks=risks,
                 vibe_check=vibe,
+                unique_signals=unique_signals,
+                # `next_steps` is consumed by the formatter's
+                # ``_derive_agent_contract`` and surfaces as
+                # ``agent_contract.next_commands`` — copy-paste-executable
+                # roam invocations agents on tight context can follow
+                # without re-reading the envelope.  Order matters: most
+                # broadly-useful unique signals first.
+                next_steps=[
+                    "roam vibe-check",
+                    "roam ai-readiness",
+                    "roam ai-ratio",
+                    "roam algo",
+                    "roam forecast",
+                ],
             )
             click.echo(to_json(envelope))
             return
@@ -367,4 +544,26 @@ def dashboard(ctx):
             click.echo(f"  Top: {cats_str}")
             click.echo()
 
-        click.echo("  Run `roam health`, `roam hotspots`, `roam vibe-check` for details.")
+        # === Unique signals (discovery hints, LAW 11) ===
+        # Several commands produce signal NOT available anywhere else; surface
+        # the headline + the command name so agents discover them without
+        # scraping prose.  Compact: one line each, only show non-zero.
+        if danger_top:
+            top = danger_top[0]
+            click.echo("  === Unique signals ===")
+            click.echo(
+                f"  Top danger-zone file: {top['path']} "
+                f"(score={top['danger_score']}) — run `roam metrics-push --dry-run` for full list"
+            )
+            click.echo()
+
+        click.echo(
+            "  Run `roam health`, `roam hotspots`, `roam vibe-check` for details."
+        )
+        click.echo(
+            "  Discover more: `roam algo` (anti-patterns), `roam ai-readiness` (agent-readiness),"
+        )
+        click.echo(
+            "    `roam ai-ratio` (AI-generated %), `roam forecast` (30d health projection),"
+        )
+        click.echo("    `roam module <dir>` (cohesion %).")

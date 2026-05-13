@@ -11,6 +11,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root
 from roam.output.formatter import json_envelope, to_json
@@ -49,6 +50,20 @@ def _hooks_dir(root: Path) -> Path:
     return root / ".git" / "hooks"
 
 
+@roam_capability(
+    name="pre-commit",
+    category="getting-started",
+    summary="Install or preview a roam-critique pre-commit git hook",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command(name="pre-commit")
 @click.option("--install", is_flag=True, help="Write the hook into .git/hooks/pre-commit (idempotent).")
 @click.option("--print", "print_only", is_flag=True, help="Print the hook script to stdout instead of installing.")

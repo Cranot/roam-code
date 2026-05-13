@@ -18,6 +18,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 EXIT_GATE_FAILURE = 5
@@ -255,6 +256,20 @@ def _print_explain_block() -> None:
     click.echo("Severities: BLOCK (gate failure) | WARN | INFO. Default: WARN.")
 
 
+@roam_capability(
+    name="rules-validate",
+    category="workflow",
+    summary="Lint a `.roam/rules.yml` file before shipping it to your team",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command(name="rules-validate")
 @click.argument("rules_path", type=click.Path(), default=".roam/rules.yml")
 @click.option(

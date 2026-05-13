@@ -180,8 +180,8 @@ class TestSfxmlExtractor:
 
         The SfxmlExtractor derives the kind from the file extension segment
         (e.g. 'object' from 'Invoice__c.object-meta.xml') using _TAG_TO_KIND.
-        Since the map key is 'customobject' not 'object', the kind defaults
-        to 'metadata' for plain .object-meta.xml files.
+        Plain .object-meta.xml files contain a CustomObject root and map to
+        the 'object' kind.
         """
         source = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -201,8 +201,7 @@ class TestSfxmlExtractor:
         assert len(symbols) >= 1, f"Expected at least 1 symbol, got {len(symbols)}"
         obj_sym = symbols[0]
         assert obj_sym["name"] == "Invoice__c"
-        # The kind is derived from _TAG_TO_KIND; 'object' maps to 'metadata' (default)
-        assert obj_sym["kind"] == "metadata"
+        assert obj_sym["kind"] == "object"
         assert obj_sym["is_exported"] is True
         assert "object" in obj_sym["qualified_name"]
 

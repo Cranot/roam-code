@@ -152,10 +152,10 @@ class TestAlreadySupportedCommands:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "hotspots"
-        # hotspots may use summary_envelope in non-detail mode, so we only
+        # hotspots may use strip_list_payloads in non-detail mode, so we only
         # check that if truncated is set, it's not from budget truncation
         if data["summary"].get("truncated"):
-            # If truncated, it should be detail_available (from summary_envelope)
+            # If truncated, it should be detail_available (from strip_list_payloads)
             # and NOT from budget truncation (which would set budget_tokens)
             assert "budget_tokens" not in data["summary"]
 
@@ -213,7 +213,7 @@ class TestDepsBudget:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "deps"
-        # deps may use summary_envelope in non-detail mode; if truncated is present
+        # deps may use strip_list_payloads in non-detail mode; if truncated is present
         # it's from detail-mode, not from budget (which adds budget_tokens)
         if data["summary"].get("truncated"):
             assert "budget_tokens" not in data["summary"]
@@ -268,7 +268,7 @@ class TestDeadBudget:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "dead"
-        # dead may use summary_envelope in non-detail mode; budget_tokens only
+        # dead may use strip_list_payloads in non-detail mode; budget_tokens only
         # appears when budget truncation fires
         if data["summary"].get("truncated"):
             assert "budget_tokens" not in data["summary"]
@@ -297,7 +297,7 @@ class TestClustersBudget:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "clusters"
-        # clusters uses summary_envelope in non-detail mode; if truncated is set
+        # clusters uses strip_list_payloads in non-detail mode; if truncated is set
         # it's from detail-mode, not from budget (which adds budget_tokens)
         if data["summary"].get("truncated"):
             assert "budget_tokens" not in data["summary"]
@@ -326,7 +326,7 @@ class TestLayersBudget:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "layers"
-        # layers uses summary_envelope in non-detail mode; if truncated is set
+        # layers uses strip_list_payloads in non-detail mode; if truncated is set
         # it's from detail-mode, not from budget (which adds budget_tokens)
         if data["summary"].get("truncated"):
             assert "budget_tokens" not in data["summary"]
@@ -572,7 +572,7 @@ class TestBudgetZeroMeansNoLimit:
         result = _invoke_with_budget(runner, ["dead"], budget=0, cwd=basic_project)
         assert result.exit_code == 0
         data = json.loads(result.output)
-        # dead uses summary_envelope which may set truncated=True; budget_tokens
+        # dead uses strip_list_payloads which may set truncated=True; budget_tokens
         # only appears when budget truncation fires
         if data["summary"].get("truncated"):
             assert "budget_tokens" not in data["summary"]

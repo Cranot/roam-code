@@ -34,6 +34,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.commands.audit_trail_helpers import load_records as _load_records
 from roam.output.formatter import json_envelope, to_json
@@ -174,6 +175,20 @@ def _checks_to_sarif(
     )
 
 
+@roam_capability(
+    name="audit-trail-conformance-check",
+    category="workflow",
+    summary="Score the audit trail against an EU AI Act Article 12 checklist",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "compliance"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=False,
+    requires_index=True,
+)
 @click.command(name="audit-trail-conformance-check")
 @click.option(
     "--input",
@@ -230,6 +245,91 @@ def audit_trail_conformance_check(
     path = Path(input_path) if input_path else DEFAULT_AUDIT_TRAIL_PATH
     records = _load_records(path)
 
+    # Fix E (Pattern 2: silent fallbacks) — when no audit trail exists yet,
+    # do NOT compute a 0/6 score and report NON-conformant. That misleads
+    # consumers into thinking the trail was scanned and failed. Instead emit
+    # an explicit "no audit trail to check" state so callers know the
+    # underlying check did not run. Adopts the two-state framing from
+    # article-12-check (directory exists vs trail populated).
+    trail_absent = not path.exists() or not records
+    if trail_absent:
+        no_trail_reason = (
+            f"audit trail file does not exist at {path}"
+            if not path.exists()
+            else f"audit trail at {path} contains zero records"
+        )
+        no_trail_summary = {
+            "verdict": "no audit trail to check",
+            "state": "no_trail",
+            "partial_success": True,
+            "score": None,
+            "chain_compliance_score": None,
+            "compliance_kind": "audit_trail_chain_integrity",
+            "compliance_kind_definition": (
+                "Chain-of-custody score for an existing roam audit trail: "
+                "6 per-record integrity checks. NOT the same as "
+                "article-12-check (repo-level readiness)."
+            ),
+            "checks_passed": 0,
+            "checks_total": 6,  # 6 Article 12 checks, none ran in this state
+            "total_records": 0,
+            "audit_trail_path": str(path),
+            "retention_days_required": retention_days,
+            "schema_reference": "EU AI Act Regulation 2024/1689, Article 12",
+            "disclaimer": "Triage signal only — not legal advice.",
+            "reason": no_trail_reason,
+            "fix": "Run `roam audit-trail-export` to bootstrap a trail, or use `roam pr-analyze --audit-trail` to emit the first record.",
+        }
+        # Build the same 6 checks but uniformly marked "not_run" so consumers
+        # that iterate checks[] see the state explicitly rather than getting
+        # silent FAIL=0 fields.
+        no_trail_checks = [
+            {"id": cid, "passed": False, "state": "not_run", "message": "no audit trail to check"}
+            for cid in (
+                "chain_integrity",
+                "timestamp_completeness",
+                "actor_attribution",
+                "reproducibility_metadata",
+                "verdict_and_rationale",
+                "retention",
+            )
+        ]
+
+        if sarif:
+            from roam.output.sarif import write_sarif
+
+            sarif_doc = _checks_to_sarif(no_trail_checks, path, 0)
+            sarif_text = write_sarif(sarif_doc, sarif_output)
+            if not sarif_output:
+                click.echo(sarif_text)
+            elif not json_mode:
+                click.echo(f"VERDICT: {no_trail_summary['verdict']} — SARIF written to {sarif_output}")
+        elif json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "audit-trail-conformance-check",
+                        summary=no_trail_summary,
+                        checks=no_trail_checks,
+                        disclaimer="Triage signal only — not legal advice. Compliance depends on full system context.",
+                        schema_reference="EU AI Act Regulation 2024/1689, Article 12",
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {no_trail_summary['verdict']}")
+            click.echo(f"  path:    {path}")
+            click.echo(f"  records: 0")
+            click.echo(f"  state:   no_trail ({no_trail_reason})")
+            click.echo(f"  fix:     {no_trail_summary['fix']}")
+            click.echo()
+            click.echo("Reference: EU AI Act Regulation 2024/1689, Article 12.")
+            click.echo("Disclaimer: triage signal only — not legal advice.")
+
+        if gate:
+            sys.exit(EXIT_GATE_FAILURE)
+        return
+
     chain_ok, chain_msg = _check_chain_integrity(path)
     ts_ok, ts_msg = _check_timestamps(records) if records else (False, "no records loaded")
     actor_ok, actor_msg = _check_actors(records) if records else (False, "no records loaded")
@@ -257,9 +357,26 @@ def audit_trail_conformance_check(
     else:
         verdict = f"NON-conformant ({passed}/{total} checks, score {score}/100)"
 
+    # W17.2 / Pattern 3c: the audit-trail conformance score and the
+    # article-12-check readiness score are GENUINELY different metrics
+    # (one is ledger-integrity over recorded events; the other is
+    # repo-level readiness artifacts). Both publish a
+    # `compliance_kind` + `compliance_kind_definition` so consumers
+    # never confuse them. The legacy `score` field stays for
+    # back-compat; new code should read `chain_compliance_score`.
     summary = {
         "verdict": verdict,
         "score": score,
+        "chain_compliance_score": score,
+        "compliance_kind": "audit_trail_chain_integrity",
+        "compliance_kind_definition": (
+            "Chain-of-custody score for an existing roam audit trail: "
+            "6 per-record integrity checks (chain hash, timestamps, "
+            "actor attribution, reproducibility metadata, verdict + "
+            "rationale, retention). NOT the same as article-12-check, "
+            "which measures repo-level readiness artifacts. "
+            "Reference: EU AI Act Article 12 (event logging)."
+        ),
         "checks_passed": passed,
         "checks_total": total,
         "total_records": len(records),

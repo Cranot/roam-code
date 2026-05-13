@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.db.connection import (
     _load_project_config,
     db_exists,
@@ -523,7 +524,18 @@ def _show_config(root: Path, current: dict, json_mode: bool) -> None:
             "exclude_builtin": builtin_patterns,
             "exclude_all": all_patterns,
         }
-        _emit_config_json({"verdict": "ok"}, **payload)
+        # LAW 4 (W17.3): the bare ``"ok"`` verdict is abstract — anchor
+        # on the literal config file + counts so an agent reading only
+        # the contract knows what was inspected.
+        config_path = root / ".roam" / "config.json"
+        verdict = (
+            f"{len(current)} config key(s) in {config_path}, "
+            f"{len(all_patterns)} active exclude pattern(s)"
+            if current
+            else f"no {config_path} (using defaults), "
+            f"{len(all_patterns)} active exclude pattern(s)"
+        )
+        _emit_config_json({"verdict": verdict, "config_keys": len(current)}, **payload)
         return
 
     if not current and not roamignore_patterns:
@@ -559,6 +571,20 @@ def _no_mutating_options(
     )
 
 
+@roam_capability(
+    name="config",
+    category="getting-started",
+    summary="Manage per-project roam configuration (.roam/config.json)",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command("config")
 @click.option(
     "--set-db-dir",

@@ -3,14 +3,18 @@
 Combines blast radius, affected tests, complexity, coupling, conventions,
 and fitness violations into a single call -- reducing round-trips for AI
 agents from 5-6 calls to 1.
+
+Naming-conventions detection delegates to the canonical helper in
+``roam.commands.conventions_helper`` so preflight, describe, understand,
+minimap, and the standalone conventions command all agree on what
+violates a convention.
 """
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import (
     get_changed_files,
     resolve_changed_to_db,
@@ -20,11 +24,9 @@ from roam.commands.cmd_affected_tests import (
     _looks_like_file,
     _resolve_file_symbols,
 )
-from roam.commands.cmd_conventions import (
-    _group_for_kind,
-    classify_case,
-)
+from roam.commands.cmd_conventions import classify_case
 from roam.commands.cmd_fitness import _CHECKERS, _load_rules
+from roam.commands.conventions_helper import compute_conventions
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import find_project_root, open_db
@@ -33,6 +35,7 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
+from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
 # Risk-level helpers
@@ -409,38 +412,45 @@ def _check_coupling(conn, file_ids, file_paths):
 # ---------------------------------------------------------------------------
 
 
-def _check_conventions(conn, sym_ids):
-    """Check if target symbols follow codebase naming conventions."""
+def _check_conventions(conn, sym_ids, min_majority_pct: float = 70.0):
+    """Check if target symbols follow codebase naming conventions.
+
+    Uses the canonical detector in ``roam.commands.conventions_helper``
+    so this gate agrees with what ``roam describe`` / ``roam understand``
+    / ``roam minimap`` / ``roam conventions`` say about the same codebase.
+
+    Pattern 4 of the dogfood corpus called out that preflight produced
+    "45 violations, many false positives" because it flagged any symbol
+    whose case differed from the codebase-wide mode for its kind-group —
+    even on kinds where no convention had a real majority (51/49 splits
+    treated as "violations"). The fix: only flag a symbol when its
+    *kind* has a >70% majority convention AND the symbol violates that
+    convention. The threshold is the ``min_majority_pct`` argument.
+    """
     if not sym_ids:
         return {
             "violations": [],
             "violation_count": 0,
             "severity": "OK",
+            "majority_threshold_pct": min_majority_pct,
+            "kinds_with_majority": 0,
         }
 
-    # First, determine dominant naming style per kind-group from whole codebase
-    all_symbols = conn.execute("""
-        SELECT s.name, s.kind
-        FROM symbols s
-        WHERE s.kind IN ('function', 'method', 'class', 'interface',
-                         'struct', 'trait', 'enum', 'variable',
-                         'constant', 'property', 'field', 'type_alias')
-    """).fetchall()
+    # Canonical detector — single source of truth across all roam
+    # commands. Applies the default exclusion list (.github, docs, etc.)
+    # so a YAML constant in a workflow file doesn't get treated as a
+    # naming violation.
+    result = compute_conventions(conn, min_majority_pct=min_majority_pct)
+    by_kind = result["by_kind"]
 
-    group_cases = defaultdict(Counter)
-    for sym in all_symbols:
-        group = _group_for_kind(sym["kind"])
-        style = classify_case(sym["name"])
-        if style:
-            group_cases[group][style] += 1
+    # Build a {kind -> expected_style} map, but ONLY for kinds whose
+    # majority crosses the threshold. Kinds without a strong majority
+    # (e.g. 55% methods snake_case) don't contribute violations — there
+    # is no real convention to violate.
+    expected_by_kind: dict[str, str] = {
+        kind: info["style"] for kind, info in by_kind.items() if info["has_majority"]
+    }
 
-    # Determine dominant style per group
-    dominant = {}
-    for group, counter in group_cases.items():
-        if counter:
-            dominant[group] = counter.most_common(1)[0][0]
-
-    # Now check target symbols
     ph = ",".join("?" for _ in sym_ids)
     target_syms = conn.execute(
         f"""SELECT s.name, s.kind, s.line_start, f.path as file_path
@@ -452,20 +462,24 @@ def _check_conventions(conn, sym_ids):
 
     violations = []
     for sym in target_syms:
-        group = _group_for_kind(sym["kind"])
+        kind = sym["kind"]
+        expected = expected_by_kind.get(kind)
+        if not expected:
+            continue
         style = classify_case(sym["name"])
-        expected = dominant.get(group)
-        if style and expected and style != expected:
-            violations.append(
-                {
-                    "name": sym["name"],
-                    "kind": sym["kind"],
-                    "actual_style": style,
-                    "expected_style": expected,
-                    "file": sym["file_path"],
-                    "line": sym["line_start"],
-                }
-            )
+        if not style or style == expected:
+            continue
+        violations.append(
+            {
+                "name": sym["name"],
+                "kind": kind,
+                "actual_style": style,
+                "expected_style": expected,
+                "majority_pct": by_kind[kind]["pct"],
+                "file": sym["file_path"],
+                "line": sym["line_start"],
+            }
+        )
 
     severity = _convention_severity(len(violations))
 
@@ -473,6 +487,8 @@ def _check_conventions(conn, sym_ids):
         "violations": violations,
         "violation_count": len(violations),
         "severity": severity,
+        "majority_threshold_pct": min_majority_pct,
+        "kinds_with_majority": len(expected_by_kind),
     }
 
 
@@ -634,6 +650,27 @@ def _resolve_targets(conn, target, staged, root):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    category="review",
+    summary="Run a pre-change safety checklist: blast, tests, complexity, coupling, conventions.",
+    inputs=["target"],
+    outputs=["checklist", "verdict"],
+    examples=[
+        "roam preflight handleSave",
+        "roam preflight --staged",
+        "roam preflight src/auth.py",
+    ],
+    tags=["review", "gate", "agent"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=True,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command("preflight")
 @click.argument("target", required=False, default=None)
 @click.option("--staged", is_flag=True, help="Check staged changes")
@@ -683,20 +720,19 @@ def preflight(ctx, target, staged):
             # so the verdict / next-step hint show the bare query text.
             display_label = label.removesuffix(" (not found)")
             verdict = f"target not found — `{display_label}` is not in the index"
+            not_found_envelope = json_envelope(
+                "preflight",
+                summary={
+                    "verdict": verdict,
+                    "target": display_label,
+                    "risk_level": "UNKNOWN",
+                    "partial_success": True,
+                    "error": "No symbols found",
+                },
+            )
+            auto_log(not_found_envelope, action="preflight", target=display_label, repo_root=root)
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "preflight",
-                            summary={
-                                "verdict": verdict,
-                                "target": display_label,
-                                "risk_level": "UNKNOWN",
-                                "error": "No symbols found",
-                            },
-                        )
-                    )
-                )
+                click.echo(to_json(not_found_envelope))
             else:
                 click.echo(f"VERDICT: {verdict}")
                 click.echo()
@@ -751,62 +787,71 @@ def preflight(ctx, target, staged):
             if detail.get("status") == "FAIL"
         ]
 
+        # Build the envelope once — used for JSON output and auto-log.
+        preflight_envelope = json_envelope(
+            "preflight",
+            summary={
+                "verdict": verdict,
+                "target": label,
+                "risk_level": risk,
+                "symbols_checked": len(sym_ids),
+                "files_checked": len(file_paths),
+                "fitness_violations": fitness_violations_list,
+            },
+            blast_radius={
+                "affected_symbols": blast["affected_symbols"],
+                "affected_files": blast["affected_files"],
+                "affected_file_list": blast["affected_file_list"],
+                "severity": blast["severity"],
+            },
+            tests={
+                "direct": tests["direct"],
+                "transitive": tests["transitive"],
+                "colocated": tests["colocated"],
+                "total": tests["total"],
+                "test_files": tests["test_files"],
+                "pytest_command": tests["pytest_command"],
+                "severity": tests["severity"],
+            },
+            complexity={
+                "max_cognitive_complexity": compl["max_cognitive_complexity"],
+                "max_nesting_depth": compl["max_nesting_depth"],
+                "high_complexity_symbols": compl["high_complexity_symbols"],
+                "severity": compl["severity"],
+            },
+            coupling={
+                "coupled_files": coupl["coupled_files"],
+                "missing_partners": coupl["missing_partners"],
+                "severity": coupl["severity"],
+            },
+            conventions={
+                "violation_count": convs["violation_count"],
+                "violations": convs["violations"],
+                "severity": convs["severity"],
+                "majority_threshold_pct": convs.get("majority_threshold_pct"),
+                "kinds_with_majority": convs.get("kinds_with_majority"),
+            },
+            fitness={
+                "rules_checked": fitns["rules_checked"],
+                "rules_failed": fitns["rules_failed"],
+                "total_violations": fitns["total_violations"],
+                "failed_rules": fitns["failed_rules"],
+                "rule_details": fitns["rule_details"],
+                "severity": fitns["severity"],
+            },
+        )
+
+        # Auto-log into the active run (silent no-op if no run is active).
+        # Strip the "(file:line)" suffix the resolver appends so the
+        # target on disk matches what the agent typed.
+        _auto_target = label or ""
+        if isinstance(_auto_target, str):
+            _auto_target = _auto_target.removesuffix(" (not found)").split(" (", 1)[0]
+        auto_log(preflight_envelope, action="preflight", target=_auto_target, repo_root=root)
+
         # JSON output
         if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "preflight",
-                        summary={
-                            "verdict": verdict,
-                            "target": label,
-                            "risk_level": risk,
-                            "symbols_checked": len(sym_ids),
-                            "files_checked": len(file_paths),
-                            "fitness_violations": fitness_violations_list,
-                        },
-                        blast_radius={
-                            "affected_symbols": blast["affected_symbols"],
-                            "affected_files": blast["affected_files"],
-                            "affected_file_list": blast["affected_file_list"],
-                            "severity": blast["severity"],
-                        },
-                        tests={
-                            "direct": tests["direct"],
-                            "transitive": tests["transitive"],
-                            "colocated": tests["colocated"],
-                            "total": tests["total"],
-                            "test_files": tests["test_files"],
-                            "pytest_command": tests["pytest_command"],
-                            "severity": tests["severity"],
-                        },
-                        complexity={
-                            "max_cognitive_complexity": compl["max_cognitive_complexity"],
-                            "max_nesting_depth": compl["max_nesting_depth"],
-                            "high_complexity_symbols": compl["high_complexity_symbols"],
-                            "severity": compl["severity"],
-                        },
-                        coupling={
-                            "coupled_files": coupl["coupled_files"],
-                            "missing_partners": coupl["missing_partners"],
-                            "severity": coupl["severity"],
-                        },
-                        conventions={
-                            "violation_count": convs["violation_count"],
-                            "violations": convs["violations"],
-                            "severity": convs["severity"],
-                        },
-                        fitness={
-                            "rules_checked": fitns["rules_checked"],
-                            "rules_failed": fitns["rules_failed"],
-                            "total_violations": fitns["total_violations"],
-                            "failed_rules": fitns["failed_rules"],
-                            "rule_details": fitns["rule_details"],
-                            "severity": fitns["severity"],
-                        },
-                    )
-                )
-            )
+            click.echo(to_json(preflight_envelope))
             return
 
         # Text output

@@ -1,7 +1,7 @@
 """roam cga — Code Graph Attestation (E.1 v12.0 scaffold).
 
 Emits and verifies an in-toto v1 Statement with predicate type
-``https://roam-code.dev/CodeGraph/v1`` over the indexed graph.
+``https://roam-code.com/spec/CodeGraph/v1`` over the indexed graph.
 
 v12.0 ships unsigned attestations only. v12.1 layers cosign keyless
 signing on top (the predicate body is signature-format-agnostic, so
@@ -32,17 +32,32 @@ from roam.attest.cga import (
     serialize_statement,
     verify_cga_statement,
 )
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="cga",
+    category="reports",
+    summary="Code Graph Attestation: sign-ready in-toto evidence over the index",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "compliance"),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=False,
+    requires_index=True,
+)
 @click.group()
 def cga():
     """Code Graph Attestation: sign-ready in-toto evidence over the index.
 
     Emits an in-toto v1 statement (predicate
-    ``roam-code.dev/CodeGraph/v1``) covering symbols, edges, taint
+    ``roam-code.com/spec/CodeGraph/v1``) covering symbols, edges, taint
     findings, and AIBOM material. Optionally cosign-signs the
     statement so auditors can verify the artifact later.
 
@@ -154,7 +169,7 @@ def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, k
     """Emit a Code Graph Attestation (in-toto v1, optionally cosign-signed).
 
     With ``--aibom`` the predicate type promotes to
-    ``roam-code.dev/CodeGraph-AIBOM/v1`` and the predicate gains an
+    ``roam-code.com/spec/CodeGraph-AIBOM/v1`` and the predicate gains an
     ``aibom`` block binding AI-authored commits to indexed symbols.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -212,8 +227,12 @@ def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, k
             written_to = "stdout"
         else:
             target = Path(output_path) if output_path else _default_output_path(project_root, statement)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(canonical + "\n", encoding="utf-8")
+            # Atomic write: attestations are cryptographically chained — a
+            # torn file mid-write breaks downstream signature verification
+            # (R28 substrate flagged this as ``unsafe_mutation``).
+            from roam.atomic_io import atomic_write_text
+
+            atomic_write_text(target, canonical + "\n")
             written_to = str(target)
             written_path = target
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
@@ -129,6 +130,20 @@ def _discover_invariants(conn, sym_id, sym_info):
     }
 
 
+@roam_capability(
+    name="invariants",
+    category="refactoring",
+    summary="Discover implicit contracts for symbols",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("invariants")
 @click.argument("target", required=False, default=None)
 @click.option("--public-api", is_flag=True, help="Analyze all public/exported symbols")

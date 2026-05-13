@@ -15,6 +15,7 @@ import click
 
 from roam.ask.classifier import classify
 from roam.ask.recipes import RECIPES, Recipe, by_name
+from roam.capability import roam_capability
 from roam.ask.runner import extract_symbol, fill_followups, run_recipe
 from roam.output.confidence import DEFAULT_CONFIDENCE_THRESHOLD, is_low_confidence
 from roam.output.formatter import json_envelope, to_json
@@ -195,6 +196,27 @@ def _emit_text_result(recipe: Recipe, results: list[dict], rendered_followups: l
             click.echo(f"  {item}")
 
 
+@roam_capability(
+    name="ask",
+    category="exploration",
+    summary="Collapse the command surface to one phrase via recipe routing.",
+    inputs=["query"],
+    outputs=["recipe", "results", "verdict"],
+    examples=[
+        "roam ask 'is it safe to delete UserSession'",
+        "roam ask --list",
+    ],
+    tags=["routing", "recipes"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.argument("query", nargs=-1)
 @click.option(

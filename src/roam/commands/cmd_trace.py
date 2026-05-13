@@ -4,11 +4,55 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
-_MAX_GRAPH_SYMBOLS = 5000
+# Exhaustive Yen's-algorithm pathfinding is O(K*V*(V+E)) and degrades sharply
+# above this threshold. Bounded BFS is always available; the exhaustive code
+# path is gated behind --exhaustive on graphs this size.
+_MAX_EXHAUSTIVE_GRAPH_SYMBOLS = 18000
+
+
+def _find_bounded_paths(G, source_id: int, target_id: int, *, max_hops: int, k: int) -> list[list[int]]:
+    """Find up to *k* simple paths from source to target with length <= max_hops.
+
+    Uses a bounded DFS (no full-graph traversal) so it scales to 18K+ symbol
+    graphs without hard-failing. Returns paths sorted shortest-first.
+
+    The DFS is bounded by ``max_hops`` edges (== ``max_hops + 1`` nodes) and
+    cuts off as soon as ``k`` paths have been collected.
+    """
+    if source_id not in G or target_id not in G:
+        return []
+    if source_id == target_id:
+        return [[source_id]]
+
+    found: list[list[int]] = []
+    # Iterative DFS to avoid Python recursion limits on long chains.
+    # Each stack entry is (current_node, path_so_far, visited_set).
+    stack: list = [(source_id, [source_id], {source_id})]
+    max_nodes = int(max_hops) + 1  # path length in nodes
+
+    while stack and len(found) < k:
+        node, path, visited = stack.pop()
+        if len(path) >= max_nodes:
+            continue
+        for succ in G.successors(node):
+            if succ in visited:
+                continue
+            new_path = path + [succ]
+            if succ == target_id:
+                found.append(new_path)
+                if len(found) >= k:
+                    break
+                continue
+            if len(new_path) < max_nodes:
+                stack.append((succ, new_path, visited | {succ}))
+
+    found.sort(key=len)
+    return found[:k]
 
 
 def _classify_coupling(hops):
@@ -113,23 +157,60 @@ def _build_hops(path_ids, annotated, G):
     return hops
 
 
+@roam_capability(
+    name="trace",
+    category="exploration",
+    summary="Show shortest path between two symbols",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "debug"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("source")
 @click.argument("target")
 @click.option("-k", "k_paths", default=3, help="Number of alternative paths to find")
+@click.option(
+    "--max-hops",
+    type=int,
+    default=6,
+    show_default=True,
+    help=(
+        "cap path search at N edges. Conservative default keeps the search "
+        "bounded on production-scale graphs (18K+ symbols). Increase for "
+        "longer chains; combine with --exhaustive for Yen's k-shortest."
+    ),
+)
+@click.option(
+    "--exhaustive",
+    is_flag=True,
+    default=False,
+    help=(
+        "use Yen's k-shortest algorithm over the full graph. Slow on "
+        "graphs > 18K symbols; default is a bounded BFS that respects "
+        "--max-hops."
+    ),
+)
 @click.pass_context
-def trace(ctx, source, target, k_paths):
+def trace(ctx, source, target, k_paths, max_hops, exhaustive):
     """Show shortest path between two symbols.
 
     Unlike ``impact`` (which shows the blast radius of one symbol), this
     command finds the shortest dependency path connecting two specific
-    symbols.
+    symbols. The default search is a bounded BFS capped at ``--max-hops``
+    edges; pass ``--exhaustive`` for Yen's k-shortest over the full graph.
 
     \b
     Examples:
       roam trace handle_login validate_token
       roam trace UserService.create AuditLog.write -k 3
-      roam --json trace login logout
+      roam trace login logout --max-hops 10
+      roam --json trace login logout --exhaustive
 
     See also ``impact`` (blast radius from one symbol), ``uses``
     (direct consumers), and ``why`` (architectural role of a symbol).
@@ -142,19 +223,30 @@ def trace(ctx, source, target, k_paths):
 
     with open_db(readonly=True) as conn:
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-        if sym_count > _MAX_GRAPH_SYMBOLS:
+        if exhaustive and sym_count > _MAX_EXHAUSTIVE_GRAPH_SYMBOLS:
             msg = (
-                f"Graph too large ({sym_count} symbols) for trace analysis. "
-                "Use a scoped index or reduce the codebase size."
+                f"graph too large for exhaustive search ({sym_count} symbols); "
+                f"drop --exhaustive to use bounded BFS within --max-hops={max_hops}"
             )
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "trace",
-                            summary={"verdict": msg, "symbol_count": sym_count},
+                            summary={
+                                "verdict": msg,
+                                "symbol_count": sym_count,
+                                "state": "graph_too_large_for_exhaustive",
+                                "partial_success": True,
+                                "hops": 0,
+                                "paths": 0,
+                            },
                             source=source,
                             target=target,
+                            paths=[],
+                            path=None,
+                            state="graph_too_large_for_exhaustive",
+                            partial_success=True,
                         )
                     )
                 )
@@ -230,7 +322,10 @@ def trace(ctx, source, target, k_paths):
                     if fe:
                         all_paths.append([sid, tid])
 
-                paths = find_k_paths(G, sid, tid, k=k_paths)
+                if exhaustive:
+                    paths = find_k_paths(G, sid, tid, k=k_paths)
+                else:
+                    paths = _find_bounded_paths(G, sid, tid, max_hops=max_hops, k=k_paths)
                 for p in paths:
                     all_paths.append(p)
 
@@ -246,25 +341,58 @@ def trace(ctx, source, target, k_paths):
         unique_paths = unique_paths[:k_paths]
 
         if not unique_paths:
-            no_path_verdict = f"no path found between {source} and {target}"
+            # Distinguish "bounded search exhausted hop budget" from "definitive
+            # no path under exhaustive search". The bounded case is a partial
+            # result (a longer path may exist); the exhaustive case is final.
+            if exhaustive:
+                no_path_state = "no_path"
+                no_path_verdict = (
+                    f"no path found between {source} and {target} (exhaustive)"
+                )
+                partial = False
+            else:
+                no_path_state = "no_path_within_hops"
+                no_path_verdict = (
+                    f"no path between {source} and {target} within --max-hops={max_hops}; "
+                    f"increase --max-hops or pass --exhaustive"
+                )
+                partial = True
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "trace",
-                            summary={"verdict": no_path_verdict, "hops": 0, "paths": 0},
+                            summary={
+                                "verdict": no_path_verdict,
+                                "hops": 0,
+                                "paths": 0,
+                                "state": no_path_state,
+                                "partial_success": partial,
+                                "max_hops": max_hops,
+                                "exhaustive": exhaustive,
+                            },
                             source=source,
                             target=target,
                             path=None,
                             paths=[],
                             coupling_summary="none — no dependency path exists",
+                            state=no_path_state,
+                            partial_success=partial,
                         )
                     )
                 )
             else:
                 click.echo(f"VERDICT: {no_path_verdict}\n")
                 click.echo(f"No dependency path between '{source}' and '{target}'.")
-                click.echo("These symbols are independent — changes to one cannot affect the other.")
+                if exhaustive:
+                    click.echo(
+                        "These symbols are independent — changes to one cannot affect the other."
+                    )
+                else:
+                    click.echo(
+                        f"Bounded search exhausted at --max-hops={max_hops}. "
+                        "Re-run with a larger --max-hops or pass --exhaustive."
+                    )
             return
 
         # Annotate all paths with hub detection and quality scoring
@@ -330,12 +458,16 @@ def trace(ctx, source, target, k_paths):
                             "hops": len(first["hops"]),
                             "paths": len(annotated_paths),
                             "coupling": coupling_summary,
+                            "state": "ok",
+                            "max_hops": max_hops,
+                            "exhaustive": exhaustive,
                         },
                         source=source,
                         target=target,
                         hops=len(first["hops"]),
                         path=first["hops"],
                         coupling_summary=coupling_summary,
+                        state="ok",
                         paths=[
                             {
                                 "hops": len(ap["hops"]),

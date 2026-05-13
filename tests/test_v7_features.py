@@ -325,7 +325,13 @@ class TestSARIF:
 
 class TestInit:
     def test_init_creates_files(self, tmp_path):
-        """roam init should create fitness.yaml and workflow files."""
+        """roam init creates fitness.yaml by default, and the workflow
+        only when ``--with-ci=github`` is passed.
+
+        Audit R1: writing CI config unsolicited on first init was the
+        single biggest trust-damage driver. The workflow is now an
+        explicit opt-in.
+        """
         proj = tmp_path / "initproj"
         proj.mkdir()
         (proj / "hello.py").write_text('def hello(): return "hi"\n')
@@ -335,22 +341,42 @@ class TestInit:
         assert rc == 0, f"init failed: {out}"
         assert "Roam initialized" in out or "fitness.yaml" in out
 
-        # Check files were created
+        # Always-created config.
         assert (proj / ".roam" / "fitness.yaml").exists()
+        # Default no longer drops a CI workflow into the user's repo.
+        assert not (proj / ".github" / "workflows" / "roam.yml").exists()
+
+        # Opt-in path writes the workflow.
+        out2, rc2 = roam("init", "--yes", "--with-ci=github", cwd=proj)
+        assert rc2 == 0, f"init --with-ci=github failed: {out2}"
         assert (proj / ".github" / "workflows" / "roam.yml").exists()
 
     def test_init_skips_existing(self, tmp_path):
-        """roam init should skip files that already exist."""
+        """roam init is idempotent — second run still exits 0 and
+        does not overwrite existing fitness.yaml.
+
+        Text mode no longer prints "skipped"/"already exist" since the
+        welcome banner is the same on both runs; JSON mode is the
+        canonical place to inspect the skipped list (see
+        ``test_init_cmd.TestInitSideEffects.test_second_init_skips_existing_files``).
+        """
         proj = tmp_path / "initproj2"
         proj.mkdir()
         (proj / "hello.py").write_text('def hello(): return "hi"\n')
         git_init(proj)
 
-        # Run init twice
+        # Run init twice — second invocation must be a no-op for
+        # already-present config files, not a re-write.
         roam("init", "--yes", cwd=proj)
+        fitness = proj / ".roam" / "fitness.yaml"
+        mtime_before = fitness.stat().st_mtime if fitness.exists() else 0
         out, rc = roam("init", "--yes", cwd=proj)
-        assert rc == 0
-        assert "already exist" in out or "skipped" in out.lower()
+        assert rc == 0, f"second init failed: {out}"
+        assert fitness.exists()
+        # The fitness file must not have been overwritten on the
+        # second run — that's the skip behaviour the JSON envelope
+        # reports as "skipped".
+        assert fitness.stat().st_mtime == mtime_before
 
     def test_init_json(self, tmp_path):
         """roam --json init should return structured output."""
@@ -638,11 +664,22 @@ class TestGateExpressions:
 
 class TestCategorizedHelp:
     def test_help_has_categories(self):
-        """roam --help should show categorized command groups."""
-        out, rc = roam("--help")
-        assert rc == 0
-        # Should show at least some categories
-        assert "Getting Started" in out or "Daily Workflow" in out or "Codebase Health" in out
+        """The `_CATEGORIES` registry should still organize commands into groups.
+
+        The rendered `roam --help` panel was redesigned (May 2026) to surface
+        the 5-verb starter list; the full categorized view is now consumed
+        machine-readable via `roam surface --json` (categories[]) rather
+        than emitted in help text. Verify the underlying registry instead.
+        """
+        from roam.cli import _CATEGORIES
+
+        # Should have at least the canonical category names
+        category_names = set(_CATEGORIES.keys())
+        assert (
+            "Getting Started" in category_names
+            or "Daily Workflow" in category_names
+            or "Codebase Health" in category_names
+        )
 
     def test_help_shows_run_command(self):
         """roam --help should tell users how to get per-command help."""
@@ -684,14 +721,22 @@ class TestElifComplexityFix:
         data = json.loads(out)
 
         # Find classify function
+        # R22 confidence triple shape — each symbol is now
+        # {"value": {...}, "confidence": ..., "reason": ...}.
         symbols = data.get("symbols", [])
         classify = None
         for s in symbols:
-            if s.get("name") == "classify":
-                classify = s
+            sym_val = s.get("value", s)  # R22 confidence triple shape
+            if sym_val.get("name") == "classify":
+                classify = sym_val
+                # R22 confidence triple shape — the wrapping entry must
+                # carry a valid confidence label.
+                assert s.get("confidence") in ("high", "medium", "low")
                 break
 
-        assert classify is not None, f"classify not found in: {[s.get('name') for s in symbols]}"
+        assert classify is not None, (
+            f"classify not found in: {[s.get('value', s).get('name') for s in symbols]}"
+        )
         cc = classify.get("cognitive_complexity", 0)
         # Should be 4 (if+elif+elif+else), not 10+ (with nesting penalties)
         assert cc <= 6, f"elif chain complexity too high ({cc}), nesting penalty not removed"
@@ -720,8 +765,9 @@ class TestElifComplexityFix:
         symbols = data.get("symbols", [])
         check_fn = None
         for s in symbols:
-            if s.get("name") == "check":
-                check_fn = s
+            sym_val = s.get("value", s)  # R22 confidence triple shape
+            if sym_val.get("name") == "check":
+                check_fn = sym_val
                 break
 
         assert check_fn is not None

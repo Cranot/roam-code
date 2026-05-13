@@ -13,6 +13,7 @@ import subprocess
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 _PREFIX_BUCKETS: list[tuple[re.Pattern[str], str]] = [
@@ -84,6 +85,20 @@ def _classify(subject: str) -> tuple[str, str]:
     return _FALLBACK_BUCKET, subject
 
 
+@roam_capability(
+    name="changelog",
+    category="getting-started",
+    summary="List commits since the last tag, optionally as a markdown draft",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option(
     "--since",

@@ -171,6 +171,17 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
 
 4. Add tests in `tests/`
 
+5. Refresh the command/MCP-tool counts that appear in `README.md`, `CLAUDE.md`,
+   `llms-install.md`, and the MCP server cards:
+
+   ```bash
+   python dev/build_readme_counts.py --apply
+   ```
+
+   CI runs `python dev/build_readme_counts.py --check` in the `doc-hygiene`
+   job and will fail if any count drifts from the source of truth in
+   `src/roam/cli.py` + `src/roam/mcp_server.py`.
+
 #### Adding a New Language (Tier 1)
 
 1. Create `src/roam/languages/yourlang_lang.py` inheriting from `LanguageExtractor`

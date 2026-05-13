@@ -12,7 +12,7 @@ docstring that:
    discover related tooling without re-reading the whole help index).
 
 The list grows incrementally as commands are polished. New commands
-SHOULD aim for the template; ones in the long tail (~210 commands at
+SHOULD aim for the template; ones in the long tail (~217 commands at
 the time of writing) are NOT held to it yet — adding them here when
 ready is how we ratchet up consistency over time.
 """

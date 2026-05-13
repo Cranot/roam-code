@@ -13,6 +13,15 @@ from roam.commands.cmd_pr_comment_render import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _enforcement_safe(monkeypatch):
+    """Pre-elect autonomous_pr so privileged `roam pr-comment-render` works
+    under future `ROAM_MODE_ENFORCEMENT` default-on (W23.3 staged-rollout
+    PR-B). Pure-Python unit tests in this file are unaffected; CLI tests
+    via CliRunner read the env var at gate-check time."""
+    monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
+
+
 def _envelope(
     verdict: str = "REVIEW",
     blast: int = 50,

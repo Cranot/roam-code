@@ -6,6 +6,7 @@ import re
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import (
@@ -154,6 +155,27 @@ def _format_explanation_text(expl: dict) -> list[str]:
     return lines
 
 
+@roam_capability(
+    category="exploration",
+    summary="Find symbols matching a name substring (FTS5-backed, case-insensitive).",
+    inputs=["pattern"],
+    outputs=["matches"],
+    examples=[
+        "roam search handleSave",
+        "roam search auth -k cls",
+        "roam search 'login.*flow'",
+    ],
+    tags=["exploration", "search"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.argument("pattern")
 @click.option("--full", is_flag=True, help="Show all results without truncation")

@@ -4,11 +4,26 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 
+@roam_capability(
+    name="search-semantic",
+    category="exploration",
+    summary="Find symbols by natural language query (hybrid BM25 + vector + packs)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("query")
 @click.option("--top", "top_k", default=10, type=int, help="Number of results (default 10)")

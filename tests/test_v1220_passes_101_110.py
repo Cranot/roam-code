@@ -85,9 +85,14 @@ def test_pass110_orphan_imports_no_false_internal_typos():
     result = runner.invoke(cli, ["--json", "orphan-imports", "--lang", "python"])
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    typos = [o for o in payload.get("orphans", []) if o.get("kind") == "internal_typo"]
+    # R22 confidence triple shape — each orphan is now
+    # {"value": {...}, "confidence": ..., "reason": ...}.
+    typos = [
+        o for o in payload.get("orphans", [])
+        if o.get("value", o).get("kind") == "internal_typo"
+    ]
     # roam.telemetry / roam.observability used to dominate this list
-    fp_modules = {o["module"] for o in typos}
+    fp_modules = {o["value"]["module"] for o in typos}
     assert "roam.telemetry" not in fp_modules
     assert "roam.observability" not in fp_modules
 

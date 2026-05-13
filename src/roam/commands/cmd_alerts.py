@@ -6,6 +6,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.metrics_history import collect_metrics, get_snapshots
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
@@ -464,6 +465,34 @@ def _alerts_verdict(all_alerts: list[dict], counts: dict) -> str:
 
 
 def _emit_alerts_json(verdict: str, all_alerts: list[dict], counts: dict, snapshots_analyzed: int) -> None:
+    # LAW 4 (CLAUDE.md): supply explicit agent_contract.facts anchored on
+    # the concrete subject ("alerts scan") with analytical verbs, instead of
+    # leaning on the formatter's auto-derive that turns ``critical: 5`` into
+    # an abstract key:value fact.
+    facts: list[str] = [verdict]
+    if counts.get(CRITICAL):
+        facts.append(
+            f"alerts scan flagged {counts[CRITICAL]} CRITICAL health degradations "
+            f"across {snapshots_analyzed} snapshots"
+        )
+    if counts.get(WARNING):
+        facts.append(
+            f"alerts scan flagged {counts[WARNING]} WARNING-level health trends"
+        )
+    if counts.get(INFO):
+        facts.append(
+            f"alerts scan emitted {counts[INFO]} INFO-level observations"
+        )
+    if all_alerts:
+        top = all_alerts[0]
+        facts.append(
+            f"highest-priority alert: [{top.get('level', '?')}] "
+            f"{top.get('message', '?')}"
+        )
+    next_commands = [
+        "roam health",
+        "roam architecture-drift",
+    ]
     click.echo(
         to_json(
             json_envelope(
@@ -477,6 +506,10 @@ def _emit_alerts_json(verdict: str, all_alerts: list[dict], counts: dict, snapsh
                     "snapshots_analyzed": snapshots_analyzed,
                 },
                 alerts=all_alerts,
+                agent_contract={
+                    "facts": facts,
+                    "next_commands": next_commands,
+                },
             )
         )
     )
@@ -494,6 +527,20 @@ def _emit_alerts_text(verdict: str, all_alerts: list[dict], counts: dict) -> Non
     click.echo(", ".join(_alerts_summary_parts(counts)))
 
 
+@roam_capability(
+    name="alerts",
+    category="health",
+    summary="Detect health degradation trends and generate actionable alerts",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.pass_context
 def alerts(ctx):

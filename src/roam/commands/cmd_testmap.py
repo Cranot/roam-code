@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file as _is_test_file
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
@@ -213,6 +214,20 @@ def _test_map_file(conn, path):
                 click.echo(f"  {abbrev_kind(r['kind'])}  {r['name']}  (PR={pr:.4f}, in={r['in_degree']})")
 
 
+@roam_capability(
+    name="test-map",
+    category="refactoring",
+    summary="Map a symbol or file to its test coverage",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("test-map")
 @click.argument("name")
 @click.pass_context

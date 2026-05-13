@@ -1,4 +1,10 @@
-"""Single-call codebase comprehension — everything an AI agent needs in one shot."""
+"""Single-call codebase comprehension — everything an AI agent needs in one shot.
+
+Naming-conventions detection delegates to the canonical helper in
+``roam.commands.conventions_helper`` so this command, ``roam describe``,
+``roam minimap``, ``roam preflight``, and ``roam conventions`` all agree
+on the same codebase.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +13,9 @@ import re
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
+from roam.commands.conventions_helper import compute_conventions
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
@@ -445,36 +453,23 @@ def _suggest_reading_order(conn, entry_points, key_abstractions, hotspots):
 
 
 def _detect_conventions(conn):
-    """Detect dominant naming conventions per symbol kind."""
-    _SNAKE = re.compile(r"^[a-z_][a-z0-9_]*$")
-    _CAMEL = re.compile(r"^[a-z][a-zA-Z0-9]*$")
-    _PASCAL = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
-    _UPPER = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+    """Detect dominant naming conventions per symbol kind.
 
-    result = {}
-    for kind in ("function", "class", "method", "variable"):
-        rows = conn.execute("SELECT name FROM symbols WHERE kind = ?", (kind,)).fetchall()
-        if not rows:
-            continue
-        names = [r["name"] for r in rows]
-        counts = {"snake_case": 0, "camelCase": 0, "PascalCase": 0, "UPPER_SNAKE": 0}
-        for n in names:
-            if _UPPER.match(n) and "_" in n:
-                counts["UPPER_SNAKE"] += 1
-            elif _PASCAL.match(n):
-                counts["PascalCase"] += 1
-            elif _SNAKE.match(n):
-                counts["snake_case"] += 1
-            elif _CAMEL.match(n):
-                counts["camelCase"] += 1
-
-        if counts:
-            dominant = max(counts, key=counts.get)
-            total = len(names)
-            pct = round(counts[dominant] * 100 / total, 0) if total else 0
-            result[kind] = {"style": dominant, "pct": pct, "total": total}
-
-    return result
+    Thin wrapper around the canonical detector in
+    ``roam.commands.conventions_helper`` — returns the per-kind summary
+    in the historic shape (``{kind: {style, pct, total}}``) so the
+    existing JSON envelope and text renderers stay backward-compatible.
+    """
+    result = compute_conventions(conn)
+    return {
+        kind: {
+            "style": info["style"],
+            "pct": info["pct"],
+            "total": info["total"],
+        }
+        for kind, info in result["by_kind"].items()
+        if kind in ("function", "class", "method", "variable")
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -606,6 +601,24 @@ def _top_debt(conn, limit=5):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="understand",
+    category="exploration",
+    summary="Single-call codebase comprehension: structure, stack, hotspots, reading order.",
+    inputs=["repo_path"],
+    outputs=["structure", "stack", "architecture", "hotspots", "verdict"],
+    examples=["roam understand", "roam understand --agent", "roam understand --tour"],
+    tags=["overview", "onboarding"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.option("--full", is_flag=True, help="Show all clusters and hotspots, not just top-N")
 @click.option("--tour", "tour_mode", is_flag=True, help="Append tour: reading order, entry points, next steps")
@@ -640,6 +653,7 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
     ``health`` (quality scores), and ``ask`` (free-form intent dispatch).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     cmd_name = ctx.info_name or "understand"
     ensure_index()
 
@@ -647,14 +661,14 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
     # Flag: --agent  (compact agent prompt, skips normal output)
     # ------------------------------------------------------------------
     if agent_mode:
-        _run_agent_mode(json_mode, cmd_name)
+        _run_agent_mode(json_mode, cmd_name, token_budget)
         return
 
     # ------------------------------------------------------------------
     # Flag: --skeleton DIR  (directory skeleton, skips normal output)
     # ------------------------------------------------------------------
     if skeleton_dir is not None:
-        _run_skeleton_mode(json_mode, cmd_name, skeleton_dir)
+        _run_skeleton_mode(json_mode, cmd_name, skeleton_dir, token_budget)
         return
 
     # ------------------------------------------------------------------
@@ -780,6 +794,34 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
                 f"({health['health_score']}/100), "
                 f"{len(clusters_data)} clusters, {len(hotspots)} hotspots"
             )
+            # Unique-signal discovery hints (LAW 11: server-side hints).
+            # Several roam commands produce signal not available elsewhere
+            # (danger_score, AI-rot, AI-ratio, AI-readiness, cohesion,
+            # algo anti-patterns, 30d forecast).  An agent reading
+            # ``roam understand`` should know which command surfaces each
+            # one without scraping prose.  See
+            # ``internal/dogfood/SYNTHESIS-2026-05-12.md`` section "NEW in v3".
+            discoverable_via = {
+                "danger_score": "roam metrics-push --dry-run",
+                "algo_anti_patterns": "roam algo",
+                "ai_generated_percentage": "roam ai-ratio",
+                "ai_readiness_score": "roam ai-readiness",
+                "ai_rot_score": "roam vibe-check",
+                "module_cohesion_pct": "roam module <module>",
+                "health_30d_forecast": "roam forecast",
+            }
+            # ``next_steps`` is consumed by the formatter and surfaces as
+            # ``agent_contract.next_commands`` — copy-paste-executable
+            # roam invocations for advanced discovery.  Ordering: most
+            # broadly-useful unique-signal commands first; standard
+            # follow-ups after.
+            next_steps = [
+                "roam vibe-check",
+                "roam ai-readiness",
+                "roam ai-ratio",
+                "roam algo",
+                "roam forecast",
+            ]
             envelope_kwargs = dict(
                 project={
                     "name": root.name,
@@ -815,6 +857,8 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
                 debt_hotspots=debt_hotspots,
                 hotspots=hotspots,
                 suggested_reading_order=reading_order,
+                discoverable_via=discoverable_via,
+                next_steps=next_steps,
             )
             if tour_data is not None:
                 envelope_kwargs["tour"] = tour_data
@@ -828,7 +872,9 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
                             "symbols": sym_count,
                             "health_score": health["health_score"],
                             "languages": len(languages),
+                            "caller_metric_definition": "direct_in_degree (architecture.key_abstractions[*].fan_in)",
                         },
+                        budget=token_budget,
                         **envelope_kwargs,
                     )
                 )
@@ -973,6 +1019,20 @@ def _understand_text(
     for ro in reading_order:
         click.echo(f"  {ro['priority']:>2d}. {ro['path']:<50s}  ({ro['reason']})")
 
+    # Advanced discovery — surface commands that produce signal not
+    # available elsewhere (LAW 11: server-side hints teaching tools).
+    # Compact: one line each, copy-paste-executable, ordered by breadth
+    # of utility.  See ``internal/dogfood/SYNTHESIS-2026-05-12.md``.
+    click.echo()
+    click.echo("Advanced discovery (unique signals):")
+    click.echo("  roam metrics-push --dry-run   -- danger_score per file (churn × complexity × fan_in)")
+    click.echo("  roam algo                     -- algorithmic anti-patterns (io-in-loop, list-prepend, …)")
+    click.echo("  roam vibe-check               -- AI-rot score + pattern breakdown")
+    click.echo("  roam ai-ratio                 -- ai_generated_percentage (commit signature)")
+    click.echo("  roam ai-readiness             -- ai_readiness_score (7-dim scorecard)")
+    click.echo("  roam module <dir>             -- cohesion_pct + API surface")
+    click.echo("  roam forecast                 -- 30d health projection (Theil-Sen)")
+
 
 # ---------------------------------------------------------------------------
 # --tour helpers
@@ -1064,7 +1124,7 @@ def _emit_tour_text(tour_data, conn, G, mermaid_mode):
 # ---------------------------------------------------------------------------
 
 
-def _run_agent_mode(json_mode, cmd_name):
+def _run_agent_mode(json_mode, cmd_name, token_budget=0):
     """Handle the --agent flag: emit a compact agent-oriented prompt."""
     from roam.commands.cmd_describe import _agent_prompt_data, _format_agent_prompt
 
@@ -1081,6 +1141,7 @@ def _run_agent_mode(json_mode, cmd_name):
                 json_envelope(
                     cmd_name,
                     summary={"verdict": _ap_verdict, "mode": "agent"},
+                    budget=token_budget,
                     agent_prompt=_format_agent_prompt(data),
                     **data,
                 )
@@ -1097,7 +1158,7 @@ def _run_agent_mode(json_mode, cmd_name):
 # ---------------------------------------------------------------------------
 
 
-def _run_skeleton_mode(json_mode, cmd_name, directory):
+def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
     """Handle the --skeleton DIR flag: emit directory skeleton."""
     from collections import defaultdict
 
@@ -1135,6 +1196,7 @@ def _run_skeleton_mode(json_mode, cmd_name, directory):
                                 "file_count": 0,
                                 "symbol_count": 0,
                             },
+                            budget=token_budget,
                             directory=directory,
                             files={},
                             symbol_count=0,
@@ -1176,6 +1238,7 @@ def _run_skeleton_mode(json_mode, cmd_name, directory):
                             "file_count": len(by_file),
                             "symbol_count": len(symbols),
                         },
+                        budget=token_budget,
                         directory=directory,
                         file_count=len(by_file),
                         symbol_count=len(symbols),

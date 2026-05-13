@@ -21,6 +21,23 @@ from roam.security.taint_classifier import (
     classify_findings,
 )
 
+# W19.2 pytest-asyncio plugin gate. The plugin is listed in `[dev]` extras
+# (pyproject.toml) but isn't always installed in minimal venvs. The sync
+# parser/prompt-builder tests still run; the async classes below skip cleanly
+# when the plugin is unavailable rather than producing collection errors that
+# pollute test signal.
+try:
+    import pytest_asyncio  # noqa: F401
+
+    _HAS_PYTEST_ASYNCIO = True
+except ImportError:
+    _HAS_PYTEST_ASYNCIO = False
+
+_requires_pytest_asyncio = pytest.mark.skipif(
+    not _HAS_PYTEST_ASYNCIO,
+    reason="pytest-asyncio not installed (pip install roam-code[dev])",
+)
+
 # ---------------------------------------------------------------------------
 # Pure parser unit tests
 # ---------------------------------------------------------------------------
@@ -147,6 +164,7 @@ _BASE_FINDING: dict[str, Any] = {
 }
 
 
+@_requires_pytest_asyncio
 class TestClassifyFinding:
     @pytest.mark.asyncio
     async def test_returns_classification_on_clean_response(self):
@@ -207,6 +225,7 @@ class TestClassifyFinding:
         assert out is None
 
 
+@_requires_pytest_asyncio
 class TestClassifyFindings:
     @pytest.mark.asyncio
     async def test_annotates_each_finding(self):

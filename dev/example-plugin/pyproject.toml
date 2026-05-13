@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "roam-plugin-example"
+version = "0.1.0"
+description = "Reference plugin for roam-code — shows the entry-point + register(ctx) flow."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+  {name = "roam-code maintainers"},
+]
+dependencies = [
+  # ``roam-code`` is the host. Pin a lower bound so the entry-point
+  # group exists. Production plugins should pin to a tested range.
+  "roam-code>=12.0",
+]
+
+# THIS is the magic. The "roam.plugins" entry-point group is what
+# ``roam`` discovers at startup. The right-hand side
+# ``<module>:<attr>`` must resolve to either a ``register(ctx)``
+# callable, or to a module that exposes a ``register`` attribute.
+[project.entry-points."roam.plugins"]
+example = "roam_plugin_example:register"
+
+[tool.hatch.build.targets.wheel]
+packages = ["roam_plugin_example"]

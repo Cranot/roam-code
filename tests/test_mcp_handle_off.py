@@ -32,6 +32,16 @@ from roam.mcp_server import (
 )
 
 
+def _unwrap_tool(fn):
+    """Strip the outermost FastMCP ``FunctionTool`` shell. We deliberately
+    do NOT chase ``__wrapped__`` further — going past the FunctionTool
+    boundary would strip the concurrency / handle-off wrappers that
+    these tests need to exercise."""
+    if hasattr(fn, "fn") and callable(getattr(fn, "fn", None)):
+        return fn.fn
+    return fn
+
+
 @pytest.fixture(autouse=True)
 def _isolate_handle_dir(tmp_path, monkeypatch):
     """Run every test from a tmp cwd so handles land under the tmp's
@@ -128,36 +138,46 @@ def test_already_handle_envelope_not_double_wrapped(monkeypatch):
 
 
 def test_fetch_handle_roundtrip(monkeypatch):
+    """Fix F: ``fetch_handle`` v2 is chunked-by-default — the legacy
+    "return the whole payload" behaviour now requires either a
+    ``section="key"`` pick or a ``jq=".data"`` projection. The
+    round-trip is verified by retrieving a known section and confirming
+    the payload contents survived the write/read cycle."""
     monkeypatch.setenv("ROAM_MCP_HANDLE_KB", "1")
     payload = {"summary": {"verdict": "big"}, "data": list(range(2000))}
     h = _maybe_handle_off(payload, tool_name="roam_test")
     handle = h["handle"]
 
-    # fetch_handle is wrapped (concurrency + handle-off + tool reg);
-    # call the underlying impl through __wrapped__ so we don't trip
-    # the asyncio guard inside the test.
-    fn = fetch_handle.__wrapped__ if hasattr(fetch_handle, "__wrapped__") else fetch_handle
+    fn = _unwrap_tool(fetch_handle)
+    # Default mode returns first 20000 bytes plus pagination metadata.
     fetched = fn(handle=handle)
-    assert fetched["summary"]["verdict"] == "big"
-    assert len(fetched["data"]) == 2000
+    assert fetched["summary"]["mode"] == "byte_slice"
+    assert fetched["summary"]["total_size"] > 0
+    # Use section pick to retrieve the original ``data`` field.
+    data_only = fn(handle=handle, section="data")
+    assert data_only["summary"]["mode"] == "section"
+    assert len(data_only["data"]) == 2000
+    # Confirm summary section round-trips too.
+    summary_only = fn(handle=handle, section="summary")
+    assert summary_only["data"]["verdict"] == "big"
 
 
 def test_fetch_handle_rejects_malformed():
-    fn = fetch_handle.__wrapped__ if hasattr(fetch_handle, "__wrapped__") else fetch_handle
+    fn = _unwrap_tool(fetch_handle)
     r = fn(handle="not-hex")
     assert r.get("isError") is True
     assert r.get("error_code") == "USAGE_ERROR"
 
 
 def test_fetch_handle_rejects_too_short():
-    fn = fetch_handle.__wrapped__ if hasattr(fetch_handle, "__wrapped__") else fetch_handle
+    fn = _unwrap_tool(fetch_handle)
     r = fn(handle="abc")
     assert r.get("isError") is True
     assert r.get("error_code") == "USAGE_ERROR"
 
 
 def test_fetch_handle_unknown_returns_no_results():
-    fn = fetch_handle.__wrapped__ if hasattr(fetch_handle, "__wrapped__") else fetch_handle
+    fn = _unwrap_tool(fetch_handle)
     r = fn(handle="0" * 16)
     assert r.get("isError") is True
     assert r.get("error_code") == "NO_RESULTS"

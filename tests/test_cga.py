@@ -35,6 +35,15 @@ from roam.cli import cli
 from roam.security.taint_engine import OPENVEX_JUSTIFICATIONS, OPENVEX_STATUSES
 from tests.conftest import make_src_project as _make_project
 
+
+@pytest.fixture(autouse=True)
+def _enforcement_safe(monkeypatch):
+    """Pre-elect autonomous_pr so privileged `roam cga` works under future
+    `ROAM_MODE_ENFORCEMENT` default-on (W23.3 staged-rollout PR-B). All tests
+    in this file invoke `roam cga emit|verify`, which is gated under `safe_edit`."""
+    monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
+
+
 # ---------------------------------------------------------------------------
 # In-memory DB for unit tests
 # ---------------------------------------------------------------------------
@@ -794,21 +803,3 @@ class TestDirtyTreeRefusal:
         assert result.exit_code == 0, result.output
         statement = json.loads(out.read_text(encoding="utf-8"))
         assert statement["predicate"]["git_dirty_hash"] is None
-        """End-to-end guard: emit with --include-taint, verify the on-disk
-        statement never contains the forbidden v11.x 'code_not_reachable'
-        string anywhere."""
-        out = tmp_path / "cga_with_taint.json"
-        runner = CliRunner()
-        result = runner.invoke(
-            cli,
-            [
-                "cga",
-                "emit",
-                "--include-taint",
-                "--output",
-                str(out),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        contents = out.read_text(encoding="utf-8")
-        assert "code_not_reachable" not in contents

@@ -24,7 +24,7 @@ def detect_bridges(file_paths: list[str]) -> list[LanguageBridge]:
 
 
 def _auto_discover():
-    """Auto-discover built-in bridges on first call."""
+    """Auto-discover built-in + plugin-contributed bridges on first call."""
     if _BRIDGES:
         return
 
@@ -52,4 +52,15 @@ def _auto_discover():
     try:
         from roam.bridges import bridge_django  # noqa: F401
     except ImportError:
+        pass
+
+    # Plugin-contributed bridges (roam-plugin-* packages). Wrapped in
+    # try/except so a broken plugin never blocks built-in bridges.
+    try:
+        from roam.plugins import get_plugin_bridges
+
+        for bridge in get_plugin_bridges():
+            if bridge not in _BRIDGES:
+                _BRIDGES.append(bridge)
+    except Exception:
         pass

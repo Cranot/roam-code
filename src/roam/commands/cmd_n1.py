@@ -29,8 +29,15 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.index.test_conventions import is_test_file as _is_canonical_test_file
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import json_envelope, loc, to_json
 
 # Sentinel used by helpers that accept pre-fetched bulk data. Distinct from
@@ -182,13 +189,14 @@ _EAGER_LOAD_PATTERNS = {
 
 
 def _is_test_path(path: str) -> bool:
-    p = path.replace("\\", "/").lower()
-    base = os.path.basename(p)
-    if base.startswith("test_") or base.endswith("_test.py"):
-        return True
-    if "tests/" in p or "test/" in p or "__tests__/" in p or "spec/" in p:
-        return True
-    return False
+    """Delegate to the canonical ``test_conventions.is_test_file`` detector.
+
+    W6.2 consolidation: the canonical detector handles both filename
+    patterns (Vitest / Vue SFC ``*.test.vue``, pytest ``test_*.py``,
+    Go ``*_test.go``, ...) AND directory patterns (``tests/``,
+    ``__tests__/``, ``spec/``, ...). No fallback needed.
+    """
+    return _is_canonical_test_file(path)
 
 
 def _detect_framework(conn) -> str:
@@ -1168,6 +1176,35 @@ def analyze_n1(conn, confidence_filter=None):
     return findings, framework
 
 
+# R22 — confidence classifier for N+1 findings.
+#
+# analyze_n1 already assigns a high/medium/low to each finding based on
+# whether the model is used in a collection/pagination context (the
+# functional analogue of "ORM call inside a loop"). We surface that
+# label verbatim in the triple and explain in the reason which signal
+# drove it so consumers don't need to re-derive the rule.
+#
+#   high   — model used in a collection / pagination context → almost
+#            certainly N+1 on serialization (loop-depth analogue).
+#   medium — no clear collection context detected but the I/O type is a
+#            relationship lazy-load (sometimes still problematic).
+#   low    — heuristic match without strong supporting signal.
+def _n1_classify(finding: dict) -> tuple[str, str]:
+    """Map an N+1 finding to a (confidence, reason) tuple."""
+    conf = (finding.get("confidence") or "medium").lower()
+    if conf not in ("high", "medium", "low"):
+        conf = "medium"
+    io_type = finding.get("io_type", "?")
+    ctxs = finding.get("collection_contexts") or []
+    if conf == "high":
+        reason = f"used in {len(ctxs)} collection context(s); I/O type {io_type}"
+    elif conf == "medium":
+        reason = f"I/O type {io_type}; no strong collection-context evidence"
+    else:
+        reason = f"heuristic match (I/O type {io_type}); manual review needed"
+    return conf, reason
+
+
 def _build_suggestion(framework, model_name, rel_name, attr_name, io_type):
     """Build a framework-specific fix suggestion."""
     if framework == "laravel":
@@ -1188,6 +1225,20 @@ def _build_suggestion(framework, model_name, rel_name, attr_name, io_type):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="n1",
+    category="health",
+    summary="Detect implicit N+1 I/O patterns in ORM models",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("n1")
 @click.option(
     "--confidence",
@@ -1253,18 +1304,26 @@ def n1_cmd(ctx, confidence_filter, limit, verbose):
 
         # --- JSON output ---
         if json_mode:
+            # R22: wrap each finding in {value, confidence, reason}.
+            # Consumers that previously read findings[i]["model_name"]
+            # must now read findings[i]["value"]["model_name"] plus
+            # findings[i]["confidence"] / findings[i]["reason"].
+            finding_triples = wrap_findings(findings, classifier=_n1_classify)
+            distribution = confidence_distribution(finding_triples)
+            wrapped_verdict = verdict_with_high_count(verdict, distribution)
             click.echo(
                 to_json(
                     json_envelope(
                         "n1",
                         summary={
-                            "verdict": verdict,
+                            "verdict": wrapped_verdict,
                             "total": total,
                             "framework": framework,
                             "by_confidence": dict(by_confidence),
                             "truncated": truncated,
+                            "findings_confidence_distribution": distribution,
                         },
-                        findings=findings,
+                        findings=finding_triples,
                     )
                 )
             )

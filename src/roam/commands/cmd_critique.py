@@ -20,6 +20,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.critique.aggregator import aggregate
 from roam.critique.checks import (
@@ -32,6 +33,7 @@ from roam.critique.checks import (
 )
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
+from roam.runs.helpers import auto_log
 
 # Hot-path → bench command. When a diff touches any of these path
 # prefixes, the default critique rules can pass while the change
@@ -230,17 +232,15 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
         "diff_count": len(per_file),
         "high_severity_total": high_count,
     }
+    batch_envelope = json_envelope(
+        "critique",
+        summary=summary,
+        budget=token_budget,
+        diffs=per_file,
+    )
+    auto_log(batch_envelope, action="critique", target=str(base))
     if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "critique",
-                    summary=summary,
-                    budget=token_budget,
-                    diffs=per_file,
-                )
-            )
-        )
+        click.echo(to_json(batch_envelope))
     else:
         click.echo(f"VERDICT: {summary['verdict']}")
         click.echo()
@@ -258,6 +258,27 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
         raise GateFailureError(f"batch critique: {high_count} high-severity finding(s)")
 
 
+@roam_capability(
+    category="review",
+    summary="Verify a patch against the indexed graph — clones-not-edited + blast radius.",
+    inputs=["diff_text"],
+    outputs=["findings", "verdict"],
+    examples=[
+        "git diff | roam critique",
+        "git diff main..HEAD | roam critique --json",
+    ],
+    tags=["review", "ci", "gate"],
+    ai_safe=True,
+    requires_index=True,
+    since="12.0",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=True,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.option(
     "--input",
@@ -407,32 +428,34 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text):
         "bench_hint": bench_hint or None,
     }
 
+    critique_envelope = json_envelope(
+        "critique",
+        summary=summary,
+        budget=token_budget,
+        severity_breakdown=result["severity_breakdown"],
+        findings=result["findings"],
+        top_finding=result["top_finding"],
+        bench_hint=bench_hint,
+        changed_symbols=[
+            {
+                "symbol_id": s.symbol_id,
+                "name": s.name,
+                "qualified_name": s.qualified_name,
+                "kind": s.kind,
+                "file_path": s.file_path,
+                "line_start": s.line_start,
+                "line_end": s.line_end,
+            }
+            for s in changed_symbols
+        ],
+    )
+    # Auto-log into the active run; target is the intent string (e.g. PR
+    # title / commit subject) when available, else the input path.
+    _critique_target = effective_intent or (input_path or "")
+    auto_log(critique_envelope, action="critique", target=_critique_target)
+
     if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "critique",
-                    summary=summary,
-                    budget=token_budget,
-                    severity_breakdown=result["severity_breakdown"],
-                    findings=result["findings"],
-                    top_finding=result["top_finding"],
-                    bench_hint=bench_hint,
-                    changed_symbols=[
-                        {
-                            "symbol_id": s.symbol_id,
-                            "name": s.name,
-                            "qualified_name": s.qualified_name,
-                            "kind": s.kind,
-                            "file_path": s.file_path,
-                            "line_start": s.line_start,
-                            "line_end": s.line_end,
-                        }
-                        for s in changed_symbols
-                    ],
-                )
-            )
-        )
+        click.echo(to_json(critique_envelope))
     else:
         click.echo(f"VERDICT: {result['verdict']}")
         click.echo()

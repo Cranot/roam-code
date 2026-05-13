@@ -14,6 +14,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
@@ -606,6 +607,20 @@ def _format_change_text(change: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="api-changes",
+    category="workflow",
+    summary="Detect breaking and non-breaking API changes vs a git ref",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("api-changes")
 @click.option(
     "--base",

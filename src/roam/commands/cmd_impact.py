@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import time
+
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.output.formatter import (
@@ -13,22 +16,109 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
+from roam.runs.helpers import auto_log
 
 
-def _collect_dependents(G, RG, sym_id, conn, max_hops: int | None = None):
+def _bounded_bfs(
+    RG,
+    sym_id,
+    *,
+    max_depth: int | None,
+    max_callers: int | None,
+    deadline: float | None,
+):
+    """Bounded BFS over reverse graph from ``sym_id``.
+
+    Caps applied:
+
+    - ``max_depth``: traversal stops past ``max_depth`` hops (None = unlimited)
+    - ``max_callers``: at each frontier, fan-out is capped at this many new
+      nodes; further siblings are dropped (None = unlimited)
+    - ``deadline``: wall-clock cutoff in ``time.monotonic()`` units; checked
+      every 1000 nodes so we don't pay the syscall on tight loops
+
+    Returns ``(dependents_set, hit_caller_cap, hit_depth_cap, hit_timeout)``.
+    """
+    dependents: set = set()
+    if sym_id not in RG:
+        return dependents, False, False, False
+
+    hit_caller_cap = False
+    hit_depth_cap = False
+    hit_timeout = False
+
+    # Frontier-based BFS so we can apply per-frontier fan-out caps.
+    frontier: list = [sym_id]
+    depth = 0
+    nodes_visited = 0
+    while frontier:
+        if max_depth is not None and depth >= int(max_depth):
+            # Frontier still has items past the depth cap — flag and bail.
+            hit_depth_cap = True
+            break
+        next_frontier: list = []
+        for node in frontier:
+            for succ in RG.successors(node):
+                if succ in dependents or succ == sym_id:
+                    continue
+                if max_callers is not None and len(dependents) >= int(max_callers):
+                    hit_caller_cap = True
+                    break
+                dependents.add(succ)
+                next_frontier.append(succ)
+                nodes_visited += 1
+                if deadline is not None and nodes_visited % 1000 == 0:
+                    if time.monotonic() >= deadline:
+                        hit_timeout = True
+                        break
+            if hit_caller_cap or hit_timeout:
+                break
+        if hit_caller_cap or hit_timeout:
+            break
+        frontier = next_frontier
+        depth += 1
+    return dependents, hit_caller_cap, hit_depth_cap, hit_timeout
+
+
+def _collect_dependents(
+    G,
+    RG,
+    sym_id,
+    conn,
+    max_hops: int | None = None,
+    *,
+    max_callers: int | None = None,
+    deadline: float | None = None,
+):
     """Collect affected files, direct callers by kind, and SF test files.
 
     When ``max_hops`` is set, the BFS is bounded to that many hops instead
-    of expanding to the full transitive descendants set.
+    of expanding to the full transitive descendants set. Additional caps
+    (``max_callers``, ``deadline``) bound fan-out / wall-clock for
+    high-fan-in symbols (e.g. shared hooks with 500+ callers).
+
+    Returns the legacy 5-tuple plus a trailing ``state`` dict tracking
+    which caps fired so the caller can surface ``partial_success`` /
+    ``truncated`` envelope flags.
     """
     import networkx as nx
 
-    if max_hops is None:
-        dependents = nx.descendants(RG, sym_id)
+    state = {"hit_caller_cap": False, "hit_depth_cap": False, "hit_timeout": False}
+
+    if max_callers is None and deadline is None:
+        # Legacy fast path — preserve original semantics exactly.
+        if max_hops is None:
+            dependents = nx.descendants(RG, sym_id)
+        else:
+            lengths = nx.single_source_shortest_path_length(RG, sym_id, cutoff=int(max_hops))
+            dependents = {n for n in lengths if n != sym_id}
     else:
-        # Bounded BFS via single_source_shortest_path_length(cutoff=N).
-        lengths = nx.single_source_shortest_path_length(RG, sym_id, cutoff=int(max_hops))
-        dependents = {n for n in lengths if n != sym_id}
+        dependents, hit_cap, hit_depth, hit_to = _bounded_bfs(
+            RG, sym_id, max_depth=max_hops, max_callers=max_callers, deadline=deadline
+        )
+        state["hit_caller_cap"] = hit_cap
+        state["hit_depth_cap"] = hit_depth
+        state["hit_timeout"] = hit_to
     affected_files = set()
     direct_callers = set(RG.successors(sym_id))
     by_kind: dict[str, list] = {}
@@ -63,7 +153,7 @@ def _collect_dependents(G, RG, sym_id, conn, max_hops: int | None = None):
             for ct in conv_tests:
                 sf_test_files.add(ct["path"])
 
-    return dependents, affected_files, direct_callers, by_kind, sf_test_files
+    return dependents, affected_files, direct_callers, by_kind, sf_test_files, state
 
 
 def _find_indirect_refs(conn, sym, already_affected_files: set, *, limit: int = 50) -> list[dict]:
@@ -144,6 +234,26 @@ def _impact_verdict(dependents, affected_files, total_syms):
     return "No dependents — safe to change", reach_pct
 
 
+@roam_capability(
+    category="exploration",
+    summary="Show blast radius: what breaks if a symbol changes.",
+    inputs=["name"],
+    outputs=["affected_symbols", "verdict"],
+    examples=[
+        "roam impact handleSave",
+        "roam impact AuthService --hops 3",
+    ],
+    tags=["exploration", "blast", "agent"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.argument("name")
 @click.option(
@@ -151,23 +261,57 @@ def _impact_verdict(dependents, affected_files, total_syms):
     type=int,
     default=None,
     help=(
-        "bound the BFS at N hops (default: full transitive). "
+        "bound the BFS at N hops (legacy alias for --depth). "
         "``--hops 1`` mirrors ``roam uses``; ``--hops 2`` shows callers "
         "of callers; useful to scope a refactor to a controlled radius."
     ),
 )
+@click.option(
+    "--depth",
+    type=int,
+    default=3,
+    show_default=True,
+    help=(
+        "cap BFS depth (number of hops). Conservative default keeps the "
+        "command bounded for high-fan-in symbols (e.g. shared hooks with "
+        "500+ callers). Use ``--hops 0`` or a large ``--depth`` for the "
+        "full transitive radius."
+    ),
+)
+@click.option(
+    "--max-callers",
+    type=int,
+    default=100,
+    show_default=True,
+    help=(
+        "cap total fan-out at N callers. When exceeded, the envelope sets "
+        "``truncated: true`` and ``partial_success: true``; the first N "
+        "callers are returned."
+    ),
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=30.0,
+    show_default=True,
+    help=(
+        "graceful wall-clock cap in seconds. On hit, returns what we have "
+        "with ``state: timeout`` + ``partial_success: true``."
+    ),
+)
 @click.pass_context
-def impact(ctx, name, hops):
+def impact(ctx, name, hops, depth, max_callers, timeout):
     """Show blast radius: what breaks if a symbol changes.
 
     Unlike ``uses`` (which lists direct callers), this command computes the
-    full transitive blast radius including affected files and PageRank-weighted
-    importance.
+    transitive blast radius (bounded by default) including affected files
+    and PageRank-weighted importance.
 
     \b
     Examples:
       roam impact handle_login
-      roam impact User --hops 3
+      roam impact User --depth 5
+      roam impact useThemeClasses --max-callers 200 --timeout 60
       roam --json impact MyClass.method
 
     See also ``uses`` (direct callers only), ``preflight`` (full
@@ -177,9 +321,32 @@ def impact(ctx, name, hops):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # ``--hops`` is the legacy alias; if user passed it, it overrides
+    # ``--depth`` (preserves prior behavior of explicit unbounded
+    # opt-in via large --hops). 0 means unbounded.
+    if hops is not None:
+        effective_depth = None if hops <= 0 else int(hops)
+    else:
+        effective_depth = None if depth <= 0 else int(depth)
+    effective_max_callers = None if max_callers <= 0 else int(max_callers)
+    deadline = (time.monotonic() + float(timeout)) if timeout and timeout > 0 else None
+
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, name)
         if sym is None:
+            # W15.2 — auto-log a "symbol not found" event so the replay
+            # timeline shows the failed lookup. Build a minimal envelope
+            # the helper can consume; never let logging derail the exit.
+            not_found_env = json_envelope(
+                "impact",
+                summary={
+                    "verdict": f"Symbol '{name}' not found",
+                    "partial_success": True,
+                    "state": "not_found",
+                },
+                symbol=name or "",
+            )
+            auto_log(not_found_env, action="impact", target=name or "")
             click.echo(symbol_not_found(conn, name, json_mode=json_mode))
             raise SystemExit(1)
         sym_id = sym["id"]
@@ -202,34 +369,59 @@ def impact(ctx, name, hops):
         if sym_id not in G:
             verdict = f"Symbol '{name}' exists in the index but is not in the dependency graph."
             tip = f"Run `roam index` to rebuild the graph, or use `roam symbol {name}` to view raw symbol data."
+            not_in_graph_env = json_envelope(
+                "impact",
+                budget=token_budget,
+                summary={
+                    "verdict": verdict,
+                    "affected_symbols": 0,
+                    "affected_files": 0,
+                    "in_graph": False,
+                },
+                symbol=sym["qualified_name"] or sym["name"],
+                tip=tip,
+                direct_dependents={},
+                affected_file_list=[],
+                indirect_refs=[],
+            )
+            # W15.2 — auto-log into the active run. Silent no-op if no run.
+            auto_log(not_in_graph_env, action="impact", target=name or "")
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "impact",
-                            budget=token_budget,
-                            summary={
-                                "verdict": verdict,
-                                "affected_symbols": 0,
-                                "affected_files": 0,
-                                "in_graph": False,
-                            },
-                            symbol=sym["qualified_name"] or sym["name"],
-                            tip=tip,
-                            direct_dependents={},
-                            affected_file_list=[],
-                            indirect_refs=[],
-                        )
-                    )
-                )
+                click.echo(to_json(not_in_graph_env))
             else:
                 click.echo(f"{verdict}\n  Tip: {tip}")
             return
 
         RG = G.reverse()
-        dependents, affected_files, direct_callers, by_kind, sf_test_files = _collect_dependents(
-            G, RG, sym_id, conn, max_hops=hops
+        (
+            dependents,
+            affected_files,
+            direct_callers,
+            by_kind,
+            sf_test_files,
+            bfs_state,
+        ) = _collect_dependents(
+            G,
+            RG,
+            sym_id,
+            conn,
+            max_hops=effective_depth,
+            max_callers=effective_max_callers,
+            deadline=deadline,
         )
+        truncated = (
+            bfs_state["hit_caller_cap"]
+            or bfs_state["hit_depth_cap"]
+            or bfs_state["hit_timeout"]
+        )
+        if bfs_state["hit_timeout"]:
+            run_state = "timeout"
+        elif bfs_state["hit_caller_cap"]:
+            run_state = "caller_cap"
+        elif bfs_state["hit_depth_cap"]:
+            run_state = "depth_cap"
+        else:
+            run_state = "ok"
 
         # Personalized PageRank for distance-weighted importance (Gleich 2015)
         ppr = {}
@@ -240,21 +432,20 @@ def impact(ctx, name, hops):
                 pass
 
         if not dependents:
+            no_dep_env = json_envelope(
+                "impact",
+                budget=token_budget,
+                summary={"verdict": "no dependents", "affected_symbols": 0, "affected_files": 0},
+                symbol=sym["qualified_name"] or sym["name"],
+                affected_symbols=0,
+                affected_files=0,
+                direct_dependents={},
+                affected_file_list=[],
+            )
+            # W15.2 — auto-log into the active run. Silent no-op if no run.
+            auto_log(no_dep_env, action="impact", target=name or "")
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "impact",
-                            budget=token_budget,
-                            summary={"verdict": "no dependents", "affected_symbols": 0, "affected_files": 0},
-                            symbol=sym["qualified_name"] or sym["name"],
-                            affected_symbols=0,
-                            affected_files=0,
-                            direct_dependents={},
-                            affected_file_list=[],
-                        )
-                    )
-                )
+                click.echo(to_json(no_dep_env))
             else:
                 click.echo("VERDICT: no dependents — safe to change")
             return
@@ -269,57 +460,86 @@ def impact(ctx, name, hops):
         # surface those callsites as ``indirect_refs``.
         indirect_refs = _find_indirect_refs(conn, sym, affected_files)
         verdict, reach_pct = _impact_verdict(dependents, affected_files, len(G))
+        if truncated:
+            # Name the limit(s) that fired so an agent can decide to re-run
+            # with a larger budget. Imperative, concrete (LAWs 2, 4).
+            _limit_notes = []
+            if bfs_state["hit_timeout"]:
+                _limit_notes.append(f"timeout={timeout}s")
+            if bfs_state["hit_caller_cap"]:
+                _limit_notes.append(f"max-callers={effective_max_callers}")
+            if bfs_state["hit_depth_cap"]:
+                _limit_notes.append(f"depth={effective_depth}")
+            verdict = (
+                f"{verdict} (partial: {', '.join(_limit_notes)} — "
+                f"re-run with larger limits for full radius)"
+            )
+
+        # Build the full envelope so we can both auto-log and emit it.
+        # Look up global PageRank for dependent symbols (used in JSON path and
+        # in text-mode "Affected files" ranking).
+        global_pr: dict[int, float] = {}
+        try:
+            pr_rows = conn.execute("SELECT symbol_id, pagerank FROM graph_metrics").fetchall()
+            global_pr = {r["symbol_id"]: r["pagerank"] for r in pr_rows}
+        except Exception:
+            pass
+
+        json_deps = {
+            ek: [{"name": i[1], "kind": i[0], "file": i[2]} for i in items] for ek, items in by_kind.items()
+        }
+        # Build affected file list with importance scores.
+        # File importance = max PageRank of any dependent symbol in that file.
+        file_importance: dict[str, float] = {}
+        for dep_id in dependents:
+            node = G.nodes.get(dep_id, {})
+            fp = node.get("file_path", "?")
+            pr_val = global_pr.get(dep_id, ppr.get(dep_id, 0.0))
+            if pr_val > file_importance.get(fp, 0.0):
+                file_importance[fp] = pr_val
+
+        affected_file_dicts = [
+            {"path": fp, "importance": round(file_importance.get(fp, 0.0), 6)} for fp in sorted(affected_files)
+        ]
+        limits_block = {
+            "depth": effective_depth,
+            "max_callers": effective_max_callers,
+            "timeout_s": float(timeout) if timeout and timeout > 0 else None,
+        }
+        impact_env = json_envelope(
+            "impact",
+            budget=token_budget,
+            summary={
+                "verdict": verdict,
+                "affected_symbols": len(dependents),
+                "affected_files": len(affected_files),
+                "weighted_impact": round(weighted_impact, 4),
+                "reach_pct": round(reach_pct, 1),
+                "sf_convention_tests": len(sf_test_files),
+                "truncated": truncated,
+                "partial_success": truncated,
+                "state": run_state,
+                "limits": limits_block,
+            },
+            symbol=sym["qualified_name"] or sym["name"],
+            affected_symbols=len(dependents),
+            affected_files=len(affected_files),
+            weighted_impact=round(weighted_impact, 4),
+            reach_pct=round(reach_pct, 1),
+            direct_dependents=json_deps,
+            affected_file_list=affected_file_dicts,
+            sf_convention_tests=sorted(sf_test_files),
+            indirect_refs=indirect_refs,
+            truncated=truncated,
+            partial_success=truncated,
+            state=run_state,
+            limits=limits_block,
+        )
+        # W15.2 — auto-log into the active run (silent no-op if none).
+        auto_log(impact_env, action="impact", target=name or "")
 
         if json_mode:
-            # Look up global PageRank for dependent symbols
-            global_pr: dict[int, float] = {}
-            try:
-                pr_rows = conn.execute("SELECT symbol_id, pagerank FROM graph_metrics").fetchall()
-                global_pr = {r["symbol_id"]: r["pagerank"] for r in pr_rows}
-            except Exception:
-                pass
-
-            json_deps = {
-                ek: [{"name": i[1], "kind": i[0], "file": i[2]} for i in items] for ek, items in by_kind.items()
-            }
-            # Build affected file list with importance scores.
-            # File importance = max PageRank of any dependent symbol in that file.
-            file_importance: dict[str, float] = {}
-            for dep_id in dependents:
-                node = G.nodes.get(dep_id, {})
-                fp = node.get("file_path", "?")
-                pr_val = global_pr.get(dep_id, ppr.get(dep_id, 0.0))
-                if pr_val > file_importance.get(fp, 0.0):
-                    file_importance[fp] = pr_val
-
-            affected_file_dicts = [
-                {"path": fp, "importance": round(file_importance.get(fp, 0.0), 6)} for fp in sorted(affected_files)
-            ]
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "impact",
-                        budget=token_budget,
-                        summary={
-                            "verdict": verdict,
-                            "affected_symbols": len(dependents),
-                            "affected_files": len(affected_files),
-                            "weighted_impact": round(weighted_impact, 4),
-                            "reach_pct": round(reach_pct, 1),
-                            "sf_convention_tests": len(sf_test_files),
-                        },
-                        symbol=sym["qualified_name"] or sym["name"],
-                        affected_symbols=len(dependents),
-                        affected_files=len(affected_files),
-                        weighted_impact=round(weighted_impact, 4),
-                        reach_pct=round(reach_pct, 1),
-                        direct_dependents=json_deps,
-                        affected_file_list=affected_file_dicts,
-                        sf_convention_tests=sorted(sf_test_files),
-                        indirect_refs=indirect_refs,
-                    )
-                )
-            )
+            click.echo(to_json(impact_env))
             return
 
         click.echo(f"VERDICT: {verdict}\n")

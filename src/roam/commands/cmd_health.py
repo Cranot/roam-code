@@ -40,6 +40,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import imported_coverage_overview
@@ -55,12 +56,14 @@ from roam.graph.cycles import (
     propagation_cost,
 )
 from roam.graph.layers import detect_layers, find_violations
+from roam.quality.cycles import definition as cycles_definition
+from roam.quality.god_components import definition as god_components_definition
 from roam.output.formatter import (
     abbrev_kind,
     format_table,
     json_envelope,
     loc,
-    summary_envelope,
+    strip_list_payloads,
     to_json,
 )
 from roam.output.framework_filter import FRAMEWORK_PRIMITIVE_NAMES as _FRAMEWORK_NAMES
@@ -540,6 +543,27 @@ def _emit_baseline_diff(
         click.echo("\nNo regressions detected.")
 
 
+@roam_capability(
+    category="health",
+    summary="Report code health: cycles, god components, bottlenecks, 0-100 score.",
+    inputs=["repo_path"],
+    outputs=["health_score", "findings", "verdict"],
+    examples=[
+        "roam health",
+        "roam health --gate",
+        "roam health --baseline main",
+    ],
+    tags=["health", "ci"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.option(
     "--no-framework",
@@ -1112,6 +1136,14 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                     },
                     "actionable_cycles": len(actionable_cycles),
                     "ignored_cycles": len(ignored_cycles),
+                    "total_cycles": len(formatted_cycles),
+                    # Vocabulary aliases for cross-command agreement with
+                    # `describe` and `agent-export` (Pattern 3 fix).
+                    "cycles_total": len(formatted_cycles),
+                    "cycles_actionable": len(actionable_cycles),
+                    "god_components": len(god_items),
+                    "cycles_definition": cycles_definition(),
+                    "god_components_definition": god_components_definition(),
                     "imported_coverage_pct": coverage_import.get("coverage_pct"),
                     "imported_coverage_files": coverage_import.get("files_with_coverage", 0),
                 },
@@ -1131,6 +1163,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                 actionable_cycles=len(actionable_cycles),
                 ignored_cycles=len(ignored_cycles),
                 total_cycles=len(formatted_cycles),
+                cycles_total=len(formatted_cycles),
+                cycles_actionable=len(actionable_cycles),
                 imported_coverage_pct=coverage_import.get("coverage_pct"),
                 imported_coverage_files=coverage_import.get("files_with_coverage", 0),
                 imported_covered_lines=coverage_import.get("covered_lines", 0),
@@ -1186,7 +1220,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
             if _idx_status_json is not None:
                 envelope["index_status"] = _idx_status_json
             if not detail:
-                envelope = summary_envelope(envelope)
+                envelope = strip_list_payloads(envelope)
             click.echo(to_json(envelope))
             return
 

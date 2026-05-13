@@ -18,6 +18,7 @@ import sys
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 _GITHUB_LINK = "https://github.com/Cranot/roam-code"
@@ -447,6 +448,20 @@ def _render_plain(envelope: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+@roam_capability(
+    name="pr-comment-render",
+    category="workflow",
+    summary="Render a markdown PR comment from a pr-analyze envelope",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "review"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command(name="pr-comment-render")
 @click.option(
     "--input",

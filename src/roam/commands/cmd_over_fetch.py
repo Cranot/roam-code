@@ -21,11 +21,25 @@ Detection checks:
    ``Model::all()`` or ``Model::paginate()`` without ``->select(['f1', 'f2'])``
    to limit returned columns, especially on large models.
 
-Confidence levels:
+5. **3-state endpoint classification** — Per controller-method classification
+   into BARE / GUARDED_RELATION / UNGUARDED_RELATION based on the eager-load
+   shape. Surfaced in the JSON envelope under ``endpoint_findings`` and
+   counted in ``summary.bare_count`` / ``guarded_relation_count`` /
+   ``unguarded_relation_count``. Disambiguates the common case where a
+   model is flagged but most of its endpoints already have partial
+   ``with('rel:cols')`` guards in place.
+
+Confidence levels (model-level):
 
 - ``high``   — 30+ fillable fields, no $hidden, no $visible, direct controller return
 - ``medium`` — 20+ fillable fields, minimal $hidden (< 3 fields hidden)
 - ``low``    — 15+ fillable fields, no select() optimization in queries
+
+Endpoint states (3-state, endpoint-level):
+
+- ``BARE``                — Model::query()->paginate() without ->select() or Resource (H severity)
+- ``UNGUARDED_RELATION``  — with('rel') without column selection (H severity)
+- ``GUARDED_RELATION``    — with('rel:col1,col2,...') — partially constrained (L severity, advisory)
 
 Supported frameworks: Laravel/Eloquent (PHP).
 """
@@ -38,6 +52,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, loc, to_json
@@ -105,6 +120,36 @@ _UNOPTIMIZED_QUERY_RE = re.compile(
     r"::\s*all\s*\(\s*\)|::\s*paginate\s*\(|"
     r"::\s*get\s*\(\s*\))",
 )
+
+# ---------------------------------------------------------------------------
+# 3-state with(...) classification (BARE / GUARDED_RELATION / UNGUARDED_RELATION)
+# ---------------------------------------------------------------------------
+#
+# These overlays operate at the endpoint (controller method) level — distinct
+# from the model-level findings above. The dogfood lesson: 4 of 5 flagged
+# "Employee leak" endpoints actually had `with('relation:cols')` partial
+# guards already in place. Only 1 was a true full-relation dump. Existing
+# model-level scoring (huge $fillable + no Resource) doesn't see this nuance.
+
+# Each individual eager-load argument inside `with(...)`. We extract every
+# 'relation' or 'relation:cols' string literal independently so a single
+# with('a:cols', 'b') call is correctly classified as mixed (1 guarded + 1
+# unguarded). The colon → column-selection convention is documented in
+# Laravel's Eloquent docs as the "Eager Loading Specific Columns" feature.
+_WITH_ARG_RE = re.compile(r"['\"](?P<rel>[A-Za-z_][\w.]*)(?P<colon>:)?(?P<cols>[\w,]*)['\"]")
+
+# Top-level `with(` call — captures the args group only; we then scan inside.
+_WITH_CALL_RE = re.compile(r"\bwith\s*\(\s*(?P<args>[^)]*)\)")
+
+# Query-loading entry points that pull rows into memory (and hence into the
+# JSON response if returned directly). These are the call sites we classify.
+_LOAD_CALL_RE = re.compile(
+    r"->\s*(?:paginate|simplePaginate|cursorPaginate|get|all|find|first|firstOrFail|findOrFail)\s*\("
+)
+
+# Detect `Model::query()` chains and `Model::paginate(` etc that originate
+# in a class-static call. We need the model name for endpoint naming.
+_MODEL_STATIC_RE = re.compile(r"\b(?P<model>[A-Z][A-Za-z0-9_]+)\s*::\s*(?:query|paginate|all|where|with|find|first|select)\s*\(")
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +467,242 @@ def _check_missing_select(
 
 
 # ---------------------------------------------------------------------------
+# Endpoint-level 3-state classification
+# ---------------------------------------------------------------------------
+
+
+def _classify_with_args(args_text: str) -> tuple[list[dict], list[dict]]:
+    """Parse a `with(...)` arg list and split into guarded / unguarded entries.
+
+    Returns (guarded, unguarded) where each entry is
+    {"relation": str, "cols": list[str], "raw": str}.
+
+    Examples:
+        with('user:id,name')         -> guarded=[{rel:user,cols:[id,name]}], unguarded=[]
+        with('user')                 -> guarded=[], unguarded=[{rel:user,cols:[]}]
+        with('a:id', 'b')            -> guarded=[{rel:a}], unguarded=[{rel:b}]
+        with(['user' => fn (...)])   -> {} (closure callbacks ignored — could be guarded inside)
+    """
+    guarded: list[dict] = []
+    unguarded: list[dict] = []
+    for m in _WITH_ARG_RE.finditer(args_text):
+        rel = m.group("rel")
+        # Skip anything that looks like a query method passed as the relation arg
+        # (e.g. 'orderBy', 'limit') — relations are typically lowercase nouns
+        # with optional dotted paths. We accept any identifier-shaped string;
+        # false positives here just produce extra advisory entries.
+        cols = m.group("cols") or ""
+        if m.group("colon") and cols:
+            guarded.append(
+                {
+                    "relation": rel,
+                    "cols": [c.strip() for c in cols.split(",") if c.strip()],
+                    "raw": f"{rel}:{cols}",
+                }
+            )
+        else:
+            unguarded.append({"relation": rel, "cols": [], "raw": rel})
+    return guarded, unguarded
+
+
+def _endpoint_state_for_body(
+    body: str,
+) -> tuple[str | None, dict]:
+    """Determine the 3-state classification for a single method body.
+
+    Returns (state, details) where state is one of:
+      - "BARE"                — query loads data without column select, no with(:cols)
+      - "GUARDED_RELATION"    — body has at least one with('rel:cols') call
+      - "UNGUARDED_RELATION"  — body has with('rel') without column selection
+      - None                  — no loading query, or response is shaped (Resource/DTO)
+
+    Precedence when both guarded and unguarded relations co-exist in the same
+    body: report as UNGUARDED_RELATION (the unguarded relation is the leak,
+    even if a sibling relation is partially guarded). The guarded sibling is
+    surfaced in `details.guarded` so reviewers see the existing partial fix.
+    """
+    # Bail early if the body doesn't load anything we'd serialize back to
+    # the wire — no point classifying internal logic / setters.
+    if not _LOAD_CALL_RE.search(body) and not _MODEL_STATIC_RE.search(body):
+        return None, {}
+
+    # If the body shapes its output through a Resource/DTO/makeHidden/etc,
+    # the leak is filtered before the wire. Don't flag.
+    # _BODY_SHAPING_PATTERNS catches `new XResource(`, DTOs, makeHidden, etc.
+    # _RESOURCE_PATTERNS catches `XResource::collection(` and bare JsonResource
+    # references, which is what most Laravel apps use for list endpoints.
+    if any(p.search(body) for p in _BODY_SHAPING_PATTERNS):
+        return None, {}
+    if any(p.search(body) for p in _RESOURCE_PATTERNS):
+        return None, {}
+
+    # Walk all `with(...)` calls and accumulate guarded + unguarded relations.
+    all_guarded: list[dict] = []
+    all_unguarded: list[dict] = []
+    for wm in _WITH_CALL_RE.finditer(body):
+        g, u = _classify_with_args(wm.group("args"))
+        all_guarded.extend(g)
+        all_unguarded.extend(u)
+
+    has_select = bool(_SELECT_CALL_RE.search(body))
+
+    # Detect the BARE model surface: a load (paginate/get/all/etc) that does
+    # NOT chain ->select() and does NOT have a guarded with(:cols) covering
+    # the main model. The presence of `with('rel:cols')` only guards the
+    # eager-loaded relation, NOT the primary model. So a body with
+    # `Model::query()->with('rel:cols')->paginate()` is still BARE for Model.
+    bare_main_model = bool(_LOAD_CALL_RE.search(body)) and not has_select
+
+    details = {
+        "guarded": all_guarded,
+        "unguarded": all_unguarded,
+        "has_select": has_select,
+        "bare_main_model": bare_main_model,
+    }
+
+    # Precedence: BARE > UNGUARDED_RELATION > GUARDED_RELATION
+    # Why this order: the user dogfood's exact pain point — agents need to
+    # know the worst surviving leak in this endpoint. A BARE main model is
+    # the strongest leak (all columns). UNGUARDED_RELATION dumps a full
+    # relation. GUARDED_RELATION means partial fix already applied → low.
+    #
+    # BUT: if there are ZERO with(...) calls at all, we don't claim BARE
+    # purely on the load — the existing model-level scoring already covers
+    # plain `Model::paginate()` via direct-return analysis. The new states
+    # exist to disambiguate eager-load patterns. So:
+    #   - load + no with()        → return None (model-level rules handle it)
+    #   - load + with(:cols) only → GUARDED_RELATION
+    #   - load + with() only      → UNGUARDED_RELATION
+    #   - load + mixed            → UNGUARDED_RELATION (worst wins)
+    if not all_guarded and not all_unguarded:
+        # Pure BARE Model::paginate() — surface here too so the endpoint-level
+        # view is complete. Severity remains H per the spec.
+        if bare_main_model:
+            return "BARE", details
+        return None, {}
+
+    if all_unguarded:
+        return "UNGUARDED_RELATION", details
+    if all_guarded:
+        return "GUARDED_RELATION", details
+    return None, {}
+
+
+_SEVERITY_BY_STATE = {
+    "BARE": "H",
+    "UNGUARDED_RELATION": "H",
+    "GUARDED_RELATION": "L",
+}
+
+
+def _recommendation_for_state(state: str, details: dict) -> str:
+    if state == "BARE":
+        return (
+            "Bare model load — add ->select(['col1','col2',...]) or wrap "
+            "in an API Resource to control output columns."
+        )
+    if state == "UNGUARDED_RELATION":
+        rels = ", ".join(u["relation"] for u in details.get("unguarded", []) or [])
+        return (
+            f"Add column selection: with('{rels.split(',')[0].strip()}:id,name,...') "
+            "or wrap the loaded relation in a Resource. Currently dumps all "
+            "relation columns."
+        )
+    if state == "GUARDED_RELATION":
+        return (
+            "Already partially guarded; consider full API Resource wrapper "
+            "for stronger contract."
+        )
+    return ""
+
+
+def _evidence_for_state(state: str, details: dict) -> str:
+    if state == "GUARDED_RELATION":
+        first = (details.get("guarded") or [{}])[0]
+        if first:
+            return f"with('{first['raw']}')"
+    if state == "UNGUARDED_RELATION":
+        first = (details.get("unguarded") or [{}])[0]
+        if first:
+            return f"with('{first['raw']}')"
+    if state == "BARE":
+        return "paginate()/get()/all() without ->select() or Resource"
+    return ""
+
+
+def analyze_endpoint_states(conn, root) -> list[dict]:
+    """Scan all controller methods and classify each into BARE / GUARDED / UNGUARDED.
+
+    Returns a list of endpoint findings, each:
+        {
+          endpoint: "ControllerName@method",
+          file, line, state, severity, evidence, recommendation,
+          details: {guarded:[...], unguarded:[...], has_select, bare_main_model}
+        }
+
+    The returned list is sorted with H severity first.
+    """
+    findings: list[dict] = []
+
+    controller_files = conn.execute(
+        "SELECT path FROM files WHERE (path LIKE '%Controller%' OR path LIKE '%controller%') "
+        "AND path LIKE '%.php'",
+    ).fetchall()
+
+    for row in controller_files:
+        path = row["path"]
+        if _is_test_path(path):
+            continue
+        p_lower = path.replace("\\", "/").lower()
+        if "/console/" in p_lower or "/commands/" in p_lower:
+            continue
+        if (
+            "controller" in os.path.basename(path).lower()
+            and "/http/" not in p_lower
+            and "/controllers/" not in p_lower
+        ):
+            continue
+
+        abs_path = root / path
+        if not abs_path.is_file():
+            continue
+        try:
+            content = abs_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        # Derive controller class name from filename (e.g. AdvanceController.php → AdvanceController)
+        controller_name = os.path.basename(path).rsplit(".", 1)[0]
+
+        for method in _extract_method_bodies_with_lines(content):
+            body = method["body"]
+            state, details = _endpoint_state_for_body(body)
+            if state is None:
+                continue
+            severity = _SEVERITY_BY_STATE.get(state, "M")
+            findings.append(
+                {
+                    "endpoint": f"{controller_name}@{method['name']}",
+                    "controller": controller_name,
+                    "method": method["name"],
+                    "file": path,
+                    "line": method["start_line"],
+                    "location": loc(path, method["start_line"]),
+                    "state": state,
+                    "severity": severity,
+                    "evidence": _evidence_for_state(state, details),
+                    "recommendation": _recommendation_for_state(state, details),
+                    "details": details,
+                }
+            )
+
+    # H first, then L; within a severity bucket preserve file/line stability.
+    _sev_order = {"H": 0, "M": 1, "L": 2}
+    findings.sort(key=lambda f: (_sev_order.get(f["severity"], 9), f["file"], f["line"]))
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Core analysis
 # ---------------------------------------------------------------------------
 
@@ -626,6 +907,20 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="over-fetch",
+    category="health",
+    summary="Detect models that serialize more fields than necessary in API responses",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("over-fetch")
 @click.option(
     "--threshold",
@@ -641,8 +936,18 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
     show_default=True,
     help="Maximum number of findings to display",
 )
+@click.option(
+    "--leaks-only/--no-leaks-only",
+    "leaks_only",
+    default=None,
+    help=(
+        "Show only BARE and UNGUARDED_RELATION findings "
+        "(omit GUARDED_RELATION advisory). Default off, but `--ci` "
+        "implies --leaks-only; pass --no-leaks-only to override."
+    ),
+)
 @click.pass_context
-def over_fetch_cmd(ctx, threshold, limit):
+def over_fetch_cmd(ctx, threshold, limit, leaks_only):
     """Detect models that serialize more fields than necessary in API responses.
 
     Finds large models ($fillable) without $hidden/$visible field filtering,
@@ -668,13 +973,21 @@ def over_fetch_cmd(ctx, threshold, limit):
         roam --json over-fetch           # JSON output
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    # W21.6 --ci composition: under --ci, default leaks_only=True so the CI
+    # gate fails only on real leaks (BARE/UNGUARDED). leaks_only is a
+    # tri-state Click option (--leaks-only/--no-leaks-only/None=unset);
+    # explicit user flags ALWAYS win over the --ci inference (LAW 11).
+    ci_mode = ctx.obj.get("ci_mode", False) if ctx.obj else False
+    if leaks_only is None:
+        leaks_only = bool(ci_mode)
     ensure_index()
 
     with open_db(readonly=True) as conn:
         findings = analyze_over_fetch(conn, threshold=threshold, limit=limit)
+        endpoint_findings = analyze_endpoint_states(conn, find_project_root())
 
     # -------------------------------------------------------------------
-    # Tally by confidence
+    # Tally by confidence (model-level) and by state (endpoint-level)
     # -------------------------------------------------------------------
     by_confidence: dict[str, int] = defaultdict(int)
     for f in findings:
@@ -694,8 +1007,63 @@ def over_fetch_cmd(ctx, threshold, limit):
         conf_parts.append(f"{low_count} low")
     conf_str = ", ".join(conf_parts) if conf_parts else "none"
 
-    if total:
-        verdict = f"{total} over-fetch pattern{'s' if total != 1 else ''} found ({conf_str})"
+    # 3-state endpoint tallies — computed from the FULL classification, not
+    # the post-filter list. This is intentional: SUMMARY tells the truth;
+    # the FINDINGS list is what gets filtered by --leaks-only.
+    bare_count = sum(1 for e in endpoint_findings if e["state"] == "BARE")
+    guarded_relation_count = sum(1 for e in endpoint_findings if e["state"] == "GUARDED_RELATION")
+    unguarded_relation_count = sum(1 for e in endpoint_findings if e["state"] == "UNGUARDED_RELATION")
+    endpoint_total = bare_count + guarded_relation_count + unguarded_relation_count
+
+    # Apply --leaks-only filter to the findings LIST only (summary counts
+    # preserved above). The flag is a presentation filter; detection is
+    # identical with or without it.
+    if leaks_only:
+        endpoint_findings = [
+            e for e in endpoint_findings if e["state"] in {"BARE", "UNGUARDED_RELATION"}
+        ]
+
+    # Endpoint verdict — concrete-noun anchored (LAW 4). Names the worst
+    # endpoint by file:line where possible so agents see WHICH leak to fix.
+    real_leaks = bare_count + unguarded_relation_count
+    if endpoint_total:
+        ep_parts: list[str] = []
+        if bare_count:
+            ep_parts.append(f"{bare_count} BARE leak{'s' if bare_count != 1 else ''}")
+        if guarded_relation_count and not leaks_only:
+            ep_parts.append(
+                f"{guarded_relation_count} GUARDED_RELATION (already partial)"
+            )
+        if unguarded_relation_count:
+            ep_parts.append(
+                f"{unguarded_relation_count} UNGUARDED_RELATION "
+                f"({'real leak' if unguarded_relation_count == 1 else 'real leaks'})"
+            )
+        if leaks_only and guarded_relation_count:
+            # Explicit suppression note so the verdict makes clear WHY the
+            # GUARDED count isn't in the leak list. Positive vocabulary per
+            # CONSTRAINT 7 — name what's surviving (real leaks), then state
+            # the suppression as a closing clause.
+            leak_clause = ", ".join(ep_parts) if ep_parts else "0 real leaks"
+            endpoint_verdict = (
+                f"{real_leaks} real leak{'s' if real_leaks != 1 else ''} "
+                f"({leak_clause}) — {guarded_relation_count} guarded-relation "
+                f"finding{'s' if guarded_relation_count != 1 else ''} suppressed via --leaks-only"
+            )
+        else:
+            endpoint_verdict = ", ".join(ep_parts)
+    else:
+        endpoint_verdict = ""
+
+    if total or endpoint_total:
+        head_bits: list[str] = []
+        if total:
+            head_bits.append(
+                f"{total} over-fetch pattern{'s' if total != 1 else ''} ({conf_str})"
+            )
+        if endpoint_verdict:
+            head_bits.append(endpoint_verdict)
+        verdict = "; ".join(head_bits)
     else:
         verdict = "No over-fetch patterns detected"
 
@@ -703,6 +1071,11 @@ def over_fetch_cmd(ctx, threshold, limit):
     # JSON output
     # -------------------------------------------------------------------
     if json_mode:
+        # `endpoint_findings` is the 3-state classification surface — keep
+        # it separate from model-level `findings` so existing consumers
+        # don't break. The summary carries the headline counts so agents
+        # can read the verdict line and skip the full envelope.
+        partial_success = bare_count > 0 or unguarded_relation_count > 0
         click.echo(
             to_json(
                 json_envelope(
@@ -712,8 +1085,21 @@ def over_fetch_cmd(ctx, threshold, limit):
                         "total": total,
                         "threshold": threshold,
                         "by_confidence": dict(by_confidence),
+                        # 3-state endpoint classification counts — these
+                        # reflect the FULL classification regardless of
+                        # --leaks-only; the flag only filters the findings
+                        # list. Summary always tells the truth.
+                        "bare_count": bare_count,
+                        "guarded_relation_count": guarded_relation_count,
+                        "unguarded_relation_count": unguarded_relation_count,
+                        "endpoint_total": endpoint_total,
+                        "real_leak_count": real_leaks,
+                        "state": "ok" if real_leaks == 0 else "leak",
+                        "partial_success": partial_success,
+                        "leaks_only": leaks_only,
                     },
                     findings=findings,
+                    endpoint_findings=endpoint_findings,
                 )
             )
         )
@@ -723,6 +1109,21 @@ def over_fetch_cmd(ctx, threshold, limit):
     # Text output
     # -------------------------------------------------------------------
     click.echo(f"VERDICT: {verdict}")
+
+    # Endpoint-level 3-state block — printed BEFORE the model-level findings
+    # because it names concrete endpoints by file:line and is what the
+    # caller usually wants to act on first (CONSTRAINT 12 — executability).
+    if endpoint_findings:
+        click.echo()
+        click.echo("Endpoint classification (BARE / GUARDED_RELATION / UNGUARDED_RELATION):")
+        for ep in endpoint_findings:
+            click.echo(
+                f"  [{ep['severity']}] {ep['state']:<20} {ep['endpoint']}  {ep['location']}"
+            )
+            if ep.get("evidence"):
+                click.echo(f"          Evidence: {ep['evidence']}")
+            if ep.get("recommendation"):
+                click.echo(f"          Fix: {ep['recommendation']}")
 
     if not findings:
         return

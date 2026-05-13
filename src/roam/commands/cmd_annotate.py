@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -18,6 +19,20 @@ from roam.output.formatter import json_envelope, to_json
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="annotate",
+    category="workflow",
+    summary="Annotate a symbol or file with a persistent note",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("target")
 @click.argument("content")
@@ -101,6 +116,20 @@ def annotate(ctx, target, content, tag, author, expires):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="annotations",
+    category="workflow",
+    summary="List annotations for a symbol, file, or the whole project",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("target", required=False, default=None)
 @click.option("--tag", default=None, help="Filter by tag")

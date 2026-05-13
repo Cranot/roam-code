@@ -1,4 +1,10 @@
-"""Generate a compact codebase minimap for CLAUDE.md injection."""
+"""Generate a compact codebase minimap for CLAUDE.md injection.
+
+Naming-conventions detection delegates to the canonical helper in
+``roam.commands.conventions_helper`` so the conventions line agrees
+with ``roam describe``, ``roam understand``, ``roam preflight``, and
+``roam conventions``.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +15,8 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
+from roam.commands.conventions_helper import compute_conventions
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -272,28 +280,34 @@ def _get_hotspots(conn, limit: int = 5) -> list[str]:
 
 
 def _get_conventions(conn) -> str:
-    """Detect dominant naming conventions from the symbol table."""
-    snake = conn.execute("SELECT COUNT(*) FROM symbols WHERE kind='function' AND name LIKE '%_%'").fetchone()[0]
-    camel = conn.execute(
-        "SELECT COUNT(*) FROM symbols WHERE kind='function' AND name GLOB '*[A-Z]*' AND name NOT LIKE '%_%'"
-    ).fetchone()[0]
-    total_cls = conn.execute("SELECT COUNT(*) FROM symbols WHERE kind='class'").fetchone()[0]
-    pascal_cls = conn.execute(
-        "SELECT COUNT(*) FROM symbols "
-        "WHERE kind='class' AND LENGTH(name)>1 "
-        "AND SUBSTR(name,1,1) = UPPER(SUBSTR(name,1,1))"
-    ).fetchone()[0]
+    """Detect dominant naming conventions from the symbol table.
+
+    Delegates to the canonical detector in
+    ``roam.commands.conventions_helper`` so the minimap's one-line
+    summary is derived from the same per-kind percentages that
+    ``roam describe`` / ``roam understand`` / ``roam conventions`` use.
+
+    Previously this function collapsed the entire codebase to a single
+    misleading label (e.g. ``"snake_case fns, PascalCase classes"``)
+    that masked, for example, that 55% of methods were snake_case while
+    93% of functions were camelCase — the same per-kind disagreement
+    Pattern 4 of the dogfood corpus called out.
+    """
+    result = compute_conventions(conn)
+    by_kind = result["by_kind"]
 
     parts: list[str] = []
-    if snake > camel * 2:
-        parts.append("snake_case fns")
-    elif camel > snake * 2:
-        parts.append("camelCase fns")
-    else:
-        parts.append("mixed fn style")
-
-    if total_cls > 0 and pascal_cls / max(total_cls, 1) > 0.7:
-        parts.append("PascalCase classes")
+    # Render per-kind so the minimap surfaces the same granularity
+    # describe/understand do. Threshold at 60% so we don't pretend a
+    # 51/49 split is a "convention", and label that case as mixed.
+    for kind in ("function", "class", "method"):
+        info = by_kind.get(kind)
+        if not info:
+            continue
+        if info["pct"] >= 60:
+            parts.append(f"{info['style']} {info['label']} ({info['pct']}%)")
+        else:
+            parts.append(f"mixed {info['label']}")
 
     return ", ".join(parts) if parts else "mixed conventions"
 
@@ -404,6 +418,20 @@ def _upsert_file(filepath: Path, block: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="minimap",
+    category="getting-started",
+    summary="Generate a compact codebase minimap for CLAUDE.md injection",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("minimap")
 @click.option(
     "--update",
@@ -506,11 +534,16 @@ def minimap(ctx, update_claude, output_file, init_notes):
     if target is not None:
         verb = _upsert_file(target, block)
         if json_mode:
+            # LAW 4 (W17.3): concrete verb + path beats bare ``"ok"``.
             click.echo(
                 to_json(
                     json_envelope(
                         "minimap",
-                        summary={"verdict": "ok", "action": verb.lower(), "file": str(target)},
+                        summary={
+                            "verdict": f"minimap {verb.lower()} in {target}",
+                            "action": verb.lower(),
+                            "file": str(target),
+                        },
                         file=str(target),
                     )
                 )
@@ -524,7 +557,16 @@ def minimap(ctx, update_claude, output_file, init_notes):
                 to_json(
                     json_envelope(
                         "minimap",
-                        summary={"verdict": "ok"},
+                        summary={
+                            # LAW 4 (W17.3): name the analytical subject
+                            # (the rendered block) + a size cue, not bare "ok".
+                            "verdict": (
+                                f"minimap rendered ({len(block)} chars) — "
+                                "wrap in CLAUDE.md with --update-claude"
+                            ),
+                            "content_char_count": len(block),
+                            "caller_metric_definition": "direct_in_degree (Touch carefully + file annotations)",
+                        },
                         content=block,
                     )
                 )

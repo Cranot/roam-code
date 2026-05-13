@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -28,6 +29,28 @@ def _format_pct_list(pcts: list[float]) -> str:
     return " / ".join(f"{p:.0f}%" for p in pcts)
 
 
+@roam_capability(
+    name="fingerprint",
+    category="architecture",
+    summary="Topology fingerprint for cross-repo comparison: layers, modularity, PageRank.",
+    inputs=["repo_path"],
+    outputs=["signature", "verdict"],
+    examples=[
+        "roam fingerprint",
+        "roam fingerprint --export fp.json",
+        "roam fingerprint --compare fp.json",
+    ],
+    tags=["architecture", "comparison"],
+    ai_safe=True,
+    requires_index=True,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+)
 @click.command()
 @click.option("--compact", is_flag=True, help="Single-line summary output")
 @click.option(
@@ -105,6 +128,30 @@ def fingerprint(ctx, compact, export_path, compare_path):
         G = build_symbol_graph(conn)
         fp = compute_fingerprint(conn, G)
 
+        # W17.2 / Pattern 3c: reconcile god-component count with `roam health`.
+        # The legacy `god_objects` field uses a statistical (avg_degree*2)
+        # algorithm. The canonical metric (degree-thresholded, utility-aware)
+        # is owned by `roam.quality.god_components`. We surface both:
+        # `god_components` (canonical, agrees with health) and
+        # `god_objects` (legacy alias, retained for back-compat).
+        try:
+            from roam.quality.god_components import (
+                god_components as _gc,
+                definition as _gc_def,
+            )
+
+            _gsum = _gc(conn)
+            fp.setdefault("antipatterns", {})
+            fp["antipatterns"]["god_components"] = _gsum.total
+            fp["antipatterns"]["god_components_critical"] = _gsum.critical
+            fp["antipatterns"]["god_components_actionable"] = _gsum.actionable
+            fp["antipatterns"]["god_components_legacy_god_objects"] = (
+                fp["antipatterns"].get("god_objects", 0)
+            )
+            fp["antipatterns"]["god_components_definition"] = _gc_def()
+        except Exception:
+            pass
+
         topo = fp["topology"]
         n_layers = topo["layers"]
         modularity = topo["modularity"]
@@ -127,6 +174,8 @@ def fingerprint(ctx, compact, export_path, compare_path):
 
         # -- JSON output --
         if json_mode:
+            from roam.quality.god_components import definition as _gc_def_local
+
             envelope = json_envelope(
                 "fingerprint",
                 summary={
@@ -135,6 +184,11 @@ def fingerprint(ctx, compact, export_path, compare_path):
                     "modularity": modularity,
                     "fiedler": fiedler,
                     "tangle_ratio": tangle,
+                    "god_components": fp.get("antipatterns", {}).get(
+                        "god_components",
+                        fp.get("antipatterns", {}).get("god_objects", 0),
+                    ),
+                    "god_components_definition": _gc_def_local(),
                 },
                 fingerprint=fp,
             )

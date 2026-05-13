@@ -14,6 +14,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -446,6 +447,124 @@ def _check_required_tables() -> dict:
     }
 
 
+def _check_stale_math_signal_column() -> dict:
+    """Detect a stale ``math_signals.loop_eq_with_dependent_write`` column.
+
+    Migration #51 (USER_VERSION 12 -> 13, W36.4) added the
+    ``loop_eq_with_dependent_write`` column to ``math_signals`` with
+    ``DEFAULT 0``. Repos indexed before that migration landed have the
+    column populated with zeros across every row — meaning ``roam algo``
+    correctly reports zero false-positives but ALSO zero true-positives
+    for the new dependent-write predicate.
+
+    The fix is ``roam index --force`` to re-run the signal extractor.
+
+    Advisory only: a stale-but-present column is informational, never
+    blocking — the user is still getting correct (just incomplete)
+    results.
+
+    States:
+      no_index   — DB doesn't exist (skipped)
+      no_table   — math_signals table missing (older schema; skipped)
+      no_column  — column not present (pre-USER_VERSION-13 DB; skipped —
+                   migration will add it on next open)
+      empty      — math_signals table is empty (fresh project; skipped)
+      stale      — column exists, table non-empty, but all rows are 0
+      populated  — at least one row has a non-zero value (healthy)
+    """
+    try:
+        from roam.db.connection import db_exists, open_db
+    except Exception as exc:
+        return {
+            "name": "Stale math_signals column",
+            "passed": False,
+            "detail": f"connection module import failed: {type(exc).__name__}: {exc}",
+        }
+
+    if not db_exists():
+        return {
+            "name": "Stale math_signals column",
+            "passed": True,
+            "detail": "no index - stale-signal check skipped",
+            "_state": "no_index",
+        }
+
+    try:
+        with open_db(readonly=True) as conn:
+            # Does math_signals exist?
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='math_signals'"
+            ).fetchone()
+            if row is None:
+                return {
+                    "name": "Stale math_signals column",
+                    "passed": True,
+                    "detail": "math_signals table absent - older schema, skipped",
+                    "_state": "no_table",
+                }
+            # Does the column exist? PRAGMA table_info returns (cid, name, ...)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(math_signals)").fetchall()}
+            if "loop_eq_with_dependent_write" not in cols:
+                return {
+                    "name": "Stale math_signals column",
+                    "passed": True,
+                    "detail": (
+                        "loop_eq_with_dependent_write column not present - "
+                        "pre-migration-#51 DB, will populate on next open"
+                    ),
+                    "_state": "no_column",
+                }
+            # Is the table populated at all? Use COUNT + SUM in one query.
+            row = conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(loop_eq_with_dependent_write), 0) "
+                "FROM math_signals"
+            ).fetchone()
+    except Exception as exc:
+        return {
+            "name": "Stale math_signals column",
+            "passed": False,
+            "detail": f"could not probe math_signals: {type(exc).__name__}: {exc}",
+        }
+
+    total_rows = int(row[0] or 0)
+    nonzero_sum = int(row[1] or 0)
+
+    if total_rows == 0:
+        return {
+            "name": "Stale math_signals column",
+            "passed": True,
+            "detail": "math_signals empty - fresh project, skipped",
+            "_state": "empty",
+            "_row_count": 0,
+        }
+
+    if nonzero_sum == 0:
+        return {
+            "name": "Stale math_signals column",
+            "passed": False,
+            "detail": (
+                f"ADVISORY: stale math_signals column 'loop_eq_with_dependent_write' - "
+                f"schema v13 added this signal (W36.4 / migration #51) but no row "
+                f"has a non-zero value across {total_rows} rows. This is normal for "
+                f"repos indexed before migration #51 landed. "
+                f"Fix: run `roam index --force` to rebuild signals."
+            ),
+            "_state": "stale",
+            "_row_count": total_rows,
+        }
+
+    return {
+        "name": "Stale math_signals column",
+        "passed": True,
+        "detail": (
+            f"loop_eq_with_dependent_write populated ({nonzero_sum} non-zero "
+            f"value(s) across {total_rows} rows)"
+        ),
+        "_state": "populated",
+        "_row_count": total_rows,
+    }
+
+
 def _format_age(seconds: float) -> str:
     """Format an age in seconds as a human-readable string."""
     seconds = max(0.0, float(seconds))
@@ -556,6 +675,268 @@ def _check_index_manifest() -> dict:
         "passed": passed,
         "detail": detail,
         "_drift_fields": sorted(drift.keys()),
+    }
+
+
+def _check_index_manifest_history() -> dict:
+    """Compare the two most recent manifest rows for structural drift.
+
+    Complements ``_check_index_manifest`` (which diffs the latest row
+    against the current environment). This check answers a different
+    question: "did the last two recorded index runs produce a different
+    toolchain / config / git state?" — i.e. is the index history itself
+    moving around between runs?
+
+    States:
+      no_history     — 0 or 1 manifest rows recorded (advisory pass)
+      stable         — 2+ rows, no fields differ between the latest two
+      drift_detected — 2+ rows, one or more drift fields differ
+
+    The drift fields are the ones manifest.manifest_diff already
+    considers significant (roam_version, schema_version, parser/grammar
+    versions, config_hash, git_head, git_dirty_hash, enabled_extras,
+    index_profile). We surface the field names and counts; the per-field
+    old/new values stay in the `_drift` private payload so JSON
+    consumers that want them can opt in.
+    """
+    import json  # local — keeps doctor's import surface lazy
+
+    try:
+        from roam.db.connection import db_exists, open_db
+        from roam.index.manifest import _DRIFT_FIELDS, manifest_diff
+    except Exception as exc:
+        return {
+            "name": "Index manifest history",
+            "passed": False,
+            "detail": f"manifest module import failed: {type(exc).__name__}: {exc}",
+        }
+
+    if not db_exists():
+        return {
+            "name": "Index manifest history",
+            "passed": True,
+            "detail": "no index — manifest history skipped",
+            "_state": "no_history",
+        }
+
+    # Pull the two most recent manifest rows (latest first). Stay inside a
+    # single read-only connection so the check is cheap even on large DBs.
+    def _decode_row(row) -> dict:
+        # Decode the same fields latest_manifest() decodes, so the diff
+        # function sees the same shape on both sides.
+        parser_versions_raw = row[3] or "{}"
+        grammar_versions_raw = row[4]
+        enabled_extras_raw = row[8] or "[]"
+        try:
+            parser_versions = json.loads(parser_versions_raw)
+        except (TypeError, ValueError):
+            parser_versions = {}
+        try:
+            grammar_versions = json.loads(grammar_versions_raw) if grammar_versions_raw else None
+        except (TypeError, ValueError):
+            grammar_versions = None
+        try:
+            enabled_extras = json.loads(enabled_extras_raw)
+        except (TypeError, ValueError):
+            enabled_extras = []
+        return {
+            "indexed_at": row[0],
+            "roam_version": row[1],
+            "schema_version": row[2],
+            "parser_versions": parser_versions,
+            "grammar_versions": grammar_versions,
+            "config_hash": row[5],
+            "git_head": row[6],
+            "git_dirty_hash": row[7],
+            "enabled_extras": enabled_extras,
+            "index_profile": row[9],
+        }
+
+    try:
+        with open_db(readonly=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT indexed_at, roam_version, schema_version,
+                       parser_versions, grammar_versions, config_hash,
+                       git_head, git_dirty_hash, enabled_extras,
+                       index_profile
+                  FROM index_manifest
+              ORDER BY indexed_at DESC, id DESC
+                 LIMIT 2
+                """
+            ).fetchall()
+    except Exception as exc:
+        return {
+            "name": "Index manifest history",
+            "passed": False,
+            "detail": f"could not read manifest history: {type(exc).__name__}: {exc}",
+        }
+
+    row_count = len(rows)
+    if row_count < 2:
+        return {
+            "name": "Index manifest history",
+            "passed": True,
+            "detail": (
+                "manifest seeded — no prior run to diff against"
+                if row_count == 1
+                else "no manifest rows recorded yet"
+            ),
+            "_state": "no_history",
+            "_row_count": row_count,
+        }
+
+    current = _decode_row(rows[0])
+    previous = _decode_row(rows[1])
+    drift = manifest_diff(previous, current)
+
+    if not drift:
+        return {
+            "name": "Index manifest history",
+            "passed": True,
+            "detail": "last two index runs are structurally identical",
+            "_state": "stable",
+            "_row_count": row_count,
+        }
+
+    # Drift detected — surface field names + a short summary. Old/new
+    # values stay in the private payload so the human-facing detail stays
+    # readable.
+    fields_sorted = sorted(drift.keys())
+    # Preserve docstring order for the first few fields when possible
+    # (roam_version, schema_version, parser_versions, ...) so the most
+    # important drift surfaces first.
+    ordered = [f for f in _DRIFT_FIELDS if f in drift]
+    extra = [f for f in fields_sorted if f not in ordered]
+    headline_fields = ordered + extra
+    detail = (
+        f"{len(drift)} field(s) drifted between the last two index runs: "
+        f"{', '.join(headline_fields)}"
+    )
+    return {
+        "name": "Index manifest history",
+        "passed": False,
+        "detail": detail,
+        "_state": "drift_detected",
+        "_row_count": row_count,
+        "_drift_fields": fields_sorted,
+        "_drift": {k: list(v) for k, v in drift.items()},
+    }
+
+
+def _check_installed_binary_matches_source() -> dict:
+    """Detect a stale ``roam`` binary that doesn't point at this source tree.
+
+    A common foot-gun across multiple agent recheck rounds (W7.3, W13.5):
+    the local repo's source has new commands but the installed ``roam``
+    binary on PATH was built from an older checkout. Agents then see
+    ``No such command`` errors at run-time.
+
+    States:
+      fresh         — imported roam module and on-PATH ``roam`` binary
+                      point at the same site-packages / source tree
+      stale_install — paths diverge (likely: editable import shadows a
+                      uv-installed binary, or vice-versa)
+      no_binary     — ``shutil.which("roam")`` returns None — likely a
+                      bare ``python -m roam`` invocation, not actionable
+
+    Advisory only — the running command obviously imported just fine,
+    so this can't be blocking. It exists to surface the staleness so
+    the user can refresh the binary before the next shell invocation.
+    """
+    try:
+        import roam  # noqa: PLC0415 — local import keeps doctor's surface lazy
+    except Exception as exc:
+        return {
+            "name": "Installed binary",
+            "passed": False,
+            "detail": f"could not import roam: {type(exc).__name__}: {exc}",
+            "_state": "import_failed",
+        }
+
+    import_path_str = getattr(roam, "__file__", None)
+    if not import_path_str:
+        return {
+            "name": "Installed binary",
+            "passed": True,
+            "detail": "roam module has no __file__ — namespace package or frozen build",
+            "_state": "no_file",
+        }
+    import_path = Path(import_path_str).resolve()
+    # ``roam/__init__.py`` -> the package dir is its parent.
+    import_pkg_dir = import_path.parent
+
+    binary_path_str = shutil.which("roam")
+    if binary_path_str is None:
+        return {
+            "name": "Installed binary",
+            "passed": True,
+            "detail": "no `roam` binary on PATH — running via `python -m roam` or similar",
+            "_state": "no_binary",
+            "_import_path": str(import_pkg_dir),
+        }
+
+    # Resolve the binary's installed-package location. Two robust signals:
+    # 1) shebang of the wrapper script (Unix), 2) ``roam`` exe living in
+    # a Scripts/ or bin/ sibling of a site-packages/roam/ dir (Windows).
+    # We don't try to execute the binary — that's slow and racey — we
+    # only need the *location* it would run from.
+    binary_path = Path(binary_path_str).resolve()
+
+    # Search upward from the binary for a sibling site-packages/roam (or
+    # Lib/site-packages/roam on Windows uv tool installs) and treat that
+    # as the binary's effective source tree.
+    binary_pkg_dir: Path | None = None
+    for parent in binary_path.parents:
+        for candidate in (
+            parent / "site-packages" / "roam",
+            parent / "Lib" / "site-packages" / "roam",
+            parent / "lib" / "site-packages" / "roam",
+        ):
+            if candidate.is_dir():
+                binary_pkg_dir = candidate.resolve()
+                break
+        if binary_pkg_dir is not None:
+            break
+
+    if binary_pkg_dir is None:
+        # We can't resolve where the binary points; report the binary
+        # path and treat it as advisory pass (insufficient evidence to
+        # claim staleness).
+        return {
+            "name": "Installed binary",
+            "passed": True,
+            "detail": (
+                f"`roam` binary at {binary_path} — could not locate its "
+                f"site-packages/roam to compare against import {import_pkg_dir}"
+            ),
+            "_state": "unknown",
+            "_import_path": str(import_pkg_dir),
+            "_binary_path": str(binary_path),
+        }
+
+    if binary_pkg_dir == import_pkg_dir:
+        return {
+            "name": "Installed binary",
+            "passed": True,
+            "detail": f"`roam` binary and import share source tree at {import_pkg_dir}",
+            "_state": "fresh",
+            "_import_path": str(import_pkg_dir),
+            "_binary_path": str(binary_path),
+        }
+
+    return {
+        "name": "Installed binary",
+        "passed": False,
+        "detail": (
+            f"`roam` binary points at {binary_pkg_dir} but the running "
+            f"import is from {import_pkg_dir}. "
+            "Run `pip install -e .` or `uv tool install -e .` to refresh the binary."
+        ),
+        "_state": "stale_install",
+        "_import_path": str(import_pkg_dir),
+        "_binary_pkg_dir": str(binary_pkg_dir),
+        "_binary_path": str(binary_path),
     }
 
 
@@ -702,10 +1083,31 @@ _ADVISORY_CHECK_NAMES = frozenset(
         "Index exists",  # auto-created on first command
         "Index freshness",  # stale index is still functional
         "Index manifest",  # drift hints — informational
+        "Index manifest history",  # cross-run drift — informational
+        "Installed binary",  # stale-install hint — informational
+        "Stale math_signals column",  # post-migration #51 re-index hint
     }
 )
 
 
+@roam_capability(
+    name="doctor",
+    category="health",
+    summary="Diagnose environment: Python, dependencies, git, index state.",
+    inputs=[],
+    outputs=["checks", "verdict"],
+    examples=["roam doctor", "roam doctor --strict"],
+    tags=["diagnostics", "setup"],
+    ai_safe=True,
+    requires_index=False,
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+)
 @click.command("doctor")
 @click.option(
     "--strict",
@@ -762,6 +1164,7 @@ def doctor(ctx, strict):
     checks.append(_check_mcp_backpressure())
     checks.append(_check_plugin_discovery())
     checks.append(_check_required_tables())
+    checks.append(_check_stale_math_signal_column())
 
     # Index checks: existence feeds into freshness and SQLite checks
     index_check = _check_index_exists()
@@ -771,6 +1174,8 @@ def doctor(ctx, strict):
     checks.append(_check_index_freshness(db_path_str))
     checks.append(_check_sqlite(db_path_str))
     checks.append(_check_index_manifest())
+    checks.append(_check_index_manifest_history())
+    checks.append(_check_installed_binary_matches_source())
 
     # --- Compute summary, with advisory / blocking severity split ---
     total = len(checks)

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -79,7 +80,12 @@ for _pdef in _FLAG_PATTERN_DEFS:
         }
     )
 
-# Extensions worth scanning for flag usage (source code, not images/binaries)
+# 33 source extensions scanned for feature-flag references — covers the top
+# mainstream languages plus Salesforce (.cls/.trigger), Elixir (.ex/.exs),
+# Erlang (.erl), Haskell (.hs), Lua, R, Dart, Groovy, Clojure. Deliberately
+# tighter than discovery.SKIP_EXTENSIONS' inverse: flag scanners run regex
+# patterns and benefit from skipping high-noise extensions (HTML, CSS,
+# templates).
 _SCANNABLE_EXTENSIONS = frozenset(
     {
         ".py",
@@ -394,6 +400,20 @@ def analyze_flags(
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="flag-dead",
+    category="refactoring",
+    summary="Detect potentially stale feature flag code (conditionally-dead code)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "refactor"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("flag-dead")
 @click.option(
     "--config",

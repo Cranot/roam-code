@@ -12,6 +12,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.graph.builder import build_file_graph, build_symbol_graph
@@ -57,6 +58,20 @@ def _serialise_graphml(G, output_path: Path) -> int:
     return G.number_of_nodes() + G.number_of_edges()
 
 
+@roam_capability(
+    name="graph-export",
+    category="architecture",
+    summary="Export the indexed graph for external tooling",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command(name="graph-export")
 @click.option(
     "--format",

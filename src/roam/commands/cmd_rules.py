@@ -10,6 +10,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -91,12 +92,43 @@ exempt:
   files: ["**/tests/**"]
 """
 
+# R18: graph-aware clauses — these only fire when the index has the
+# corresponding tables populated (`roam clones --persist` for clones_with,
+# `roam index` for the rest).
+_EXAMPLE_GRAPH_CLAUSE_RULE = """\
+# Rule: graph-aware architectural constraints (R18)
+# Demonstrates the four new clause types: reachable_from, imports_from,
+# clones_with, tested_by. Each rule may carry a `must` or `must_not` block
+# (or both). Combine with `when:` to scope the rule.
+name: "Handlers must reach the canonical DB"
+description: "Every src/handlers/**.py file must be able to reach src/db/__init__.py"
+severity: error
+when:
+  pattern: "src/handlers/**.py"
+must_not:
+  imports_from: "src/legacy"
+"""
+
 
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="rules",
+    category="reports",
+    summary="Evaluate custom governance rules defined in .roam/rules/",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("rules")
 @click.option("--init", "do_init", is_flag=True, help="Generate example rule files in .roam/rules/.")
 @click.option("--ci", "ci_mode", is_flag=True, help="Exit code 1 on error-severity violations.")
@@ -110,22 +142,44 @@ exempt:
     show_default=True,
     help="Cap on violations shown per failing rule (alias: --limit). Pass 0 for unlimited.",
 )
+@click.option(
+    "--depth",
+    "depth",
+    default=3,
+    type=int,
+    show_default=True,
+    help=(
+        "BFS depth for graph-aware clauses (reachable_from, tested_by). "
+        "Default 3 — mirrors `roam impact` to keep evaluation fast on large repos."
+    ),
+)
+@click.option(
+    "--max-nodes",
+    "max_nodes",
+    default=100,
+    type=int,
+    show_default=True,
+    help="Max visited nodes per graph-aware clause BFS (W3.4 guardrail).",
+)
 @click.pass_context
-def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
+def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
     """Evaluate custom governance rules defined in .roam/rules/.
 
     Unlike ``check-rules`` (which evaluates pre-packaged structural rules),
     this command evaluates user-authored YAML governance rules with custom
     constraints.
 
-    Rules are YAML files that define architectural constraints. Four rule
+    Rules are YAML files that define architectural constraints. Five rule
     types are supported: path_match (edges between from/to patterns),
     symbol_match (symbols matching criteria with optional require),
     ast_match (AST structural patterns with `$METAVAR` captures),
-    and dataflow_match (basic intra-procedural dataflow heuristics).
+    dataflow_match (basic intra-procedural dataflow heuristics), and
+    graph_clause (R18 — must/must_not clauses backed by the indexed graph:
+    reachable_from, imports_from, clones_with, tested_by).
 
     Use --init to create example rule files. Use --ci for CI gates
-    (exit code 1 on error-severity violations).
+    (exit code 1 on error-severity violations). Use --depth to control
+    BFS depth for graph-aware clauses (default 3).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
@@ -190,7 +244,7 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
     from roam.rules.engine import evaluate_all
 
     with open_db(readonly=True) as conn:
-        results = evaluate_all(rules_dir, conn)
+        results = evaluate_all(rules_dir, conn, max_depth=depth, max_nodes=max_nodes)
 
     # Tally results
     total = len(results)
@@ -199,6 +253,7 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
     failed_warnings = sum(1 for r in results if not r["passed"] and r["severity"] == "warning")
     failed_infos = sum(1 for r in results if not r["passed"] and r["severity"] == "info")
     failed = total - passed
+    partial_success = any(r.get("partial_success") for r in results)
 
     if failed == 0:
         verdict = f"all {total} rules passed" if total > 0 else "no rules found"
@@ -211,6 +266,35 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
         if failed_infos > 0:
             parts.append(f"{failed_infos} info")
         verdict = f"{passed} of {total} rules passed, {', '.join(parts)}"
+
+    # R18: derive imperative `next_commands` from graph-clause violations so
+    # an agent that consumes only the verdict can keep going. LAW 2: every
+    # entry is a copy-paste-executable `roam <cmd>` string.
+    next_commands: list[str] = []
+    seen_cmds: set[str] = set()
+    for r in results:
+        if r.get("passed"):
+            continue
+        for v in r.get("violations", []):
+            sym = (v.get("symbol") or "").strip()
+            file_path = (v.get("file") or "").strip()
+            clause = (v.get("clause") or "").strip()
+            cmd: str | None = None
+            if clause == "reachable_from" and sym:
+                cmd = f"roam impact {sym}"
+            elif clause == "imports_from" and file_path:
+                cmd = f"roam file {file_path}"
+            elif clause == "clones_with" and sym:
+                cmd = f"roam clones --persist && roam impact {sym}"
+            elif clause == "tested_by" and sym:
+                cmd = f"roam coverage-gaps --symbol {sym}"
+            if cmd and cmd not in seen_cmds:
+                seen_cmds.add(cmd)
+                next_commands.append(cmd)
+            if len(next_commands) >= 10:
+                break
+        if len(next_commands) >= 10:
+            break
 
     # --- SARIF output ---
     if sarif_mode:
@@ -226,18 +310,22 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
 
     # --- JSON output ---
     if json_mode:
+        summary_dict = {
+            "verdict": verdict,
+            "passed": passed,
+            "failed": failed,
+            "warnings": failed_warnings,
+            "total": total,
+        }
+        if partial_success:
+            summary_dict["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "rules",
-                    summary={
-                        "verdict": verdict,
-                        "passed": passed,
-                        "failed": failed,
-                        "warnings": failed_warnings,
-                        "total": total,
-                    },
+                    summary=summary_dict,
                     results=results,
+                    next_commands=next_commands,
                 )
             )
         )
@@ -275,6 +363,20 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
             if top_n > 0 and count > top_n:
                 click.echo(f"    (+{count - top_n} more — pass `--top N` or `--top 0` to see them)")
 
+    if next_commands:
+        click.echo()
+        click.echo("Next commands:")
+        for nc in next_commands:
+            click.echo(f"  - {nc}")
+
+    if partial_success:
+        click.echo()
+        click.echo(
+            "NOTE: at least one rule could not fully evaluate (graph clause "
+            "had unresolved targets or missing clone index). Verdict reflects "
+            "rules that DID run; consult evidence for partial cases."
+        )
+
     if ci_mode and failed_errors > 0:
         from roam.exit_codes import EXIT_GATE_FAILURE
 
@@ -299,6 +401,7 @@ def _handle_init(root: Path, json_mode: bool, rules_dir_opt: str | None):
     symbol_rule_file = rules_dir / "exported_need_tests.yaml"
     ast_rule_file = rules_dir / "no_eval_style_execution.yaml"
     dataflow_rule_file = rules_dir / "basic_dataflow_hygiene.yaml"
+    graph_clause_rule_file = rules_dir / "graph_clauses_example.yaml"
 
     created: list[str] = []
 
@@ -317,6 +420,10 @@ def _handle_init(root: Path, json_mode: bool, rules_dir_opt: str | None):
     if not dataflow_rule_file.exists():
         dataflow_rule_file.write_text(_EXAMPLE_DATAFLOW_RULE, encoding="utf-8")
         created.append(str(dataflow_rule_file))
+
+    if not graph_clause_rule_file.exists():
+        graph_clause_rule_file.write_text(_EXAMPLE_GRAPH_CLAUSE_RULE, encoding="utf-8")
+        created.append(str(graph_clause_rule_file))
 
     if json_mode:
         verdict = f"created {len(created)} example rule(s)" if created else "rule files already exist"

@@ -6,9 +6,24 @@ import time
 
 import click
 
+from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="index",
+    category="getting-started",
+    summary="Build or rebuild the codebase index",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command()
 @click.option("--force", is_flag=True, help="Force full reindex")
 @click.option("--verbose", is_flag=True, help="Show detailed warnings during indexing")

@@ -27,6 +27,19 @@ These are **v1 starting points**, not legal advice. Each template should be:
 4. Send **DPA** if client is EU-based or asks about data handling.
 5. Send **security/procurement packet** when procurement review starts.
 
+## Productized services these templates support
+
+- **PR Replay** — paid historical PR audit; use `sow-pr-replay.md`.
+- **Agent Governance Evidence Pack** — setup of run ledgers, proof-carrying
+  PR bundles, audit-trail export, and control mapping for teams adopting AI
+  coding agents.
+- **Security Reachability Triage** — focused report on reachable dependency,
+  taint, secret, and supply-chain findings.
+- **Agent Vendor Benchmark Report** — repo-specific comparison of agent
+  workflows and safety outcomes.
+- **Custom Rules / Framework Intelligence Pack** — paid rule, extractor, or
+  plugin work for a customer's stack.
+
 ## Anti-pattern reminders
 
 - Do NOT ship to first paying customer without at least the NDA + SOW in place.

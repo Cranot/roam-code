@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, find_symbol_with_alternatives, symbol_not_found
 from roam.db.connection import open_db
@@ -182,6 +183,20 @@ def _recent_changes(conn, file_id, limit=5):
     ]
 
 
+@roam_capability(
+    name="diagnose",
+    category="workflow",
+    summary="Root cause analysis for a failing symbol",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "debug"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("name", required=False, default=None)
 @click.option("--depth", default=2, help="How many hops to analyze (default 2)")
@@ -416,6 +431,7 @@ def diagnose(ctx, name, depth, batch_input):
                     "upstream_count": len(upstream_ranked),
                     "downstream_count": len(downstream_ranked),
                     "ambiguous": bool(did_you_mean),
+                    "caller_metric_definition": "transitive_upstream_bfs",
                 },
                 target_metrics=target_metrics,
                 upstream=upstream_ranked[:15],
@@ -448,7 +464,7 @@ def diagnose(ctx, name, depth, batch_input):
             click.echo("Did you mean (other matches, ranked by importance):")
             for alt in did_you_mean:
                 click.echo(f"  {abbrev_kind(alt['kind'])}  {alt['name']}  {alt['location']}")
-            click.echo("  Tip: use file:symbol (e.g. KiniseisEntryModal.vue:handleSave) to disambiguate.\n")
+            click.echo("  Tip: use file:symbol (e.g. TransactionEntryModal.vue:handleSave) to disambiguate.\n")
 
         if upstream_ranked:
             click.echo("Upstream suspects (callers, ranked by risk):\n")

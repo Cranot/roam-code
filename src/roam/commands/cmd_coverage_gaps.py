@@ -7,6 +7,7 @@ import re
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.gate_presets import (
     ALL_PRESETS,
     detect_preset,
@@ -17,7 +18,44 @@ from roam.commands.graph_helpers import build_forward_adj
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import ingest_coverage_reports
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+
+
+# R22 — confidence classifier for coverage-gaps findings.
+#
+# Coverage-gap findings are uncovered entry points: top-level exported
+# functions / methods that don't reach a gate symbol in the call graph.
+# Confidence reflects how much real-world traffic the entry point is
+# under (proxied by in-degree, since uncovered entries by definition
+# have no gate path):
+#   high   — ≥10 callers and no gate; load-bearing surface, real risk.
+#   medium — 3-9 callers and no gate; non-trivial surface.
+#   low    — <3 callers; low-impact even if technically uncovered.
+#
+# We annotate each uncovered entry with `caller_count` at envelope
+# build time so the classifier can read it locally. A missing
+# caller_count falls back to "low" (we have no signal to escalate).
+_COVERAGE_HIGH_CALLERS = 10
+_COVERAGE_MEDIUM_CALLERS = 3
+
+
+def _coverage_gaps_classify(uncovered: dict) -> tuple[str, str]:
+    """Map an uncovered-entry finding to a (confidence, reason) tuple."""
+    callers = uncovered.get("caller_count", 0) or 0
+    try:
+        callers_n = int(callers)
+    except (TypeError, ValueError):
+        callers_n = 0
+    if callers_n >= _COVERAGE_HIGH_CALLERS:
+        return "high", f"{callers_n} callers indexed; load-bearing uncovered surface"
+    if callers_n >= _COVERAGE_MEDIUM_CALLERS:
+        return "medium", f"{callers_n} callers indexed; non-trivial surface"
+    return "low", f"{callers_n} caller(s) indexed; low-impact even if uncovered"
 
 
 def _find_gates(conn, gate_names, gate_pattern):
@@ -185,6 +223,20 @@ def _evaluate_gate_rules(conn, rules):
     return violations
 
 
+@roam_capability(
+    name="coverage-gaps",
+    category="reports",
+    summary="Find entry points with no path to a required gate symbol",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("coverage-gaps")
 @click.option(
     "--gate",
@@ -557,17 +609,59 @@ def coverage_gaps(
         coverage_pct = round(len(covered) * 100 / total, 1) if total else 0
 
         if json_mode:
+            # R22: annotate each uncovered entry with its caller count
+            # so the classifier can derive confidence. Single batched
+            # graph_metrics lookup keeps this constant in the count
+            # of uncovered entries.
+            if uncovered:
+                # Look up symbol ids for uncovered entries by name+file+line
+                # — entries[] earlier carried the id, so reuse the entry
+                # row map keyed by (name, file, line).
+                entry_id_by_key = {
+                    (e["name"], e["file_path"], e["line_start"]): e["id"] for e in entries
+                }
+                uncovered_ids: list[int] = []
+                for u in uncovered:
+                    key = (u["name"], u["file"], u["line"])
+                    sid = entry_id_by_key.get(key)
+                    if sid is not None:
+                        u["_symbol_id"] = sid
+                        uncovered_ids.append(sid)
+                in_degree_by_id: dict[int, int] = {}
+                if uncovered_ids:
+                    for r in batched_in(
+                        conn,
+                        "SELECT symbol_id, in_degree FROM graph_metrics WHERE symbol_id IN ({ph})",
+                        uncovered_ids,
+                    ):
+                        in_degree_by_id[r["symbol_id"]] = int(r["in_degree"] or 0)
+                for u in uncovered:
+                    sid = u.pop("_symbol_id", None)
+                    u["caller_count"] = in_degree_by_id.get(sid, 0) if sid is not None else 0
+
+            uncovered_triples = wrap_findings(uncovered, classifier=_coverage_gaps_classify)
+            distribution = confidence_distribution(uncovered_triples)
+            base_verdict = (
+                f"all {total} entry points reach a gate ({coverage_pct}% coverage)"
+                if len(uncovered) == 0
+                else f"{len(uncovered)} unprotected entry point"
+                + ("s" if len(uncovered) != 1 else "")
+                + f" ({coverage_pct}% coverage)"
+            )
+            wrapped_verdict = verdict_with_high_count(base_verdict, distribution)
             summary = {
+                "verdict": wrapped_verdict,
                 "total_entries": total,
                 "covered": len(covered),
                 "uncovered": len(uncovered),
                 "coverage_pct": coverage_pct,
                 "gates_found": sorted(set(gate_info.values())),
                 "imported_coverage_pct": import_summary["coverage_pct"] if import_summary else None,
+                "findings_confidence_distribution": distribution,
             }
             extra = dict(
                 gates_found=sorted(set(gate_info.values())),
-                uncovered=uncovered,
+                uncovered=uncovered_triples,
                 covered=covered,
             )
             if preset_used:

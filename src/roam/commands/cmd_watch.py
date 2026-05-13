@@ -13,6 +13,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import db_exists, find_project_root, open_db
 
@@ -624,6 +625,20 @@ def poll_loop(
                 _run_guardian_step(_guardian_collect, _guardian_write, guardian_report, quiet)
 
 
+@roam_capability(
+    name="watch",
+    category="getting-started",
+    summary="Watch for file changes and auto-re-index incrementally",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
 @click.command("watch")
 @click.option(
     "--interval",

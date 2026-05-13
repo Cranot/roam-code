@@ -20,6 +20,7 @@ import os
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -304,13 +305,22 @@ def _gather_test_info(conn):
 
 
 def _gather_health(conn):
-    """Lightweight health summary without full graph computation."""
+    """Lightweight health summary without full graph computation.
+
+    W17.2 / Pattern 3c: overrides ``cycles`` and ``god_components`` with
+    the canonical numbers from ``roam.quality.cycles`` and
+    ``roam.quality.god_components`` so agent-export, health, and
+    describe always agree. The raw ``metrics_history`` numbers are kept
+    as ``cycles_raw`` / ``god_components_raw`` for backward compatibility.
+    """
     from roam.commands.metrics_history import collect_metrics
+    from roam.quality.cycles import cycles_summary
+    from roam.quality.god_components import god_components
 
     try:
-        return collect_metrics(conn)
+        m = collect_metrics(conn)
     except Exception:
-        return {
+        m = {
             "health_score": None,
             "cycles": 0,
             "god_components": 0,
@@ -318,6 +328,24 @@ def _gather_health(conn):
             "layer_violations": 0,
             "tangle_ratio": 0,
         }
+    try:
+        csum = cycles_summary(conn)
+        m["cycles_raw"] = m.get("cycles", 0)
+        m["cycles"] = csum.actionable
+        m["cycles_total"] = csum.total
+        m["cycles_actionable"] = csum.actionable
+        m["cycles_informational"] = csum.informational
+    except Exception:
+        pass
+    try:
+        gsum = god_components(conn)
+        m["god_components_raw"] = m.get("god_components", 0)
+        m["god_components"] = gsum.total
+        m["god_components_critical"] = gsum.critical
+        m["god_components_actionable"] = gsum.actionable
+    except Exception:
+        pass
+    return m
 
 
 def _gather_layers(conn):
@@ -677,6 +705,20 @@ def _write_with_preserve(filepath, content):
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="agent-export",
+    category="getting-started",
+    summary="Generate an AI agent context file from the roam index",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("agent-export")
 @click.option("--output", "-o", default=None, type=click.Path(), help="Output file path (default: stdout)")
 @click.option(
@@ -808,7 +850,17 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
                     {
                         "score": health.get("health_score"),
                         "cycles": health.get("cycles", 0),
+                        "cycles_total": health.get("cycles_total", health.get("cycles", 0)),
+                        "cycles_actionable": health.get("cycles_actionable", health.get("cycles", 0)),
+                        "cycles_definition": (
+                            __import__("roam.quality.cycles", fromlist=["definition"]).definition()
+                        ),
                         "god_components": health.get("god_components", 0),
+                        "god_components_definition": (
+                            __import__(
+                                "roam.quality.god_components", fromlist=["definition"]
+                            ).definition()
+                        ),
                         "dead_exports": health.get("dead_exports", 0),
                     }
                     if health

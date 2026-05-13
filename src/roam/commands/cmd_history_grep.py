@@ -16,6 +16,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root
 from roam.git_utils import worktree_git_env
@@ -132,6 +133,20 @@ def _diff_polarity(root: Path, sha: str, pattern: str, fixed: bool) -> str | Non
     return None
 
 
+@roam_capability(
+    name="history-grep",
+    category="exploration",
+    summary="Through-history search using git pickaxe (-S / -G)",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("history-grep")
 @click.argument("positional", required=False)
 @click.option("-e", "--regex", "patterns", multiple=True, help="Pattern (repeatable).")

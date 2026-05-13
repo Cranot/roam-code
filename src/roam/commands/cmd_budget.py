@@ -6,6 +6,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -201,6 +202,20 @@ def _budget_str(rule: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="budget",
+    category="reports",
+    summary="Check pending changes against architectural budgets",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("budget")
 @click.option("--init", "do_init", is_flag=True, help="Generate default .roam/budget.yaml.")
 @click.option("--staged", is_flag=True, help="Analyse staged changes only.")

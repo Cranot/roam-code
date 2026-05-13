@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.catalog.fixes import get_fix
 from roam.catalog.tasks import get_task, get_tip
 from roam.commands.resolve import ensure_index
@@ -42,6 +43,20 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     return selected, deferred_count
 
 
+@roam_capability(
+    name="algo",
+    category="health",
+    summary="Detect suboptimal algorithms and suggest better approaches",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option("--task", "task_filter", default=None, help="Filter by task ID (e.g. sorting, membership)")
 @click.option(

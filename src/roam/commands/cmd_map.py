@@ -6,6 +6,7 @@ from collections import Counter
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import detect_entry_points, ensure_index
 from roam.db.connection import open_db
 from roam.db.queries import (
@@ -38,6 +39,20 @@ def _build_symbol_entry_text(s, *, for_budget: bool = False) -> str:
     return f"{kind}  {s['name']}  {sig}  {location}  {pr}"
 
 
+@roam_capability(
+    name="map",
+    category="architecture",
+    summary="Show project skeleton with entry points and key symbols",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "architecture"),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("map")
 @click.option("-n", "count", default=20, help="Number of top symbols to show")
 @click.option("--full", is_flag=True, help="Show all results without truncation")

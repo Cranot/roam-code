@@ -272,7 +272,7 @@ def _render_bus_factor(bf: dict) -> str:
     header = (
         f"_{s.get('verdict', 'no verdict')}_\n\n"
         f"**Team profile:** {s.get('project_team_size', 'n/a')} · "
-        f"**Concentrated dirs:** {s.get('concentrated', 0)} / {s.get('directory_count', 0)} · "
+        f"**Concentrated dirs:** {s.get('concentrated', 0)} / {s.get('directories_analyzed', s.get('directory_count', 0))} · "
         f"**HIGH-risk dirs:** {s.get('high_risk', 0)} · "
         f"**Critical-entropy dirs:** {s.get('critical_entropy', 0)}\n"
     )

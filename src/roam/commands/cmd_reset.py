@@ -4,11 +4,26 @@ from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.db.connection import find_project_root, get_db_path
 from roam.exit_codes import EXIT_ERROR, EXIT_USAGE
 from roam.output.formatter import json_envelope, to_json
 
 
+@roam_capability(
+    name="reset",
+    category="getting-started",
+    summary="Delete the index DB and rebuild from scratch",
+    maturity="stable",
+    mcp_expose=False,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=True,
+    stale_sensitive=False,
+    ai_safe=False,
+    requires_index=False,
+)
 @click.command("reset")
 @click.option("--force", is_flag=True, default=False, help="Required to confirm destructive reset")
 @click.option("--root", default=".", help="Project root")

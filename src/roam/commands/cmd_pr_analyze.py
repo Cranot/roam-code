@@ -42,6 +42,7 @@ from pathlib import Path
 import click
 from click.testing import CliRunner
 
+from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.commands.git_helpers import (
     detect_roam_version,
@@ -68,6 +69,7 @@ from roam.commands.pr_analyze.cache import (
 )
 from roam.commands.resolve import ensure_index
 from roam.output.formatter import json_envelope, to_json
+from roam.runs.helpers import auto_log
 
 EXIT_GATE_BLOCK = 5  # mirrors EXIT_GATE_FAILURE used by cmd_rules / cmd_critique
 DEFAULT_BASELINE_PATH = Path(".roam") / "last-pr-analysis.json"
@@ -1195,6 +1197,83 @@ def _build_rationale(
     }
 
 
+def _inspect_prep_subcommand_failures(prep_payload: dict) -> tuple[list[str], str | None, str]:
+    """Look inside the pr-prep envelope for failed/no-changes subcommands.
+
+    Fix B (Pattern 2 from internal/dogfood/SYNTHESIS-2026-05-12.md): when an
+    internal step (``diff`` / ``critique`` / ``pr-risk``) returned an
+    error or a structured ``no_changes`` envelope, surface that here so
+    the top-level verdict never fabricates SAFE/READY on a failed cascade.
+
+    Returns ``(failed_subcommands, state, reason)``:
+
+    * ``failed_subcommands`` — list of internal step names that failed or
+      reported a non-success state (``["diff"]`` etc.).
+    * ``state`` — aggregated state hint for the envelope: ``"no_changes"``
+      when EVERY relevant step is no-changes, ``"diff_failed"`` when the
+      diff step errored, ``"subcommand_failed"`` for other failures, or
+      ``None`` when nothing of interest happened.
+    * ``reason`` — short human-readable string suitable for the verdict.
+    """
+    if not isinstance(prep_payload, dict):
+        return [], None, ""
+
+    failed: list[str] = []
+    no_changes_steps: list[str] = []
+    diff_failed = False
+    diff_reason = ""
+    other_reason = ""
+
+    # pr-prep top-level error wins.
+    if prep_payload.get("error"):
+        return ["pr-prep"], "subcommand_failed", str(prep_payload.get("error"))[:200]
+
+    for step_name in ("diff", "critique", "pr_risk"):
+        step = prep_payload.get(step_name)
+        if not isinstance(step, dict):
+            continue
+        step_summary = step.get("summary") or {}
+        # Explicit error envelope shape (matches `_capture_json_subcommand`).
+        if step.get("error"):
+            failed.append(step_name)
+            err_msg = str(step.get("error"))[:120]
+            if step_name == "diff":
+                diff_failed = True
+                diff_reason = err_msg
+            else:
+                other_reason = other_reason or f"{step_name}: {err_msg}"
+            continue
+        # Structured no-changes envelope (post-Fix-A shape).
+        if step_summary.get("state") == "no_changes":
+            no_changes_steps.append(step_name)
+            continue
+        # Index-stale / partial_success signal.
+        if step_summary.get("state") == "index_stale" or step_summary.get("partial_success"):
+            failed.append(step_name)
+            if step_name == "diff":
+                diff_failed = True
+                diff_reason = str(step_summary.get("verdict") or step_summary.get("state") or "diff partial_success")[
+                    :120
+                ]
+            else:
+                other_reason = other_reason or (
+                    f"{step_name}: " f"{step_summary.get('verdict') or step_summary.get('state')}"
+                )
+
+    if diff_failed:
+        return failed, "diff_failed", f"diff step failed: {diff_reason}".strip()
+
+    # If diff explicitly reports no_changes, propagate that — even if
+    # critique/pr_risk fired (they would be analysing an empty diff).
+    if "diff" in no_changes_steps:
+        return [], "no_changes", "no changes to analyze"
+
+    if failed:
+        return failed, "subcommand_failed", other_reason or f"subcommand(s) failed: {','.join(failed)}"
+
+    return [], None, ""
+
+
 def _determine_verdict(
     blast_radius: int,
     ai_likelihood: int,
@@ -1257,6 +1336,7 @@ def _serve_from_cache(
     json_mode: bool,
     quiet: bool,
     gate: bool,
+    token_budget: int = 0,
 ) -> bool:
     """Try the envelope cache. On hit emit the cached output and return True.
 
@@ -1271,8 +1351,10 @@ def _serve_from_cache(
     cached["cache_hit"] = True
     cached["cache_key"] = key
     s = cached.get("summary") or {}
+    pr_analyze_cached_envelope = json_envelope("pr-analyze", budget=token_budget, **cached)
+    auto_log(pr_analyze_cached_envelope, action="pr-analyze", target="(cache hit)")
     if json_mode:
-        click.echo(to_json(json_envelope("pr-analyze", **cached)))
+        click.echo(to_json(pr_analyze_cached_envelope))
     elif quiet:
         click.echo(
             f"VERDICT: {s.get('verdict', '?')} (cached, blast {s.get('blast_radius', '?')}, "
@@ -1643,12 +1725,15 @@ def _emit_batch(
     }
     bundle = {"summary": summary, "files": per_file}
 
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    pr_analyze_batch_envelope = json_envelope("pr-analyze", budget=token_budget, **bundle)
+    auto_log(pr_analyze_batch_envelope, action="pr-analyze", target=str(base))
     if stream_jsonl:
         # Per-file rows already emitted line-by-line above; finish with the
         # summary as the last JSONL line so consumers can detect end-of-stream.
         click.echo(_json.dumps({"_summary": summary}, separators=(",", ":")))
     elif json_mode:
-        click.echo(to_json(json_envelope("pr-analyze", **bundle)))
+        click.echo(to_json(pr_analyze_batch_envelope))
     else:
         click.echo(f"VERDICT: {summary['verdict']}")
         click.echo(f"  files processed: {len(per_file)}")
@@ -1676,6 +1761,20 @@ def _emit_batch(
 # ---------------------------------------------------------------- main command ---
 
 
+@roam_capability(
+    name="pr-analyze",
+    category="workflow",
+    summary="Analyse a PR diff for structural risk and AI-likelihood",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core", "review"),
+    side_effect=True,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command(name="pr-analyze")
 @click.argument("commit_range", required=False, default=None)
 @click.option(
@@ -1872,6 +1971,7 @@ def pr_analyze(
     The CLI engine behind Roam Agent Review.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     # B7 (C.1.ff) — --watch mode: re-run analysis whenever the working
@@ -1935,6 +2035,7 @@ def pr_analyze(
         json_mode=json_mode,
         quiet=quiet,
         gate=gate,
+        token_budget=token_budget,
     ):
         return
 
@@ -1961,6 +2062,22 @@ def pr_analyze(
     high_severity = int(summary.get("high_severity_findings") or 0)
     pr_prep_error = bool(prep_payload.get("error"))
 
+    # Fix B (Pattern 2 from SYNTHESIS-2026-05-12): inspect the pr-prep
+    # envelope for inner subcommand failure/no-changes BEFORE choosing a
+    # verdict. Without this, pr-analyze would happily emit SAFE/READY
+    # even when its internal `diff` step crashed or had nothing to look at.
+    failed_subcommands, prep_state, prep_state_reason = _inspect_prep_subcommand_failures(prep_payload)
+
+    # When the user supplied a diff out-of-band (--input / stdin /
+    # --diff-from-pr) the working tree may legitimately be clean — but
+    # we DO have content to analyse, so the inner "no_changes" signal
+    # from pr-prep is not actionable for the user.
+    has_diff_text = bool((diff_text or "").strip())
+    if prep_state == "no_changes" and has_diff_text:
+        prep_state = None
+        prep_state_reason = ""
+        failed_subcommands = []
+
     verdict, reasons = _determine_verdict(
         blast_radius=blast_radius,
         ai_likelihood=ai["score"],
@@ -1970,6 +2087,22 @@ def pr_analyze(
         block_threshold=block_threshold,
         pr_prep_error=pr_prep_error,
     )
+
+    # Override the verdict on no-changes / failed-subcommand. We do NOT
+    # let the [intentional] marker bypass an empty diff — analysing
+    # nothing should never report SAFE.
+    if prep_state == "no_changes":
+        verdict = "NO_CHANGES"
+        reasons = [prep_state_reason or "no changes to analyze"]
+    elif prep_state == "diff_failed":
+        # Promote to at least REVIEW so the failure surfaces to humans.
+        if verdict in ("SAFE", "INTENTIONAL"):
+            verdict = "REVIEW"
+        reasons = [prep_state_reason] + list(reasons)
+    elif prep_state == "subcommand_failed":
+        if verdict in ("SAFE", "INTENTIONAL"):
+            verdict = "REVIEW"
+        reasons = [prep_state_reason] + list(reasons)
 
     reviewers_payload: dict | None = None
     if with_reviewers:
@@ -1989,15 +2122,27 @@ def pr_analyze(
         prep_payload=prep_payload,
     )
 
+    bundle_summary: dict = {
+        "verdict": verdict,
+        "blast_radius": blast_radius,
+        "ai_likelihood": ai["score"],
+        "rule_violations": len(rule_violations),
+        "high_severity_critique": high_severity,
+        "reasons": reasons,
+    }
+    # Fix B (Pattern 2): expose the aggregated state and failed-subcommands
+    # list so downstream consumers (PR bot, CI gate) can distinguish
+    # "we found no risk" from "we couldn't compute one of the inputs".
+    if prep_state:
+        bundle_summary["state"] = prep_state
+        # partial_success is True when ANY subcommand failed or no-changes:
+        # the analysis is structurally incomplete in either case.
+        bundle_summary["partial_success"] = prep_state != "no_changes" or verdict == "NO_CHANGES"
+    if failed_subcommands:
+        bundle_summary["failed_subcommands"] = list(failed_subcommands)
+
     bundle = {
-        "summary": {
-            "verdict": verdict,
-            "blast_radius": blast_radius,
-            "ai_likelihood": ai["score"],
-            "rule_violations": len(rule_violations),
-            "high_severity_critique": high_severity,
-            "reasons": reasons,
-        },
+        "summary": bundle_summary,
         "rationale": rationale,
         "pr_prep": prep_payload,
         "ai_likelihood": ai,
@@ -2008,6 +2153,8 @@ def pr_analyze(
         "intent": intent,
         "reviewers": reviewers_payload,
     }
+    if failed_subcommands:
+        bundle["failed_subcommands"] = list(failed_subcommands)
 
     # --- Baseline drift detection -----------------------------------------
     base_path = Path(baseline_path) if baseline_path else DEFAULT_BASELINE_PATH
@@ -2045,8 +2192,14 @@ def pr_analyze(
         # Advisory only: never block on the conformance computation itself.
         _run_conformance_check_inline(bundle, trail_path)
 
+    pr_analyze_envelope = json_envelope("pr-analyze", budget=token_budget, **bundle)
+    auto_log(
+        pr_analyze_envelope,
+        action="pr-analyze",
+        target=commit_range or intent or "",
+    )
     if json_mode:
-        click.echo(to_json(json_envelope("pr-analyze", **bundle)))
+        click.echo(to_json(pr_analyze_envelope))
     elif quiet:
         # CI-friendly mode: 1-line summary + reason if any. No tables, no breakdowns.
         click.echo(f"VERDICT: {verdict} (blast {blast_radius}, ai {ai['score']}, rules {len(rule_violations)})")

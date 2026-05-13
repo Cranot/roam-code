@@ -20,8 +20,14 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import json_envelope, to_json
 from roam.security.taint_engine import (
     OPENVEX_JUSTIFICATIONS,
@@ -32,10 +38,50 @@ from roam.security.taint_engine import (
 )
 
 
+# R22 — confidence classifier for taint findings.
+#
+# We map the taint-engine's existing severity grading + sanitizer
+# presence + path length into a confidence label:
+#
+#   high   — severity "error" AND no sanitizer on the path; the rule
+#            considers this a direct source→sink reach with no
+#            mitigation.
+#   medium — severity "warning", OR severity "error" with a sanitizer
+#            on the path (sanitiser presence downgrades — the
+#            attestation layer can still cite the finding as mitigated).
+#   low    — anything else / inferred indirect paths.
+def _taint_classify(finding: dict) -> tuple[str, str]:
+    """Map a taint finding to a (confidence, reason) tuple."""
+    severity = (finding.get("severity") or "").lower()
+    sanitized = bool(finding.get("sanitizer_in_path"))
+    path_length = finding.get("path_length", 0) or 0
+    if severity == "error" and not sanitized:
+        return "high", f"direct source→sink reach, no sanitiser; path_length={path_length}"
+    if severity == "error" and sanitized:
+        return "medium", f"source→sink reach but sanitiser on path (mitigated); path_length={path_length}"
+    if severity == "warning":
+        return "medium", f"severity=warning; sanitiser={sanitized}; path_length={path_length}"
+    return "low", f"severity={severity or 'unknown'}; path_length={path_length}"
+
+
 def _default_rules_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "security" / "taint_rules"
 
 
+@roam_capability(
+    name="taint",
+    category="reports",
+    summary="Reach-analysis from rule sources to sinks over the indexed edges",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.option(
     "--rules-dir",
@@ -199,6 +245,14 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
         return
 
     if json_mode:
+        # R22: wrap each finding in {value, confidence, reason}.
+        # Consumers that previously read findings[i]["rule_id"] must
+        # now read findings[i]["value"]["rule_id"] plus
+        # findings[i]["confidence"] / findings[i]["reason"].
+        finding_triples = wrap_findings(findings_dump, classifier=_taint_classify)
+        distribution = confidence_distribution(finding_triples)
+        wrapped_verdict = verdict_with_high_count(verdict, distribution)
+
         # Round 3 #23: only ship the OpenVEX vocabulary lists when there
         # are findings to attach them to. Empty taint runs returning the
         # static lists every call was metadata noise.
@@ -206,7 +260,7 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
             budget=token_budget,
             rules_dir=str(rules_path),
             rule_ids=[r.rule_id for r in rules],
-            findings=findings_dump,
+            findings=finding_triples,
         )
         if findings_dump:
             envelope_kwargs["openvex_justification_strings"] = sorted(OPENVEX_JUSTIFICATIONS)
@@ -216,13 +270,14 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
                 json_envelope(
                     "taint",
                     summary={
-                        "verdict": verdict,
+                        "verdict": wrapped_verdict,
                         "rules": len(rules),
                         "findings": len(findings),
                         "errors": high_count,
                         "warnings": medium_count,
                         "sanitized": sanitized_count,
                         "risk_score": risk_score,
+                        "findings_confidence_distribution": distribution,
                     },
                     **envelope_kwargs,
                 )

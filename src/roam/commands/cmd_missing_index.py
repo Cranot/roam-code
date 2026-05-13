@@ -33,8 +33,14 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
@@ -130,6 +136,27 @@ _RE_WHERE_IN = re.compile(
 _RE_ORDER_BY = re.compile(
     r"->\s*orderBy\s*\(\s*['\"]([a-zA-Z_][a-zA-Z0-9_.]*)['\"]",
 )
+
+# Match a range/inequality where: ->where('col', '<op>', value) where <op> is
+# one of >, <, >=, <=, !=, <> — captures column name. Equality where calls
+# `->where('col', value)` or `->where('col', '=', value)` are NOT matched here.
+_RE_WHERE_RANGE = re.compile(
+    r"->\s*where\s*\(\s*['\"]([a-zA-Z_][a-zA-Z0-9_.]*)['\"]"
+    r"\s*,\s*['\"](?:>=|<=|!=|<>|>|<)['\"]",
+)
+
+# Match range-flavoured Eloquent helpers (always treated as range predicates):
+#   ->whereBetween('col', ...), ->whereNotBetween('col', ...),
+#   ->whereDate('col', ...), ->whereYear/Month/Day/Time('col', ...),
+#   ->whereJsonContains('col', ...), ->whereJsonLength('col', ...)
+_RE_WHERE_RANGE_HELPER = re.compile(
+    r"->\s*(?:whereBetween|whereNotBetween|whereDate|whereDay|whereMonth|whereYear|whereTime"
+    r"|whereJsonContains|whereJsonLength)\s*\(\s*['\"]([a-zA-Z_][a-zA-Z0-9_.]*)['\"]",
+)
+
+# Match ->when($x, fn(...) => ...) or ->when($x, function(...) { ... }) —
+# captures the start of the closure-arg list so we can scan its body.
+_RE_WHEN = re.compile(r"->\s*when\s*\(")
 
 # Pagination indicators in the same method/file context
 _RE_PAGINATE = re.compile(
@@ -410,6 +437,213 @@ def _infer_table_from_context(content: str, match_pos: int) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Predicate classification — distinguishes unconditional / conditional / range
+# / sort columns so the composite-index recommendation can order columns by
+# index efficacy (leading equality first, then range, then sort).
+#
+# The 212-eval dogfood showed that the previous regex-find ordering put
+# ``->when($var, ...)`` filters BEFORE eager-resolved ``whereIn`` calls in the
+# suggested composite, which is wrong: an index can only seek on its leading
+# columns when those columns are ALWAYS supplied. Conditional `->when()`
+# predicates can be absent at runtime, so they must trail the unconditional
+# columns. Range predicates likewise stop the engine from using subsequent
+# index columns for further equality seeks, so they trail equality. ORDER BY
+# columns sit last so the index can stream the sort.
+# ---------------------------------------------------------------------------
+
+# Predicate classification labels (mirror the indexing semantics above).
+_PRED_UNCONDITIONAL = "unconditional"  # always-applied equality (or whereIn)
+_PRED_CONDITIONAL = "conditional"      # inside a ->when() / if-guarded closure
+_PRED_RANGE = "range"                  # whereBetween / whereDate / where col > x
+_PRED_SORT = "sort"                    # orderBy
+# Per-classification rank (lower = better leading-column candidate).
+_PRED_RANK = {
+    _PRED_UNCONDITIONAL: 0,
+    _PRED_CONDITIONAL: 1,
+    _PRED_RANGE: 2,
+    _PRED_SORT: 3,
+}
+
+
+def _find_when_ranges(body: str) -> list[tuple[int, int]]:
+    """Return [(start, end), ...] for each ``->when(...)`` closure body.
+
+    Each range covers the inside of the ``->when(`` arg list (from the byte
+    after the opening paren to the byte before its matching close paren).
+    Any predicate match whose position falls inside one of these ranges is
+    classified as *conditional* — its column might not be applied at runtime
+    so it cannot anchor a composite index.
+
+    The scanner balances parens (and skips over strings) so nested
+    ``->when()`` chains, ternary arguments, and quoted parens don't confuse
+    the boundary tracking.
+    """
+    ranges: list[tuple[int, int]] = []
+    for wm in _RE_WHEN.finditer(body):
+        # Position of the '(' immediately after 'when'.
+        open_pos = body.rfind("(", wm.start(), wm.end())
+        if open_pos == -1:
+            continue
+        depth = 1
+        i = open_pos + 1
+        n = len(body)
+        in_str: str | None = None
+        while i < n and depth > 0:
+            ch = body[i]
+            if in_str is not None:
+                # Skip escaped chars; close on matching quote.
+                if ch == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if ch == in_str:
+                    in_str = None
+            else:
+                if ch == "'" or ch == '"':
+                    in_str = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        ranges.append((open_pos + 1, i))
+                        break
+            i += 1
+    return ranges
+
+
+def _pos_in_any_range(pos: int, ranges: list[tuple[int, int]]) -> bool:
+    """True if ``pos`` falls inside any (start, end) range."""
+    return any(start <= pos < end for (start, end) in ranges)
+
+
+class _ClassifiedPredicate:
+    """One predicate (column reference) plus its classification + source pos.
+
+    The position is preserved so the ranker can stably break ties by
+    appearance order within the method body — keeps tests predictable and
+    makes ``column_ordering`` rationale reproducible.
+    """
+
+    __slots__ = ("column", "classification", "pos")
+
+    def __init__(self, column: str, classification: str, pos: int):
+        self.column = column
+        self.classification = classification
+        self.pos = pos
+
+
+def _classify_predicates(body: str) -> list[_ClassifiedPredicate]:
+    """Scan a method body and classify every WHERE / ORDER BY predicate.
+
+    Heuristic (line-based, NOT a full PHP parser):
+      1. Find every ``->when(...)`` arg-list range (closure-balanced parens).
+      2. For each ``->where``, ``->whereIn``, ``->orderBy``, ``->whereBetween``,
+         ``->whereDate``, etc., look up its source position.
+      3. If the position is inside any ``->when()`` range → conditional.
+      4. Else if it matches a range helper or 3-arg operator-where → range.
+      5. Else if it's an orderBy → sort.
+      6. Else → unconditional equality (the strongest leading-column signal).
+
+    Edge cases (accept some false positives — the heuristic is strictly
+    better than ranking everything as conditional):
+      - Nested ``->when()`` chains: outer + inner ranges both register; any
+        position inside either is conditional (still correct).
+      - Ternary inside a where value: ``where('a', $x ?: $y)`` does not
+        appear inside a ``->when()`` range so it stays unconditional — that's
+        the correct classification (the predicate IS always applied).
+      - Range operator inside a ``->when()``: caught as conditional first
+        (when() takes priority — runtime conditionality dominates).
+    """
+    when_ranges = _find_when_ranges(body)
+    preds: list[_ClassifiedPredicate] = []
+
+    # Range helpers FIRST so a ``->whereBetween`` isn't double-classified
+    # as a plain equality where. Operator-where (``->where('col', '>', x)``)
+    # next, so it can claim its position before the looser _RE_WHERE.
+    consumed: set[int] = set()
+    for m in _RE_WHERE_RANGE_HELPER.finditer(body):
+        pos = m.start()
+        consumed.add(pos)
+        cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_RANGE
+        preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
+    for m in _RE_WHERE_RANGE.finditer(body):
+        pos = m.start()
+        consumed.add(pos)
+        cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_RANGE
+        preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
+
+    # Plain equality where (skip positions already consumed by the range
+    # patterns above — _RE_WHERE matches their prefix as well).
+    for m in _RE_WHERE.finditer(body):
+        pos = m.start()
+        if pos in consumed:
+            continue
+        cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_UNCONDITIONAL
+        preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
+
+    # whereIn — eager-resolved equality (the array is materialised at call
+    # time, so it's ALWAYS applied unless wrapped in ->when()).
+    for m in _RE_WHERE_IN.finditer(body):
+        pos = m.start()
+        cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_UNCONDITIONAL
+        preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
+
+    # orderBy → sort, unless it's conditional (rare but possible).
+    for m in _RE_ORDER_BY.finditer(body):
+        pos = m.start()
+        cls = _PRED_CONDITIONAL if _pos_in_any_range(pos, when_ranges) else _PRED_SORT
+        preds.append(_ClassifiedPredicate(m.group(1).split(".")[-1], cls, pos))
+
+    return preds
+
+
+def _rank_columns_for_index(
+    preds: list[_ClassifiedPredicate],
+    keep_cols: set[str] | None = None,
+) -> list[tuple[str, str]]:
+    """Order columns for a composite index recommendation.
+
+    Returns ``[(column, classification), ...]`` ordered as:
+      1. unconditional equality (leading-column candidates)
+      2. conditional equality
+      3. range predicates (break index efficiency for trailing columns)
+      4. sort columns (orderBy)
+
+    Ties within a class are broken by FIRST appearance in source. Duplicates
+    are merged on column name, KEEPING THE STRONGEST classification (lowest
+    rank wins) — important when the same column is used both inside and
+    outside a ``->when()``.
+
+    ``keep_cols`` (optional) restricts the output to columns we want to
+    include (e.g. those that aren't already covered by an index).
+    """
+    # Merge duplicates: column name → (best_rank, classification, first_pos).
+    best: dict[str, tuple[int, str, int]] = {}
+    for p in preds:
+        if keep_cols is not None and p.column not in keep_cols:
+            continue
+        rank = _PRED_RANK.get(p.classification, 9)
+        existing = best.get(p.column)
+        if existing is None or rank < existing[0]:
+            best[p.column] = (rank, p.classification, p.pos)
+        elif rank == existing[0] and p.pos < existing[2]:
+            # Same rank, earlier position — keep earliest source position.
+            best[p.column] = (rank, p.classification, p.pos)
+
+    ordered = sorted(best.items(), key=lambda item: (item[1][0], item[1][2]))
+    return [(col, info[1]) for (col, info) in ordered]
+
+
+# Human-readable rationale text per classification (used in finding output).
+_CLASSIFICATION_RATIONALE = {
+    _PRED_UNCONDITIONAL: "unconditional equality (always applied — leading-column candidate)",
+    _PRED_CONDITIONAL: "conditional (inside ->when() — may be absent at runtime)",
+    _PRED_RANGE: "range predicate (breaks index efficacy for trailing equality)",
+    _PRED_SORT: "sort column (orderBy — index can stream the sort)",
+}
+
+
 class _QueryPattern:
     """Represents a detected query pattern in source code."""
 
@@ -421,6 +655,7 @@ class _QueryPattern:
         "orderby_cols",
         "has_paginate",
         "kind",
+        "predicates",
     )
 
     def __init__(
@@ -432,6 +667,7 @@ class _QueryPattern:
         orderby_cols: list[str],
         has_paginate: bool,
         kind: str,
+        predicates: list[_ClassifiedPredicate] | None = None,
     ):
         self.file_path = file_path
         self.line_no = line_no
@@ -440,6 +676,7 @@ class _QueryPattern:
         self.orderby_cols = orderby_cols
         self.has_paginate = has_paginate
         self.kind = kind  # 'scope', 'service', 'controller', 'generic'
+        self.predicates = predicates or []
 
 
 def _line_offsets(content: str) -> list[int]:
@@ -505,24 +742,32 @@ def _query_pattern_from_body(
     """Scan a function/scope body for WHERE/ORDER BY/paginate patterns.
 
     Returns a populated ``_QueryPattern`` or None when there's nothing to
-    emit.
+    emit. Each predicate is classified (unconditional / conditional / range /
+    sort) so the composite-index ranker can order columns correctly.
     """
-    where_cols = [m.group(1) for m in _RE_WHERE.finditer(body)]
-    where_cols += [m.group(1) for m in _RE_WHERE_IN.finditer(body)]
-    orderby_cols = [m.group(1) for m in _RE_ORDER_BY.finditer(body)]
     has_paginate = bool(_RE_PAGINATE.search(body))
-    where_cols = [c.split(".")[-1] for c in where_cols]
-    orderby_cols = [c.split(".")[-1] for c in orderby_cols]
-    if not (where_cols or orderby_cols):
+    predicates = _classify_predicates(body)
+    if not predicates:
         return None
+
+    # Preserve the legacy ``where_cols`` / ``orderby_cols`` shape for the
+    # downstream checks that don't yet consume the classified list. We keep
+    # the columns in FIRST-APPEARANCE order (sorted by source position) so
+    # legacy text rendering stays stable.
+    where_pred = [p for p in predicates if p.classification != _PRED_SORT]
+    sort_pred = [p for p in predicates if p.classification == _PRED_SORT]
+    where_cols = list(dict.fromkeys(p.column for p in sorted(where_pred, key=lambda p: p.pos)))
+    orderby_cols = list(dict.fromkeys(p.column for p in sorted(sort_pred, key=lambda p: p.pos)))
+
     return _QueryPattern(
         file_path=rel_path,
         line_no=line_no,
         table=table,
-        where_cols=list(dict.fromkeys(where_cols)),
-        orderby_cols=list(dict.fromkeys(orderby_cols)),
+        where_cols=where_cols,
+        orderby_cols=orderby_cols,
         has_paginate=has_paginate,
         kind=kind,
+        predicates=predicates,
     )
 
 
@@ -622,23 +867,89 @@ def _composite_covered(cols: list[str], indexed_tuples: set[tuple[str, ...]]) ->
 
 
 def _check_composite_where(pat, query_cols, indexed, seen) -> dict | None:
-    """Multi-column WHERE without a covering composite index."""
-    if not (pat.table and not _composite_covered(query_cols, indexed)):
+    """Multi-column WHERE (and optional ORDER BY) without a covering composite.
+
+    Column ordering for the suggested composite index is computed from the
+    predicate classification on the originating pattern, NOT from the order
+    columns happen to appear in regex results. The classes are ranked:
+
+      unconditional equality → conditional equality → range → sort
+
+    This matches B-tree index semantics — the engine can only seek on
+    leading equality columns that are guaranteed to be present in every
+    invocation. Columns that may be omitted (``->when()``) or that break
+    further equality seeks (ranges) must trail.
+
+    Confidence calibration:
+      high   — paginated query AND at least one unconditional column is
+               present (we are sure the index will be used).
+      medium — paginated WITHOUT any unconditional column (less certain),
+               or any non-paginated query.
+      low    — only used by the orderby_composite path, not here.
+    """
+    if not pat.table:
         return None
-    dedup_key = ("composite", pat.table, tuple(sorted(query_cols)), pat.file_path)
+
+    # ORDER BY columns that aren't already covered by index — fold them into
+    # the composite recommendation so it satisfies filter + sort.
+    sort_cols_to_consider = [
+        c for c in pat.orderby_cols
+        if c not in _SKIP_COLUMNS and not _is_low_cardinality(c)
+    ]
+    all_candidate_cols = set(query_cols) | set(sort_cols_to_consider)
+    if not all_candidate_cols:
+        return None
+
+    if _composite_covered(list(all_candidate_cols), indexed):
+        return None
+
+    # Use the classified predicates to rank — strongest leading-column
+    # candidates (unconditional) first, sort columns last.
+    ranked = _rank_columns_for_index(pat.predicates, keep_cols=all_candidate_cols)
+    if not ranked:
+        # No classified predicates somehow — fall back to source order.
+        ranked = [(c, _PRED_UNCONDITIONAL) for c in query_cols]
+        ranked += [(c, _PRED_SORT) for c in sort_cols_to_consider if c not in {col for col, _ in ranked}]
+
+    ordered_cols = [c for (c, _cls) in ranked]
+    dedup_key = ("composite", pat.table, tuple(sorted(ordered_cols)), pat.file_path)
     if dedup_key in seen:
         return None
     seen.add(dedup_key)
-    missing_individual = [c for c in query_cols if not _column_has_any_index(c, indexed)]
-    confidence = "high" if pat.has_paginate else "medium"
-    fix_cols = ", ".join(query_cols)
+
+    missing_individual = [c for c in ordered_cols if not _column_has_any_index(c, indexed)]
+    has_unconditional = any(cls == _PRED_UNCONDITIONAL for (_c, cls) in ranked)
+    if pat.has_paginate and has_unconditional:
+        confidence = "high"
+    elif pat.has_paginate:
+        confidence = "medium"
+    else:
+        confidence = "medium"
+
+    fix_cols = ", ".join(ordered_cols)
     suggestion = f"Add composite index on ({fix_cols})"
     if missing_individual:
         suggestion += " — also missing individual indexes for: " + ", ".join(missing_individual)
+
+    # Build per-column rationale so consumers see WHY each column is in its
+    # position (external dogfood feedback specifically flagged this gap).
+    column_ordering = [
+        {
+            "column": col,
+            "classification": cls,
+            "rationale": _CLASSIFICATION_RATIONALE.get(cls, cls),
+        }
+        for (col, cls) in ranked
+    ]
+    ranking_explanation = (
+        "leading-column priority: "
+        + " > ".join(f"{col} ({cls})" for (col, cls) in ranked)
+    )
+
     return {
         "confidence": confidence,
         "table": pat.table,
-        "columns": query_cols,
+        "columns": ordered_cols,
         "issue": f"no composite index covering ({fix_cols})",
         "query_location": loc(pat.file_path, pat.line_no),
         "query_kind": pat.kind,
@@ -646,6 +957,8 @@ def _check_composite_where(pat, query_cols, indexed, seen) -> dict | None:
         "pattern_type": "composite_where",
         "suggestion": suggestion,
         "missing_individual": missing_individual,
+        "column_ordering": column_ordering,
+        "ranking_explanation": ranking_explanation,
     }
 
 
@@ -704,7 +1017,13 @@ def _check_orderby_unindexed(pat, col, indexed, seen) -> dict | None:
 
 def _check_orderby_composite(pat, col, indexed, seen) -> dict | None:
     """ORDER BY column has an individual index but no composite covering
-    filter+sort columns."""
+    filter+sort columns.
+
+    Composite column ordering uses the predicate classification (the same
+    ranking validated against a real Vue/TS dogfood codebase) so the sort
+    column trails the equality columns and conditional/range predicates
+    are positioned correctly within the index.
+    """
     if _is_low_cardinality(col):
         return None
     if not (pat.table and _column_has_any_index(col, indexed) and pat.where_cols):
@@ -716,7 +1035,28 @@ def _check_orderby_composite(pat, col, indexed, seen) -> dict | None:
     if dedup_key in seen:
         return None
     seen.add(dedup_key)
-    fix_cols = ", ".join(non_skip_where + [col])
+
+    # Rank with classification — sort columns will naturally trail.
+    keep = set(non_skip_where) | {col}
+    ranked = _rank_columns_for_index(pat.predicates, keep_cols=keep)
+    if not ranked:
+        ranked = [(c, _PRED_UNCONDITIONAL) for c in non_skip_where] + [(col, _PRED_SORT)]
+    ordered_cols = [c for (c, _cls) in ranked]
+    fix_cols = ", ".join(ordered_cols)
+
+    column_ordering = [
+        {
+            "column": c,
+            "classification": cls,
+            "rationale": _CLASSIFICATION_RATIONALE.get(cls, cls),
+        }
+        for (c, cls) in ranked
+    ]
+    ranking_explanation = (
+        "leading-column priority: "
+        + " > ".join(f"{c} ({cls})" for (c, cls) in ranked)
+    )
+
     return {
         "confidence": "low",
         "table": pat.table,
@@ -728,6 +1068,8 @@ def _check_orderby_composite(pat, col, indexed, seen) -> dict | None:
         "pattern_type": "orderby_with_where",
         "suggestion": f"Consider a composite index on ({fix_cols})",
         "missing_individual": [],
+        "column_ordering": column_ordering,
+        "ranking_explanation": ranking_explanation,
     }
 
 
@@ -744,18 +1086,32 @@ def _build_findings(
         indexed = table_indexes.get(table, set()) if table else set()
 
         # WHERE-clause analysis (composite vs single).
+        # The composite path folds in trailing orderBy columns so the
+        # suggestion is a single index that satisfies filter + sort — see
+        # the Pattern 2 case from external dogfood feedback. Track which
+        # orderBy columns got folded so the per-column orderby analysis
+        # below doesn't double-fire.
         query_cols = [c for c in pat.where_cols if c not in _SKIP_COLUMNS]
+        sort_cols_folded: set[str] = set()
         if len(query_cols) >= 2:
             f = _check_composite_where(pat, query_cols, indexed, seen)
             if f:
                 findings.append(f)
+                sort_cols_folded = {
+                    c for c in f.get("columns", [])
+                    if c in pat.orderby_cols
+                }
         elif len(query_cols) == 1:
             f = _check_single_where(pat, query_cols[0], indexed, seen)
             if f:
                 findings.append(f)
 
-        # ORDER-BY analysis (per column).
-        order_cols = [c for c in pat.orderby_cols if c not in _SKIP_COLUMNS]
+        # ORDER-BY analysis (per column). Skip any column that was already
+        # rolled into the composite_where finding above.
+        order_cols = [
+            c for c in pat.orderby_cols
+            if c not in _SKIP_COLUMNS and c not in sort_cols_folded
+        ]
         for col in order_cols:
             f = _check_orderby_unindexed(pat, col, indexed, seen) or _check_orderby_composite(pat, col, indexed, seen)
             if f:
@@ -767,10 +1123,61 @@ def _build_findings(
 
 
 # ---------------------------------------------------------------------------
+# R22 — confidence classifier for missing-index findings.
+#
+# The analyser already labels each finding with a high/medium/low based
+# on pattern unambiguity:
+#   high   — WHERE on a known unindexed column in a paginated query
+#            (unambiguous: paginated → bounded result set means filtering
+#            is happening; missing index → guaranteed table scan).
+#   medium — JOIN/ORDER BY without composite, or WHERE without paginate
+#            (recognisable pattern but slightly weaker signal).
+#   low    — heuristic / composite-index nuance where the column already
+#            has *an* index just not the optimal one.
+#
+# We re-use the existing label and surface the specific pattern_type so
+# consumers know WHY it landed in each bucket without re-deriving.
+# ---------------------------------------------------------------------------
+
+
+def _missing_index_classify(finding: dict) -> tuple[str, str]:
+    """Map a missing-index finding to a (confidence, reason) tuple."""
+    conf = (finding.get("confidence") or "medium").lower()
+    if conf not in ("high", "medium", "low"):
+        conf = "medium"
+    pattern_type = finding.get("pattern_type", "?")
+    paginate = finding.get("has_paginate")
+    if conf == "high":
+        reason = f"{pattern_type} on a paginated query (unambiguous missing index)"
+    elif conf == "medium":
+        if paginate:
+            reason = f"{pattern_type} on a paginated query without composite coverage"
+        else:
+            reason = f"{pattern_type} pattern recognised; not paginated"
+    else:
+        reason = f"{pattern_type} — column has an index but not the optimal composite"
+    return conf, reason
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="missing-index",
+    category="health",
+    summary="Detect queries that filter or sort on columns without indexes",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("missing-index")
 @click.option("--limit", "-n", default=50, help="Max findings to show")
 @click.option(
@@ -863,7 +1270,21 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
         medium_n = by_confidence.get("medium", 0)
         low_n = by_confidence.get("low", 0)
 
-        if total_findings == 0:
+        # Fix E (Pattern 2: silent fallbacks) — distinguish "0 missing
+        # indexes found after scanning N migrations" from "0 migrations
+        # scanned" (no migration files at all). The previous code reported
+        # "No missing indexes detected" in BOTH cases, which silently hid
+        # the no-input scenario from consumers.
+        state = "scanned"
+        partial_success = False
+        if len(migration_paths) == 0:
+            state = "no_migrations"
+            partial_success = True
+            verdict = (
+                "no migrations scanned (no PHP migration files found; "
+                "missing-index detection requires Laravel-style migration files)"
+            )
+        elif total_findings == 0:
             verdict = "No missing indexes detected"
         else:
             parts = []
@@ -884,12 +1305,21 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
 
         # --- JSON output ---
         if json_mode:
+            # R22: wrap each finding in {value, confidence, reason}.
+            # Consumers that previously read findings[i]["table"] must
+            # now read findings[i]["value"]["table"] plus
+            # findings[i]["confidence"] / findings[i]["reason"].
+            finding_triples = wrap_findings(findings, classifier=_missing_index_classify)
+            distribution = confidence_distribution(finding_triples)
+            wrapped_verdict = verdict_with_high_count(verdict, distribution)
             click.echo(
                 to_json(
                     json_envelope(
                         "missing-index",
                         summary={
-                            "verdict": verdict,
+                            "verdict": wrapped_verdict,
+                            "state": state,
+                            "partial_success": partial_success,
                             "total": total_findings,
                             "by_confidence": dict(by_confidence),
                             "indexes_found": total_indexes,
@@ -899,8 +1329,9 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
                             "truncated": truncated,
                             "confidence_filter": confidence_filter,
                             "table_filter": table_filter,
+                            "findings_confidence_distribution": distribution,
                         },
-                        findings=findings,
+                        findings=finding_triples,
                     )
                 )
             )

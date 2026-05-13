@@ -13,6 +13,7 @@ from datetime import datetime
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
@@ -27,6 +28,20 @@ def _fmt_ts(ts: int | None) -> str:
         return "?"
 
 
+@roam_capability(
+    name="timeline",
+    category="health",
+    summary="Show commits that touched the file owning <symbol>",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command()
 @click.argument("symbol")
 @click.option("--limit", default=20, show_default=True, help="Max commits to show.")

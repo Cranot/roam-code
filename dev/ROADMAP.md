@@ -32,7 +32,7 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   --platform github --write`. Keep `.roam/fitness.yaml`.
 
 ### S2. Fix the rename-no-recovery silent-correctness bug [08 S1]
-- **Where:** `src/roam/index/indexer.py:1409`
+- **Where:** `src/roam/index/indexer.py:1618`
 - **Effort:** 1-word fix + regression test
 - **Why now:** Pure rename produces `(added=[bar.py], modified=[],
   removed=[foo.py])`. The gating clause `if not force and modified and
@@ -60,8 +60,13 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   email. Per-tier discount code emitted to deliverable for Review
   conversion tracking.
 
-### S4. Fix `roam cga verify` silently skipping cosign [05 R4]
-- **Where:** `src/roam/commands/cmd_cga.py:277-348`
+### S4. Fix `roam cga verify` silently skipping cosign [05 R4] — SHIPPED in df4a091
+- **Where:** `src/roam/commands/cmd_cga.py:294-381` (cga_verify fail-closed branch)
+- **Status:** Done. `cga verify` now fails closed when no bundle is
+  detected; `--no-cosign` is required for explicit predicate-only
+  acknowledgment. Shipped alongside the S5 dirty-hash binding in the
+  "deep audit follow-through" commit (df4a091).
+- **Original brief retained below for provenance.**
 - **Effort:** 0.5 day
 - **Why now:** A user with the `.json` statement but no sibling `.bundle`
   gets verdict "CGA verified — predicate matches live index" while the
@@ -76,9 +81,15 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   (c) dirty-tree-at-sign-time → fail. Bundle-`git_dirty_hash` and
   `git_commit_sha1` reproduction (S5).
 
-### S5. Bind `git_dirty_hash` + `git_commit_sha1` into predicate verification [05 R1, R2]
-- **Where:** `src/roam/attest/cga.py:279-316` `verify_cga_statement`;
-  `src/roam/commands/cmd_cga.py` (refuse-on-dirty default).
+### S5. Bind `git_dirty_hash` + `git_commit_sha1` into predicate verification [05 R1, R2] — SHIPPED in df4a091
+- **Where:** `src/roam/attest/cga.py:254` (predicate emit) and
+  `src/roam/attest/cga.py:405-440` (verifier checks).
+- **Status:** Done. `git_dirty_hash` and `git_commit_sha1` are now
+  embedded in the predicate and the verifier refuses on commit-SHA
+  mismatch or dirty-tree mismatch (clean-then-dirty / dirty-then-clean
+  / digest-changed). Shipped with the S4 fail-closed branch in commit
+  df4a091.
+- **Original brief retained below for provenance.**
 - **Effort:** 1 day
 - **Why now:** Highest-leverage technical P0 in the security review. The
   manifest collects `_git_dirty_hash()` (sha256 of `git status
@@ -217,13 +228,15 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   refuse. Reuses existing session infra.
 
 ### S16. Bump `USER_VERSION` discipline [03 R6]
-- **Where:** `src/roam/db/connection.py:253` (static `USER_VERSION = 1`)
+- **Where:** `src/roam/db/connection.py:354` (currently `USER_VERSION = 12`)
 - **Effort:** 30 minutes
-- **Why now:** Free win. `manifest.py:177` already reads PRAGMA
-  `user_version` but it's been static at `= 1` since introduction. Every
-  `index_manifest` row written today claims schema_version=1 regardless
-  of reality. Pre-condition for every other manifest-based check.
-- **Move:** Bump on every schema change since v1. Add CI check (or
+- **Why now:** `manifest.py:177` reads PRAGMA `user_version`; the constant
+  has caught up to schema reality (now 12) but the discipline of
+  bumping-on-schema-change is still informal. Every `index_manifest`
+  row carries this value; drift between code-as-shipped and the value
+  written here turns the manifest into a misleading "schema_version"
+  signal. Pre-condition for every other manifest-based check.
+- **Move:** Keep bumping on every schema change. Add CI check (or
   pre-commit hook) that fails if `schema.py` or the `_safe_alter` block
   in `connection.py` changed but `USER_VERSION` didn't.
 
@@ -573,6 +586,93 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   agents?" / "What if we already use CodeRabbit?" / "Can I trial without
   a credit card?" / "How does the Cloud bundle work?" / "What happens if
   I exceed the cap mid-month?"
+
+#### C12. Agent Governance Evidence Pack [02 C10, 05 cross-ref]
+- **Where:** New `/governance` or `/trust` page; `templates/legal/`;
+  `dev/MONETIZATION-OPPORTUNITIES-2026-05-13.md`
+- **Effort:** 1-2 days for public page + control matrix; counsel pass
+  before binding.
+- **Why now:** Web research validates AI-governance evidence as a real
+  buyer language: EU AI Act Article 12 centers record-keeping, ISO/IEC
+  42001 gives AI management-system language, and NIST AI RMF gives a
+  voluntary risk-management frame. Roam already has `runs`,
+  `pr-bundle`, `audit-trail-*`, `cga`, `mode`, `permit`,
+  `article-12-check`, `agent-score`, and `constitution`.
+- **Move:** Productize as a paid setup: "Prove which agent changed what,
+  what it read first, what risks it accepted, and which tests closed the
+  loop." Price as $5k-$15k setup + quarterly evidence retainer; bundle
+  into Self-Hosted for regulated buyers.
+
+#### C13. Premium Rules and Policy Packs [02 C11]
+- **Where:** `templates/rules/`, future `templates/rules/premium/`,
+  `rules/community/`, `src/roam/policy/`
+- **Effort:** 1 day for taxonomy; 3-10 days per first paid pack.
+- **Why now:** Competitors sell broad PR review; Roam can sell local,
+  graph-aware policy. Built substrate: `rules`, `rules-validate`,
+  `check-rules`, taint rules, SARIF export, plugin substrate, and
+  graph clauses.
+- **Move:** Define free community pack vs paid packs: fintech/payments,
+  healthcare, OWASP/appsec, Django/Rails/Laravel/Next.js, AI-generated
+  code quality gates. Sell first as custom implementation, then convert
+  repeated rules into paid packs.
+
+#### C14. Team MCP Gateway [02 C12, 04 cross-ref]
+- **Where:** New product one-pager first; later hosted/self-hosted MCP
+  service wrapping `roam mcp`.
+- **Effort:** 1 day for one-pager; engineering only after customer pull.
+- **Why now:** Cursor supports remote MCP over SSE/Streamable HTTP with
+  OAuth, the official MCP Registry is a discovery channel, and Anthropic
+  has a connector directory. Roam already ships `server.json`, MCP
+  presets, tool metadata, completions, watcher/session extras, and
+  `mcp-status`.
+- **Move:** Position as "one authenticated Roam MCP endpoint for every
+  team agent." Price as $99/team/mo + repo add-ons or bundle into Review
+  Team+. Defer implementation until a Review/Self-Hosted prospect asks.
+
+#### C15. Security Reachability Triage [02 C13, 05 cross-ref]
+- **Where:** Audit page add-on once sample report exists;
+  `templates/audit-report/`; `src/roam/security/`
+- **Effort:** 2-4 days for sample report and command recipe.
+- **Why now:** Snyk validates developer-security budgets and Endor Labs
+  validates reachability as a vulnerability-prioritization story. Roam
+  already has `sbom`, `supply-chain`, `vulns`, `vuln-reach`,
+  `vuln-map`, `taint`, `taint-classify`, `secrets`, SARIF, and graph
+  context.
+- **Move:** Sell one-shot "Reachability Triage" reports for teams buried
+  in scanner noise. Price $1.5k-$7.5k initially; later bundle as a
+  Review/Cloud add-on.
+
+#### C16. Agent Vendor Benchmark Report [02 C14]
+- **Where:** `benchmarks/agent-eval/`, `bench/retrieve/`,
+  `templates/audit-report/`
+- **Effort:** 3-5 days for repeatable report template.
+- **Why now:** Teams are choosing between Cursor, Claude Code, Copilot,
+  Codex, and internal agents. Roam can answer a stronger question:
+  "which agent is safest on this repo?"
+- **Move:** Productize repo-specific benchmark reports using
+  `eval-retrieve`, `agent-score`, `ai-readiness`, `ai-ratio`, run
+  ledgers, and PR Replay. Price $3k-$15k depending on scope.
+
+#### C17. Framework Intelligence Packs [02 C15]
+- **Where:** `src/roam/plugins/`, `dev/example-plugin/`, bridges and
+  language extractors.
+- **Effort:** Services-led, 1-4 weeks per serious stack.
+- **Why now:** Framework-specific knowledge is the difference between
+  demo accuracy and production trust. The plugin substrate exists, and
+  custom extractor/bridge work improves both paid services and OSS.
+- **Move:** Offer paid Laravel/Rails/Next.js/Prisma/Django/Salesforce
+  intelligence packs as custom work first; upstream generic pieces into
+  OSS or paid policy packs after reuse.
+
+#### C18. Team Index Cache / CI Acceleration [02 C16]
+- **Where:** `index-export`, `index-import`, GitHub Action cache,
+  incremental indexer.
+- **Effort:** Defer until repeated CI-cost objections.
+- **Why now:** GitHub Actions minutes are billable for private repos, and
+  AI review/scanning workflows increasingly consume CI time. This is a
+  cost-control add-on, not a primary wedge.
+- **Move:** Keep as a lower-priority add-on for self-hosted/local-first
+  teams that want shared encrypted index artifacts and faster PR gates.
 
 ### D. Site / brand / copy heavy hitters
 

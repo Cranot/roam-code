@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
@@ -363,6 +364,20 @@ ORDER BY f.path, s.line_start
 # ---------------------------------------------------------------------------
 
 
+@roam_capability(
+    name="doc-staleness",
+    category="refactoring",
+    summary="Detect stale docstrings where the code body changed long after the docs",
+    maturity="stable",
+    mcp_expose=True,
+    mcp_preset=("core",),
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=True,
+    ai_safe=True,
+    requires_index=True,
+)
 @click.command("doc-staleness")
 @click.option("--limit", default=20, show_default=True, help="Maximum number of stale symbols to display.")
 @click.option(

@@ -67,7 +67,13 @@ class RoamError(click.ClickException):
 class IndexMissingError(RoamError):
     """Raised when the roam index database does not exist."""
 
-    def __init__(self, message: str = "No index found. Run `roam init` to create one."):
+    def __init__(
+        self,
+        message: str = (
+            "No index found. Run `roam init` to create one. "
+            "If this looks unexpected, run `roam doctor` to diagnose your install."
+        ),
+    ):
         super().__init__(message, EXIT_INDEX_MISSING)
 
 
