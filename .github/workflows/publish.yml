@@ -176,20 +176,36 @@ jobs:
         #
         # Only run on tag-triggered events: workflow_dispatch / release
         # webhooks may not have a clean tag context.
+        #
+        # v13.2 fix (W1047): the publish job has no actions/checkout, so
+        # ``gh release`` falls back to ``git`` for repo context and dies
+        # with "fatal: not a git repository". Pass ``--repo`` explicitly.
+        # Also: pushing a git tag does NOT auto-create a GitHub Release;
+        # only the ``release: published`` trigger does. So tag-pushed runs
+        # need to create the release before uploading assets. Idempotent
+        # via ``gh release view ... || gh release create ...``.
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           set -e
+          # Ensure the GitHub Release exists before uploading assets.
+          # Idempotent: if the release was already created (e.g. by a
+          # ``release: published`` trigger or by a previous workflow run
+          # via workflow_dispatch), the view succeeds and the create is
+          # skipped.
+          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$REPO" --title "$TAG" --generate-notes
           # --clobber makes the upload idempotent — re-running the workflow
           # for the same tag overwrites the previous asset rather than 422-ing.
-          gh release upload "$TAG" sbom/*.cdx.json --clobber
+          gh release upload "$TAG" sbom/*.cdx.json --repo "$REPO" --clobber
           # Best-effort: upload cosign sig + cert if they exist. ls returns
           # nothing if the cosign step was skipped, in which case the loop
           # body never runs.
           for sig in sbom/*.sig sbom/*.crt; do
-            [ -f "$sig" ] && gh release upload "$TAG" "$sig" --clobber || true
+            [ -f "$sig" ] && gh release upload "$TAG" "$sig" --repo "$REPO" --clobber || true
           done
 
       - name: Verify SBOM is attached to the release
