@@ -16,6 +16,7 @@ from roam.commands.context_helpers import (
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.output.formatter import budget_truncate, json_envelope, loc, to_json
+from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 
 def _summarize_tests(test_hits: list[dict], cap: int) -> tuple[list[dict], int, int]:
@@ -413,7 +414,7 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
                 "steps": len(plan_steps),
                 "selected_strategy": strategy,
                 "callers": len(context["non_test_callers"]),
-                "caller_metric_definition": "raw_edge_rows",
+                "caller_metric_definition": CALLER_METRIC_RAW,
                 "callees": len(context["callees"]),
                 "test_files": total_test_files,
                 "dependent_symbols": int(blast.get("dependent_symbols") or 0),

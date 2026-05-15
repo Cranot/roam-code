@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import time
@@ -498,8 +499,16 @@ def _compute_cognitive_load(conn):
     _log(f"  Cognitive load for {len(updates)} files")
 
 
-def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows):
-    """Insert extracted symbols into the DB and populate all_symbol_rows."""
+def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_version=None):
+    """Insert extracted symbols into the DB and populate all_symbol_rows.
+
+    *extractor_version* is the ``VERSION`` class attribute from the
+    :class:`LanguageExtractor` subclass that produced *symbols*. Stamped
+    onto every row so future ``roam doctor`` runs can detect that the
+    extractor's shape has drifted since the index was built (Audit A6).
+    None falls back to NULL — pre-A6 callers and tests that bypass the
+    indexer pipeline get the same value they would have written before.
+    """
     for sym in symbols:
         parent_id = None
         if sym["parent_name"]:
@@ -515,8 +524,8 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows):
                (file_id, name, qualified_name, kind, signature,
                 line_start, line_end, docstring, visibility,
                 is_exported, parent_id, default_value,
-                is_async, decorators)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                is_async, decorators, extractor_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 file_id,
                 sym["name"],
@@ -532,6 +541,7 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows):
                 sym.get("default_value"),
                 1 if sym.get("is_async") else 0,
                 sym.get("decorators") or "",
+                extractor_version,
             ),
         )
         row = conn.execute("SELECT last_insert_rowid()").fetchone()
@@ -547,6 +557,14 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows):
             "kind": sym["kind"],
             "is_exported": bool(sym.get("is_exported")),
             "line_start": sym["line_start"],
+            # W708: include line_end so the relations resolver's
+            # _closest_symbol fallback can identify the containing
+            # method/function for a reference. Without this every
+            # ref inside a method whose qualified scope (e.g.
+            # ``Indexer._do_run``) doesn't appear as a top-level key
+            # in symbols_by_name silently re-attributes to syms[0]
+            # (the first symbol in the file by line_start).
+            "line_end": sym["line_end"],
         }
 
 
@@ -724,13 +742,14 @@ class Indexer:
     def _prefetch_sources(self, files_to_process, verbose: bool) -> None:
         """Pre-read source bytes into memory in parallel.
 
-        opt-in via ``ROAM_PARALLEL_INDEX=1``. File I/O dominates
+        On-by-default since W404 (W396 in the perf memo); opt-OUT via
+        ``ROAM_PARALLEL_INDEX=0`` (or ``false``/``no``). File I/O dominates
         on cold caches (network drives, OneDrive, etc.). A thread pool
         eliminates that wait without touching the (serial) DB write path.
         Bytes are stored on ``self._source_cache`` and consumed by
         ``_read_index_source`` so the rest of the pipeline is unchanged.
         """
-        if os.environ.get("ROAM_PARALLEL_INDEX", "").strip() not in {"1", "true", "yes"}:
+        if os.environ.get("ROAM_PARALLEL_INDEX", "1").strip().lower() in {"0", "false", "no"}:
             return
         from concurrent.futures import ThreadPoolExecutor
 
@@ -751,6 +770,62 @@ class Indexer:
         self._source_cache = cache
         if verbose:
             self._log(f"  Prefetched {len(cache)} source files in parallel")
+
+    # W440: Phase 5 source cache (effects + taint) ----------------------------
+
+    def _phase5_cache_cap_bytes(self) -> int:
+        """Return the max-bytes ceiling for the Phase 5 source cache.
+
+        Default 512 MiB. Override via ``ROAM_PHASE5_CACHE_MAX_BYTES``. A
+        value <=0 disables the cache entirely (forces Phase 5 to read+parse
+        from disk, matching pre-W440 behaviour — useful for memory-constrained
+        environments).
+        """
+        try:
+            raw = os.environ.get("ROAM_PHASE5_CACHE_MAX_BYTES", "").strip()
+            if not raw:
+                return 512 * 1024 * 1024
+            return int(raw)
+        except (TypeError, ValueError):
+            return 512 * 1024 * 1024
+
+    def _capture_phase5_source(self, rel_path: str, source: bytes, tree) -> None:
+        """Stash (raw_source_bytes, tree) for Phase 5 to reuse.
+
+        Bounded by ``_phase5_cache_cap_bytes``: once the running total
+        approaches the cap the cache stops growing and the remaining files
+        fall back to disk I/O in Phase 5. Cap is `bytes only` — tree-sitter
+        Tree objects are opaque C pointers and not counted; on roam-code
+        ~470 files the bytes cost (~5MB) dominates the tree pointer cost
+        (negligible).
+        """
+        if source is None or tree is None:
+            return
+        cap = self._phase5_cache_cap_bytes()
+        if cap <= 0:
+            return
+        cache = getattr(self, "_phase5_source_cache", None)
+        if cache is None:
+            cache = {}
+            self._phase5_source_cache = cache
+            self._phase5_source_bytes = 0
+            self._phase5_source_skipped = 0
+        if self._phase5_source_bytes + len(source) > cap:
+            self._phase5_source_skipped += 1
+            return
+        cache[rel_path] = (source, tree)
+        self._phase5_source_bytes += len(source)
+
+    def _phase5_cache_for_handoff(self) -> dict | None:
+        """Return the Phase 5 cache (and detach it from self) for handoff."""
+        return getattr(self, "_phase5_source_cache", None)
+
+    def _clear_phase5_cache(self) -> None:
+        """Release the Phase 5 cache after effects + taint complete."""
+        if hasattr(self, "_phase5_source_cache"):
+            self._phase5_source_cache = None
+        if hasattr(self, "_phase5_source_bytes"):
+            self._phase5_source_bytes = 0
 
     def _insert_file_record(
         self, conn, full_path: Path, rel_path: str, language: str | None, source: bytes
@@ -826,12 +901,25 @@ class Indexer:
         if tree is None and parsed_source is None:
             return file_id
 
+        # W440: retain (raw_source_bytes, tree) for Phase 5 (effects + taint)
+        # so they don't re-read+re-parse every file on disk. Bounded by
+        # ROAM_PHASE5_CACHE_MAX_BYTES (default 512MB); when the cap is hit
+        # the cache stops growing and Phase 5 falls back to disk I/O for the
+        # remainder, preserving correctness on giant repos.
+        self._capture_phase5_source(rel_path, source, tree)
+
         extractor = self._extractor_for_file(get_extractor, lang, rel_path, verbose)
         if extractor is None:
             return file_id
 
         symbols = extract_symbols(tree, parsed_source, rel_path, extractor)
-        _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows)
+        # A6: stamp the extractor's class-level VERSION onto every row so
+        # consumers can detect drift between the indexed shape and the
+        # current extractor implementation. ``getattr`` keeps third-party
+        # plugin extractors that pre-date the VERSION attribute working
+        # (NULL column = treat as 1.0.0-compatible).
+        extractor_version = getattr(type(extractor), "VERSION", None)
+        _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_version)
         self._compute_symbol_metrics(conn, file_id, tree, parsed_source, rel_path, compute_complexity_fn, verbose)
         self._extract_file_refs(
             rel_path,
@@ -1110,9 +1198,14 @@ class Indexer:
 
     @staticmethod
     def _merge_existing_symbols(conn, all_symbol_rows: dict) -> None:
+        # W708: also select line_end so the relations resolver's
+        # _closest_symbol fallback can identify the containing
+        # method/function for a reference on incremental reindex
+        # paths (where most symbols come from this merge, not from
+        # _store_symbols).
         existing_rows = conn.execute(
             "SELECT s.id, s.file_id, s.name, s.qualified_name, s.kind, "
-            "s.is_exported, s.line_start, f.path as file_path "
+            "s.is_exported, s.line_start, s.line_end, f.path as file_path "
             "FROM symbols s JOIN files f ON s.file_id = f.id"
         ).fetchall()
         for row in existing_rows:
@@ -1128,6 +1221,7 @@ class Indexer:
                 "kind": row["kind"],
                 "is_exported": bool(row["is_exported"]),
                 "line_start": row["line_start"],
+                "line_end": row["line_end"],
             }
 
     @staticmethod
@@ -1182,6 +1276,7 @@ class Indexer:
         return G, _detect_clusters, _label_clusters, _store_clusters
 
     def _run_django_post_resolver(self, conn) -> None:
+        start = time.monotonic()
         try:
             from roam.index.django_post import resolve_all_django
 
@@ -1196,56 +1291,189 @@ class Indexer:
                     parts.append(f"{django_counts['relationships_created']} relationship edge(s)")
                 if parts:
                     self._log(f"  Django: {', '.join(parts)}")
+            self._record_step(
+                "django_post_resolver",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  Django post-resolver skipped: {e}")
+            self._record_step(
+                "django_post_resolver",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
     def _run_pytest_fixture_resolver(self, conn) -> None:
+        start = time.monotonic()
         try:
             from roam.index.pytest_fixtures import resolve_pytest_fixtures
 
             fixture_edges = resolve_pytest_fixtures(conn)
             if fixture_edges:
                 self._log(f"  pytest fixtures: {fixture_edges} dependency edge(s)")
+            self._record_step(
+                "pytest_fixture_resolver",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  pytest fixture resolver skipped: {e}")
+            self._record_step(
+                "pytest_fixture_resolver",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
     def _run_laravel_post_resolver(self, conn) -> None:
+        start = time.monotonic()
         try:
             from roam.index.laravel_post import resolve_laravel_dispatch
 
             laravel_edges = resolve_laravel_dispatch(conn, self.root)
             if laravel_edges:
                 self._log(f"  Laravel dispatch: {laravel_edges} edge(s)")
+            self._record_step(
+                "laravel_post_resolver",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  Laravel post-resolver skipped: {e}")
+            self._record_step(
+                "laravel_post_resolver",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
     def _run_registry_dispatch_resolver(self, conn) -> None:
+        start = time.monotonic()
         try:
             from roam.index.registry_dispatch import resolve_registry_dispatch
 
             dispatch_edges = resolve_registry_dispatch(conn)
             if dispatch_edges:
                 self._log(f"  registry dispatch: {dispatch_edges} edge(s)")
+            self._record_step(
+                "registry_dispatch_resolver",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  registry-dispatch resolver skipped: {e}")
+            self._record_step(
+                "registry_dispatch_resolver",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
-    def _record_step(self, step: str, status: str) -> None:
+    def _record_step(
+        self,
+        step: str,
+        status: str,
+        *,
+        error: str | None = None,
+        duration_ms: float | None = None,
+    ) -> None:
         """Track which sub-step succeeded / failed / was skipped.
 
-        Audit A8: the indexer runs ~10 sub-steps with try/except
+        ROADMAP A8 (W82): the indexer runs ~12 sub-steps with try/except
         log-and-continue. Without per-step status, ``roam doctor``
         can't tell "your index is missing taint analysis because
         that step failed" from "everything ran cleanly." The
         step-completion record lets the doctor surface specific
         degraded-mode signals.
 
-        Persisted via ``_record_manifest`` into the manifest's
-        ``notes`` field as a JSON blob (no schema change required).
+        Persisted via ``_record_manifest`` into the dedicated
+        ``index_manifest.steps_status`` JSON column (migration seq 52).
+
+        Status grammar (free-form but conventional):
+
+        * ``"ok"`` — step ran cleanly.
+        * ``"ok:cached"`` — short-circuited because the inputs hadn't
+          changed (e.g. Louvain cache hit). Still a "succeeded" state.
+        * ``"skipped:<reason>"`` — step was deliberately not run
+          (module missing, no graph to operate on).
+        * ``"failed:<ExceptionClass>"`` — step ran but raised. The
+          exception class name is folded into the status so doctor
+          can name what went wrong without parsing the error blob.
+
+        Args:
+            step: stable step identifier (``"clustering"``,
+                ``"taint_analysis"`` …). Used by doctor for advisory text.
+            status: one of the patterns above.
+            error: optional error message excerpt. Trimmed to 200 chars
+                so a single huge stack-trace can't bloat the manifest.
+            duration_ms: optional wall-clock duration for the step. Lets
+                doctor surface "clustering took 18s on the last run".
         """
         # Initialise lazily — keeps __init__ untouched.
         if not hasattr(self, "_step_status") or self._step_status is None:
             self._step_status = {}
-        self._step_status[step] = status
+        entry: dict = {"status": status}
+        if error:
+            # Cap excerpt length so a giant stack trace can't bloat the
+            # manifest. 200 chars is enough to convey "what failed".
+            entry["error_excerpt"] = str(error)[:200]
+        if duration_ms is not None:
+            entry["duration_ms"] = round(float(duration_ms), 2)
+        self._step_status[step] = entry
+
+    @contextlib.contextmanager
+    def _step(self, name: str):
+        """Time + record one sub-step.
+
+        Use when you have a step body that needs uniform success / failure
+        bookkeeping. On exception, records ``failed:<ExceptionClass>`` with
+        an error excerpt and re-raises. On clean exit, records ``ok``
+        unless the caller has overridden it (``note_skipped`` /
+        ``note_ok_cached``)::
+
+            with self._step("clustering") as step_ctx:
+                if cached:
+                    step_ctx.note_ok_cached()
+                    return
+                detect_clusters(G)
+        """
+        start = time.monotonic()
+
+        class _StepRecorder:
+            __slots__ = ("status", "error")
+
+            def __init__(self):
+                self.status: str | None = None
+                self.error: str | None = None
+
+            def note_ok(self):
+                self.status = "ok"
+
+            def note_ok_cached(self):
+                self.status = "ok:cached"
+
+            def note_skipped(self, reason: str):
+                self.status = f"skipped:{reason}"
+
+            def note_failed(self, exc: BaseException):
+                self.status = f"failed:{type(exc).__name__}"
+                self.error = str(exc)
+
+        rec = _StepRecorder()
+        try:
+            yield rec
+        except Exception as exc:
+            rec.note_failed(exc)
+            elapsed_ms = (time.monotonic() - start) * 1000.0
+            self._record_step(name, rec.status, error=rec.error, duration_ms=elapsed_ms)
+            raise
+        else:
+            if rec.status is None:
+                rec.note_ok()
+            elapsed_ms = (time.monotonic() - start) * 1000.0
+            self._record_step(name, rec.status, error=rec.error, duration_ms=elapsed_ms)
 
     def _run_git_analysis(self, conn) -> None:
         analyze_git = _try_import_git_stats()
@@ -1255,12 +1483,22 @@ class Indexer:
             return
 
         # Phase header emitted by _begin_phase in _do_run.
+        start = time.monotonic()
         try:
             analyze_git(conn, self.root)
-            self._record_step("git_analysis", "ok")
+            self._record_step(
+                "git_analysis",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  Git analysis failed: {e}")
-            self._record_step("git_analysis", f"failed:{type(e).__name__}")
+            self._record_step(
+                "git_analysis",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
     @staticmethod
     def _compute_graph_signature(G) -> dict | None:
@@ -1371,15 +1609,25 @@ class Indexer:
                 return
 
         self._log("Computing clusters...")
+        start = time.monotonic()
         try:
             cluster_map = detect_clusters(G)
             labels = label_clusters(cluster_map, conn)
             store_clusters(conn, cluster_map, labels)
             self._log(f"  {len(set(cluster_map.values()))} clusters")
-            self._record_step("clustering", "ok")
+            self._record_step(
+                "clustering",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  Clustering failed: {e}")
-            self._record_step("clustering", f"failed:{type(e).__name__}")
+            self._record_step(
+                "clustering",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
     def _run_effect_analysis(self, conn, G) -> None:
         effects_fn = _try_import_effects()
@@ -1388,15 +1636,29 @@ class Indexer:
             return
 
         # Phase header emitted by _begin_phase in _do_run (effects + taint share phase 5).
+        start = time.monotonic()
         try:
-            effects_fn(conn, self.root, G)
+            # W440: hand Phase 2's (source, tree) cache to Phase 5 so it
+            # doesn't re-open + re-parse every file. ``source_cache`` is
+            # backwards-compatible (default None → original disk-read path).
+            source_cache = self._phase5_cache_for_handoff()
+            effects_fn(conn, self.root, G, source_cache=source_cache)
             effect_count = conn.execute("SELECT COUNT(*) FROM symbol_effects").fetchone()[0]
             if effect_count:
                 self._log(f"  {_format_count(effect_count)} effects classified")
-            self._record_step("effect_analysis", "ok")
+            self._record_step(
+                "effect_analysis",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  Effect analysis failed: {e}")
-            self._record_step("effect_analysis", f"failed:{type(e).__name__}")
+            self._record_step(
+                "effect_analysis",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
     def _run_taint_analysis(self, conn, G) -> None:
         taint_fn = _try_import_taint()
@@ -1405,32 +1667,64 @@ class Indexer:
             return
 
         # Phase header emitted by _begin_phase in _do_run (effects + taint share phase 5).
+        start = time.monotonic()
         try:
-            taint_fn(conn, self.root, G)
+            # W440: same source cache as effects, fed from Phase 2 parses.
+            source_cache = self._phase5_cache_for_handoff()
+            taint_fn(conn, self.root, G, source_cache=source_cache)
             taint_count = conn.execute("SELECT COUNT(*) FROM taint_findings").fetchone()[0]
             if taint_count:
                 self._log(f"  {_format_count(taint_count)} taint findings")
-            self._record_step("taint_analysis", "ok")
+            self._record_step(
+                "taint_analysis",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  Taint analysis failed: {e}")
-            self._record_step("taint_analysis", f"failed:{type(e).__name__}")
+            self._record_step(
+                "taint_analysis",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
     def _compute_health_and_load(self, conn, G) -> None:
         self._log("Computing health scores...")
+        start = time.monotonic()
         try:
             _compute_file_health_scores(conn, G)
-            self._record_step("health_scores", "ok")
+            self._record_step(
+                "health_scores",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  Health score computation failed: {e}")
-            self._record_step("health_scores", f"failed:{type(e).__name__}")
+            self._record_step(
+                "health_scores",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
         self._log("Computing cognitive load...")
+        start = time.monotonic()
         try:
             _compute_cognitive_load(conn)
-            self._record_step("cognitive_load", "ok")
+            self._record_step(
+                "cognitive_load",
+                "ok",
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
         except Exception as e:
             self._log(f"  Cognitive load computation failed: {e}")
-            self._record_step("cognitive_load", f"failed:{type(e).__name__}")
+            self._record_step(
+                "cognitive_load",
+                f"failed:{type(e).__name__}",
+                error=str(e),
+                duration_ms=(time.monotonic() - start) * 1000.0,
+            )
 
     def _restore_or_relink_annotations(self, conn, force: bool, saved_annotations: list[dict]) -> None:
         if force and saved_annotations:
@@ -1490,12 +1784,13 @@ class Indexer:
         and bundle-import drift checks; missing it just means those
         consumers fall back to "no manifest".
 
-        Per-step status is persisted as a JSON blob in the manifest's
-        ``notes`` field (audit A8) so ``roam doctor`` can surface
-        "your index is missing taint analysis because that step failed"
-        rather than the generic stale-manifest signal. No schema change
-        — the ``notes`` field already exists and is documented as
-        free-form.
+        Per-step status is persisted into the dedicated
+        ``index_manifest.steps_status`` column (W82/A8, migration seq
+        52) so ``roam doctor`` can surface "your index is missing
+        taint analysis because that step failed" rather than the
+        generic stale-manifest signal. The ``cluster_signature`` cache
+        key still rides along in ``notes`` (it's an indexer-internal
+        gate, not a consumer signal).
         """
         try:
             from roam.index.manifest import record_indexer_run
@@ -1508,14 +1803,17 @@ class Indexer:
             f"force={1 if force else 0}",
             f"include_excluded={1 if include_excluded else 0}",
         ]
-        notes = None
-        step_status = getattr(self, "_step_status", None)
+        step_status = getattr(self, "_step_status", None) or None
         cluster_sig = getattr(self, "_cluster_signature", None)
+        phase_timings = getattr(self, "_phase_timings", None) or None
         notes_payload: dict = {}
-        if step_status:
-            notes_payload["steps"] = step_status
         if cluster_sig:
             notes_payload["cluster_signature"] = cluster_sig
+        if phase_timings:
+            # W408: persist per-phase wallclock so ``roam doctor`` and
+            # the W395-followup perf work can rank optimization candidates.
+            notes_payload["phase_timings"] = phase_timings
+        notes: str | None = None
         if notes_payload:
             import json as _json
 
@@ -1526,6 +1824,7 @@ class Indexer:
             profile="all",
             extra_config_inputs=flags,
             notes=notes,
+            steps_status=step_status,
         )
 
     def _set_completion_summary(self, conn, elapsed: float) -> None:
@@ -1552,18 +1851,70 @@ class Indexer:
     # split or merge, bump _PHASE_COUNT and update the calls below.
     _PHASE_COUNT = 7
 
+    # Stable phase-key labels used in the ``phase_timings`` manifest map
+    # so consumers (roam doctor, W395-followup perf work) can read a fixed
+    # vocabulary without parsing the human-facing label. Order matches the
+    # ``_begin_phase`` call sequence in ``_do_run``.
+    _PHASE_KEYS = (
+        "discover",         # git ls-files + change detection (implicit phase 0)
+        "parse_extract",    # phase 1: Parsing & extracting symbols
+        "resolve",          # phase 2: Resolving references
+        "graph_metrics",    # phase 3: Computing graph metrics
+        "git_analysis",     # phase 4: Analyzing git history
+        "effects_taint",    # phase 5: Computing effects & taint flow
+        "health_load",      # phase 6: Computing health & cognitive load
+        "search_indexes",   # phase 7: Building search indexes
+    )
+
     def _begin_phase(self, n: int, label: str) -> None:
         """Emit a ``[n/N] label...`` line before the next pipeline step.
 
-        Skipped under ``--quiet``. Calls go to stderr (the same
-        channel as the click progressbar) so they interleave cleanly
-        in CI logs and don't pollute stdout JSON output.
+        Also records the wall-clock elapsed for the *previous* phase into
+        ``self._phase_timings`` (W408). The phase keyed by ``n`` is
+        looked up from ``_PHASE_KEYS`` (index ``n`` since slot 0 is
+        ``discover``); a stable key keeps the persisted timing dict
+        machine-readable across releases.
+
+        Skipped under ``--quiet`` for the *log line* only — timings are
+        always captured so ``roam doctor`` can surface them regardless
+        of how the index was triggered.
         """
+        # Close the previously open phase, if any.
+        self._close_open_phase()
+        # Open the new phase. ``_PHASE_KEYS[0]`` is reserved for
+        # "discover" which is recorded outside _begin_phase (see _do_run).
+        if 1 <= n < len(self._PHASE_KEYS):
+            key = self._PHASE_KEYS[n]
+        else:
+            key = f"phase_{n}"
+        self._phase_open = (key, time.perf_counter())
         if not self._quiet:
             self._log(f"  [{n}/{self._PHASE_COUNT}] {label}")
 
+    def _record_phase(self, key: str, seconds: float) -> None:
+        """Persist one phase wall-clock into ``self._phase_timings``."""
+        if not hasattr(self, "_phase_timings") or self._phase_timings is None:
+            self._phase_timings = {}
+        # Sum so a repeated key (e.g. discover invoked twice for a partial
+        # re-index) accumulates rather than overwrites.
+        prev = float(self._phase_timings.get(key, 0.0))
+        self._phase_timings[key] = round(prev + max(0.0, float(seconds)), 3)
+
+    def _close_open_phase(self) -> None:
+        """Close the currently open phase, if any (W408)."""
+        if getattr(self, "_phase_open", None) is None:
+            return
+        key, t_start = self._phase_open
+        self._record_phase(key, time.perf_counter() - t_start)
+        self._phase_open = None
+
     def _do_run(self, force: bool, verbose: bool = False, include_excluded: bool = False):
         t0 = time.monotonic()
+        # W408: phase wall-clock map. Persisted into the manifest ``notes``
+        # JSON under "phase_timings". Stable keys live in ``_PHASE_KEYS``.
+        self._phase_timings: dict[str, float] = {}
+        self._phase_open: tuple[str, float] | None = None
+        t_discover = time.perf_counter()
         self._log("Discovering files...")
         all_files = discover_files(self.root, include_excluded=include_excluded)
         self._log(f"  {_format_count(len(all_files))} files found")
@@ -1577,6 +1928,8 @@ class Indexer:
                 removed = []
             else:
                 added, modified, removed = get_changed_files(conn, all_files, self.root)
+            # Discover-phase wallclock covers ls-files + change detection.
+            self._record_phase("discover", time.perf_counter() - t_discover)
 
             total_changed = len(added) + len(modified) + len(removed)
             if total_changed == 0:
@@ -1657,11 +2010,16 @@ class Indexer:
             self._begin_phase(5, "Computing effects & taint flow...")
             self._run_effect_analysis(conn, G)
             self._run_taint_analysis(conn, G)
+            # W440: release the Phase 2 source/tree cache before Phase 6
+            # so peak memory drops back before health + cognitive load.
+            self._clear_phase5_cache()
             self._begin_phase(6, "Computing health & cognitive load...")
             self._compute_health_and_load(conn, G)
             self._restore_or_relink_annotations(conn, force, saved_annotations)
             self._begin_phase(7, "Building search indexes...")
             self._build_search_indexes(conn, force=force)
+            # W408: close phase 7 before any post-phase bookkeeping.
+            self._close_open_phase()
             self._log_parse_issues()
             self._set_completion_summary(conn, time.monotonic() - t0)
             self._record_manifest(conn, force=force, include_excluded=include_excluded)

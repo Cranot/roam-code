@@ -191,6 +191,67 @@ def test_impact_depth_limit(cli_runner, deep_chain_project, monkeypatch):
     assert bounded_count < full_count
 
 
+def test_weighted_impact_not_truncated_to_zero_on_real_data(
+    cli_runner, high_fan_in_project, monkeypatch
+):
+    """W336 — ``weighted_impact`` must be > 0 whenever there are real
+    affected symbols.
+
+    Two bugs combined to silently zero this metric:
+
+    1. The unconditional ``round(weighted_impact, 4)`` truncated legitimate
+       small per-node PageRank sums (1e-5 to 1e-3 range on multi-thousand
+       node graphs) down to 0.0.
+    2. The bare ``except Exception`` around the ``nx.pagerank`` call
+       silently swallowed ``ImportError`` when scipy/numpy weren't
+       installed, leaving ``ppr = {}`` so the sum was always 0.
+
+    With 100 callers in the fixture and the bug fixed, the personalized
+    PageRank sum over the affected set MUST be > 0 — either via the
+    scipy/numpy path (full PageRank) or via the
+    ``personalized_pagerank`` degree-based fallback.
+    """
+    monkeypatch.chdir(high_fan_in_project)
+    result = invoke_cli(
+        cli_runner,
+        # Pull the full blast radius (no caller cap) so we always have
+        # dependents under either backend.
+        ["impact", "hub", "--depth", "10", "--max-callers", "0"],
+        cwd=high_fan_in_project,
+        json_mode=True,
+    )
+    data = parse_json_output(result, "impact")
+    summary = data["summary"]
+
+    # Sanity: there must actually be dependents — the fixture has 100
+    # callers, so this fails fast if the index is broken.
+    assert summary["affected_symbols"] > 0, (
+        f"Expected affected_symbols > 0 in high-fan-in fixture, got {summary}"
+    )
+
+    # The bug — weighted_impact stayed 0 even with 100 affected symbols.
+    assert summary["weighted_impact"] > 0, (
+        "weighted_impact must be > 0 when there are real dependents. "
+        f"Got {summary['weighted_impact']!r} with "
+        f"{summary['affected_symbols']} affected_symbols. "
+        "If this fails, check both the rounding precision (4 -> 6 decimals "
+        "in cmd_impact.py) and the ImportError fallback for "
+        "personalized_pagerank."
+    )
+
+    # The mirror at top-level must agree.
+    assert data["weighted_impact"] > 0, (
+        "Top-level weighted_impact mirror must also be > 0; got "
+        f"{data['weighted_impact']!r}"
+    )
+
+    # Definition sidecar must still be stamped (regression guard for the
+    # W331 sidecar wiring, which the round-precision fix is paired with).
+    assert summary.get("weighted_impact_definition"), (
+        "weighted_impact_definition sidecar missing from summary"
+    )
+
+
 def test_impact_truncation_flag(cli_runner, high_fan_in_project, monkeypatch):
     """When truncated, envelope contains ``truncated: true`` AND
     ``partial_success: true`` AND a ``state`` field naming the cap.

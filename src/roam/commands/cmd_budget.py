@@ -9,7 +9,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import WarningsOut, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Default budget rules (used when no config file exists)
@@ -62,30 +62,104 @@ budgets:
 # ---------------------------------------------------------------------------
 
 
-def _load_budgets(config_path: Path | None) -> list[dict]:
+def _load_budgets(
+    config_path: Path | None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
     """Load budget rules from a YAML file.
 
     Falls back to a simple line parser if PyYAML is not installed.
+
+    W1019c (Pattern 2 — silent fallback, mirror of W706's
+    ``_load_ignore_findings_file``): when *warnings_out* is supplied as a
+    ``list[str]``, every silent-fallback path (file unreadable / OSError,
+    malformed YAML, non-mapping root, missing ``budgets`` key, non-list
+    ``budgets``, non-dict entries) appends an actionable warning naming
+    the path, the failure shape, and the resolution. Pre-W1019c callers
+    that don't supply ``warnings_out`` retain byte-identical silent-empty
+    behaviour so existing happy-path consumers (cmd_budget.budget,
+    cmd_attest._collect_budget_evidence) keep emitting byte-identical
+    envelopes when ``.roam/budget.yaml`` is well-formed.
+
+    W1019c also migrates the file-read + YAML parse + no-PyYAML fallback
+    + root-type check to
+    :func:`roam.commands._yaml_loader.load_yaml_with_warnings` — the
+    helper owns the I/O + parser-fallback shape; the per-callsite
+    ``budgets``-extraction and per-entry validation stays here.
     """
-    if config_path is None or not config_path.exists():
+    if config_path is None:
         return []
 
-    try:
-        import yaml
-    except ImportError:
-        return _parse_simple_yaml(config_path)
+    from roam.commands._yaml_loader import load_yaml_with_warnings
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-
-    if not data or "budgets" not in data:
+    path_str = str(config_path)
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data = load_yaml_with_warnings(
+        config_path,
+        tiny_parser=_parse_simple_yaml_dict,
+        config_label="budget",
+        warnings_out=warnings_out,
+    )
+    if data is None:
+        # Missing file — default state, no warning emitted by the helper.
         return []
-    return data["budgets"]
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper already explained the failure (read error / malformed
+        # YAML / wrong root type / tiny-parser fallback). Propagate the
+        # empty result without piling on a second "no `budgets:` key"
+        # warning that would just confuse the caller.
+        return []
+    # ``data`` is a Mapping when ``allow_list_root`` is left at False
+    # (the default we want for budget.yaml). The helper's root-type check
+    # guarantees this; the assert keeps the type checker happy on the
+    # post-helper budgets-extraction logic.
+    assert isinstance(data, dict)
+    if "budgets" not in data:
+        if warnings_out is not None:
+            warnings_out.append(
+                f"budget: {path_str!r} has no `budgets:` key. "
+                f"Expected shape: `budgets:` followed by a list of "
+                f"`{{name, metric, max_increase|max_decrease|max_increase_pct}}` entries."
+            )
+        return []
+    budgets = data.get("budgets")
+    if not isinstance(budgets, list):
+        if warnings_out is not None:
+            warnings_out.append(
+                f"budget: {path_str!r} `budgets` is "
+                f"{type(budgets).__name__!r}, expected a list. Treating as "
+                f"empty budgets."
+            )
+        return []
+    out: list[dict] = []
+    for idx, b in enumerate(budgets):
+        if not isinstance(b, dict):
+            if warnings_out is not None:
+                warnings_out.append(
+                    f"budget: {path_str!r} budgets[{idx}] is "
+                    f"{type(b).__name__!r}, expected a mapping with "
+                    f"`name` / `metric` / `max_*` keys. Skipping entry."
+                )
+            continue
+        out.append(b)
+    return out
 
 
-def _parse_simple_yaml(path: Path) -> list[dict]:
+def _parse_simple_yaml_dict(text: str) -> dict:
+    """Minimal YAML parser for budget rules (no PyYAML dependency).
+
+    Returns a ``{"budgets": [...]}`` dict so the helper's root-type
+    check + ``budgets`` extraction in :func:`_load_budgets` works on a
+    uniform shape regardless of whether PyYAML parsed the file or this
+    fallback did.
+    """
+    rules = _parse_simple_yaml_rules(text)
+    return {"budgets": rules} if rules else {}
+
+
+def _parse_simple_yaml_rules(text: str) -> list[dict]:
     """Minimal YAML parser for budget rules (no PyYAML dependency)."""
-    text = path.read_text(encoding="utf-8")
     rules: list[dict] = []
     current_rule: dict | None = None
 
@@ -252,7 +326,8 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
         if not cfg.exists():
             cfg = root / ".roam" / "budget.yml"
 
-    budgets = _load_budgets(cfg) if cfg.exists() else []
+    _budget_warnings: list[str] = []
+    budgets = _load_budgets(cfg, warnings_out=_budget_warnings) if cfg.exists() else []
     if not budgets:
         budgets = list(_DEFAULT_BUDGETS)
 
@@ -303,17 +378,21 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
 
     # --- JSON output ---
     if json_mode:
+        summary_payload: dict = {
+            "verdict": verdict,
+            "rules_checked": len(results),
+            "passed": passed,
+            "failed": failed,
+            "skipped": skipped,
+        }
+        if _budget_warnings:
+            summary_payload["warnings_out"] = list(_budget_warnings)
+            summary_payload["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "budget",
-                    summary={
-                        "verdict": verdict,
-                        "rules_checked": len(results),
-                        "passed": passed,
-                        "failed": failed,
-                        "skipped": skipped,
-                    },
+                    summary=summary_payload,
                     rules=results,
                     has_before_snapshot=has_before,
                 )

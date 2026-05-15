@@ -26,7 +26,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import WarningsOut, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # YAML config loading
@@ -46,31 +46,51 @@ def _find_config_path(config_path: str | None) -> str | None:
     return None
 
 
-def _load_raw_config(config_path: str | None) -> dict:
+def _load_raw_config(
+    config_path: str | None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> dict:
     """Load and parse the YAML config file into a raw dict.
 
     Returns an empty dict if not found or on parse error.
+
+    W1019d (Pattern 2 — silent fallback): when *warnings_out* is supplied
+    as a ``list[str]``, every silent-fallback path (file unreadable,
+    malformed YAML/JSON, non-mapping root) appends an actionable warning
+    naming the path, the failure shape, and the resolution. Pre-W1019d
+    callers that don't supply ``warnings_out`` retain the byte-identical
+    silent-empty-dict behaviour so existing happy-path consumers keep
+    emitting byte-identical envelopes when ``.roam-rules.yml`` is
+    well-formed.
     """
+    from roam.commands._yaml_loader import load_yaml_with_warnings
+
     resolved = _find_config_path(config_path)
     if resolved is None:
         return {}
 
-    try:
-        import yaml
-
-        with open(resolved, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-    except ImportError:
-        data = _parse_simple_yaml(Path(resolved))
-    except Exception:
+    data = load_yaml_with_warnings(
+        Path(resolved),
+        tiny_parser=_parse_simple_yaml_text,
+        config_label="roam-rules",
+        warnings_out=warnings_out,
+    )
+    if data is None:
+        # Missing file (helper short-circuits absence).
         return {}
-
-    if not data or not isinstance(data, dict):
-        return {}
+    # ``allow_list_root`` is False (default) so the helper guarantees a
+    # mapping. The assert keeps the type checker honest on the
+    # post-helper extraction logic below.
+    assert isinstance(data, dict)
     return data
 
 
-def _load_user_config(config_path: str | None) -> list[dict]:
+def _load_user_config(
+    config_path: str | None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
     """Load user rule overrides from .roam-rules.yml.
 
     Returns a list of rule override dicts. Fields:
@@ -78,35 +98,86 @@ def _load_user_config(config_path: str | None) -> list[dict]:
       enabled (bool, optional): set to false to disable
       threshold (float, optional): override the default threshold
       severity (str, optional): override severity
+
+    W1019d (Pattern 2 — silent fallback): mirrors :func:`_load_raw_config`.
+    A non-list ``rules:`` value surfaces a structured warning when
+    ``warnings_out`` is supplied; pre-W1019d callers stay byte-identical.
     """
-    data = _load_raw_config(config_path)
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data = _load_raw_config(config_path, warnings_out=warnings_out)
     if not data:
         return []
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper / raw-loader already explained the failure (read error /
+        # malformed YAML / wrong root type). Propagate the empty result
+        # without piling on a second warning that would confuse the caller.
+        return []
 
+    if "rules" not in data:
+        # No `rules:` key — a profile-only config is legitimate, so this is
+        # NOT a warning. Return empty overrides and let the caller decide.
+        return []
     rules = data.get("rules", [])
     if not isinstance(rules, list):
+        if warnings_out is not None:
+            resolved = _find_config_path(config_path)
+            path_str = resolved if resolved is not None else "<unknown>"
+            warnings_out.append(
+                f"roam-rules: {path_str!r} `rules` is "
+                f"{type(rules).__name__!r}, expected a list of "
+                f"`{{id, threshold?, severity?, enabled?}}` entries. "
+                f"Treating as empty overrides."
+            )
         return []
     return rules
 
 
-def _load_config_profile(config_path: str | None) -> str | None:
+def _load_config_profile(
+    config_path: str | None,
+    *,
+    warnings_out: WarningsOut = None,
+) -> str | None:
     """Load the profile name from .roam-rules.yml if present.
 
     Returns the profile name string or None.
+
+    W1019d (Pattern 2 — silent fallback): mirrors :func:`_load_raw_config`.
+    A non-string / empty ``profile:`` value surfaces a structured warning
+    when ``warnings_out`` is supplied; pre-W1019d callers stay
+    byte-identical.
     """
-    data = _load_raw_config(config_path)
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data = _load_raw_config(config_path, warnings_out=warnings_out)
+    if not data:
+        return None
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper already explained the file-level failure; don't pile on.
+        return None
+    if "profile" not in data:
+        # Absence of a profile key is legitimate (rules-only configs).
+        return None
     profile = data.get("profile")
     if isinstance(profile, str) and profile.strip():
         return profile.strip()
+    if warnings_out is not None:
+        resolved = _find_config_path(config_path)
+        path_str = resolved if resolved is not None else "<unknown>"
+        warnings_out.append(
+            f"roam-rules: {path_str!r} `profile` is "
+            f"{type(profile).__name__!r}, expected a non-empty string "
+            f"(e.g. 'strict-security'). Treating as no profile."
+        )
     return None
 
 
-def _parse_simple_yaml(path: Path) -> dict:
-    """Minimal YAML parser fallback when PyYAML is unavailable."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except Exception:
-        return {}
+def _parse_simple_yaml_text(text: str) -> dict:
+    """Minimal YAML parser fallback when PyYAML is unavailable.
+
+    W1019d: text-based tiny-parser conforming to the
+    :data:`roam.commands._yaml_loader.TinyParser` shape. The helper owns
+    the file-read + OSError handling now; this callback just parses the
+    raw text.
+    """
     result: dict = {}
     current_list: list | None = None
     current_item: dict | None = None
@@ -430,13 +501,20 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
 
     ensure_index()
 
+    # W1019d (Pattern 2 — silent fallback): single accumulator threaded
+    # through all three sub-loaders. Drained into ``summary.warnings_out``
+    # + flips ``summary.partial_success=True`` when populated so a
+    # consumer reading only the summary still sees the silent-state
+    # disclosure.
+    check_rules_warnings: list[str] = []
+
     # Load user config
-    user_overrides = _load_user_config(config_path)
+    user_overrides = _load_user_config(config_path, warnings_out=check_rules_warnings)
 
     # Resolve profile: CLI --profile takes precedence over config file profile:
     effective_profile = profile_name
     if effective_profile is None:
-        effective_profile = _load_config_profile(config_path)
+        effective_profile = _load_config_profile(config_path, warnings_out=check_rules_warnings)
 
     if effective_profile:
         from roam.rules.builtin import resolve_profile
@@ -489,20 +567,39 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
         # Evaluate custom rules from .roam/rules
         results.extend(_evaluate_custom_rules(conn, rule_filter, severity_filter))
 
+    # W1019d: dedup warnings while preserving insertion order. The two
+    # sub-loaders both call _load_raw_config, so a file-level malformation
+    # would otherwise be reported twice.
+    seen_warnings: set[str] = set()
+    deduped_warnings: list[str] = []
+    for w in check_rules_warnings:
+        if w not in seen_warnings:
+            seen_warnings.add(w)
+            deduped_warnings.append(w)
+
     if not results:
         verdict = "no rules matched"
         if json_mode:
+            empty_summary: dict = {"verdict": verdict, "passed": 0, "failed": 0, "total": 0}
+            if deduped_warnings:
+                empty_summary["partial_success"] = True
             click.echo(
                 to_json(
                     json_envelope(
                         "check-rules",
-                        summary={"verdict": verdict, "passed": 0, "failed": 0, "total": 0},
+                        summary=empty_summary,
                         results=[],
+                        warnings_out=list(deduped_warnings),
                     )
                 )
             )
         else:
             click.echo("VERDICT: {}".format(verdict))
+            if deduped_warnings:
+                click.echo()
+                click.echo(f"Warnings ({len(deduped_warnings)}):")
+                for w in deduped_warnings:
+                    click.echo(f"  - {w}")
         return
 
     verdict, exit_code = _calculate_verdict(results)
@@ -525,18 +622,26 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
         errors = sum(1 for r in results if not r["passed"] and r["severity"] == "error")
         warnings = sum(1 for r in results if not r["passed"] and r["severity"] == "warning")
 
+        summary: dict = {
+            "verdict": verdict,
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "errors": errors,
+            "warnings": warnings,
+        }
+        # W1019d: silent-fallback disclosure on the envelope. A consumer
+        # reading only the summary still sees that the config file was
+        # malformed via ``partial_success=True``.
+        if deduped_warnings:
+            summary["partial_success"] = True
+
         envelope = json_envelope(
             "check-rules",
             budget=token_budget,
-            summary={
-                "verdict": verdict,
-                "total": total,
-                "passed": passed,
-                "failed": failed,
-                "errors": errors,
-                "warnings": warnings,
-            },
+            summary=summary,
             results=results,
+            warnings_out=list(deduped_warnings),
         )
         click.echo(to_json(envelope))
         if exit_code != 0:
@@ -546,6 +651,15 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     # --- Text output ---
     click.echo("VERDICT: {}".format(verdict))
     click.echo()
+
+    # W1019d: surface accumulated config-load warnings prominently — before
+    # the rule list so the user sees the silent-state disclosure even when
+    # stdout is piped to ``head``. Mirrors the cmd_smells discipline (W987).
+    if deduped_warnings:
+        click.echo(f"Warnings ({len(deduped_warnings)}):")
+        for w in deduped_warnings:
+            click.echo(f"  - {w}")
+        click.echo()
 
     total = len(results)
     passed = [r for r in results if r["passed"]]

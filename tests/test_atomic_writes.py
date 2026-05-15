@@ -29,6 +29,7 @@ from roam.atomic_io import (
     atomic_write_json,
     atomic_write_text,
 )
+from tests._helpers.repo_root import repo_root
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +265,7 @@ def test_atomic_io_module_uses_os_replace_not_rename():
     """Source-level invariant: ``atomic_io.py`` MUST use ``os.replace``
     (atomic on Windows) and never ``os.rename`` (raises on Windows
     when the target exists)."""
-    src = (Path(__file__).resolve().parents[1] / "src" / "roam" / "atomic_io.py").read_text(
+    src = (repo_root() / "src" / "roam" / "atomic_io.py").read_text(
         encoding="utf-8"
     )
     assert "os.replace" in src, "atomic_io must use os.replace"

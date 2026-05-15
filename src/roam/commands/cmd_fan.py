@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
@@ -12,6 +16,236 @@ from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc,
 from roam.output.framework_filter import FRAMEWORK_PRIMITIVE_NAMES as _FRAMEWORK_NAMES
 
 
+# W152: fan is the fifth detector migrating onto the central findings
+# registry (after ``clones`` in W95, ``dead`` in W99, ``complexity`` in
+# W102, ``smells`` in W109). The shape mirrors those — a stable detector
+# version stamp and a deterministic ``finding_id_str`` so re-runs upsert
+# instead of duplicating rows. Bump this when the predicate (cross-file
+# hub threshold, degree thresholds) or the emitted flag vocabulary
+# changes meaningfully.
+FAN_DETECTOR_VERSION: str = "1.0.0"
+
+
+# W152 — per-flag confidence tier mapping.
+#
+# All three architectural flags ride on graph-edge evidence (the call /
+# import graph in ``edges`` + ``file_edges``) rather than on regex or
+# runtime signal. Per the W150 audit they all land at ``structural``:
+#
+# * ``arch.fan_hub`` — cross-file fan-in over threshold (many distinct
+#   files import / call this symbol).
+# * ``arch.fan_spreader`` — cross-file fan-out over threshold (this
+#   symbol reaches into many distinct files).
+# * ``arch.fan_high_risk`` — both directions over threshold (hub and
+#   spreader concurrently).
+#
+# ``local-hub`` / ``local-spreader`` are intentionally NOT mirrored: the
+# W150 audit classifies them as single-file by design (one large SFC,
+# generated module) rather than architectural — emitting them would
+# bloat the registry with non-actionable rows.
+_FAN_FLAG_TO_KIND: dict[str, str] = {
+    "hub": "arch.fan_hub",
+    "spreader": "arch.fan_spreader",
+    "HIGH-RISK": "arch.fan_high_risk",
+}
+_FAN_FLAG_TO_CONFIDENCE: dict[str, str] = {
+    "hub": "structural",
+    "spreader": "structural",
+    "HIGH-RISK": "structural",
+}
+
+
+def _fan_finding_id(
+    source_detector: str,
+    flag: str,
+    subject_key: str,
+) -> str:
+    """Stable, deterministic finding id for one fan hit.
+
+    ``subject_key`` is the natural identifier for the subject:
+    ``<file_path>:<symbol_name>:<line_start>`` for symbol mode and
+    ``<file_path>`` for file mode. We fold it into a short digest so
+    re-runs upsert the same row in place rather than duplicating.
+
+    The ``source_detector`` is part of the id to avoid hash collisions
+    across the dual-detector design (``fan-symbol`` vs ``fan-file``):
+    a same-name file/symbol pair under each surface gets distinct ids.
+    """
+    raw = f"{source_detector}:{flag}:{subject_key}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"{source_detector}:{flag}:{digest}"
+
+
+def _resolve_file_id(conn: sqlite3.Connection, file_path: str) -> int | None:
+    """Look up ``files.id`` for a path. Returns ``None`` on miss.
+
+    File-mode subjects link via ``subject_kind='file'`` + ``subject_id``
+    pointing at ``files.id`` so downstream consumers can JOIN cleanly.
+    """
+    try:
+        row = conn.execute(
+            "SELECT id FROM files WHERE path = ? LIMIT 1",
+            (file_path,),
+        ).fetchone()
+        return int(row[0]) if row is not None else None
+    except sqlite3.OperationalError:
+        return None
+
+
+def _emit_fan_findings(
+    conn: sqlite3.Connection,
+    data: dict,
+    mode: str,
+    source_version: str,
+) -> int:
+    """Mirror cross-file fan findings into the central registry.
+
+    Returns the number of finding rows written. Caller is responsible
+    for opening ``conn`` writable; emit_finding does not commit
+    (the caller commits once at the end of the persist branch).
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (without the ``findings`` table) silently no-ops rather than
+    crashing the standard fan command path.
+
+    Dual ``source_detector`` design per the W150 audit:
+
+    * ``mode == "symbol"`` → ``source_detector = "fan-symbol"``,
+      ``subject_kind = "symbol"``, ``subject_id`` = ``symbols.id``.
+    * ``mode == "file"`` → ``source_detector = "fan-file"``,
+      ``subject_kind = "file"``, ``subject_id`` = ``files.id``.
+
+    The dual approach keeps the registry queryable per surface
+    (``roam findings list --detector fan-symbol`` vs ``--detector
+    fan-file``) instead of forcing consumers to filter on a nested
+    ``mode`` field in the evidence JSON.
+
+    Only the three architectural flags (``HIGH-RISK`` / ``hub`` /
+    ``spreader``) are mirrored. Rows with empty flag, ``local-hub``, or
+    ``local-spreader`` are skipped — see the module-level
+    ``_FAN_FLAG_TO_KIND`` comment for the rationale.
+    """
+    # Local import keeps the cost out of the read-only path —
+    # callers without --persist never reach here.
+    from roam.db.findings import FindingRecord, emit_finding
+
+    source_detector = "fan-symbol" if mode == "symbol" else "fan-file"
+    subject_kind = "symbol" if mode == "symbol" else "file"
+    caller_metric_definition = data.get("summary", {}).get(
+        "caller_metric_definition"
+    )
+
+    written = 0
+    for item in data.get("items", []):
+        flag = item.get("flag") or ""
+        if flag not in _FAN_FLAG_TO_KIND:
+            # Skip empty, local-hub, local-spreader — non-architectural.
+            continue
+
+        kind_label = _FAN_FLAG_TO_KIND[flag]
+        confidence = _FAN_FLAG_TO_CONFIDENCE[flag]
+
+        if mode == "symbol":
+            symbol_name = item.get("name") or ""
+            location = item.get("location") or ""
+            file_path = location.split(":", 1)[0] if location else ""
+            line_start: int | None = None
+            if location and ":" in location:
+                try:
+                    line_start = int(location.rsplit(":", 1)[1])
+                except (ValueError, IndexError):
+                    line_start = None
+            # Resolve subject_id back to symbols.id via (file, name, line).
+            subject_id: int | None = None
+            try:
+                row = conn.execute(
+                    "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id "
+                    "WHERE f.path = ? AND s.name = ? AND s.line_start = ? LIMIT 1",
+                    (file_path, symbol_name, line_start),
+                ).fetchone()
+                if row is not None:
+                    subject_id = int(row[0])
+                else:
+                    # Fallback: nearest-line match by (path, name) — handles
+                    # decorator / parser line-start drift the same way smells does.
+                    row = conn.execute(
+                        "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id "
+                        "WHERE f.path = ? AND s.name = ? "
+                        "ORDER BY ABS(COALESCE(s.line_start, 0) - ?) LIMIT 1",
+                        (file_path, symbol_name, line_start or 0),
+                    ).fetchone()
+                    subject_id = int(row[0]) if row is not None else None
+            except sqlite3.OperationalError:
+                subject_id = None
+
+            subject_key = f"{file_path}:{symbol_name}:{int(line_start or 0)}"
+            evidence = {
+                "mode": "symbol",
+                "flag": flag,
+                "symbol_name": symbol_name,
+                "kind": item.get("kind"),
+                "file_path": file_path,
+                "line_start": line_start,
+                "location": location,
+                "fan_in": item.get("fan_in"),
+                "fan_out": item.get("fan_out"),
+                "total": item.get("total"),
+                "fan_in_intra": item.get("fan_in_intra"),
+                "fan_in_inter": item.get("fan_in_inter"),
+                "fan_in_files": item.get("fan_in_files"),
+                "fan_out_intra": item.get("fan_out_intra"),
+                "fan_out_inter": item.get("fan_out_inter"),
+                "fan_out_files": item.get("fan_out_files"),
+                "betweenness": item.get("betweenness"),
+                "pagerank": item.get("pagerank"),
+                # Pattern 3 (vocabulary discipline): preserve the exact
+                # metric definition so downstream consumers can tell
+                # this `fan_in` apart from `impact`'s `fan_in` or
+                # `cmd_describe`'s caller count.
+                "caller_metric_definition": caller_metric_definition,
+            }
+            claim = (
+                f"{kind_label}: {symbol_name} ({location}) — "
+                f"fan_in={item.get('fan_in')}, fan_out={item.get('fan_out')}, "
+                f"fan_in_files={item.get('fan_in_files')}, "
+                f"fan_out_files={item.get('fan_out_files')}"
+            )
+        else:  # file mode
+            file_path = item.get("path") or ""
+            subject_id = _resolve_file_id(conn, file_path)
+            subject_key = file_path
+            evidence = {
+                "mode": "file",
+                "flag": flag,
+                "file_path": file_path,
+                "fan_in": item.get("fan_in"),
+                "fan_out": item.get("fan_out"),
+                "total": item.get("total"),
+                "caller_metric_definition": caller_metric_definition,
+            }
+            claim = (
+                f"{kind_label}: {file_path} — "
+                f"fan_in={item.get('fan_in')}, fan_out={item.get('fan_out')}"
+            )
+
+        finding_id = _fan_finding_id(source_detector, flag, subject_key)
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind=subject_kind,
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=confidence,
+                source_detector=source_detector,
+                source_version=source_version,
+            ),
+        )
+        written += 1
+    return written
+
+
 def _filter_tooling_rows(rows):
     """Filter out rows whose ``file_path`` is in a default-excluded
     location (tooling, generated, examples, vendor, workspaces, etc.).
@@ -19,7 +253,7 @@ def _filter_tooling_rows(rows):
     Uses the shared ``output.file_role_hints`` set so all headline
     commands stay in sync.
     """
-    return [r for r in rows if not is_excluded_path(r["file_path"] or "")]
+    return [r for r in rows if not is_excluded_path(r["file_path"])]
 
 
 _CROSS_FILE_HUB_THRESHOLD = 3
@@ -157,8 +391,21 @@ def _scope_flag(meta_entry, in_deg, out_deg):
         "is expected and dominates the headline."
     ),
 )
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Persist cross-file architectural fan findings (HIGH-RISK / hub / "
+        "spreader) to the .roam/index.db findings registry. "
+        "Symbol-mode findings emit under source_detector='fan-symbol'; "
+        "file-mode under 'fan-file'. Local-only flags (local-hub, "
+        "local-spreader) are skipped as non-architectural. "
+        "Query via `roam findings list --detector fan-symbol` or `fan-file`."
+    ),
+)
 @click.pass_context
-def fan(ctx, mode, count, no_framework, include_tooling):
+def fan(ctx, mode, count, no_framework, include_tooling, persist):
     """Show fan-in/fan-out: most connected symbols or files.
 
     Unlike ``coupling`` (which measures temporal co-change frequency), this
@@ -178,7 +425,7 @@ def fan(ctx, mode, count, no_framework, include_tooling):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         # Pull more rows than ``count`` when filtering, so the displayed
         # top-N still has ``count`` entries after exclusions. 5x is a
         # comfortable safety factor for typical tooling shares.
@@ -230,6 +477,53 @@ def fan(ctx, mode, count, no_framework, include_tooling):
                     click.echo("No graph metrics available. Run `roam index` first.")
                 return
 
+            # Build the symbol-mode items list once — reused by JSON emit,
+            # the persist branch, and (indirectly) the text table below.
+            symbol_items = [
+                {
+                    "name": r["name"],
+                    "kind": r["kind"],
+                    "fan_in": r["in_degree"] or 0,
+                    "fan_out": r["out_degree"] or 0,
+                    "total": (r["in_degree"] or 0) + (r["out_degree"] or 0),
+                    "betweenness": round(r["betweenness"] or 0, 1),
+                    "pagerank": round(r["pagerank"] or 0, 4),
+                    "location": loc(r["file_path"], r["line_start"]),
+                    "fan_in_intra": scope_meta.get(r["id"], {}).get("fan_in_intra", 0),
+                    "fan_in_inter": scope_meta.get(r["id"], {}).get("fan_in_inter", 0),
+                    "fan_in_files": scope_meta.get(r["id"], {}).get("fan_in_files", 0),
+                    "fan_out_intra": scope_meta.get(r["id"], {}).get("fan_out_intra", 0),
+                    "fan_out_inter": scope_meta.get(r["id"], {}).get("fan_out_inter", 0),
+                    "fan_out_files": scope_meta.get(r["id"], {}).get("fan_out_files", 0),
+                    "flag": _scope_flag(
+                        scope_meta.get(r["id"], {}),
+                        r["in_degree"] or 0,
+                        r["out_degree"] or 0,
+                    ),
+                }
+                for r in rows
+            ]
+
+            # W152: mirror cross-file architectural flags into the
+            # findings registry. Runs ONLY with --persist. Local-only
+            # flags (local-hub, local-spreader) are skipped per the
+            # W150 audit recommendation.
+            if persist:
+                try:
+                    _emit_fan_findings(
+                        conn,
+                        {
+                            "summary": {"caller_metric_definition": "direct_in_degree"},
+                            "items": symbol_items,
+                        },
+                        mode="symbol",
+                        source_version=FAN_DETECTOR_VERSION,
+                    )
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    # findings table missing (pre-W89 schema) — degrade gracefully.
+                    pass
+
             if json_mode:
                 _top_in = max(rows, key=lambda r: r["in_degree"] or 0)
                 _top_out = max(rows, key=lambda r: r["out_degree"] or 0)
@@ -249,30 +543,7 @@ def fan(ctx, mode, count, no_framework, include_tooling):
                                 "caller_metric_definition": "direct_in_degree",
                             },
                             mode=mode,
-                            items=[
-                                {
-                                    "name": r["name"],
-                                    "kind": r["kind"],
-                                    "fan_in": r["in_degree"] or 0,
-                                    "fan_out": r["out_degree"] or 0,
-                                    "total": (r["in_degree"] or 0) + (r["out_degree"] or 0),
-                                    "betweenness": round(r["betweenness"] or 0, 1),
-                                    "pagerank": round(r["pagerank"] or 0, 4),
-                                    "location": loc(r["file_path"], r["line_start"]),
-                                    "fan_in_intra": scope_meta.get(r["id"], {}).get("fan_in_intra", 0),
-                                    "fan_in_inter": scope_meta.get(r["id"], {}).get("fan_in_inter", 0),
-                                    "fan_in_files": scope_meta.get(r["id"], {}).get("fan_in_files", 0),
-                                    "fan_out_intra": scope_meta.get(r["id"], {}).get("fan_out_intra", 0),
-                                    "fan_out_inter": scope_meta.get(r["id"], {}).get("fan_out_inter", 0),
-                                    "fan_out_files": scope_meta.get(r["id"], {}).get("fan_out_files", 0),
-                                    "flag": _scope_flag(
-                                        scope_meta.get(r["id"], {}),
-                                        r["in_degree"] or 0,
-                                        r["out_degree"] or 0,
-                                    ),
-                                }
-                                for r in rows
-                            ],
+                            items=symbol_items,
                         )
                     )
                 )
@@ -366,6 +637,50 @@ def fan(ctx, mode, count, no_framework, include_tooling):
                     click.echo("No file edges available. Run `roam index` first.")
                 return
 
+            def _file_flag(fan_in: int, fan_out: int) -> str:
+                if fan_in > 5 and fan_out > 5:
+                    return "HIGH-RISK"
+                if fan_in > 5:
+                    return "hub"
+                if fan_out > 5:
+                    return "spreader"
+                return ""
+
+            # Build the file-mode items list once — reused by JSON emit,
+            # the persist branch, and the text table below.
+            file_items = [
+                {
+                    "path": r["path"],
+                    "fan_in": r["fan_in"],
+                    "fan_out": r["fan_out"],
+                    "total": r["fan_in"] + r["fan_out"],
+                    "flag": _file_flag(r["fan_in"], r["fan_out"]),
+                }
+                for r in rows
+            ]
+
+            # W152: mirror cross-file architectural flags into the
+            # findings registry. Runs ONLY with --persist.
+            if persist:
+                try:
+                    _emit_fan_findings(
+                        conn,
+                        {
+                            "summary": {
+                                "caller_metric_definition": (
+                                    "direct_in_degree (file-level: distinct source files)"
+                                )
+                            },
+                            "items": file_items,
+                        },
+                        mode="file",
+                        source_version=FAN_DETECTOR_VERSION,
+                    )
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    # findings table missing (pre-W89 schema) — degrade gracefully.
+                    pass
+
             if json_mode:
                 _top_in_r = max(rows, key=lambda r: r["fan_in"])
                 _top_out_r = max(rows, key=lambda r: r["fan_out"])
@@ -387,38 +702,21 @@ def fan(ctx, mode, count, no_framework, include_tooling):
                                 "caller_metric_definition": "direct_in_degree (file-level: distinct source files)",
                             },
                             mode=mode,
-                            items=[
-                                {
-                                    "path": r["path"],
-                                    "fan_in": r["fan_in"],
-                                    "fan_out": r["fan_out"],
-                                    "total": r["fan_in"] + r["fan_out"],
-                                }
-                                for r in rows
-                            ],
+                            items=file_items,
                         )
                     )
                 )
                 return
 
             table_rows = []
-            for r in rows:
-                total = r["fan_in"] + r["fan_out"]
-                flag = ""
-                if r["fan_in"] > 5 and r["fan_out"] > 5:
-                    flag = "HIGH-RISK"
-                elif r["fan_in"] > 5:
-                    flag = "hub"
-                elif r["fan_out"] > 5:
-                    flag = "spreader"
-
+            for item in file_items:
                 table_rows.append(
                     [
-                        r["path"],
-                        str(r["fan_in"]),
-                        str(r["fan_out"]),
-                        str(total),
-                        flag,
+                        item["path"],
+                        str(item["fan_in"]),
+                        str(item["fan_out"]),
+                        str(item["total"]),
+                        item["flag"],
                     ]
                 )
 

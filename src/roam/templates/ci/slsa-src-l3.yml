@@ -1,0 +1,107 @@
+# Roam SLSA SRC-L3 Source Provenance — drop-in GitHub Actions workflow.
+#
+# W471 — emits a SLSA v1.2 Verification Summary Attestation (VSA) plus a
+# run-ledger HMAC root attestation on every pull request, keyless-signed
+# via Sigstore Fulcio + Rekor (the GitHub Actions OIDC token is the trust
+# anchor that lifts the assurance floor from SRC-L2 to SRC-L3).
+#
+# Place at .github/workflows/roam-slsa-src-l3.yml in your repo.
+#
+# What this produces:
+#   * .roam/pr-bundle/slsa-vsa-<evidence_id>.json
+#       — in-toto v1 Statement, predicateType
+#         https://slsa.dev/verification_summary/v1
+#   * .roam/pr-bundle/run-ledger-root-<run_id>.json
+#       — in-toto v1 Statement attesting to the HMAC chain tip of the
+#         active run-ledger; predicateType
+#         https://roam-code.com/spec/RunLedgerRoot/v1
+#   * cosign .sig + Rekor transparency-log entries for both
+#
+# Wording-lint discipline (CLAUDE.md): this workflow produces evidence
+# that *supports* a SLSA SRC-L3 claim. The verifier asserts the claim;
+# the workflow itself does NOT make the repo "SLSA-compliant".
+#
+# Trust anchor: the `id-token: write` permission gives the job an
+# OIDC token that cosign exchanges with Fulcio for a short-lived
+# X.509 certificate bound to the GitHub workflow identity. Without
+# this permission, keyless signing fails and the assurance floor
+# stays at SRC-L2.
+
+name: Roam SLSA SRC-L3 Source Provenance
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  id-token: write          # REQUIRED — keyless cosign OIDC (lifts L2 -> L3)
+  pull-requests: write     # post sticky comment with VSA + Rekor links
+  attestations: write      # write GitHub-native attestation references
+
+jobs:
+  slsa-src-l3:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history — VSA subject is the commit SHA
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "{python_version}"
+
+      - name: Install roam-code
+        run: |
+          python -m pip install --upgrade pip
+          pip install "roam-code[mcp]"
+
+      - name: Install cosign (keyless OIDC signer)
+        uses: sigstore/cosign-installer@v3
+
+      - name: Index repository
+        run: roam init
+
+      - name: Start run ledger (HMAC-chained event log)
+        id: run
+        run: |
+          ROAM_RUN_ID=$(roam --json runs start \
+            --intent "${{ github.event.pull_request.title }}" \
+            | python -c "import json,sys; print(json.load(sys.stdin)['summary']['run_id'])")
+          echo "ROAM_RUN_ID=$ROAM_RUN_ID" >> $GITHUB_ENV
+
+      - name: Initialise pr-bundle
+        run: |
+          roam pr-bundle init \
+            --intent "${{ github.event.pull_request.title }}" \
+            --agent-id "github-actions" \
+            --human-actor "${{ github.actor }}"
+
+      - name: Emit pr-bundle with SLSA SRC-L3 attestations (signed)
+        run: |
+          roam pr-bundle emit \
+            --auto-collect \
+            --strict \
+            --slsa-l3 \
+            --sign \
+            --keyless
+
+      - name: Verify run-ledger HMAC chain integrity
+        run: roam runs verify
+
+      - name: Close run ledger with pr-bundle reference
+        run: roam runs end --with-pr-bundle-emit
+
+      - name: Upload SLSA attestations + run-ledger root
+        uses: actions/upload-artifact@v4
+        with:
+          name: roam-slsa-src-l3
+          path: |
+            .roam/pr-bundle/slsa-vsa-*.json
+            .roam/pr-bundle/run-ledger-root-*.json
+            .roam/pr-bundle/*.sig
+            .roam/pr-bundle/*.pem
+          retention-days: 90
+          if-no-files-found: error

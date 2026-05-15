@@ -39,10 +39,8 @@ from conftest import invoke_cli, parse_json_output
 
 @pytest.fixture
 def cli_runner():
-    try:
-        return CliRunner(mix_stderr=False)
-    except TypeError:
-        return CliRunner()
+    # Click 8.3+ removed mix_stderr; use result.stderr_bytes manually if needed
+    return CliRunner()
 
 
 # ---------------------------------------------------------------------------

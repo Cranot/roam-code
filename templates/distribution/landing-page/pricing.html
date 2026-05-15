@@ -67,10 +67,11 @@
         <strong>Pay for the engine running in the right places.</strong>
       </h1>
       <p class="hero-subhead">
-        The free CLI is the engine — a local code-graph plus 130+ MCP
-        tools your agents call directly. Teams pay to run it on every
-        pull request, in a shared dashboard, or self-hosted inside their
-        own network.
+        The free CLI is the local intelligence engine — maps,
+        algorithmic judgment, pre-change gates, and post-change evidence
+        packets your team can verify offline. Teams pay to run it on
+        every pull request, in a shared dashboard, or self-hosted inside
+        their own network.
       </p>
     </div>
   </header>
@@ -157,14 +158,14 @@
               <td>commercial</td>
             </tr>
             <tr>
-              <th scope="row">233 CLI commands</th>
+              <th scope="row">238 CLI commands</th>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
             </tr>
             <tr>
-              <th scope="row">149 MCP tools for AI agents</th>
+              <th scope="row">224 MCP tools for AI agents</th>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
@@ -224,7 +225,7 @@
               <td class="no">—</td>
               <td class="no">—</td>
               <td class="no">—</td>
-              <td class="yes">Yes</td>
+              <td class="ltd">Planned</td>
             </tr>
             <tr>
               <th scope="row">SLA + dedicated support</th>
@@ -391,13 +392,109 @@
     </div>
   </section>
 
+  <section class="faq" id="faq">
+    <div class="faq-inner">
+      <h2>Pricing FAQ</h2>
+      <details>
+        <summary>What if my team doesn't use AI agents yet?</summary>
+        <p>
+          The free CLI is a standalone code-intelligence layer — health
+          scores, dead-export detection, blast-radius analysis, SARIF
+          export for GitHub Code Scanning, in-toto v1 audit-trail files.
+          None of it assumes an agent. Roam Review's PR verdict is just
+          as useful for human-authored PRs as for agent-authored ones;
+          the structural and algorithmic risk classes do not care who
+          wrote the diff.
+        </p>
+      </details>
+      <details>
+        <summary>What if we already use CodeRabbit, Greptile, or another semantic reviewer?</summary>
+        <p>
+          Keep them. Roam Review is a different layer — semantic
+          reviewers comment on diff readability and style; Roam reviews
+          structure (clones-not-edited, layer violations, blast-radius
+          spikes) and algorithmic risk (accidental O(n²), N+1, regex in
+          loop). Both are flat tiers, both run on every PR, both ship
+          their own verdict. We routinely sit alongside a semantic
+          reviewer in customer pipelines.
+        </p>
+      </details>
+      <details>
+        <summary>Can I trial Roam Review without a credit card?</summary>
+        <p>
+          The CLI is Apache 2.0 and free forever — install with
+          <code>pip install roam-code</code> and run the same engine
+          locally. Roam Review (the GitHub App) ships with a 14-day
+          trial on every paid tier. For a paid pre-subscription
+          evaluation across a real PR history, see
+          <a href="/audit">PR Replay</a> — 50% of the fee credits toward
+          a Review subscription if you start within 60 days. Open-source
+          repositories get Roam Review free, forever; email
+          <a href="mailto:hello@roam-code.com?subject=OSS%20Review%20activation">hello@roam-code.com</a>
+          with a repo link.
+        </p>
+      </details>
+      <details>
+        <summary>How do Roam Review and Roam Cloud fit together?</summary>
+        <p>
+          Roam Review posts a verdict on every PR; Roam Cloud is the
+          dashboard that aggregates those verdicts over time — health,
+          debt, danger-zone trends per repo and per author. Cloud
+          Starter is $19/repo/mo; Team is $99/mo for 10 repos; Growth
+          is $299/mo. You can run Review without Cloud (verdicts ship
+          to the PR), Cloud without Review (it ingests local
+          <code>roam health</code> runs), or both together (the common
+          setup once you want history).
+        </p>
+      </details>
+      <details>
+        <summary>What happens if I exceed the cap mid-month?</summary>
+        <p>
+          Soft cap by default. We email the org admin at 80% of any cap
+          and surface a banner at 100%. The default at 100% is "next
+          review skipped, banner shown" — Roam Review keeps the queue
+          rather than dropping PRs, and your bill never moves unless
+          you opt in to overage. You can either upgrade tiers
+          (pro-rated) or enable the per-tier overage rates listed in
+          the limits table. No surprise bills.
+        </p>
+      </details>
+      <details>
+        <summary>Do you offer OSS or educational discounts?</summary>
+        <p>
+          Roam Review is free, forever, on public repositories — see
+          the comparison table above. We do not gate the CLI's
+          features by license, so educational users can run the full
+          engine locally at zero cost. For an institutional Review or
+          Cloud rollout (a department, a course, a research group),
+          email
+          <a href="mailto:hello@roam-code.com?subject=OSS%20%2F%20educational%20activation">hello@roam-code.com</a>
+          with a description and a repo link.
+        </p>
+      </details>
+      <details>
+        <summary>Can I self-host?</summary>
+        <p>
+          Roam Self-Hosted is custom-priced annual, sized to team and
+          compliance scope, with a regulated-pilot option for a small
+          number of design partners. ISO 42001 and SOC 2 control
+          mapping is planned but not yet certified — see the
+          comparison table for current status. Book a 30-minute call
+          from the
+          <a href="#self-hosted">Self-Hosted card above</a> or email
+          <a href="mailto:hello@roam-code.com?subject=Roam%20Self-Hosted%20enquiry">hello@roam-code.com</a>.
+        </p>
+      </details>
+    </div>
+  </section>
+
   </main>
 
   <footer>
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local structural intelligence layer for coding agents.</span>
+        <span>The local codebase intelligence layer for developers and AI agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

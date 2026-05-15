@@ -327,7 +327,18 @@ def lease_claim(ctx, agent, files, partition, ttl_seconds):
         },
     )
     try:
-        auto_log(envelope, action="lease-claim", target=claimed.lease_id, repo_root=root)
+        # W294 - stamp ``lease_id`` on the event so the W292 collector
+        # harvester corroborates the matching lease AuthorityRef and
+        # promotes it to ``provenance="run_ledger"``. Only on the
+        # SUCCESS path (the conflict branch above does NOT stamp the
+        # field - the lease wasn't actually claimed).
+        auto_log(
+            envelope,
+            action="lease-claim",
+            target=claimed.lease_id,
+            repo_root=root,
+            extra_event_fields={"lease_id": claimed.lease_id},
+        )
     except Exception:
         pass
 
@@ -428,7 +439,18 @@ def lease_release(ctx, lease_id):
         },
     )
     try:
-        auto_log(envelope, action="lease-release", target=lease_id, repo_root=root)
+        # W294 - stamp ``lease_id`` so a release event STILL corroborates
+        # the matching lease AuthorityRef (the lease was held during the
+        # change scope even if it's been released since). The W292
+        # harvester does not distinguish acquire from release; both
+        # emissions count as evidence the lease existed.
+        auto_log(
+            envelope,
+            action="lease-release",
+            target=lease_id,
+            repo_root=root,
+            extra_event_fields={"lease_id": lease_id},
+        )
     except Exception:
         pass
 

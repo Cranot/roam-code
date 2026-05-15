@@ -240,3 +240,89 @@ class TestSarifNoFindings:
         assert_valid_sarif(data)
         run = data["runs"][0]
         assert len(run["results"]) == 0
+
+
+class TestSarifSeverityMapping:
+    """W531: ``severity: error`` taint rules MUST emit SARIF level=error.
+
+    Before W531 ``_LEVEL_MAP`` had no entry for ``"ERROR"`` so every taint
+    finding (every shipped SQLi / SSTI / deserialization rule ships
+    ``severity: error``) silently downgraded to SARIF ``"note"``. GitHub
+    Code Scanning + Defender + every CI gate keyed off ``level=error`` was
+    broken. The fix is the closed mapping in ``_LEVEL_MAP``; this test
+    locks it.
+    """
+
+    def test_to_level_maps_error_to_sarif_error(self):
+        from roam.output.sarif import _to_level
+
+        # Lowercase and uppercase both resolve to the SARIF "error" level.
+        assert _to_level("error") == "error"
+        assert _to_level("ERROR") == "error"
+
+    def test_to_level_full_severity_table(self):
+        from roam.output.sarif import _to_level
+
+        # Closed mapping — every shipped severity tier resolves correctly.
+        assert _to_level("CRITICAL") == "error"
+        assert _to_level("critical") == "error"
+        assert _to_level("ERROR") == "error"
+        assert _to_level("error") == "error"
+        assert _to_level("HIGH") == "warning"
+        assert _to_level("WARNING") == "warning"
+        assert _to_level("warning") == "warning"
+        assert _to_level("MEDIUM") == "note"
+        assert _to_level("LOW") == "note"
+        assert _to_level("INFO") == "note"
+        # Unknown labels default to "note" — never accidentally gates CI.
+        assert _to_level("UNKNOWN") == "note"
+
+    def test_taint_severity_error_emits_sarif_level_error(self):
+        """A taint finding produced from a ``severity: error`` rule must
+        emit a SARIF result with ``level: "error"`` AND the rule's
+        ``defaultConfiguration.level`` must also be ``"error"``."""
+        from roam.output.sarif import taint_to_sarif
+
+        findings = [
+            {
+                "rule_id": "java-sqli",
+                "severity": "error",
+                "cwe": "CWE-89",
+                "owasp_top10": "A03:2021_Injection",
+                "source": {"name": "getParameter", "file": "S.java", "line": 1},
+                "sink": {"name": "executeQuery", "file": "D.java", "line": 9},
+                "path_length": 2,
+                "path": [],
+                "sanitizer_in_path": False,
+                "vex_justification": None,
+            }
+        ]
+        doc = taint_to_sarif(findings)
+        result = doc["runs"][0]["results"][0]
+        assert result["level"] == "error", (
+            "severity:error MUST surface as SARIF level=error so CI gates "
+            "keyed off level=error fire; pre-W531 it downgraded to note."
+        )
+        rule = doc["runs"][0]["tool"]["driver"]["rules"][0]
+        assert rule["defaultConfiguration"]["level"] == "error"
+
+    def test_taint_severity_warning_emits_sarif_level_warning(self):
+        """``severity: warning`` resolves to SARIF ``level: "warning"``."""
+        from roam.output.sarif import taint_to_sarif
+
+        findings = [
+            {
+                "rule_id": "js-ssrf",
+                "severity": "warning",
+                "cwe": "CWE-918",
+                "owasp_top10": "",
+                "source": {"name": "req.query", "file": "x.js", "line": 1},
+                "sink": {"name": "fetch", "file": "x.js", "line": 5},
+                "path_length": 2,
+                "path": [],
+                "sanitizer_in_path": False,
+                "vex_justification": None,
+            }
+        ]
+        doc = taint_to_sarif(findings)
+        assert doc["runs"][0]["results"][0]["level"] == "warning"

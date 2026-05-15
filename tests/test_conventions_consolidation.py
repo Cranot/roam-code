@@ -369,11 +369,13 @@ class TestCrossCommandInvariance:
     def test_minimap_uses_helper(self, cli_runner, known_naming_project, monkeypatch):
         monkeypatch.chdir(known_naming_project)
         env = _invoke_json(cli_runner, ["minimap"])
-        result = _extract_function_pct(env, "minimap")
         # minimap may report "mixed functions" since 60% < 60% threshold-edge
         # OR it may emit the dominant style. We just need that whatever
         # it says is consistent — it must not contradict the helper.
         # Acceptable: result is None (mixed), or style matches camelCase.
+        # The structured helper view is checked by test_pre_fixg_minimap_no_longer_lies;
+        # here we only assert the content surfaces the empirical view.
+        _ = _extract_function_pct(env, "minimap")  # smoke: extractor must not raise
         content = env.get("content", "")
         # Either the content says "mixed" or it says "camelCase"
         assert "mixed functions" in content or "camelCase functions" in content, (

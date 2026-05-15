@@ -46,6 +46,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Optional dependency: PyYAML. Used only by ``LanguageConfig.load()`` to
+# parse the per-language YAML extractor schemas. Hoisted to module scope
+# so tests can monkeypatch ``yaml = None`` to exercise the missing-dep
+# install-hint path without needing to uninstall the real package.
+try:
+    import yaml  # type: ignore
+except ImportError as _yaml_import_exc:  # pragma: no cover - exercised via test monkeypatch
+    yaml = None  # type: ignore[assignment]
+    _YAML_IMPORT_ERROR: ImportError | None = _yaml_import_exc
+else:
+    _YAML_IMPORT_ERROR = None
+
+
 # ---------------------------------------------------------------------------
 # Schema Data Classes
 # ---------------------------------------------------------------------------
@@ -195,8 +208,19 @@ class LanguageConfig:
 
     @classmethod
     def load(cls, path: Path) -> "LanguageConfig":
-        """Load from a YAML file."""
-        import yaml
+        """Load from a YAML file.
+
+        Requires PyYAML. Raises ``ImportError`` with an install hint when
+        PyYAML is missing (PyYAML is not a core dependency; it ships under
+        the ``[dev]`` extra and is commonly present via transitive deps,
+        but a bare ``pip install roam-code`` does not pull it in).
+        """
+        if yaml is None:
+            raise ImportError(
+                "LanguageConfig.load() requires PyYAML. "
+                "Install with: pip install 'roam-code[dev]' (or: pip install pyyaml). "
+                f"Original error: {_YAML_IMPORT_ERROR!r}"
+            )
 
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)

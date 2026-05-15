@@ -1,0 +1,56 @@
+[
+  {
+    "id": 1001,
+    "user": {"login": "alice"},
+    "state": "APPROVED",
+    "submitted_at": "2026-05-13T10:15:00Z",
+    "commit_id": "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+    "html_url": "https://github.com/example-org/example-repo/pull/42#pullrequestreview-1001",
+    "body": "This is sensitive private info about why I approved, do not store this anywhere."
+  },
+  {
+    "id": 1002,
+    "user": {"login": "bob"},
+    "state": "APPROVED",
+    "submitted_at": "2026-05-12T09:30:00Z",
+    "commit_id": "stale222stale222stale222stale222stale222",
+    "html_url": "https://github.com/example-org/example-repo/pull/42#pullrequestreview-1002",
+    "body": "I approved an older commit; outdated now."
+  },
+  {
+    "id": 1003,
+    "user": {"login": "carol"},
+    "state": "CHANGES_REQUESTED",
+    "submitted_at": "2026-05-13T11:00:00Z",
+    "commit_id": "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+    "html_url": "https://github.com/example-org/example-repo/pull/42#pullrequestreview-1003",
+    "body": "Please rework the migration plan before merging."
+  },
+  {
+    "id": 1004,
+    "user": {"login": "dave"},
+    "state": "COMMENTED",
+    "submitted_at": "2026-05-13T11:30:00Z",
+    "commit_id": "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+    "html_url": "https://github.com/example-org/example-repo/pull/42#pullrequestreview-1004",
+    "body": "Left some inline comments, no verdict."
+  },
+  {
+    "id": 1005,
+    "user": {"login": "erin"},
+    "state": "DISMISSED",
+    "submitted_at": "2026-05-13T12:00:00Z",
+    "commit_id": "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+    "html_url": "https://github.com/example-org/example-repo/pull/42#pullrequestreview-1005",
+    "body": "Dismissed by PR author after re-pushing."
+  },
+  {
+    "id": 1006,
+    "user": {"login": "frank"},
+    "state": "PENDING",
+    "submitted_at": "2026-05-13T12:30:00Z",
+    "commit_id": "aaa111aaa111aaa111aaa111aaa111aaa111aaa1",
+    "html_url": "https://github.com/example-org/example-repo/pull/42#pullrequestreview-1006",
+    "body": "Reviewing now, will submit soon."
+  }
+]

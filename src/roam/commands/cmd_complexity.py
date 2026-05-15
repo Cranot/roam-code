@@ -7,6 +7,10 @@ understand code in the project.
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
@@ -17,7 +21,114 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
+from roam.output._severity import severity_to_confidence_level
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
+
+
+# W93-follow-up: complexity is the third detector migrating onto the
+# central findings registry (after `clones` in W95 and `dead` in W99).
+# The shape mirrors those two — a stable detector version stamp and a
+# deterministic ``finding_id_str`` so re-runs upsert instead of
+# duplicating rows. Bump this when the threshold-to-severity mapping
+# in ``_severity`` changes meaningfully, since that's what the registry
+# row's ``claim`` and confidence tier are derived from.
+COMPLEXITY_DETECTOR_VERSION: str = "1.0.0"
+
+# Registry-emit threshold: only symbols with cognitive_complexity >= 15
+# are emitted as findings. This mirrors the existing ``_severity``
+# cutoff: 15 is the floor for HIGH severity (refactor-target tier).
+# Below that, the symbols are noise for an agent consuming the
+# cross-detector registry — they appear in the per-command rankings
+# but shouldn't pollute ``roam findings list``.
+COMPLEXITY_FINDING_THRESHOLD: float = 15.0
+
+
+def _complexity_finding_id(symbol_id: int, cognitive_score: float) -> str:
+    """Stable, deterministic finding id for one complexity hotspot.
+
+    The (symbol_id, rounded-score) pair re-identifies the same hotspot
+    across runs. We round the cognitive score to the nearest int so a
+    tree-sitter parse jitter that nudges the score by 0.0001 doesn't
+    mint a fresh id — but a meaningful refactor that drops the score
+    from 25 to 14 does (and removes the row, since it's below the emit
+    threshold).
+    """
+    raw = f"{symbol_id}:{int(round(float(cognitive_score)))}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"complexity:hotspot:{digest}"
+
+
+def _emit_complexity_findings(conn, rows) -> None:
+    """Mirror each high-complexity symbol row into the findings registry.
+
+    ``rows`` is the filtered ranking from the ``symbol_metrics`` JOIN
+    (same shape used by the JSON envelope). Rows below
+    ``COMPLEXITY_FINDING_THRESHOLD`` are skipped — the registry
+    documents hotspots, not the long tail.
+
+    Wrapped at the call site in try/except so a pre-W89 DB (no
+    ``findings`` table) silently no-ops rather than crashing the
+    standard read path.
+    """
+    from roam.db.findings import (
+        CONFIDENCE_STRUCTURAL,
+        FindingRecord,
+        emit_finding,
+    )
+
+    for r in rows:
+        symbol_id = r["symbol_id"]
+        if symbol_id is None:
+            continue
+        score = float(r["cognitive_complexity"] or 0)
+        if score < COMPLEXITY_FINDING_THRESHOLD:
+            continue
+        severity = _severity(score)
+        name = r["qualified_name"] or r["name"] or ""
+        file_path = r["file_path"] or ""
+        line_start = r["line_start"]
+        finding_id = _complexity_finding_id(int(symbol_id), score)
+        evidence = {
+            "name": name,
+            "kind": r["kind"],
+            "file_path": file_path,
+            "line_start": line_start,
+            "line_end": r["line_end"],
+            "cognitive_complexity": score,
+            "severity": severity,
+            "nesting_depth": r["nesting_depth"],
+            "param_count": r["param_count"],
+            "line_count": r["line_count"],
+            "return_count": r["return_count"],
+            "bool_op_count": r["bool_op_count"],
+            "callback_depth": r["callback_depth"],
+            "cyclomatic_density": _safe_metric(r, "cyclomatic_density"),
+            "halstead_volume": _safe_metric(r, "halstead_volume"),
+            "halstead_difficulty": _safe_metric(r, "halstead_difficulty"),
+            "halstead_effort": _safe_metric(r, "halstead_effort"),
+            "halstead_bugs": _safe_metric(r, "halstead_bugs"),
+        }
+        claim = (
+            f"High cognitive complexity: {name} ({file_path}:{line_start}) — "
+            f"score {score:.0f} ({severity}, threshold {COMPLEXITY_FINDING_THRESHOLD:.0f})"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol",
+                subject_id=int(symbol_id),
+                claim=claim,
+                # Cognitive complexity is a deterministic AST measurement,
+                # not a heuristic — same input file always produces the
+                # same score. ``structural`` is the right tier.
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=CONFIDENCE_STRUCTURAL,
+                source_detector="complexity",
+                source_version=COMPLEXITY_DETECTOR_VERSION,
+            ),
+        )
 
 
 # R22 — confidence-derivation rule for complexity rankings:
@@ -29,19 +140,21 @@ from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 #   severity CRITICAL or HIGH (score >= 15) → "high"  (refactor target)
 #   severity MEDIUM  (8 <= score < 15)       → "medium" (monitor)
 #   severity LOW     (score < 8)             → "low"    (no action)
-_COMPLEXITY_SEVERITY_TO_CONFIDENCE = {
-    "CRITICAL": "high",
-    "HIGH": "high",
-    "MEDIUM": "medium",
-    "LOW": "low",
-}
+#
+# W565 — the per-site ``severity -> confidence-level`` table moved to
+# the canonical helper in :mod:`roam.output._severity`. The default
+# table already maps critical/high -> "high", warning/medium ->
+# "medium", info/low/unknown -> "low" — exactly the contract this
+# command needs. ``severity_to_confidence_level`` is case-insensitive
+# so the uppercase severity labels emitted by ``_severity()`` resolve
+# unchanged.
 
 
 def _complexity_classify(sym: dict) -> tuple[str, str]:
     """Map a complexity ranking entry to a (confidence, reason) tuple."""
     score = sym.get("cognitive_complexity", 0) or 0
     severity = sym.get("severity") or _severity(score)
-    conf = _COMPLEXITY_SEVERITY_TO_CONFIDENCE.get(severity, "low")
+    conf = severity_to_confidence_level(severity)
     reason = f"cognitive complexity {score:.0f} → {severity} (refactor signal)"
     return conf, reason
 
@@ -141,8 +254,23 @@ def _severity_icon(sev: str) -> str:
     is_flag=True,
     help="Filter import/interop wrapper symbols from rankings",
 )
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror complexity hotspots (cognitive_complexity >= 15) into the "
+        "central findings registry — visible via "
+        "``roam findings list --detector complexity``. The detector-specific "
+        "output is unchanged; the registry rows are the denormalised "
+        "cross-detector surface. Persisted rows ignore --top/-n display "
+        "limits — all HIGH/CRITICAL symbols are written so re-running with "
+        "a smaller --top doesn't truncate the registry."
+    ),
+)
 @click.pass_context
-def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooling, no_framework, no_imports):
+def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooling, no_framework, no_imports, persist):
     """Show cognitive complexity metrics for functions and methods.
 
     Unlike ``health`` (which scores the whole codebase) and ``debt`` (which
@@ -169,27 +297,39 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         # Check if symbol_metrics table has data
         try:
             count = conn.execute("SELECT COUNT(*) FROM symbol_metrics").fetchone()[0]
         except Exception:
             count = -1
         if count <= 0:
-            verdict = "No complexity data found. Re-index with: roam index --force"
+            # W810 + Pattern-1B: empty symbol_metrics is a RECOVERABLE state
+            # ("no data yet, re-index"), not a programmer-class failure. The
+            # prior ``raise SystemExit(1)`` paired with structured stdout
+            # tripped the MCP wrapper-bridge layer into emitting a generic
+            # COMMAND_FAILED envelope, burying the actionable verdict. Exit
+            # cleanly so the structured envelope reaches the agent. The
+            # ``next_command`` field carries the recovery instruction.
+            verdict = "No complexity data — re-index with `roam index --force` to populate symbols"
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "complexity",
-                            summary={"verdict": verdict, "total": 0},
+                            summary={
+                                "verdict": verdict,
+                                "total": 0,
+                                "state": "no_complexity_data",
+                            },
                             results=[],
+                            next_command="roam index --force",
                         )
                     )
                 )
             else:
                 click.echo(verdict)
-            raise SystemExit(1)
+            return
 
         if bumpy_road:
             _bumpy_road(conn, json_mode, limit, threshold)
@@ -229,7 +369,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
         if not include_tooling:
             from roam.output.file_role_hints import is_excluded_path
 
-            rows = [r for r in rows if not is_excluded_path(r["file_path"] or "")]
+            rows = [r for r in rows if not is_excluded_path(r["file_path"])]
 
         if no_framework:
             from roam.commands.cmd_health import _FRAMEWORK_NAMES
@@ -242,6 +382,24 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 for r in rows
                 if r["kind"] not in {"import", "module_import"} and "import" not in (r["name"] or "").lower()
             ]
+
+        # --- W93 follow-up: mirror hotspots into the central findings registry.
+        # Runs ONLY with --persist. The persisted set is independent of the
+        # --top/-n display slice — we query all symbols above the emit
+        # threshold so re-running with a smaller --top doesn't truncate the
+        # registry. The detector-specific output (text / JSON / SARIF) below
+        # is unchanged.
+        if persist:
+            try:
+                _persist_complexity_findings(
+                    conn,
+                    include_tooling=include_tooling,
+                    no_framework=no_framework,
+                    no_imports=no_imports,
+                )
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
         rows = rows[:limit]
 
@@ -350,6 +508,9 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                             "high_count": high_count,
                             "showing": len(rows),
                             "findings_confidence_distribution": distribution,
+                            # W331: clarify which complexity metric the
+                            # rankings use — cognitive (Sonar) not McCabe.
+                            "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                         },
                         budget=token_budget,
                         symbols=symbol_triples,
@@ -404,6 +565,56 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
             click.echo(f"  {icon}{r['cognitive_complexity']:5.0f}  {name:<45s} {kind} {location}{factor_str}")
 
 
+def _persist_complexity_findings(
+    conn,
+    *,
+    include_tooling: bool,
+    no_framework: bool,
+    no_imports: bool,
+) -> None:
+    """Run the persist-side query and emit findings for every hotspot.
+
+    Independent of the display query so re-running with a smaller --top
+    doesn't truncate the registry. We pull every symbol at or above
+    ``COMPLEXITY_FINDING_THRESHOLD``, apply the same role filters the
+    display query applies (tooling/framework/imports), then emit one
+    finding per surviving row. The caller is responsible for opening
+    ``conn`` writable.
+    """
+    rows = conn.execute(
+        """SELECT sm.symbol_id, sm.cognitive_complexity, sm.nesting_depth,
+                  sm.param_count, sm.line_count, sm.return_count,
+                  sm.bool_op_count, sm.callback_depth,
+                  sm.cyclomatic_density, sm.halstead_volume,
+                  sm.halstead_difficulty, sm.halstead_effort, sm.halstead_bugs,
+                  s.name, s.qualified_name, s.kind,
+                  s.line_start, s.line_end, f.path as file_path
+           FROM symbol_metrics sm
+           JOIN symbols s ON sm.symbol_id = s.id
+           JOIN files f ON s.file_id = f.id
+           WHERE sm.cognitive_complexity >= ?
+           ORDER BY sm.cognitive_complexity DESC""",
+        (COMPLEXITY_FINDING_THRESHOLD,),
+    ).fetchall()
+    if not include_tooling:
+        from roam.output.file_role_hints import is_excluded_path
+
+        rows = [r for r in rows if not is_excluded_path(r["file_path"])]
+    if no_framework:
+        from roam.commands.cmd_health import _FRAMEWORK_NAMES
+
+        rows = [r for r in rows if (r["name"] or "") not in _FRAMEWORK_NAMES]
+    if no_imports:
+        rows = [
+            r
+            for r in rows
+            if r["kind"] not in {"import", "module_import"}
+            and "import" not in (r["name"] or "").lower()
+        ]
+    _emit_complexity_findings(conn, rows)
+    conn.commit()
+
+
 def _by_file_output(conn, rows, json_mode):
     """Group complexity results by file."""
     from collections import defaultdict
@@ -436,7 +647,12 @@ def _by_file_output(conn, rows, json_mode):
             to_json(
                 json_envelope(
                     "complexity",
-                    summary={"verdict": _bf_verdict, "files": len(file_summaries)},
+                    summary={
+                        "verdict": _bf_verdict,
+                        "files": len(file_summaries),
+                        # W331: by-file rollups still rank by cognitive complexity.
+                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
+                    },
                     files=[
                         {
                             "file": fs["file"],
@@ -518,6 +734,8 @@ def _bumpy_road(conn, json_mode, limit, threshold):
                         "mode": "bumpy-road",
                         "threshold": min_score,
                         "files_found": len(rows),
+                        # W331: bumpy-road also thresholds on cognitive complexity.
+                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                     },
                     files=[
                         {

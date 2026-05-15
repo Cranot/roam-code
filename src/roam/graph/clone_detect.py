@@ -21,10 +21,21 @@ References:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# W93 follow-up: the clones detector is the proof-of-concept migration onto
+# the central findings registry (``src/roam/db/findings.py``). Detector
+# version is stamped on every emitted finding so consumers can spot rows
+# produced under an older clone-detection shape (e.g. before a Jaccard
+# tightening). Bump per the rules in roam.catalog.versions when the
+# detector shape changes meaningfully.
+CLONES_DETECTOR_VERSION: str = "1.0.0"
 
 # Node types whose text values are normalized (treated as equivalent)
 _NORMALIZED_LEAF_TYPES = frozenset(
@@ -767,12 +778,68 @@ def detect_clones(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_symbol_id(conn, file_path: str, func_name: str, line_start: int) -> int | None:
+    """Best-effort lookup of ``symbols.id`` for a (file, func, line) triple.
+
+    Used by the findings-registry emit path so registry rows can be JOINed
+    back to ``symbols`` when present. Returns ``None`` when the symbol
+    can't be resolved (anonymous function, mismatched indexer state, or
+    pre-W89 schema with no ``symbols`` table) — emit_finding tolerates a
+    NULL subject_id by design.
+    """
+    try:
+        row = conn.execute(
+            "SELECT s.id FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE f.path = ? AND s.name = ? AND s.line_start = ? "
+            "LIMIT 1",
+            (file_path, func_name, line_start),
+        ).fetchone()
+        if row is not None:
+            return int(row[0])
+        # Line numbers occasionally drift between the indexer's symbol
+        # extraction and tree-sitter's function-node start (decorator
+        # rows, type alias prefixes). Fall back to name-only lookup
+        # before giving up so we don't routinely emit subject_id=NULL.
+        row = conn.execute(
+            "SELECT s.id FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE f.path = ? AND s.name = ? "
+            "ORDER BY ABS(COALESCE(s.line_start, 0) - ?) "
+            "LIMIT 1",
+            (file_path, func_name, line_start),
+        ).fetchone()
+        return int(row[0]) if row is not None else None
+    except sqlite3.OperationalError:
+        # Pre-W89 schema or symbols table absent — fall back to NULL.
+        return None
+
+
+def _clone_pair_finding_id(qname_a: str, qname_b: str) -> str:
+    """Stable, sort-order-invariant finding id for one clone pair.
+
+    Sorted qnames + a short SHA-1 prefix → deterministic regardless of
+    which side is "a" vs "b" in this run. Re-running the detector on the
+    same input upserts the same row rather than duplicating.
+    """
+    left, right = sorted((qname_a, qname_b))
+    digest = hashlib.sha1(f"{left}|{right}".encode("utf-8")).hexdigest()[:12]
+    return f"clones:pair:{digest}"
+
+
 def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> None:
     """Persist detection results to clone_pairs and clone_clusters tables.
 
     Truncates and replaces — clone results are always a complete snapshot,
     not incremental. Called from `roam clones --persist` and (eventually)
     the indexer's final stage.
+
+    W93 follow-up: every persisted clone pair ALSO emits a row to the
+    central findings registry. The detector-specific tables remain
+    authoritative; the findings rows are the denormalised cross-detector
+    surface (``roam findings list/show/count``, future SARIF emit, …).
+    The emit is wrapped in a defensive try/except so pre-W89 DBs (without
+    the ``findings`` table) don't crash on this code path.
     """
     conn.execute("DELETE FROM clone_pairs")
     conn.execute("DELETE FROM clone_clusters")
@@ -827,6 +894,82 @@ def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> 
                 p.line_end_b,
                 p.similarity,
                 cluster_id,
+            ),
+        )
+
+    # W93 follow-up — mirror each clone pair into the central findings
+    # registry. Detector-specific table writes above remain authoritative;
+    # this block is purely additive. Wrapped so a pre-W89 DB (where the
+    # findings table doesn't exist) silently no-ops rather than crashing
+    # the legacy clone_pairs write path that consumers like `roam critique`
+    # and `roam retrieve` already depend on.
+    try:
+        _emit_clone_findings(conn, pairs)
+    except sqlite3.OperationalError:
+        # findings table missing (pre-W89 schema) — degrade gracefully.
+        pass
+
+
+def _emit_clone_findings(conn, pairs: list[ClonePair]) -> None:
+    """Emit one ``FindingRecord`` per clone pair into the registry.
+
+    Subject is the "a" side of the pair (the lower-sorted qname when we
+    constructed the finding id; here we use whichever side ``ClonePair``
+    carries — agents wanting both sides JOIN on ``evidence_json``). When
+    the symbols-table lookup resolves the function, ``subject_id`` is
+    populated; otherwise it stays NULL (registry permits NULL subjects
+    for file/edge/commit findings).
+    """
+    # Import here so the legacy clone_pairs path doesn't pay the import
+    # cost on every persist when callers haven't migrated to consume
+    # findings yet (W93 itself just made the table maturity-experimental).
+    from roam.db.findings import (
+        CONFIDENCE_STRUCTURAL,
+        FindingRecord,
+        emit_finding,
+    )
+
+    for p in pairs:
+        subject_id = _resolve_symbol_id(conn, p.file_a, p.func_a, p.line_a)
+        partner_id = _resolve_symbol_id(conn, p.file_b, p.func_b, p.line_b)
+        finding_id_str = _clone_pair_finding_id(p.qname_a, p.qname_b)
+        evidence = {
+            "qname_a": p.qname_a,
+            "qname_b": p.qname_b,
+            "file_a": p.file_a,
+            "file_b": p.file_b,
+            "func_a": p.func_a,
+            "func_b": p.func_b,
+            "line_a": p.line_a,
+            "line_end_a": p.line_end_a,
+            "line_b": p.line_b,
+            "line_end_b": p.line_end_b,
+            "similarity": p.similarity,
+            "partner_symbol_id": partner_id,
+        }
+        # Confidence threshold mirrors the cmd_clones _classify_similarity
+        # contract: only structural-level confidence when Jaccard >= 0.70.
+        # Below that, the pair shouldn't even reach store_clones (the
+        # detector default threshold is 0.70) — but keep the gate explicit
+        # for future callers that pass --threshold below the floor.
+        confidence = (
+            CONFIDENCE_STRUCTURAL if p.similarity >= 0.70 else "heuristic"
+        )
+        claim = (
+            f"{p.func_a} ({p.file_a}:{p.line_a}) is a structural clone of "
+            f"{p.func_b} ({p.file_b}:{p.line_b}) — Jaccard {p.similarity:.2f}"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id_str,
+                subject_kind="symbol",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=json.dumps(evidence, sort_keys=True),
+                confidence=confidence,
+                source_detector="clones",
+                source_version=CLONES_DETECTOR_VERSION,
             ),
         )
 

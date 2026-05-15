@@ -28,8 +28,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from tests._helpers.repo_root import repo_root
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+
+REPO_ROOT = repo_root()
 _SRC_DIR = REPO_ROOT / "src"
 if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))

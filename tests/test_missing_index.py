@@ -146,11 +146,8 @@ def non_php_project(tmp_path):
 
 @pytest.fixture
 def cli_runner():
-    """CliRunner compatible with Click 8.2+."""
-    try:
-        return CliRunner(mix_stderr=False)
-    except TypeError:
-        return CliRunner()
+    """CliRunner (Click 8.3+ removed mix_stderr)."""
+    return CliRunner()
 
 
 # ===========================================================================

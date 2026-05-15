@@ -1,0 +1,34 @@
+id: php-laravel-sqli
+description: Untrusted request input concatenated into a raw SQL fragment (DB::raw, whereRaw, orderByRaw, DB::statement) — Laravel parameter bindings are bypassed. Maps to CWE-89 / OWASP A03:2021 Injection.
+severity: error
+cwe: CWE-89
+owasp_top10: A03:2021_Injection
+languages:
+  - php
+sources:
+  - input
+  - all
+  - query
+  - post
+  - get
+  - json
+  - request
+sinks:
+  - raw
+  - DB.raw
+  - statement
+  - DB.statement
+  - select
+  - DB.select
+  - whereRaw
+  - orderByRaw
+  - havingRaw
+  - selectRaw
+  - groupByRaw
+  - unsafeRaw
+sanitizers:
+  - intval
+  - floatval
+  - bindings
+  - addslashes
+  - prepareSafe

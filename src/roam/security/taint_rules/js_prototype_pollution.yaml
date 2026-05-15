@@ -1,7 +1,8 @@
 id: js-prototype-pollution
-description: Untrusted input merged into existing objects (CWE-1321 Improperly Controlled Modification of Object Prototype Attributes).
+description: Untrusted input merged into existing objects (CWE-1321 Improperly Controlled Modification of Object Prototype Attributes). Maps to CWE-1321 / OWASP A08:2021 Software and Data Integrity Failures (OWASP 2021 explicitly enumerates CWE-1321 under A08).
 severity: error
 cwe: CWE-1321
+owasp_top10: A08:2021_Software_and_Data_Integrity_Failures
 languages:
   - javascript
   - typescript

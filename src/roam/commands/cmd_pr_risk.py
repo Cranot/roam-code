@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import math
+import sqlite3
 import subprocess
 import time
+from typing import Any
 
 import click
 
@@ -19,6 +23,478 @@ from roam.commands.cmd_coupling import _compute_surprise
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
+
+
+# W134 — pr-risk is the sixth detector migrating onto the central findings
+# registry (after clones W95, dead W99, complexity W102, smells W109,
+# bus-factor W115). Unlike those five — which scan workspace state —
+# pr-risk is INVOCATION-SCOPED: a run produces findings tied to a specific
+# diff (commit range / staged set / unstaged set) at the moment of
+# invocation. The diff id is stamped into ``evidence_json`` so a consumer
+# can distinguish fresh rows from rows tied to a since-merged PR.
+#
+# Confidence tiers per kind (see _PR_RISK_KIND_TO_CONFIDENCE below):
+# * ``composite-risk-score`` — the headline 0-100 score is a multiplicative
+#   blend of eight fuzzy factors; fundamentally heuristic.
+# * ``high-blast-radius-symbol-touched`` — derived from reverse-graph
+#   descendants over the symbol DAG; deterministic structural signal.
+# * ``test-coverage-gap`` — derived from file_edges (test files importing
+#   the changed file); a structural graph + file-role pattern.
+# * ``author-novelty-flag`` — author-familiarity is a time-decayed churn
+#   rollup; heuristic.
+#
+# Bump this version when the composite weights / thresholds or the kind
+# emit rules change meaningfully so registry consumers can spot rows
+# produced under an older shape.
+PR_RISK_DETECTOR_VERSION: str = "1.0.0"
+
+
+# W134 — per-kind confidence tier mapping. Mirrors the W109 smells pattern:
+# every emitted kind picks a tier from the central CONFIDENCE_* enum so a
+# downstream consumer can weight signals without re-deriving the rule.
+_PR_RISK_KIND_TO_CONFIDENCE: dict[str, str] = {
+    "composite-risk-score": "heuristic",
+    "high-blast-radius-symbol-touched": "structural",
+    "test-coverage-gap": "structural",
+    "author-novelty-flag": "heuristic",
+}
+
+
+def _diff_id(
+    *,
+    label: str,
+    commit_range: str | None,
+    staged: bool,
+    file_paths: list[str],
+) -> str:
+    """Stable id for one pr-risk invocation's diff.
+
+    Folds the diff source (commit_range / staged / unstaged), the sorted
+    list of changed file paths, and an explicit label into a sha1 prefix.
+    Two invocations against the same diff produce the same id (so
+    ``--persist`` upserts in place); changing any of the inputs — even
+    just adding one more changed file — produces a fresh id so the prior
+    finding stays as an audit-trail row.
+    """
+    raw = (
+        f"{label}|range={commit_range or ''}|staged={int(staged)}|"
+        f"files={','.join(sorted(file_paths))}"
+    )
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _pr_risk_finding_id(kind: str, diff_id: str, suffix: str = "") -> str:
+    """Stable, deterministic finding id for one pr-risk row.
+
+    ``kind`` discriminates the four sub-kinds; ``diff_id`` ties the
+    finding to a specific invocation's diff so reruns on the same diff
+    upsert. ``suffix`` is appended for kinds that emit per-symbol /
+    per-file rows (currently unused — the composite, blast, coverage,
+    and novelty kinds are all invocation-scoped). Convention:
+    ``"pr-risk:<kind>:<diff_id>[:<suffix_digest>]"``.
+    """
+    if suffix:
+        sfx_digest = hashlib.sha1(suffix.encode("utf-8")).hexdigest()[:8]
+        return f"pr-risk:{kind}:{diff_id}:{sfx_digest}"
+    return f"pr-risk:{kind}:{diff_id}"
+
+
+# W134 → W242 → W718 — risk-level → severity mapping for the composite row.
+# The headline composite kind is invocation-scoped; severity follows
+# the bucketed risk level (low/moderate/high/critical → low/medium/
+# high/critical). The conditional sub-kinds carry their own severity
+# that reflects what triggered the emit (high blast → high; coverage
+# gap → medium; novelty → medium).
+#
+# W718: keys are lowercase to match the canonical roam severity
+# vocabulary (W547 ``roam.output._severity``). Pre-W718 callers /
+# fixtures that pass UPPER-cased ``level`` strings (``"CRITICAL"``,
+# ``"HIGH"``, ``"MODERATE"``, ``"LOW"``) are normalised at the lookup
+# boundary via :func:`_normalise_pr_risk_level`. ``moderate`` is a
+# pr-risk-domain bucket label (the score window 25 < risk ≤ 50) that
+# maps to the canonical SARIF ``medium`` severity tier — kept as a
+# distinct level so the human-readable verdict can say "Moderate risk"
+# without ambiguity with the SARIF mid-tier.
+_PR_RISK_LEVEL_TO_SEVERITY: dict[str, str] = {
+    "low": "low",
+    "moderate": "medium",
+    "high": "high",
+    "critical": "critical",
+}
+
+
+# W989 (Pattern 2 — silent fallback): the canonical pr-risk bucket
+# vocabulary re-expressed as a closed set. Mirrors W969's
+# ``_CANONICAL_LEVELS`` discipline in ``cmd_alerts.py``. ``_coerce_risk_level``
+# (below) is the single boundary that accepts canonical lowercase silently,
+# coerces UPPER-cased silently (W718 / W649 back-compat), and warns + defaults
+# on anything else.
+#
+# Kept in sync (by hand, like the LAW 4 anchor lists) with the
+# ``_PR_RISK_LEVEL_TO_SEVERITY`` keys above — adding a new bucket means
+# updating BOTH this frozenset AND the severity mapping AND the bucketing
+# logic in :func:`pr_risk` (the risk-score thresholds at ~line 1000). The
+# drift-guard test in ``tests/test_w989_pr_risk_pattern2.py`` pins the
+# frozenset-vs-mapping equality so a one-sided edit fails at CI time.
+_VALID_RISK_LEVELS: frozenset[str] = frozenset(_PR_RISK_LEVEL_TO_SEVERITY)
+
+
+def _coerce_risk_level(
+    value: Any,
+    default: str,
+    *,
+    field_name: str,
+    warnings_out: list[str] | None,
+) -> str:
+    """W989 (Pattern 2 — silent fallback): coerce a pr-risk ``level`` scalar.
+
+    Mirrors W969's ``_coerce_level`` from ``cmd_alerts.py``: validates against
+    the canonical pr-risk vocabulary ``{"low", "moderate", "high", "critical"}``
+    and surfaces an actionable warning on unknown input.
+
+    - returns the value untouched when it is already canonical lowercase
+      (happy path);
+    - lowercases + accepts when it is canonical when lowercased (handles
+      pre-W718 UPPER-cased fixtures silently — they round-trip to canonical
+      lowercase without a warning);
+    - appends an actionable warning AND returns *default* for any other shape
+      (unknown string, int, list, None, ...). Pattern 2 discipline: name the
+      offending field, name the value, name the resolution and the valid
+      spellings.
+
+    The W718 CI-safety floor (default to ``"low"`` for unknown / None) is
+    preserved — a typo'd label MUST NOT promote a finding into a CI-failing
+    rank — but the silent fallback now surfaces as a structured warning so
+    consumers can tell a defaulted level apart from a genuinely-low risk.
+    """
+    if isinstance(value, str):
+        if value in _VALID_RISK_LEVELS:
+            return value
+        lowered = value.strip().lower()
+        if lowered in _VALID_RISK_LEVELS:
+            return lowered
+    if warnings_out is not None:
+        warnings_out.append(
+            f"Config field {field_name!r} value {value!r} is not a valid "
+            f"pr-risk level (must be one of {sorted(_VALID_RISK_LEVELS)}); "
+            f"defaulting to {default!r}."
+        )
+    return default
+
+
+def _normalise_pr_risk_level(level: str | None) -> str:
+    """Canonicalise a pr-risk ``level`` string to lowercase (W718).
+
+    Returns one of ``"low"`` / ``"moderate"`` / ``"high"`` /
+    ``"critical"`` when the input matches a known bucket (case-
+    insensitive), or ``"low"`` as the CI-safety floor for unknown /
+    None inputs (the W531 lesson: a typo'd label must NOT promote a
+    finding into a CI-failing rank). Pre-W718 fixtures that pass
+    UPPER-cased ``level`` strings keep working unchanged.
+
+    W989: now delegates to :func:`_coerce_risk_level` so the closed-set
+    validation has a single source of truth. This wrapper preserves the
+    pre-W989 signature (no ``warnings_out``) for back-compat with the
+    23 callers in :func:`_build_pr_risk_finding_rows` and elsewhere; new
+    call sites that want to surface the silent-fallback signal should
+    call ``_coerce_risk_level`` directly with a ``warnings_out`` accumulator.
+    """
+    return _coerce_risk_level(
+        level,
+        default="low",
+        field_name="level",
+        warnings_out=None,
+    )
+
+
+def _build_pr_risk_finding_rows(
+    data: dict,
+    source_version: str,
+    *,
+    warnings_out: list[str] | None = None,
+) -> list[dict]:
+    """Build the W134 finding row dicts from one pr-risk invocation's data.
+
+    Returns a list of dicts in the W134 registry shape — the SAME shape
+    that both ``--persist`` writes to the central findings table AND
+    that the JSON envelope stamps at ``envelope["findings"]`` (W242).
+    Extracted so both paths are pure transcriptions of one source of
+    truth: change the row shape here, and both surfaces follow.
+
+    Each row dict carries the canonical W134 fields plus the
+    threshold/severity metadata the agent-OS evidence layer expects:
+
+    * ``finding_id_str`` — deterministic id (stable across reruns on
+      the same diff so registry upserts in place).
+    * ``source_detector`` / ``source_version`` — provenance.
+    * ``subject_kind="commit"`` / ``subject_id=None`` — pr-risk is
+      invocation-scoped; the diff doesn't map to a ``symbols.id`` row.
+    * ``confidence`` — closed-enum tier from ``_PR_RISK_KIND_TO_CONFIDENCE``.
+    * ``claim`` — short human-readable verdict.
+    * ``kind`` — ``"pr-risk:<bare_kind>"`` namespaced label so a
+      cross-detector consumer can filter without parsing
+      ``finding_id_str``.
+    * ``severity`` — one of ``CLAIM_SEVERITIES``
+      (``critical``/``high``/``medium``/``low``/``info``).
+    * ``evidence`` — detector-specific payload (mirrors what
+      ``--persist`` lands in ``findings.evidence_json``).
+
+    Threshold gating mirrors the W134 emit rules verbatim:
+    * composite-risk-score — always emitted.
+    * high-blast-radius-symbol-touched — emitted when ``blast_pct >= 20``.
+    * test-coverage-gap — emitted when there are source files AND
+      ``test_coverage < 0.5``.
+    * author-novelty-flag — emitted when an author resolved AND
+      familiarity was assessed AND ``familiarity_risk >= 0.10``.
+
+    W989 (Pattern 2 — silent fallback): when *warnings_out* is supplied
+    as a ``list[str]``, an unknown ``data["level"]`` value (anything outside
+    the canonical ``low/moderate/high/critical`` set) appends an actionable
+    warning naming the field, the value, and the valid spellings. The
+    severity falls back to ``"info"`` via :data:`_PR_RISK_LEVEL_TO_SEVERITY`
+    after :func:`_coerce_risk_level` floors the unknown level to ``"low"``
+    (the W718 CI-safety floor). Pre-W989 callers that don't supply
+    ``warnings_out`` retain the byte-identical silent-floor behaviour so
+    persisted finding row hashes stay stable.
+    """
+    diff_id = data["diff_id"]
+    label = data["label"]
+    commit_range = data["commit_range"]
+    staged = data["staged"]
+    file_list = data["file_list"]
+    created_at = int(time.time())
+
+    # Shared invocation metadata — every row carries this so a consumer
+    # can group findings by PR / commit / branch without joining back.
+    base_evidence = {
+        "diff_id": diff_id,
+        "label": label,
+        "commit_range": commit_range,
+        "staged": bool(staged),
+        "file_list": file_list,
+        "changed_files_count": len(file_list),
+        "created_at_epoch": created_at,
+    }
+
+    rows: list[dict] = []
+
+    # --- Always-emitted: the composite risk score ---
+    composite_evidence = {
+        **base_evidence,
+        "risk_score": data["risk"],
+        "risk_level": data["level"],
+        "blast_radius_pct": round(data["blast_pct"], 1),
+        "hotspot_score": round(data["hotspot_score"], 3),
+        "test_coverage_pct": round(data["test_coverage"] * 100, 1),
+        "bus_factor_risk": round(data["bus_factor_risk"], 3),
+        "coupling_score": round(data["coupling_score"], 3),
+        "novelty_score": data["novelty"],
+        "familiarity_risk": round(data["familiarity_risk"], 3),
+        "minor_risk": round(data["minor_risk"], 3),
+        "reductive_change": bool(data["reductive_change"]),
+        "top_driver": data["driver_label"],
+        "lines_added": data["total_added"],
+        "lines_removed": data["total_removed"],
+        # W198 vocabulary drift fix: ``author`` is the git-blame term
+        # (kept for back-compat); ``actor`` is the agentic-assurance
+        # crosswalk term (W182 ``ActorRef``). Both carry the same value
+        # so the ``ChangeEvidence`` collector never sees two synonyms
+        # downstream — it picks one canonical key without losing the
+        # original.
+        "author": data["resolved_author"],
+        "actor": data["resolved_author"],
+    }
+    composite_claim = (
+        f"pr-risk: {data['level']} ({data['risk']}/100) on {label}"
+        + (f" — driver: {data['driver_label']}" if data["driver_label"] else "")
+    )
+    # W989: route through _coerce_risk_level so an unknown level surfaces
+    # via warnings_out (when supplied) instead of being a silent floor.
+    # When warnings_out is None, the helper preserves the pre-W989 silent
+    # behaviour byte-for-byte so persisted finding row hashes stay stable.
+    _canonical_level = _coerce_risk_level(
+        data["level"],
+        default="low",
+        field_name="level",
+        warnings_out=warnings_out,
+    )
+    rows.append({
+        "finding_id_str": _pr_risk_finding_id("composite-risk-score", diff_id),
+        "source_detector": "pr-risk",
+        "source_version": source_version,
+        "subject_kind": "commit",
+        "subject_id": None,
+        "confidence": _PR_RISK_KIND_TO_CONFIDENCE["composite-risk-score"],
+        "claim": composite_claim,
+        "kind": "pr-risk:composite-risk-score",
+        "severity": _PR_RISK_LEVEL_TO_SEVERITY.get(_canonical_level, "info"),
+        "evidence": composite_evidence,
+    })
+
+    # --- Conditional: high-blast-radius-symbol-touched ---
+    # Threshold matches the multiplicative factor cap in the composite
+    # weight (40% of repo symbols affected → factor saturates). Below
+    # that the blast signal is too small to surface as its own finding.
+    if data["blast_pct"] >= 20.0:
+        blast_evidence = {
+            **base_evidence,
+            "blast_radius_pct": round(data["blast_pct"], 1),
+            "affected_symbols": data["affected_count"],
+            "total_symbols": data["total_syms_repo"],
+            "changed_symbol_ids_count": data["changed_syms_count"],
+        }
+        blast_claim = (
+            f"High blast radius: {data['affected_count']} of "
+            f"{data['total_syms_repo']} symbols affected "
+            f"({data['blast_pct']:.1f}%) on {label}"
+        )
+        rows.append({
+            "finding_id_str": _pr_risk_finding_id(
+                "high-blast-radius-symbol-touched", diff_id
+            ),
+            "source_detector": "pr-risk",
+            "source_version": source_version,
+            "subject_kind": "commit",
+            "subject_id": None,
+            "confidence": _PR_RISK_KIND_TO_CONFIDENCE[
+                "high-blast-radius-symbol-touched"
+            ],
+            "claim": blast_claim,
+            "kind": "pr-risk:high-blast-radius-symbol-touched",
+            "severity": "high",
+            "evidence": blast_evidence,
+        })
+
+    # --- Conditional: test-coverage-gap ---
+    # Only emit when there were source files to assess AND coverage is
+    # below 50% — at 100% coverage there's no gap; with no source files
+    # (e.g., docs-only PR) the metric is N/A.
+    if data["source_files_count"] > 0 and data["test_coverage"] < 0.5:
+        gap_evidence = {
+            **base_evidence,
+            "test_coverage_pct": round(data["test_coverage"] * 100, 1),
+            "covered_files": data["covered_files"],
+            "source_files_count": data["source_files_count"],
+            "uncovered_files": data["source_files_count"] - data["covered_files"],
+        }
+        gap_claim = (
+            f"Test coverage gap: {data['covered_files']} of "
+            f"{data['source_files_count']} changed source files have "
+            f"adjacent tests ({data['test_coverage'] * 100:.0f}% covered) on {label}"
+        )
+        rows.append({
+            "finding_id_str": _pr_risk_finding_id("test-coverage-gap", diff_id),
+            "source_detector": "pr-risk",
+            "source_version": source_version,
+            "subject_kind": "commit",
+            "subject_id": None,
+            "confidence": _PR_RISK_KIND_TO_CONFIDENCE["test-coverage-gap"],
+            "claim": gap_claim,
+            "kind": "pr-risk:test-coverage-gap",
+            "severity": "medium",
+            "evidence": gap_evidence,
+        })
+
+    # --- Conditional: author-novelty-flag ---
+    # Only emit when we have a resolved author AND familiarity was
+    # actually assessed AND the risk is meaningful (>= 0.10 on the
+    # 0-0.25 scale, i.e. avg_familiarity below ~0.6).
+    fam_assessed = (data["familiarity_details"] or {}).get("files_assessed", 0)
+    if (
+        data["resolved_author"]
+        and fam_assessed > 0
+        and data["familiarity_risk"] >= 0.10
+    ):
+        novelty_evidence = {
+            **base_evidence,
+            "familiarity_risk": round(data["familiarity_risk"], 3),
+            "avg_familiarity": (data["familiarity_details"] or {}).get(
+                "avg_familiarity"
+            ),
+            "files_assessed": fam_assessed,
+            "files_familiar": (data["familiarity_details"] or {}).get(
+                "files_familiar", 0
+            ),
+            # W198: see composite_evidence for the rationale — author is
+            # git-blame vocabulary; actor is the agentic-assurance
+            # crosswalk term. Both carry the same value.
+            "author": data["resolved_author"],
+            "actor": data["resolved_author"],
+        }
+        novelty_claim = (
+            f"Author novelty: {data['resolved_author']} is unfamiliar with "
+            f"{fam_assessed - (data['familiarity_details'] or {}).get('files_familiar', 0)}"
+            f" of {fam_assessed} changed files on {label}"
+        )
+        rows.append({
+            "finding_id_str": _pr_risk_finding_id("author-novelty-flag", diff_id),
+            "source_detector": "pr-risk",
+            "source_version": source_version,
+            "subject_kind": "commit",
+            "subject_id": None,
+            "confidence": _PR_RISK_KIND_TO_CONFIDENCE["author-novelty-flag"],
+            "claim": novelty_claim,
+            "kind": "pr-risk:author-novelty-flag",
+            "severity": "medium",
+            "evidence": novelty_evidence,
+        })
+
+    return rows
+
+
+def _emit_pr_risk_findings(
+    conn: sqlite3.Connection,
+    data: dict,
+    source_version: str,
+) -> int:
+    """Mirror pr-risk's invocation result into the central findings registry.
+
+    Returns the count of finding rows written. ``data`` is the dict of
+    pre-computed signals built in the main ``pr_risk`` body — it's
+    passed in rather than recomputed so the persist path stays a pure
+    transcription of what the read path already calculated.
+
+    The registry uses ``subject_kind="commit"`` for every kind: pr-risk
+    operates on a changeset (commit range / staged set / unstaged set),
+    not on a static workspace symbol. ``subject_id`` stays NULL because
+    a diff doesn't map to a ``symbols.id`` row. The ``diff_id`` in
+    ``evidence_json`` is what disambiguates one PR from another.
+
+    Caller commits the transaction. emit_finding does not commit on its
+    own (matches the W95 / W99 / W102 / W109 / W115 convention).
+
+    Wrapped at the call site in try/except so a pre-W89 DB (no
+    ``findings`` table) silently no-ops rather than crashing the
+    standard read path.
+
+    W242 single-source refactor: this helper now delegates to
+    :func:`_build_pr_risk_finding_rows` for the row dicts and only
+    handles the registry-write side (``FindingRecord`` construction +
+    ``emit_finding`` upsert). The same row dicts are stamped at
+    ``envelope["findings"]`` by the read path — so the envelope and
+    the registry can never drift apart.
+    """
+    from roam.db.findings import FindingRecord, emit_finding
+
+    rows = _build_pr_risk_finding_rows(data, source_version)
+    written = 0
+    for row in rows:
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=row["finding_id_str"],
+                subject_kind=row["subject_kind"],
+                subject_id=row["subject_id"],
+                claim=row["claim"],
+                evidence_json=_json.dumps(row["evidence"], sort_keys=True),
+                confidence=row["confidence"],
+                source_detector=row["source_detector"],
+                source_version=row["source_version"],
+            ),
+        )
+        written += 1
+
+    return written
 
 
 def _get_file_stat(root, path, *, staged=False, commit_range=None):
@@ -294,8 +770,24 @@ def _minor_contributor_risk(conn, author, changed_files):
 @click.argument("commit_range", required=False, default=None)
 @click.option("--staged", is_flag=True, help="Analyze staged changes")
 @click.option("--author", default=None, help="Author name (auto-detects via git config if omitted)")
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror this invocation's risk signals into the central findings "
+        "registry (queryable via `roam findings list --detector pr-risk`). "
+        "INVOCATION-SCOPED: pr-risk runs against a specific diff, so the "
+        "persisted rows are tied to the commit range / staged set / "
+        "unstaged set at the moment of invocation. The diff identifier is "
+        "stamped into ``evidence_json.diff_id`` so consumers can "
+        "distinguish fresh rows from rows tied to a since-merged PR. "
+        "Reruns on the same diff upsert in place; reruns on a different "
+        "diff insert fresh rows (the older rows stay as audit trail)."
+    ),
+)
 @click.pass_context
-def pr_risk(ctx, commit_range, staged, author):
+def pr_risk(ctx, commit_range, staged, author, persist):
     """Compute risk score for pending changes.
 
     Analyzes blast radius, hotspot churn, bus factor, test coverage,
@@ -311,6 +803,15 @@ def pr_risk(ctx, commit_range, staged, author):
       roam pr-risk --staged
       roam pr-risk HEAD~3..HEAD
       roam --json pr-risk HEAD~1..HEAD
+      roam pr-risk --persist                 # mirror into findings registry
+
+    With ``--persist``, the invocation's risk signals are mirrored into the
+    central findings registry (visible via
+    ``roam findings list --detector pr-risk``). Because pr-risk is
+    invocation-scoped (vs the workspace-scoped clones / dead / smells
+    detectors), the persisted rows carry a ``diff_id`` so they can be told
+    apart from rows tied to a different PR — including rows for diffs that
+    have since merged.
 
     See also ``preflight`` (pre-change safety), ``critique`` (post-change
     diff review), and ``affected-tests`` (which tests run for the diff).
@@ -338,7 +839,7 @@ def pr_risk(ctx, commit_range, staged, author):
             click.echo(f"No changes found for {label}.")
         return
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         # Map changed files to DB
         file_map = resolve_changed_to_db(conn, changed)
 
@@ -577,14 +1078,20 @@ def pr_risk(ctx, commit_range, staged, author):
             no_risk *= 1 - max(0, min(f, 0.99))
         risk = int(min(100, (1 - no_risk) * 100))
 
+        # W718: canonical lowercase severity vocabulary (W547). Was
+        # ``LOW``/``MODERATE``/``HIGH``/``CRITICAL`` pre-W718 — the
+        # lowercase form is the only spelling that reaches the JSON
+        # envelope, the findings registry, and the ``_PR_RISK_LEVEL_TO_SEVERITY``
+        # lookup. ``moderate`` stays as a distinct pr-risk bucket label
+        # (25 < risk ≤ 50) that projects to canonical ``medium`` severity.
         if risk <= 25:
-            level = "LOW"
+            level = "low"
         elif risk <= 50:
-            level = "MODERATE"
+            level = "moderate"
         elif risk <= 75:
-            level = "HIGH"
+            level = "high"
         else:
-            level = "CRITICAL"
+            level = "critical"
 
         # --- Per-file risk breakdown ---
         per_file = []
@@ -645,31 +1152,121 @@ def pr_risk(ctx, commit_range, staged, author):
         driver_label = top_driver[0] if top_driver[1] > 0.05 else None
 
         # Verdict
-        if level == "LOW":
+        if level == "low":
             verdict = f"Low risk ({risk}/100) — safe to merge"
-        elif level == "MODERATE":
+        elif level == "moderate":
             verdict = f"Moderate risk ({risk}/100) — review recommended"
-        elif level == "HIGH":
+        elif level == "high":
             verdict = f"High risk ({risk}/100) — careful review needed"
         else:
             verdict = f"Critical risk ({risk}/100) — significant blast radius, thorough review required"
         if driver_label:
             verdict += f" (driver: {driver_label})"
 
+        # --- W134 / W242: build the shared finding-row payload ---
+        # INVOCATION-SCOPED: pr-risk runs against a specific diff, so the
+        # finding rows carry a ``diff_id`` (sha1 of label + commit_range
+        # + staged-flag + sorted file paths) inside their evidence.
+        # The same row list is the SINGLE SOURCE OF TRUTH for both
+        # ``--persist`` (mirror to the central findings registry) AND
+        # the JSON envelope's top-level ``findings[]`` array (W242).
+        # Building it unconditionally keeps the two surfaces in lockstep:
+        # the envelope rows match what a subsequent ``--persist`` run
+        # would land in ``findings``.
+        file_list_for_id = sorted(file_map.keys())
+        diff_id_val = _diff_id(
+            label=label,
+            commit_range=commit_range,
+            staged=bool(staged),
+            file_paths=file_list_for_id,
+        )
+        _pr_risk_data = {
+            "diff_id": diff_id_val,
+            "label": label,
+            "commit_range": commit_range,
+            "staged": bool(staged),
+            "file_list": file_list_for_id,
+            "risk": risk,
+            "level": level,
+            "blast_pct": blast_pct,
+            "hotspot_score": hotspot_score,
+            "test_coverage": test_coverage,
+            "bus_factor_risk": bus_factor_risk,
+            "coupling_score": coupling_score,
+            "novelty": novelty,
+            "familiarity_risk": familiarity_risk,
+            "minor_risk": minor_risk,
+            "reductive_change": reductive_change,
+            "driver_label": driver_label,
+            "total_added": total_added,
+            "total_removed": total_removed,
+            "resolved_author": resolved_author,
+            "affected_count": len(all_affected),
+            "total_syms_repo": total_syms_repo,
+            "changed_syms_count": len(changed_sym_ids),
+            "source_files_count": len(source_files),
+            "covered_files": covered_files,
+            "familiarity_details": familiarity_details,
+        }
+        # W989: collect Pattern-2 silent-fallback warnings while building
+        # the finding rows. ``level`` is computed internally (the bucketing
+        # at ~line 1000), so this accumulator should stay empty on the
+        # happy path; non-empty means the canonical-level invariant got
+        # broken upstream and the envelope MUST flip ``partial_success``.
+        _warnings_out: list[str] = []
+        finding_rows = _build_pr_risk_finding_rows(
+            _pr_risk_data,
+            PR_RISK_DETECTOR_VERSION,
+            warnings_out=_warnings_out,
+        )
+
+        # --- W134: mirror into the central findings registry ---
+        # Reruns on the same diff upsert in place; reruns on a different
+        # diff insert fresh rows so consumers can tell findings apart from
+        # rows tied to a since-merged PR. Wrapped in try/except so a
+        # pre-W89 schema (no ``findings`` table) degrades cleanly.
+        if persist:
+            try:
+                _emit_pr_risk_findings(
+                    conn,
+                    _pr_risk_data,
+                    PR_RISK_DETECTOR_VERSION,
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
+
         if json_mode:
+            # W989 (Pattern 2): surface accumulated silent-fallback warnings
+            # on the envelope. ``partial_success`` flips True iff any warning
+            # fired — mirrors the cmd_alerts ``warnings_out`` discipline.
+            _summary: dict[str, Any] = {
+                "verdict": verdict,
+                "risk_score": risk,
+                "risk_level": level,
+                "changed_files": len(file_map),
+                "change_shape": "reductive" if reductive_change else "mixed",
+                "lines_added": total_added,
+                "lines_removed": total_removed,
+                "findings_count": len(finding_rows),
+            }
+            if _warnings_out:
+                _summary["partial_success"] = True
+                _summary["warnings_count"] = len(_warnings_out)
             click.echo(
                 to_json(
                     json_envelope(
                         "pr-risk",
-                        summary={
-                            "verdict": verdict,
-                            "risk_score": risk,
-                            "risk_level": level,
-                            "changed_files": len(file_map),
-                            "change_shape": "reductive" if reductive_change else "mixed",
-                            "lines_added": total_added,
-                            "lines_removed": total_removed,
-                        },
+                        summary=_summary,
+                        # W242: top-level ``findings[]`` carrying the W134
+                        # row shape — the same rows ``--persist`` writes to
+                        # the central findings registry. Built from a single
+                        # source (``_build_pr_risk_finding_rows``) so the
+                        # envelope and the registry can never drift. The
+                        # collector's ``pr_risk_envelope`` kwarg expects
+                        # exactly this key.
+                        findings=finding_rows,
                         label=label,
                         risk_score=risk,
                         risk_level=level,
@@ -696,10 +1293,31 @@ def pr_risk(ctx, commit_range, staged, author):
                         dead_exports=len(new_dead),
                         familiarity=familiarity_details,
                         minor_risk=minor_details,
+                        # W198 vocabulary drift fix: ``author`` is the
+                        # git-blame term kept for back-compat; ``actor``
+                        # mirrors the W182 ``ActorRef`` crosswalk
+                        # vocabulary so ``ChangeEvidence`` collectors
+                        # don't carry two synonyms downstream.
                         author=resolved_author,
+                        actor=resolved_author,
                         per_file=per_file,
-                        suggested_reviewers=[{"author": a, "lines": l} for a, l in top_authors],
+                        # W198: each reviewer row carries both ``author``
+                        # (git-blame) and ``actor`` (crosswalk) for the
+                        # same identity. See composite envelope above.
+                        suggested_reviewers=[
+                            {"author": a, "actor": a, "lines": l}
+                            for a, l in top_authors
+                        ],
                         dead_code=new_dead[:10],
+                        # W989 (Pattern 2): structured silent-fallback
+                        # warnings. Empty list on the happy path; non-empty
+                        # means the canonical-level invariant got broken
+                        # upstream (level NOT in
+                        # {"low","moderate","high","critical"}) — the row
+                        # severity defaulted to "info" and ``summary.
+                        # partial_success`` flipped True. Mirrors the
+                        # cmd_alerts ``warnings_out`` discipline.
+                        warnings_out=list(_warnings_out),
                     )
                 )
             )

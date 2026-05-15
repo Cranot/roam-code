@@ -15,6 +15,9 @@ shaped for R18 consumption, so an agent can pipe ``roam laws mine
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
+import sqlite3
 from pathlib import Path
 
 import click
@@ -32,8 +35,117 @@ from roam.laws.serializer import (
     load_laws_yaml,
     write_laws_file,
 )
+from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import json_envelope, to_json
 from roam.runs.helpers import auto_log
+
+
+# W119 (W93 follow-up): laws is the fifth detector migrating onto the
+# central findings registry (after ``clones`` in W95, ``dead`` in W99,
+# ``complexity`` in W102, ``smells`` in W109). The shape mirrors those —
+# a stable detector version stamp and a deterministic ``finding_id_str``
+# so re-runs upsert instead of duplicating rows. Bump this when the law
+# shape, ``rule`` dict, or evidence keys change meaningfully.
+LAWS_DETECTOR_VERSION: str = "1.0.0"
+
+
+# W119 — per-law-kind confidence tier mapping.
+#
+# Mined laws split into three evidence classes:
+#
+# * ``naming`` and ``import`` — derived from deterministic counts over
+#   the indexed AST / file-edge graph (``compute_conventions`` /
+#   ``file_edges``). Same input → same law → ``structural``.
+# * ``testing`` — name-based heuristic match between public symbol
+#   names and test file basenames (``test_<name>.py`` / ``<name>.test.ts``
+#   / …). Pattern is reliable but name-dependent → ``heuristic``.
+# * ``errors`` and ``co_change`` — stubs in v1 (return ``[]``); listed
+#   here so a follow-up implementation lands on the right tier
+#   without re-deriving this table. Both target observable runtime /
+#   git-history signal, so they map to ``structural`` once wired up.
+_LAW_KIND_TO_CONFIDENCE: dict[str, str] = {
+    "naming": "structural",
+    "import": "structural",
+    "testing": "heuristic",
+    # Stubs (return [] today) — pre-mapped for the eventual wiring.
+    "errors": "structural",
+    "co_change": "structural",
+}
+_LAW_DEFAULT_CONFIDENCE: str = "structural"
+
+
+def _law_finding_id(law: Law) -> str:
+    """Stable, deterministic finding id for a mined law.
+
+    The (kind, id) tuple re-identifies the same law across runs: the
+    miner emits the same ``Law.id`` slug for the same input (see
+    ``_safe_id`` in :mod:`roam.laws.miner`). We fold the kind into the
+    digest so a future kind reusing the same id slug (unlikely but
+    possible) doesn't collide.
+    """
+    raw = f"{law.kind}:{law.id}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"laws:{law.kind}:{digest}"
+
+
+def _emit_laws_findings(
+    conn: sqlite3.Connection,
+    laws: list[Law],
+    source_version: str,
+) -> int:
+    """Mirror each mined law into the central findings registry.
+
+    Returns the count of finding rows written. Caller is responsible
+    for opening ``conn`` writable; emit_finding does not commit
+    (the caller commits once at the end of the persist branch).
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (without the ``findings`` table) silently no-ops rather than
+    crashing the standard ``laws mine`` command path.
+    """
+    # Local import keeps the cost out of the read-only path —
+    # callers without --persist never reach here.
+    from roam.db.findings import FindingRecord, emit_finding
+
+    written = 0
+    for law in laws:
+        finding_id = _law_finding_id(law)
+        evidence = {
+            "law_id": law.id,
+            "kind": law.kind,
+            "description": law.description,
+            "severity": law.severity,
+            "confidence_label": law.confidence,
+            "rule": law.rule,
+            "evidence": law.evidence,
+        }
+        sample = int((law.evidence or {}).get("sample_size", 0))
+        pct = (law.evidence or {}).get("conformance_pct", 0)
+        claim = (
+            f"Law {law.id} ({law.kind}): {law.description} "
+            f"[confidence={law.confidence}, n={sample}, conformance={pct}%]"
+        )
+        confidence = _LAW_KIND_TO_CONFIDENCE.get(law.kind, _LAW_DEFAULT_CONFIDENCE)
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                # Laws are repo-level invariants, not symbol-level. Use
+                # ``file`` as the closest subject_kind in the existing
+                # vocabulary (matches how dead/smells fall back when no
+                # symbols.id resolves). subject_id stays NULL — the
+                # registry permits it by design.
+                subject_kind="file",
+                subject_id=None,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=confidence,
+                source_detector="laws",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+    return written
 
 
 # ---------------------------------------------------------------------------
@@ -106,8 +218,20 @@ def laws_group(ctx):
     default=None,
     help="Write YAML to this path (default: stdout).",
 )
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror each mined law into the central findings registry "
+        "(``roam findings list --detector laws``). Detector-specific "
+        "output (text / JSON / YAML) is unchanged; the registry rows "
+        "are the denormalised cross-detector surface."
+    ),
+)
 @click.pass_context
-def laws_mine(ctx, top, min_confidence, out_path):
+def laws_mine(ctx, top, min_confidence, out_path, persist):
     """Discover laws from the indexed codebase + tests + git history.
 
     Examples:
@@ -121,13 +245,34 @@ def laws_mine(ctx, top, min_confidence, out_path):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     ensure_index()
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         laws = mine_laws(conn, top=top)
 
-    if min_confidence:
-        rank = {"low": 1, "medium": 2, "high": 3}
-        min_rank = rank.get(min_confidence, 1)
-        laws = [law for law in laws if rank.get(law.confidence, 0) >= min_rank]
+        if min_confidence:
+            # W596: canonical confidence-LEVEL rank — higher = more confident.
+            # Pre-W596 min_confidence fallback was 1 (treat unknown filter
+            # as "low"); canonical returns -1 for an unknown filter label
+            # which would keep everything — clamp to 1 to preserve the
+            # pre-W596 strict-floor semantic.
+            min_rank = max(confidence_level_rank(min_confidence), 1)
+            laws = [
+                law for law in laws
+                if confidence_level_rank(law.confidence, fallback=-1) >= min_rank
+            ]
+
+        # --- W119: mirror into the central findings registry ---
+        # Runs ONLY with --persist. The persisted set respects the same
+        # --top / --min-confidence filters that shape the YAML output so
+        # the registry stays in lockstep with the user-facing view (a
+        # ``roam laws mine --top 5 --persist`` campaign writes the same
+        # five laws it prints).
+        if persist:
+            try:
+                _emit_laws_findings(conn, laws, LAWS_DETECTOR_VERSION)
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
     yaml_text = dump_laws_yaml(laws)
 

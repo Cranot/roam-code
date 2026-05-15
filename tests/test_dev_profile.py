@@ -740,6 +740,8 @@ class TestDevProfileCLI:
 class TestEmptyGitHistory:
     """Test graceful handling of repos with no recent commits."""
 
+    # Do NOT add @pytest.mark.git_history here. W984's autouse fixture sets
+    # ROAM_GIT_SINCE=0, but this test asserts the *shallow-history empty* path.
     def test_very_short_window_no_commits(self, tmp_path):
         """Using --days 0 on a repo should return an empty profiles list gracefully."""
         repo = tmp_path / "empty_repo"

@@ -2,6 +2,7 @@ id: python-command-injection
 description: Untrusted user input flowing into shell-style command execution
 severity: error
 cwe: CWE-78
+owasp_top10: A03:2021_Injection
 languages:
   - python
 sources:

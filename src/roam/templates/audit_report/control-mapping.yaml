@@ -1,0 +1,771 @@
+# Roam Code - Governance Evidence Pack control mapping
+#
+# Maps Roam-produced change evidence to external governance frameworks.
+#
+# WORDING DISCIPLINE (per BUILD-PRIORITIES-2026-05-13.md):
+#   - This file uses "maps to" and "supports evidence for."
+#   - This file does NOT make legal compliance claims.
+#   - A control passing in this map does NOT certify the customer is compliant
+#     with the named standard; it indicates Roam has evidence the customer can
+#     present to their auditor.
+#
+# Schema fields (v1):
+#   control_id        - stable identifier
+#   source_framework  - short name of the framework (e.g., eu_ai_act_art_12).
+#                       Renamed from `standard` in v0 to match the crosswalk
+#                       vocabulary (AGENTIC-ASSURANCE-CROSSWALK-2026-05-13.md).
+#   claim             - human-readable one-line claim
+#   required_evidence - Roam evidence fields needed (dotted refs)
+#   evidence_types    - ChangeEvidence field categories that satisfy the
+#                       control. NEW in v1. Drawn from the agentic-assurance
+#                       crosswalk "eight evidence questions" table - typical
+#                       values: actor_refs, authority_refs, run_ids,
+#                       audit_trail, changed_subjects, policy_decisions,
+#                       findings, accepted_risks, tests_required, tests_run,
+#                       approvals, git_range, commit_sha, verdict.
+#   surface           - Roam product surface(s) that emit this evidence. NEW
+#                       in v1. Valid values (per crosswalk "Product
+#                       implications"): pr-replay, governance-pack, review,
+#                       team-mcp-gateway, self-hosted, due-diligence,
+#                       security-reachability.
+#   wording_guard     - verbatim discipline phrase the renderer must use.
+#                       NEW in v1. One of: "maps to", "supports evidence for",
+#                       "audit-ready record". Never "certifies", "compliant",
+#                       "guarantees".
+#   query             - suggested SQL / dataclass lookup
+#   pass_condition    - when the control passes
+#   export_text       - what the audit report renders
+#   notes             - caveats
+#
+# See:
+#   - (internal memo) (Policy and control mapping)
+#   - (internal memo) (Build deltas item 5)
+
+version: 1
+schema_version: control_mapping/v1
+
+controls:
+
+  # ---------------------------------------------------------------------------
+  # EU AI Act - Article 12 (record-keeping / automatic logs)
+  # ---------------------------------------------------------------------------
+
+  - control_id: AI_AGENT_RECORD_KEEPING
+    source_framework: eu_ai_act_art_12
+    claim: Each AI-agent action is recorded with timestamp and actor.
+    required_evidence:
+      - runs.event.timestamp
+      - runs.event.agent
+      - runs.event.action
+    evidence_types:
+      - actor_refs
+      - run_ids
+      - audit_trail
+    surface:
+      - governance-pack
+      - pr-replay
+    wording_guard: "maps to"
+    query: |
+      SELECT run_id, agent, action, ts
+      FROM runs_events
+      WHERE run_id = :run_id
+      ORDER BY seq;
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's run ledger maps to EU AI Act Article 12 record-keeping by
+      capturing timestamp, actor, and action for every recorded agent event.
+    notes: |
+      Today the ledger is loaded via `roam runs show <run_id>`. The SQL above
+      is illustrative; the canonical surface is the JSON envelope, not a
+      direct table query.
+
+  - control_id: AI_AGENT_CHANGE_PROVENANCE
+    source_framework: eu_ai_act_art_12
+    claim: Every AI-generated code change is traceable to a run_id and agent.
+    required_evidence:
+      - pr_bundle.run_id
+      - pr_bundle.agent
+      - pr_bundle.intent
+    evidence_types:
+      - actor_refs
+      - run_ids
+      - changed_subjects
+      - commit_sha
+    surface:
+      - pr-replay
+      - governance-pack
+      - review
+    wording_guard: "supports evidence for"
+    query: |
+      roam --json pr-bundle show <run_id>
+    pass_condition: all_required_present
+    export_text: >-
+      Each PR bundle carries a run_id, agent identifier, and intent string,
+      which supports evidence for traceability of AI-generated changes.
+
+  - control_id: AI_AGENT_AUDIT_TRAIL_INTACT
+    source_framework: eu_ai_act_art_12
+    claim: The audit-trail HMAC chain verifies with no gaps in event sequence.
+    required_evidence:
+      - runs.chain_verified
+      - runs.event.seq
+      - runs.event.prev_hash
+    evidence_types:
+      - audit_trail
+      - run_ids
+    surface:
+      - governance-pack
+      - pr-replay
+    wording_guard: "audit-ready record"
+    query: |
+      roam --json runs verify <run_id>
+    pass_condition: all_required_present
+    export_text: >-
+      `roam runs verify` produces an audit-ready record of HMAC-chain
+      integrity, which maps to Article 12 expectations for tamper-evident
+      activity logs.
+    notes: |
+      Implemented via `roam.runs.signing.verify_chain`. A failed verification
+      should be reported as a section-level red flag in the audit report, not
+      silently elided.
+
+  # ---------------------------------------------------------------------------
+  # ISO/IEC 42001 (AI management system).
+  # `iso_iec_42001` slug aligns with the spec's official name (ISO/IEC 42001:2023).
+  # ---------------------------------------------------------------------------
+
+  - control_id: AI_AGENT_OPERATIONAL_BOUNDARIES
+    source_framework: iso_iec_42001
+    claim: Agents operate within declared modes (read_only, safe_edit, migration, autonomous_pr).
+    required_evidence:
+      - mode.active
+      - runs.event.mode
+    evidence_types:
+      - authority_refs
+      - audit_trail
+      - run_ids
+    surface:
+      - governance-pack
+      - review
+    wording_guard: "maps to"
+    query: |
+      SELECT mode FROM modes_active LIMIT 1;
+      -- plus mode-switch events from the run ledger
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's mode substrate maps to ISO/IEC 42001 expectations for operational
+      boundaries by recording the active mode at every event and the explicit
+      mode-switch events that change it.
+
+  - control_id: AI_AGENT_RISK_ASSESSMENT
+    source_framework: iso_iec_42001
+    claim: A pre-edit blast-radius analysis exists for changes the agent later applied.
+    required_evidence:
+      - pr_bundle.context_read.commands_run
+      - pr_bundle.affected_symbols
+      - preflight.verdict
+    evidence_types:
+      - policy_decisions
+      - findings
+      - changed_subjects
+      - verdict
+    surface:
+      - pr-replay
+      - governance-pack
+      - review
+    wording_guard: "supports evidence for"
+    query: |
+      roam --json pr-bundle show <run_id>
+      -- check context_read.commands_run for "roam preflight" or "roam impact"
+    pass_condition: any_required_present
+    export_text: >-
+      Where the PR bundle's `context_read.commands_run` includes a preflight
+      or impact invocation, Roam supports evidence for ISO/IEC 42001 AI-risk
+      assessment requirements.
+    notes: |
+      `pass_condition` is `any_required_present` because either `preflight`
+      or `impact` (or a structural equivalent like `describe`) satisfies the
+      pre-edit-analysis claim. The audit report renders the actual command
+      list verbatim.
+
+  - control_id: AI_AGENT_GOVERNANCE_REVIEW
+    source_framework: iso_iec_42001
+    claim: Sensitive edits above safe_edit are linked to a named human authorizer.
+    required_evidence:
+      - runs.event.mode_switch
+      - runs.event.authorizer
+      - runs.event.rationale
+    evidence_types:
+      - authority_refs
+      - approvals
+      - accepted_risks
+      - audit_trail
+    surface:
+      - governance-pack
+      - pr-replay
+    wording_guard: "maps to"
+    query: |
+      roam --json runs show <run_id>
+      -- filter events where action == "mode-switch"
+    pass_condition: conditional
+    export_text: >-
+      For runs that invoked `migration` or `autonomous_pr`, the ledger's
+      mode-switch event records a named authorizer and rationale; this maps
+      to ISO/IEC 42001 governance-review requirements.
+    notes: |
+      `pass_condition` is `conditional`: the control only applies when the
+      run actually crossed into a privileged mode. `authorizer` and
+      `rationale` are convention-based fields today (free-form strings set
+      at switch time per the sample audit report); making them structural
+      ledger fields is a future wave.
+
+  # ---------------------------------------------------------------------------
+  # NIST AI RMF (Govern / Map / Measure / Manage)
+  # ---------------------------------------------------------------------------
+
+  - control_id: AI_GOVERN_MAP
+    source_framework: nist_ai_rmf
+    claim: Each AI agent has documented capability boundaries via declared mode.
+    required_evidence:
+      - mode.active
+      - mode.allowed_actions
+    evidence_types:
+      - authority_refs
+      - actor_refs
+    surface:
+      - governance-pack
+      - team-mcp-gateway
+    wording_guard: "supports evidence for"
+    query: |
+      roam --json mode
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's cumulative mode substrate (read_only / safe_edit / migration /
+      autonomous_pr) supports evidence for NIST AI RMF GOVERN function
+      requirements by making each agent's action surface explicit.
+
+  - control_id: AI_MEASURE_RISK
+    source_framework: nist_ai_rmf
+    claim: Run-level risk verdicts and per-symbol risk entries are recorded.
+    required_evidence:
+      - pr_bundle.risks
+      - pr_bundle.affected_symbols.blast_radius
+      - critique.verdict
+    evidence_types:
+      - findings
+      - changed_subjects
+      - verdict
+      - accepted_risks
+    surface:
+      - pr-replay
+      - governance-pack
+      - review
+      - security-reachability
+    wording_guard: "maps to"
+    query: |
+      roam --json pr-bundle show <run_id>
+    pass_condition: all_required_present
+    export_text: >-
+      The PR bundle's `risks[]` array, together with per-symbol
+      `blast_radius` values, maps to NIST AI RMF MEASURE function
+      expectations for risk identification and quantification.
+
+  - control_id: AI_MANAGE_CONTROL
+    source_framework: nist_ai_rmf
+    claim: Policy decisions are recorded with timestamp and decision context.
+    required_evidence:
+      - runs.event.timestamp
+      - runs.event.action
+      - constitution.gates
+    evidence_types:
+      - policy_decisions
+      - authority_refs
+      - audit_trail
+      - run_ids
+    surface:
+      - governance-pack
+      - pr-replay
+      - team-mcp-gateway
+    wording_guard: "maps to"
+    query: |
+      roam --json runs show <run_id>
+      -- plus `roam constitution` for the active gate set
+    pass_condition: all_required_present
+    export_text: >-
+      Roam records each policy-relevant event (mode switch, gate evaluation,
+      lease claim) on the chained ledger; this maps to NIST AI RMF MANAGE
+      function expectations for decision context.
+    notes: |
+      Gate-evaluation events are emitted by the constitution substrate; the
+      surface for "decision input hash -> decision output hash" decision
+      receipts is on the roadmap but not fully wired today (see
+      ARCHITECTURE-EVIDENCE-COMPILER-2026-05-13.md "MCP trust boundary").
+
+  # ---------------------------------------------------------------------------
+  # SOC 2 CC8.1 (change management)
+  # ---------------------------------------------------------------------------
+
+  - control_id: CHANGE_AUTHORIZATION
+    source_framework: soc_2_cc8_1
+    claim: Each commit links to a documented run_id and agent actor.
+    required_evidence:
+      - pr_bundle.run_id
+      - pr_bundle.agent
+      - pr_bundle.commit_sha
+    evidence_types:
+      - actor_refs
+      - run_ids
+      - commit_sha
+      - git_range
+    surface:
+      - pr-replay
+      - governance-pack
+      - due-diligence
+    wording_guard: "supports evidence for"
+    query: |
+      roam --json pr-bundle show <run_id>
+    pass_condition: all_required_present
+    export_text: >-
+      Each emitted PR bundle ties its commit_sha to a run_id and named agent,
+      which supports evidence for SOC 2 CC8.1 change-authorization records.
+    notes: |
+      `commit_sha` linkage relies on the agent or CI step writing the SHA
+      into the bundle on emit. `roam pr-bundle emit` populates it when run
+      from a worktree; agents that emit out-of-band should add it explicitly.
+
+  - control_id: CHANGE_REVIEW
+    source_framework: soc_2_cc8_1
+    claim: Pre-merge review evidence exists in the PR bundle (critique + impact).
+    required_evidence:
+      - pr_bundle.context_read.commands_run
+      - critique.verdict
+      - impact.affected_symbols
+    evidence_types:
+      - findings
+      - changed_subjects
+      - verdict
+      - tests_run
+    surface:
+      - review
+      - pr-replay
+      - governance-pack
+    wording_guard: "supports evidence for"
+    query: |
+      roam --json pr-bundle show <run_id>
+      -- look for "roam critique" and "roam impact" in commands_run
+    pass_condition: any_required_present
+    export_text: >-
+      Where the PR bundle records a `roam critique` or `roam impact`
+      invocation before merge, Roam supports evidence for SOC 2 CC8.1
+      change-review requirements.
+
+  - control_id: CHANGE_TRACEABILITY
+    source_framework: soc_2_cc8_1
+    claim: A commit links to its run, the context the agent read, and the tests it ran.
+    required_evidence:
+      - pr_bundle.commit_sha
+      - pr_bundle.run_id
+      - pr_bundle.context_read
+      - pr_bundle.tests_run
+    evidence_types:
+      - commit_sha
+      - git_range
+      - run_ids
+      - tests_run
+      - audit_trail
+    surface:
+      - pr-replay
+      - governance-pack
+      - due-diligence
+    wording_guard: "audit-ready record"
+    query: |
+      roam --json pr-bundle show <run_id>
+    pass_condition: all_required_present
+    export_text: >-
+      The PR bundle composes commit_sha, run_id, context_read, and tests_run
+      into an audit-ready record that maps to SOC 2 CC8.1 traceability
+      requirements.
+
+  # ---------------------------------------------------------------------------
+  # Internal AI-change policy
+  # ---------------------------------------------------------------------------
+
+  - control_id: AI_CHANGE_CONTEXT_REVIEWED
+    source_framework: internal_ai_change_policy
+    claim: Agent read relevant context before edit.
+    required_evidence:
+      - pr_bundle.context_read
+      - preflight.verdict
+      - changed_subjects
+    evidence_types:
+      - changed_subjects
+      - findings
+      - verdict
+      - policy_decisions
+    surface:
+      - pr-replay
+      - review
+      - governance-pack
+    wording_guard: "supports evidence for"
+    query: |
+      roam --json pr-bundle show <run_id>
+    pass_condition: all_required_present
+    export_text: >-
+      The PR bundle's `context_read` manifest, combined with a recorded
+      preflight verdict on the changed subjects, supports evidence for
+      the internal AI-change-policy expectation that the agent reviewed
+      relevant context before editing.
+    notes: |
+      `changed_subjects` is a `ChangeEvidence` field defined in
+      ARCHITECTURE-EVIDENCE-COMPILER-2026-05-13.md and currently in flight
+      (W174). Until the evidence package schema v0 lands, audit-report
+      renderers should fall back to `pr_bundle.affected_symbols[].name` as
+      the substitute key.
+
+  - control_id: AI_CHANGE_TESTS_GATED
+    source_framework: internal_ai_change_policy
+    claim: Required tests were declared and at least one passed before merge.
+    required_evidence:
+      - pr_bundle.tests_required
+      - pr_bundle.tests_run
+      - pr_bundle.tests_run.passed
+    evidence_types:
+      - tests_required
+      - tests_run
+      - verdict
+    surface:
+      - review
+      - pr-replay
+      - governance-pack
+    wording_guard: "supports evidence for"
+    query: |
+      roam --json pr-bundle show <run_id>
+      -- non-empty tests_required AND tests_run; at least one passed=true
+    pass_condition: conditional
+    export_text: >-
+      Where the bundle declared `tests_required` and recorded a non-empty
+      `tests_run` with at least one passing entry, Roam supports evidence
+      for the internal AI-change-policy test gate.
+    notes: |
+      `pass_condition` is `conditional` because some changes (docs-only,
+      config-only) legitimately declare empty `tests_required`. The
+      renderer should report the empty-required case as "not applicable"
+      rather than failure, per the sample audit report's Section 5 wording.
+
+  # ---------------------------------------------------------------------------
+  # NIST AI 600-1 - Generative AI Profile (July 2024, action-ID granularity
+  # over the function-level nist_ai_rmf entries above). Added W428.
+  # Source: https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf
+  # Companion planning doc: (internal memo)
+  # ---------------------------------------------------------------------------
+
+  - control_id: AI600_VALUE_CHAIN_PROVENANCE
+    source_framework: nist_ai_600_1
+    claim: Every AI-agent code change carries actor, run, and content-hash provenance.
+    required_evidence:
+      - pr_bundle.run_id
+      - pr_bundle.agent
+      - pr_bundle.commit_sha
+      - runs.event.actor
+    evidence_types:
+      - actor_refs
+      - run_ids
+      - commit_sha
+      - audit_trail
+    surface:
+      - pr-replay
+      - governance-pack
+    wording_guard: "maps to"
+    query: |
+      roam --json pr-bundle show <run_id>
+      -- plus roam --json runs show <run_id> for per-event actor
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's pr-bundle and run ledger maps to NIST AI 600-1 GV-1.2-001
+      value-chain transparency by recording actor, run, and content-hash
+      provenance for every AI-assisted code change. Scope note: GV-1.2-001
+      targets model version and training-data provenance; roam covers
+      code-change provenance (same structure, different subject).
+
+  - control_id: AI600_STOP_BUILD_AUTHORITY
+    source_framework: nist_ai_600_1
+    claim: Constitution gates and mode substrate block writes on unacceptable risk.
+    required_evidence:
+      - constitution.gates
+      - mode.active
+      - runs.chain_verified
+    evidence_types:
+      - authority_refs
+      - policy_decisions
+      - audit_trail
+    surface:
+      - governance-pack
+      - review
+    wording_guard: "supports evidence for"
+    query: |
+      roam --json constitution
+      roam --json mode
+      roam --json runs verify <run_id>
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's constitution-gate evaluation and mode substrate (with
+      read_only blocking the write surface) supports evidence for
+      NIST AI 600-1 GV-1.3-006/007 stop-build authority. Scope note:
+      gate enforcement is repo-local; no external deployment pipeline
+      integration today.
+
+  # ---------------------------------------------------------------------------
+  # NIST SP 800-218A - SSDF GenAI Community Profile (July 2024, task-level
+  # specificity for AI-assisted development). Added W428.
+  # Source: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-218A.pdf
+  # Companion planning doc: (internal memo)
+  # ---------------------------------------------------------------------------
+
+  - control_id: SSDF218A_CODE_PROVENANCE
+    source_framework: nist_sp_800_218a
+    claim: AI-assisted code changes carry the provenance fields defined in SP 800-218A PW.3.2.
+    required_evidence:
+      - pr_bundle.run_id
+      - pr_bundle.actor_refs
+      - pr_bundle.commit_sha
+      - pr_bundle.context_read
+    evidence_types:
+      - actor_refs
+      - run_ids
+      - commit_sha
+      - changed_subjects
+      - audit_trail
+    surface:
+      - pr-replay
+      - governance-pack
+      - due-diligence
+    wording_guard: "maps to"
+    query: |
+      roam --json pr-bundle show <run_id>
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's ChangeEvidence (actor_refs, run_ids, commit_sha, context_read)
+      maps to the NIST SP 800-218A PW.3.2 provenance definition for
+      AI-assisted code changes. Scope note: PW.3.2 targets model
+      training-data provenance; roam covers code-change provenance (same
+      structure, different subject).
+    notes: |
+      PW.3.2 defines provenance as "the chronology of origin, development,
+      ownership, location, and changes to a system or system component
+      and associated data, including personnel and processes used to
+      interact with or make modifications." The ChangeEvidence dataclass
+      (actor_refs / authority_refs / run_ids / commit_sha / context_read /
+      diff_hash) is a structural match.
+
+  - control_id: SSDF218A_CODE_REVIEW_AI_OUTPUT
+    source_framework: nist_sp_800_218a
+    claim: Pre-merge critique gates AI-generated diff before merge.
+    required_evidence:
+      - pr_bundle.context_read.commands_run
+      - critique.verdict
+      - critique.severity
+    evidence_types:
+      - findings
+      - verdict
+      - tests_run
+    surface:
+      - review
+      - pr-replay
+      - governance-pack
+    wording_guard: "maps to"
+    query: |
+      roam --json pr-bundle show <run_id>
+      -- look for "roam critique" in commands_run with severity recorded
+    pass_condition: any_required_present
+    export_text: >-
+      Where the PR bundle records a roam critique invocation before merge,
+      Roam maps to NIST SP 800-218A PW.6 code-review requirements for
+      AI-generated output. Scope note: critique applies uniformly today;
+      no explicit "AI-generated" flag on reviewed hunks.
+
+  - control_id: SSDF218A_DEVELOPER_AUTHORIZATION
+    source_framework: nist_sp_800_218a
+    claim: Write-surface actions are gated by declared mode and named permit.
+    required_evidence:
+      - mode.active
+      - mode.allowed_actions
+      - runs.event.authorizer
+    evidence_types:
+      - authority_refs
+      - approvals
+      - audit_trail
+    surface:
+      - governance-pack
+      - review
+      - team-mcp-gateway
+    wording_guard: "supports evidence for"
+    query: |
+      roam --json mode
+      roam --json runs show <run_id>
+      -- filter events where action == "mode-switch" or "permit-grant"
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's mode substrate (cumulative read_only / safe_edit / migration /
+      autonomous_pr) and permit records supports evidence for NIST SP
+      800-218A PO.3.2 developer-authorization requirements. Scope note:
+      authorization is repo-local; no org-level IdP/SSO integration today.
+
+  # ---------------------------------------------------------------------------
+  # SLSA v1.2 Source Track (SRC-L2 + SRC-L3). Added W506.
+  # Source: https://slsa.dev/spec/v1.2/source-requirements
+  # Positioning memo: (internal memo) (W358 research).
+  # Substrate waves: W451 (pr-bundle emit --slsa-l3 --sign --keyless +
+  # src/roam/attest/vsa.py), W471 (CI auto-trigger --with-slsa-l3),
+  # W472 (cga emit --also-vsa sibling). The three entries below back
+  # the public "supports evidence for SLSA SRC-L3 source provenance"
+  # claim with explicit evidence-control mappings.
+  # ---------------------------------------------------------------------------
+
+  - control_id: SLSA_SRC_L2_AUTHORITY
+    source_framework: slsa_src_l2
+    claim: Protected-branch actions are gated by declared mode and recorded authority.
+    required_evidence:
+      - mode.active
+      - constitution.gates
+      - pr_bundle.authority_refs
+    evidence_types:
+      - authority_refs
+      - policy_decisions
+      - audit_trail
+    surface:
+      - governance-pack
+      - pr-replay
+      - review
+    wording_guard: "maps to"
+    query: |
+      roam --json mode
+      roam --json constitution
+      roam --json pr-bundle show <run_id>
+      -- inspect authority_refs[] (mode + permit + policy_rule)
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's mode substrate (cumulative read_only / safe_edit / migration /
+      autonomous_pr) and constitution-gate evaluations, recorded on
+      `ChangeEvidence.authority_refs[]`, maps to SLSA SRC-L2 authority
+      requirements for protected-branch change controls. Scope note:
+      authority enforcement is repo-local; SCM-level branch protections
+      remain the SCM's responsibility.
+    notes: |
+      Mirrors the SLSA-V12-POSITIONING crosswalk row `SLSA_SRC_L2_AUTHORITY`
+      ((internal memo) §6).
+
+  - control_id: SLSA_SRC_L2_PROVENANCE
+    source_framework: slsa_src_l2
+    claim: Each revision carries contemporaneous actor, timestamp, and revision-id provenance.
+    required_evidence:
+      - runs.event.timestamp
+      - runs.event.actor
+      - pr_bundle.commit_sha
+      - pr_bundle.run_id
+      - pr_bundle.actor_refs
+    evidence_types:
+      - actor_refs
+      - run_ids
+      - commit_sha
+      - audit_trail
+    surface:
+      - pr-replay
+      - governance-pack
+      - due-diligence
+    wording_guard: "maps to"
+    query: |
+      roam --json pr-bundle show <run_id>
+      roam --json runs show <run_id>
+      -- inspect actor_refs[] + commit_sha + per-event timestamps
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's HMAC-chained run ledger and pr-bundle (actor_refs, commit_sha,
+      run_id, per-event timestamps) maps to SLSA SRC-L2 contemporaneous
+      source-provenance requirements. Scope note: the ledger HMAC is
+      locally tamper-evident; external transparency anchoring is the SRC-L3
+      lift covered by `SLSA_SRC_L3_VSA_PREDICATE` below.
+    notes: |
+      Mirrors the SLSA-V12-POSITIONING crosswalk rows `SLSA_SRC_L2_HISTORY`
+      and `SLSA_SRC_L2_CONTINUITY` ((internal memo)
+      §6). The "no force-push" SRC-L2 requirement is SCM-enforced and
+      remains out of scope for roam.
+
+  - control_id: SLSA_SRC_L3_VSA_PREDICATE
+    source_framework: slsa_src_l3
+    claim: A Verification Summary Attestation in SLSA v1 VSA shape is emitted with the change.
+    required_evidence:
+      - pr_bundle.artifacts.vsa
+      - pr_bundle.commit_sha
+      - pr_bundle.run_id
+      - pr_bundle.signature_ref
+    evidence_types:
+      - actor_refs
+      - run_ids
+      - audit_trail
+      - commit_sha
+      - verdict
+    surface:
+      - governance-pack
+      - pr-replay
+      - due-diligence
+    wording_guard: "supports evidence for"
+    query: |
+      roam pr-bundle emit --slsa-l3 --sign --keyless
+      -- or: roam cga emit --also-vsa --sign --keyless
+      -- inspect the emitted in-toto v1 Statement carrying
+      -- predicateType "https://slsa.dev/verification_summary/v1"
+    pass_condition: all_required_present
+    export_text: >-
+      Roam's `pr-bundle emit --slsa-l3 --sign --keyless` (and the parallel
+      `cga emit --also-vsa` surface) wraps `ChangeEvidence` in an in-toto
+      v1 Statement carrying `predicateType:
+      https://slsa.dev/verification_summary/v1`, signed via Fulcio + Rekor.
+      This supports evidence for SLSA SRC-L3 verification-summary
+      attestation requirements. Scope note: roam emits the VSA evidence;
+      external slsa-verifier consumers issue the level claim.
+    notes: |
+      Substrate: src/roam/attest/vsa.py (W451), src/roam/templates/ci/
+      slsa-src-l3.yml (W471), src/roam/commands/cmd_cga.py `--also-vsa`
+      (W472). The VSA predicate consumes ChangeEvidence read-only and
+      preserves byte-identical canonical JSON for the underlying packet.
+      `pass_condition` is `all_required_present` because each emitted VSA
+      must carry both subject digest (commit_sha) and predicate body to
+      validate under slsa-verifier.
+
+  # ---------------------------------------------------------------------------
+  # Internal AI-change policy (continued)
+  # ---------------------------------------------------------------------------
+
+  - control_id: AI_CHANGE_BLAST_RADIUS_REVIEWED
+    source_framework: internal_ai_change_policy
+    claim: High-blast-radius changes have an additional approval signal.
+    required_evidence:
+      - pr_bundle.affected_symbols.blast_radius
+      - pr_bundle.risks
+      - runs.event.authorizer
+    evidence_types:
+      - findings
+      - accepted_risks
+      - approvals
+      - authority_refs
+      - changed_subjects
+    surface:
+      - review
+      - pr-replay
+      - governance-pack
+      - security-reachability
+    wording_guard: "maps to"
+    query: |
+      roam --json pr-bundle show <run_id>
+      -- any affected_symbols.blast_radius >= threshold (default 10)
+    pass_condition: conditional
+    export_text: >-
+      For changes whose affected_symbols include a blast_radius above the
+      site's configured threshold, the bundle's `risks[]` rationale,
+      combined with a named authorizer on the run, maps to the internal
+      AI-change policy's high-blast review requirement.
+    notes: |
+      Threshold is site-policy and not hard-coded. Today the
+      blast_radius-vs-threshold check is left to the renderer; promoting it
+      into a `roam pr-bundle validate --policy high-blast` flag is a future
+      wave alongside the constitution substrate.

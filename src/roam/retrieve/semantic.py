@@ -216,7 +216,7 @@ def _load_text_encoder():
         import os
         from pathlib import Path as _Path
 
-        import numpy as np  # noqa: F401  required by onnxruntime
+        import numpy as np
         import onnxruntime as ort  # type: ignore
         from tokenizers import Tokenizer  # type: ignore
     except ImportError:
@@ -242,11 +242,9 @@ def _load_text_encoder():
         return None
 
     def _encode(text: str) -> list[float] | None:
-        import numpy as _np
-
         enc = tokenizer.encode(text)
-        ids = _np.array([enc.ids], dtype=_np.int64)
-        mask = _np.array([enc.attention_mask], dtype=_np.int64)
+        ids = np.array([enc.ids], dtype=np.int64)
+        mask = np.array([enc.attention_mask], dtype=np.int64)
         try:
             outputs = sess.run(
                 None,
@@ -257,9 +255,9 @@ def _load_text_encoder():
         # First output is typically the last_hidden_state; mean-pool.
         last_hidden = outputs[0][0]
         # Mask-aware mean pooling
-        m = mask[0].astype(_np.float32)[..., None]
+        m = mask[0].astype(np.float32)[..., None]
         pooled = (last_hidden * m).sum(axis=0) / max(m.sum(), 1.0)
-        norm = float(_np.linalg.norm(pooled)) or 1.0
+        norm = float(np.linalg.norm(pooled)) or 1.0
         return [float(x) / norm for x in pooled.tolist()]
 
     _ENCODER_CACHE = _encode

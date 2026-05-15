@@ -114,6 +114,7 @@ class TestComputeGraphMetrics:
         G.add_node(1, name="a", kind="function", file_path="a.py")
         G.add_node(2, name="b", kind="function", file_path="b.py")
         G.add_node(3, name="c", kind="function", file_path="c.py")
+        # W501: networkx link-type attribute, unrelated to edges.kind / W512 CALL_OR_REF_KINDS.
         G.add_edge(1, 2, kind="calls")
         G.add_edge(2, 3, kind="calls")
 

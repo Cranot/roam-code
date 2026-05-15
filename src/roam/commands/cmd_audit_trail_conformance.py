@@ -29,6 +29,8 @@ Six checks (each contributes equally to the score):
 from __future__ import annotations
 
 import datetime as _dt
+import json as _json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -38,12 +40,143 @@ from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.commands.audit_trail_helpers import load_records as _load_records
 from roam.output.formatter import json_envelope, to_json
+from roam.output.metric_definitions import CHAIN_COMPLIANCE_SCORE_DEFINITION
 
 EXIT_GATE_FAILURE = 5
 DEFAULT_RETENTION_DAYS = 180  # ~6 months, the Article 12 minimum
 
 # Required fields for a record to be Article 12-shaped.
 REQUIRED_RECORD_FIELDS = ("timestamp", "actor", "verdict", "diff_sha256", "git_sha", "tool_version")
+
+
+# W145 (W93 follow-up): audit-trail-conformance is the next detector
+# migrating onto the central findings registry (after ``clones`` in W95,
+# ``dead`` in W99, ``complexity`` in W102, ``smells`` in W109,
+# ``orphan-imports`` in W132, and others). The shape mirrors those
+# migrations — a stable detector version stamp and a deterministic
+# ``finding_id_str`` so re-runs upsert instead of duplicating rows.
+# Bump this when any of the 6 Article 12 checks changes its predicate
+# or message shape meaningfully (the registry rows would otherwise
+# silently drift).
+AUDIT_TRAIL_CONFORMANCE_DETECTOR_VERSION: str = "1.0.0"
+
+
+# W145 — per-check confidence tier mapping.
+#
+# The 6 Article 12 checks split into two evidence classes:
+#
+# * Cryptographic / schema-deterministic (chain hash verify, presence
+#   of required JSONL fields) — same input → same verdict, no
+#   timing-based inference → ``static_analysis``.
+# * Time-window heuristic (retention compares the oldest record's
+#   timestamp to the configurable ``--retention-days`` threshold) —
+#   the threshold itself is policy, not law → ``heuristic``.
+#
+# A failing retention check on a fresh trail isn't necessarily a
+# violation (the deployer may have a documented shorter retention
+# policy), which is exactly the heuristic-tier contract.
+_AUDIT_TRAIL_CONFORMANCE_KIND_TO_CONFIDENCE: dict[str, str] = {
+    "chain_integrity": "static_analysis",
+    "timestamp_completeness": "static_analysis",
+    "actor_attribution": "static_analysis",
+    "reproducibility_metadata": "static_analysis",
+    "verdict_and_rationale": "static_analysis",
+    "retention": "heuristic",
+}
+_AUDIT_TRAIL_CONFORMANCE_DEFAULT_CONFIDENCE: str = "heuristic"
+
+
+def _audit_trail_conformance_finding_id(check_id: str, audit_trail_path: str) -> str:
+    """Stable, deterministic finding id for one failed conformance check.
+
+    The (check_id, audit_trail_path) tuple re-identifies the same failure
+    across runs — a given trail at a given path either passes or fails
+    a given check, and re-running with the same inputs must upsert in
+    place rather than duplicate the row. We deliberately do NOT fold the
+    number of failing records into the id: the *fact that the check
+    failed* is the finding, and the evidence JSON carries the per-run
+    detail (failing record indices, computed-vs-expected hashes, etc.).
+    """
+    from roam.db.findings import make_finding_id
+
+    return make_finding_id(
+        "audit-trail-conformance", check_id, check_id, audit_trail_path
+    )
+
+
+def _emit_audit_trail_conformance_findings(
+    conn: sqlite3.Connection,
+    checks: list[dict],
+    audit_trail_path: str,
+    retention_days: int,
+    source_version: str,
+) -> int:
+    """Mirror each FAILED conformance check into the central findings registry.
+
+    Returns the count of finding rows written (one per failed check).
+    Passed checks are not findings — they're the absence of a finding —
+    so we follow the SARIF convention of emitting results only for
+    failures. Caller is responsible for opening ``conn`` writable;
+    emit_finding does not commit (the caller commits once at the end
+    of the persist branch).
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (without the ``findings`` table) silently no-ops rather than
+    crashing the standard conformance command path.
+    """
+    # Local import keeps the cost out of the read-only path —
+    # callers without --persist never reach here.
+    from roam.db.findings import FindingRecord, emit_finding
+
+    written = 0
+    for c in checks:
+        # Only failed checks become findings. A "passed" check isn't a
+        # finding; it's the absence of one. Skipping "not_run" states
+        # (no-trail branch) for the same reason — if the underlying
+        # check did not run, we don't fabricate a row.
+        if c.get("passed"):
+            continue
+        if c.get("state") == "not_run":
+            continue
+
+        check_id = c.get("id") or "unknown"
+        message = c.get("message") or ""
+        confidence = _AUDIT_TRAIL_CONFORMANCE_KIND_TO_CONFIDENCE.get(
+            check_id, _AUDIT_TRAIL_CONFORMANCE_DEFAULT_CONFIDENCE
+        )
+        evidence = {
+            "check_id": check_id,
+            "audit_trail_path": audit_trail_path,
+            "message": message,
+            "retention_days_required": retention_days,
+            "schema_reference": "EU AI Act Regulation 2024/1689, Article 12",
+        }
+        finding_id = _audit_trail_conformance_finding_id(check_id, audit_trail_path)
+        claim = (
+            f"audit-trail-conformance ({check_id}): {audit_trail_path} — {message}"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                # subject_kind="file" with subject_id=None: the trail lives
+                # at a known path on disk, but ``.roam/audit-trail.jsonl``
+                # is gitignored repo-local state and never appears in the
+                # indexed ``files`` table. The findings registry permits
+                # NULL subject_id by design for file/edge/commit findings;
+                # consumers locate the trail via ``audit_trail_path`` in
+                # evidence.
+                subject_kind="file",
+                subject_id=None,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=confidence,
+                source_detector="audit-trail-conformance",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+    return written
 
 
 def _parse_iso(ts: str) -> _dt.datetime | None:
@@ -215,6 +348,20 @@ def _checks_to_sarif(
     default=None,
     help="Write SARIF to this file (default: stdout when global --sarif is set). Requires --sarif.",
 )
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Persist failed conformance checks to .roam/index.db findings registry "
+        "(cross-detector queryable via `roam findings list --detector "
+        "audit-trail-conformance`). The detector-specific output is unchanged; "
+        "the registry rows are the denormalised cross-detector surface. "
+        "Passed checks are NOT persisted — only failing checks become "
+        "findings (mirrors the SARIF emit, which surfaces results only "
+        "for failures)."
+    ),
+)
 @click.pass_context
 def audit_trail_conformance_check(
     ctx,
@@ -222,6 +369,7 @@ def audit_trail_conformance_check(
     retention_days: int,
     gate: bool,
     sarif_output: str | None,
+    persist: bool,
 ) -> None:
     """Score the audit trail against an EU AI Act Article 12 checklist.
 
@@ -264,6 +412,10 @@ def audit_trail_conformance_check(
             "partial_success": True,
             "score": None,
             "chain_compliance_score": None,
+            # W331b (Pattern 3a): name the score computation explicitly
+            # so consumers reading the no-trail envelope know what the
+            # null score WOULD have measured if a trail existed.
+            "chain_compliance_score_definition": CHAIN_COMPLIANCE_SCORE_DEFINITION,
             "compliance_kind": "audit_trail_chain_integrity",
             "compliance_kind_definition": (
                 "Chain-of-custody score for an existing roam audit trail: "
@@ -319,7 +471,7 @@ def audit_trail_conformance_check(
         else:
             click.echo(f"VERDICT: {no_trail_summary['verdict']}")
             click.echo(f"  path:    {path}")
-            click.echo(f"  records: 0")
+            click.echo("  records: 0")
             click.echo(f"  state:   no_trail ({no_trail_reason})")
             click.echo(f"  fix:     {no_trail_summary['fix']}")
             click.echo()
@@ -346,6 +498,40 @@ def audit_trail_conformance_check(
         {"id": "retention", "passed": retention_ok, "message": retention_msg},
     ]
 
+    # --- W145: mirror failed checks into the central findings registry ---
+    # Runs ONLY with --persist. The persisted set covers ONLY failing
+    # checks — passed checks aren't findings, and "not_run" states (the
+    # no-trail branch handled above this point) are also skipped so we
+    # don't fabricate rows for checks that never executed. Wrapped in a
+    # try/except so a pre-W89 DB (without the ``findings`` table)
+    # degrades gracefully rather than crashing the standard text/JSON
+    # output path that legacy consumers depend on.
+    if persist:
+        try:
+            from roam.commands.resolve import ensure_index
+            from roam.db.connection import open_db
+
+            ensure_index(quiet=True)
+            with open_db(readonly=False) as conn:
+                try:
+                    _emit_audit_trail_conformance_findings(
+                        conn,
+                        checks,
+                        str(path),
+                        retention_days,
+                        AUDIT_TRAIL_CONFORMANCE_DETECTOR_VERSION,
+                    )
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    # findings table missing (pre-W89 schema) — degrade gracefully.
+                    pass
+        except Exception:
+            # Any other persist-side failure (missing index, etc.) must
+            # not break the read-side output that legacy consumers
+            # depend on. The detector-output path stays the source of
+            # truth; the registry mirror is best-effort.
+            pass
+
     passed = sum(1 for c in checks if c["passed"])
     total = len(checks)
     score = round(100 * passed / total)
@@ -368,6 +554,10 @@ def audit_trail_conformance_check(
         "verdict": verdict,
         "score": score,
         "chain_compliance_score": score,
+        # W331b (Pattern 3a): pair the score with an explicit definition
+        # of what the 6 checks measure. Lives in metric_definitions.py
+        # so the string cannot drift away from the actual checklist.
+        "chain_compliance_score_definition": CHAIN_COMPLIANCE_SCORE_DEFINITION,
         "compliance_kind": "audit_trail_chain_integrity",
         "compliance_kind_definition": (
             "Chain-of-custody score for an existing roam audit trail: "

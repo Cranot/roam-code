@@ -22,7 +22,12 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+from tests._helpers.repo_root import repo_root
+
+# Resolve via git's canonical toplevel so nested-worktree dispatch
+# (``.claude/worktrees/.../.claude/worktrees/...``) still finds the
+# project root that owns ``CLAUDE.md`` / ``README.md`` (W572).
+ROOT = repo_root()
 SRC = ROOT / "src"
 SCRIPT = ROOT / "dev" / "build_readme_counts.py"
 README = ROOT / "README.md"
@@ -72,11 +77,33 @@ def test_script_check_passes_at_head():
 
 def test_script_exits_nonzero_on_drift(tmp_path, monkeypatch):
     """Inject a wrong count into README; --check must exit non-zero, --apply must fix."""
+    # Compute the truth-aligned count substring from the source of truth instead
+    # of hard-coding it — otherwise this test breaks every time someone adds a
+    # command (the literal here used to be "233 commands and 149 MCP tools" and
+    # silently rotted to a no-op replace once the count drifted to 234).
+    from roam.surface_counts import cli_surface_counts, mcp_surface_counts
+
+    cli = cli_surface_counts()
+    mcp = mcp_surface_counts()
+    correct_cmd_count = int(cli["command_names"])
+    correct_mcp_count = int(mcp["registered_tools"])
+    # Mirror the ``readme-headline-prose`` template in ``dev/build_readme_counts.py``:
+    # ``f"... through {c.command_names} commands and {c.mcp_full} MCP tools ..."``.
+    truth_string = f"{correct_cmd_count} commands and {correct_mcp_count} MCP tools"
+    # Wrong-by-one is enough to trigger drift detection, and is guaranteed not to
+    # collide with the truth string (so the replace below cannot become a no-op).
+    drift_string = f"{correct_cmd_count - 1} commands and {correct_mcp_count} MCP tools"
+    assert drift_string != truth_string, "wrong-by-one drift string collided with truth"
+
     backup = README.read_text(encoding="utf-8")
+    assert truth_string in backup, (
+        f"test precondition failed: truth-aligned substring {truth_string!r} "
+        f"not present in README — run dev/build_readme_counts.py --apply first"
+    )
     try:
-        # Inject drift: replace the truth-count (233) with a wrong number in the
-        # auto-count block. Use a marker-protected line so the change is reversible.
-        bad = backup.replace("233 commands and 149 MCP tools", "999 commands and 1 MCP tools", 1)
+        # Inject drift: replace the truth-count with a wrong-by-one count inside
+        # the auto-count block. Use a marker-protected line so the change is reversible.
+        bad = backup.replace(truth_string, drift_string, 1)
         assert bad != backup, "test setup failed — drift injection didn't change file"
         README.write_text(bad, encoding="utf-8")
 

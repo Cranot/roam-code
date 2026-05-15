@@ -7,7 +7,7 @@ name = "roam-plugin-example"
 version = "0.1.0"
 description = "Reference plugin for roam-code — shows the entry-point + register(ctx) flow."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
   {name = "roam-code maintainers"},

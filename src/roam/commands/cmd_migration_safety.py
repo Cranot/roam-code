@@ -46,6 +46,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -599,11 +600,11 @@ def analyze_migration_safety(conn, limit: int = 50, include_archive: bool = Fals
         file_findings = _analyze_file(abs_path, rel_path)
         findings.extend(file_findings)
 
-    # Sort: high → medium → low, then by file path, then by line number
-    _conf_order = {"high": 0, "medium": 1, "low": 2}
+    # Sort: high → medium → low, then by file path, then by line number.
+    # W596: canonical confidence-LEVEL rank — negate for high-first sort.
     findings.sort(
         key=lambda f: (
-            _conf_order.get(f["confidence"], 9),
+            -confidence_level_rank(f["confidence"], fallback=-1),
             f["file"],
             f["line"],
         )

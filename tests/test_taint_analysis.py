@@ -64,7 +64,12 @@ def _insert_symbol(
     return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
 
-def _insert_edge(conn, source_id, target_id, kind="calls"):
+# W493: canonical edge kind for call edges is singular 'call' (see
+# src/roam/index/relations.py and every src/roam/languages/*_lang.py).
+# The previous default 'calls' (plural) silently matched the read-side
+# typo in taint/dead/dataflow and made these tests assert against the
+# bug instead of the contract.
+def _insert_edge(conn, source_id, target_id, kind="call"):
     conn.execute(
         "INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)",
         (source_id, target_id, kind),
@@ -483,8 +488,8 @@ class TestPropagateTaint:
         # Caller: calls get_input, passes result to process
         caller_id = _insert_symbol(conn, fid, "main", signature="def main()")
 
-        _insert_edge(conn, caller_id, src_id, "calls")
-        _insert_edge(conn, caller_id, sink_id, "calls")
+        _insert_edge(conn, caller_id, src_id, "call")
+        _insert_edge(conn, caller_id, sink_id, "call")
 
         summaries = {
             src_id: TaintSummary(
@@ -515,8 +520,8 @@ class TestPropagateTaint:
         san_id = _insert_symbol(conn, fid, "sanitize", signature="def sanitize(data)")
         sink_id = _insert_symbol(conn, fid, "execute", signature="def execute(cmd)")
 
-        _insert_edge(conn, src_id, san_id, "calls")
-        _insert_edge(conn, san_id, sink_id, "calls")
+        _insert_edge(conn, src_id, san_id, "call")
+        _insert_edge(conn, san_id, sink_id, "call")
 
         summaries = {
             src_id: TaintSummary(
@@ -651,7 +656,7 @@ class TestInterProceduralDataflowPatterns:
         # Insert a caller edge
         caller_fid = _insert_file(conn, path="src/main.py")
         caller_sid = _insert_symbol(conn, caller_fid, "main")
-        _insert_edge(conn, caller_sid, sid, "calls")
+        _insert_edge(conn, caller_sid, sid, "call")
 
         from roam.rules.dataflow import _collect_inter_findings
 
@@ -807,7 +812,7 @@ class TestComputeAndStoreTaint:
             line_start=5,
             line_end=6,
         )
-        _insert_edge(conn, sid1, sid2, "calls")
+        _insert_edge(conn, sid1, sid2, "call")
 
         compute_and_store_taint(conn, tmp_path)
 

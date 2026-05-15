@@ -83,7 +83,7 @@ def _build_symbol_cochange(
     file_to_syms: dict[int, list[tuple[int, float]]] = defaultdict(list)
     test_file_ids: set[int] = set()
     for s in sym_rows:
-        if exclude_tests and is_test_file(s["path"] or ""):
+        if exclude_tests and is_test_file(s["path"]):
             test_file_ids.add(s["file_id"])
             continue
         file_to_syms[s["file_id"]].append((s["id"], s["pr"] or 0))

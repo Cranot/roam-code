@@ -26,12 +26,11 @@ try:
 except ImportError:
 
     class QueryCursor:
-        """Shim for tree-sitter < 0.24 (Python 3.9 lane) where ``QueryCursor``
-        wasn't yet exported.
+        """Shim for tree-sitter < 0.24 where ``QueryCursor`` wasn't yet exported.
 
         The old ``Query`` exposes ``.matches(node)`` and ``.captures(node)``
-        directly, so we just delegate. Once 3.9 support is dropped this
-        shim can go.
+        directly, so we just delegate. Kept because the main dep pin
+        (``tree-sitter>=0.23``) still admits 0.23.x installs in the wild.
         """
 
         def __init__(self, query):

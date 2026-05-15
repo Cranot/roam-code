@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 from roam.index.parser import EXTENSION_MAP, GRAMMAR_ALIASES, REGEX_ONLY_LANGUAGES
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .base import LanguageExtractor
 
 # Single source of truth for extension → language is parser.EXTENSION_MAP.
@@ -181,114 +183,202 @@ def get_ts_language(language: str):
     return get_language(grammar)
 
 
+# W646 -- dispatch table replacing a 23-arm if/elif chain on `language`.
+# Each entry is a zero-arg thunk so per-language extractor modules stay lazily
+# imported (the same property the old chain preserved by importing inside each
+# arm). The TS family (typescript/tsx/vue/svelte) shares one class, hence the
+# repeated thunk. Adding a language = add a thunk here AND add the name to
+# _SUPPORTED_LANGUAGES above; the drift-guard test in tests/test_languages.py
+# fails on a one-sided edit.
+
+
+def _make_python() -> "LanguageExtractor":
+    from .python_lang import PythonExtractor
+
+    return PythonExtractor()
+
+
+def _make_javascript() -> "LanguageExtractor":
+    from .javascript_lang import JavaScriptExtractor
+
+    return JavaScriptExtractor()
+
+
+def _make_typescript() -> "LanguageExtractor":
+    from .typescript_lang import TypeScriptExtractor
+
+    return TypeScriptExtractor()
+
+
+def _make_go() -> "LanguageExtractor":
+    from .go_lang import GoExtractor
+
+    return GoExtractor()
+
+
+def _make_rust() -> "LanguageExtractor":
+    from .rust_lang import RustExtractor
+
+    return RustExtractor()
+
+
+def _make_java() -> "LanguageExtractor":
+    from .java_lang import JavaExtractor
+
+    return JavaExtractor()
+
+
+def _make_c() -> "LanguageExtractor":
+    from .c_lang import CExtractor
+
+    return CExtractor()
+
+
+def _make_cpp() -> "LanguageExtractor":
+    from .c_lang import CppExtractor
+
+    return CppExtractor()
+
+
+def _make_php() -> "LanguageExtractor":
+    from .php_lang import PhpExtractor
+
+    return PhpExtractor()
+
+
+def _make_csharp() -> "LanguageExtractor":
+    from .csharp_lang import CSharpExtractor
+
+    return CSharpExtractor()
+
+
+def _make_ruby() -> "LanguageExtractor":
+    from .ruby_lang import RubyExtractor
+
+    return RubyExtractor()
+
+
+def _make_kotlin() -> "LanguageExtractor":
+    from .kotlin_lang import KotlinExtractor
+
+    return KotlinExtractor()
+
+
+def _make_swift() -> "LanguageExtractor":
+    from .swift_lang import SwiftExtractor
+
+    return SwiftExtractor()
+
+
+def _make_scala() -> "LanguageExtractor":
+    from .scala_lang import ScalaExtractor
+
+    return ScalaExtractor()
+
+
+def _make_sql() -> "LanguageExtractor":
+    from .sql_lang import SqlExtractor
+
+    return SqlExtractor()
+
+
+def _make_dart() -> "LanguageExtractor":
+    from .dart_lang import DartExtractor
+
+    return DartExtractor()
+
+
+def _make_apex() -> "LanguageExtractor":
+    from .apex_lang import ApexExtractor
+
+    return ApexExtractor()
+
+
+def _make_sfxml() -> "LanguageExtractor":
+    from .sfxml_lang import SfxmlExtractor
+
+    return SfxmlExtractor()
+
+
+def _make_aura() -> "LanguageExtractor":
+    from .aura_lang import AuraExtractor
+
+    return AuraExtractor()
+
+
+def _make_visualforce() -> "LanguageExtractor":
+    from .visualforce_lang import VisualforceExtractor
+
+    return VisualforceExtractor()
+
+
+def _make_foxpro() -> "LanguageExtractor":
+    from .foxpro_lang import FoxProExtractor
+
+    return FoxProExtractor()
+
+
+def _make_yaml() -> "LanguageExtractor":
+    from .yaml_lang import YamlExtractor
+
+    return YamlExtractor()
+
+
+def _make_hcl() -> "LanguageExtractor":
+    from .hcl_lang import HclExtractor
+
+    return HclExtractor()
+
+
+_LANGUAGE_EXTRACTORS: "dict[str, Callable[[], LanguageExtractor]]" = {
+    "python": _make_python,
+    "javascript": _make_javascript,
+    "typescript": _make_typescript,
+    "tsx": _make_typescript,
+    "vue": _make_typescript,
+    "svelte": _make_typescript,
+    "go": _make_go,
+    "rust": _make_rust,
+    "java": _make_java,
+    "c": _make_c,
+    "cpp": _make_cpp,
+    "php": _make_php,
+    "c_sharp": _make_csharp,
+    "ruby": _make_ruby,
+    "kotlin": _make_kotlin,
+    "swift": _make_swift,
+    "scala": _make_scala,
+    "sql": _make_sql,
+    "dart": _make_dart,
+    # Salesforce extractors
+    "apex": _make_apex,
+    "sfxml": _make_sfxml,
+    "aura": _make_aura,
+    "visualforce": _make_visualforce,
+    # Regex-only extractors
+    "foxpro": _make_foxpro,
+    "yaml": _make_yaml,
+    "hcl": _make_hcl,
+}
+
+
 @lru_cache(maxsize=None)
 def _create_extractor(language: str) -> "LanguageExtractor":
     """Create and cache an extractor instance for a language."""
-    if language == "python":
-        from .python_lang import PythonExtractor
+    factory = _LANGUAGE_EXTRACTORS.get(language)
+    if factory is not None:
+        return factory()
+    plugin_factory = _plugin_language_extractors().get(language)
+    if plugin_factory is not None:
+        return plugin_factory()
+    # For aliased languages, delegate to the alias target's extractor
+    alias_target = GRAMMAR_ALIASES.get(language)
+    if alias_target and alias_target in _DEDICATED_EXTRACTORS:
+        return _create_extractor(alias_target)
+    # Use generic extractor for tier-2 languages
+    from .generic_lang import GenericExtractor
 
-        return PythonExtractor()
-    elif language == "javascript":
-        from .javascript_lang import JavaScriptExtractor
-
-        return JavaScriptExtractor()
-    elif language in ("typescript", "tsx", "vue", "svelte"):
-        from .typescript_lang import TypeScriptExtractor
-
-        return TypeScriptExtractor()
-    elif language == "go":
-        from .go_lang import GoExtractor
-
-        return GoExtractor()
-    elif language == "rust":
-        from .rust_lang import RustExtractor
-
-        return RustExtractor()
-    elif language == "java":
-        from .java_lang import JavaExtractor
-
-        return JavaExtractor()
-    elif language == "c":
-        from .c_lang import CExtractor
-
-        return CExtractor()
-    elif language == "cpp":
-        from .c_lang import CppExtractor
-
-        return CppExtractor()
-    elif language == "php":
-        from .php_lang import PhpExtractor
-
-        return PhpExtractor()
-    elif language == "c_sharp":
-        from .csharp_lang import CSharpExtractor
-
-        return CSharpExtractor()
-    elif language == "ruby":
-        from .ruby_lang import RubyExtractor
-
-        return RubyExtractor()
-    elif language == "kotlin":
-        from .kotlin_lang import KotlinExtractor
-
-        return KotlinExtractor()
-    elif language == "swift":
-        from .swift_lang import SwiftExtractor
-
-        return SwiftExtractor()
-    elif language == "scala":
-        from .scala_lang import ScalaExtractor
-
-        return ScalaExtractor()
-    elif language == "sql":
-        from .sql_lang import SqlExtractor
-
-        return SqlExtractor()
-    elif language == "dart":
-        from .dart_lang import DartExtractor
-
-        return DartExtractor()
-    # Salesforce extractors
-    elif language == "apex":
-        from .apex_lang import ApexExtractor
-
-        return ApexExtractor()
-    elif language == "sfxml":
-        from .sfxml_lang import SfxmlExtractor
-
-        return SfxmlExtractor()
-    elif language == "aura":
-        from .aura_lang import AuraExtractor
-
-        return AuraExtractor()
-    elif language == "visualforce":
-        from .visualforce_lang import VisualforceExtractor
-
-        return VisualforceExtractor()
-    elif language == "foxpro":
-        from .foxpro_lang import FoxProExtractor
-
-        return FoxProExtractor()
-    elif language == "yaml":
-        from .yaml_lang import YamlExtractor
-
-        return YamlExtractor()
-    elif language == "hcl":
-        from .hcl_lang import HclExtractor
-
-        return HclExtractor()
-    else:
-        plugin_factory = _plugin_language_extractors().get(language)
-        if plugin_factory is not None:
-            return plugin_factory()
-        # For aliased languages, delegate to the alias target's extractor
-        alias_target = GRAMMAR_ALIASES.get(language)
-        if alias_target and alias_target in _DEDICATED_EXTRACTORS:
-            return _create_extractor(alias_target)
-        # Use generic extractor for tier-2 languages
-        from .generic_lang import GenericExtractor
-
-        return GenericExtractor(language=language)
+    return GenericExtractor(language=language)
 
 
 def get_extractor(language: str) -> "LanguageExtractor":

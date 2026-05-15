@@ -24,6 +24,10 @@ from roam.output.confidence import (
     wrap_findings,
 )
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.metric_definitions import (
+    COVERAGE_PCT_DEFINITION,
+    GATE_VIOLATION_DEFINITION,
+)
 
 
 # R22 — confidence classifier for coverage-gaps findings.
@@ -415,6 +419,15 @@ def coverage_gaps(
                             "parsed_files": import_summary["parsed_files"],
                             "unmatched_files": import_summary["unmatched_count"],
                             "coverage_pct": import_summary["coverage_pct"],
+                            # W331b: name the coverage_pct computation so
+                            # consumers do not confuse it with the gate-
+                            # reachability metric in the main branch.
+                            # In this import-only branch coverage_pct
+                            # comes from the parsed .info / .xml report.
+                            "coverage_pct_definition": (
+                                "imported coverage_pct from parsed report (.info/.xml/.json);"
+                                " NOT the gate-reachability metric."
+                            ),
                         },
                         import_summary=import_summary,
                     )
@@ -436,18 +449,37 @@ def coverage_gaps(
         warnings = [v for v in gate_violations if v["severity"] == "warning"]
         preset_info = preset_used.name if preset_used else "custom"
 
+        # LAW 6 + LAW 4: self-contained verdict that names the count and
+        # anchors on a concrete-noun terminal ("violations" / "warnings" /
+        # "files"). A bare "fail" / "pass" violates both laws.
+        if errors:
+            preset_verdict = (
+                f"{len(errors)} blocking and {len(warnings)} advisory "
+                f"gate violations across {len(gate_violations)} findings"
+            )
+        elif warnings:
+            preset_verdict = (
+                f"0 blocking gate violations with {len(warnings)} advisory warnings"
+            )
+        else:
+            preset_verdict = f"0 gate violations across {preset_info} preset rules"
+
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "coverage-gaps",
                         summary={
-                            "verdict": "fail" if errors else "pass",
+                            "verdict": preset_verdict,
                             "preset": preset_info,
                             "total_violations": len(gate_violations),
                             "errors": len(errors),
                             "warnings": len(warnings),
                             "imported_coverage_pct": import_summary["coverage_pct"] if import_summary else None,
+                            # W331b (Pattern 3a): name the violation
+                            # computation so the preset-only branch is
+                            # unambiguous to downstream consumers.
+                            "gate_violation_definition": GATE_VIOLATION_DEFINITION,
                         },
                         preset=preset_info,
                         gate_violations=gate_violations,
@@ -456,8 +488,7 @@ def coverage_gaps(
                 )
             )
         else:
-            verdict_str = "fail" if errors else "pass"
-            click.echo(f"VERDICT: {verdict_str}")
+            click.echo(f"VERDICT: {preset_verdict}")
             click.echo()
             click.echo(f"=== Coverage Gaps (preset: {preset_info}) ===\n")
             if import_summary:
@@ -658,6 +689,12 @@ def coverage_gaps(
                 "gates_found": sorted(set(gate_info.values())),
                 "imported_coverage_pct": import_summary["coverage_pct"] if import_summary else None,
                 "findings_confidence_distribution": distribution,
+                # W331b (Pattern 3a): stamp the precise definition of the
+                # coverage_pct metric. In this main branch coverage_pct is
+                # the gate-reachability ratio, NOT imported line/branch
+                # coverage — those two are different signals despite the
+                # shared field name and must not be conflated.
+                "coverage_pct_definition": COVERAGE_PCT_DEFINITION,
             }
             extra = dict(
                 gates_found=sorted(set(gate_info.values())),
@@ -669,6 +706,9 @@ def coverage_gaps(
                 extra["preset"] = preset_used.name
             if gate_violations:
                 summary["gate_violation_count"] = len(gate_violations)
+                # W331b: when gate_violations are also reported here,
+                # carry the violation definition too.
+                summary["gate_violation_definition"] = GATE_VIOLATION_DEFINITION
                 extra["gate_violations"] = gate_violations
             if import_summary:
                 extra["import_summary"] = import_summary

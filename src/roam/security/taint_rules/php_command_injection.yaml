@@ -1,0 +1,26 @@
+id: php-command-injection
+description: Untrusted request input flowing into a shell execution primitive (exec, system, passthru, shell_exec, proc_open, popen) without escapeshellarg. Maps to CWE-78 / OWASP A03:2021 Injection.
+severity: error
+cwe: CWE-78
+owasp_top10: A03:2021_Injection
+languages:
+  - php
+sources:
+  - input
+  - all
+  - query
+  - post
+  - get
+  - json
+  - file
+sinks:
+  - exec
+  - system
+  - passthru
+  - shell_exec
+  - proc_open
+  - popen
+  - pcntl_exec
+sanitizers:
+  - escapeshellarg
+  - escapeshellcmd

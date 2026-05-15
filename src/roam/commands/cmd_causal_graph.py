@@ -24,6 +24,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import format_table, json_envelope, to_json
 from roam.runs.helpers import auto_log
 from roam.world_model.causal_graph import (
@@ -167,15 +168,13 @@ def causal_graph_cmd(ctx, symbol, kind, top):
         )
         partial_success = False
 
-    # Rank graphs by interest:
-    #   1. confidence high > medium > low
+    # Rank graphs by interest (W596: canonical confidence-LEVEL rank):
+    #   1. confidence high > medium > low (higher = more confident)
     #   2. higher edge count
     #   3. shorter file path
-    _CONF_RANK = {"high": 3, "medium": 2, "low": 1}
-
     def _interest(g):
         return (
-            _CONF_RANK.get(g.confidence, 0),
+            confidence_level_rank(g.confidence, fallback=-1),
             len(g.edges),
             -len(g.file or ""),
         )

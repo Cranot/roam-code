@@ -20,7 +20,9 @@ import importlib.util
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from tests._helpers.repo_root import repo_root
+
+ROOT = repo_root()
 SRC = ROOT / "src"
 SYNC_SCRIPT = ROOT / "scripts" / "sync_surface_counts.py"
 BUILD_SCRIPT = ROOT / "dev" / "build_readme_counts.py"

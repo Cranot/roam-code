@@ -13,7 +13,7 @@ Resolution order
 TOML parser
 -----------
 - Python 3.11+ uses stdlib ``tomllib``.
-- Python 3.9 / 3.10 try ``tomli`` if installed.
+- Python 3.10 tries ``tomli`` if installed.
 - Final fallback is a tiny in-tree parser for the subset we actually
   emit (``[section]`` headers + ``key = value`` lines, scalar values).
 

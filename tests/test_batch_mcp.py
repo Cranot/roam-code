@@ -498,11 +498,14 @@ class TestBatchSearch:
         call_count = [0]
         original = _batch_search_one
 
-        def failing_search(conn, q, limit):
+        # Mirrors _batch_search_one's full kwargs for clarity; W103 fixed the
+        # underlying bug where signature drift would trigger a batch-wide fatal
+        # instead of per-query error capture. See test_per_query_exception_does_not_abort_batch.
+        def failing_search(conn, q, limit, include_paths=False):
             call_count[0] += 1
             if q == "bad_query":
                 return [], "simulated db error"
-            return original(conn, q, limit)
+            return original(conn, q, limit, include_paths=include_paths)
 
         p1, p2 = _patch_db(tmp_db)
         with p1, p2, patch("roam.mcp_server._batch_search_one", side_effect=failing_search):
@@ -514,6 +517,37 @@ class TestBatchSearch:
         # "bad_query" error should be captured
         assert "errors" in result
         assert "bad_query" in result["errors"]
+
+    def test_per_query_exception_does_not_abort_batch(self, tmp_db):
+        """Bug W103: a raised exception in _batch_search_one (not a tuple-form error)
+        must be captured per-query and not abort the rest of the batch."""
+        from roam.mcp_server import _batch_search_one, batch_search
+
+        call_count = [0]
+        original = _batch_search_one
+
+        def raising_search(conn, q, limit, include_paths=False):
+            call_count[0] += 1
+            if q == "bad_query":
+                raise ValueError("simulated downstream crash in _batch_search_one")
+            return original(conn, q, limit, include_paths=include_paths)
+
+        p1, p2 = _patch_db(tmp_db)
+        with p1, p2, patch("roam.mcp_server._batch_search_one", side_effect=raising_search):
+            result = batch_search(queries=["user", "bad_query", "auth"], root=".")
+
+        # "user" and "auth" must still appear in results (not aborted)
+        assert "user" in result["results"], f"user aborted: {result}"
+        assert "auth" in result["results"], f"auth aborted: {result}"
+        # "bad_query" must be captured in errors, not as _fatal
+        assert "errors" in result
+        assert "bad_query" in result["errors"]
+        assert "_fatal" not in result["errors"], (
+            "raised exception in one query incorrectly triggered batch-wide fatal: "
+            + repr(result["errors"])
+        )
+        # All 3 queries should have been attempted
+        assert call_count[0] == 3, f"only {call_count[0]} of 3 queries attempted"
 
     def test_fatal_db_error_returns_structured_response(self):
         """A complete DB connection failure returns a structured error, not an exception."""
@@ -681,6 +715,37 @@ class TestBatchGet:
         assert result["command"] == "batch-get"
         assert result["summary"]["symbols_resolved"] == 0
         assert "_fatal" in result.get("errors", {})
+
+    def test_per_symbol_exception_does_not_abort_batch(self, tmp_db):
+        """Bug W103: a raised exception in _batch_get_one (not a tuple-form error)
+        must be captured per-symbol and not abort the rest of the batch."""
+        from roam.mcp_server import _batch_get_one, batch_get
+
+        call_count = [0]
+        original = _batch_get_one
+
+        def raising_get(conn, sym):
+            call_count[0] += 1
+            if sym == "bad_sym":
+                raise ValueError("simulated downstream crash in _batch_get_one")
+            return original(conn, sym)
+
+        p1, p2 = _patch_db(tmp_db)
+        with p1, p2, patch("roam.mcp_server._batch_get_one", side_effect=raising_get):
+            result = batch_get(symbols=["User", "bad_sym", "authenticate"], root=".")
+
+        # "User" and "authenticate" must still appear in results (not aborted)
+        assert "User" in result["results"], f"User aborted: {result}"
+        assert "authenticate" in result["results"], f"authenticate aborted: {result}"
+        # "bad_sym" must be captured in errors, not as _fatal
+        assert "errors" in result
+        assert "bad_sym" in result["errors"]
+        assert "_fatal" not in result["errors"], (
+            "raised exception in one symbol incorrectly triggered batch-wide fatal: "
+            + repr(result["errors"])
+        )
+        # All 3 symbols should have been attempted
+        assert call_count[0] == 3, f"only {call_count[0]} of 3 symbols attempted"
 
     def test_none_symbols_treated_as_empty(self, tmp_db):
         from roam.mcp_server import batch_get

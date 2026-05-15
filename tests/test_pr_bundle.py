@@ -99,6 +99,72 @@ def test_init_creates_bundle_file(cli_runner, bundle_project):
 
 
 # ---------------------------------------------------------------------------
+# 1b. W521 - pr-bundle init populates commit_sha unconditionally
+# ---------------------------------------------------------------------------
+
+
+def test_init_populates_commit_sha_in_git_repo(cli_runner, bundle_project):
+    """W521: pr-bundle init must stamp ``commit_sha`` on the envelope
+    at init time when the workspace is a git repo. Before W521 the
+    field was absent until ``emit`` re-derived it via the W509 fallback;
+    the producer-side fix moves identity resolution to init so the
+    persisted bundle AND every subsequent envelope carry the SHA.
+    """
+    import subprocess
+
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=bundle_project,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert head_sha, "test fixture must have a real HEAD sha"
+
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "init", "--intent", "x"])
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle-init")
+
+    # Top-level commit_sha is what emit_vsa.py probes via
+    # ``envelope.get("commit_sha")``. Must match git rev-parse HEAD.
+    assert data.get("commit_sha") == head_sha, (
+        f"W521: envelope.commit_sha must equal git rev-parse HEAD; "
+        f"got {data.get('commit_sha')!r}, expected {head_sha!r}"
+    )
+    # No pre_warnings on the happy path (git repo with a real SHA).
+    assert not data.get("pre_warnings"), data.get("pre_warnings")
+
+    # Persisted bundle carries commit_sha under git.commit_sha so the
+    # SHA is portable across subsequent pr-bundle commands without
+    # re-running git.
+    bundle = _read_bundle_file(bundle_project)
+    assert bundle["git"].get("commit_sha") == head_sha
+
+
+def test_init_emits_pre_warning_outside_git_repo(cli_runner, tmp_path, monkeypatch):
+    """W521: when the workspace is NOT a git repo, pr-bundle init must
+    emit a ``pre_warnings`` entry explaining why ``commit_sha`` is
+    absent (Pattern 2 — explicit absence beats silent absence).
+    """
+    proj = tmp_path / "no-git-repo"
+    proj.mkdir()
+    (proj / ".roam").mkdir()  # avoid find_project_root walking elsewhere
+    (proj / "main.py").write_text("pass\n")
+    monkeypatch.chdir(proj)
+
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "init", "--intent", "x"])
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle-init")
+
+    # No commit_sha on the envelope (or empty/None — both express
+    # "absent" downstream).
+    assert not data.get("commit_sha")
+    # pre_warnings names the missing-commit-sha condition explicitly.
+    pre = data.get("pre_warnings") or []
+    assert any("commit_sha unresolved" in w for w in pre), pre
+
+
+# ---------------------------------------------------------------------------
 # 2. set intent updates the bundle
 # ---------------------------------------------------------------------------
 
@@ -873,3 +939,805 @@ def test_validate_strict_resolved_flips_exit_code_on_complete_bundle(
     assert data_on["summary"]["strict_resolved"] is True
     missing = data_on["summary"]["missing_proofs"]
     assert any("unresolved_affected_symbols" in m for m in missing), missing
+
+
+# ---------------------------------------------------------------------------
+# 17. W189 — actor block + approvals + accepted_risks producers
+# ---------------------------------------------------------------------------
+#
+# Backstory: the W186 8-evidence-questions gap audit found that the
+# collector at ``src/roam/evidence/collector.py:551-569`` ALREADY probes
+# for an ``actor`` block on the pr-bundle envelope, BUT
+# ``cmd_pr_bundle.py`` never produced one. Every ``ChangeEvidence``
+# packet built from a real pr-bundle had empty ``agent_id`` and
+# ``human_actor`` fields. W189 closes that gap. These tests pin down:
+#
+#   1. The envelope carries an ``actor`` key with all 6 documented fields
+#      AND ``approvals`` / ``accepted_risks`` as empty top-level arrays.
+#   2. The ``--agent-id`` CLI flag wins over ``ROAM_AGENT_ID``.
+#   3. With no flag and no env, ``human_actor`` falls back to
+#      ``git config user.email`` (the fixture sets this in ``git_init``).
+#   4. ``actor_kind`` resolves from the dominant populated field
+#      (``agent`` > ``ci_runner`` > ``mcp_client`` > ``tool`` > ``human`` >
+#      ``external``).
+#   5. ``approvals`` and ``accepted_risks`` are always present as empty
+#      lists (Pattern 2 — explicit absence, never silent absence).
+
+
+def _populate_minimal_emit_bundle(cli_runner) -> None:
+    """Init + add the bare-minimum bits so emit returns a happy envelope."""
+    _invoke(cli_runner, ["pr-bundle", "init", "--intent", "W189 actor smoke"])
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "affected", "useFoo", "--blast-radius", "1"],
+    )
+    _invoke(cli_runner, ["pr-bundle", "add", "risk", "smoke"])
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "test-required", "tests/test_foo.py"],
+    )
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "test-run", "tests/test_foo.py", "--passed"],
+    )
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "context-cmd", "roam preflight useFoo"],
+    )
+
+
+def test_pr_bundle_envelope_includes_actor_block(
+    cli_runner, bundle_project, monkeypatch
+):
+    """Basic ``pr-bundle emit`` invocation has the ``actor`` key with all
+    six documented fields, plus empty ``approvals`` / ``accepted_risks``
+    arrays at the top level.
+
+    The collector at ``src/roam/evidence/collector.py:551-569`` reads
+    these fields; before W189 every ChangeEvidence packet had
+    empty ``agent_id`` / ``human_actor`` because the producer was
+    silent. Test pins down the six-field shape exactly.
+    """
+    # Clean env so the test result doesn't depend on the host CI runner.
+    for var in (
+        "ROAM_AGENT_ID",
+        "ROAM_HUMAN_ACTOR",
+        "ROAM_MCP_CLIENT_ID",
+        "ROAM_CI_RUNNER_ID",
+        "GITHUB_ACTIONS_RUN_ID",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    _populate_minimal_emit_bundle(cli_runner)
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+
+    # 1. actor block exists with the documented six fields.
+    #    W290 added per-field ``provenance_<field>`` sub-keys for any
+    #    field that resolved through a known channel (cli flag / env /
+    #    git config / run-ledger). The six documented fields must be
+    #    present; provenance_* sub-keys are additive and allowed.
+    assert "actor" in data, "envelope missing actor block (W189)"
+    actor = data["actor"]
+    expected_fields = {
+        "agent_id",
+        "human_actor",
+        "mcp_client_id",
+        "tool_id",
+        "ci_runner_id",
+        "actor_kind",
+    }
+    assert expected_fields <= set(actor.keys()), (
+        f"actor block missing documented fields: "
+        f"{expected_fields - set(actor.keys())}"
+    )
+    extra_keys = set(actor.keys()) - expected_fields
+    assert all(k.startswith("provenance_") for k in extra_keys), (
+        f"actor block has unexpected non-provenance keys: {extra_keys}"
+    )
+    # tool_id is reserved for W196 — always None today.
+    assert actor["tool_id"] is None
+
+    # 2. approvals / accepted_risks present as empty lists.
+    assert data.get("approvals") == [], "approvals must be empty list, not absent"
+    assert data.get("accepted_risks") == [], (
+        "accepted_risks must be empty list, not absent"
+    )
+
+
+def test_pr_bundle_agent_id_flag_wins_over_env(
+    cli_runner, bundle_project, monkeypatch
+):
+    """``--agent-id X`` MUST win over ``ROAM_AGENT_ID=Y`` (LAW 11)."""
+    monkeypatch.setenv("ROAM_AGENT_ID", "env-agent-loses")
+    # Clear unrelated env so actor_kind resolution is deterministic.
+    for var in ("ROAM_MCP_CLIENT_ID", "ROAM_CI_RUNNER_ID", "GITHUB_ACTIONS_RUN_ID"):
+        monkeypatch.delenv(var, raising=False)
+
+    _populate_minimal_emit_bundle(cli_runner)
+    result = _invoke(
+        cli_runner,
+        [
+            "--json",
+            "pr-bundle",
+            "emit",
+            "--no-auto-collect",
+            "--agent-id",
+            "flag-agent-wins",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    assert data["actor"]["agent_id"] == "flag-agent-wins", (
+        f"expected --agent-id to win, got {data['actor']!r}"
+    )
+
+
+def test_pr_bundle_env_fallback_to_git_config(
+    cli_runner, bundle_project, monkeypatch
+):
+    """No flag + no env -> ``human_actor`` populated from
+    ``git config user.email`` (the fixture's ``git_init`` sets this)."""
+    for var in (
+        "ROAM_AGENT_ID",
+        "ROAM_HUMAN_ACTOR",
+        "ROAM_MCP_CLIENT_ID",
+        "ROAM_CI_RUNNER_ID",
+        "GITHUB_ACTIONS_RUN_ID",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    # Pin the git user so the assertion isn't host-dependent.
+    subprocess.run(
+        ["git", "config", "user.email", "alice@example.com"],
+        cwd=bundle_project,
+        capture_output=True,
+    )
+
+    _populate_minimal_emit_bundle(cli_runner)
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    assert data["actor"]["human_actor"] == "alice@example.com", (
+        f"expected human_actor from git config, got {data['actor']!r}"
+    )
+    assert data["actor"]["agent_id"] is None
+    # No agent / CI -> kind falls back to "human" when only human_actor set.
+    assert data["actor"]["actor_kind"] == "human"
+
+
+def test_pr_bundle_actor_kind_resolved_from_fields(
+    cli_runner, bundle_project, monkeypatch
+):
+    """``actor_kind`` derives from the dominant populated field:
+    agent_id -> 'agent'; human_actor only -> 'human'; nothing -> 'external'.
+
+    Pins the priority chain in ``_resolve_actor_kind``: an AI-agent
+    identity is the load-bearing one when present (agent-OS thesis).
+    """
+    for var in (
+        "ROAM_AGENT_ID",
+        "ROAM_HUMAN_ACTOR",
+        "ROAM_MCP_CLIENT_ID",
+        "ROAM_CI_RUNNER_ID",
+        "GITHUB_ACTIONS_RUN_ID",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    # Suppress git config lookups entirely so the "nothing set" case is
+    # achievable even when the host machine has a global ``user.email``.
+    # ``GIT_CONFIG_GLOBAL=/dev/null`` neutralises ~/.gitconfig; the local
+    # ``--unset`` clears anything written by the bundle_project fixture.
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    subprocess.run(
+        ["git", "config", "--local", "--unset", "user.email"],
+        cwd=bundle_project,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "--local", "--unset", "user.name"],
+        cwd=bundle_project,
+        capture_output=True,
+    )
+
+    _populate_minimal_emit_bundle(cli_runner)
+
+    # Case A: agent_id only -> kind="agent" (wins even when human is also set).
+    result_a = _invoke(
+        cli_runner,
+        [
+            "--json",
+            "pr-bundle",
+            "emit",
+            "--no-auto-collect",
+            "--agent-id",
+            "claude-opus-4.7",
+            "--human-actor",
+            "bob@example.com",
+        ],
+    )
+    assert result_a.exit_code == 0, result_a.output
+    data_a = parse_json_output(result_a, command="pr-bundle")
+    assert data_a["actor"]["actor_kind"] == "agent", data_a["actor"]
+    assert data_a["actor"]["agent_id"] == "claude-opus-4.7"
+    assert data_a["actor"]["human_actor"] == "bob@example.com"
+
+    # Case B: human_actor only -> kind="human".
+    result_b = _invoke(
+        cli_runner,
+        [
+            "--json",
+            "pr-bundle",
+            "emit",
+            "--no-auto-collect",
+            "--human-actor",
+            "carol@example.com",
+        ],
+    )
+    assert result_b.exit_code == 0, result_b.output
+    data_b = parse_json_output(result_b, command="pr-bundle")
+    assert data_b["actor"]["actor_kind"] == "human", data_b["actor"]
+    assert data_b["actor"]["agent_id"] is None
+    assert data_b["actor"]["human_actor"] == "carol@example.com"
+
+    # Case C: nothing set -> kind="external" (escape hatch).
+    result_c = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result_c.exit_code == 0, result_c.output
+    data_c = parse_json_output(result_c, command="pr-bundle")
+    assert data_c["actor"]["actor_kind"] == "external", data_c["actor"]
+    assert data_c["actor"]["agent_id"] is None
+    assert data_c["actor"]["human_actor"] is None
+
+
+def test_pr_bundle_emits_empty_approvals_and_accepted_risks(
+    cli_runner, bundle_project, monkeypatch
+):
+    """Both top-level arrays are present with empty lists, not absent
+    (Pattern 2 — explicit absence beats silent absence)."""
+    for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR"):
+        monkeypatch.delenv(var, raising=False)
+    _populate_minimal_emit_bundle(cli_runner)
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    assert "approvals" in data, "approvals must be a top-level key"
+    assert "accepted_risks" in data, "accepted_risks must be a top-level key"
+    assert data["approvals"] == []
+    assert data["accepted_risks"] == []
+
+
+# ---------------------------------------------------------------------------
+# W236a / W232: secret scrub on actor block + verdict
+# ---------------------------------------------------------------------------
+
+
+def test_pr_bundle_redacts_github_pat_in_human_actor(
+    cli_runner, bundle_project, monkeypatch
+):
+    """ROAM_HUMAN_ACTOR containing a GitHub PAT MUST be scrubbed to
+    ``[REDACTED]`` on the envelope's actor block, and ``redactions``
+    must contain ``"secret"`` (W236a / W232).
+
+    Before this fix the PAT flowed verbatim into ``actor.human_actor``
+    and survived into ``ChangeEvidence.human_actor`` /
+    ``ActorRef.actor_id``.
+    """
+    monkeypatch.setenv(
+        "ROAM_HUMAN_ACTOR",
+        "alice+ghp_abc1234567890abc1234567890abc12345678@example.com",
+    )
+    _populate_minimal_emit_bundle(cli_runner)
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    assert "ghp_abc1234567890abc1234567890abc12345678" not in data["actor"][
+        "human_actor"
+    ], data["actor"]["human_actor"]
+    assert "[REDACTED]" in data["actor"]["human_actor"]
+    assert "secret" in (data.get("redactions") or []), (
+        f"expected 'secret' in redactions; got {data.get('redactions')}"
+    )
+
+
+def test_pr_bundle_redacts_openai_key_in_verdict(
+    cli_runner, bundle_project, monkeypatch
+):
+    """An OpenAI-key-shaped substring in any verdict-rendered field MUST
+    be scrubbed before the envelope leaves the producer.
+
+    The init path bakes ``--intent`` into the verdict, so an intent
+    carrying a key-shaped substring would otherwise leak through. The
+    finalisation pass scrubs the verdict and stamps ``redactions``.
+    """
+    for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR"):
+        monkeypatch.delenv(var, raising=False)
+    leaked_key = "sk-proj-abc1234567890abc1234567890"
+    result = _invoke(
+        cli_runner,
+        [
+            "--json",
+            "pr-bundle",
+            "init",
+            "--intent",
+            f"sync with {leaked_key}",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle-init")
+    verdict = data["summary"]["verdict"]
+    assert leaked_key not in verdict, (
+        f"OpenAI key leaked into verdict: {verdict!r}"
+    )
+    assert "[REDACTED]" in verdict
+    assert "secret" in (data.get("redactions") or []), (
+        f"expected 'secret' in redactions; got {data.get('redactions')}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# W224a: context_files promoted to top level
+# ---------------------------------------------------------------------------
+
+
+def test_pr_bundle_context_files_promoted_to_top_level(
+    cli_runner, bundle_project, monkeypatch
+):
+    """``pr-bundle add context-file <path>`` now surfaces ``<path>`` on the
+    envelope's top-level ``context_files[]`` array of ``{path,
+    content_hash}`` dicts (W224a / W219).
+
+    Before the fix, the inspected file lived only under
+    ``context_read.files_inspected`` and the evidence collector (which
+    probes ``context_files`` directly) saw nothing.
+    """
+    for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR"):
+        monkeypatch.delenv(var, raising=False)
+    _invoke(cli_runner, ["pr-bundle", "init", "--intent", "context files top-level"])
+    _invoke(cli_runner, ["pr-bundle", "add", "context-file", "src/upload.py"])
+    _invoke(cli_runner, ["pr-bundle", "add", "context-file", "src/retry.py"])
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    assert "context_files" in data, "envelope missing top-level context_files"
+    paths = [entry.get("path") for entry in data["context_files"]]
+    assert "src/upload.py" in paths
+    assert "src/retry.py" in paths
+    # Each row carries a content_hash key (None when not computed).
+    for entry in data["context_files"]:
+        assert "content_hash" in entry, entry
+
+
+def test_pr_bundle_emits_empty_context_files_array(
+    cli_runner, bundle_project, monkeypatch
+):
+    """When no context files were added, ``context_files`` is still
+    present as an empty array (Pattern 2 — explicit absence)."""
+    for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR"):
+        monkeypatch.delenv(var, raising=False)
+    _populate_minimal_emit_bundle(cli_runner)
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    assert "context_files" in data
+    assert data["context_files"] == []
+
+
+# ---------------------------------------------------------------------------
+# W224b: add-approval / add-accepted-risk CLI affordances
+# ---------------------------------------------------------------------------
+
+
+def test_pr_bundle_add_approval_appends_to_envelope(
+    cli_runner, bundle_project, monkeypatch
+):
+    """``roam pr-bundle add-approval --approver X --scope Y`` appends a
+    row that survives into the emit envelope's top-level
+    ``approvals[]`` array (W224b).
+    """
+    for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR"):
+        monkeypatch.delenv(var, raising=False)
+    _populate_minimal_emit_bundle(cli_runner)
+    res_add = _invoke(
+        cli_runner,
+        [
+            "pr-bundle",
+            "add-approval",
+            "--approver",
+            "alice@example.com",
+            "--scope",
+            "pr-42",
+            "--reason",
+            "signed off",
+        ],
+    )
+    assert res_add.exit_code == 0, res_add.output
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    approvals = data.get("approvals", [])
+    assert len(approvals) == 1, approvals
+    row = approvals[0]
+    assert row["approver"] == "alice@example.com"
+    assert row["scope"] == "pr-42"
+    assert row["reason"] == "signed off"
+    assert "approval_id" in row
+
+
+def test_pr_bundle_add_accepted_risk_appends_to_envelope(
+    cli_runner, bundle_project, monkeypatch
+):
+    """``roam pr-bundle add-accepted-risk --reviewer X --scope Y``
+    appends a row that survives into the emit envelope's
+    ``accepted_risks[]`` array (W224b).
+    """
+    for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR"):
+        monkeypatch.delenv(var, raising=False)
+    _populate_minimal_emit_bundle(cli_runner)
+    res_add = _invoke(
+        cli_runner,
+        [
+            "pr-bundle",
+            "add-accepted-risk",
+            "--reviewer",
+            "bob@example.com",
+            "--scope",
+            "R-001",
+            "--reason",
+            "blast radius minimal",
+        ],
+    )
+    assert res_add.exit_code == 0, res_add.output
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    accepted = data.get("accepted_risks", [])
+    assert len(accepted) == 1, accepted
+    row = accepted[0]
+    assert row["reviewer"] == "bob@example.com"
+    assert row["scope"] == "R-001"
+    assert row["reason"] == "blast radius minimal"
+    # The W219 collector reads either ``rationale`` or ``reason``; the
+    # producer stamps both so the collector picks up the row reliably.
+    assert row.get("rationale") == "blast radius minimal"
+    assert "risk_id" in row
+
+
+# ---------------------------------------------------------------------------
+# W224c: mode always emitted on normal emit
+# ---------------------------------------------------------------------------
+
+
+def test_pr_bundle_emit_always_carries_mode(
+    cli_runner, bundle_project, monkeypatch
+):
+    """A normal (non-blocked) emit MUST include both ``mode`` at the
+    top level AND ``summary.active_mode`` so the evidence collector's
+    mode probe always picks up a value (W224c / W219).
+    """
+    for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR", "ROAM_AGENT_MODE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ROAM_AGENT_MODE", "safe_edit")
+    _populate_minimal_emit_bundle(cli_runner)
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    assert "mode" in data, "envelope missing top-level 'mode' key"
+    assert data["mode"] == "safe_edit", data["mode"]
+    assert data["summary"].get("active_mode") == "safe_edit", data["summary"]
+
+
+def test_pr_bundle_emit_mode_unmoded_when_none_active(
+    cli_runner, bundle_project, monkeypatch
+):
+    """When no mode resolver fires, the envelope carries
+    ``mode="unmoded"`` rather than omitting the key (Pattern 2 —
+    explicit absence). W224c.
+    """
+    for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR", "ROAM_AGENT_MODE"):
+        monkeypatch.delenv(var, raising=False)
+    # Patch the mode resolver to return an empty name (simulates the
+    # "no mode declared" branch). The producer must then default to
+    # "unmoded" rather than dropping the key.
+    import roam.commands.cmd_pr_bundle as pr_bundle_mod
+
+    def _fake_mode_blocks_emit(_root):
+        return (False, "", None)
+
+    monkeypatch.setattr(
+        pr_bundle_mod, "_mode_blocks_emit", _fake_mode_blocks_emit
+    )
+
+    _populate_minimal_emit_bundle(cli_runner)
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+    assert data.get("mode") == "unmoded", data.get("mode")
+    assert data["summary"].get("active_mode") == "unmoded"
+
+
+# ---------------------------------------------------------------------------
+# W266 — pr-bundle envelope carries environment_refs[]
+# ---------------------------------------------------------------------------
+
+
+def test_pr_bundle_envelope_carries_environment_refs(
+    cli_runner, bundle_project, monkeypatch,
+):
+    """W266: pr-bundle emit envelope MUST include environment_refs[].
+
+    The W252 producer-coverage matrix flagged ``environment`` as the
+    most under-served evidence axis - only ``pr-replay`` materialised
+    EnvironmentRef rows. After W266 the pr-bundle envelope carries
+    its own producer-side env signal so consumers reading the envelope
+    DIRECTLY (without going through the collector) see workspace +
+    branch_range + (ci_job or local_run).
+    """
+    # Scrub CI env so the local_run path is deterministic.
+    for var in (
+        "CI",
+        "GITHUB_ACTIONS", "GITHUB_RUN_ID",
+        "GITLAB_CI", "CI_JOB_ID",
+        "BUILDKITE", "BUILDKITE_BUILD_ID",
+        "CIRCLECI", "CIRCLE_BUILD_NUM",
+        "JENKINS_URL", "BUILD_TAG",
+        "TF_BUILD", "BUILD_BUILDID",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    _invoke(cli_runner, ["pr-bundle", "init", "--intent", "Add env refs to bundle"])
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "affected", "foo", "--blast-radius", "1"],
+    )
+    _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
+
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+
+    env_refs = data.get("environment_refs")
+    assert isinstance(env_refs, list), (
+        f"environment_refs must be a list, got {type(env_refs).__name__}"
+    )
+    assert env_refs, "environment_refs must be non-empty on a real emit"
+
+    kinds = {r["env_kind"] for r in env_refs}
+    # workspace is always present; local_run when no CI was detected.
+    assert "workspace" in kinds, (
+        f"expected workspace env_kind; got {kinds}"
+    )
+    assert "local_run" in kinds, (
+        f"expected local_run env_kind in no-CI run; got {kinds}"
+    )
+    # branch_range is present when the bundle has a head_sha (git_init
+    # in the fixture creates a commit, so it will).
+    # The exact assertion is best-effort: skip when the fixture didn't
+    # produce a commit (e.g. some CI sandbox without git config).
+    has_branch = any(r["env_kind"] == "branch_range" for r in env_refs)
+    if has_branch:
+        branch_ref = next(r for r in env_refs if r["env_kind"] == "branch_range")
+        assert isinstance(branch_ref["env_id"], str) and branch_ref["env_id"]
+
+
+def test_pr_bundle_envelope_carries_ci_job_in_ci(
+    cli_runner, bundle_project, monkeypatch,
+):
+    """In a CI context, pr-bundle envelope's environment_refs include ci_job."""
+    # Pin a synthetic CI provider.
+    for var in (
+        "CI",
+        "GITHUB_ACTIONS", "GITHUB_RUN_ID",
+        "GITLAB_CI", "CI_JOB_ID",
+        "BUILDKITE", "BUILDKITE_BUILD_ID",
+        "CIRCLECI", "CIRCLE_BUILD_NUM",
+        "JENKINS_URL", "BUILD_TAG",
+        "TF_BUILD", "BUILD_BUILDID",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_RUN_ID", "pr-bundle-test-42")
+
+    _invoke(cli_runner, ["pr-bundle", "init", "--intent", "CI context test"])
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "affected", "bar", "--blast-radius", "1"],
+    )
+    _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight bar"])
+
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+
+    env_refs = data.get("environment_refs") or []
+    kinds = {r["env_kind"] for r in env_refs}
+    assert "ci_job" in kinds, (
+        f"expected ci_job env_kind in CI run; got {kinds}"
+    )
+    ci = next(r for r in env_refs if r["env_kind"] == "ci_job")
+    assert ci["env_id"] == "pr-bundle-test-42", (
+        f"ci_job env_id should match GITHUB_RUN_ID; got {ci['env_id']!r}"
+    )
+    assert "local_run" not in kinds, (
+        f"local_run must NOT appear in a CI run; got {kinds}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# W268 - pr-bundle envelope carries permits[] / leases[]
+# ---------------------------------------------------------------------------
+
+
+def test_pr_bundle_envelope_always_emits_permits_empty(
+    cli_runner, bundle_project,
+):
+    """W268: pr-bundle emit ALWAYS emits ``permits[]`` (empty in a fresh repo).
+
+    Pattern 2 always-emit contract: with no ``.roam/permits/`` directory,
+    the envelope still carries the key as ``[]`` so consumers can rely
+    on its presence. The W252 producer-coverage matrix flagged this gap.
+    """
+    _invoke(cli_runner, ["pr-bundle", "init", "--intent", "Add permits test"])
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "affected", "foo", "--blast-radius", "1"],
+    )
+    _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
+
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+
+    permits = data.get("permits")
+    assert isinstance(permits, list), (
+        f"permits must be a list, got {type(permits).__name__}"
+    )
+    # Fresh repo - .roam/permits/ does not exist; the always-emit
+    # contract requires an empty list (NOT a missing key).
+    assert permits == [], (
+        f"permits must be [] when .roam/permits/ is missing; got {permits!r}"
+    )
+
+
+def test_pr_bundle_envelope_always_emits_leases_empty(
+    cli_runner, bundle_project,
+):
+    """W268: pr-bundle emit ALWAYS emits ``leases[]`` (empty in a fresh repo)."""
+    _invoke(cli_runner, ["pr-bundle", "init", "--intent", "Add leases test"])
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "affected", "foo", "--blast-radius", "1"],
+    )
+    _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
+
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+
+    leases = data.get("leases")
+    assert isinstance(leases, list), (
+        f"leases must be a list, got {type(leases).__name__}"
+    )
+    assert leases == [], (
+        f"leases must be [] when .roam/leases/ is empty; got {leases!r}"
+    )
+
+
+def test_pr_bundle_envelope_lifts_permits_from_disk(
+    cli_runner, bundle_project,
+):
+    """W268: a ``.roam/permits/<id>.json`` row flows onto envelope.permits[].
+
+    W380 hardening: the reader now schema-validates each row through the
+    W198 ``PermitRecord`` contract, so the on-disk permit MUST carry the
+    full required field set (permit_id matching PERMIT_ID_RE, scope,
+    expires_at, issued_to, issued_at, issued_by). A skeletal "facade"
+    row that omits required fields is dropped + warned.
+    """
+    permits_dir = bundle_project / ".roam" / "permits"
+    permits_dir.mkdir(parents=True, exist_ok=True)
+    permit_row = {
+        "permit_id": "permit_20260514_268a00",
+        "scope": "edit:src/roam/cli.py",
+        "issued_to": "agent:claude-opus-4.7",
+        "expires_at": "2026-12-31T23:59:59Z",
+        "issued_at": "2026-05-14T10:00:00Z",
+        "issued_by": "human:w268-operator",
+    }
+    (permits_dir / "permit_20260514_268a00.json").write_text(
+        json.dumps(permit_row), encoding="utf-8"
+    )
+
+    _invoke(cli_runner, ["pr-bundle", "init", "--intent", "Add permit lift test"])
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "affected", "foo", "--blast-radius", "1"],
+    )
+    _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
+
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+
+    permits = data.get("permits") or []
+    assert len(permits) == 1, f"expected one permit lifted; got {permits!r}"
+    lifted = permits[0]
+    assert lifted.get("permit_id") == "permit_20260514_268a00"
+    assert lifted.get("scope") == "edit:src/roam/cli.py"
+    # The on-disk shape is mirrored verbatim - the producer does NOT
+    # invent fields.
+    assert lifted.get("issued_to") == "agent:claude-opus-4.7"
+
+
+def test_pr_bundle_envelope_lifts_leases_from_disk(
+    cli_runner, bundle_project,
+):
+    """W268: a ``.roam/leases/<id>.json`` row flows onto envelope.leases[]."""
+    leases_dir = bundle_project / ".roam" / "leases"
+    leases_dir.mkdir(parents=True, exist_ok=True)
+    lease_row = {
+        "lease_id": "lease_20260514_w268a",
+        "agent": "w268-smoke",
+        "subject_kind": "files",
+        "subject": ["src/roam/cli.py"],
+        "ttl_seconds": 1800,
+        "acquired_at": "2026-05-14T09:00:00.000000Z",
+        "expires_at": "2099-05-14T09:30:00.000000Z",
+        "state": "active",
+    }
+    (leases_dir / "lease_20260514_w268a.json").write_text(
+        json.dumps(lease_row), encoding="utf-8"
+    )
+
+    _invoke(cli_runner, ["pr-bundle", "init", "--intent", "Add lease lift test"])
+    _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "affected", "foo", "--blast-radius", "1"],
+    )
+    _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
+
+    result = _invoke(
+        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
+    )
+    assert result.exit_code == 0, result.output
+    data = parse_json_output(result, command="pr-bundle")
+
+    leases = data.get("leases") or []
+    assert len(leases) == 1, f"expected one lease lifted; got {leases!r}"
+    lifted = leases[0]
+    assert lifted.get("lease_id") == "lease_20260514_w268a"
+    assert lifted.get("agent") == "w268-smoke"
+    assert lifted.get("subject_kind") == "files"
+    # Subject + TTL flow through verbatim.
+    assert lifted.get("subject") == ["src/roam/cli.py"]
+    assert lifted.get("ttl_seconds") == 1800

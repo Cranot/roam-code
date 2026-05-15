@@ -554,7 +554,7 @@ def _detect_patterns_summary(conn):
         count = conn.execute(
             "SELECT COUNT(*) FROM symbols "
             "WHERE kind = 'function' AND "
-            "(name LIKE 'create_%' OR name LIKE 'build_%' OR name LIKE 'make_%' OR name LIKE '%Factory%')"
+            "(name LIKE 'create\\_%' ESCAPE '\\' OR name LIKE 'build\\_%' ESCAPE '\\' OR name LIKE 'make\\_%' ESCAPE '\\' OR name LIKE '%Factory%')"
         ).fetchone()[0]
         if count > 0:
             patterns.append({"type": "factory", "name": "factory functions", "count": count})

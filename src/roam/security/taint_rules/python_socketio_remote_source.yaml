@@ -1,7 +1,8 @@
 id: python-socketio-remote-input
-description: python-socketio event payload (network-attacker-controlled) into a SQL / shell / file sink. CodeQL 2.24 added equivalent remote source models.
+description: python-socketio event payload (network-attacker-controlled) into a SQL / shell / file sink. CodeQL 2.24 added equivalent remote source models. Maps to CWE-20 / OWASP A03:2021 Injection (sinks are SQL/shell/eval/file write — all injection-class).
 severity: error
 cwe: CWE-20
+owasp_top10: A03:2021_Injection
 languages:
   - python
 sources:

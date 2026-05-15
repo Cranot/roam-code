@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time as _time
 from pathlib import Path
+from typing import Literal
 
 import click
 from click.testing import CliRunner as _CliRunner
@@ -46,12 +47,14 @@ except Exception:
 # Each module is best-effort -- import failures degrade gracefully.
 try:
     from roam.mcp_extras import completions as _mcp_completions
+    from roam.mcp_extras import preflight as _mcp_preflight
     from roam.mcp_extras import progress as _mcp_progress
     from roam.mcp_extras import sampling as _mcp_sampling
     from roam.mcp_extras import session as _mcp_session
     from roam.mcp_extras import watcher as _mcp_watcher
 except Exception:
     _mcp_completions = None  # type: ignore[assignment]
+    _mcp_preflight = None  # type: ignore[assignment]
     _mcp_progress = None  # type: ignore[assignment]
     _mcp_sampling = None  # type: ignore[assignment]
     _mcp_session = None  # type: ignore[assignment]
@@ -59,7 +62,8 @@ except Exception:
 
 # ---------------------------------------------------------------------------
 # Tool presets — named sets of tools exposed to agents.
-# Default: "core" (23 tools + meta-tool = 24 total).
+# Default: "core" (57 tools + `roam_expand_toolset` meta-tool = 58 total).
+# Authoritative count via `python -m roam.surface_counts` (mcp.core_tools).
 # Override: ROAM_MCP_PRESET=review|refactor|debug|architecture|full
 # Legacy: ROAM_MCP_LITE=0 maps to "full" preset.
 # ---------------------------------------------------------------------------
@@ -268,7 +272,8 @@ if FastMCP is not None:
             "(core / review / refactor / debug / architecture / compliance / full) — "
             "the default surface is intentionally narrow to keep the prompt tight. "
             "For multi-symbol verification use `roam_batch_get` instead of N "
-            "sequential `roam_uses` / `roam_search` calls. "
+            # W787: canonical MCP tool name is `roam_search_symbol` (bare `roam_search` is not registered)
+            "sequential `roam_uses` / `roam_search_symbol` calls. "
             "Concurrency: tool calls are bounded (default 8 in flight, "
             "tighter for retrieve/taint_classify). When the server is at "
             "capacity, a structured envelope with error_code='RATE_LIMITED' "
@@ -289,46 +294,62 @@ _REGISTERED_TOOLS: list[str] = []
 # enumerate every tool in one call without re-introspecting FastMCP.
 _TOOL_METADATA: dict[str, dict] = {}
 
-# Tools with side effects or non-idempotent behavior.
-_NON_READ_ONLY_TOOLS = {
-    "roam_annotate_symbol",
-    "roam_ingest_trace",
-    "roam_vuln_map",
-    "roam_mutate",
-    "roam_init",
-    "roam_reindex",
-}
-_DESTRUCTIVE_TOOLS = {"roam_mutate"}
-_NON_IDEMPOTENT_TOOLS = _NON_READ_ONLY_TOOLS.copy()
+# ROADMAP A1 / W108: ``_NON_READ_ONLY_TOOLS`` is no longer a hand-maintained
+# set — it is a *derived view* of ``_TOOL_METADATA[name]["read_only"]`` (any
+# tool flagged ``read_only=False`` is non-read-only). The decorator is the
+# single source of truth; this module-level alias is rebuilt during
+# module-load finalization. The initial empty ``frozenset`` is so any early
+# importer sees a valid iterable; the real derived membership replaces it
+# during module-load finalization.
+_NON_READ_ONLY_TOOLS: frozenset[str] = frozenset()
+# ROADMAP A1 / W74: ``_DESTRUCTIVE_TOOLS`` is no longer a hand-maintained
+# set — it is a *derived view* of ``_TOOL_METADATA[name]["destructive"]``,
+# rebuilt at module-load after every ``@_tool`` decorator has run (see the
+# block just before the "Entry point" section). This bootstrap value is an
+# empty ``frozenset`` so any early importer sees a valid iterable; the real
+# derived membership replaces it during module-load finalization.
+_DESTRUCTIVE_TOOLS: frozenset[str] = frozenset()
+# ROADMAP A1 / W113: ``_NON_IDEMPOTENT_TOOLS`` is no longer derived from
+# ``_NON_READ_ONLY_TOOLS`` — it is a *derived view* of
+# ``_TOOL_METADATA[name]["idempotent"]``. Independent axis: in principle
+# a read-only tool could be non-idempotent (returns a UUID etc.) though
+# in current data they coincide. Decorator is single source of truth.
+# Initial empty ``frozenset`` is a bootstrap; module-load finalization
+# replaces it with the real derived membership.
+_NON_IDEMPOTENT_TOOLS: frozenset[str] = frozenset()
 
-# Tools where task execution must be used (non-blocking by default).
-# v12.2: promote `roam_health`, `roam_understand`, `roam_simulate` to
+# ROADMAP A1 / W99 + W107: ``_TASK_REQUIRED_TOOLS`` is no longer a
+# hand-maintained set — it is a *derived view* of
+# ``_TOOL_METADATA[name]["task_mode"] == "required"``, rebuilt at module-load
+# after every ``@_tool`` decorator has populated ``_TOOL_METADATA`` (see the
+# block just before the "Entry point" section). This bootstrap value is an
+# empty ``frozenset`` so any early importer sees a valid iterable; the real
+# derived membership replaces it during module-load finalization. The source
+# of truth is the ``task_mode="required"`` kwarg on the ``@_tool`` decorator
+# (legacy ``task_required=True`` still works via the deprecation shim).
+#
+# Members (pre-collapse, locked by tests/test_task_required_tools_derived.py):
+# v12.2 promoted `roam_health`, `roam_understand`, `roam_simulate` to
 # required-task per MCP spec 2025-11-25 (SEP-1686). These all run >2s on
 # a 14k-symbol repo — blocking the client is wrong UX. Tasks/get + cancel
 # work end-to-end. roam was the first code-intel MCP server to ship this.
-_TASK_REQUIRED_TOOLS = {
-    "roam_init",
-    "roam_reindex",
-    "roam_health",
-    "roam_understand",
-    "roam_simulate",
-}
+_TASK_REQUIRED_TOOLS: frozenset[str] = frozenset()
 
-# Long-running tools where task support is useful when FastMCP task extras exist.
-_TASK_OPTIONAL_TOOLS = {
-    "roam_orchestrate",
-    "roam_mutate",
-    "roam_vuln_map",
-    "roam_ingest_trace",
-    "roam_bisect_blame",
-    "roam_forecast",
-    "roam_path_coverage",
-    "roam_search_semantic",
-    "roam_closure",
-    "roam_cut_analysis",
-    "roam_generate_plan",
-    "roam_adversarial_review",
-}
+# ROADMAP A1 / W105 + W107: ``_TASK_OPTIONAL_TOOLS`` is no longer a
+# hand-maintained set — it is a *derived view* of
+# ``_TOOL_METADATA[name]["task_mode"] == "optional"``, rebuilt at module-load
+# after every ``@_tool`` decorator has populated ``_TOOL_METADATA`` (see the
+# block just before the "Entry point" section). This bootstrap value is an
+# empty ``frozenset`` so any early importer sees a valid iterable; the real
+# derived membership replaces it during module-load finalization. The source
+# of truth is the ``task_mode="optional"`` kwarg on the ``@_tool`` decorator
+# (legacy ``task_optional=True`` still works via the deprecation shim).
+#
+# Members (pre-collapse, locked by tests/test_task_optional_tools_derived.py):
+# Long-running tools where task support is useful when FastMCP task extras
+# exist but is not required (the dispatch falls back to a blocking call when
+# the task extras aren't available).
+_TASK_OPTIONAL_TOOLS: frozenset[str] = frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +464,10 @@ def _select_instruction_file(precedence: list[str], existing: list[str]) -> str:
     return "AGENTS.md"
 
 
+# W976: loose-but-honest per W966 — merges user-controlled profile
+# overrides via ``.update()``; do NOT TypedDict this return without an
+# at-boundary validator. See W933 _resolved_thresholds for the canonical
+# case study.
 def _compat_profile_payload(profile: str, root: str = ".") -> dict:
     """Build MCP client compatibility payload for one profile or all profiles."""
     existing = _detect_instruction_files(root)
@@ -534,11 +559,11 @@ _SCHEMA_EXPLORE = _make_schema(
 )
 
 _SCHEMA_PREPARE_CHANGE = _make_schema(
-    {"sections": {"type": "array"}, "target": {"type": "string"}},
+    {"sections": {"type": "array"}, "symbol": {"type": "string"}},
     workflow=_WORKFLOW_SCHEMA,
     preflight={"type": "object", "description": "Safety check: blast radius, tests, fitness"},
     context={"type": "object", "description": "Files and line ranges to read"},
-    effects={"type": "object", "description": "Side effects of the target symbol"},
+    effects={"type": "object", "description": "Side effects of the symbol"},
 )
 
 _SCHEMA_REVIEW_CHANGE = _make_schema(
@@ -798,12 +823,20 @@ def _tool_title(name: str) -> str:
 
 def _tool_annotations(name: str) -> dict:
     """Build MCP tool annotations with capability hints."""
-    read_only = name not in _NON_READ_ONLY_TOOLS
+    # ROADMAP A1 / W74 + W108 + W113: read ``destructive``, ``read_only``, and
+    # ``idempotent`` from ``_TOOL_METADATA`` (the source of truth) rather than
+    # the module-level ``_DESTRUCTIVE_TOOLS`` / ``_NON_READ_ONLY_TOOLS`` /
+    # ``_NON_IDEMPOTENT_TOOLS`` sets, which are now derived views rebuilt only
+    # after all ``@_tool`` decorators have run. ``_TOOL_METADATA[name]`` is
+    # populated at the top of the ``@_tool`` decorator, so it is always
+    # available by the time ``_tool_annotations`` is called downstream.
+    meta = _TOOL_METADATA.get(name, {})
+    read_only = meta.get("read_only", True)
     annotations = {
         "title": _tool_title(name),
         "readOnlyHint": read_only,
-        "destructiveHint": name in _DESTRUCTIVE_TOOLS,
-        "idempotentHint": name not in _NON_IDEMPOTENT_TOOLS,
+        "destructiveHint": meta.get("destructive", False),
+        "idempotentHint": meta.get("idempotent", True),
         "openWorldHint": False,
     }
     # Non-core tools are lazily discoverable in clients that support this extension.
@@ -818,6 +851,12 @@ def _tool(
     output_schema: dict | None = None,
     *,
     version: str = "1.0.0",
+    destructive: bool = False,
+    read_only: bool = True,
+    idempotent: bool = True,
+    task_mode: Literal["required", "optional"] | None = None,
+    task_required: bool | None = None,  # DEPRECATED: pass task_mode="required"
+    task_optional: bool | None = None,  # DEPRECATED: pass task_mode="optional"
 ):
     """Register an MCP tool if it belongs to the active preset.
 
@@ -833,9 +872,167 @@ def _tool(
     holding cached schemas may misbehave — bump the version. ``roam_catalog``
     surfaces the current version so agents can detect and refresh stale
     schema caches without re-enumerating the whole surface.
+
+    ROADMAP A1 / W74: ``destructive=True`` marks tools that mutate persistent
+    state (filesystem writes, schema migrations, …). The legacy module-level
+    ``_DESTRUCTIVE_TOOLS`` set is now a *derived view* of this flag — see the
+    module-load block after the last ``@_tool`` declaration. Adding a new
+    destructive tool only requires ``destructive=True`` here; do not add the
+    name to a separate hand-maintained set.
+
+    ROADMAP A1 / W99 + W105 + W107: the ``task_mode`` kwarg is the canonical
+    3-way enum describing how a tool interacts with MCP task mode:
+
+    - ``task_mode="required"`` — tool MUST run under MCP task mode (non-blocking;
+      tasks/get + cancel work end-to-end). These are tools that exceed ~2s on a
+      real-size repo, so blocking the client is wrong UX.
+    - ``task_mode="optional"`` — tool opts INTO task mode when FastMCP task extras
+      are available, but falls back to a blocking call when they aren't.
+    - ``task_mode=None`` (default) — blocking call only.
+
+    The legacy module-level ``_TASK_REQUIRED_TOOLS`` and ``_TASK_OPTIONAL_TOOLS``
+    sets are *derived views* of ``task_mode`` (see the module-load block after
+    the last ``@_tool`` declaration). Adding a new task-aware tool only requires
+    setting ``task_mode=...`` here; do not add the name to a separate set.
+
+    W107 collapsed the legacy two-bool shape (``task_required`` / ``task_optional``)
+    into this single enum. The dispatch logic was always fundamentally 3-way; the
+    enum encodes that structurally so a tool cannot be marked both required and
+    optional by construction. The two bool kwargs are RETAINED as DEPRECATED
+    back-compat aliases — passing either issues a ``DeprecationWarning`` when
+    combined with an explicit ``task_mode``, and otherwise maps onto it
+    transparently.
     """
 
+    # ROADMAP A1 / W107: resolve the deprecated two-bool shape onto the new enum.
+    # ``task_mode`` wins when both are supplied; warn so the caller updates.
+    if task_required is not None or task_optional is not None:
+        if task_mode is None:
+            if task_required:
+                task_mode = "required"
+            elif task_optional:
+                task_mode = "optional"
+        else:
+            import warnings as _w
+
+            _w.warn(
+                f"_tool({name!r}): task_mode={task_mode!r} overrides legacy "
+                f"task_required/task_optional kwargs — drop the legacy kwargs",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+    # Defensive: a tool can't be both required AND optional. With the enum,
+    # this is impossible by construction; with the legacy bools it required
+    # a separate test. Pin it here so a future re-introduction of the bool
+    # shape can't silently regress.
+    if task_required and task_optional:
+        raise ValueError(
+            f"_tool({name!r}): task_required and task_optional are disjoint — "
+            f"pick one (preferably task_mode=\"required\" or \"optional\")"
+        )
+
     def decorator(fn):
+        # A7: populate ``_TOOL_METADATA`` UNCONDITIONALLY — before the
+        # fastmcp-presence check — so ``roam_catalog`` and the version
+        # surface work even in environments where fastmcp isn't installed
+        # (tests, CLI-only installs). Metadata is plain Python state and
+        # is orthogonal to whether the MCP transport can actually serve.
+        when_to_use_pre = ""
+        examples_pre: list[str] = []
+        doc_pre = fn.__doc__ or ""
+        if doc_pre:
+            for line in doc_pre.splitlines():
+                stripped = line.strip()
+                if stripped.upper().startswith("WHEN TO USE:"):
+                    when_to_use_pre = stripped.split(":", 1)[1].strip()
+                    break
+            for line in doc_pre.splitlines():
+                ls = line.strip()
+                if ls.startswith(">>>") and "roam" in ls:
+                    examples_pre.append(ls[3:].strip())
+                if len(examples_pre) >= 3:
+                    break
+        _TOOL_METADATA[name] = {
+            "name": name,
+            "title": _tool_title(name),
+            "description": description,
+            "when_to_use": when_to_use_pre,
+            "examples": examples_pre,
+            "core": name in _CORE_TOOLS,
+            # ROADMAP A1 / W108: ``read_only`` now flows from the decorator
+            # kwarg into ``_TOOL_METADATA`` directly. The module-level
+            # ``_NON_READ_ONLY_TOOLS`` is built as a derived view of the
+            # NEGATION of this flag after all ``@_tool`` decorators have run.
+            "read_only": read_only,
+            # ROADMAP A1 / W74: ``destructive`` now flows from the decorator
+            # kwarg into ``_TOOL_METADATA`` directly. The module-level
+            # ``_DESTRUCTIVE_TOOLS`` is built as a derived view of this flag
+            # after all ``@_tool`` decorators have run.
+            "destructive": destructive,
+            # ROADMAP A1 / W113: ``idempotent`` is a first-class axis stored in
+            # ``_TOOL_METADATA``. Independent from ``read_only`` (in current
+            # data they coincide — destructive tools are all non-idempotent —
+            # but the semantic distinction matters: a read-only tool can be
+            # non-idempotent when it returns a fresh UUID or timestamp on
+            # every call). The module-level ``_NON_IDEMPOTENT_TOOLS`` is
+            # built as a derived view of the NEGATION of this flag after all
+            # ``@_tool`` decorators have run.
+            "idempotent": idempotent,
+            # ROADMAP A1 / W99 + W105 + W107: ``task_mode`` is the canonical
+            # 3-way enum stored in ``_TOOL_METADATA``. The legacy boolean
+            # ``task_required`` / ``task_optional`` fields are DERIVED from it
+            # for back-compat with the W99/W105 derived-view tests and any
+            # downstream consumer that introspects ``_TOOL_METADATA``. The
+            # module-level ``_TASK_REQUIRED_TOOLS`` / ``_TASK_OPTIONAL_TOOLS``
+            # sets are built as derived views of ``task_mode`` after all
+            # ``@_tool`` decorators have run.
+            "task_mode": task_mode,
+            "task_required": task_mode == "required",
+            "task_optional": task_mode == "optional",
+            # Version stamp — agents can compare against a cached value
+            # to detect schema drift without re-enumerating tools.
+            # Bump when the input or output schema for ``name`` changes.
+            "version": version,
+        }
+
+        # W296: append the "Requires a built index -- run `roam init`
+        # first" hint to every tool description that the cold-start
+        # guard gates. Imperative voice per CLAUDE.md LAW 2 ("Run X" not
+        # "This command does X"). Idempotent: appending twice is a no-op.
+        # Done BEFORE the fastmcp-presence gate so ``_TOOL_METADATA``
+        # surfaces the hinted description even when fastmcp is absent
+        # (tests, CLI-only installs).
+        if _mcp_preflight is not None:
+            effective_description = _mcp_preflight.maybe_decorate_description(
+                name, description or ""
+            )
+        else:
+            effective_description = description or ""
+        if effective_description:
+            _TOOL_METADATA[name]["description"] = effective_description
+
+        # W196: emit an ``McpDecisionReceipt`` per sensitive tool call.
+        # Wired BEFORE the fastmcp-presence gate so receipts also fire
+        # for in-process callers (tests, compound tools, CLI-only
+        # installs) - receipts are audit artefacts, independent of the
+        # MCP transport. Read-only / idempotent tools are passed through
+        # unchanged by ``_wrap_with_receipt`` so the overhead is zero
+        # on the high-volume benign tools.
+        fn = _wrap_with_receipt(name, fn)
+
+        # W296: cold-start short-circuit. Wired OUTSIDE the receipt
+        # wrapper (applied later, runs first on dispatch) so that when
+        # ``.roam/index.db`` is missing we return a structured
+        # ``index_not_built`` envelope INSTEAD of running the underlying
+        # CLI command (which auto-triggers a full index build that
+        # exceeds MCP call timeouts). No receipt is emitted on the
+        # short-circuit because nothing was actually decided. Tools in
+        # ``_NO_INDEX_NEEDED`` (init, reindex, doctor, catalog, ...) are
+        # pass-through unchanged. Per CLAUDE.md Pattern 1: silence /
+        # hang is the worst failure mode -- always emit a structured
+        # response the client can act on.
+        fn = _wrap_with_cold_start_guard(name, fn)
+
         if mcp is None:
             return fn
         # R8.E8 / Fix F: apply the handle-off wrapper UP-FRONT, before the
@@ -848,9 +1045,25 @@ def _tool(
         # function call when no handle-off fires (sub-microsecond).
         fn = _wrap_with_handle_off(name, fn)
 
+        # W670 / Fix D-extension: apply the alias-normalization wrapper
+        # UP-FRONT, before the preset filter — same rationale as the
+        # handle-off wrapper above. In-process callers (compound tools,
+        # tests, internal helpers that grab the tool by module attribute)
+        # must get param-alias normalization regardless of which preset
+        # is active. Pre-W670 this wrap sat after the preset filter, so
+        # ``roam_plan(file_path=...)`` on a default-core preset would
+        # raise ``TypeError`` instead of normalizing to ``path=...``.
+        # The "outermost so FastMCP sees the synthesised signature"
+        # rationale still holds for the registered path —
+        # ``mcp.tool(**attempt)(fn)`` below is only reached when the
+        # tool is in-preset, and at that point ``fn`` is already
+        # alias-wrapped with the merged signature attached.
+        fn = _wrap_with_alias_normalization(name, fn)
+
         # Meta-tool is always registered; others filtered by preset.
-        # When filtered out, return the handle-off-wrapped function so
-        # in-process callers still get the same safety net as MCP clients.
+        # When filtered out, return the alias-wrapped + handle-off-wrapped
+        # function so in-process callers still get the same safety net
+        # as MCP clients.
         if name != _META_TOOL:
             if _ACTIVE_TOOLS and name not in _ACTIVE_TOOLS:
                 return fn
@@ -862,59 +1075,34 @@ def _tool(
         from roam.mcp_extras.concurrency import wrap_with_guard
 
         fn = wrap_with_guard(name, fn)
-        # Fix D: legacy-parameter-alias normalization. Sits OUTERMOST so it
-        # sees raw client kwargs before any other wrapper, and so the
-        # synthesised signature (canonical + aliases) is what FastMCP /
-        # Pydantic introspect when generating the tool's JSON schema.
-        fn = _wrap_with_alias_normalization(name, fn)
+        # W445: fail-loud on duplicate tool registration. W432 sealed one
+        # specific duplicate (roam_oracle_route_exists); this guard prevents
+        # a future drive-by from silently shadowing an existing registration.
+        if name in _REGISTERED_TOOLS:
+            raise RuntimeError(f"Duplicate MCP tool registration: {name}")
         _REGISTERED_TOOLS.append(name)
-        # extract richer metadata from the tool's docstring so
-        # ``roam_catalog`` consumers don't need to fetch each tool's
-        # full description to pick the right one.
-        when_to_use = ""
-        examples: list[str] = []
-        doc = fn.__doc__ or ""
-        if doc:
-            # ``WHEN TO USE:`` block — single line up to a blank line.
-            for line in doc.splitlines():
-                stripped = line.strip()
-                if stripped.upper().startswith("WHEN TO USE:"):
-                    when_to_use = stripped.split(":", 1)[1].strip()
-                    break
-            # First three doctest-style example lines (``>>> roam ...``).
-            for line in doc.splitlines():
-                ls = line.strip()
-                if ls.startswith(">>>") and "roam" in ls:
-                    examples.append(ls[3:].strip())
-                if len(examples) >= 3:
-                    break
-        _TOOL_METADATA[name] = {
-            "name": name,
-            "title": _tool_title(name),
-            "description": description,
-            "when_to_use": when_to_use,
-            "examples": examples,
-            "core": name in _CORE_TOOLS,
-            "read_only": name not in _NON_READ_ONLY_TOOLS,
-            "destructive": name in _DESTRUCTIVE_TOOLS,
-            # Version stamp — agents can compare against a cached value
-            # to detect schema drift without re-enumerating tools.
-            # Bump when the input or output schema for ``name`` changes.
-            "version": version,
-        }
+        # Note: ``_TOOL_METADATA`` is populated at the top of ``decorator``
+        # so ``roam_catalog`` works even when fastmcp is absent. The
+        # wrappers above (handle-off, guard, alias-normalization) only
+        # affect dispatch behavior, not the catalog surface.
         kwargs: dict = {"name": name, "title": _tool_title(name)}
-        if description:
-            kwargs["description"] = description
+        # ``effective_description`` was computed BEFORE the fastmcp-presence
+        # gate above (W296). It carries the cold-start hint when the tool
+        # is gated by the cold-start guard, or the original description
+        # verbatim otherwise. Using it here keeps the catalog-visible
+        # description (``_TOOL_METADATA``) and the MCP-protocol description
+        # (this ``kwargs["description"]``) in lockstep.
+        if effective_description:
+            kwargs["description"] = effective_description
         schema = output_schema if output_schema is not None else _ENVELOPE_SCHEMA
         kwargs["output_schema"] = schema
         kwargs["annotations"] = _tool_annotations(name)
 
-        task_mode: str | None = None
-        if name in _TASK_REQUIRED_TOOLS:
-            task_mode = "required"
-        elif name in _TASK_OPTIONAL_TOOLS:
-            task_mode = "optional"
-        if task_mode:
+        # ROADMAP A1 / W99 + W105 + W107: ``task_mode`` is the canonical 3-way
+        # enum captured from the decorator kwarg above. The legacy
+        # ``_TASK_REQUIRED_TOOLS`` / ``_TASK_OPTIONAL_TOOLS`` sets are derived
+        # views of ``task_mode`` rebuilt at module-load finalization.
+        if task_mode is not None:
             # Metadata fallback for clients even when FastMCP task extras are absent.
             kwargs["meta"] = {"taskSupport": task_mode}
             if _TaskConfig is not None:
@@ -1160,29 +1348,89 @@ def _reset_session_partial_success_count() -> None:
 #   - symbol identifier:  ``symbol`` / ``name`` / ``target``
 #   - file location:      ``path`` / ``file`` / ``paths``
 #   - free-text query:    ``query`` / ``pattern`` / ``prefix``
+#   - input file path:    ``input_path`` / ``rules_path`` / ``rules_file``
+#                         / ``statement_path`` / ``envelope_path`` (W332)
 #
-# We pick a canonical name per concept (``symbol`` / ``path`` / ``query``) and
-# accept the historical aliases at the dispatch boundary, emitting a
-# deprecation warning so agents migrate without breaking. The alias layer is
-# ADDITIVE — no parameter is ever removed, only translated.
+# We pick a canonical name per concept (``symbol`` / ``path`` / ``query`` /
+# ``input_path``) and accept the historical aliases at the dispatch boundary,
+# emitting a deprecation warning so agents migrate without breaking. The alias
+# layer is ADDITIVE — no parameter is ever removed, only translated.
 #
 # Concepts intentionally NOT collapsed:
 #   - ``paths`` (plural list) vs ``path`` (singular) — semantically distinct
 #   - ``prefix`` — literal-prefix-match semantics, not free-text query
-#   - ``envelope_path`` — a specific JSON envelope file, not a generic path
 #   - ``trace_file`` — refers to an OTel/Jaeger/Zipkin trace, not source code
 #   - ``rules_dir`` / ``redact_paths`` — directories / flags, distinct concepts
 #   - ``from_pattern`` / ``to_pattern`` — regex patterns for path filtering
+#   - ``diff_path`` — a diff file is one of TWO inputs to pr-analyze and is the
+#     primary input; collapsing would clash with its sidecar ``input_path``
+#     (rules YAML). See W332 design note in this comment block.
+#
+# W332 design note — single-input-file canonical
+# -----------------------------------------------
+# All 5 historical "path to a file the tool reads" parameters (``rules_path``,
+# ``rules_file``, ``statement_path``, ``envelope_path``, plus the already-
+# canonical ``input_path`` on the audit_trail_* tools) collapse to one
+# canonical: ``input_path``. The agent's mental model is: "the file the tool
+# reads as its primary input." The tool's docstring explains WHAT KIND of file.
+# This mirrors the Pattern 3b fix for symbol/path/query.
+#
+# Acknowledged ambiguity: ``pr_analyze`` declares BOTH ``diff_path`` (primary
+# input, the PR diff) AND ``input_path`` (sidecar, the rules YAML). The
+# docstring is explicit that ``diff_path`` is primary and ``input_path`` is
+# the sidecar rules pack. Both names stay distinct — only the legacy
+# ``rules_path`` alias on ``pr_analyze`` collapses to ``input_path``. A
+# future sweep may introduce a finer-grained canonical
+# (``primary_input_path`` vs ``config_input_path``) if the dogfood corpus
+# shows agents tripping on the ``diff_path`` + ``input_path`` split.
 # ---------------------------------------------------------------------------
 
 # Per-concept alias map: {canonical_name: {alias: canonical}}. The redundant
 # value half lets callers also do reverse lookup if needed; the helper only
 # uses the keys.
 _PARAM_ALIASES: dict[str, dict[str, str]] = {
-    "symbol": {"name": "symbol", "target": "symbol"},
-    "path": {"file": "path"},
+    # W347 — ``subject`` reserved as a future symbol-shaped alias; no wrapper
+    # currently declares it. Pre-registering keeps the alias machinery
+    # forward-compatible for a future wrapper that picks that spelling.
+    "symbol": {"name": "symbol", "target": "symbol", "subject": "symbol"},
+    # W347 — extend ``path`` aliases to cover the file-path cluster
+    # (``file`` was already aliased pre-W332; ``file_path`` / ``filename`` /
+    # ``filepath`` join it here). The lint catches new wrappers that pick
+    # any of these as their canonical and forces a rename to ``path``.
+    "path": {
+        "file": "path",
+        "file_path": "path",
+        "filename": "path",
+        "filepath": "path",
+    },
     "query": {"pattern": "query"},
+    # W332 — single-input-file canonical. Four legacy names collapse here.
+    "input_path": {
+        "rules_path": "input_path",
+        "rules_file": "input_path",
+        "statement_path": "input_path",
+        "envelope_path": "input_path",
+    },
 }
+
+# W332 — closed set of legacy names that MUST NOT be declared by any new
+# ``@_tool`` wrapper. The lint test ``test_mcp_param_names.py`` parametrizes
+# over this set + ``_PARAM_ALIASES`` so that a future divergent param-name
+# family is caught the moment it lands. Existing callers that pass these
+# names still work via the alias machinery; the lint targets the WRAPPER
+# DECLARATION side, not the call site.
+_W332_DEPRECATED_INPUT_PATH_PARAMS: frozenset[str] = frozenset(
+    {"rules_path", "rules_file", "statement_path", "envelope_path"}
+)
+
+# W347 — closed set of legacy names from the symbol / file-path clusters
+# that MUST NOT be declared by any new ``@_tool`` wrapper. The matching
+# lint case in ``test_mcp_param_names.py`` parametrizes over this set;
+# existing wrappers carrying these names are listed in the lint's
+# ``_PRE_W332_EXEMPT`` table with a per-entry rationale.
+_W347_DEPRECATED_PARAMS: frozenset[str] = frozenset(
+    {"file_path", "filename", "filepath", "subject"}
+)
 
 
 def _normalize_aliases(
@@ -1271,6 +1519,144 @@ def _attach_alias_warnings(result, warnings: list[str]):
     return result
 
 
+def _collect_alias_candidates(sig) -> tuple[set[str], list[str]]:
+    """W607 — Pure: discover the alias surface for a given signature.
+
+    Returns ``(accepted, aliases_for_tool)``:
+
+    * ``accepted`` — the canonical names from ``_PARAM_ALIASES`` that the
+      signature actually declares (e.g. ``{"symbol", "path"}``).
+    * ``aliases_for_tool`` — the legacy alias names that should be
+      synthesised as keyword-only params on the wrapper (e.g.
+      ``["name", "target", "file"]``). Aliases already declared by the
+      wrapper itself are skipped — the wrapper owns that name.
+
+    Aliases are emitted in iteration order of ``_PARAM_ALIASES`` →
+    ``accepted`` (whose iteration order is set-insertion-derived); the
+    resulting list is deterministic across CPython runs for the same
+    signature because ``_PARAM_ALIASES`` is module-level and ``accepted``
+    is built by iterating over ``sig.parameters`` which preserves
+    declaration order.
+    """
+    accepted: set[str] = {
+        p.name for p in sig.parameters.values() if p.name in _PARAM_ALIASES
+    }
+    if not accepted:
+        return accepted, []
+
+    declared = {p.name for p in sig.parameters.values()}
+    aliases_for_tool: list[str] = []
+    for canon in accepted:
+        for alias in _PARAM_ALIASES[canon]:
+            if alias == canon or alias in declared:
+                continue
+            aliases_for_tool.append(alias)
+    return accepted, aliases_for_tool
+
+
+def _build_merged_signature(sig, accepted: set[str], aliases_for_tool: list[str]):
+    """W607 — Pure: build the merged ``inspect.Signature`` for the wrapper.
+
+    Constraints reconciled:
+
+    1. Any CANONICAL param that has at least one alias is demoted to
+       ``default=""`` so FastMCP / Pydantic schema generation does not
+       reject calls supplying only the legacy alias.
+    2. A positional-or-keyword param with a default cannot be followed by
+       a positional-or-keyword param WITHOUT a default (Python grammar).
+       So when a canonical-with-alias gets demoted AND any subsequent
+       positional-or-keyword param is still required, the demoted
+       canonical is promoted to ``KEYWORD_ONLY`` instead. This is the
+       W595 fix path.
+    3. Aliases are appended as ``KEYWORD_ONLY`` with ``default=None`` and
+       ``annotation=str`` — agents always invoke by keyword, so the
+       positional/keyword-only distinction is invisible at the wire level.
+    4. A ``**kwargs`` sink (VAR_KEYWORD) is preserved at the tail.
+
+    Pure: no I/O, no module imports beyond the local ``inspect``, no
+    mutation of ``sig`` (uses ``sig.replace(...)``).
+    """
+    import inspect as _inspect
+
+    canonicals_with_alias = {
+        canon for canon in accepted if any(a != canon for a in _PARAM_ALIASES[canon])
+    }
+
+    original_params = list(sig.parameters.values())
+
+    # W595 — pre-scan: which canonicals must become KEYWORD_ONLY rather
+    # than stay positional-or-keyword-with-default?
+    must_promote_to_kwonly: set[str] = set()
+    for i, p in enumerate(original_params):
+        if p.kind != _inspect.Parameter.POSITIONAL_OR_KEYWORD:
+            continue
+        if p.name not in canonicals_with_alias:
+            continue
+        if p.default is not _inspect.Parameter.empty:
+            continue
+        for q in original_params[i + 1 :]:
+            if q.kind != _inspect.Parameter.POSITIONAL_OR_KEYWORD:
+                break
+            if q.default is _inspect.Parameter.empty:
+                must_promote_to_kwonly.add(p.name)
+                break
+
+    positional_params: list[_inspect.Parameter] = []
+    keyword_only_params: list[_inspect.Parameter] = []
+    var_keyword_param: _inspect.Parameter | None = None
+    for p in original_params:
+        if p.kind == _inspect.Parameter.VAR_KEYWORD:
+            var_keyword_param = p
+            continue
+        if p.kind == _inspect.Parameter.KEYWORD_ONLY:
+            keyword_only_params.append(p)
+            continue
+        # POSITIONAL_OR_KEYWORD or POSITIONAL_ONLY
+        if p.name in canonicals_with_alias and p.default is _inspect.Parameter.empty:
+            if p.name in must_promote_to_kwonly:
+                keyword_only_params.append(
+                    p.replace(kind=_inspect.Parameter.KEYWORD_ONLY, default="")
+                )
+            else:
+                positional_params.append(p.replace(default=""))
+        else:
+            positional_params.append(p)
+
+    for alias in aliases_for_tool:
+        keyword_only_params.append(
+            _inspect.Parameter(
+                alias,
+                kind=_inspect.Parameter.KEYWORD_ONLY,
+                default=None,
+                annotation=str,
+            )
+        )
+
+    new_params: list[_inspect.Parameter] = positional_params + keyword_only_params
+    if var_keyword_param is not None:
+        new_params.append(var_keyword_param)
+
+    return sig.replace(parameters=new_params)
+
+
+def _build_merged_annotations(fn, aliases_for_tool: list[str]) -> dict:
+    """W607 — Pure: build the merged ``__annotations__`` dict.
+
+    FastMCP / Pydantic call ``typing.get_type_hints(wrapper_fn)`` to
+    derive the input schema, and ``get_type_hints`` looks at
+    ``__annotations__``, NOT ``__signature__``. Without syncing the two,
+    the synthesised alias params would be missing their type and pydantic
+    raises ``KeyError: '<alias>'`` during schema generation.
+
+    All aliases get ``str`` — mirrors the ``_build_merged_signature``
+    contract where alias params are typed ``str`` with ``default=None``.
+    """
+    merged: dict = dict(getattr(fn, "__annotations__", {}) or {})
+    for alias in aliases_for_tool:
+        merged[alias] = str
+    return merged
+
+
 def _wrap_with_alias_normalization(name: str, fn):
     """Wrap an MCP tool so legacy parameter aliases are accepted.
 
@@ -1292,6 +1678,11 @@ def _wrap_with_alias_normalization(name: str, fn):
     in the synthesised signature — this avoids ambiguity when a caller
     supplies both via positional + keyword. In practice clients call MCP
     tools by keyword, so this has no observable cost.
+
+    W607 — Signature-rebuild concerns are extracted into three pure
+    helpers (``_collect_alias_candidates`` / ``_build_merged_signature``
+    / ``_build_merged_annotations``). This function is now ~30 lines of
+    orchestration + the sync/async closure construction.
     """
     import functools as _functools
     import inspect as _inspect
@@ -1304,110 +1695,43 @@ def _wrap_with_alias_normalization(name: str, fn):
         # never break the tool.
         return fn
 
-    # Canonical names this tool declares (e.g. {"symbol", "path"}).
-    accepted: set[str] = {
-        p.name for p in sig.parameters.values() if p.name in _PARAM_ALIASES
-    }
-
+    accepted, aliases_for_tool = _collect_alias_candidates(sig)
     if not accepted:
         # Tool declares no canonical concept name — nothing to alias.
         return fn
 
-    # Build the merged signature: original params + alias params (keyword-only,
-    # default None). Inserted right before any **kwargs sink (if present).
-    #
-    # IMPORTANT: any CANONICAL param that has at least one alias is ALSO
-    # demoted to "optional with default None" in the synthesised signature.
-    # Reason: when a client sends only the legacy alias (e.g. ``name=X``)
-    # the canonical (``symbol``) would otherwise be a required-positional,
-    # and FastMCP / Pydantic schema validation would reject the call BEFORE
-    # this wrapper runs. The wrapper body translates aliases → canonical
-    # and then calls the inner fn, which preserves the original semantics
-    # (the inner fn still treats ``symbol=""`` as the "no symbol" case).
-    new_params: list[_inspect.Parameter] = []
-    aliases_for_tool: list[str] = []
-    declared = {p.name for p in sig.parameters.values()}
-    for canon in accepted:
-        for alias in _PARAM_ALIASES[canon]:
-            if alias == canon or alias in declared:
-                continue
-            aliases_for_tool.append(alias)
+    merged_signature = _build_merged_signature(sig, accepted, aliases_for_tool)
+    merged_annotations = _build_merged_annotations(fn, aliases_for_tool)
 
-    canonicals_with_alias = {
-        canon for canon in accepted if any(a != canon for a in _PARAM_ALIASES[canon])
-    }
-
-    for p in sig.parameters.values():
-        if p.name in canonicals_with_alias and p.default is _inspect.Parameter.empty:
-            # Demote required canonical → optional so the alias-only client
-            # path passes schema validation. Default ``""`` matches the
-            # convention used elsewhere in this file for "no symbol".
-            new_params.append(p.replace(default=""))
-        else:
-            new_params.append(p)
-
-    var_keyword_idx = None
-    for i, p in enumerate(new_params):
-        if p.kind == _inspect.Parameter.VAR_KEYWORD:
-            var_keyword_idx = i
-            break
-    insert_at = len(new_params) if var_keyword_idx is None else var_keyword_idx
-
-    for alias in aliases_for_tool:
-        new_params.insert(
-            insert_at,
-            _inspect.Parameter(
-                alias,
-                kind=_inspect.Parameter.KEYWORD_ONLY,
-                default=None,
-                annotation=str,
-            ),
-        )
-        insert_at += 1
-
-    merged_signature = sig.replace(parameters=new_params)
-
-    # Build the matching __annotations__ dict — FastMCP / Pydantic
-    # call ``typing.get_type_hints(wrapper_fn)`` to derive the input
-    # schema, and ``get_type_hints`` looks at ``__annotations__``, NOT
-    # ``__signature__``. Without syncing the two, the synthesised alias
-    # params would be missing their type and pydantic raises
-    # ``KeyError: '<alias>'`` during schema generation.
-    merged_annotations: dict = dict(getattr(fn, "__annotations__", {}) or {})
-    for alias in aliases_for_tool:
-        merged_annotations[alias] = str
+    def _prepare_kwargs(kwargs: dict) -> tuple[dict, list]:
+        # Drop alias-only kwargs that are still ``None`` — they were
+        # injected by the synthetic signature but the client didn't
+        # actually pass them. Otherwise they'd shadow a canonical
+        # default and confuse the inner function.
+        for alias in aliases_for_tool:
+            if alias in kwargs and kwargs[alias] is None:
+                kwargs.pop(alias)
+        return _normalize_aliases(name, kwargs, accepted)
 
     if _inspect.iscoroutinefunction(fn):
 
         @_functools.wraps(fn)
-        async def _async_alias_wrapped(*args, **kwargs):
-            # Drop alias-only kwargs that are still ``None`` — they were
-            # injected by the synthetic signature but the client didn't
-            # actually pass them. Otherwise they'd shadow a canonical
-            # default and confuse the inner function.
-            for alias in aliases_for_tool:
-                if alias in kwargs and kwargs[alias] is None:
-                    kwargs.pop(alias)
-            kwargs, warns = _normalize_aliases(name, kwargs, accepted)
+        async def _alias_wrapped(*args, **kwargs):
+            kwargs, warns = _prepare_kwargs(kwargs)
             result = await fn(*args, **kwargs)
             return _attach_alias_warnings(result, warns)
 
-        _async_alias_wrapped.__signature__ = merged_signature  # type: ignore[attr-defined]
-        _async_alias_wrapped.__annotations__ = merged_annotations
-        return _async_alias_wrapped
+    else:
 
-    @_functools.wraps(fn)
-    def _sync_alias_wrapped(*args, **kwargs):
-        for alias in aliases_for_tool:
-            if alias in kwargs and kwargs[alias] is None:
-                kwargs.pop(alias)
-        kwargs, warns = _normalize_aliases(name, kwargs, accepted)
-        result = fn(*args, **kwargs)
-        return _attach_alias_warnings(result, warns)
+        @_functools.wraps(fn)
+        def _alias_wrapped(*args, **kwargs):
+            kwargs, warns = _prepare_kwargs(kwargs)
+            result = fn(*args, **kwargs)
+            return _attach_alias_warnings(result, warns)
 
-    _sync_alias_wrapped.__signature__ = merged_signature  # type: ignore[attr-defined]
-    _sync_alias_wrapped.__annotations__ = merged_annotations
-    return _sync_alias_wrapped
+    _alias_wrapped.__signature__ = merged_signature  # type: ignore[attr-defined]
+    _alias_wrapped.__annotations__ = merged_annotations
+    return _alias_wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -1550,6 +1874,37 @@ _HANDLE_GC_WRITE_COUNTER: dict[str, int] = {"n": 0}
 _HANDLE_GC_RUN_EVERY = 25
 
 
+# W671: closed enumeration of MCP tools whose response IS the answer and
+# must be returned inline regardless of size. These are session-bootstrap
+# / pure-metadata surfaces where forcing the agent through a second
+# ``roam_fetch_handle`` round-trip defeats the contract:
+#
+# * ``roam_catalog`` — the canonical "what tools exist?" call. WHEN TO
+#   USE doc literally says "at the start of a long session ... one
+#   round-trip". On a 223-tool registry the JSON payload is ~126KB,
+#   which previously tripped the 50KB handle threshold and returned a
+#   handle envelope, forcing every agent to fetch the catalog twice.
+# * ``roam_session_metrics`` — local-only invocation telemetry; agents
+#   typically read it at end-of-session, not as a queryable dataset.
+# * ``roam_expand_toolset`` — already exempted below via ``_META_TOOL``
+#   (kept in the readable set here for documentation parity).
+#
+# This is a strict subset of ``mcp_extras.preflight._NO_INDEX_NEEDED``
+# (the cold-start skip set). Membership rule: "the response is one
+# message agents consume whole; pagination/sub-fetch makes no sense."
+# Tools that operate on caller-supplied paths (``roam_evidence_doctor``,
+# ``roam_pr_comment_render``) and bootstrap tools (``roam_init`` /
+# ``roam_reindex`` / ``roam_doctor``) all produce small envelopes in
+# practice and don't need the exemption — keeping the set narrow.
+_INLINE_RESPONSE_TOOLS: frozenset[str] = frozenset(
+    {
+        "roam_catalog",
+        "roam_session_metrics",
+        "roam_expand_toolset",
+    }
+)
+
+
 def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
     """If ``payload`` JSON-serialises larger than the threshold, write
     it to a content-addressed file and return a small handle envelope.
@@ -1575,6 +1930,12 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
         return payload
     # Don't handle-off the fetch tool itself (would loop) or the meta-tool.
     if tool_name in {"roam_fetch_handle", _META_TOOL}:
+        return payload
+    # W671: SETUP / pure-metadata tools whose response IS the answer must
+    # be returned inline. Forcing agents through ``roam_fetch_handle`` for
+    # the canonical session-start catalog defeats the one-round-trip
+    # contract. See ``_INLINE_RESPONSE_TOOLS`` above for the rationale.
+    if tool_name in _INLINE_RESPONSE_TOOLS:
         return payload
     # Don't double-handle: if the payload already IS a handle envelope
     # (e.g. an internal call composed from one), pass through.
@@ -1711,6 +2072,316 @@ def _wrap_with_handle_off(name: str, fn):
         return _maybe_handle_off(r, tool_name=name)
 
     return _sync_wrapped
+
+
+# ---------------------------------------------------------------------------
+# W196 - McpDecisionReceipt emission for sensitive tool calls
+# ---------------------------------------------------------------------------
+#
+# Per ``(internal memo)`` §"MCP trust boundary"
+# (lines 244-262): sensitive tools produce decision receipts so that "who
+# invoked what tool with what args, and what did the policy layer decide?"
+# is locally verifiable evidence. Receipts live as JSON files under
+# ``.roam/mcp_receipts/<run_id>/<tool_call>.json`` (or
+# ``.roam/mcp_receipts/_no_run/<tool_call>.json`` when no run is open).
+#
+# Sensitive = at least one of: ``destructive=True``, ``read_only=False``,
+# ``idempotent=False``, ``task_mode="required"``. Read-only / idempotent
+# tools (search/symbol/describe/...) skip emission - they are high-volume
+# and benign; receipts are for the WRITE audit trail.
+#
+# Best-effort discipline: a receipt write that fails must NEVER break the
+# underlying tool call. The audit trail is opportunistic.
+
+
+_MCP_RECEIPT_MAX_INLINE_OUTPUT_BYTES = 8 * 1024
+
+
+def _is_sensitive(meta: dict) -> bool:
+    """A tool is 'sensitive' if it writes, mutates state, or is non-idempotent."""
+    return (
+        meta.get("destructive", False)
+        or not meta.get("read_only", True)
+        or not meta.get("idempotent", True)
+        or meta.get("task_mode") == "required"
+    )
+
+
+def _declared_side_effects_for(meta: dict) -> tuple[str, ...]:
+    """Translate ``_TOOL_METADATA`` flags into the receipt's side-effect tuple.
+
+    Order is documented for stability: ``destructive`` wins over ``write``;
+    ``non_idempotent`` is appended when ``idempotent=False`` and is independent
+    of the destructive/write axis.
+    """
+    effects: list[str] = []
+    if meta.get("destructive", False):
+        effects.append("destructive")
+    elif not meta.get("read_only", True):
+        effects.append("write")
+    if not meta.get("idempotent", True):
+        effects.append("non_idempotent")
+    return tuple(effects)
+
+
+def _resolve_active_run_id() -> str | None:
+    """Best-effort lookup of the currently-active run id.
+
+    Reads ``ROAM_RUN_ID`` first (explicit handle-set signal from the agent /
+    harness), then falls back to ``runs.helpers.get_active_run_id`` which
+    scans ``.roam/runs/*`` for the newest in-progress run. Returns ``None``
+    when no run is open or anything blows up - the caller will route the
+    receipt to ``_no_run/`` instead.
+    """
+    try:
+        env_id = os.environ.get("ROAM_RUN_ID", "").strip()
+        if env_id:
+            return env_id
+    except Exception:
+        pass
+    try:
+        from pathlib import Path as _Path
+
+        from roam.db.connection import find_project_root
+        from roam.runs.helpers import get_active_run_id
+
+        return get_active_run_id(_Path(find_project_root()))
+    except Exception:
+        return None
+
+
+def _mcp_receipts_root() -> "Path":
+    """Repo-local home for MCP decision receipts.
+
+    Lives under ``<repo_root>/.roam/mcp_receipts/`` so a receipt sits
+    alongside the run ledger it links to. Falls back to ``.roam/`` under the
+    current working directory when ``find_project_root`` cannot locate a
+    ``.git`` root (rare; e.g. running ``roam mcp`` outside any repo).
+    """
+    try:
+        from roam.db.connection import find_project_root
+
+        root = Path(find_project_root())
+    except Exception:
+        root = Path(".").resolve()
+    return root / ".roam" / "mcp_receipts"
+
+
+def _write_mcp_receipt(
+    tool_name: str,
+    args: "Mapping[str, object]",
+    state: dict,
+) -> None:
+    """Construct an ``McpDecisionReceipt`` and atomically write it to disk.
+
+    Raises on any failure; the public ``_mcp_receipt_for`` context manager
+    swallows the exception so an audit-trail failure cannot break the tool
+    call.
+    """
+    import uuid as _uuid
+
+    from roam.atomic_io import atomic_write_text
+    from roam.evidence.mcp_receipt import McpDecisionReceipt, hash_input_args
+
+    meta = _TOOL_METADATA.get(tool_name, {})
+
+    # Build a JSON-serialisable view of the input args. Drop the FastMCP
+    # ``Context`` object (and anything else non-trivial) by going through a
+    # repr-based fallback - the goal is a stable hash, not a faithful replay
+    # of the call.
+    safe_args: dict[str, object] = {}
+    for k, v in (args or {}).items():
+        if k == "ctx":
+            continue
+        try:
+            json.dumps(v)
+            safe_args[k] = v
+        except (TypeError, ValueError):
+            safe_args[k] = repr(v)
+
+    tool_call_id = f"{tool_name}_{_uuid.uuid4().hex[:12]}"
+    input_hash = hash_input_args(safe_args)
+    run_id = _resolve_active_run_id()
+
+    # output_ref OR output_hash, never both (the dataclass enforces this).
+    output_ref = state.get("output_ref")
+    output_hash = state.get("output_hash")
+    if output_ref is None and output_hash is None:
+        # Compute output_hash from the captured result when small; else
+        # use the captured handle path.
+        result = state.get("result")
+        if result is not None:
+            try:
+                canonical = json.dumps(result, sort_keys=True, separators=(",", ":"))
+                payload = canonical.encode("utf-8")
+                if len(payload) <= _MCP_RECEIPT_MAX_INLINE_OUTPUT_BYTES:
+                    import hashlib as _hashlib
+
+                    output_hash = _hashlib.sha256(payload).hexdigest()
+                else:
+                    # Large result: rely on the handle-off layer's path if it
+                    # fired (result will carry ``handle``/``is_handle``); else
+                    # fall back to a hash of the canonical bytes so the
+                    # receipt always carries a fingerprint.
+                    if isinstance(result, dict) and result.get("is_handle"):
+                        handle = result.get("summary", {}).get("handle")
+                        if isinstance(handle, str) and handle:
+                            output_ref = f"handle:{handle}"
+                    if output_ref is None:
+                        import hashlib as _hashlib
+
+                        output_hash = _hashlib.sha256(payload).hexdigest()
+            except (TypeError, ValueError):
+                output_hash = None
+
+    receipt = McpDecisionReceipt(
+        tool_call=tool_call_id,
+        client_id=os.environ.get("ROAM_MCP_CLIENT_ID", "<unknown>"),
+        tool_name=tool_name,
+        actor_ref_id=os.environ.get("ROAM_AGENT_ID"),
+        declared_side_effects=_declared_side_effects_for(meta),
+        required_mode=meta.get("task_mode"),
+        input_hash=input_hash,
+        policy_decision=state.get("policy_decision", "allow"),
+        output_ref=output_ref,
+        output_hash=output_hash,
+        run_event_id=run_id,
+        redactions=(),
+        extra={},
+    )
+
+    bucket = run_id if run_id else "_no_run"
+    target = _mcp_receipts_root() / bucket / f"{tool_call_id}.json"
+    atomic_write_text(target, receipt.to_canonical_json() + "\n")
+
+
+import contextlib as _contextlib
+
+
+@_contextlib.contextmanager
+def _mcp_receipt_for(tool_name: str, args: "Mapping[str, object]"):
+    """Emit an ``McpDecisionReceipt`` for a sensitive tool call.
+
+    Yields a mutable dict the caller can populate with output info
+    (``output_ref`` OR ``output_hash``, ``policy_decision``). On exit, writes
+    the receipt to disk best-effort: errors are swallowed so an audit-trail
+    failure never breaks the tool call itself.
+
+    For read-only tools the helper yields an empty dict and writes nothing -
+    receipts are reserved for the WRITE audit trail.
+    """
+    meta = _TOOL_METADATA.get(tool_name, {})
+    if not _is_sensitive(meta):
+        yield {}
+        return
+
+    receipt_state: dict = {
+        "policy_decision": "allow",
+        "output_ref": None,
+        "output_hash": None,
+        "result": None,
+    }
+    try:
+        yield receipt_state
+    finally:
+        try:
+            _write_mcp_receipt(tool_name, args, receipt_state)
+        except Exception:
+            # Best-effort: receipts must NEVER break the tool call.
+            pass
+
+
+def _wrap_with_cold_start_guard(name: str, fn):
+    """Wrap an MCP tool with the W296 "no index yet" short-circuit.
+
+    Per CLAUDE.md Pattern 1 anti-pattern ("JSON-parse-on-empty-input"):
+    every MCP tool MUST return a structured envelope the client can act on.
+    On a fresh project where ``.roam/index.db`` does not exist, the
+    underlying ``_run_roam`` call would auto-trigger a full index build
+    that typically exceeds the MCP client's call timeout, leaving the
+    client to time out with no signal.
+
+    This wrapper short-circuits BEFORE any other wrapper runs (it is the
+    outermost layer applied last in the decorator chain, so it executes
+    first on dispatch). When the tool is in :data:`_NO_INDEX_NEEDED` --
+    i.e. it is a bootstrap / metadata / file-path tool -- the wrapper is
+    a pass-through (zero overhead beyond a single set-membership check).
+
+    Cost on the hot path (index already built): one ``Path.exists()``
+    call. The result is NOT cached at the module level because an agent
+    might run ``roam init`` mid-session and the next tool call should
+    immediately stop returning the cold-start envelope.
+    """
+    import functools as _functools
+    import inspect as _inspect
+
+    if _mcp_preflight is None:
+        # Best-effort: if the module failed to import we leave the tool
+        # uninstrumented rather than break the entire MCP surface.
+        return fn
+
+    if not _mcp_preflight.needs_index(name):
+        return fn
+
+    if _inspect.iscoroutinefunction(fn):
+
+        @_functools.wraps(fn)
+        async def _async_cold_start_wrapped(*args, **kwargs):
+            root = kwargs.get("root", ".")
+            envelope = _mcp_preflight.maybe_cold_start_envelope(name, root)
+            if envelope is not None:
+                return envelope
+            return await fn(*args, **kwargs)
+
+        return _async_cold_start_wrapped
+
+    @_functools.wraps(fn)
+    def _sync_cold_start_wrapped(*args, **kwargs):
+        root = kwargs.get("root", ".")
+        envelope = _mcp_preflight.maybe_cold_start_envelope(name, root)
+        if envelope is not None:
+            return envelope
+        return fn(*args, **kwargs)
+
+    return _sync_cold_start_wrapped
+
+
+def _wrap_with_receipt(name: str, fn):
+    """Wrap an MCP tool so a decision receipt is emitted per sensitive call.
+
+    Non-sensitive (read-only + idempotent + no required task mode) tools are
+    returned unchanged so we don't pay the overhead. Sensitive tools emit a
+    receipt to ``.roam/mcp_receipts/<run_id>/<tool_call>.json`` on every
+    invocation - capturing input args hash, declared side effects, the
+    resolved active run id, and the output hash (or handle ref for large
+    outputs).
+    """
+    import functools as _functools
+    import inspect as _inspect
+
+    meta = _TOOL_METADATA.get(name, {})
+    if not _is_sensitive(meta):
+        return fn
+
+    if _inspect.iscoroutinefunction(fn):
+
+        @_functools.wraps(fn)
+        async def _async_receipt_wrapped(*args, **kwargs):
+            with _mcp_receipt_for(name, kwargs) as state:
+                result = await fn(*args, **kwargs)
+                state["result"] = result
+                return result
+
+        return _async_receipt_wrapped
+
+    @_functools.wraps(fn)
+    def _sync_receipt_wrapped(*args, **kwargs):
+        with _mcp_receipt_for(name, kwargs) as state:
+            result = fn(*args, **kwargs)
+            state["result"] = result
+            return result
+
+    return _sync_receipt_wrapped
 
 
 def _structured_error(error_dict: dict) -> dict:
@@ -1935,6 +2606,73 @@ def _annotate_stale(result: dict, command: str) -> dict:
     return result
 
 
+# W325 — module-scope set of exit codes treated as "command completed normally".
+# Hoisted out of ``_run_roam_inprocess`` / ``_run_roam_subprocess`` (where it
+# was duplicated) so any future exit-code addition only edits one place.
+# Imported lazily to avoid a circular import on cold-start.
+from roam.exit_codes import EXIT_GATE_FAILURE as _EXIT_GATE_FAILURE
+from roam.exit_codes import EXIT_SUCCESS as _EXIT_SUCCESS
+
+_SUCCESS_EXIT_CODES: frozenset[int] = frozenset({_EXIT_SUCCESS, _EXIT_GATE_FAILURE})
+
+
+def _maybe_pass_through_structured_json(output: str, exit_code: int) -> dict | None:
+    """W325 — Pattern-1 Variant B pass-through.
+
+    When the CLI emits valid JSON on stdout AND exits with a code outside
+    :data:`_SUCCESS_EXIT_CODES` (e.g. 1 = advisory failure in ``doctor``,
+    6 = ``EXIT_PARTIAL`` in ``stale-refs``, or the
+    ``symbol_not_found`` + ``SystemExit(1)`` pattern in
+    ``cmd_test_scaffold``), we previously buried the structured stdout in
+    the ``error`` field of a generic error envelope. That hid the real
+    diagnostic from the agent.
+
+    This helper attempts a single ``json.loads`` on the stripped stdout
+    and, on success, returns the parsed dict annotated with:
+
+    * ``_meta.cli_exit_code`` — the original exit code so consumers can
+      distinguish 1 (advisory) from 6 (partial). Preserved if the inner
+      JSON already set it.
+    * ``isError`` — ``True`` per the MCP-spec convention (W328 codified)
+      that ``isError`` belongs INSIDE the result dict. Preserved if the
+      inner JSON already set it (don't overwrite a deliberate
+      ``isError: false``).
+
+    Returns ``None`` when:
+
+    * ``output`` is empty or whitespace
+    * the stripped output does not start with ``{``, ``[``, or ``"``
+      (cheap fast-reject so we don't burn JSON-parsing on stack traces)
+    * ``json.loads`` raises
+    * the parsed value is not a dict (top-level arrays or strings stay
+      in the error envelope where structure can be wrapped around them)
+
+    Pure function: no env reads, no logging side-effects, no module
+    state mutation. Both ``_run_roam_inprocess`` and
+    ``_run_roam_subprocess`` call it.
+    """
+    if not output:
+        return None
+    stripped = output.strip()
+    if not stripped:
+        return None
+    if stripped[0] not in "{[\"":
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    meta = parsed.get("_meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        parsed["_meta"] = meta
+    meta.setdefault("cli_exit_code", exit_code)
+    parsed.setdefault("isError", True)
+    return parsed
+
+
 def _run_roam(args: list[str], root: str = ".") -> dict:
     """Run a roam CLI command with ``--json`` and return parsed output.
 
@@ -2036,9 +2774,9 @@ def _run_roam_inprocess(args: list[str]) -> dict:
     # Gate failure (exit code 5) still produces valid JSON output — the
     # command completed but found issues.  Treat it like success for output
     # parsing, but annotate the result with gate_failure=True.
-    from roam.exit_codes import EXIT_GATE_FAILURE
-
-    _success_codes = {0, EXIT_GATE_FAILURE}
+    # W325: ``_SUCCESS_EXIT_CODES`` is the hoisted module constant.
+    EXIT_GATE_FAILURE = _EXIT_GATE_FAILURE
+    _success_codes = _SUCCESS_EXIT_CODES
 
     # Fix A (SYNTHESIS Pattern 1 — JSON-parse-on-empty-input):
     # If the CLI succeeded but emitted no stdout (e.g. ``roam diff`` on a
@@ -2084,6 +2822,16 @@ def _run_roam_inprocess(args: list[str]) -> dict:
                 "raw_stdout_preview": output[:500],
             }
 
+    # W325 — Pattern-1 Variant B pass-through: if the CLI emitted valid
+    # JSON on stdout but exited with a non-success code (1 = advisory,
+    # 6 = EXIT_PARTIAL, or symbol_not_found + SystemExit(1) in
+    # cmd_test_scaffold), surface the structured envelope to the agent
+    # annotated with ``_meta.cli_exit_code`` + ``isError: True`` rather
+    # than burying it under a generic error envelope.
+    passthrough = _maybe_pass_through_structured_json(output, result.exit_code)
+    if passthrough is not None:
+        return passthrough
+
     # Error path — classify and return structured error.
     # Task 2a: CliRunner(catch_exceptions=True) parks the raised exception
     # on ``result.exception``. Recover StaleDbDirError out of that slot so
@@ -2123,9 +2871,9 @@ def _run_roam_inprocess(args: list[str]) -> dict:
 
 def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
     """Run a roam CLI command via subprocess (fallback for non-local roots)."""
-    from roam.exit_codes import EXIT_GATE_FAILURE
-
-    _success_codes = {0, EXIT_GATE_FAILURE}
+    # W325: ``_SUCCESS_EXIT_CODES`` is the hoisted module constant.
+    EXIT_GATE_FAILURE = _EXIT_GATE_FAILURE
+    _success_codes = _SUCCESS_EXIT_CODES
 
     cmd = ["roam", "--json"] + args
     try:
@@ -2174,6 +2922,14 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
                 parsed["gate_failure"] = True
                 parsed["exit_code"] = EXIT_GATE_FAILURE
             return parsed
+        # W325 — Pattern-1 Variant B pass-through (subprocess path):
+        # mirror ``_run_roam_inprocess``. If stdout parsed cleanly as JSON
+        # but the CLI exited outside ``_SUCCESS_EXIT_CODES``, surface the
+        # structured diagnostic to the agent rather than burying it in
+        # the generic error envelope.
+        passthrough = _maybe_pass_through_structured_json(stdout_text, result.returncode)
+        if passthrough is not None:
+            return passthrough
         stderr = result.stderr.strip()
         error_code, hint, _retryable = _classify_error(stderr, result.returncode)
         return _structured_error(
@@ -2686,7 +3442,7 @@ async def explore(
     output_schema=_SCHEMA_PREPARE_CHANGE,
 )
 def prepare_change(
-    target: str,
+    symbol: str,
     staged: bool = False,
     budget: int = 0,
     session_hint: str = "",
@@ -2703,8 +3459,10 @@ def prepare_change(
 
     Parameters
     ----------
-    target:
-        Symbol name or file path to prepare for changing.
+    symbol:
+        Symbol name or file path to prepare for changing. W430/Fix-D
+        canonical; legacy ``target=`` callers are accepted via
+        ``_PARAM_ALIASES`` with a deprecation warning.
     staged:
         If True, check staged (git add-ed) changes instead.
     budget:
@@ -2715,12 +3473,12 @@ def prepare_change(
         Comma-separated recently discussed symbols for rank biasing.
 
     Returns: preflight safety data, context files to read, and side
-    effects of the target. Each section includes its own verdict.
+    effects of the symbol. Each section includes its own verdict.
     """
     budget_args = ["--budget", str(budget)] if budget else []
     pf_args = budget_args + ["preflight"]
-    if target:
-        pf_args.append(target)
+    if symbol:
+        pf_args.append(symbol)
     if staged:
         pf_args.append("--staged")
 
@@ -2728,15 +3486,15 @@ def prepare_change(
 
     ctx_data: dict = {}
     effects_data: dict = {}
-    if target:
-        ctx_args = budget_args + ["context", target, "--task", "refactor"]
+    if symbol:
+        ctx_args = budget_args + ["context", symbol, "--task", "refactor"]
         _append_context_personalization_args(
             ctx_args,
             session_hint=session_hint,
             recent_symbols=recent_symbols,
         )
         ctx_data = _run_roam(ctx_args, root)
-        effects_data = _run_roam(budget_args + ["effects", target], root)
+        effects_data = _run_roam(budget_args + ["effects", symbol], root)
 
     result = _compound_envelope(
         "prepare-change",
@@ -2745,7 +3503,7 @@ def prepare_change(
             ("context", ctx_data),
             ("effects", effects_data),
         ],
-        target=target,
+        symbol=symbol,
     )
     return _apply_budget(result, budget)
 
@@ -2866,8 +3624,8 @@ _BATCH_FTS_SQL = (
 # Fallback LIKE SQL when FTS5 is unavailable or returns nothing.
 # Default (symbol-only) matches the CLI ``batch-search`` contract — name
 # OR qualified_name only, never file path. Path-substring matches caused
-# false positives like ``redacted`` returning ``setup`` from
-# ``tests/.../redacted.test.ts`` (W3.1 bug fix).
+# false positives like ``useAccountBalance`` returning ``setup`` from
+# ``tests/.../useAccountBalance.test.ts`` (W3.1 bug fix).
 _BATCH_LIKE_SQL = (
     "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
     "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
@@ -3040,8 +3798,8 @@ def batch_search(
         If True, also match against file paths. Off by default — the
         previous wide-match behaviour caused spurious matches when a
         query string happened to appear in a directory or fixture name
-        (e.g. ``redacted`` matching ``setup`` from
-        ``tests/composables/redacted/redacted.test.ts``).
+        (e.g. ``useAccountBalance`` matching ``setup`` from
+        ``tests/composables/transactions/useAccountBalance.test.ts``).
         Mirrors the ``--include-paths`` flag on the CLI.
     root:
         Project root directory (default ".").
@@ -3075,16 +3833,15 @@ def batch_search(
             "errors": {},
         }
 
+    # W103: outer try/except guards ONLY open_db() — a connection failure is
+    # legitimately fatal. Each per-query iteration has its own inner try/except
+    # so an unexpected raise from _batch_search_one (e.g., row-dict KeyError on
+    # a malformed FTS5 row, or future signature drift) is captured per-query
+    # and does not abort the rest of the batch.
     try:
-        with open_db(readonly=True) as conn:
-            for q in queries_list:
-                rows, err = _batch_search_one(conn, q, limit, include_paths=include_paths_flag)
-                if err:
-                    errors[q] = err
-                else:
-                    results[q] = rows
+        conn_ctx = open_db(readonly=True)
     except Exception as exc:
-        # Index not available or other fatal DB error — return structured error
+        # open_db itself failed — no DB → return structured fatal
         return {
             "command": "batch-search",
             "summary": {
@@ -3097,6 +3854,18 @@ def batch_search(
             "results": {},
             "errors": {"_fatal": str(exc)},
         }
+
+    with conn_ctx as conn:
+        for q in queries_list:
+            try:
+                rows, err = _batch_search_one(conn, q, limit, include_paths=include_paths_flag)
+            except Exception as exc:  # noqa: BLE001 — surface any unexpected error per query
+                errors[q] = f"unexpected error: {exc}"
+                continue
+            if err:
+                errors[q] = err
+            else:
+                results[q] = rows
 
     total_matches = sum(len(v) for v in results.values())
     verdict = f"{total_matches} matches across {len(results)} queries" if results else "no matches found"
@@ -3168,14 +3937,12 @@ def batch_get(symbols: list, root: str = ".") -> dict:
             "errors": {},
         }
 
+    # W103: outer try/except guards ONLY open_db() — a connection failure is
+    # legitimately fatal. Each per-symbol iteration has its own inner try/except
+    # so an unexpected raise from _batch_get_one is captured per-symbol and
+    # does not abort the rest of the batch.
     try:
-        with open_db(readonly=True) as conn:
-            for sym in symbols_list:
-                details, err = _batch_get_one(conn, sym)
-                if err or details is None:
-                    errors[sym] = err or "not found"
-                else:
-                    results[sym] = details
+        conn_ctx = open_db(readonly=True)
     except Exception as exc:
         return {
             "command": "batch-get",
@@ -3187,6 +3954,18 @@ def batch_get(symbols: list, root: str = ".") -> dict:
             "results": {},
             "errors": {"_fatal": str(exc)},
         }
+
+    with conn_ctx as conn:
+        for sym in symbols_list:
+            try:
+                details, err = _batch_get_one(conn, sym)
+            except Exception as exc:  # noqa: BLE001 — surface any unexpected error per symbol
+                errors[sym] = f"unexpected error: {exc}"
+                continue
+            if err or details is None:
+                errors[sym] = err or "not found"
+            else:
+                results[sym] = details
 
     resolved = len(results)
     verdict = f"{resolved}/{len(symbols_list)} symbols resolved"
@@ -3256,6 +4035,9 @@ def expand_toolset(preset: str = "") -> dict:
     name="roam_init",
     description="Initialize roam and build the first index. Task-mode for non-blocking setup.",
     output_schema=_SCHEMA_INIT,
+    read_only=False,
+    idempotent=False,
+    task_mode="required",
 )
 async def roam_init(root: str = ".", yes: bool = True, ctx: _Context | None = None) -> dict:
     """Initialize roam for a repo and create the first index.
@@ -3289,6 +4071,9 @@ async def roam_init(root: str = ".", yes: bool = True, ctx: _Context | None = No
     name="roam_reindex",
     description="Incremental or force reindex. Task-mode + elicited confirmation for force runs.",
     output_schema=_SCHEMA_REINDEX,
+    read_only=False,
+    idempotent=False,
+    task_mode="required",
 )
 async def roam_reindex(
     force: bool = False,
@@ -3353,6 +4138,7 @@ async def roam_reindex(
     name="roam_understand",
     description="Full codebase briefing: stack, architecture, health, hotspots. Call FIRST in a new repo.",
     output_schema=_SCHEMA_UNDERSTAND,
+    task_mode="required",
 )
 async def understand(
     root: str = ".",
@@ -3459,6 +4245,7 @@ def ask(
     name="roam_health",
     description="Codebase health score (0-100) with issue breakdown, cycles, bottlenecks.",
     output_schema=_SCHEMA_HEALTH,
+    task_mode="required",
 )
 async def health(
     root: str = ".",
@@ -4703,7 +5490,7 @@ def retrieve_context(
     inside the agent's working window.
 
     Differs from ``roam_context`` (which expects a symbol) and
-    ``roam_search`` (which only returns names without budget /
+    ``roam_search_symbol`` (which only returns names without budget /
     rerank). Reaches for the ``clone_pairs`` table populated by
     ``roam clones --persist`` for the clone-canonical signal —
     persisted clones are not required, but they make rankings sharper.
@@ -4913,72 +5700,18 @@ def critique_patch(
 
 
 # ---------------------------------------------------------------------------
-# v12.1 — Boolean oracles (5)
+# v12.1 — Boolean oracle alias + batch helper
 # ---------------------------------------------------------------------------
-# Each oracle returns a single yes/no fact about the indexed graph. Direct
-# response to CKB v9.2's `symbolExists` / `analyzeOutgoingImpact` pattern —
-# 1-token answers keep agent prompts tight. All five wrap pure-function
-# implementations in `commands.cmd_oracle` so the same logic runs from CLI
-# and from MCP.
-
-
-@_tool(
-    name="roam_oracle_symbol_exists",
-    description="Boolean oracle: does any symbol with this name (or qualified name) exist in the indexed graph?",
-)
-def oracle_symbol_exists(symbol: str, root: str = ".") -> dict:
-    """Yes/no: is there an indexed symbol matching this name?
-
-    WHEN TO USE: cheapest possible existence check before generating
-    references to a symbol that might have been renamed/removed. Returns
-    ``{"value": bool, "reason": str}`` plus the standard envelope.
-
-    Differs from ``roam_search_symbol`` (which lists matches with metadata)
-    — this returns just a boolean for tight agent prompts. Matches name OR
-    qualified_name OR ``%.<name>`` suffix on qualified_name.
-
-    Fix D: legacy alias ``name`` is still accepted (translates to
-    ``symbol``) with a deprecation warning surfaced in
-    ``summary.alias_warnings``.
-    """
-    return _run_roam(["oracle", "symbol-exists", symbol], root)
-
-
-@_tool(
-    name="roam_oracle_route_exists",
-    description="Boolean oracle: does any HTTP route handler match this URL path?",
-)
-def oracle_route_exists(path: str, root: str = ".") -> dict:
-    """Yes/no: is there a route handler for this URL path?
-
-    WHEN TO USE: before generating a fetch/request to a backend endpoint
-    — confirm the route actually exists. Reads ``cross_repo_edges``
-    (populated by ``roam ws resolve``) when available; falls back to
-    scanning route-handler-shaped symbols (``app.get/post/...``,
-    ``Route::get/...``, ``@app.get(...)``).
-    """
-    return _run_roam(["oracle", "route-exists", path], root)
-
-
-@_tool(
-    name="roam_oracle_is_test_only",
-    description="Boolean oracle: are ALL callers of this symbol in test files?",
-)
-def oracle_is_test_only(symbol: str, root: str = ".") -> dict:
-    """Yes/no/indeterminate: do all callers of this symbol live in test files?
-
-    WHEN TO USE: before deleting a symbol or marking it as dead. A
-    ``True`` answer means the symbol exists only to support tests and
-    likely targets *production* code that's been gone for a while; combine
-    with ``roam_safe_delete`` for full evidence.
-
-    Tri-state: orphan symbols (no callers at all) return ``value=null``
-    with ``reason_class="indeterminate_no_data"`` rather than collapsing
-    to ``False`` — there's no evidence either way.
-
-    Fix D: legacy alias ``name`` is still accepted.
-    """
-    return _run_roam(["oracle", "is-test-only", symbol], root)
+# The five canonical boolean-oracle wrappers (``roam_oracle_symbol_exists``,
+# ``roam_oracle_route_exists``, ``roam_oracle_is_test_only``,
+# ``roam_oracle_is_reachable_from_entry``, ``roam_oracle_is_clone_of``)
+# live in the W305 cluster further down in this file. They previously
+# also lived here as a duplicate older block; W432 removed the duplicates
+# (two ``@_tool(name=...)`` decorations with the same name silently
+# overwrite ``_TOOL_METADATA`` and produce undefined dispatch behaviour
+# under FastMCP). This region retains only the two wrappers that are NOT
+# duplicated by the W305 cluster: the ``roam_oracle_test_only`` short-name
+# alias and the ``roam_oracle_batch`` multi-query helper.
 
 
 @_tool(
@@ -4996,53 +5729,6 @@ def oracle_test_only_alias(symbol: str, root: str = ".") -> dict:
     Fix D: legacy alias ``name`` is still accepted.
     """
     return _run_roam(["oracle", "is-test-only", symbol], root)
-
-
-@_tool(
-    name="roam_oracle_is_reachable_from_entry",
-    description="Boolean oracle: can BFS reach this symbol from any entry point in the call graph?",
-)
-def oracle_is_reachable_from_entry(symbol: str, max_hops: int = 10, root: str = ".") -> dict:
-    """Yes/no: is this symbol reachable from any entry-point symbol?
-
-    WHEN TO USE: before treating a symbol as "live code" — confirm the
-    static call graph actually has a path from an entry point (``main``,
-    a Click command, an HTTP route, an event handler, anything tagged
-    ``is_entry = 1`` or living in a file with ``file_role = 'entry'``).
-
-    BFS over ``edges.kind IN ('calls', 'references')`` up to ``max_hops``
-    deep. ``False`` from this oracle is the strongest signal a symbol is
-    truly unreachable — combine with ``roam_safe_delete`` for the full
-    evidence bundle.
-
-    Parameters
-    ----------
-    max_hops: BFS depth cap (default 10). Increase for very deep graphs;
-        decrease for quick sanity checks.
-
-    Fix D: legacy alias ``name`` is still accepted.
-    """
-    args = ["oracle", "is-reachable-from-entry", symbol]
-    if max_hops != 10:
-        args.extend(["--max-hops", str(max_hops)])
-    return _run_roam(args, root)
-
-
-@_tool(
-    name="roam_oracle_is_clone_of",
-    description="Boolean oracle: does this symbol participate in a persisted clone cluster?",
-)
-def oracle_is_clone_of(symbol: str, root: str = ".") -> dict:
-    """Yes/no: does this symbol have persisted clone siblings?
-
-    WHEN TO USE: before editing a symbol — if it's a clone, the same fix
-    likely needs to land on its siblings. Reads ``clone_pairs`` (populated
-    by ``roam clones --persist``); returns ``False`` with a hint when the
-    table is empty.
-
-    Fix D: legacy alias ``name`` is still accepted.
-    """
-    return _run_roam(["oracle", "is-clone-of", symbol], root)
 
 
 @_tool(
@@ -5286,7 +5972,7 @@ def cga_emit(
     ),
 )
 def cga_verify(
-    statement_path: str,
+    input_path: str = "",
     cosign_bundle: str = "",
     cosign_key: str = "",
     no_cosign: bool = False,
@@ -5297,8 +5983,17 @@ def cga_verify(
     WHEN TO USE: at audit / receipt time. Pair with the public key
     distributed alongside the codebase to verify both the Merkle digest
     AND the cosign identity in one call.
+
+    Parameters
+    ----------
+    input_path:
+        Path to the CGA statement JSON file to verify (required at call
+        time; defaulted to ``""`` to keep the alias-wrapper schema
+        permissive — the CLI returns exit 2 on an empty path). Legacy
+        callers using ``statement_path=`` are translated transparently
+        with a deprecation warning under ``summary.alias_warnings``.
     """
-    args = ["cga", "verify", statement_path]
+    args = ["cga", "verify", input_path]
     if cosign_bundle:
         args.extend(["--cosign-bundle", cosign_bundle])
     if cosign_key:
@@ -5395,13 +6090,23 @@ async def taint_classify(
     description="Shortest dependency path between two symbols with hop details.",
     output_schema=_SCHEMA_TRACE,
 )
-def trace(source: str, target: str, root: str = ".") -> dict:
+def trace(source: str, symbol: str, root: str = ".") -> dict:
     """Find the shortest dependency path between two symbols.
 
     Call this to understand HOW a change in one symbol could affect
     another. Shows path hops with symbol names, edge types, locations,
-    and coupling strength."""
-    return _run_roam(["trace", source, target], root)
+    and coupling strength.
+
+    Parameters
+    ----------
+    source:
+        The starting symbol of the dependency path.
+    symbol:
+        The destination symbol. W430/Fix-D canonical; legacy
+        ``target=`` callers are accepted via ``_PARAM_ALIASES`` with a
+        deprecation warning.
+    """
+    return _run_roam(["trace", source, symbol], root)
 
 
 @_tool(
@@ -5519,7 +6224,7 @@ def pr_analyze(
     diff_path: str = "",
     commit_range: str = "",
     staged: bool = False,
-    rules_path: str = "",
+    input_path: str = "",
     intent: str = "",
     block_threshold: int = 85,
     with_reviewers: bool = False,
@@ -5540,13 +6245,16 @@ def pr_analyze(
     ----------
     diff_path:
         Optional path to a unified-diff file. If omitted, ``commit_range`` /
-        ``staged`` / unstaged ``git diff`` is used.
+        ``staged`` / unstaged ``git diff`` is used. Note: this is the
+        PRIMARY input; ``input_path`` below is the sidecar rules pack.
     commit_range:
         Git range (e.g. ``"main..HEAD"``).
     staged:
         Analyse staged changes.
-    rules_path:
-        Path to ``.roam/rules.yml`` (default: auto-detect).
+    input_path:
+        Sidecar path to ``.roam/rules.yml`` (default: auto-detect). Legacy
+        callers using ``rules_path=`` are translated transparently with a
+        deprecation warning under ``summary.alias_warnings``.
     intent:
         PR title or commit message — checked for the ``[intentional]`` marker.
     block_threshold:
@@ -5570,8 +6278,8 @@ def pr_analyze(
         args.extend(["--input", diff_path])
     if staged:
         args.append("--staged")
-    if rules_path:
-        args.extend(["--rules", rules_path])
+    if input_path:
+        args.extend(["--rules", input_path])
     if intent:
         args.extend(["--intent", intent])
     if block_threshold != 85:
@@ -5588,7 +6296,7 @@ def pr_analyze(
 
 
 @_tool(name="roam_pr_comment_render")
-def pr_comment_render(envelope_path: str, style: str = "github", include_links: bool = True, root: str = ".") -> dict:
+def pr_comment_render(input_path: str = "", style: str = "github", include_links: bool = True, root: str = ".") -> dict:
     """Render a markdown PR comment from a pr-analyze JSON envelope.
 
     WHEN TO USE: After ``roam_pr_analyze``, render the verdict as a sticky
@@ -5598,8 +6306,11 @@ def pr_comment_render(envelope_path: str, style: str = "github", include_links: 
 
     Parameters
     ----------
-    envelope_path:
+    input_path:
         Path to a saved ``roam pr-analyze --json`` envelope on disk.
+        Legacy callers using ``envelope_path=`` are translated
+        transparently with a deprecation warning under
+        ``summary.alias_warnings``.
     style:
         ``github`` / ``gitlab`` / ``plain`` (default: ``github``).
     include_links:
@@ -5608,7 +6319,7 @@ def pr_comment_render(envelope_path: str, style: str = "github", include_links: 
     Returns: ``{summary: {...}, markdown: "..."}`` — the rendered comment
     in the ``markdown`` field plus a small summary block.
     """
-    args = ["pr-comment-render", "--input", envelope_path, "--style", style]
+    args = ["pr-comment-render", "--input", input_path, "--style", style]
     if not include_links:
         args.append("--no-links")
     return _run_roam(args, root)
@@ -5764,7 +6475,7 @@ def dogfood(
     audit: bool = True,
     pr_analyze_on: bool = True,
     audit_trail_on: bool = True,
-    rules_file: str = "",
+    input_path: str = "",
     root: str = ".",
 ) -> dict:
     """One-shot full-stack run: audit + pr-analyze + audit-trail + conformance.
@@ -5782,8 +6493,11 @@ def dogfood(
         Run pr-analyze on uncommitted diff.
     audit_trail_on:
         Append an audit-trail record + run conformance check.
-    rules_file:
-        Pass-through to pr-analyze (default: auto-detect ``.roam/rules.yml``).
+    input_path:
+        Pass-through rules YAML to pr-analyze (default: auto-detect
+        ``.roam/rules.yml``). Legacy callers using ``rules_file=`` are
+        translated transparently with a deprecation warning under
+        ``summary.alias_warnings``.
 
     Returns: ``{summary: {verdict, health_score, pr_verdict, conformance_score},
     sections: {audit, pr_analyze, conformance}}``.
@@ -5795,14 +6509,14 @@ def dogfood(
         args.append("--no-pr-analyze")
     if not audit_trail_on:
         args.append("--no-audit-trail")
-    if rules_file:
-        args.extend(["--rules", rules_file])
+    if input_path:
+        args.extend(["--rules", input_path])
     return _run_roam(args, root)
 
 
 @_tool(name="roam_rules_validate")
 def rules_validate(
-    rules_path: str = ".roam/rules.yml",
+    input_path: str = ".roam/rules.yml",
     against: str = "",
     strict: bool = False,
     root: str = ".",
@@ -5817,8 +6531,10 @@ def rules_validate(
 
     Parameters
     ----------
-    rules_path:
+    input_path:
         Path to the rules YAML to validate (default: ``.roam/rules.yml``).
+        Legacy callers using ``rules_path=`` are translated transparently
+        with a deprecation warning under ``summary.alias_warnings``.
     against:
         Optional sample diff path; the rules will be dry-run against it
         and matching violations reported.
@@ -5829,7 +6545,7 @@ def rules_validate(
     Returns: ``{summary: {verdict, errors_count, warnings_count, ...},
     errors: [...], warnings: [...], dry_run_violations: [...]}``.
     """
-    args = ["rules-validate", rules_path]
+    args = ["rules-validate", input_path]
     if against:
         args.extend(["--against", against])
     if strict:
@@ -6072,16 +6788,26 @@ def changelog(since: str = "", suggest: bool = False, root: str = ".") -> dict:
     name="roam_affected_tests",
     description="Test files that exercise changed code, with hop distance.",
 )
-def affected_tests(target: str = "", staged: bool = False, root: str = ".") -> dict:
+def affected_tests(symbol: str = "", staged: bool = False, root: str = ".") -> dict:
     """Find test files that exercise changed code.
 
     Call this to know which tests to run after making changes. Walks
     reverse dependency edges from changed code to find test files. For
     a full pre-change check, prefer preflight (includes affected tests
-    plus blast radius and fitness)."""
+    plus blast radius and fitness).
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name or file path to find tests for. W430/Fix-D
+        canonical; legacy ``target=`` callers are accepted via
+        ``_PARAM_ALIASES`` with a deprecation warning.
+    staged:
+        If True, analyze staged changes only.
+    """
     args = ["affected-tests"]
-    if target:
-        args.append(target)
+    if symbol:
+        args.append(symbol)
     if staged:
         args.append("--staged")
     return _run_roam(args, root)
@@ -6288,6 +7014,45 @@ def vibe_check(threshold: int = 0, root: str = ".") -> dict:
     args = ["vibe-check"]
     if threshold > 0:
         args.extend(["--threshold", str(threshold)])
+    return _run_roam(args, root)
+
+
+# W415: roam_llm_smells -- first multi-provider LLM-API linter.
+@_tool(
+    name="roam_llm_smells",
+    description=(
+        "Run LLM-API integration linter over indexed files: detects unpinned "
+        "model versions, missing max_tokens, prompt injection via user-input "
+        "concatenation, unvalidated json.loads on LLM output, and missing "
+        "temperature. Different from ``roam_vibe_check`` (AI-generated code "
+        "shape) and ``roam_smells`` (structural anti-patterns) -- this is "
+        "the production gate for human-authored LLM-using code."
+    ),
+)
+def roam_llm_smells(
+    min_severity: str = "info",
+    root: str = ".",
+) -> dict:
+    """Detect LLM-API anti-patterns: unpinned models, missing token bounds, prompt injection.
+
+    WHEN TO USE: Run this before shipping any code that calls an LLM
+    provider SDK (openai, anthropic, langchain, litellm, …) to catch
+    cost / reproducibility / prompt-injection regressions early.
+
+    Parameters
+    ----------
+    min_severity:
+        Minimum severity to surface: ``info`` / ``warning`` / ``critical``.
+        Defaults to ``info`` (everything).
+    root:
+        Repo root (default current directory).
+
+    Returns: per-pattern counts, findings list, scanned LLM files, and a
+    ``next_steps`` pointer to ``roam findings list --detector llm-smells``.
+    """
+    args: list[str] = ["llm-smells"]
+    if min_severity and min_severity.lower() != "info":
+        args.extend(["--min-severity", min_severity])
     return _run_roam(args, root)
 
 
@@ -6710,9 +7475,11 @@ def relate(symbols: list[str], files: list[str] | None = None, depth: int = 3, r
 @_tool(
     name="roam_annotate_symbol",
     description="Add persistent annotation to a symbol/file for future agent sessions.",
+    read_only=False,
+    idempotent=False,
 )
 def annotate_symbol(
-    target: str,
+    symbol: str,
     content: str,
     tag: str = "",
     author: str = "",
@@ -6728,8 +7495,10 @@ def annotate_symbol(
 
     Parameters
     ----------
-    target:
-        Symbol name or file path to annotate.
+    symbol:
+        Symbol name or file path to annotate. W430/Fix-D canonical;
+        legacy ``target=`` callers are accepted via ``_PARAM_ALIASES``
+        with a deprecation warning.
     content:
         The annotation text (e.g., "O(n^2) loop, see PR #42").
     tag:
@@ -6739,9 +7508,9 @@ def annotate_symbol(
     expires:
         Optional expiry datetime (ISO 8601, e.g. "2025-12-31").
 
-    Returns: confirmation with the resolved target and tag.
+    Returns: confirmation with the resolved symbol and tag.
     """
-    args = ["annotate", target, content]
+    args = ["annotate", symbol, content]
     if tag:
         args.extend(["--tag", tag])
     if author:
@@ -6756,7 +7525,7 @@ def annotate_symbol(
     description="Read annotations for symbols, files, or project. Filter by tag/date.",
 )
 def get_annotations(
-    target: str = "",
+    symbol: str = "",
     tag: str = "",
     since: str = "",
     root: str = ".",
@@ -6769,8 +7538,10 @@ def get_annotations(
 
     Parameters
     ----------
-    target:
+    symbol:
         Symbol name or file path. If empty, returns all annotations.
+        W430/Fix-D canonical; legacy ``target=`` callers are accepted
+        via ``_PARAM_ALIASES`` with a deprecation warning.
     tag:
         Filter by tag (e.g., "security", "performance").
     since:
@@ -6779,8 +7550,8 @@ def get_annotations(
     Returns: list of annotations with content, tag, author, and timestamps.
     """
     args = ["annotations"]
-    if target:
-        args.append(target)
+    if symbol:
+        args.append(symbol)
     if tag:
         args.extend(["--tag", tag])
     if since:
@@ -7132,6 +7903,7 @@ def capsule_export(redact_paths: bool = False, no_signatures: bool = False, root
 @_tool(
     name="roam_path_coverage",
     description="Critical call paths with zero test protection, ranked by risk.",
+    task_mode="optional",
 )
 def path_coverage(from_pattern: str = "", to_pattern: str = "", max_depth: int = 8, root: str = ".") -> dict:
     """Find critical call paths with zero test protection.
@@ -7165,6 +7937,7 @@ def path_coverage(from_pattern: str = "", to_pattern: str = "", max_depth: int =
 @_tool(
     name="roam_forecast",
     description="Predict when metrics will exceed thresholds (Theil-Sen regression).",
+    task_mode="optional",
 )
 def forecast(symbol: str = "", horizon: int = 30, alert_only: bool = False, root: str = ".") -> dict:
     """Predict when metrics will exceed thresholds.
@@ -7198,11 +7971,12 @@ def forecast(symbol: str = "", horizon: int = 30, alert_only: bool = False, root
 @_tool(
     name="roam_generate_plan",
     description="Structured execution plan for code modification: read order, invariants, tests.",
+    task_mode="optional",
 )
 def generate_plan(
-    target: str = "",
+    symbol: str = "",
     task: str = "refactor",
-    file_path: str = "",
+    path: str = "",
     staged: bool = False,
     depth: int = 2,
     root: str = ".",
@@ -7216,12 +7990,17 @@ def generate_plan(
 
     Parameters
     ----------
-    target:
-        Symbol name to plan for.
+    symbol:
+        Symbol name to plan for. W430/Fix-D canonical; legacy
+        ``target=`` callers are accepted via ``_PARAM_ALIASES`` with a
+        deprecation warning.
     task:
         Task type: refactor, debug, extend, review, understand.
-    file_path:
-        File to plan for (alternative to target).
+    path:
+        File to plan for (alternative to symbol). W347/Fix-D canonical
+        for filesystem paths -- legacy ``file_path=`` / ``filename=`` /
+        ``filepath=`` / ``file=`` callers are accepted via
+        ``_PARAM_ALIASES`` with a deprecation warning.
     staged:
         Plan for staged changes.
     depth:
@@ -7230,12 +8009,12 @@ def generate_plan(
     Returns: structured plan with 6 sections.
     """
     args = ["plan"]
-    if target:
-        args.append(target)
+    if symbol:
+        args.append(symbol)
     if task != "refactor":
         args.extend(["--task", task])
-    if file_path:
-        args.extend(["--file", file_path])
+    if path:
+        args.extend(["--file", path])
     if staged:
         args.append("--staged")
     if depth != 2:
@@ -7246,6 +8025,7 @@ def generate_plan(
 @_tool(
     name="roam_adversarial_review",
     description="Adversarial architecture review: challenges about cycles, anti-patterns, coupling.",
+    task_mode="optional",
 )
 def adversarial_review(staged: bool = False, commit_range: str = "", severity: str = "low", root: str = ".") -> dict:
     """Adversarial architecture review — challenge code changes.
@@ -7279,6 +8059,7 @@ def adversarial_review(staged: bool = False, commit_range: str = "", severity: s
 @_tool(
     name="roam_cut_analysis",
     description="Minimum cut analysis: fragile domain boundaries, highest-impact leak edges.",
+    task_mode="optional",
 )
 def cut_analysis(
     between_a: str = "",
@@ -7322,7 +8103,7 @@ def cut_analysis(
     description="Implicit contracts for symbols: signature stability, usage spread, breaking risk.",
 )
 def get_invariants(
-    target: str = "",
+    symbol: str = "",
     public_api: bool = False,
     breaking_risk: bool = False,
     top_n: int = 20,
@@ -7336,8 +8117,10 @@ def get_invariants(
 
     Parameters
     ----------
-    target:
-        Symbol name or file path to analyze.
+    symbol:
+        Symbol name or file path to analyze. W430/Fix-D canonical;
+        legacy ``target=`` callers are accepted via ``_PARAM_ALIASES``
+        with a deprecation warning.
     public_api:
         Analyze all exported/public symbols.
     breaking_risk:
@@ -7348,8 +8131,8 @@ def get_invariants(
     Returns: invariants per symbol with breaking risk scores.
     """
     args = ["invariants"]
-    if target:
-        args.append(target)
+    if symbol:
+        args.append(symbol)
     if public_api:
         args.append("--public-api")
     if breaking_risk:
@@ -7362,6 +8145,7 @@ def get_invariants(
 @_tool(
     name="roam_bisect_blame",
     description="Find snapshots that caused architectural degradation, ranked by impact.",
+    task_mode="optional",
 )
 def bisect_blame(
     metric: str = "health_score",
@@ -7403,6 +8187,7 @@ def bisect_blame(
 @_tool(
     name="roam_simulate",
     description="Predict metric deltas from move/extract/merge/delete operations.",
+    task_mode="required",
 )
 def simulate(
     operation: str,
@@ -7460,6 +8245,7 @@ def simulate(
 @_tool(
     name="roam_closure",
     description="Minimal set of changes needed for rename/delete/modify (exact files + lines).",
+    task_mode="optional",
 )
 def closure(symbol: str, rename: str = "", delete: bool = False, root: str = ".") -> dict:
     """Compute the minimal set of changes needed when modifying a symbol.
@@ -7606,6 +8392,7 @@ def rules_check(ci: bool = False, rules_dir: str = "", root: str = ".") -> dict:
 @_tool(
     name="roam_orchestrate",
     description="Partition codebase for parallel multi-agent work with exclusive write zones.",
+    task_mode="optional",
 )
 async def orchestrate(
     n_agents: int,
@@ -7650,6 +8437,10 @@ async def orchestrate(
 @_tool(
     name="roam_mutate",
     description="Agentic editing: move/rename/add-call/extract symbols with auto-import rewrite.",
+    destructive=True,
+    read_only=False,
+    idempotent=False,
+    task_mode="optional",
 )
 def mutate(
     operation: str,
@@ -7746,6 +8537,9 @@ def mutate(
 @_tool(
     name="roam_vuln_map",
     description="Ingest vulnerability scanner reports (npm/pip/trivy/osv), match to symbols.",
+    read_only=False,
+    idempotent=False,
+    task_mode="optional",
 )
 def vuln_map(
     npm_audit: str = "",
@@ -7856,6 +8650,9 @@ def secrets_scan(severity: str = "all", root: str = ".") -> dict:
 @_tool(
     name="roam_ingest_trace",
     description="Ingest runtime traces (OTel/Jaeger/Zipkin), match spans to symbols.",
+    read_only=False,
+    idempotent=False,
+    task_mode="optional",
 )
 def ingest_trace(trace_file: str, format: str = "", root: str = ".") -> dict:
     """Ingest runtime traces and match spans to symbols.
@@ -7921,6 +8718,7 @@ def runtime_hotspots(runtime_sort: bool = False, discrepancy: bool = False, root
 @_tool(
     name="roam_search_semantic",
     description="Find symbols by natural language query (hybrid BM25 + vector + framework packs).",
+    task_mode="optional",
 )
 def search_semantic(query: str, top: int = 10, threshold: float = 0.05, root: str = ".") -> dict:
     """Find symbols by natural language query using hybrid BM25+vector search.
@@ -8034,7 +8832,7 @@ def roam_uses(symbol: str, full: bool = False, root: str = ".") -> dict:
     positives in comments / docstrings / unrelated string literals,
     and the agent then has to filter those out. ``roam_uses`` resolves
     references through the indexed call/import/inherit graph: every
-    result is a real symbol that depends on the target, grouped by
+    result is a real symbol that depends on ``symbol``, grouped by
     edge type (calls, imports, inheritance, trait usage). Broader
     than ``roam_impact`` (which counts symbols only); use ``uses``
     for planning API changes or "what would break if I delete X".
@@ -9499,15 +10297,4291 @@ def roam_disambiguate(symbol: str, limit: int = 20, root: str = ".") -> dict:
     description="Triage a failing test/symbol: recently-changed symbols transitively reachable from it.",
     output_schema=_ENVELOPE_SCHEMA,
 )
-def roam_why_fail(target: str, days: int = 14, max_hops: int = 5, limit: int = 10, root: str = ".") -> dict:
+def roam_why_fail(symbol: str, days: int = 14, max_hops: int = 5, limit: int = 10, root: str = ".") -> dict:
     """Triage a failing test by surfacing recently-changed reachable symbols.
 
     WHEN TO USE: a test just started failing — what changed?
     Combines BFS reach with git recency to rank suspects.
 
+    Parameters
+    ----------
+    symbol:
+        Failing test symbol or file. W430/Fix-D canonical; legacy
+        ``target=`` callers are accepted via ``_PARAM_ALIASES`` with a
+        deprecation warning.
+
     >>> roam why-fail tests/test_login.py --days 7
     """
-    args = ["why-fail", target, "--days", str(days), "--max-hops", str(max_hops), "--limit", str(limit)]
+    args = ["why-fail", symbol, "--days", str(days), "--max-hops", str(max_hops), "--limit", str(limit)]
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_evidence_doctor",
+    description=(
+        "Diagnose a ChangeEvidence packet's health: schema validity, "
+        "closed-enum conformance, content_hash integrity, completeness "
+        "banner tier (STRONG / PARTIAL / INSUFFICIENT), declared "
+        "redactions, and actionable next steps for partial / missing "
+        "evidence questions. Read-only."
+    ),
+)
+def roam_evidence_doctor(packet_path: str, root: str = ".") -> dict:
+    """Diagnose an evidence packet's health.
+
+    WHEN TO USE: a buyer / auditor (or a CI gate) received a
+    ``ChangeEvidence`` JSON packet and wants to know whether it's
+    trustworthy / complete / well-formed BEFORE running it through a
+    heavyweight downstream check. Lightweight, read-only, never mutates
+    the packet.
+
+    Verdict ladder:
+
+    * ``PASS`` — schema valid, content_hash matches, banner is STRONG.
+    * ``WARN`` — schema valid, content_hash matches, but banner is
+      PARTIAL or INSUFFICIENT (one or more questions are partial /
+      missing).
+    * ``FAIL`` — schema invalid (closed-enum violation, malformed JSON)
+      OR content_hash recompute disagrees with the stamped value.
+
+    Parameters
+    ----------
+    packet_path:
+        Filesystem path to a ``ChangeEvidence`` JSON file. The packet is
+        loaded as raw JSON (no schema-version coupling), so older
+        packets that pre-date W210 still parse.
+    """
+    args = ["evidence-doctor", packet_path]
+    return _run_roam(args, root)
+
+
+# W464 + W465: roam_evidence_oscal — OSCAL v1.2 emission (Control Mapping or AR).
+@_tool(
+    name="roam_evidence_oscal",
+    description=(
+        "Emit an OSCAL v1.2 document. Default kind='control-mapping' "
+        "compiles the roam control map (maps roam evidence to EU AI "
+        "Act, ISO/IEC 42001, NIST AI RMF, NIST AI 600-1, NIST SP "
+        "800-218A, SOC 2, internal AI-change policy). kind="
+        "'assessment-results' compiles a per-run AR document from a "
+        "ChangeEvidence packet (requires evidence_path); AR mandates "
+        "an Assessment Plan reference — pass import_ap_ref for an "
+        "external AP or omit it to inline a synthesized stub AP. "
+        "Supports evidence for the listed frameworks — does not "
+        "certify compliance. Two roam-specific concepts "
+        "(authority_refs, redactions) surface as OSCAL ``prop`` "
+        "extensions under the ``urn:roam:oscal:v1`` namespace."
+    ),
+)
+def roam_evidence_oscal(
+    kind: str = "control-mapping",
+    output_path: str | None = None,
+    control_map: str | None = None,
+    evidence_path: str | None = None,
+    import_ap_ref: str | None = None,
+    title: str | None = None,
+    root: str = ".",
+) -> dict:
+    """Emit an OSCAL v1.2 document (Control Mapping or Assessment Results).
+
+    WHEN TO USE: an external GRC / compliance tool (compliance-
+    trestle, complyctl, FedRAMP automation) wants to consume a
+    portable, OSCAL-conformant document from roam. Control Mapping
+    is the repo-static crosswalk (one per repo); Assessment Results
+    is the per-run findings document (one per code-change scope).
+
+    Parameters
+    ----------
+    kind:
+        ``"control-mapping"`` (default) or ``"assessment-results"``.
+    output_path:
+        Optional path to write the OSCAL JSON to disk. When omitted,
+        the document is returned inline in the JSON envelope's
+        ``oscal_document`` payload field.
+    control_map:
+        Optional override for the source ``control-mapping.yaml``
+        path (control-mapping kind only). Defaults to the wheel-
+        bundled ``roam.templates.audit_report`` resource (W554);
+        a project-root ``templates/audit-report/control-mapping.yaml``
+        under ``root`` is honoured as a hand-edited override.
+    evidence_path:
+        Required when ``kind='assessment-results'``. Path to a
+        ChangeEvidence JSON packet (canonical form as emitted by
+        ``roam pr-replay --evidence``).
+    import_ap_ref:
+        Optional reference (path / URI) to an external Assessment
+        Plan (AR kind only). When omitted, a stub AP is synthesized
+        inline (FedRAMP continuous-assessment pattern).
+    title:
+        Optional document-level title override. Must comply with the
+        W184 wording lint ("maps to" / "supports evidence for"; no
+        "certifies" / "compliant" / "guarantees").
+    root:
+        Repo root (default current directory).
+
+    Returns
+    -------
+    dict
+        Envelope summary fields vary by kind:
+        * control-mapping: ``{verdict, control_count, framework_count,
+          document_uuid, output_path}``.
+        * assessment-results: ``{verdict, result_count, finding_count,
+          observation_count, document_uuid, output_path,
+          import_ap_ref}``.
+        ``oscal_document`` carries the full OSCAL JSON shape.
+    """
+    args = ["evidence-oscal", "--kind", kind]
+    if output_path:
+        args += ["--output", output_path]
+    if control_map:
+        args += ["--control-map", control_map]
+    if evidence_path:
+        args += ["--evidence", evidence_path]
+    if import_ap_ref:
+        args += ["--import-ap-ref", import_ap_ref]
+    if title:
+        args += ["--title", title]
+    return _run_roam(args, root)
+
+
+# ---------------------------------------------------------------------------
+# W299: exploration & search cluster (Wave29 MCP wrapper backfill, sub-wave 1)
+# ---------------------------------------------------------------------------
+# 9 read-only navigation wrappers that an agent reaches for first: index-aware
+# grep, through-history pickaxe, literal-string audit, fan-in/out, module
+# overview, unified metrics, and the three findings-registry subcommands.
+# All 9 require a built index, so they're auto-wired into the W296 cold-start
+# guard by virtue of NOT appearing in ``_NO_INDEX_NEEDED``. Descriptions use
+# imperative voice per CLAUDE.md LAW 2 ("Run X" not "This command does X").
+# ---------------------------------------------------------------------------
+
+
+# W299: roam_grep
+@_tool(
+    name="roam_grep",
+    description=(
+        "Run index-aware grep across the codebase. Returns matches with "
+        "their enclosing symbol, reachability badge, PageRank, clone-class, "
+        "and bridge annotations. Supports multi-pattern, source-only / "
+        "test-only filters, reachable-from / unreachable filters, "
+        "co-occurrence across patterns, and rank-by importance."
+    ),
+)
+def roam_grep(
+    pattern: str = "",
+    patterns: str = "",
+    globs: str = "",
+    fixed: bool = False,
+    case_insensitive: bool = False,
+    word_boundary: bool = False,
+    count: int = 50,
+    source_only: bool = False,
+    test_only: bool = False,
+    exclude: str = "",
+    reachable_from: str = "",
+    unreachable: bool = False,
+    co_occur: bool = False,
+    missing_pattern: str = "",
+    rank_by: str = "line",
+    group_by: str = "none",
+    with_blame: bool = False,
+    with_heat: bool = False,
+    no_clones: bool = False,
+    no_bridges: bool = False,
+    root: str = ".",
+) -> dict:
+    """Run index-aware grep across the codebase.
+
+    WHEN TO USE: when raw text search is needed but the agent also wants
+    each hit annotated with its enclosing symbol, reachability, clone
+    class, and PageRank. More than a wrapper around ripgrep -- adds the
+    structural signal an LLM agent uses to triage hits.
+
+    Parameters
+    ----------
+    pattern:
+        Single positional pattern. Use ``patterns`` for multi-pattern
+        alternation.
+    patterns:
+        Comma-separated list of patterns (becomes repeated ``-e`` on the
+        CLI). Treated as alternation across patterns.
+    globs:
+        Comma-separated glob filter (e.g. ``"py,md"``). Shorthand ``ts``
+        / ``.ts`` is normalised to ``*.ts`` by the CLI.
+    fixed:
+        Literal mode (no regex).
+    case_insensitive:
+        Case-insensitive search.
+    word_boundary:
+        Match whole words only.
+    count:
+        Max results to show (default 50).
+    source_only:
+        Exclude docs, configs, and non-source files.
+    test_only:
+        Only search in test files.
+    exclude:
+        Comma-separated exclusion globs.
+    reachable_from:
+        Keep only hits reachable from a named entry symbol.
+    unreachable:
+        Keep only hits in unreachable / orphan code.
+    co_occur:
+        Keep hits whose enclosing symbol matches every pattern.
+    missing_pattern:
+        Drop hits whose enclosing symbol also matches this pattern.
+    rank_by:
+        ``line`` (default) or ``importance`` (sort by enclosing-symbol
+        PageRank desc).
+    group_by:
+        ``none`` (default) or ``symbol`` (collapse hits inside the same
+        symbol).
+    with_blame:
+        Annotate hits with last-modified author + date.
+    with_heat:
+        Annotate hits with churn / commit count.
+    no_clones:
+        Skip clone-class annotation.
+    no_bridges:
+        Skip bridge annotation.
+
+    Returns: ``{summary: {verdict, total_hits, ...}, hits: [...]}``.
+    """
+    args: list[str] = ["grep"]
+    if pattern:
+        args.append(pattern)
+    for p in (patterns or "").split(","):
+        p = p.strip()
+        if p:
+            args.extend(["-e", p])
+    for g in (globs or "").split(","):
+        g = g.strip()
+        if g:
+            args.extend(["-g", g])
+    if fixed:
+        args.append("-F")
+    if case_insensitive:
+        args.append("-i")
+    if word_boundary:
+        args.append("-w")
+    if count != 50:
+        args.extend(["-n", str(count)])
+    if source_only:
+        args.append("-s")
+    if test_only:
+        args.append("-t")
+    if exclude:
+        args.extend(["--exclude", exclude])
+    if reachable_from:
+        args.extend(["--reachable-from", reachable_from])
+    if unreachable:
+        args.append("--unreachable")
+    if co_occur:
+        args.append("--co-occur")
+    if missing_pattern:
+        args.extend(["--missing-pattern", missing_pattern])
+    if rank_by != "line":
+        args.extend(["--rank-by", rank_by])
+    if group_by != "none":
+        args.extend(["--group-by", group_by])
+    if with_blame:
+        args.append("--blame")
+    if with_heat:
+        args.append("--heat")
+    if no_clones:
+        args.append("--no-clones")
+    if no_bridges:
+        args.append("--no-bridges")
+    return _run_roam(args, root)
+
+
+# W299: roam_history_grep
+@_tool(
+    name="roam_history_grep",
+    description=(
+        "Run git pickaxe (``-S`` / ``-G``) through commit history. Returns "
+        "commits that introduced or removed the literal string, with "
+        "author, date, short SHA, and summary per commit."
+    ),
+)
+def roam_history_grep(
+    pattern: str = "",
+    patterns: str = "",
+    fixed: bool = True,
+    case_insensitive: bool = False,
+    since: str = "",
+    until: str = "",
+    limit: int = 20,
+    polarity: bool = False,
+    paths: str = "",
+    root: str = ".",
+) -> dict:
+    """Search through-history with git pickaxe.
+
+    WHEN TO USE: postmortems, provenance investigations, auditing renames
+    or deletions that no longer leave a trace in HEAD. Answers "when did
+    this string first appear?" or "which commit removed it?".
+
+    Parameters
+    ----------
+    pattern:
+        Single positional pattern. Use ``patterns`` for multi-pattern.
+    patterns:
+        Comma-separated additional patterns.
+    fixed:
+        Literal mode (default True -- use ``-S``). Set False to use
+        regex pickaxe (``-G``).
+    case_insensitive:
+        Case-insensitive search.
+    since:
+        Only commits after this date (YYYY-MM-DD or relative, e.g.
+        ``"2 weeks ago"``).
+    until:
+        Only commits before this date.
+    limit:
+        Max commits per pattern (default 20).
+    polarity:
+        Annotate each commit as introduced / removed / modified (slower).
+    paths:
+        Comma-separated path filter (e.g. ``"src/,docs/"``).
+
+    Returns: ``{summary: {...}, per_pattern: {pattern: [commit_rows]}}``.
+    """
+    args: list[str] = ["history-grep"]
+    if pattern:
+        args.append(pattern)
+    for p in (patterns or "").split(","):
+        p = p.strip()
+        if p:
+            args.extend(["-e", p])
+    # CLI flag is ``-F/--fixed-string`` with default True; only emit when
+    # the caller wants regex pickaxe (``fixed=False``). The CLI option is
+    # a boolean flag (no value), so to disable it we'd need ``--no-...``
+    # which the CLI doesn't expose. Per LAW 11 (user intent > inference)
+    # we honor fixed=True as the documented default and skip the flag.
+    if case_insensitive:
+        args.append("-i")
+    if since:
+        args.extend(["--since", since])
+    if until:
+        args.extend(["--until", until])
+    if limit != 20:
+        args.extend(["-n", str(limit)])
+    if polarity:
+        args.append("--polarity")
+    for path in (paths or "").split(","):
+        path = path.strip()
+        if path:
+            args.extend(["-p", path])
+    return _run_roam(args, root)
+
+
+# W299: roam_refs_text
+@_tool(
+    name="roam_refs_text",
+    description=(
+        "Audit literal strings across the project and emit a per-string "
+        "verdict: SAFE-TO-REMOVE / REVIEW / LOAD-BEARING. Groups every "
+        "reference by surface (code, test, docs, config, generated, "
+        "vendored) and annotates reachability for code hits."
+    ),
+)
+def roam_refs_text(
+    strings: str = "",
+    reachable_from: str = "",
+    globs: str = "",
+    fixed: bool = True,
+    case_insensitive: bool = False,
+    with_clones: bool = True,
+    with_bridges: bool = True,
+    per_match_detail: bool = False,
+    root: str = ".",
+) -> dict:
+    """Audit literal strings across the project with safety verdict.
+
+    WHEN TO USE: before removing a config key, error message, route, or
+    identifier. Different shape from ``roam_grep`` -- grep prints lines
+    so you can eyeball them; refs-text answers the question "is this
+    string still load-bearing?".
+
+    Verdict ladder:
+
+    * ``SAFE-TO-REMOVE`` -- only doc / test / dead-code references.
+    * ``REVIEW`` -- referenced in one or two reachable code symbols.
+    * ``LOAD-BEARING`` -- referenced in many reachable code symbols, or
+      in symbols with non-trivial PageRank.
+
+    Parameters
+    ----------
+    strings:
+        Comma-separated list of strings to audit (e.g.
+        ``"DATABASE_URL,/api/v1/users"``).
+    reachable_from:
+        Treat reachability as "reachable from <entry>". When omitted,
+        dead = no inbound edges.
+    globs:
+        Comma-separated glob filter (e.g. ``"py,md"``).
+    fixed:
+        Literal mode (default True). Set False for regex matching.
+    case_insensitive:
+        Case-insensitive search.
+    with_clones:
+        Annotate code hits with clone-class siblings (default True).
+    with_bridges:
+        Annotate config / template hits with cross-language bridge
+        links (default True).
+    per_match_detail:
+        Include every match in JSON output (default: only summary +
+        per-surface counts).
+
+    Returns: ``{summary: {verdict, total_targets, ...}, per_string: {...}}``.
+    """
+    args: list[str] = ["refs-text"]
+    targets = [s.strip() for s in (strings or "").split(",") if s.strip()]
+    args.extend(targets)
+    if reachable_from:
+        args.extend(["--reachable-from", reachable_from])
+    for g in (globs or "").split(","):
+        g = g.strip()
+        if g:
+            args.extend(["-g", g])
+    # CLI's --fixed-string defaults to True; only need to skip when
+    # caller wants regex. Same LAW 11 note as roam_history_grep.
+    if case_insensitive:
+        args.append("-i")
+    if not with_clones:
+        args.append("--no-clones")
+    if not with_bridges:
+        args.append("--no-bridges")
+    if per_match_detail:
+        args.append("--per-match-detail")
+    return _run_roam(args, root)
+
+
+# W299: roam_fan
+@_tool(
+    name="roam_fan",
+    description=(
+        "Show fan-in / fan-out: the most-connected symbols or files. "
+        "Flags hub / spreader / HIGH-RISK structural hotspots based on "
+        "cross-file import / call edges. Different from coupling "
+        "(co-change frequency) -- this measures structural connectivity."
+    ),
+)
+def roam_fan(
+    mode: str = "symbol",
+    count: int = 20,
+    no_framework: bool = False,
+    include_tooling: bool = False,
+    persist: bool = False,
+    root: str = ".",
+) -> dict:
+    """Show most-connected symbols or files by structural fan-in / fan-out.
+
+    WHEN TO USE: find architectural hubs (many callers) and spreaders
+    (many callees). High-risk symbols are both -- they aggregate AND
+    distribute. Useful before refactoring or carving a module boundary.
+
+    Parameters
+    ----------
+    mode:
+        ``symbol`` (default) or ``file``.
+    count:
+        Number of items to show (default 20).
+    no_framework:
+        Filter out framework / boilerplate symbols.
+    include_tooling:
+        Include CI scripts, dev tooling, build, and generated files.
+        Excluded by default -- high fan-in there is expected and
+        dominates the headline.
+    persist:
+        Persist cross-file architectural fan findings (HIGH-RISK / hub
+        / spreader) to the ``.roam/index.db`` findings registry.
+
+    Returns: ``{summary: {...}, top_symbols: [...] | top_files: [...]}``.
+    """
+    args: list[str] = ["fan", mode, "-n", str(count)]
+    if no_framework:
+        args.append("--no-framework")
+    if include_tooling:
+        args.append("--include-tooling")
+    if persist:
+        args.append("--persist")
+    return _run_roam(args, root)
+
+
+# W299: roam_module
+@_tool(
+    name="roam_module",
+    description=(
+        "Show directory contents: exported symbols, signatures, external "
+        "imports / importers, internal cohesion percentage, and API "
+        "surface ratio. Different from ``roam_describe`` (project-wide) "
+        "-- this analyses a single directory."
+    ),
+)
+def roam_module(path: str, root: str = ".") -> dict:
+    """Show a directory's exports, dependencies, and cohesion.
+
+    WHEN TO USE: scoping a refactor to one directory, or auditing whether
+    a module's public surface is reasonable. Returns the directory's
+    cohesion (internal edge ratio), API surface percentage, and external
+    coupling per importer / importee.
+
+    Parameters
+    ----------
+    path:
+        Directory path relative to the repo root (e.g. ``"src/roam/db"``).
+        Pass ``"."`` for root-level files only.
+
+    Returns: ``{summary: {...}, files, symbols, deps_in, deps_out, ...}``.
+    """
+    return _run_roam(["module", path], root)
+
+
+# W299: roam_metrics
+@_tool(
+    name="roam_metrics",
+    description=(
+        "Show unified per-file or per-symbol metrics: cognitive "
+        "complexity, fan-in / fan-out, SNA centrality vector "
+        "(PageRank / betweenness / closeness / eigenvector / clustering "
+        "coefficient), composite debt score, churn, test coverage, and "
+        "comprehension difficulty in a single view."
+    ),
+)
+def roam_metrics(symbol: str, root: str = ".") -> dict:
+    """Show unified metrics for a file or symbol.
+
+    WHEN TO USE: deciding whether a symbol is risky to change, or
+    triaging a hotspot. Consolidates the signals from complexity, fan,
+    centrality, churn, coverage, and dead-code-risk into one structured
+    output. Different from ``roam_health`` (codebase-wide score) --
+    this drills into one symbol.
+
+    Parameters
+    ----------
+    symbol:
+        File path (e.g. ``"src/app.py"``) OR symbol name (e.g.
+        ``"create_user"``). W430/Fix-D canonical; legacy ``target=``
+        callers are accepted via ``_PARAM_ALIASES`` with a deprecation
+        warning.
+
+    Returns: ``{summary: {...}, metrics: {complexity, fan_in, fan_out,
+    centrality, churn, coverage, dead_code_risk, ...}}``.
+    """
+    return _run_roam(["metrics", symbol], root)
+
+
+# W299: roam_findings_list
+@_tool(
+    name="roam_findings_list",
+    description=(
+        "List rows from the central findings registry, optionally "
+        "filtered by detector or subject. Cross-detector view -- every "
+        "migrated detector (clones, dead, complexity, smells, n1, "
+        "missing-index, ...) emits here behind one schema."
+    ),
+)
+def roam_findings_list(
+    detector: str = "",
+    subject_kind: str = "",
+    subject_id: int = 0,
+    limit: int = 100,
+    root: str = ".",
+) -> dict:
+    """List findings from the central registry.
+
+    WHEN TO USE: the canonical "what's wrong with this repo" surface.
+    Cross-detector dedup, suppression management, and the SARIF-emit
+    substrate all flow through this registry. Returns rows with
+    ``finding_id_str`` you can pass to ``roam_findings_show``.
+
+    Parameters
+    ----------
+    detector:
+        Filter by ``source_detector`` (exact match, e.g. ``"clones"`` /
+        ``"dead"`` / ``"complexity"`` / ``"smells"``).
+    subject_kind:
+        Filter by ``subject_kind`` (e.g. ``symbol`` / ``file`` /
+        ``edge`` / ``commit``).
+    subject_id:
+        Filter by ``subject_id`` (numeric). Typically combined with
+        ``subject_kind``.
+    limit:
+        Cap rows returned (default 100).
+
+    Returns: ``{summary: {verdict, total_findings, detectors}, findings: [...]}``.
+    """
+    args: list[str] = ["findings", "list", "--limit", str(limit)]
+    if detector:
+        args.extend(["--detector", detector])
+    if subject_kind:
+        args.extend(["--subject-kind", subject_kind])
+    if subject_id:
+        args.extend(["--subject-id", str(subject_id)])
+    return _run_roam(args, root)
+
+
+# W299: roam_findings_show
+@_tool(
+    name="roam_findings_show",
+    description=(
+        "Show full detail for a single finding by its stable "
+        "``finding_id_str``. Returns the detector version, subject, "
+        "confidence tier, claim, evidence JSON, and any suppressions."
+    ),
+)
+def roam_findings_show(finding_id_str: str, root: str = ".") -> dict:
+    """Show full detail for a single finding.
+
+    WHEN TO USE: after ``roam_findings_list`` returns a row of interest,
+    fetch its full evidence payload. The ``finding_id_str`` is the
+    stable cross-run identifier (e.g. ``"clones:sym:abcd"``).
+
+    Parameters
+    ----------
+    finding_id_str:
+        Stable finding identifier from ``roam_findings_list``.
+
+    Returns: ``{summary: {...}, finding: {detector, subject, claim,
+    evidence_json, suppressions, ...}}``.
+    """
+    return _run_roam(["findings", "show", finding_id_str], root)
+
+
+# W299: roam_findings_count
+@_tool(
+    name="roam_findings_count",
+    description=(
+        "Show per-detector finding counts. Useful for spotting which "
+        "detectors have migrated to the central registry vs which are "
+        "still only emitting to their detector-specific tables."
+    ),
+)
+def roam_findings_count(root: str = ".") -> dict:
+    """Show per-detector finding counts.
+
+    WHEN TO USE: triage which detectors have signal on the current
+    repo. The tally maps ``source_detector`` -> row count so an agent
+    can pick the highest-yield detector to drill into.
+
+    Returns: ``{summary: {total_findings, detector_count}, counts: {detector: n}}``.
+    """
+    return _run_roam(["findings", "count"], root)
+
+
+# ---------------------------------------------------------------------------
+# W300: architecture cluster (Wave29 MCP wrapper backfill, sub-wave 2)
+# ---------------------------------------------------------------------------
+# 10 read-only structural-analysis wrappers that all hit the graph layer:
+# Louvain clusters, topological layers, file / function temporal coupling,
+# commit-range graph delta, graph-wide invariants, entry-point catalog,
+# architectural-pattern detector, min-cut domain boundaries, and the
+# cross-language bridge report. All 10 require a built index, so they're
+# auto-wired into the W296 cold-start guard by virtue of NOT appearing in
+# ``_NO_INDEX_NEEDED``. Descriptions use imperative voice per CLAUDE.md
+# LAW 2 ("Run X" not "This command does X").
+# ---------------------------------------------------------------------------
+
+
+# W300: roam_clusters
+@_tool(
+    name="roam_clusters",
+    description=(
+        "Show Louvain code clusters and directory mismatches. Returns "
+        "per-cluster size, cohesion, conductance, modularity Q, mega-cluster "
+        "sub-group breakdowns, and inter-cluster coupling. Different from "
+        "``roam_layers`` (dependency-layer violations) -- this groups by "
+        "community detection, not by topological depth."
+    ),
+)
+def roam_clusters(
+    min_size: int = 3,
+    mermaid: bool = False,
+    weak: bool = False,
+    strong: bool = False,
+    root: str = ".",
+) -> dict:
+    """Show Louvain code clusters and directory mismatches.
+
+    WHEN TO USE: discover natural module boundaries the graph finds on
+    its own, then compare against the directory structure. Mismatches
+    indicate hidden coupling that the layout doesn't reflect. Pair with
+    ``roam_cut`` to find the thinnest seam to split along.
+
+    Parameters
+    ----------
+    min_size:
+        Hide clusters smaller than this (default 3).
+    mermaid:
+        Emit a Mermaid LR diagram of clusters + inter-cluster edges.
+    weak:
+        Rank clusters by lowest intra-density (split candidates).
+    strong:
+        Rank clusters by highest intra-density (well-formed modules).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, clusters, mismatches, modularity_q, ...},
+    clusters: [...], mismatches: [...]}``.
+    """
+    args: list[str] = ["clusters", "--min-size", str(min_size)]
+    if mermaid:
+        args.append("--mermaid")
+    if weak:
+        args.append("--weak")
+    if strong:
+        args.append("--strong")
+    return _run_roam(args, root)
+
+
+# W300: roam_layers
+@_tool(
+    name="roam_layers",
+    description=(
+        "Show topological dependency layers and violations. Returns each "
+        "layer's symbol count, directory breakdown, and any back-edges that "
+        "violate the topological order. Different from ``roam_clusters`` "
+        "(community detection) -- this measures dependency depth."
+    ),
+)
+def roam_layers(mermaid: bool = False, root: str = ".") -> dict:
+    """Show topological dependency layers and violations.
+
+    WHEN TO USE: confirm the codebase has a clean layered architecture
+    or surface back-edges (e.g. domain calling controller) before
+    refactoring. Pair with ``roam_guard`` for per-symbol layer-violation
+    risk scoring.
+
+    Parameters
+    ----------
+    mermaid:
+        Emit a Mermaid LR diagram of layers + violations.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_layers, violations, ...},
+    layers: [...], violations: [...]}``.
+    """
+    args: list[str] = ["layers"]
+    if mermaid:
+        args.append("--mermaid")
+    return _run_roam(args, root)
+
+
+# W300: roam_coupling
+@_tool(
+    name="roam_coupling",
+    description=(
+        "Show temporal coupling: file pairs that change together. Reads "
+        "git history to find files with high co-change frequency. "
+        "Different from ``roam_fan`` (structural connectivity) and "
+        "``roam_dark_matter`` (hidden co-change) -- this measures "
+        "file-level temporal coupling."
+    ),
+)
+def roam_coupling(
+    count: int = 0,
+    staged: bool = False,
+    against: str = "",
+    min_strength: float = 0.3,
+    min_cochanges: int = 2,
+    root: str = ".",
+) -> dict:
+    """Show file pairs that change together over git history.
+
+    WHEN TO USE: spot hidden coupling that isn't visible in the call
+    graph (e.g. files that always change together because they encode
+    the same domain concept). Use ``staged`` / ``against`` to surface
+    missing co-change partners for a working-set diff.
+
+    Parameters
+    ----------
+    count:
+        Number of pairs to show. ``0`` (default) lets the CLI auto-scale
+        by project size (20 / 50 / 100 for small / mid / large repos).
+    staged:
+        Check coupling for staged changes only.
+    against:
+        Check coupling for a commit range (e.g. ``"HEAD~3..HEAD"``).
+    min_strength:
+        Minimum coupling strength for against mode (default 0.3).
+    min_cochanges:
+        Minimum co-change count for against mode (default 2).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, pairs: [...]}``.
+    """
+    args: list[str] = ["coupling"]
+    if count:
+        args.extend(["-n", str(count)])
+    if staged:
+        args.append("--staged")
+    if against:
+        args.extend(["--against", against])
+    if min_strength != 0.3:
+        args.extend(["--min-strength", str(min_strength)])
+    if min_cochanges != 2:
+        args.extend(["--min-cochanges", str(min_cochanges)])
+    return _run_roam(args, root)
+
+
+# W300: roam_fn_coupling
+@_tool(
+    name="roam_fn_coupling",
+    description=(
+        "Show function-level temporal coupling: symbol pairs that change "
+        "together across commits. Different from ``roam_coupling`` "
+        "(file-level pairs) -- this drills into co-changing symbols "
+        "inside and across files, with optional structural-edge filtering."
+    ),
+)
+def roam_fn_coupling(
+    min_count: int = 3,
+    limit: int = 20,
+    include_connected: bool = False,
+    include_tests: bool = False,
+    max_files_per_commit: int = 0,
+    max_symbols_per_file: int = 0,
+    since: str = "",
+    root: str = ".",
+) -> dict:
+    """Show symbol pairs that change together over git history.
+
+    WHEN TO USE: locate co-changing symbol pairs that lack a direct
+    call edge -- the strongest hidden-coupling signal at the function
+    level. Pass ``include_connected=True`` to compare against directly
+    connected pairs.
+
+    Parameters
+    ----------
+    min_count:
+        Minimum co-change count to report (default 3).
+    limit:
+        Maximum pairs to show (default 20).
+    include_connected:
+        Also show pairs that have a direct edge.
+    include_tests:
+        Include test files in the co-change matrix. Off by default --
+        test fixtures co-change with src files by design.
+    max_files_per_commit:
+        Skip commits touching more than N files (treated as
+        merges/reformats). ``0`` lets the CLI use its default.
+    max_symbols_per_file:
+        Per commit, only the top-N PageRank symbols of each changed
+        file contribute pairs. ``0`` lets the CLI use its default.
+    since:
+        Only consider commits since this ref (sha or tag).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, pairs: [...]}``.
+    """
+    args: list[str] = [
+        "fn-coupling",
+        "--min-count",
+        str(min_count),
+        "-n",
+        str(limit),
+    ]
+    if include_connected:
+        args.append("--include-connected")
+    if include_tests:
+        args.append("--include-tests")
+    if max_files_per_commit:
+        args.extend(["--max-files-per-commit", str(max_files_per_commit)])
+    if max_symbols_per_file:
+        args.extend(["--max-symbols-per-file", str(max_symbols_per_file)])
+    if since:
+        args.extend(["--since", since])
+    return _run_roam(args, root)
+
+
+# W300: roam_graph_diff
+@_tool(
+    name="roam_graph_diff",
+    description=(
+        "Show the structural graph delta between two snapshots. Surfaces "
+        "new / removed symbols, edge churn, degree shifts, new cycles, "
+        "layer migrations, and likely renames. Reads persisted snapshots "
+        "from ``.roam/snapshots/`` -- capture one with ``--save-snapshot``."
+    ),
+)
+def roam_graph_diff(
+    base: str = "",
+    head: str = "",
+    top: int = 20,
+    save_snapshot: str = "",
+    root: str = ".",
+) -> dict:
+    """Show the structural graph delta between two snapshots.
+
+    WHEN TO USE: before / after refactor verification. Save a snapshot
+    with ``save_snapshot="pre-refactor"``, make changes, then call
+    again with ``base="pre-refactor"`` to see what moved in the graph.
+    Emits a clean ``state: no_baseline_snapshot`` envelope when nothing
+    is on disk.
+
+    Parameters
+    ----------
+    base:
+        Baseline snapshot label. Defaults to newest snapshot on disk.
+    head:
+        Head snapshot label. Defaults to the current DB graph (live).
+    top:
+        Cap list outputs to N rows (default 20; 0 = unlimited).
+    save_snapshot:
+        Persist the current DB graph to
+        ``.roam/snapshots/<label>.json`` and exit.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, added, removed, ...}``.
+    """
+    args: list[str] = ["graph-diff"]
+    if base:
+        args.extend(["--base", base])
+    if head:
+        args.extend(["--head", head])
+    if top != 20:
+        args.extend(["--top", str(top)])
+    if save_snapshot:
+        args.extend(["--save-snapshot", save_snapshot])
+    return _run_roam(args, root)
+
+
+# W300: roam_graph_stats
+@_tool(
+    name="roam_graph_stats",
+    description=(
+        "Report graph-level invariants: density, connected components, "
+        "average in/out degree, top in-degree symbols, and approximate "
+        "diameter. One overview number for 'how dense, connected, and "
+        "cyclic is this codebase'."
+    ),
+)
+def roam_graph_stats(scope: str = "symbol", root: str = ".") -> dict:
+    """Report density, connected components, and degree statistics.
+
+    WHEN TO USE: scoping a new repo or comparing the global shape
+    against a known baseline. Pair with ``roam_health`` for a
+    score-driven view and ``roam_clusters`` / ``roam_layers`` for
+    structure-driven views.
+
+    Parameters
+    ----------
+    scope:
+        ``symbol`` (default) or ``file`` -- which dependency graph to
+        measure.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, nodes, edges, density, ...}}``.
+    """
+    args: list[str] = ["graph-stats"]
+    if scope.lower() != "symbol":
+        args.extend(["--scope", scope])
+    return _run_roam(args, root)
+
+
+# W300: roam_entry_points
+@_tool(
+    name="roam_entry_points",
+    description=(
+        "Catalog every entry point into the codebase: HTTP routes, CLI "
+        "commands, scheduled jobs, event handlers, message consumers, "
+        "main functions, and exports. Reports per-entry reachability "
+        "coverage -- what fraction of symbols each entry transitively "
+        "reaches through the call graph."
+    ),
+)
+def roam_entry_points(
+    protocol: str = "",
+    limit: int = 50,
+    root: str = ".",
+) -> dict:
+    """Show entry-point catalog with protocol classification.
+
+    WHEN TO USE: triage public surface area before a security review,
+    measure reachability per protocol, or scope a refactor's external
+    impact. Different from ``roam_coverage_gaps`` (unprotected entry
+    points lacking gate guards) -- this catalogs every entry point.
+
+    Parameters
+    ----------
+    protocol:
+        Filter to one protocol: ``HTTP`` / ``CLI`` / ``Event`` /
+        ``Scheduled`` / ``Message`` / ``Main`` / ``Export``. Empty
+        (default) shows every protocol.
+    limit:
+        Maximum entry points to display (default 50).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, entry_points: [...]}``.
+    """
+    args: list[str] = ["entry-points", "--limit", str(limit)]
+    if protocol:
+        args.extend(["--protocol", protocol])
+    return _run_roam(args, root)
+
+
+# W300: roam_patterns
+@_tool(
+    name="roam_patterns",
+    description=(
+        "Detect positive architectural patterns: Singleton, Factory, "
+        "Observer, Repository, Middleware, Strategy, and Decorator. "
+        "Different from ``roam_smells`` (negative anti-patterns) -- "
+        "this discovers intentional design patterns."
+    ),
+)
+def roam_patterns(
+    pattern: str = "",
+    strict_factory: bool = False,
+    root: str = ".",
+) -> dict:
+    """Detect common architectural patterns in the codebase.
+
+    WHEN TO USE: confirm a design pattern claim ("we use the
+    repository pattern") or scope a refactor that touches one
+    pattern type. Returns per-pattern instances with the symbols and
+    files involved.
+
+    Parameters
+    ----------
+    pattern:
+        Filter to one pattern type (e.g. ``singleton`` / ``factory`` /
+        ``observer`` / ``repository`` / ``middleware`` / ``strategy`` /
+        ``decorator``). Empty (default) shows every pattern.
+    strict_factory:
+        Drop builder-helper functions (``build_X`` / ``make_X``
+        returning POJOs). Default keeps them tagged with
+        ``subtype='builder_helper'``.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, patterns: {...}}``.
+    """
+    args: list[str] = ["patterns"]
+    if pattern:
+        args.extend(["--pattern", pattern])
+    if strict_factory:
+        args.append("--strict-factory")
+    return _run_roam(args, root)
+
+
+# W300: roam_cut
+@_tool(
+    name="roam_cut",
+    description=(
+        "Find fragile domain boundaries via minimum-cut analysis. "
+        "Computes the thinnest edge cuts between architectural clusters "
+        "and the highest-impact 'leak edges' whose removal would best "
+        "improve domain isolation. Different from ``roam_split`` "
+        "(decomposes a single file) -- this finds boundaries between "
+        "clusters."
+    ),
+)
+def roam_cut(
+    between: str = "",
+    leak_edges: bool = False,
+    top: int = 10,
+    root: str = ".",
+) -> dict:
+    """Show minimum-cut domain boundaries between clusters.
+
+    WHEN TO USE: planning to split a mega-cluster into two modules.
+    Pair with ``roam_clusters`` to find candidate cluster pairs and
+    ``roam_dark_matter`` to confirm the cut doesn't sever co-changing
+    symbols.
+
+    Parameters
+    ----------
+    between:
+        Comma-separated pair of cluster names to analyse the boundary
+        between (e.g. ``"auth,payments"``). Empty (default) ranks
+        every boundary.
+    leak_edges:
+        Focus on leak-edge analysis -- which single edges, if removed,
+        most improve domain isolation.
+    top:
+        Show top N boundaries (default 10).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, boundaries: [...] | leak_edges: [...]}``.
+    """
+    args: list[str] = ["cut", "--top", str(top)]
+    if between:
+        pair = [p.strip() for p in between.split(",") if p.strip()]
+        if len(pair) == 2:
+            args.extend(["--between", pair[0], pair[1]])
+    if leak_edges:
+        args.append("--leak-edges")
+    return _run_roam(args, root)
+
+
+# W300: roam_x_lang
+@_tool(
+    name="roam_x_lang",
+    description=(
+        "Show cross-language symbol bridges: Protobuf .proto -> "
+        "generated Go/Java/Python stubs, Salesforce Apex -> Aura/LWC/"
+        "Visualforce, REST API frontend -> backend route, template "
+        "variable -> source, and env-var read -> .env definition. "
+        "Use ``roam_bridges`` to list registered bridge types."
+    ),
+)
+def roam_x_lang(scope: str = "", root: str = ".") -> dict:
+    """Show cross-language symbol bridges detected in the project.
+
+    WHEN TO USE: audit cross-language coupling before a schema change
+    (e.g. renaming a .proto field invalidates Go/Java/Python stubs).
+    On large repos pass ``scope`` to restrict analysis to a subtree.
+
+    Parameters
+    ----------
+    scope:
+        Restrict analysis to files whose path starts with this prefix
+        (e.g. ``"src/"``). Empty (default) scans the whole repo.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, bridges, links, ...}, bridges: [...], links: [...]}``.
+    """
+    args: list[str] = ["x-lang"]
+    if scope:
+        args.extend(["--scope", scope])
+    return _run_roam(args, root)
+
+
+# ---------------------------------------------------------------------------
+# W301: health / quality cluster (Wave29 MCP wrapper backfill, sub-wave 3)
+# ---------------------------------------------------------------------------
+# 10 read-only detector-style wrappers that an agent reaches for when
+# triaging code quality, runtime / security hotspots, ownership and review
+# congestion, retrieval-quality, and doc<->code drift. Several of these
+# detectors persist into the central findings registry behind their
+# ``--persist`` flag; the wrappers default to NOT persisting so an MCP
+# call stays read-only. All 10 require a built index, so they're
+# auto-wired into the W296 cold-start guard by virtue of NOT appearing
+# in ``_NO_INDEX_NEEDED``. Descriptions use imperative voice per
+# CLAUDE.md LAW 2 ("Run X" not "This command does X"). Per-fact
+# vocabulary follows LAW 4 concrete-noun terminals (smells, hotspots,
+# directories, violations, orphans, tasks, symbols, findings).
+#
+# W332 canonical: ``eval-retrieve --tasks`` and ``fitness --baseline``
+# are sidecar JSONL/JSON files the tool READS — those collapse onto
+# ``input_path``. ``smells --file`` and ``owner <path>`` filter to a
+# path already INDEXED in the repo, so they keep the ``path`` /
+# ``file_path`` convention used elsewhere in the wrapper surface
+# (e.g. ``roam_module(path=...)``, ``roam_file_info(path=...)``).
+# ---------------------------------------------------------------------------
+
+
+# W301: roam_smells
+@_tool(
+    name="roam_smells",
+    description=(
+        "Run 15 deterministic code-smell detectors over the indexed "
+        "codebase: brain methods, god classes, deep nesting, shotgun "
+        "surgery, feature envy, long parameter lists, large classes, "
+        "dead params, low cohesion, message chains, data clumps, and "
+        "more. Different from ``roam_vibe_check`` (AI-rot pattern "
+        "regex) and ``roam_patterns`` (positive design patterns) -- "
+        "this surfaces negative structural anti-patterns from DB "
+        "queries."
+    ),
+)
+def roam_smells(
+    path: str = "",
+    min_severity: str = "",
+    include_tooling: bool = False,
+    root: str = ".",
+) -> dict:
+    """Detect code smells: brain methods, god classes, deep nesting.
+
+    WHEN TO USE: scoping a refactor or auditing a single file's
+    structural anti-patterns. Pair with ``roam_findings_list
+    --detector smells`` to read previously-persisted hits without
+    re-running the detectors.
+
+    Parameters
+    ----------
+    path:
+        Filter smells to one file path in the indexed repo (e.g.
+        ``"src/roam/cli.py"``). Empty (default) scans every indexed
+        file. Mirrors the ``--file`` CLI flag.
+    min_severity:
+        Minimum severity to include: ``critical`` / ``warning`` /
+        ``info``. Empty (default) includes every severity.
+    include_tooling:
+        Include CI scripts, build scripts, dev tooling, and generated
+        files in the smell count. Off by default because high
+        complexity in one-shot scripts and codegen output is expected
+        and uninteresting.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_smells, ...}, smells: [...]}``.
+    """
+    args: list[str] = ["smells"]
+    if path:
+        args.extend(["--file", path])
+    if min_severity:
+        args.extend(["--min-severity", min_severity])
+    if include_tooling:
+        args.append("--include-tooling")
+    return _run_roam(args, root)
+
+
+# W301: roam_hotspots
+@_tool(
+    name="roam_hotspots",
+    description=(
+        "Show runtime hotspots: symbols ranked by static analysis vs "
+        "real production traces (requires ``roam ingest-trace`` to "
+        "have populated ``runtime_stats``). Each row is tagged "
+        "UPGRADE (runtime-critical but statically safe), CONFIRMED "
+        "(both agree), or DOWNGRADE (statically risky but low "
+        "traffic). Different from ``roam_why_slow`` (top-N by latency "
+        "alone) -- this classifies static vs runtime mismatch."
+    ),
+)
+def roam_hotspots(
+    runtime: bool = False,
+    discrepancy: bool = False,
+    security: bool = False,
+    danger: bool = False,
+    root: str = ".",
+) -> dict:
+    """Show runtime hotspots: static vs runtime classification.
+
+    WHEN TO USE: triage which symbols carry real production load
+    after ingesting OTel / Jaeger / Zipkin traces. Pair with
+    ``roam_why_slow`` for the latency-only ranking, and
+    ``roam_metrics`` to drill into one hotspot symbol.
+
+    Parameters
+    ----------
+    runtime:
+        Sort by runtime metrics rather than the default
+        composite score.
+    discrepancy:
+        Only show symbols where static and runtime rankings
+        disagree (UPGRADE / DOWNGRADE rows).
+    security:
+        Detect security hotspots: dangerous-API regex sinks
+        with entry-point reachability scoring. Switches the
+        detector mode.
+    danger:
+        Files in top quartile of churn x complexity x max-fan-in
+        (the "danger zone" cross-cut).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, hotspots: [...]}``.
+    """
+    args: list[str] = ["hotspots"]
+    if runtime:
+        args.append("--runtime")
+    if discrepancy:
+        args.append("--discrepancy")
+    if security:
+        args.append("--security")
+    if danger:
+        args.append("--danger")
+    return _run_roam(args, root)
+
+
+# W301: roam_bus_factor
+@_tool(
+    name="roam_bus_factor",
+    description=(
+        "Score knowledge-concentration risk per directory: Shannon "
+        "entropy over unique authors, primary-author share, last "
+        "activity, and a staleness factor. Flags CRITICAL / HIGH / "
+        "MEDIUM / LOW per module. Different from ``roam_owner`` "
+        "(per-file blame) and ``roam_congestion`` (too-many-authors "
+        "merge-conflict risk) -- this measures knowledge-loss risk."
+    ),
+)
+def roam_bus_factor(
+    limit: int = 20,
+    stale_months: int = 6,
+    brain_methods: bool = False,
+    force_team_mode: bool = False,
+    root: str = ".",
+) -> dict:
+    """Score knowledge-loss risk per directory.
+
+    WHEN TO USE: spot directories where a single departure would
+    leave the team without a knowledgeable maintainer. Single-author
+    repos auto-collapse to STALE-only output; pass
+    ``force_team_mode=True`` to opt back into the full
+    distributed-team rubric.
+
+    Parameters
+    ----------
+    limit:
+        Number of directories to show (default 20).
+    stale_months:
+        Months of inactivity before flagging stale knowledge
+        (default 6).
+    brain_methods:
+        Show disproportionately complex functions per directory
+        as an extra column.
+    force_team_mode:
+        Override single-author auto-detection. When one author owns
+        >80% of commits, the default switches to STALE-only output;
+        this flag restores the full team rubric.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_directories, ...},
+    directories: [...]}``.
+    """
+    args: list[str] = [
+        "bus-factor",
+        "--limit",
+        str(limit),
+        "--stale-months",
+        str(stale_months),
+    ]
+    if brain_methods:
+        args.append("--brain-methods")
+    if force_team_mode:
+        args.append("--force-team-mode")
+    return _run_roam(args, root)
+
+
+# W301: roam_fitness
+@_tool(
+    name="roam_fitness",
+    description=(
+        "Run architectural fitness functions from "
+        "``.roam/fitness.yaml``: dependency constraints, layer "
+        "enforcement, metric thresholds, naming conventions, and "
+        "trend regression guards. Different from ``roam_preflight`` "
+        "(compound 6-signal pre-edit gate) -- this is the dedicated "
+        "fitness surface with per-rule output, baseline / delta mode, "
+        "and trend regression guards."
+    ),
+)
+def roam_fitness(
+    rule: str = "",
+    explain: bool = False,
+    input_path: str = "",
+    root: str = ".",
+) -> dict:
+    """Run fitness rules from ``.roam/fitness.yaml``.
+
+    WHEN TO USE: gate a PR against architectural rules
+    (dependency / layer / metric / naming / trend) declared in
+    ``.roam/fitness.yaml``. Pair with ``roam_preflight`` for the
+    pre-edit composite verdict.
+
+    Parameters
+    ----------
+    rule:
+        Run only rules whose ``name`` matches this filter substring.
+        Empty (default) runs every declared rule.
+    explain:
+        Show full reason text for each rule violation.
+    input_path:
+        Path to a baseline JSON file. When set, the runner compares
+        current violations against the baseline and exits non-zero
+        only for NEW violations. Sidecar file the tool reads (W332
+        canonical ``input_path``).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, passed, failed, ...}, rules: [...],
+    violations: [...]}``.
+    """
+    args: list[str] = ["fitness"]
+    if rule:
+        args.extend(["--rule", rule])
+    if explain:
+        args.append("--explain")
+    if input_path:
+        args.extend(["--baseline", input_path])
+    return _run_roam(args, root)
+
+
+# W301: roam_orphan_imports
+@_tool(
+    name="roam_orphan_imports",
+    description=(
+        "List imports that don't resolve to any indexed module or "
+        "installed package -- catches typo'd local imports, missing "
+        "packages, and dangling relative imports. Covers Python "
+        "(default), JavaScript / TypeScript, and Go. Different from "
+        "``roam_dead_code`` (unused symbols) -- this targets "
+        "import-statement orphans."
+    ),
+)
+def roam_orphan_imports(lang: str = "all", root: str = ".") -> dict:
+    """List orphan imports across the indexed languages.
+
+    WHEN TO USE: lint pass before a release, or scoping a refactor
+    that renamed a module. Pair with ``roam_findings_list
+    --detector orphan-imports`` to read previously-persisted hits.
+
+    Parameters
+    ----------
+    lang:
+        Restrict to a single language scan: ``all`` (default) /
+        ``python`` / ``javascript`` / ``go``.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_orphans, ...}, orphans: [...]}``.
+    """
+    args: list[str] = ["orphan-imports"]
+    if lang and lang.lower() != "all":
+        args.extend(["--lang", lang])
+    return _run_roam(args, root)
+
+
+# W301: roam_eval_retrieve
+@_tool(
+    name="roam_eval_retrieve",
+    description=(
+        "Run the retrieval eval harness over a labeled task set. "
+        "Reports recall@K, mean reciprocal rank, and per-task "
+        "diagnostics. Supports a weight sweep and CodeRAG-Bench / "
+        "BEIR emit formats for public leaderboard submission."
+    ),
+)
+def roam_eval_retrieve(
+    input_path: str = "",
+    rerank: str = "fast",
+    sweep: bool = False,
+    min_recall_at_20: float = 0.0,
+    quick: bool = False,
+    root: str = ".",
+) -> dict:
+    """Measure retrieval recall against a labeled task set.
+
+    WHEN TO USE: regression-test ``roam retrieve`` ranking weights
+    after a pipeline change, or generate a portable run file for an
+    external leaderboard.
+
+    Parameters
+    ----------
+    input_path:
+        JSONL file of ``(task, expected_files)`` pairs. Empty
+        (default) picks up ``bench/retrieve/roam_self.jsonl``. W332
+        canonical ``input_path`` -- the file the harness reads.
+    rerank:
+        Forwarded to ``roam retrieve``: ``fast`` (default) or
+        ``off``.
+    sweep:
+        Run the harness across a small grid of weight vectors and
+        report the best-scoring vector.
+    min_recall_at_20:
+        CI gate: exit 5 if the mean recall@20 is below this
+        threshold. ``0.0`` (default) disables the gate.
+    quick:
+        Run the first 5 tasks only for fast local iteration.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, mean_recall_at_20, ...},
+    per_task: [...]}``.
+    """
+    args: list[str] = ["eval-retrieve", "--rerank", rerank]
+    if input_path:
+        args.extend(["--tasks", input_path])
+    if sweep:
+        args.append("--sweep")
+    if min_recall_at_20 > 0.0:
+        args.extend(["--min-recall-at-20", str(min_recall_at_20)])
+    if quick:
+        args.append("--quick")
+    return _run_roam(args, root)
+
+
+# W301: roam_why_slow
+@_tool(
+    name="roam_why_slow",
+    description=(
+        "Rank runtime hotspots by cost = log10(call_count + 1) * "
+        "p99_latency_ms. Reads ``runtime_stats`` populated by ``roam "
+        "ingest-trace``. Optionally restricts to symbols in changed "
+        "files vs a base ref. Different from ``roam_hotspots`` "
+        "(static-vs-runtime classification) -- this is the pure "
+        "latency-weighted ranking."
+    ),
+)
+def roam_why_slow(
+    top: int = 20,
+    changed: bool = False,
+    base: str = "HEAD~1",
+    min_calls: int = 0,
+    root: str = ".",
+) -> dict:
+    """Rank runtime symbols by cost weight.
+
+    WHEN TO USE: gate a PR with ``changed=True`` to ask "is this PR
+    slowing down a hot path?" Pair with ``roam_hotspots`` for the
+    static-vs-runtime classification.
+
+    Parameters
+    ----------
+    top:
+        Limit to top N hotspots (default 20).
+    changed:
+        Filter to symbols in changed files (vs ``base`` ref).
+    base:
+        Base ref for ``changed=True`` (default ``HEAD~1``).
+    min_calls:
+        Filter out symbols below this ``call_count``.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, hotspots: [...]}``.
+    """
+    args: list[str] = ["why-slow", "--top", str(top)]
+    if changed:
+        args.append("--changed")
+    if base and base != "HEAD~1":
+        args.extend(["--base", base])
+    if min_calls:
+        args.extend(["--min-calls", str(min_calls)])
+    return _run_roam(args, root)
+
+
+# W301: roam_doc_staleness
+@_tool(
+    name="roam_doc_staleness",
+    description=(
+        "Detect stale docstrings: docs whose body has drifted since "
+        "the comment was written. Uses ``git blame`` to compare "
+        "docstring timestamps against code body timestamps. Different "
+        "from ``roam_docs_coverage`` (missing docs ranked by PageRank) "
+        "and ``roam_stale_refs`` (dangling doc links) -- this audits "
+        "what existing docs SAY."
+    ),
+)
+def roam_doc_staleness(
+    limit: int = 20,
+    days: int = 90,
+    include_prose_drift: bool = False,
+    root: str = ".",
+) -> dict:
+    """Detect stale docstrings via git-blame drift.
+
+    WHEN TO USE: audit existing comments before a release or
+    refactor pass. Pair with ``roam_docs_coverage`` for the inverse
+    (missing-doc) view.
+
+    Parameters
+    ----------
+    limit:
+        Maximum number of stale symbols to display (default 20).
+    days:
+        Staleness threshold in days -- body changed N+ days after
+        docstring (default 90).
+    include_prose_drift:
+        Also flag pure-prose docstrings on commit-drift alone. Off
+        by default because summary docstrings stay accurate even
+        when the body is refactored.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_stale, ...}, symbols: [...]}``.
+    """
+    args: list[str] = [
+        "doc-staleness",
+        "--limit",
+        str(limit),
+        "--days",
+        str(days),
+    ]
+    if include_prose_drift:
+        args.append("--include-prose-drift")
+    return _run_roam(args, root)
+
+
+# W301: roam_owner
+@_tool(
+    name="roam_owner",
+    description=(
+        "Show code ownership computed from git blame: per-author "
+        "line counts, percentages, last-active dates, and a "
+        "fragmentation index. Works on a file or a directory "
+        "prefix. Different from ``roam_codeowners`` (which reads the "
+        "CODEOWNERS file) -- this measures actual ownership."
+    ),
+)
+def roam_owner(path: str, root: str = ".") -> dict:
+    """Show actual code ownership from git blame.
+
+    WHEN TO USE: find the right reviewer for a file or scope, or
+    spot fragmentation hotspots where no single author dominates.
+    Pair with ``roam_bus_factor`` for the directory-level
+    knowledge-concentration risk.
+
+    Parameters
+    ----------
+    path:
+        File path (e.g. ``"src/roam/cli.py"``) or directory prefix
+        (e.g. ``"src/roam/db/"``) in the indexed repo.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, authors: [...]}``.
+    """
+    return _run_roam(["owner", path], root)
+
+
+# W301: roam_congestion
+@_tool(
+    name="roam_congestion",
+    description=(
+        "Detect developer congestion: files with too many concurrent "
+        "authors within a sliding time window. Combines author count, "
+        "churn intensity, and complexity into a congestion score that "
+        "predicts merge conflicts and coordination failures. Different "
+        "from ``roam_bus_factor`` (knowledge-loss risk) and "
+        "``roam_owner`` (per-file blame breakdown) -- this measures "
+        "too-many-cooks contention."
+    ),
+)
+def roam_congestion(
+    window: int = 90,
+    min_authors: int = 3,
+    limit: int = 30,
+    root: str = ".",
+) -> dict:
+    """Detect files with too many concurrent authors.
+
+    WHEN TO USE: predict merge-conflict / review-bottleneck risk
+    before scheduling a refactor that touches the same files
+    multiple teams are already editing.
+
+    Parameters
+    ----------
+    window:
+        Time window in days for recent activity (default 90).
+    min_authors:
+        Minimum distinct recent authors to flag a file as congested
+        (default 3).
+    limit:
+        Maximum files to display (default 30).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_congested, ...}, files: [...]}``.
+    """
+    args: list[str] = [
+        "congestion",
+        "--window",
+        str(window),
+        "--min-authors",
+        str(min_authors),
+        "--limit",
+        str(limit),
+    ]
+    return _run_roam(args, root)
+
+
+# ---------------------------------------------------------------------------
+# W302: refactoring cluster (Wave29 MCP wrapper backfill, sub-wave 4)
+# ---------------------------------------------------------------------------
+# 9 read-only "what's safe to change" wrappers that an agent reaches for
+# when scoping a refactor: deletion gates, refactor-zone classification,
+# stale feature-flag detection, file-decomposition suggestions, directory
+# API skeletons, and the three test-surface commands (map / pyramid /
+# scaffold). All 9 require a built index so they auto-inherit the W296
+# cold-start guard (none appear in ``_NO_INDEX_NEEDED``). Descriptions
+# use imperative voice per CLAUDE.md LAW 2; ``agent_contract.facts`` and
+# verdict strings anchor on LAW 4 concrete-noun terminals (callers,
+# zones, deletions, flags, files, symbols, tests).
+#
+# W332 canonical: ``flag-dead --config`` is a sidecar file the tool READS
+# (newline-delimited known-stale flag names), so the wrapper exposes it
+# as ``input_path``. ``test-scaffold --framework`` is a string enum
+# (pytest / unittest / jest / ...) -- a value, not a path -- so it stays
+# ``framework``. ``safe-zones --depth`` is an int control knob, not a
+# file, so it stays ``depth``. ``sketch <directory>``, ``split <path>``,
+# ``owner <path>``, and ``test-map <name>`` filter to a path/name already
+# INDEXED in the repo, so they keep the ``path`` / ``directory`` /
+# ``name`` convention used elsewhere in the wrapper surface
+# (e.g. ``roam_module(path=...)``, ``roam_owner(path=...)``,
+# ``roam_safe_delete(name=...)``).
+#
+# Pattern-1 audit (JSON-parse-on-empty): all 9 underlying CLI commands
+# emit a non-empty JSON envelope on every path -- including
+# symbol-not-found / file-not-found / no-deletions-detected / too-few-
+# symbols cases -- so MCP callers parsing the JSON output never crash on
+# empty stdout. ``test-scaffold`` and ``safe-delete`` still raise
+# ``SystemExit(1)`` when the symbol is not found AFTER emitting the
+# envelope; the W325 chokepoint try-parse passthrough preserves that
+# envelope through the MCP runner.
+# ---------------------------------------------------------------------------
+
+
+# W302: roam_safe_delete
+@_tool(
+    name="roam_safe_delete",
+    description=(
+        "Fuse dead-code, blast-radius, and test-coverage signals into a "
+        "single deletion verdict: SAFE / REVIEW / UNSAFE. Reports direct "
+        "callers (non-test), transitive dependents, affected files, and "
+        "a public-API bump that flips SAFE -> REVIEW for exported "
+        "symbols whose name matches a common public-API prefix. "
+        "Different from ``roam_dead_code`` (all unreferenced symbols) "
+        "and ``roam_impact`` (transitive blast radius) -- this is the "
+        "single go/no-go gate."
+    ),
+)
+def roam_safe_delete(symbol: str, root: str = ".") -> dict:
+    """Decide whether a symbol can be safely deleted.
+
+    WHEN TO USE: agent is about to delete a symbol and wants a single
+    verdict + reason before touching the file. Pair with
+    ``roam_impact`` for the full blast radius if the verdict is
+    REVIEW / UNSAFE.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name (e.g. ``"handleSave"`` or ``"MyClass.method"``).
+        W332/Fix-D canonical -- legacy ``name=`` callers are accepted
+        via the ``_PARAM_ALIASES`` machinery with a deprecation warning.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict: SAFE|REVIEW|UNSAFE, direct_callers,
+    affected_files}, callers: [...]}``.
+    """
+    return _run_roam(["safe-delete", symbol], root)
+
+
+# W302: roam_safe_zones
+@_tool(
+    name="roam_safe_zones",
+    description=(
+        "Classify the refactor containment zone around a symbol or "
+        "file: ISOLATED (no external connections), CONTAINED (<=5 "
+        "boundary symbols), or EXPOSED (>5). Reports strictly-internal "
+        "vs boundary symbols and external caller / callee counts per "
+        "boundary. Different from ``roam_impact`` (unbounded reverse "
+        "blast radius) and ``roam_closure`` (exact locations needing "
+        "modification) -- this maps the bounded zone where it is safe "
+        "to refactor freely."
+    ),
+)
+def roam_safe_zones(symbol: str, depth: int = 5, root: str = ".") -> dict:
+    """Map the safe-to-refactor containment zone around a symbol or file.
+
+    WHEN TO USE: scoping a refactor and want to know which symbols are
+    strictly internal (safe to change freely) vs boundary (maintain
+    contracts). Pair with ``roam_preflight`` for the pre-edit composite
+    gate on a single seed.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name, ``file:symbol``, or file path to anchor the zone.
+        W332/Fix-D canonical for the symbol-shaped argument -- legacy
+        ``target=`` callers are accepted via ``_PARAM_ALIASES`` with a
+        deprecation warning. The CLI argument is positional and accepts
+        either a symbol or a file path.
+    depth:
+        Max BFS depth for forward and backward propagation (default 5
+        -- mirrors the CLI's ``--depth`` default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, zone, internal_symbols,
+    boundary_symbols, affected_files}, internal: [...], boundary: [...]}``.
+    """
+    return _run_roam(["safe-zones", symbol, "--depth", str(depth)], root)
+
+
+# W302: roam_delete_check
+@_tool(
+    name="roam_delete_check",
+    description=(
+        "Gate the diff (working / staged / PR / HEAD) on surviving "
+        "references to deleted symbols and files. Per-deletion verdict: "
+        "SAFE (no surviving references), LIKELY-SAFE (survivors only in "
+        "tests / docs / unreachable code), or BREAK-RISK (survivors in "
+        "reachable code). Different from ``roam_critique`` (PR-wide "
+        "diff review) -- this targets the deletion surface specifically "
+        "with CI-gate semantics (overall BREAK-RISK trips the gate)."
+    ),
+)
+def roam_delete_check(
+    source: str = "working",
+    base_ref: str = "main",
+    commit_range: str = "",
+    reachable_from: str = "",
+    ci: bool = False,
+    count: int = 20,
+    include_line_deletions: bool = False,
+    root: str = ".",
+) -> dict:
+    """Gate a diff on surviving references to deleted symbols / files.
+
+    WHEN TO USE: before merging a PR that removes symbols or files,
+    confirm no caller survives in reachable code. Pair with
+    ``roam_critique`` for the broader PR-diff review.
+
+    Parameters
+    ----------
+    source:
+        Which diff to gate: ``working`` (default) / ``staged`` / ``pr``
+        / ``head``. ``pr`` uses ``base_ref...HEAD``; ``head`` uses the
+        last commit.
+    base_ref:
+        Base branch when ``source="pr"`` (default ``"main"``).
+    commit_range:
+        Arbitrary git range (e.g. ``"HEAD~3..HEAD"``). Empty (default)
+        uses the ``source`` selector.
+    reachable_from:
+        Anchor reachability classification at this entry symbol.
+        Empty (default) uses the orphan-set fallback.
+    ci:
+        Surface BREAK-RISK as a CI-failing verdict (the underlying CLI
+        exit 5 collapses into the JSON envelope when called via MCP).
+    count:
+        Max deletions to report in detail (default 20).
+    include_line_deletions:
+        Also gate on raw deleted lines (slow). Off by default --
+        symbols-only mode is the precise path.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, overall: SAFE|LIKELY-SAFE|BREAK-RISK,
+    break_risk, likely_safe, safe}, deletions: [...]}``.
+    """
+    args: list[str] = [
+        "delete-check",
+        "--source",
+        source,
+        "--base-ref",
+        base_ref,
+        "-n",
+        str(count),
+    ]
+    if commit_range:
+        args.extend(["--commit-range", commit_range])
+    if reachable_from:
+        args.extend(["--reachable-from", reachable_from])
+    if ci:
+        args.append("--ci")
+    if include_line_deletions:
+        args.append("--include-line-deletions")
+    return _run_roam(args, root)
+
+
+# W302: roam_flag_dead
+@_tool(
+    name="roam_flag_dead",
+    description=(
+        "Detect potentially stale feature-flag code: flags referenced "
+        "only once, flags always checked with the same boolean default, "
+        "and flags clustered in a single file. Recognises LaunchDarkly, "
+        "Unleash, Split, generic ``feature_flag(...)`` calls, and "
+        "``FEATURE_*`` env-var patterns. Different from "
+        "``roam_dead_code`` (graph-unreachable symbols) -- this targets "
+        "code that is alive in the graph but gated behind flags that "
+        "may never fire."
+    ),
+)
+def roam_flag_dead(
+    input_path: str = "",
+    include_tests: bool = False,
+    root: str = ".",
+) -> dict:
+    """Detect stale feature-flag code (conditionally-dead code).
+
+    WHEN TO USE: clean-up pass to find flags that have lived past
+    their useful life. Pair with ``roam_dead_code`` to find symbols
+    that became unreachable once the flag was disabled.
+
+    Parameters
+    ----------
+    input_path:
+        Path to a sidecar file listing known-stale flag names, one per
+        line. Flags in the list get a guaranteed ``stale`` verdict.
+        Empty (default) relies on the heuristics alone. Sidecar file
+        the tool reads (W332 canonical ``input_path``).
+    include_tests:
+        Include test files, fixtures, docs, and examples in the scan.
+        Off by default because flag references in fixtures are
+        intentional and noisy.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_flags, stale, likely_stale,
+    suspect, ok}, flags: [...]}``.
+    """
+    args: list[str] = ["flag-dead"]
+    if input_path:
+        args.extend(["--config", input_path])
+    if include_tests:
+        args.append("--include-tests")
+    return _run_roam(args, root)
+
+
+# W302: roam_sketch
+@_tool(
+    name="roam_sketch",
+    description=(
+        "Render a compact structural skeleton of a directory: every "
+        "file's exported symbols with kind, signature, line range, and "
+        "first-line docstring. Different from ``roam_understand`` "
+        "(broader project overview) and ``roam_file_info`` (one-file "
+        "skeleton) -- this is the directory-level API surface in a "
+        "single view, with optional ``full=True`` to include private "
+        "symbols."
+    ),
+)
+def roam_sketch(directory: str, full: bool = False, root: str = ".") -> dict:
+    """Render a compact directory API skeleton.
+
+    WHEN TO USE: first read on an unfamiliar directory before touching
+    a file inside it. Pair with ``roam_module`` for the import graph
+    of the same directory.
+
+    Parameters
+    ----------
+    directory:
+        Directory path relative to the repo root (e.g.
+        ``"src/roam/db"``).
+    full:
+        Include private symbols (default False -- only exported
+        symbols, matching the CLI's default).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, file_count, symbol_count}, files:
+    {<path>: [{name, kind, signature, line_start, line_end,
+    docstring}]}}``.
+    """
+    args: list[str] = ["sketch", directory]
+    if full:
+        args.append("--full")
+    return _run_roam(args, root)
+
+
+# W302: roam_split
+@_tool(
+    name="roam_split",
+    description=(
+        "Analyse a file's internal call / reference graph and propose "
+        "natural decomposition groups via Louvain community detection. "
+        "Reports per-group isolation %, internal vs cross-group edges, "
+        "and ranked extraction candidates (groups with >=3 symbols and "
+        ">=50% isolation). Different from ``roam_clusters`` "
+        "(repo-wide module partitioning) -- this analyses ONE file's "
+        "internal seams."
+    ),
+)
+def roam_split(path: str, min_group: int = 2, root: str = ".") -> dict:
+    """Suggest how to decompose a single file into smaller modules.
+
+    WHEN TO USE: the file is too big and you want to know whether it
+    contains 2-3 cohesive sub-modules that could split out cleanly.
+    Pair with ``roam_safe_zones`` once you have a candidate group to
+    verify the extraction surface.
+
+    Parameters
+    ----------
+    path:
+        File path (e.g. ``"src/roam/cli.py"``) in the indexed repo.
+    min_group:
+        Minimum symbols per group (default 2 -- mirrors the CLI's
+        ``--min-group`` default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, groups, total_symbols, extractable},
+    groups: [...], suggestions: [...]}``.
+    """
+    return _run_roam(["split", path, "--min-group", str(min_group)], root)
+
+
+# W302: roam_test_map
+@_tool(
+    name="roam_test_map",
+    description=(
+        "Map a symbol or file to its current test coverage: direct "
+        "test edges (test file calls the symbol), file-level importers "
+        "(test file imports the symbol's module), and convention-based "
+        "matches (Salesforce ``<Name>Test`` / ``<Name>_Test`` "
+        "classes). Different from ``roam_test_gaps`` (untested symbols "
+        "in changed files) and ``roam_affected_tests`` (forward trace "
+        "from changes to affected tests) -- this is the lookup for "
+        "what currently exercises a given symbol."
+    ),
+)
+def roam_test_map(symbol: str, root: str = ".") -> dict:
+    """Look up the tests that currently cover a symbol or file.
+
+    WHEN TO USE: deciding whether to delete or refactor a symbol --
+    confirm what would lose coverage. Pair with ``roam_test_scaffold``
+    when no coverage exists.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name (e.g. ``"handleSave"``) or file path (e.g.
+        ``"src/roam/cli.py"``). Path-shaped inputs are dispatched as a
+        file lookup; everything else is treated as a symbol name.
+        W332/Fix-D canonical for the symbol-shaped argument -- legacy
+        ``name=`` callers are accepted via ``_PARAM_ALIASES`` with a
+        deprecation warning.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, direct_tests, test_importers, ...},
+    direct_tests: [...], test_importers: [...]}``.
+    """
+    return _run_roam(["test-map", symbol], root)
+
+
+# W302: roam_test_pyramid
+@_tool(
+    name="roam_test_pyramid",
+    description=(
+        "Count indexed test files by kind (unit / integration / e2e / "
+        "smoke / unknown) using path and name conventions, and flag "
+        "inverted pyramids (when ``e2e + integration > unit``). "
+        "Different from ``roam_test_gaps`` (missing coverage) -- this "
+        "measures the shape of the existing test suite for slow-CI "
+        "risk."
+    ),
+)
+def roam_test_pyramid(root: str = ".") -> dict:
+    """Count tests by kind, flag inverted pyramids.
+
+    WHEN TO USE: triage CI duration -- a pyramid with more
+    integration + e2e tests than unit tests pays for slow runs. Pair
+    with ``roam_why_slow`` for the runtime-cost view on the hottest
+    tests.
+
+    Parameters
+    ----------
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total, unit, integration, e2e,
+    smoke, unknown}, counts: {...}, samples: {...}}``.
+    """
+    return _run_roam(["test-pyramid"], root)
+
+
+# W302: roam_test_scaffold
+@_tool(
+    name="roam_test_scaffold",
+    description=(
+        "Generate a test-file skeleton for a source file or symbol "
+        "(functions, classes, methods) with the right imports and "
+        "per-symbol stub blocks. Supports pytest / unittest (Python), "
+        "jest / mocha / vitest (JS/TS), Go testing, JUnit4 / JUnit5 "
+        "(Java), and RSpec / Minitest (Ruby). Dry-run by default; pair "
+        "with ``roam_test_map`` first to confirm no existing coverage. "
+        "Skips symbols that already have tests in the target file."
+    ),
+)
+def roam_test_scaffold(
+    symbol: str,
+    write: bool = False,
+    framework: str = "",
+    root: str = ".",
+) -> dict:
+    """Scaffold a test file from indexed source symbols.
+
+    WHEN TO USE: ``roam_test_map`` reported "no tests found" for a
+    symbol or file, and you want a fresh stub to fill in.
+
+    Parameters
+    ----------
+    symbol:
+        Source file path (e.g. ``"src/roam/cli.py"``) or symbol name
+        (e.g. ``"MyClass"``). Path-shaped inputs scaffold every
+        testable symbol in the file; symbol-shaped inputs scaffold one
+        target plus its methods (for classes). W332/Fix-D canonical
+        for the symbol-shaped argument -- legacy ``name=`` callers are
+        accepted via ``_PARAM_ALIASES`` with a deprecation warning.
+    write:
+        Write the scaffold to disk. Off by default -- dry-run returns
+        the scaffold text in the envelope without touching the
+        filesystem.
+    framework:
+        Override the test framework (e.g. ``"pytest"``, ``"unittest"``,
+        ``"jest"``, ``"junit5"``, ``"rspec"``). Empty (default) picks
+        the language default.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, scaffolded, skipped, total_symbols,
+    language, framework, written}, scaffold: "<text>",
+    symbols: [...]}``.
+    """
+    args: list[str] = ["test-scaffold", symbol]
+    if write:
+        args.append("--write")
+    if framework:
+        args.extend(["--framework", framework])
+    return _run_roam(args, root)
+
+
+# ---------------------------------------------------------------------------
+# W303: test surface cluster (Wave29 MCP wrapper backfill, sub-wave 5)
+# ---------------------------------------------------------------------------
+# 5 read-only wrappers that pair test coverage with the world-model
+# classifiers an agent consults to reason about retry safety, transaction
+# correctness, and parameter-to-sink dataflow. The W303 plan listed 8
+# wrappers but W302 already shipped the three test-surface commands
+# (``test-map`` / ``test-pyramid`` / ``test-scaffold``); the remaining 5
+# land here: ``coverage-gaps`` (gate-coverage analysis) and the four
+# world-model classifiers ``side-effects`` / ``idempotency`` /
+# ``causal-graph`` / ``tx-boundaries``. All 5 require a built index so
+# they auto-inherit the W296 cold-start guard (none appear in
+# ``_NO_INDEX_NEEDED``). Descriptions use imperative voice per CLAUDE.md
+# LAW 2; verdict strings anchor on LAW 4 concrete-noun terminals
+# (symbols, gates, entries, classifications, edges, boundaries, files).
+#
+# W332 canonical: ``coverage-gaps --config`` is a sidecar
+# ``.roam-gates.yml`` file the tool READS, so the wrapper exposes it
+# as ``input_path``. ``side-effects``, ``idempotency``, ``causal-graph``,
+# and ``tx-boundaries`` take an optional positional ``[SYMBOL]`` filter,
+# so they use the W332/Fix-D canonical ``symbol`` argument with empty
+# default (mirrors CLI behaviour: empty -> scan-all). ``--kind`` /
+# ``--classification`` filters are string enums (a value, not a path),
+# so they keep their natural names. ``--top`` / ``--max-depth`` are int
+# control knobs, not files. ``coverage-gaps --import-report`` (repeated
+# trace-ingestion path) is intentionally omitted from the wrapper
+# surface; agents should run the CLI directly for trace ingestion.
+#
+# Pattern-1 audit (JSON-parse-on-empty): all 5 underlying CLI commands
+# emit a non-empty JSON envelope on every path -- including no-symbols-
+# matched / no-effects-classified / no-boundaries-found cases -- so MCP
+# callers parsing the JSON output never crash on empty stdout.
+# ---------------------------------------------------------------------------
+
+
+# W303: roam_coverage_gaps
+@_tool(
+    name="roam_coverage_gaps",
+    description=(
+        "Find unprotected entry points: top-level exported functions / "
+        "methods that have no call-graph path to a required gate symbol "
+        "(auth / permission / validation). Supports exact gate names, "
+        "regex patterns, framework presets (python / javascript / go / "
+        "java-maven / rust), and a ``.roam-gates.yml`` sidecar config. "
+        "Different from ``roam_auth_gaps`` (PHP/Laravel source analysis) "
+        "and ``roam_test_gaps`` (untested symbols in changed files) -- "
+        "this walks the call graph to verify every entry reaches a "
+        "required gate."
+    ),
+)
+def roam_coverage_gaps(
+    gate: str = "",
+    gate_pattern: str = "",
+    scope: str = "",
+    entry_pattern: str = "",
+    max_depth: int = 8,
+    preset: str = "",
+    auto_detect: bool = False,
+    input_path: str = "",
+    root: str = ".",
+) -> dict:
+    """Find entry points with no path to a required gate symbol.
+
+    WHEN TO USE: audit which exported handlers / routes / controllers
+    skip a required auth or permission check. Pair with
+    ``roam_auth_gaps`` for PHP/Laravel-specific source analysis and
+    ``roam_entry_points`` to list the entry surface itself.
+
+    Parameters
+    ----------
+    gate:
+        Comma-separated gate symbol names (e.g.
+        ``"requireAuth,validateToken"``). Empty (default) relies on
+        ``gate_pattern`` / ``preset`` / ``auto_detect`` instead.
+    gate_pattern:
+        Regex matching gate symbols by name (e.g.
+        ``"auth|permission|guard"``). Empty (default) skips
+        regex matching.
+    scope:
+        File scope glob (e.g. ``"app/routes/**"``). Empty (default)
+        scans every indexed entry. Mirrors the ``--scope`` CLI flag.
+    entry_pattern:
+        Regex filter on entry-point names (e.g.
+        ``"handler|controller"``). Empty (default) keeps every entry.
+    max_depth:
+        Maximum BFS depth from entry to gate (default 8 -- mirrors the
+        CLI default per LAW 11).
+    preset:
+        Built-in gate preset name (``python`` / ``javascript`` / ``go``
+        / ``java-maven`` / ``rust``). Empty (default) skips presets.
+    auto_detect:
+        Auto-detect the framework preset from project files. Off by
+        default -- explicit ``preset`` / ``gate`` wins.
+    input_path:
+        Path to a ``.roam-gates.yml`` config file the tool reads.
+        Empty (default) skips the sidecar. Sidecar file the tool reads
+        (W332 canonical ``input_path``).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_entries, uncovered, ...},
+    entries: [...]}``.
+    """
+    args: list[str] = ["coverage-gaps", "--max-depth", str(max_depth)]
+    if gate:
+        args.extend(["--gate", gate])
+    if gate_pattern:
+        args.extend(["--gate-pattern", gate_pattern])
+    if scope:
+        args.extend(["--scope", scope])
+    if entry_pattern:
+        args.extend(["--entry-pattern", entry_pattern])
+    if preset:
+        args.extend(["--preset", preset])
+    if auto_detect:
+        args.append("--auto-detect")
+    if input_path:
+        args.extend(["--config", input_path])
+    return _run_roam(args, root)
+
+
+# W303: roam_side_effects
+@_tool(
+    name="roam_side_effects",
+    description=(
+        "Classify symbols by side-effect bucket: ``none`` (pure), "
+        "``io_read`` (disk / network / DB read), ``io_write`` (disk / "
+        "network / DB write), ``mutation`` (global / module state "
+        "mutation), ``process`` (subprocess / thread / async), or "
+        "``unknown``. Coarse five-bucket taxonomy designed for agent "
+        "decisions. Different from ``roam_effects`` (finer 11-kind "
+        "taxonomy + transitive propagation) -- this is the agent's "
+        "go/no-go classifier for ``can I retry this safely?``."
+    ),
+)
+def roam_side_effects(
+    symbol: str = "",
+    kind: str = "",
+    top: int = 50,
+    root: str = ".",
+) -> dict:
+    """Classify symbols by side effects (none / io / mutation / process).
+
+    WHEN TO USE: deciding whether to retry / replay a symbol, or
+    auditing the side-effect surface of a module. Pair with
+    ``roam_idempotency`` for the retry-safety verdict that composes on
+    top of this classification.
+
+    Parameters
+    ----------
+    symbol:
+        Optional symbol name to filter to one classification (e.g.
+        ``"handleSave"``). Empty (default) scans every indexed symbol.
+        W332/Fix-D canonical for the symbol-shaped argument.
+    kind:
+        Filter to one side-effect kind: ``none`` / ``io_read`` /
+        ``io_write`` / ``mutation`` / ``process`` / ``unknown``. Empty
+        (default) returns every kind.
+    top:
+        Maximum classifications to surface (default 50 -- mirrors the
+        CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_classified, ...},
+    classifications: [...]}``.
+    """
+    args: list[str] = ["side-effects"]
+    if symbol:
+        args.append(symbol)
+    if kind:
+        args.extend(["--kind", kind])
+    args.extend(["--top", str(top)])
+    return _run_roam(args, root)
+
+
+# W303: roam_idempotency
+@_tool(
+    name="roam_idempotency",
+    description=(
+        "Classify symbols by retry safety: ``idempotent`` (pure, "
+        "read-only I/O, write-with-check patterns like "
+        "``mkdir(exist_ok=True)`` / ``INSERT OR IGNORE`` / ``UPSERT`` "
+        "/ ``if not exists: create``), ``non_idempotent`` (naive "
+        "writes, mutations, appends), or ``unknown`` (process spawn / "
+        "unreadable body). Composes on top of ``roam_side_effects``. "
+        "Different from ``roam_tx_boundaries`` (transaction "
+        "correctness) -- this answers ``is it safe to retry?``."
+    ),
+)
+def roam_idempotency(
+    symbol: str = "",
+    kind: str = "",
+    top: int = 50,
+    root: str = ".",
+) -> dict:
+    """Classify symbols by idempotency (safe-to-retry).
+
+    WHEN TO USE: deciding whether an agent's failed step can be
+    re-run without doubling its effect. Pair with ``roam_side_effects``
+    for the underlying effect bucket and ``roam_tx_boundaries`` for
+    transaction-scope reasoning.
+
+    Parameters
+    ----------
+    symbol:
+        Optional symbol name to filter to one classification (e.g.
+        ``"createUser"``). Empty (default) scans every indexed symbol.
+        W332/Fix-D canonical for the symbol-shaped argument.
+    kind:
+        Filter to one idempotency kind: ``idempotent`` /
+        ``non_idempotent`` / ``unknown``. Empty (default) returns every
+        kind.
+    top:
+        Maximum classifications to surface (default 50 -- mirrors the
+        CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_classified, ...},
+    classifications: [...]}``.
+    """
+    args: list[str] = ["idempotency"]
+    if symbol:
+        args.append(symbol)
+    if kind:
+        args.extend(["--kind", kind])
+    args.extend(["--top", str(top)])
+    return _run_roam(args, root)
+
+
+# W303: roam_causal_graph
+@_tool(
+    name="roam_causal_graph",
+    description=(
+        "Build per-symbol causal graphs: edges from inputs "
+        "(parameters / globals / env reads) to sinks "
+        "(side-effecting calls / return / raise / mutation). Six "
+        "causal kinds: ``param_to_effect``, ``param_to_return``, "
+        "``global_to_effect``, ``global_to_mutation``, "
+        "``env_to_effect``, ``param_to_raise``. Heuristic line-level "
+        "text scan -- false negatives expected. Different from "
+        "``roam_taint`` (cross-symbol taint propagation) -- this is "
+        "intra-symbol dataflow only."
+    ),
+)
+def roam_causal_graph(
+    symbol: str = "",
+    kind: str = "",
+    top: int = 20,
+    root: str = ".",
+) -> dict:
+    """Build per-symbol causal graphs (input -> sink dataflow).
+
+    WHEN TO USE: tracing how a function parameter or env read flows
+    into a side-effecting call before changing the signature. Pair
+    with ``roam_taint`` for cross-symbol propagation and
+    ``roam_side_effects`` for the sink classification.
+
+    Parameters
+    ----------
+    symbol:
+        Optional symbol name to filter to one graph (e.g.
+        ``"handleSave"``). Empty (default) scans every indexed symbol.
+        W332/Fix-D canonical for the symbol-shaped argument.
+    kind:
+        Filter to one causal kind: ``param_to_effect`` /
+        ``param_to_return`` / ``global_to_effect`` /
+        ``global_to_mutation`` / ``env_to_effect`` / ``param_to_raise``.
+        Empty (default) returns every kind.
+    top:
+        Maximum graphs to surface (default 20 -- mirrors the CLI
+        default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_graphs, total_edges, ...},
+    graphs: [...]}``.
+    """
+    args: list[str] = ["causal-graph"]
+    if symbol:
+        args.append(symbol)
+    if kind:
+        args.extend(["--kind", kind])
+    args.extend(["--top", str(top)])
+    return _run_roam(args, root)
+
+
+# W303: roam_tx_boundaries
+@_tool(
+    name="roam_tx_boundaries",
+    description=(
+        "Classify functions by transactional safety: "
+        "``transactional`` (begin matched by commit/rollback, all "
+        "mutations inside scope), ``partial_transactional`` (mutations "
+        "both inside AND outside scope), ``unsafe_mutation`` (mutations "
+        "OUTSIDE any transaction wrapper -- latent bug), "
+        "``unmatched_begin`` (begin without commit/rollback -- leak), "
+        "``unmatched_commit``, ``non_transactional``, or ``unknown``. "
+        "Composes on top of ``roam_side_effects``. Different from "
+        "``roam_idempotency`` (retry safety) -- this gates transaction "
+        "correctness."
+    ),
+)
+def roam_tx_boundaries(
+    symbol: str = "",
+    classification: str = "",
+    top: int = 30,
+    root: str = ".",
+) -> dict:
+    """Classify functions by transaction-scope correctness.
+
+    WHEN TO USE: auditing a service for missing begin/commit pairs or
+    mutations leaking outside transactions. Pair with
+    ``roam_side_effects`` for the underlying mutation classification.
+
+    Parameters
+    ----------
+    symbol:
+        Optional symbol name to filter to one boundary (e.g.
+        ``"transferFunds"``). Empty (default) scans every indexed
+        symbol. W332/Fix-D canonical for the symbol-shaped argument.
+    classification:
+        Filter to one classification: ``transactional`` /
+        ``partial_transactional`` / ``unsafe_mutation`` /
+        ``unmatched_begin`` / ``unmatched_commit`` /
+        ``non_transactional`` / ``unknown``. Empty (default) returns
+        every classification.
+    top:
+        Maximum boundaries to surface (default 30 -- mirrors the CLI
+        default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total_classified, ...},
+    boundaries: [...]}``.
+    """
+    args: list[str] = ["tx-boundaries"]
+    if symbol:
+        args.append(symbol)
+    if classification:
+        args.extend(["--classification", classification])
+    args.extend(["--top", str(top)])
+    return _run_roam(args, root)
+
+
+# ---------------------------------------------------------------------------
+# W304: agent-OS daily flow cluster (Wave29 MCP wrapper backfill, sub-wave 6)
+# ---------------------------------------------------------------------------
+# 10 read-only wrappers covering the "what an agent runs to plan / brief
+# itself" surface. Composite recipes that compose other commands
+# (``brief`` / ``next`` / ``plan`` / ``agent-plan`` / ``agent-context`` /
+# ``agent-score`` / ``guard`` / ``adversarial`` / ``migration-plan`` /
+# ``recommend``). All 10 require a built index so they auto-inherit the
+# W296 cold-start guard (none appear in ``_NO_INDEX_NEEDED``).
+# Descriptions use imperative voice per CLAUDE.md LAW 2; verdict strings
+# anchor on LAW 4 concrete-noun terminals (commands, symbols, agents,
+# tasks, steps, runs, challenges, recommendations).
+#
+# W332 canonical: ``migration-plan --target`` is a sidecar YAML file the
+# tool READS, so the wrapper exposes it as ``input_path``. ``recommend
+# <symbol>`` / ``guard <name>`` / ``plan <target>`` take a symbol-shaped
+# positional, so they use the W332/Fix-D canonical ``symbol`` argument.
+# ``agent_id`` / ``n_agents`` are int control knobs (not files), so they
+# keep their natural names. ``adversarial --range`` is a git-range
+# string (a value, not a path), so it stays ``commit_range`` to match
+# the pre-existing ``roam_delete_check(commit_range=...)`` convention.
+# Choice options (``--task`` / ``--format`` / ``--severity`` /
+# ``--max-risk``) are string enums (a value, not a path), so they keep
+# their natural names.
+#
+# Pattern-1 audit (JSON-parse-on-empty): all 10 underlying CLI commands
+# emit a non-empty JSON envelope on every path -- including no-runs /
+# no-changes-detected / no-symbol-found / no-target-moves cases -- so
+# MCP callers parsing the JSON output never crash on empty stdout.
+# ``plan``, ``agent-context``, and ``recommend`` still raise
+# ``SystemExit(1)`` on no-target / agent-not-found / symbol-not-found
+# AFTER emitting the envelope; the W325 chokepoint try-parse passthrough
+# preserves that envelope through the MCP runner.
+# ---------------------------------------------------------------------------
+
+
+# W304: roam_brief
+@_tool(
+    name="roam_brief",
+    description=(
+        "Compose a one-page agent briefing covering five sections: "
+        "``next`` (what ``roam next`` would recommend), ``highlights`` "
+        "(stack / top danger zones / top mined laws from "
+        "``roam agents-md``), ``pr_bundle`` (current PR-bundle status on "
+        "the active branch), ``mode`` (active agent mode and its "
+        "allow-list size), and ``runs`` (the N most-recent runs from "
+        "the ledger). Designed as the FIRST command an agent runs when "
+        "joining a roam-indexed repo. Different from ``roam_next`` "
+        "(single-command router) -- this is the verdict-first session "
+        "kickoff packet."
+    ),
+)
+def roam_brief(
+    no_next: bool = False,
+    no_pr_bundle: bool = False,
+    no_highlights: bool = False,
+    no_runs: bool = False,
+    no_mode: bool = False,
+    top_runs: int = 3,
+    root: str = ".",
+) -> dict:
+    """Compose a one-page session kickoff briefing.
+
+    WHEN TO USE: agent joining a fresh session and wants the most
+    decision-relevant state in one call. Pair with ``roam_next`` for
+    just the router recommendation or ``roam_workflow`` for curated
+    multi-step recipes.
+
+    Parameters
+    ----------
+    no_next:
+        Skip the next-command recommendation block. Off by default.
+    no_pr_bundle:
+        Skip the PR-bundle status block (useful when not in PR mode).
+        Off by default.
+    no_highlights:
+        Skip the stack / danger / laws highlights block. Off by default.
+    no_runs:
+        Skip the recent-runs block. Off by default.
+    no_mode:
+        Skip the active-mode block. Off by default.
+    top_runs:
+        How many recent closed runs to include (default 3 -- mirrors
+        the CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, next: {...}, highlights: {...},
+    pr_bundle: {...}, mode: {...}, runs: {...}}``.
+    """
+    args: list[str] = ["brief", "--top-runs", str(top_runs)]
+    if no_next:
+        args.append("--no-next")
+    if no_pr_bundle:
+        args.append("--no-pr-bundle")
+    if no_highlights:
+        args.append("--no-highlights")
+    if no_runs:
+        args.append("--no-runs")
+    if no_mode:
+        args.append("--no-mode")
+    return _run_roam(args, root)
+
+
+# W304: roam_next
+@_tool(
+    name="roam_next",
+    description=(
+        "Suggest the next ``roam`` command based on cheap repo-state "
+        "signals: index presence, staleness, working-tree dirtiness, "
+        "recent envelope, and recent memory. Emits one imperative "
+        "recommendation in <200ms. Different from ``roam_brief`` "
+        "(multi-section session kickoff) and ``roam_workflow`` "
+        "(curated multi-step recipes) -- this is the single-command "
+        "router."
+    ),
+)
+def roam_next(root: str = ".") -> dict:
+    """Recommend the next command based on current repo state.
+
+    WHEN TO USE: agent is unsure what to run next and wants a
+    bounded router that picks one command + reason. Pair with
+    ``roam_brief`` for the multi-section session packet.
+
+    Parameters
+    ----------
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, command, reason, state,
+    partial_success}, next_steps: [...], state: {...}}``.
+    """
+    return _run_roam(["next"], root)
+
+
+# W304: roam_recommend
+@_tool(
+    name="roam_recommend",
+    description=(
+        "Surface symbols related to a given symbol via three signal "
+        "sources combined: call-graph neighbours (1-hop in + out), "
+        "git co-change (other symbols whose files changed in the same "
+        "commits), and persisted clone siblings (when ``roam clones "
+        "--persist`` was run). Each candidate gets a score that's the "
+        "normalised sum of the three contributions. Different from "
+        "``roam_impact`` (transitive blast radius) and "
+        "``roam_neighbours`` (graph-only 1-hop neighbours) -- this "
+        "fuses co-change + clones into the ranking."
+    ),
+)
+def roam_recommend(
+    symbol: str,
+    limit: int = 10,
+    root: str = ".",
+) -> dict:
+    """Recommend related symbols using call-graph + co-change + clones.
+
+    WHEN TO USE: agent is about to touch a symbol and wants to know
+    which other symbols to read first. Pair with ``roam_preflight``
+    for the pre-edit composite gate and ``roam_context`` for the
+    read-order packet.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name (e.g. ``"handleSave"``) or qualified name (e.g.
+        ``"module.handleSave"``). W332/Fix-D canonical for the
+        symbol-shaped argument -- legacy ``name=`` callers are accepted
+        via ``_PARAM_ALIASES`` with a deprecation warning.
+    limit:
+        Top N recommendations to surface (default 10 -- mirrors the
+        CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, count}, recommendations: [...]}``.
+    """
+    return _run_roam(
+        ["recommend", symbol, "--limit", str(limit)], root
+    )
+
+
+# W304: roam_plan
+@_tool(
+    name="roam_plan",
+    description=(
+        "Generate a structured execution plan for modifying code: "
+        "read-order (call-graph BFS), invariants (mined contracts), "
+        "blast-radius preview, and per-task heuristics. Five task "
+        "types: ``refactor`` / ``debug`` / ``extend`` / ``review`` / "
+        "``understand``. Different from ``roam_plan_refactor`` "
+        "(refactoring-specific simulation) and ``roam_preflight`` "
+        "(blast-radius gate) -- this is the general-purpose work plan "
+        "for any task type."
+    ),
+)
+def roam_plan(
+    symbol: str = "",
+    task: str = "refactor",
+    path: str = "",
+    staged: bool = False,
+    depth: int = 2,
+    root: str = ".",
+) -> dict:
+    """Generate a structured execution plan for a coding task.
+
+    WHEN TO USE: agent is about to start a task and wants read-order,
+    invariants, and per-task heuristics in one envelope. Pair with
+    ``roam_preflight`` before edits and ``roam_context`` for the
+    single-symbol read-order packet.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name or file path to plan for (e.g. ``"handleSave"`` or
+        ``"src/api.py"``). Empty (default) falls back to ``path`` or
+        ``staged``. W332/Fix-D canonical for the symbol-shaped argument
+        -- legacy ``name=`` / ``target=`` callers are accepted via
+        ``_PARAM_ALIASES`` with a deprecation warning.
+    task:
+        Task type: ``refactor`` (default) / ``debug`` / ``extend`` /
+        ``review`` / ``understand``. Mirrors the CLI default per LAW 11.
+    path:
+        Explicit file path to plan for (e.g. ``"src/api.py"``). Empty
+        (default) uses ``symbol`` or ``staged`` instead. W347/Fix-D
+        canonical for filesystem paths -- legacy ``file_path=`` /
+        ``filename=`` / ``filepath=`` / ``file=`` callers are accepted
+        via ``_PARAM_ALIASES`` with a deprecation warning.
+    staged:
+        Plan for staged changes (mirrors ``--staged`` flag). Off by
+        default -- explicit ``symbol`` / ``path`` wins.
+    depth:
+        Call-graph depth for the read-order section (default 2 --
+        mirrors the CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, task, ...}, read_order: [...],
+    invariants: [...], blast_radius: {...}}``.
+    """
+    args: list[str] = ["plan", "--task", task, "--depth", str(depth)]
+    if symbol:
+        args.append(symbol)
+    if path:
+        args.extend(["--file", path])
+    if staged:
+        args.append("--staged")
+    return _run_roam(args, root)
+
+
+# W304: roam_agent_plan
+@_tool(
+    name="roam_agent_plan",
+    description=(
+        "Decompose partitions into dependency-ordered multi-agent "
+        "tasks: per-task write scope, read-only dependencies, "
+        "interface contracts, phase schedule, and merge sequencing. "
+        "Supports ``plain`` / ``json`` / ``claude-teams`` output "
+        "formats. Different from ``roam_partition`` (raw analytical "
+        "manifest) and ``roam_orchestrate`` (operational dispatch) -- "
+        "this is the dependency-ordered phase schedule."
+    ),
+)
+def roam_agent_plan(
+    agents: int,
+    output_format: str = "plain",
+    root: str = ".",
+) -> dict:
+    """Decompose partitions into a dependency-ordered multi-agent plan.
+
+    WHEN TO USE: planning a parallel multi-agent run and want the
+    phase + handoff schedule. Pair with ``roam_agent_context`` for
+    a per-worker focused slice.
+
+    Parameters
+    ----------
+    agents:
+        Number of agents / tasks to generate (1 or more, no default
+        in the CLI -- mirrors the required CLI flag per LAW 11).
+    output_format:
+        Output format: ``plain`` (default) / ``json`` / ``claude-teams``.
+        Mirrors the CLI default per LAW 11.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, n_agents, tasks, handoffs,
+    conflict_probability}, tasks: [...], handoffs: [...]}``.
+    """
+    return _run_roam(
+        ["agent-plan", "--agents", str(agents), "--format", output_format],
+        root,
+    )
+
+
+# W304: roam_agent_context
+@_tool(
+    name="roam_agent_context",
+    description=(
+        "Extract a single agent's partition from the full agent plan: "
+        "write scope, read-only dependencies, interface contracts, "
+        "coordination instructions, and key symbols. Different from "
+        "``roam_agent_plan`` (full multi-agent view) and "
+        "``roam_orchestrate`` (operational dispatch with merge order) "
+        "-- this is the focused per-worker packet for one agent."
+    ),
+)
+def roam_agent_context(
+    agent_id: int,
+    agents: int = 0,
+    root: str = ".",
+) -> dict:
+    """Extract one agent's partition slice from the multi-agent plan.
+
+    WHEN TO USE: dispatching a sub-agent and want its focused context
+    blob (write scope + interface contracts + coordination notes).
+    Pair with ``roam_agent_plan`` for the full multi-agent view.
+
+    Parameters
+    ----------
+    agent_id:
+        Worker ID (1-based). Required by the CLI per LAW 11.
+    agents:
+        Total number of agents used for partitioning. 0 (default) lets
+        the CLI pick ``max(agent_id, 2)`` -- mirrors the CLI default
+        per LAW 11.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, agent_id, ...}, agent: {...},
+    write_files: [...], read_only_dependencies: [...],
+    interface_contracts: [...], key_symbols: [...]}``.
+    """
+    args: list[str] = ["agent-context", "--agent-id", str(agent_id)]
+    if agents > 0:
+        args.extend(["--agents", str(agents)])
+    return _run_roam(args, root)
+
+
+# W304: roam_agent_score
+@_tool(
+    name="roam_agent_score",
+    description=(
+        "Aggregate runs from the local ledger and score each agent on "
+        "a 0..100 composite (run completion, gate adherence, "
+        "preflight compliance, blast accuracy, replay survival). "
+        "Empty state (no runs / no matching runs) returns a clean "
+        "envelope with ``state: \"no_data\"`` -- never empty stdout, "
+        "never a crash. Different from ``roam_runs_verify`` (HMAC "
+        "tamper-detection) -- this is the per-agent quality score "
+        "across runs."
+    ),
+)
+def roam_agent_score(
+    agent: str = "",
+    since: str = "",
+    top: int = 0,
+    root: str = ".",
+) -> dict:
+    """Score each agent on a 0..100 composite across recent runs.
+
+    WHEN TO USE: triage which agent is producing the highest-quality
+    runs. Pair with ``roam_runs_verify`` for ledger tamper-detection
+    on a specific run.
+
+    Parameters
+    ----------
+    agent:
+        Filter to runs by this agent name. Empty (default) scores all
+        agents. Mirrors the CLI default per LAW 11.
+    since:
+        Filter to runs started at >= ``SINCE`` (ISO-8601, e.g.
+        ``"2026-05-01T00:00:00Z"``). Empty (default) keeps every run.
+    top:
+        Cap agents reported to N highest scores. 0 (default) returns
+        every agent -- mirrors the CLI default per LAW 11.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, agents_scored, state,
+    partial_success}, agents: [...]}``.
+    """
+    args: list[str] = ["agent-score"]
+    if agent:
+        args.extend(["--agent", agent])
+    if since:
+        args.extend(["--since", since])
+    if top > 0:
+        args.extend(["--top", str(top)])
+    return _run_roam(args, root)
+
+
+# W304: roam_guard
+@_tool(
+    name="roam_guard",
+    description=(
+        "Check breaking-change risk for a symbol before editing: "
+        "0..100 risk score with component breakdown (blast radius, "
+        "complexity, centrality, test gap, layer analysis) plus "
+        "caller / callee lists and covering tests -- all within a "
+        "~2K-token budget. Different from ``roam_preflight`` "
+        "(file / staged / coupling / convention / fitness composite) "
+        "-- this is the per-symbol quantified risk score for "
+        "sub-agent dispatch."
+    ),
+)
+def roam_guard(symbol: str, root: str = ".") -> dict:
+    """Check breaking-change risk for a symbol before editing.
+
+    WHEN TO USE: sub-agent is about to edit a single symbol and
+    wants a bounded ~2K-token risk packet. Pair with
+    ``roam_preflight`` for the composite gate on files / staged
+    changes.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name (e.g. ``"handleSave"``). W332/Fix-D canonical for
+        the symbol-shaped argument -- legacy ``name=`` callers are
+        accepted via ``_PARAM_ALIASES`` with a deprecation warning.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, risk_score, ...},
+    components: {...}, callers: [...], callees: [...], tests: [...]}``.
+    """
+    return _run_roam(["guard", symbol], root)
+
+
+# W304: roam_adversarial
+@_tool(
+    name="roam_adversarial",
+    description=(
+        "Frame architectural issues in changed files as challenges "
+        "the developer must defend: CRITICAL (new cyclic dependencies), "
+        "HIGH (layer violations, high-confidence anti-patterns), "
+        "WARNING (cross-cluster coupling, high fan-out), INFO "
+        "(orphaned symbols). Composes cycles + clusters + layers + "
+        "catalog + dead + complexity. Different from ``roam_diff`` "
+        "(blast-radius facts) -- this is the architecture-review "
+        "framing for code-review agents."
+    ),
+)
+def roam_adversarial(
+    staged: bool = False,
+    commit_range: str = "",
+    severity: str = "low",
+    fail_on_critical: bool = False,
+    output_format: str = "text",
+    root: str = ".",
+) -> dict:
+    """Generate adversarial architecture challenges on changed files.
+
+    WHEN TO USE: code-review agent reviewing a diff and wants
+    architectural challenges framed as defendable choices. Pair with
+    ``roam_critique`` for the broader PR-diff review and
+    ``roam_preflight`` for the pre-edit composite gate.
+
+    Parameters
+    ----------
+    staged:
+        Review staged changes only. Off by default -- working-tree
+        wins. Mirrors the CLI default per LAW 11.
+    commit_range:
+        Git commit range (e.g. ``"main..HEAD"``). Empty (default)
+        uses the working-tree / staged selector.
+    severity:
+        Minimum severity to surface: ``low`` (default, shows all) /
+        ``medium`` / ``high`` / ``critical``. Mirrors the CLI default
+        per LAW 11.
+    fail_on_critical:
+        Surface a CI-failing verdict when critical challenges land.
+        Off by default.
+    output_format:
+        Output format: ``text`` (default) / ``markdown``. Mirrors the
+        CLI ``--format`` default per LAW 11.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, challenges, critical, high,
+    warning, info, changed_files}, challenges: [...]}``.
+    """
+    args: list[str] = ["adversarial", "--severity", severity, "--format", output_format]
+    if staged:
+        args.append("--staged")
+    if commit_range:
+        args.extend(["--range", commit_range])
+    if fail_on_critical:
+        args.append("--fail-on-critical")
+    return _run_roam(args, root)
+
+
+# W304: roam_migration_plan
+@_tool(
+    name="roam_migration_plan",
+    description=(
+        "Generate an ordered migration plan with risk + blast-radius "
+        "per step from a target-architecture YAML spec or inline "
+        "``--move SYMBOL=path/to/new/file`` directives. Each step is "
+        "annotated with caller count and a derived risk score so "
+        "agents can decide where to stop or insert tests. Stops at "
+        "the first step exceeding ``max_risk``. Different from "
+        "``roam_simulate`` (counterfactual single-move analysis) -- "
+        "this is the ordered multi-step plan with a risk gate."
+    ),
+)
+def roam_migration_plan(
+    input_path: str = "",
+    moves: tuple[str, ...] = (),
+    max_risk: str = "high",
+    root: str = ".",
+) -> dict:
+    """Generate an ordered migration plan with risk + blast-radius steps.
+
+    WHEN TO USE: planning a multi-symbol move / rename / restructure
+    and want a risk-ordered step list. Pair with ``roam_simulate``
+    for counterfactual single-move analysis.
+
+    Parameters
+    ----------
+    input_path:
+        Path to a target-architecture spec (YAML) the tool reads.
+        Empty (default) requires ``moves`` instead. W332 canonical
+        ``input_path`` for the sidecar config file.
+    moves:
+        Inline move directives, each shaped ``"SYMBOL=path/to/new.py"``.
+        Repeatable -- pass a tuple of strings (e.g.
+        ``("foo=src/a.py", "bar=src/b.py")``). Empty (default) requires
+        ``input_path`` instead.
+    max_risk:
+        Stop the plan once the next step exceeds this risk threshold:
+        ``low`` / ``medium`` / ``high`` (default). Mirrors the CLI
+        default per LAW 11.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, step_count, skipped_count, max_risk,
+    ...}, steps: [...], skipped: [...]}``.
+    """
+    args: list[str] = ["migration-plan", "--max-risk", max_risk]
+    if input_path:
+        args.extend(["--target", input_path])
+    for move in moves:
+        args.extend(["--move", move])
+    return _run_roam(args, root)
+
+
+# ---------------------------------------------------------------------------
+# W305: reports & audit cluster (Wave29 MCP wrapper backfill, sub-wave 7)
+# ---------------------------------------------------------------------------
+# 11 read-only wrappers covering the "top-level reports + boolean oracles"
+# surface. Composite report recipes (``audit`` / ``report`` / ``risk`` /
+# ``stats``) plus two cross-index diff tools (``compare`` /
+# ``evidence-diff``) plus 5 oracle subcommands (``symbol-exists`` /
+# ``route-exists`` / ``is-test-only`` / ``is-reachable-from-entry`` /
+# ``is-clone-of``). All 11 require a built index so they auto-inherit
+# the W296 cold-start guard (none appear in ``_NO_INDEX_NEEDED``).
+# Descriptions use imperative voice per CLAUDE.md LAW 2; verdict strings
+# anchor on LAW 4 concrete-noun terminals (symbols, files, presets,
+# sections, packets, callers).
+#
+# W332 canonicals: ``compare BASELINE TARGET`` takes two index-db file
+# paths; the wrapper exposes them as ``baseline_path`` / ``target_path``
+# (file-shaped, not symbol-shaped, so they keep semantically distinct
+# names rather than collapsing to ``input_path``). ``evidence-diff
+# OLD_PATH NEW_PATH`` similarly takes two evidence-packet file paths --
+# exposed as ``old_path`` / ``new_path`` to preserve the OLD vs NEW
+# semantic distinction. ``oracle symbol-exists NAME`` /
+# ``is-test-only`` / ``is-reachable-from-entry`` / ``is-clone-of`` all
+# take a symbol-shaped positional, so they use the W332/Fix-D canonical
+# ``symbol`` argument. ``oracle route-exists PATH`` takes a URL-route
+# string (a value, not a file path), so it stays ``route_path`` to
+# avoid colliding with the W332/Fix-D ``path`` canonical for filesystem
+# paths.
+#
+# ``oracle batch`` is intentionally NOT wrapped: it reads a JSONL
+# stream of queries from a file path the agent would have to prepare
+# on disk; the per-subcommand wrappers below are the MCP-idiomatic
+# surface.
+#
+# Pattern-1 audit (JSON-parse-on-empty): all 11 underlying CLI commands
+# emit a non-empty JSON envelope on every path -- including no-records
+# / no-preset / no-symbol-found / packet-mismatch cases. ``oracle``
+# returns a boolean verdict envelope even when the symbol is unknown.
+# ``compare`` and ``evidence-diff`` raise ``SystemExit`` on missing-
+# input AFTER emitting the envelope; the W325 chokepoint try-parse
+# passthrough preserves that envelope through the MCP runner.
+# ---------------------------------------------------------------------------
+
+
+# W305: roam_audit
+@_tool(
+    name="roam_audit",
+    description=(
+        "Run a one-shot codebase architecture audit: bundles health, "
+        "debt, dead-code, risk, test-pyramid, coverage, and API-surface "
+        "signals into a single envelope. Designed as the structured "
+        "artifact a written audit report attaches. Different from "
+        "``roam_health`` (single 0-100 score) and ``roam_report`` "
+        "(preset-driven Markdown report) -- this is the verdict-first "
+        "audit packet for governance and onboarding."
+    ),
+)
+def roam_audit(brief: bool = False, root: str = ".") -> dict:
+    """Run the one-shot codebase architecture audit.
+
+    WHEN TO USE: agent needs a single-envelope rollup of the audit-
+    shaped signals across health / debt / dead / risk / pyramid /
+    coverage / surface for an audit report or onboarding packet. Pair
+    with ``roam_health`` for the single-number snapshot or
+    ``roam_report`` for a curated Markdown render.
+
+    Parameters
+    ----------
+    brief:
+        Drop per-section detail and keep only the top-level summary
+        scores. Off by default -- the full envelope wins per LAW 11.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, sections: [...],
+    scores: {...}}``.
+    """
+    args: list[str] = ["audit"]
+    if brief:
+        args.append("--brief")
+    return _run_roam(args, root)
+
+
+# W305: roam_report
+@_tool(
+    name="roam_report",
+    description=(
+        "Run a compound report preset (built-ins: ``first-contact``, "
+        "``security``, ``pre-pr``, ``refactor``, ``guardian``) that "
+        "orchestrates multiple analysis commands into one rendered "
+        "report. Different from ``roam_audit`` (single fixed bundle) "
+        "-- this is the preset-driven multi-command roll-up with "
+        "optional Markdown output and strict exit-code gating."
+    ),
+)
+def roam_report(
+    preset: str = "",
+    list_presets: bool = False,
+    strict: bool = False,
+    markdown: bool = False,
+    config_path: str = "",
+    root: str = ".",
+) -> dict:
+    """Run a compound report preset over the codebase.
+
+    WHEN TO USE: agent wants a curated multi-command report (pre-PR,
+    security, refactor, ...) rendered in one shot. Pair with
+    ``roam_audit`` for the fixed structured audit envelope.
+
+    Parameters
+    ----------
+    preset:
+        Preset slug (``first-contact`` / ``security`` / ``pre-pr`` /
+        ``refactor`` / ``guardian``). Empty (default) runs no preset
+        -- useful with ``list_presets=True``.
+    list_presets:
+        List available presets and exit. Off by default.
+    strict:
+        Exit non-zero if any section fails. Off by default -- mirrors
+        the CLI default per LAW 11.
+    markdown:
+        Emit GitHub-compatible Markdown instead of plain text. Off by
+        default.
+    config_path:
+        Path to a custom presets JSON config the tool reads. Empty
+        (default) uses built-in presets only.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, preset, sections, ...},
+    sections: [...]}``.
+    """
+    args: list[str] = ["report"]
+    if list_presets:
+        args.append("--list")
+    if strict:
+        args.append("--strict")
+    if markdown:
+        args.append("--md")
+    if config_path:
+        args.extend(["--config", config_path])
+    if preset:
+        args.append(preset)
+    return _run_roam(args, root)
+
+
+# W305: roam_risk
+@_tool(
+    name="roam_risk",
+    description=(
+        "Rank symbols by domain-weighted risk: combines static risk "
+        "(fan-in + fan-out + betweenness) with domain criticality "
+        "weights so financial / auth / data-integrity symbols rank "
+        "higher than UI symbols. Different from ``roam_fan`` (raw "
+        "fan-in/out degree) and ``roam_hotspots`` (runtime hotspot "
+        "classification) -- this is the semantic-domain-weighted risk "
+        "heatmap."
+    ),
+)
+def roam_risk(
+    top: int = 0,
+    domain: str = "",
+    explain: bool = False,
+    include_tests: bool = False,
+    show_suppressed: bool = False,
+    root: str = ".",
+) -> dict:
+    """Rank symbols by domain-weighted structural risk.
+
+    WHEN TO USE: agent wants risk-ranked symbols with semantic-domain
+    weighting for pre-PR or audit scope. Pair with ``roam_fan`` for
+    raw degree counts and ``roam_hotspots`` for runtime hotspots.
+
+    Parameters
+    ----------
+    top:
+        Number of symbols to surface. ``0`` (default) lets the CLI
+        pick its default per LAW 11.
+    domain:
+        Comma-separated high-weight domain keywords (e.g.
+        ``"payment,tax,ledger"``). Empty (default) uses heuristic
+        domain detection.
+    explain:
+        Show the full callee-chain reasoning per symbol. Off by
+        default.
+    include_tests:
+        Include test-file symbols in the ranking. Off by default --
+        test fixtures co-change with src files by design and dominate
+        the headline. Mirrors the CLI default per LAW 11.
+    show_suppressed:
+        List the rows that were filtered out instead of just counting
+        them. Off by default.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, top_risk_symbols, ...},
+    risks: [...]}``.
+    """
+    args: list[str] = ["risk"]
+    if top > 0:
+        args.extend(["-n", str(top)])
+    if domain:
+        args.extend(["--domain", domain])
+    if explain:
+        args.append("--explain")
+    if include_tests:
+        args.append("--include-tests")
+    if show_suppressed:
+        args.append("--show-suppressed")
+    return _run_roam(args, root)
+
+
+# W305: roam_stats
+@_tool(
+    name="roam_stats",
+    description=(
+        "Aggregate high-level statistics: language / role / kind "
+        "counts plus a recent-commit activity counter over a "
+        "configurable window. Different from ``roam_metrics`` "
+        "(per-symbol static-metric report) and ``roam_graph_stats`` "
+        "(graph-wide topology stats) -- this is the language-and-role "
+        "inventory snapshot."
+    ),
+)
+def roam_stats(days: int = 30, root: str = ".") -> dict:
+    """Aggregate language / role / kind counts and recent activity.
+
+    WHEN TO USE: agent wants a one-call inventory of language
+    coverage, role distribution, and recent commit activity. Pair
+    with ``roam_graph_stats`` for graph-topology counts and
+    ``roam_metrics`` for per-symbol static metrics.
+
+    Parameters
+    ----------
+    days:
+        Window (in days) for the recent-commit activity counter
+        (default 30 -- mirrors the CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, language_count, role_count, ...},
+    languages: {...}, roles: {...}, recent_activity: {...}}``.
+    """
+    return _run_roam(["stats", "--days", str(days)], root)
+
+
+# W305: roam_compare
+@_tool(
+    name="roam_compare",
+    description=(
+        "Diff two roam indices structurally: reports symbols "
+        "added/removed/moved, per-file complexity deltas above a "
+        "threshold, language counts, and a one-line health verdict "
+        "(improved / regressed / sideways). Different from "
+        "``roam_graph_diff`` (commit-range graph delta from one "
+        "index) -- this is the cross-index structural delta for "
+        "release-vs-release comparisons."
+    ),
+)
+def roam_compare(
+    baseline_path: str,
+    target_path: str,
+    top: int = 15,
+    threshold: int = 5,
+    root: str = ".",
+) -> dict:
+    """Diff two roam ``.roam/index.db`` files structurally.
+
+    WHEN TO USE: agent has a previous-release index and a current
+    index and wants the structural delta + health verdict. Pair with
+    ``roam_graph_diff`` for the single-index commit-range delta.
+
+    Parameters
+    ----------
+    baseline_path:
+        Path to the baseline ``.roam/index.db`` SQLite file
+        (typically a previous-release index).
+    target_path:
+        Path to the target ``.roam/index.db`` SQLite file (typically
+        the current-release index).
+    top:
+        Show only the top N changes per category (default 15 --
+        mirrors the CLI default per LAW 11).
+    threshold:
+        Ignore per-file complexity deltas smaller than this magnitude
+        (default 5 -- mirrors the CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, symbols_added, symbols_removed,
+    symbols_moved, ...}, changes: {...}}``.
+    """
+    args: list[str] = [
+        "compare",
+        baseline_path,
+        target_path,
+        "--top",
+        str(top),
+        "--threshold",
+        str(threshold),
+    ]
+    return _run_roam(args, root)
+
+
+# W305: roam_evidence_diff
+@_tool(
+    name="roam_evidence_diff",
+    description=(
+        "Diff two ``ChangeEvidence`` packets: shows hash drift, "
+        "schema drift, added/removed refs, missing evidence, and "
+        "changed verdicts. Useful for reviewing PR re-runs, comparing "
+        "replay windows, or auditing whether a fresh evidence packet "
+        "has improved or regressed against a stored baseline. "
+        "Different from ``roam_compare`` (two-index structural delta) "
+        "-- this is the two-packet evidence delta."
+    ),
+)
+def roam_evidence_diff(
+    old_path: str,
+    new_path: str,
+    root: str = ".",
+) -> dict:
+    """Diff two ``ChangeEvidence`` packets on disk.
+
+    WHEN TO USE: agent wants to compare an older evidence packet
+    against a fresh re-run -- hash drift, missing evidence axes,
+    changed verdicts. Pair with ``roam_compare`` for the structural
+    cross-index delta.
+
+    Parameters
+    ----------
+    old_path:
+        Path to the OLD ``ChangeEvidence`` JSON packet on disk.
+    new_path:
+        Path to the NEW ``ChangeEvidence`` JSON packet on disk.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, hash_drift, schema_drift, ...},
+    deltas: {added_refs, removed_refs, missing_evidence, ...}}``.
+    """
+    return _run_roam(["evidence-diff", old_path, new_path], root)
+
+
+# W305: roam_oracle_symbol_exists
+@_tool(
+    name="roam_oracle_symbol_exists",
+    description=(
+        "Answer the boolean oracle question: does a symbol with this "
+        "name exist in the index? Returns a yes/no verdict envelope "
+        "with the matched symbol's file + kind when found. Different "
+        "from ``roam_search_symbol`` (top-N ranked hits) -- this is "
+        "the cheap boolean lookup for agent precondition checks."
+    ),
+)
+def roam_oracle_symbol_exists(symbol: str, root: str = ".") -> dict:
+    """Answer whether a symbol with this name exists in the index.
+
+    WHEN TO USE: agent has a candidate symbol name and wants a cheap
+    yes/no precondition check before running a heavier command. Pair
+    with ``roam_search_symbol`` for ranked-hit search.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name to look up (e.g. ``"handleSave"``). W332/Fix-D
+        canonical for the symbol-shaped positional argument -- legacy
+        ``name=`` callers are accepted via ``_PARAM_ALIASES`` with a
+        deprecation warning.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, exists, ...}, matches: [...]}``.
+    """
+    return _run_roam(["oracle", "symbol-exists", symbol], root)
+
+
+# W305: roam_oracle_route_exists
+@_tool(
+    name="roam_oracle_route_exists",
+    description=(
+        "Answer the boolean oracle question: does a route handler "
+        "match this URL path? Returns a yes/no verdict envelope with "
+        "the matched handler's file + kind when found. Different "
+        "from ``roam_endpoints`` (full endpoint enumeration) -- this "
+        "is the cheap boolean lookup for one route precondition "
+        "check."
+    ),
+)
+def roam_oracle_route_exists(route_path: str, root: str = ".") -> dict:
+    """Answer whether a route handler matches this URL path.
+
+    WHEN TO USE: agent has a candidate URL route and wants a cheap
+    yes/no precondition check before tracing handlers. Pair with
+    ``roam_endpoints`` for full endpoint enumeration.
+
+    Parameters
+    ----------
+    route_path:
+        URL route path to look up (e.g. ``"/api/users/:id"``). This
+        is a route-string VALUE, not a filesystem path, so it stays
+        ``route_path`` to avoid colliding with the W332/Fix-D
+        ``path`` canonical for file paths.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, exists, ...}, matches: [...]}``.
+    """
+    return _run_roam(["oracle", "route-exists", route_path], root)
+
+
+# W305: roam_oracle_is_test_only
+@_tool(
+    name="roam_oracle_is_test_only",
+    description=(
+        "Answer the boolean oracle question: are ALL callers of this "
+        "symbol in test files? Useful for sniffing test fixtures and "
+        "dead-but-test-only helpers. Different from ``roam_dead_code`` "
+        "(broad dead-symbol detection) -- this is the cheap boolean "
+        "lookup for one symbol's test-only status."
+    ),
+)
+def roam_oracle_is_test_only(symbol: str, root: str = ".") -> dict:
+    """Answer whether all callers of a symbol live in test files.
+
+    WHEN TO USE: agent wants to know if a symbol is safe to delete or
+    repurpose because nothing but tests references it. Pair with
+    ``roam_dead_code`` for the wider dead-symbol sweep.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name to look up (e.g. ``"_test_helper"``). W332/Fix-D
+        canonical for the symbol-shaped positional argument -- legacy
+        ``name=`` callers are accepted via ``_PARAM_ALIASES`` with a
+        deprecation warning.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, test_only, caller_count, ...},
+    callers: [...]}``.
+    """
+    return _run_roam(["oracle", "is-test-only", symbol], root)
+
+
+# W305: roam_oracle_is_reachable_from_entry
+@_tool(
+    name="roam_oracle_is_reachable_from_entry",
+    description=(
+        "Answer the boolean oracle question: is the symbol reachable "
+        "from any entry point via the call graph (BFS up to "
+        "``max_hops`` depth)? Useful for sniffing orphans and "
+        "production-vs-tooling code. Different from ``roam_dead_code`` "
+        "(broad dead-symbol detection) and ``roam_entry_points`` "
+        "(entry-point enumeration) -- this is the cheap boolean "
+        "lookup for one symbol's reachability."
+    ),
+)
+def roam_oracle_is_reachable_from_entry(
+    symbol: str,
+    max_hops: int = 10,
+    root: str = ".",
+) -> dict:
+    """Answer whether a symbol is reachable from any entry point.
+
+    WHEN TO USE: agent wants to confirm a symbol is on a real call
+    chain from main / handler / route before declaring it live. Pair
+    with ``roam_entry_points`` for the enumeration and
+    ``roam_dead_code`` for the broader sweep.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name to look up (e.g. ``"process_payment"``).
+        W332/Fix-D canonical for the symbol-shaped positional
+        argument -- legacy ``name=`` callers are accepted via
+        ``_PARAM_ALIASES`` with a deprecation warning.
+    max_hops:
+        BFS depth cap (default 10 -- mirrors the CLI default per
+        LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, reachable, entry_count, ...},
+    entry_points: [...]}``.
+    """
+    return _run_roam(
+        ["oracle", "is-reachable-from-entry", symbol,
+         "--max-hops", str(max_hops)],
+        root,
+    )
+
+
+# W305: roam_oracle_is_clone_of
+@_tool(
+    name="roam_oracle_is_clone_of",
+    description=(
+        "Answer the boolean oracle question: does this symbol have "
+        "persisted clone siblings in the ``clone_pairs`` table? "
+        "Returns a yes/no verdict envelope with the matched clone "
+        "class size. Different from ``roam_clones`` (full clone-pair "
+        "enumeration) -- this is the cheap boolean lookup for one "
+        "symbol's clone status."
+    ),
+)
+def roam_oracle_is_clone_of(symbol: str, root: str = ".") -> dict:
+    """Answer whether a symbol has persisted clone siblings.
+
+    WHEN TO USE: agent is about to edit a symbol and wants a cheap
+    yes/no on whether clone-class siblings exist that should also be
+    updated. Pair with ``roam_clones`` for the full enumeration.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name to look up (e.g. ``"validate_input"``).
+        W332/Fix-D canonical for the symbol-shaped positional
+        argument -- legacy ``name=`` callers are accepted via
+        ``_PARAM_ALIASES`` with a deprecation warning.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, has_clones, class_size, ...},
+    siblings: [...]}``.
+    """
+    return _run_roam(["oracle", "is-clone-of", symbol], root)
+
+
+# ---------------------------------------------------------------------------
+# W306: getting-started, refactoring, workflow & compliance cluster
+# (Wave29 MCP wrapper backfill, sub-wave 8)
+# ---------------------------------------------------------------------------
+# 13 read-only wrappers covering the heterogeneous tail of the wrapper
+# backfill: 4 getting-started / overview tools (``describe`` / ``map`` /
+# ``minimap`` / ``workflow``), 1 ADR discoverer (``adrs``), 2 prose-to-code
+# bridges (``intent`` / ``invariants``), 1 metric trender
+# (``architecture-drift``), 1 dogfood-corpus triage (``dogfood-aggregate``),
+# 1 compliance readiness check (``article-12-check``), 1 git-history
+# replay (``postmortem``), 1 pre-PR rollup (``pr-prep``), and 1 symbol
+# triage explainer (``why``).
+#
+# The cluster is heterogeneous on purpose: W305 was reports & oracles,
+# W304 was architecture & evidence, W303 was indices & metrics. W306
+# absorbs the remaining commands that did not fit a single shared
+# theme. All 13 are read-only at the wrapped surface: ``describe`` and
+# ``minimap`` have CLI flags (``--write`` / ``--update`` / ``--init-notes``)
+# that mutate disk, but the WRAPPERS DO NOT EXPOSE THOSE FLAGS so the
+# MCP surface stays read-only by construction. ``pr-bundle`` / ``fleet``
+# (the genuinely state-mutating commands) defer to W307.
+#
+# All 13 wrappers require a built index so they auto-inherit the W296
+# cold-start guard (none appear in ``_NO_INDEX_NEEDED``):
+# * ``dogfood-aggregate`` declares ``requires_index=False`` at the
+#   capability level (it scans ``internal/dogfood/evals/``), but a
+#   cold-start path still benefits from the explicit "no index built"
+#   envelope because the dogfood corpus is shipped private to the
+#   roam-code repo and absent in installed environments.
+# * ``article-12-check`` declares ``requires_index=False`` at the
+#   capability level (the 6 checks read filesystem state under .roam/
+#   and docs/), but the underlying CLI still calls ``ensure_index()``
+#   for consistency, so the wrapper stays gated.
+#
+# W332 canonicals applied:
+# * ``intent`` / ``invariants`` / ``why`` take symbol-shaped arguments
+#   -- exposed as ``symbol`` (single) or ``symbols`` (variadic) per
+#   W332/Fix-D. ``why`` takes ``names`` as ``nargs=-1`` so the wrapper
+#   exposes ``symbols: tuple[str, ...]``.
+# * ``intent --doc`` and ``map --seed`` both take filesystem paths --
+#   exposed as ``path`` per W332/Fix-D (the alias machinery rewrites
+#   ``file=`` and other legacy names to ``path=``).
+# * ``postmortem COMMIT_RANGE`` / ``pr-prep [COMMIT_RANGE]`` take git
+#   commit range strings (values, not paths) -- exposed as
+#   ``commit_range`` which is semantically distinct.
+# * ``workflow RECIPE_NAME`` takes a recipe slug (a value) -- exposed
+#   as ``recipe_name``.
+# * ``adrs`` / ``architecture-drift`` / ``article-12-check`` /
+#   ``describe`` / ``minimap`` take no symbol/path positional args.
+#
+# Pattern-1 audit (JSON-parse-on-empty): all 13 underlying CLI
+# commands emit a non-empty JSON envelope on every path, including:
+# no-ADRs-found (``adrs``), no-doc-files (``intent``), unknown-recipe
+# (``workflow``), insufficient-snapshots (``architecture-drift``),
+# no-commits-matched (``postmortem``), empty diff (``pr-prep``). The
+# Pattern-1 guard tests in tests/test_json_contracts.py and
+# tests/test_pattern1_envelope_emission.py pin this discipline.
+# ---------------------------------------------------------------------------
+
+
+# W306: roam_adrs
+@_tool(
+    name="roam_adrs",
+    description=(
+        "Discover Architecture Decision Records (ADRs) and link them "
+        "to code modules. Scans well-known ADR directories "
+        "(``docs/adr/`` / ``architecture/decisions/`` / ...) for "
+        "markdown files matching ADR naming patterns, parses each "
+        "ADR's title / status / date / file refs, then cross-"
+        "references mentioned files against the symbol index. "
+        "Different from ``roam_doc_staleness`` (inline docstring "
+        "drift) -- this is the prose-decision-document discoverer."
+    ),
+)
+def roam_adrs(filter_status: str = "", limit: int = 50, root: str = ".") -> dict:
+    """Discover ADRs and link them to indexed code modules.
+
+    WHEN TO USE: agent needs to know whether the repo has any prose
+    architecture decisions on file, how many are live vs deprecated,
+    and which ADRs mention live code files. Pair with
+    ``roam_doc_staleness`` for inline docstring drift and
+    ``roam_intent`` for general doc-to-code linkage.
+
+    Parameters
+    ----------
+    filter_status:
+        Filter ADRs by status (``accepted`` / ``proposed`` /
+        ``deprecated`` / ``superseded`` / ``rejected`` / ``draft`` /
+        ``amended``). Empty (default) returns all ADRs.
+    limit:
+        Maximum number of ADRs to surface (default 50 -- mirrors the
+        CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, adr_count, linked_count,
+    status_counts, ...}, adrs: [...]}``.
+    """
+    args: list[str] = ["adrs", "--limit", str(limit)]
+    if filter_status:
+        args.extend(["--status", filter_status])
+    return _run_roam(args, root)
+
+
+# W306: roam_architecture_drift
+@_tool(
+    name="roam_architecture_drift",
+    description=(
+        "Compute per-week growth rates for symbols / edges / cycles "
+        "across a sliding window of persisted ``.roam/snapshots/`` "
+        "and classify overall direction as ``improving`` / "
+        "``degrading`` / ``stable``. Different from ``roam_graph_diff`` "
+        "(point-in-time delta between two commits) and ``roam_trends`` "
+        "(metric-level time series) -- this is the snapshot-based "
+        "architectural-trajectory report."
+    ),
+)
+def roam_architecture_drift(
+    window: str = "30d",
+    top: int = 10,
+    root: str = ".",
+) -> dict:
+    """Trend report over the sliding-window snapshot series.
+
+    WHEN TO USE: agent wants a verdict-first "is the architecture
+    improving or degrading" answer over the last N days. Pair with
+    ``roam_graph_diff`` for one-shot deltas and ``roam_trends`` for
+    metric-level series.
+
+    Parameters
+    ----------
+    window:
+        Time window: ``30d`` / ``4w`` / ``6m`` / ``1y``. Bare integer =
+        days. Default ``30d`` -- mirrors the CLI default per LAW 11.
+    top:
+        Cap the ``biggest_movers`` list to this many rows (default
+        10 -- mirrors the CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, directional, window_days,
+    snapshots_analyzed, ...}, metrics: {...}, biggest_movers: [...],
+    pair_diffs: [...]}``.
+    """
+    return _run_roam(
+        ["architecture-drift", "--window", window, "--top", str(top)],
+        root,
+    )
+
+
+# W306: roam_article_12_check
+@_tool(
+    name="roam_article_12_check",
+    description=(
+        "Run a 6-item EU AI Act Article 12 readiness checklist over "
+        "the indexed repo: audit-trail directory, audit-trail "
+        "records, retention policy doc, technical docs, attestation "
+        "surface, high-risk classification heuristic. Emits a "
+        "structured envelope mapping each item to its Article (12, "
+        "18, 19) or Annex (III). Different from ``roam_audit_trail_"
+        "conformance_check`` (per-record chain integrity) -- this is "
+        "the repo-level governance-readiness assessment. Per the "
+        "agentic-assurance guardrails: 'maps to' / 'supports evidence "
+        "for', never 'certifies' / 'makes compliant'."
+    ),
+)
+def roam_article_12_check(root: str = ".") -> dict:
+    """Run the EU AI Act Article 12 readiness checklist.
+
+    WHEN TO USE: agent wants a scoping/readiness report for buyers
+    whose product MAY fall under Annex III. Pair with
+    ``roam_audit_trail_conformance_check`` for chain integrity.
+
+    Parameters
+    ----------
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, passed, total,
+    governance_compliance_score, ...}, items: [...]}``.
+    """
+    return _run_roam(["article-12-check"], root)
+
+
+# W306: roam_describe
+@_tool(
+    name="roam_describe",
+    description=(
+        "Auto-generate a project description for AI coding agents: "
+        "multi-section Markdown report covering overview, "
+        "directories, entry points, key abstractions, architecture, "
+        "and testing. Different from ``roam_understand`` (compact "
+        "codebase overview) -- this is the comprehensive prose "
+        "description for CLAUDE.md / AGENTS.md / .cursor/rules. The "
+        "wrapper emits to stdout; on-disk writes are deferred to the "
+        "CLI (``roam describe --write``) so the MCP surface stays "
+        "read-only."
+    ),
+)
+def roam_describe(agent_prompt: bool = False, root: str = ".") -> dict:
+    """Generate a project description for AI coding agents.
+
+    WHEN TO USE: agent wants a long-form prose description of the
+    indexed repo for CLAUDE.md / AGENTS.md / .cursor/rules. Pair
+    with ``roam_understand`` for the compact overview and
+    ``roam_minimap`` for the sentinel-block one-pager.
+
+    Parameters
+    ----------
+    agent_prompt:
+        Emit a compact agent-oriented prompt (under 500 tokens)
+        instead of the full multi-section report. Off by default --
+        the full description wins per LAW 11.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, mode, ...}, ...sections}``.
+    """
+    args: list[str] = ["describe"]
+    if agent_prompt:
+        args.append("--agent-prompt")
+    return _run_roam(args, root)
+
+
+# W306: roam_dogfood_aggregate
+@_tool(
+    name="roam_dogfood_aggregate",
+    description=(
+        "Triage view over the dogfood eval corpus: totals, "
+        "per-command findings count, by-status / by-severity / "
+        "by-type breakdowns. Reads ``internal/dogfood/evals/`` (or "
+        "an override path). Useful for agents auditing roam-code "
+        "itself; mostly a no-op on consumer repos that have no "
+        "dogfood corpus."
+    ),
+)
+def roam_dogfood_aggregate(
+    path: str = "",
+    show_all: bool = False,
+    severity: str = "",
+    finding_type: str = "",
+    since: str = "",
+    top: int = 10,
+    limit: int = 50,
+    root: str = ".",
+) -> dict:
+    """Aggregate the dogfood eval corpus into a triage view.
+
+    WHEN TO USE: agent is auditing roam-code itself and wants a
+    backlog/triage rollup of the 212-eval corpus. Mostly a no-op on
+    consumer repos.
+
+    Parameters
+    ----------
+    path:
+        Directory of evals (W332 canonical for filesystem paths).
+        Empty (default) uses ``<project>/internal/dogfood/evals/``.
+    show_all:
+        Include findings of every status (default: open only --
+        mirrors the CLI default per LAW 11).
+    severity:
+        Single severity letter (``H`` / ``M`` / ``L``); empty
+        (default) returns all severities.
+    finding_type:
+        Substring match on finding type (e.g. ``wrong`` / ``missing``
+        / ``signal`` / ``noise``); empty (default) returns all types.
+    since:
+        Only include evals with frontmatter date >= this
+        ``YYYY-MM-DD`` value. Empty (default) returns all dates.
+    top:
+        Show this many top commands by findings count (default 10 --
+        mirrors the CLI default per LAW 11).
+    limit:
+        Cap the number of findings emitted in text mode (default
+        50 -- mirrors the CLI default per LAW 11; ``0`` for no cap).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, total, ...}, totals: {...},
+    per_command: [...], findings: [...]}``.
+    """
+    args: list[str] = ["dogfood-aggregate"]
+    if path:
+        args.extend(["--path", path])
+    if show_all:
+        args.append("--all")
+    if severity:
+        args.extend(["--severity", severity])
+    if finding_type:
+        args.extend(["--type", finding_type])
+    if since:
+        args.extend(["--since", since])
+    args.extend(["--top", str(top), "--limit", str(limit)])
+    return _run_roam(args, root)
+
+
+# W306: roam_intent
+@_tool(
+    name="roam_intent",
+    description=(
+        "Link documentation to code: find which docs mention which "
+        "symbols, and detect doc-to-code drift (references to "
+        "non-existent symbols). Different from ``roam_docs_coverage`` "
+        "(PageRank-ranked missing-docstring hotlist) and "
+        "``roam_doc_staleness`` (stale docstring content) -- this is "
+        "the prose-doc-to-symbol linker plus drift detector."
+    ),
+)
+def roam_intent(
+    symbol: str = "",
+    path: str = "",
+    drift: bool = False,
+    undocumented: bool = False,
+    top: int = 20,
+    root: str = ".",
+) -> dict:
+    """Link prose documentation to indexed code symbols.
+
+    WHEN TO USE: agent wants to know which docs describe which
+    symbols, find dead references in docs, or surface important
+    symbols missing from docs. Pair with ``roam_docs_coverage`` for
+    the missing-docstring hotlist and ``roam_stale_refs`` for
+    dangling file references.
+
+    Parameters
+    ----------
+    symbol:
+        Find docs mentioning this symbol. W332/Fix-D canonical for
+        the symbol-shaped argument -- legacy ``name=`` callers are
+        accepted via ``_PARAM_ALIASES`` with a deprecation warning.
+        Empty (default) returns the full doc-to-code mapping.
+    path:
+        Find code referenced by this doc file. W332/Fix-D canonical
+        for filesystem paths -- legacy ``file=`` callers are
+        accepted via ``_PARAM_ALIASES`` with a deprecation warning.
+        Empty (default) returns the full doc-to-code mapping.
+    drift:
+        Show references to non-existent symbols (doc-code drift).
+        Off by default -- mirrors the CLI default per LAW 11.
+    undocumented:
+        Show important symbols not mentioned in any doc. Off by
+        default -- mirrors the CLI default per LAW 11.
+    top:
+        Max items to show (default 20 -- mirrors the CLI default
+        per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, links: [...], drift: [...],
+    undocumented: [...]}``.
+    """
+    args: list[str] = ["intent", "--top", str(top)]
+    if symbol:
+        args.extend(["--symbol", symbol])
+    if path:
+        args.extend(["--doc", path])
+    if drift:
+        args.append("--drift")
+    if undocumented:
+        args.append("--undocumented")
+    return _run_roam(args, root)
+
+
+# W306: roam_invariants
+@_tool(
+    name="roam_invariants",
+    description=(
+        "Discover implicit contracts for a symbol or the public API "
+        "surface: signature shape, parameter count and ordering, "
+        "usage spread across files, dependency set. Different from "
+        "``roam_check_rules`` (explicit governance rules) -- this is "
+        "the AUTO-discovered implicit-contract surface so agents "
+        "know what must stay stable when modifying a symbol."
+    ),
+)
+def roam_invariants(
+    symbol: str = "",
+    public_api: bool = False,
+    breaking_risk: bool = False,
+    top: int = 20,
+    root: str = ".",
+) -> dict:
+    """Discover implicit contracts for symbols.
+
+    WHEN TO USE: agent is about to change a symbol's signature and
+    wants the implicit-contract surface (signature shape, usage
+    spread, callers) it must preserve. Pair with
+    ``roam_check_rules`` for explicit rules and ``roam_breaking_changes``
+    for API-break detection.
+
+    Parameters
+    ----------
+    symbol:
+        Target symbol or file path. W332/Fix-D canonical for the
+        symbol-shaped argument -- legacy ``target=`` / ``name=``
+        callers are accepted via ``_PARAM_ALIASES`` with a
+        deprecation warning. Empty (default) requires ``public_api=True``.
+    public_api:
+        Analyze all public/exported symbols instead of one target.
+        Off by default -- mirrors the CLI default per LAW 11.
+    breaking_risk:
+        Rank results by breaking risk. Off by default -- mirrors
+        the CLI default per LAW 11.
+    top:
+        Max symbols to show (default 20 -- mirrors the CLI default
+        per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, symbol_count, ...},
+    invariants: [...]}``.
+    """
+    args: list[str] = ["invariants", "--top", str(top)]
+    if public_api:
+        args.append("--public-api")
+    if breaking_risk:
+        args.append("--breaking-risk")
+    if symbol:
+        args.append(symbol)
+    return _run_roam(args, root)
+
+
+# W306: roam_map
+@_tool(
+    name="roam_map",
+    description=(
+        "Show project skeleton: directory tree, entry points, top "
+        "symbols by PageRank, language counts. Different from "
+        "``roam_describe`` (prose description) and ``roam_minimap`` "
+        "(sentinel-block one-pager for CLAUDE.md) -- this is the "
+        "structured skeleton with directories, entry points, and "
+        "ranked symbols for agent onboarding."
+    ),
+)
+def roam_map(
+    count: int = 20,
+    full: bool = False,
+    budget: int = 0,
+    path: str = "",
+    depth: int = 2,
+    root: str = ".",
+) -> dict:
+    """Show the project skeleton for agent onboarding.
+
+    WHEN TO USE: agent has just been pointed at a fresh repo and
+    wants the skeleton (entry points + top symbols + directory
+    layout). Pair with ``roam_describe`` for prose and
+    ``roam_minimap`` for the CLAUDE.md-injectable one-pager.
+
+    Parameters
+    ----------
+    count:
+        Number of top symbols to show (default 20 -- mirrors the
+        CLI default per LAW 11).
+    full:
+        Show all results without truncation. Off by default --
+        mirrors the CLI default per LAW 11.
+    budget:
+        Approximate token limit for output. ``0`` (default) lets
+        the CLI pick its default per LAW 11.
+    path:
+        Restrict the top-symbols list to symbols reachable from
+        this seed file. W332/Fix-D canonical for filesystem paths --
+        legacy ``file=`` callers are accepted via ``_PARAM_ALIASES``
+        with a deprecation warning. Empty (default) returns all
+        ranked symbols.
+    depth:
+        BFS hop limit when ``path`` is given (default 2 -- mirrors
+        the CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, files, symbols, edges, ...},
+    directories: [...], entry_points: [...], top_symbols: [...]}``.
+    """
+    args: list[str] = ["map", "-n", str(count)]
+    if full:
+        args.append("--full")
+    if budget > 0:
+        args.extend(["--budget", str(budget)])
+    if path:
+        args.extend(["--seed", path, "--depth", str(depth)])
+    return _run_roam(args, root)
+
+
+# W306: roam_minimap
+@_tool(
+    name="roam_minimap",
+    description=(
+        "Generate a compact ~20-line codebase minimap for CLAUDE.md "
+        "injection: tech stack, annotated directory tree, key "
+        "symbols by PageRank, high-fan-in symbols to avoid, "
+        "hotspots, detected conventions. Different from "
+        "``roam_describe`` (long-form prose) and ``roam_map`` "
+        "(structured skeleton) -- this is the sentinel-block "
+        "one-pager. The wrapper emits to stdout; on-disk updates "
+        "are deferred to the CLI (``roam minimap --update`` / "
+        "``--init-notes``) so the MCP surface stays read-only."
+    ),
+)
+def roam_minimap(root: str = ".") -> dict:
+    """Generate a compact codebase minimap for agent context.
+
+    WHEN TO USE: agent wants a sentinel-block one-pager (tech stack
+    + tree + key symbols + hotspots) to seed CLAUDE.md / AGENTS.md.
+    Pair with ``roam_describe`` for long-form and ``roam_map`` for
+    the structured skeleton.
+
+    Parameters
+    ----------
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, minimap: "..."}``.
+    """
+    return _run_roam(["minimap"], root)
+
+
+# W306: roam_postmortem
+@_tool(
+    name="roam_postmortem",
+    description=(
+        "Replay current detectors against past commits: walks a git "
+        "commit range, runs ``roam critique`` against each commit's "
+        "diff, and reports which findings would have surfaced "
+        "pre-merge. Useful for retrospective replay -- 'would "
+        "today's detector set have caught the incidents already in "
+        "history?' Different from ``roam_pr_replay`` (one PR replay) "
+        "-- this is the range-replay over historical commits."
+    ),
+)
+def roam_postmortem(
+    commit_range: str,
+    limit: int = 100,
+    show: int = 10,
+    root: str = ".",
+) -> dict:
+    """Replay critique against a historical commit range.
+
+    WHEN TO USE: agent wants to know whether the current detector
+    set would have caught past incidents. Pair with
+    ``roam_pr_replay`` for single-PR replay and ``roam_postmortem``
+    in CI for pre-purchase signal.
+
+    Parameters
+    ----------
+    commit_range:
+        Git commit range (e.g. ``"HEAD~30..HEAD"`` or
+        ``"v12.30..v12.39"`` or ``"main..feature/new-thing"``). This
+        is a git-range VALUE, not a filesystem path, so it stays
+        ``commit_range`` to avoid colliding with the W332/Fix-D
+        ``path`` canonical for file paths.
+    limit:
+        Cap the number of commits walked (default 100 -- mirrors
+        the CLI default per LAW 11).
+    show:
+        Top-N hits to display in text mode (default 10 -- mirrors
+        the CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, commits_scanned,
+    commits_with_findings, ...}, per_commit: [...]}``.
+    """
+    return _run_roam(
+        [
+            "postmortem",
+            commit_range,
+            "--limit",
+            str(limit),
+            "--show",
+            str(show),
+        ],
+        root,
+    )
+
+
+# W306: roam_pr_prep
+@_tool(
+    name="roam_pr_prep",
+    description=(
+        "One-shot pre-PR fitness check: bundles ``diff`` blast "
+        "radius + ``critique`` + ``pr-risk`` into a single envelope "
+        "with a ``ready_to_open`` verdict. Different from "
+        "``roam_pr_risk`` (composite risk score alone) and "
+        "``roam_critique`` (clones-not-edited + blast-radius alone) "
+        "-- this is the three-section pre-PR rollup with the "
+        "go/no-go verdict."
+    ),
+)
+def roam_pr_prep(
+    commit_range: str = "",
+    high_callers: int = 10,
+    root: str = ".",
+) -> dict:
+    """Run the one-shot pre-PR fitness rollup.
+
+    WHEN TO USE: agent has finished editing and wants a single
+    go/no-go verdict before opening the PR. Pair with
+    ``roam_pr_risk`` for the standalone risk score and
+    ``roam_critique`` for the standalone clones-not-edited check.
+
+    Parameters
+    ----------
+    commit_range:
+        Git commit range (e.g. ``"main..HEAD"`` or ``"HEAD~3"``).
+        Empty (default) inspects uncommitted changes. This is a
+        git-range VALUE, not a filesystem path, so it stays
+        ``commit_range`` to avoid colliding with the W332/Fix-D
+        ``path`` canonical for file paths.
+    high_callers:
+        Direct-caller threshold passed to ``critique`` (default
+        10 -- mirrors the CLI default per LAW 11).
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ready_to_open, high_severity,
+    pr_risk_score, ...}, diff: {...}, critique: {...}, pr_risk: {...}}``.
+    """
+    args: list[str] = ["pr-prep", "--high-callers", str(high_callers)]
+    if commit_range:
+        args.append(commit_range)
+    return _run_roam(args, root)
+
+
+# W306: roam_why
+@_tool(
+    name="roam_why",
+    description=(
+        "Explain why a symbol matters: role classification "
+        "(Hub/Bridge/Leaf), transitive reach, critical-path "
+        "membership, cluster cohesion, and a one-line verdict. "
+        "Accepts multiple symbol names for batch triage. Different "
+        "from ``roam_fan`` (raw connectivity ranking) and "
+        "``roam_preflight`` (blast-radius gate before edit) -- this "
+        "is the per-symbol role explainer for triage and onboarding."
+    ),
+)
+def roam_why(symbols: tuple[str, ...], root: str = ".") -> dict:
+    """Explain why each named symbol matters.
+
+    WHEN TO USE: agent wants the role / reach / criticality verdict
+    for one or more symbols to decide where to focus. Pair with
+    ``roam_fan`` for raw connectivity and ``roam_preflight`` for
+    the pre-edit blast-radius gate.
+
+    Parameters
+    ----------
+    symbols:
+        Symbol names to explain (e.g. ``("parseAmount",
+        "formatNumber")``). Repeatable; the wrapper accepts a
+        tuple. Plural form ``symbols`` (not the W332/Fix-D ``symbol``
+        canonical) because the underlying CLI takes a variadic
+        positional ``NAMES...`` -- the wrapper exposes the list
+        shape explicitly so callers do not have to space-join
+        symbol names into one string.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, symbol_count, ...},
+    symbols: [...]}``.
+    """
+    args: list[str] = ["why"]
+    args.extend(symbols)
+    return _run_roam(args, root)
+
+
+# W306: roam_workflow
+@_tool(
+    name="roam_workflow",
+    description=(
+        "Inspect a workflow recipe DAG, list available recipes, or "
+        "suggest what to run next given a prior command. Useful as "
+        "an agent navigation aid: 'I just ran roam impact -- what "
+        "should I run next?' Different from the heavyweight "
+        "analytical recipes -- this is the metadata-only recipe "
+        "browser."
+    ),
+)
+def roam_workflow(
+    recipe_name: str = "",
+    list_recipes: bool = False,
+    query: str = "",
+    next_after: str = "",
+    root: str = ".",
+) -> dict:
+    """Inspect a workflow recipe or suggest the next command.
+
+    WHEN TO USE: agent wants to discover recipes
+    (``list_recipes=True``), inspect a specific recipe DAG (set
+    ``recipe_name``), or get a 'what next?' hint (set
+    ``next_after`` to the previously-run command). Pair with
+    ``roam_describe`` for the prose overview.
+
+    Parameters
+    ----------
+    recipe_name:
+        Recipe slug to inspect (e.g. ``"first-contact"``). Empty
+        (default) lists available recipes -- equivalent to
+        ``list_recipes=True``.
+    list_recipes:
+        List available workflow recipes and exit. Off by default --
+        mirrors the CLI default per LAW 11.
+    query:
+        Render ``{symbol}`` / ``{task}`` placeholders using this
+        query string without running commands. Empty (default)
+        skips placeholder rendering.
+    next_after:
+        Given the previously-run command name, suggest what to run
+        next (e.g. ``"impact"`` -> suggestions for the impact
+        follow-up). Empty (default) skips the suggestion path.
+    root:
+        Repo root (default current directory).
+
+    Returns: ``{summary: {verdict, ...}, recipes: [...] |
+    suggestions: [...]}``.
+    """
+    args: list[str] = ["workflow"]
+    if list_recipes:
+        args.append("--list")
+    if query:
+        args.extend(["--query", query])
+    if next_after:
+        args.extend(["--next", next_after])
+    if recipe_name:
+        args.append(recipe_name)
     return _run_roam(args, root)
 
 
@@ -9577,34 +14651,40 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         # MCP Server Card per blog.modelcontextprotocol.io/posts/2026-mcp-roadmap.
         # First-mover discovery for the MCP ecosystem registries
         # (PulseMCP, mcp.so, Smithery, etc.). v12.12.2: the card is
-        # now bundled inside the installed package (src/roam/mcp-server-card.json)
+        # bundled inside the installed package (src/roam/mcp-server-card.json)
         # so post-PyPI ``roam mcp --card`` works without a source
         # checkout. The docs/site/.well-known/ copy stays canonical for
         # the hosted /well-known URL — they are kept in sync via the
         # release process.
-        from pathlib import Path as _Path
+        #
+        # W624 / W642: resolve via ``importlib.resources`` only (mirrors
+        # W554/W570/W577/W610/W664/W668 discipline). The package-data entry
+        # ``"roam" = ["mcp-server-card.json"]`` in pyproject.toml + the
+        # W664 / W610 drift-guards guarantee the file ships in every
+        # install shape (pip wheel, editable, source checkout). No
+        # filesystem-walk fallback — those silently mask packaging drift.
+        from importlib.resources import as_file, files
 
-        bundled = _Path(__file__).resolve().parent / "mcp-server-card.json"
-        if bundled.is_file():
-            click.echo(bundled.read_text(encoding="utf-8").rstrip())
-            return
-
-        # Source-checkout fallback so dev runs against an unbuilt tree
-        # still find the docs-site copy.
-        for candidate in (
-            _Path(__file__).resolve().parents[1].parent.parent
-            / "docs"
-            / "site"
-            / ".well-known"
-            / "mcp-server-card.json",
-            _Path(__file__).resolve().parent.parent.parent / "docs" / "site" / ".well-known" / "mcp-server-card.json",
-        ):
-            if candidate.is_file():
-                click.echo(candidate.read_text(encoding="utf-8").rstrip())
-                return
-        click.echo("error: server card file not found", err=True)
+        try:
+            bundled_resource = files("roam") / "mcp-server-card.json"
+            with as_file(bundled_resource) as bundled_path:
+                if bundled_path.is_file():
+                    click.echo(bundled_path.read_text(encoding="utf-8").rstrip())
+                    return
+        except (FileNotFoundError, ModuleNotFoundError) as exc:
+            click.echo(
+                "error: mcp-server-card.json not reachable via importlib.resources "
+                f"({exc!r}). Check pyproject.toml ships "
+                "\"roam\" = [\"mcp-server-card.json\"] (W610 drift-guard).",
+                err=True,
+            )
+            raise SystemExit(1)
+        click.echo(
+            "error: mcp-server-card.json resolved but is not a regular file. "
+            "Check the wheel for a corrupted package-data entry.",
+            err=True,
+        )
         raise SystemExit(1)
-        return
 
     if mcp is None:
         click.echo(
@@ -9844,6 +14924,55 @@ else:
             "roam_complexity_report for complexity hotspots. Prioritize the "
             "top 3 issues I should fix first and explain why."
         )
+
+
+# ---------------------------------------------------------------------------
+# ROADMAP A1 / W74 + W99 + W105 + W108: derived-view finalization
+# ---------------------------------------------------------------------------
+# Collapse the legacy split-brain dicts into derived views of
+# ``_TOOL_METADATA``. Runs once, at module-load time, after every ``@_tool``
+# decorator above has populated ``_TOOL_METADATA``. The legacy names stay
+# importable (tests + ``_tool_annotations`` downstream may still read them),
+# but their content now flows from kwargs on the ``@_tool`` decorator — a
+# single source of truth. Adding a flagged tool requires only the matching
+# kwarg on its decorator; no separate set to keep in sync.
+
+_DESTRUCTIVE_TOOLS = frozenset(
+    name for name, meta in _TOOL_METADATA.items() if meta.get("destructive", False)
+)
+
+# ROADMAP A1 / W108: derive _NON_READ_ONLY_TOOLS from _TOOL_METADATA
+_NON_READ_ONLY_TOOLS = frozenset(
+    name for name, meta in _TOOL_METADATA.items() if not meta.get("read_only", True)
+)
+# ROADMAP A1 / W113: derive _NON_IDEMPOTENT_TOOLS from _TOOL_METADATA.
+# Independent axis from read_only (in current data they coincide — destructive
+# tools are all also non-idempotent — but the semantic distinction matters
+# for future tools, e.g. a read-only tool that's non-idempotent because it
+# returns a UUID). The decorator's ``idempotent=...`` kwarg is the source
+# of truth; this derived view is what ``_tool_annotations`` and downstream
+# consumers read.
+_NON_IDEMPOTENT_TOOLS = frozenset(
+    name for name, meta in _TOOL_METADATA.items() if not meta.get("idempotent", True)
+)
+
+# W99 + W107: ``_TASK_REQUIRED_TOOLS`` derived from ``task_mode == "required"``.
+# Same finalization pattern as ``_DESTRUCTIVE_TOOLS`` above. Reads the canonical
+# 3-way enum rather than the legacy ``task_required`` bool, but the boolean
+# field is still populated in ``_TOOL_METADATA`` for downstream consumers.
+_TASK_REQUIRED_TOOLS = frozenset(
+    name for name, meta in _TOOL_METADATA.items() if meta.get("task_mode") == "required"
+)
+
+# W105 + W107: ``_TASK_OPTIONAL_TOOLS`` derived from ``task_mode == "optional"``.
+# Same finalization pattern as the two above. Pre-W107 the if/elif chain inside
+# ``_tool`` could have silently preferred ``"required"`` if a tool appeared in
+# both flags; the enum makes that impossible by construction (the decorator
+# raises ValueError if both legacy bools are True). Disjointness is also pinned
+# in ``tests/test_task_optional_tools_derived.py``.
+_TASK_OPTIONAL_TOOLS = frozenset(
+    name for name, meta in _TOOL_METADATA.items() if meta.get("task_mode") == "optional"
+)
 
 
 # ---------------------------------------------------------------------------

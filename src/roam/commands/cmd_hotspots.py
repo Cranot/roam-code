@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import re
+import sqlite3
 from collections import defaultdict, deque
 
 import click
@@ -11,9 +14,25 @@ from roam.capability import roam_capability
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output._severity import severity_rank
 from roam.output.formatter import json_envelope, strip_list_payloads, to_json
 
-_SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2}
+
+# W120 — hotspots is the fifth detector migrating onto the central
+# findings registry (after clones W95, dead W99, complexity W102,
+# bus-factor W115). Hotspots is the canonical *runtime* detector —
+# every emitted finding comes from a row in ``runtime_stats``, which is
+# populated by ``roam ingest-trace`` from real OTel / Jaeger / Zipkin
+# data. The detector then compares the static ranking against the
+# runtime ranking and tags each symbol UPGRADE / CONFIRMED / DOWNGRADE.
+# All three classifications carry the ``runtime`` confidence tier —
+# they all required ingested production traces. Bump this when the
+# rank-discrepancy thresholds or the classification labels in
+# ``roam.runtime.hotspots.compute_hotspots`` change meaningfully so
+# consumers can spot rows produced under an older classifier shape.
+HOTSPOTS_DETECTOR_VERSION: str = "1.0.0"
+
+# W564: severity ordering now routed through roam.output._severity.severity_rank
 _ENTRYPOINT_HINT = re.compile(
     r"(main|handler|route|endpoint|controller|serve|api|http)",
     re.IGNORECASE,
@@ -333,7 +352,7 @@ def _compute_security_hotspots(conn) -> dict:
 
     hits.sort(
         key=lambda h: (
-            _SEVERITY_ORDER.get(h["severity"], 9),
+            -severity_rank(h["severity"]),
             0 if h["reachable_from_entrypoint"] else 1,
             -h["risk_score"],
             h["file"],
@@ -447,6 +466,120 @@ def _run_danger_mode(json_mode: bool, token_budget: int) -> None:
         )
 
 
+def _hotspots_finding_id(symbol_id: int, classification: str) -> str:
+    """Stable, deterministic finding id for one runtime hotspot.
+
+    The (symbol_id, classification) pair re-identifies the same hotspot
+    across runs — symbols.id stays stable across re-indexes of unchanged
+    code, and the classification disambiguates the same symbol surfacing
+    under a different bucket on a fresh trace ingestion (e.g. a symbol
+    that moves from CONFIRMED to UPGRADE as static metrics drift). A
+    symbol that switches buckets produces a fresh row rather than
+    upserting the old one — agents querying by classification see the
+    current bucket and the previous row stays available for audit.
+    """
+    raw = f"{symbol_id}:{classification}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"hotspots:{classification.lower()}:{digest}"
+
+
+def _emit_hotspots_findings(conn, hotspots_data: list[dict], source_version: str) -> None:
+    """Mirror each runtime hotspot row into the findings registry.
+
+    ``hotspots_data`` is the list of dicts returned by
+    :func:`roam.runtime.hotspots.compute_hotspots` — each entry already
+    carries ``symbol_id``, ``classification``, ``static_rank``,
+    ``runtime_rank``, and the nested ``runtime_stats`` / ``static_stats``
+    blocks. We emit one finding per symbol; symbols without an indexed
+    ``symbol_id`` (trace data that didn't match a known symbol) are
+    skipped — there's no stable subject to attach the finding to.
+
+    Confidence tier is always ``runtime``. All three classifications
+    (UPGRADE / CONFIRMED / DOWNGRADE) require ingested ``runtime_stats``
+    rows; the detector cannot produce findings without real trace data.
+    The classification distinguishes WHICH runtime story the symbol
+    tells, but the evidence base is the same — runtime observation.
+
+    Wrapped at the call site in try/except so a pre-W89 DB (no
+    ``findings`` table) silently no-ops rather than crashing the
+    standard read path.
+    """
+    from roam.db.findings import CONFIDENCE_RUNTIME, FindingRecord, emit_finding
+
+    for h in hotspots_data:
+        symbol_id = h.get("symbol_id")
+        if symbol_id is None:
+            # Trace span didn't resolve to an indexed symbol — there's
+            # no stable subject to attach to. Skip rather than emitting
+            # a subject_id=NULL row that can't be joined back to the
+            # codebase.
+            continue
+        classification = h.get("classification") or "CONFIRMED"
+        symbol_name = h.get("symbol_name") or ""
+        file_path = h.get("file_path") or ""
+        runtime_rank = int(h.get("runtime_rank") or 0)
+        static_rank = int(h.get("static_rank") or 0)
+        runtime_stats = h.get("runtime_stats") or {}
+        static_stats = h.get("static_stats") or {}
+
+        finding_id = _hotspots_finding_id(int(symbol_id), classification)
+        evidence = {
+            "symbol_name": symbol_name,
+            "file_path": file_path,
+            "classification": classification,
+            "static_rank": static_rank,
+            "runtime_rank": runtime_rank,
+            "runtime_stats": {
+                "call_count": runtime_stats.get("call_count"),
+                "p50_latency_ms": runtime_stats.get("p50_latency_ms"),
+                "p99_latency_ms": runtime_stats.get("p99_latency_ms"),
+                "error_rate": runtime_stats.get("error_rate"),
+            },
+            "static_stats": {
+                "pagerank": static_stats.get("pagerank"),
+                "complexity": static_stats.get("complexity"),
+                "churn": static_stats.get("churn"),
+            },
+        }
+        # Flag DOWNGRADE rows with an explicit disagreement note so an
+        # agent filtering by ``classification == "DOWNGRADE"`` doesn't
+        # have to reason about the static-vs-runtime delta from
+        # rank numbers alone (W120 disagree-with-static flag).
+        if classification == "DOWNGRADE":
+            evidence["disagreement"] = (
+                "static rank ranked this symbol high but runtime traffic is low"
+            )
+        elif classification == "UPGRADE":
+            evidence["disagreement"] = (
+                "runtime traffic ranks this symbol high but static analysis missed it"
+            )
+
+        call_count = runtime_stats.get("call_count") or 0
+        p99 = runtime_stats.get("p99_latency_ms")
+        p99_str = f", p99={p99:.0f}ms" if p99 is not None else ""
+        claim = (
+            f"Runtime hotspot ({classification}): {symbol_name} "
+            f"({file_path}) — runtime_rank={runtime_rank}, "
+            f"static_rank={static_rank}, calls={call_count}{p99_str}"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol",
+                subject_id=int(symbol_id),
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                # All three classifications require ingested
+                # ``runtime_stats`` rows — observed in production.
+                # ``runtime`` is the correct tier across the board.
+                confidence=CONFIDENCE_RUNTIME,
+                source_detector="hotspots",
+                source_version=source_version,
+            ),
+        )
+
+
 @roam_capability(
     name="hotspots",
     category="health",
@@ -476,8 +609,24 @@ def _run_danger_mode(json_mode: bool, token_budget: int) -> None:
     is_flag=True,
     help="Files in top quartile of churn × complexity × max-fan-in ('danger zone')",
 )
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror runtime hotspots into the central findings registry — "
+        "visible via ``roam findings list --detector hotspots``. The "
+        "detector-specific output is unchanged; the registry rows are "
+        "the denormalised cross-detector surface. Persists only in the "
+        "default (runtime) mode — --security and --danger are separate "
+        "modes that are not yet migrated. Persisting skips rows whose "
+        "trace span didn't resolve to an indexed symbol; the standard "
+        "JSON / text output is unaffected."
+    ),
+)
 @click.pass_context
-def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
+def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist):
     """Show runtime hotspots comparing static analysis vs runtime data.
 
     Requires prior trace ingestion via ``roam ingest-trace``.
@@ -514,6 +663,16 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
         raise SystemExit(1)
     if danger_mode and (sort_runtime or discrepancy or security_mode):
         click.echo("Cannot combine --danger with --runtime, --discrepancy, or --security")
+        raise SystemExit(1)
+    # --persist mirrors the runtime hotspot view into findings; the
+    # --security and --danger modes have their own subject surfaces
+    # (raw file/line for security, file-level danger score) and are
+    # not yet migrated to the central registry.
+    if persist and (security_mode or danger_mode):
+        click.echo(
+            "--persist applies to the default (runtime) hotspots mode only; "
+            "not supported with --security or --danger"
+        )
         raise SystemExit(1)
 
     if danger_mode:
@@ -605,7 +764,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
 
     from roam.runtime.hotspots import compute_hotspots
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         # Ensure table exists for query even in readonly mode
         try:
             conn.execute("SELECT COUNT(*) FROM runtime_stats")
@@ -632,6 +791,19 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
             return
 
         items = compute_hotspots(conn)
+
+        # --- W120: mirror runtime hotspots into the central findings
+        # registry. Runs ONLY with --persist. The persisted set is the
+        # full compute_hotspots return — independent of the
+        # --discrepancy / --runtime display filters below, so re-running
+        # with a different filter doesn't truncate the registry.
+        if persist and items:
+            try:
+                _emit_hotspots_findings(conn, items, HOTSPOTS_DETECTOR_VERSION)
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
     if discrepancy:
         items = [h for h in items if h["classification"] in ("UPGRADE", "DOWNGRADE")]

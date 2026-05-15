@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -90,7 +92,41 @@ jobs:
 
 
 def _templates_dir() -> Path:
-    """Return the path to the bundled CI templates directory."""
+    """Return the path to the bundled CI templates directory.
+
+    W643: resolve via ``importlib.resources`` (mirrors W554/W570/W577/W624
+    discipline) so wheel installs find the bundled ``roam.templates.ci``
+    package data canonically. Falls back to the source-tree
+    ``Path(__file__).parent.parent / "templates" / "ci"`` layout for
+    editable installs and dev checkouts that haven't been packaged.
+
+    W668: previous revision wrapped this in ``as_file(...)`` and captured
+    the result OUTSIDE the ``with`` block (anti-pattern from the W643
+    incident). When ``roam.templates.ci`` is a real package (W664
+    structurally enforces this by requiring ``__init__.py`` in every
+    package-data dir), ``files()`` returns a concrete on-disk Path and
+    ``as_file()`` is a no-op identity context manager — but the captured
+    Path would have been invalid on any future namespace-subpackage
+    regression. Skip ``as_file()`` entirely: the W664 drift-guard
+    guarantees a real on-disk Path, so the resource is structurally safe
+    to return directly without a temp-extraction context manager.
+    """
+    try:
+        from importlib.resources import files
+
+        package_resource = files("roam.templates.ci")
+        # W664 invariant: ``roam.templates.ci`` ships ``__init__.py``, so
+        # ``files()`` returns a concrete on-disk Path. ``Path(str(...))``
+        # normalises any Traversable subclass into a real ``pathlib.Path``
+        # without engaging the ``as_file()`` extraction codepath that
+        # caused W643.
+        resolved = Path(str(package_resource))
+        if resolved.is_dir():
+            return resolved
+    except (FileNotFoundError, ModuleNotFoundError, AttributeError):
+        pass
+
+    # Source-checkout fallback — pre-W643 layout.
     return Path(__file__).resolve().parent.parent / "templates" / "ci"
 
 
@@ -107,6 +143,242 @@ def _load_template(platform: str) -> str:
             f"Template file not found: {template_path}\nThis is a packaging error. Please reinstall roam-code."
         )
     return template_path.read_text(encoding="utf-8")
+
+
+# W471 — SLSA SRC-L3 auto-trigger workflow (GitHub-only).
+#
+# Lives as a sibling YAML file because the OIDC trust-anchor requirement
+# (`id-token: write`) is fundamentally different from the analysis
+# permissions surface of the main roam-ci workflow. Keeping them
+# separate also lets teams opt into SRC-L3 evidence without touching
+# their existing roam-ci job.
+_SLSA_SRC_L3_TEMPLATE_PATH = "slsa-src-l3.yml"
+_SLSA_SRC_L3_OUTPUT_PATH = ".github/workflows/roam-slsa-src-l3.yml"
+
+
+def _load_slsa_src_l3_template() -> str:
+    """Load the SLSA SRC-L3 auto-trigger workflow template (W471)."""
+    path = _templates_dir() / _SLSA_SRC_L3_TEMPLATE_PATH
+    if not path.exists():
+        raise click.ClickException(
+            f"Template file not found: {path}\nThis is a packaging error. Please reinstall roam-code."
+        )
+    return path.read_text(encoding="utf-8")
+
+
+# W535 — Persistent OSCAL artifacts.
+#
+# The FedRAMP continuous-assessment pattern (per W359-research §6 +
+# the W464/W465 design memo `(internal memo)`)
+# wants the stub Assessment Plan to live on disk so per-run Assessment
+# Results documents can cross-reference it by stable file path/URI
+# instead of inlining the stub on every emission.
+#
+# This flag, the cousin of W471's --with-slsa-l3, materialises both
+# the Control Mapping and the stub AP under .roam/oscal/ so downstream
+# `roam evidence-oscal --kind assessment-results --import-ap-ref ...`
+# calls have a real on-disk AP to point at.
+_OSCAL_DIR = ".roam/oscal"
+_OSCAL_CONTROL_MAPPING_PATH = f"{_OSCAL_DIR}/control-mapping.json"
+_OSCAL_STUB_AP_PATH = f"{_OSCAL_DIR}/stub-assessment-plan.json"
+
+
+def _deterministic_oscal_clock(repo_id: str) -> datetime:
+    """Derive a deterministic UTC timestamp from ``repo_id``.
+
+    Both :func:`build_oscal_control_mapping` and
+    :func:`synthesize_stub_assessment_plan` use a deterministic UUIDv5
+    document id seeded by content/repo, but their ``metadata.last-modified``
+    field defaults to ``datetime.now(timezone.utc)`` — which would make
+    `roam ci-setup --with-oscal` non-idempotent and break the hash-stability
+    mandate when a caller re-runs the command on the same repo.
+
+    Pin the clock to a deterministic epoch second derived from a SHA-256
+    hash of ``repo_id`` so re-runs against the same project produce
+    byte-identical files. Range is the first 32 bits of the hash (≈ 136
+    years of seconds), which keeps timestamps in the valid datetime
+    range and makes the output stable as long as the repo identifier
+    is stable.
+
+    We intentionally do NOT use the wall clock here — that would force
+    every consumer (W535 itself, test suites, content-hash auditors) to
+    inject an explicit ``now=`` everywhere, recreating the W471 pattern's
+    ambient-clock pitfall.
+    """
+    digest = hashlib.sha256(repo_id.encode("utf-8")).digest()
+    # First 4 bytes ≈ 4.3 billion seconds; modulo to keep within
+    # datetime's safe range (avoids overflow for any reasonable repo id).
+    epoch_seconds = int.from_bytes(digest[:4], "big") % (60 * 60 * 24 * 365 * 100)
+    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc)
+
+
+def _resolve_control_mapping_yaml(project_root: Path) -> Path | None:
+    """Locate the canonical ``control-mapping.yaml``.
+
+    Search order (first hit wins):
+
+    1. ``<project_root>/templates/audit-report/control-mapping.yaml`` —
+       repo-relative; works when a consumer has copied the YAML into
+       their own repo so they can edit it without touching the package.
+       Pre-W554 this was also where roam-code itself kept the YAML;
+       the file no longer ships there, but the candidate stays so
+       downstream consumers who hand-copied the YAML keep working.
+    2. ``importlib.resources.files("roam.templates.audit_report")``
+       — the wheel-safe bundled copy (W554). This is the path that
+       fires for ``pip install roam-code`` users, which is the default
+       customer install surface.
+    3. Walk upward from this source file looking for
+       ``templates/audit-report/control-mapping.yaml`` — last-resort
+       fallback for pre-W554 ``pip install -e .`` checkouts that may
+       still have the legacy project-root copy lying around.
+
+    Returns ``None`` when the YAML cannot be located. The caller is
+    responsible for raising a helpful error pointing the user at
+    ``--control-map`` or the GitHub source.
+    """
+    REL = Path("templates") / "audit-report" / "control-mapping.yaml"
+
+    # 1. Project root — downstream user override.
+    candidate = project_root / REL
+    if candidate.exists():
+        return candidate
+
+    # 2. Bundled package data (W554). Wheel-safe via importlib.resources.
+    try:
+        from importlib.resources import files
+
+        package_resource = files("roam.templates.audit_report") / "control-mapping.yaml"
+        # W668: previously wrapped this in ``as_file(...)`` and captured
+        # the result OUTSIDE the ``with`` block — the W643 anti-pattern.
+        # ``roam.templates.audit_report`` is a real package (W664 lint
+        # enforces ``__init__.py``), so ``files()`` returns a concrete
+        # on-disk Path and ``as_file()`` is a no-op. Normalise to
+        # ``pathlib.Path`` directly without the temp-extraction codepath
+        # that caused W643. Downstream consumers (``load_control_map``)
+        # need a real ``Path``.
+        resolved = Path(str(package_resource))
+        if resolved.exists():
+            return resolved
+    except (FileNotFoundError, ModuleNotFoundError, AttributeError):
+        # ``files()`` raises FileNotFoundError when the package data
+        # is missing (wheel built without the data); ModuleNotFoundError
+        # when the package itself isn't importable (very early on a
+        # broken install). Neither is fatal — fall through to the
+        # ancestor walk.
+        pass
+
+    # 3. Walk up from this module — pre-W554 source-checkout fallback.
+    # Caps at 6 ancestors to avoid scanning the filesystem root.
+    here = Path(__file__).resolve()
+    for ancestor in [here, *here.parents][:6]:
+        candidate = ancestor / REL
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def _write_oscal_artifacts(
+    project_root: Path,
+    *,
+    repo_id: str,
+) -> tuple[str, str]:
+    """W535 — materialise persistent OSCAL artifacts under ``.roam/oscal/``.
+
+    Writes:
+
+    * ``.roam/oscal/control-mapping.json`` - OSCAL v1.2 Control Mapping
+      compiled from the canonical control-mapping.yaml resolved via
+      :func:`_resolve_control_mapping_yaml` (wheel-bundled
+      ``roam.templates.audit_report`` by default; project-root
+      ``templates/audit-report/control-mapping.yaml`` honoured as a
+      hand-edited override, W554).
+    * ``.roam/oscal/stub-assessment-plan.json`` - OSCAL v1.2 stub
+      Assessment Plan that future ``roam evidence-oscal --kind
+      assessment-results --import-ap-ref .roam/oscal/stub-assessment-plan.json``
+      calls can reference instead of synthesising the stub inline.
+
+    Both files use a deterministic clock derived from ``repo_id`` so
+    re-runs produce byte-identical content. UUIDs are already
+    deterministic (UUIDv5 over content/repo seeds).
+
+    Returns ``(control_mapping_action, stub_ap_action)`` where each
+    action is ``"created"`` or ``"updated"``.
+    """
+    # Import lazily — keeps `roam ci-setup` (without --with-oscal) free
+    # of the PyYAML dependency that load_control_map pulls in.
+    from roam.atomic_io import atomic_write_json
+    from roam.evidence.oscal import (
+        build_oscal_control_mapping,
+        load_control_map,
+        synthesize_stub_assessment_plan,
+    )
+
+    oscal_dir = project_root / _OSCAL_DIR
+    oscal_dir.mkdir(parents=True, exist_ok=True)
+
+    pinned_clock = _deterministic_oscal_clock(repo_id)
+
+    # ---- Control Mapping ----
+    yaml_path = _resolve_control_mapping_yaml(project_root)
+    if yaml_path is None:
+        raise click.ClickException(
+            "control-mapping.yaml not found. The wheel-bundled copy "
+            "(roam.templates.audit_report) appears to be missing; this is "
+            "a packaging error — please reinstall roam-code. As a "
+            "workaround, copy templates/audit-report/control-mapping.yaml "
+            "from https://github.com/Cranot/roam-code into "
+            "<project>/templates/audit-report/control-mapping.yaml, or "
+            "pass an explicit control map via `roam evidence-oscal "
+            "--control-map PATH`."
+        )
+
+    parsed = load_control_map(yaml_path)
+    cm_doc = build_oscal_control_mapping(parsed, now=pinned_clock)
+
+    cm_path = project_root / _OSCAL_CONTROL_MAPPING_PATH
+    cm_action = "updated" if cm_path.exists() else "created"
+    atomic_write_json(cm_path, cm_doc, indent=2, sort_keys=False)
+
+    # ---- Stub Assessment Plan ----
+    # Point the stub AP at the control mapping we just wrote so the AP
+    # is self-navigable (AP -> Control Mapping -> controls).
+    stub_ap_doc = synthesize_stub_assessment_plan(
+        repo_id=repo_id,
+        now=pinned_clock,
+        control_mapping_ref=_OSCAL_CONTROL_MAPPING_PATH,
+    )
+
+    ap_path = project_root / _OSCAL_STUB_AP_PATH
+    ap_action = "updated" if ap_path.exists() else "created"
+    atomic_write_json(ap_path, stub_ap_doc, indent=2, sort_keys=False)
+
+    return cm_action, ap_action
+
+
+def _print_oscal_post_setup_instructions(
+    control_mapping_path: str,
+    stub_ap_path: str,
+) -> None:
+    """W535 - explain the persistent-AP cross-reference pattern."""
+    click.echo("")
+    click.echo("Persistent OSCAL artifacts (W535):")
+    click.echo(f"  Control Mapping:        {control_mapping_path}")
+    click.echo(f"  Stub Assessment Plan:   {stub_ap_path}")
+    click.echo("")
+    click.echo("Continuous-assessment pattern (FedRAMP precedent): the stub")
+    click.echo("AP exists on disk so per-run AR documents reference it via")
+    click.echo("path/URI instead of inlining the same boilerplate every time.")
+    click.echo("")
+    click.echo("Next: future AR emissions can pass --import-ap-ref:")
+    click.echo(
+        f"  roam evidence-oscal --kind assessment-results "
+        f"--evidence .roam/evidence/last.json --import-ap-ref {stub_ap_path}"
+    )
+    click.echo("")
+    click.echo("Wording-lint discipline: roam emits OSCAL documents that map")
+    click.echo("to / support evidence for governance controls. The auditor")
+    click.echo("asserts compliance; roam emits the evidence.")
 
 
 def _substitute_vars(template: str, variables: dict[str, str]) -> str:
@@ -204,8 +476,36 @@ def _get_default_branch(project_root: Path) -> str:
     default="60",
     help="Minimum health score for quality gate (default: 60).",
 )
+@click.option(
+    "--with-slsa-l3",
+    "with_slsa_l3",
+    is_flag=True,
+    default=False,
+    help=(
+        "W471: also emit a second GitHub Actions workflow "
+        "(.github/workflows/roam-slsa-src-l3.yml) that auto-triggers "
+        "`roam pr-bundle emit --slsa-l3 --sign --keyless` on every PR. "
+        "Requires GitHub Actions OIDC (`id-token: write`) - the trust "
+        "anchor that lifts the assurance floor from SRC-L2 to SRC-L3. "
+        "GitHub-only in v1 (Fulcio + Rekor wire-up); opt-in by default."
+    ),
+)
+@click.option(
+    "--with-oscal",
+    "with_oscal",
+    is_flag=True,
+    default=False,
+    help=(
+        "W535: also materialise persistent OSCAL v1.2 artifacts under "
+        ".roam/oscal/ (control-mapping.json + stub-assessment-plan.json). "
+        "The stub AP lives on disk so future `roam evidence-oscal --kind "
+        "assessment-results` calls can pass --import-ap-ref instead of "
+        "synthesising the stub inline (FedRAMP continuous-assessment "
+        "pattern, per W359 §6). Idempotent — re-runs are byte-identical."
+    ),
+)
 @click.pass_context
-def ci_setup(ctx, platform, write_file, python_version, gate):
+def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with_oscal):
     """Generate CI/CD pipeline config for roam-code integration.
 
     Produces ready-to-commit pipeline YAML for GitHub Actions, GitLab CI,
@@ -320,10 +620,53 @@ def ci_setup(ctx, platform, write_file, python_version, gate):
         # Exactly one platform detected
         platform = detected[0]
 
+    # W471 — SLSA SRC-L3 auto-trigger is GitHub-only in v1 (Fulcio +
+    # Rekor wire-up depends on the GitHub Actions OIDC token).
+    if with_slsa_l3 and platform != "github":
+        raise click.ClickException(
+            "--with-slsa-l3 is GitHub-only in v1. The keyless cosign "
+            "signing path depends on the GitHub Actions OIDC token "
+            "(`id-token: write`). Re-run with --platform github."
+        )
+
+    # W535 — Persistent OSCAL artifacts.
+    # Independent of --write (the OSCAL artifacts have nothing to do
+    # with the CI YAML), runs regardless of platform.
+    oscal_block: dict[str, object] | None = None
+    if with_oscal:
+        cm_action, ap_action = _write_oscal_artifacts(
+            project_root, repo_id=project_name
+        )
+        oscal_block = {
+            "control_mapping": {
+                "path": _OSCAL_CONTROL_MAPPING_PATH,
+                "action": cm_action,
+            },
+            "stub_assessment_plan": {
+                "path": _OSCAL_STUB_AP_PATH,
+                "action": ap_action,
+            },
+            "import_ap_hint": (
+                "Future `roam evidence-oscal --kind assessment-results` "
+                f"calls can pass --import-ap-ref {_OSCAL_STUB_AP_PATH} "
+                "instead of synthesising the stub inline."
+            ),
+        }
+
     # Load template
     cfg = _PLATFORMS[platform]
     template = _load_template(platform)
     rendered = _substitute_vars(template, variables)
+
+    # W471 — when SLSA SRC-L3 auto-trigger is requested, also render the
+    # sibling workflow. Kept as a second file (not merged into the main
+    # template) because the OIDC permission surface is distinct.
+    slsa_rendered: str | None = None
+    slsa_output_path: str | None = None
+    if with_slsa_l3:
+        slsa_template = _load_slsa_src_l3_template()
+        slsa_rendered = _substitute_vars(slsa_template, variables)
+        slsa_output_path = _SLSA_SRC_L3_OUTPUT_PATH
 
     output_path = cfg["output_path"]
     abs_output_path = project_root / output_path
@@ -356,7 +699,28 @@ def ci_setup(ctx, platform, write_file, python_version, gate):
 
         abs_output_path.write_text(rendered, encoding="utf-8")
 
+        # W471 — second write for the SLSA SRC-L3 auto-trigger workflow.
+        slsa_action = None
+        if slsa_rendered is not None and slsa_output_path is not None:
+            slsa_abs = project_root / slsa_output_path
+            slsa_abs.parent.mkdir(parents=True, exist_ok=True)
+            if slsa_abs.exists():
+                slsa_action = "skipped"
+            else:
+                slsa_abs.write_text(slsa_rendered, encoding="utf-8")
+                slsa_action = "created"
+
         if json_mode:
+            extras: dict[str, object] = {}
+            if slsa_output_path is not None:
+                extras["slsa_l3"] = {
+                    "path": slsa_output_path,
+                    "action": slsa_action,
+                    "predicate_type": "https://slsa.dev/verification_summary/v1",
+                    "trust_anchor": "github-actions-oidc",
+                }
+            if oscal_block is not None:
+                extras["oscal"] = oscal_block
             click.echo(
                 to_json(
                     json_envelope(
@@ -366,22 +730,46 @@ def ci_setup(ctx, platform, write_file, python_version, gate):
                             "platform": platform,
                             "path": output_path,
                             "action": "created",
+                            "with_slsa_l3": with_slsa_l3,
+                            "with_oscal": with_oscal,
                         },
                         platform=platform,
                         description=cfg["description"],
                         path=output_path,
                         variables=variables,
+                        **extras,
                     )
                 )
             )
             return
 
         click.echo(f"Wrote {cfg['description']} template to: {output_path}\n")
+        if slsa_output_path is not None:
+            if slsa_action == "created":
+                click.echo(f"Wrote SLSA SRC-L3 auto-trigger workflow to: {slsa_output_path}\n")
+            else:
+                click.echo(f"SLSA SRC-L3 workflow already exists at {slsa_output_path} - skipped.\n")
         _print_post_setup_instructions(platform, output_path)
+        if slsa_output_path is not None:
+            _print_slsa_src_l3_instructions(slsa_output_path)
+        if oscal_block is not None:
+            _print_oscal_post_setup_instructions(
+                _OSCAL_CONTROL_MAPPING_PATH, _OSCAL_STUB_AP_PATH
+            )
         return
 
     # Print template (no --write)
     if json_mode:
+        extras: dict[str, object] = {}
+        if slsa_output_path is not None and slsa_rendered is not None:
+            extras["slsa_l3"] = {
+                "path": slsa_output_path,
+                "template": slsa_rendered,
+                "predicate_type": "https://slsa.dev/verification_summary/v1",
+                "trust_anchor": "github-actions-oidc",
+            }
+        if oscal_block is not None:
+            extras["oscal"] = oscal_block
         click.echo(
             to_json(
                 json_envelope(
@@ -390,12 +778,15 @@ def ci_setup(ctx, platform, write_file, python_version, gate):
                         "verdict": f"Template for {cfg['description']}",
                         "platform": platform,
                         "detected": detected,
+                        "with_slsa_l3": with_slsa_l3,
+                        "with_oscal": with_oscal,
                     },
                     platform=platform,
                     description=cfg["description"],
                     output_path=output_path,
                     template=rendered,
                     variables=variables,
+                    **extras,
                 )
             )
         )
@@ -407,6 +798,23 @@ def ci_setup(ctx, platform, write_file, python_version, gate):
     click.echo(rendered)
     click.echo(f"\n--- Save as: {output_path} ---")
     click.echo(f"Or run: roam ci-setup --platform {platform} --write")
+
+    # W471 — also print the SLSA SRC-L3 auto-trigger template when requested.
+    if slsa_output_path is not None and slsa_rendered is not None:
+        click.echo(f"\n=== SLSA SRC-L3 auto-trigger workflow (W471) ===\n")
+        click.echo(slsa_rendered)
+        click.echo(f"\n--- Save as: {slsa_output_path} ---")
+        click.echo(f"Or run: roam ci-setup --platform github --with-slsa-l3 --write")
+
+    # W535 — when persistent OSCAL artifacts were written, surface the
+    # paths so the user can immediately use --import-ap-ref against them.
+    # Unlike SLSA/CI YAML, the OSCAL artifacts are always materialised
+    # (not just shown) regardless of --write, because the .roam/oscal/
+    # tree is roam state, not project source.
+    if oscal_block is not None:
+        _print_oscal_post_setup_instructions(
+            _OSCAL_CONTROL_MAPPING_PATH, _OSCAL_STUB_AP_PATH
+        )
 
 
 def _print_post_setup_instructions(platform: str, output_path: str) -> None:
@@ -443,7 +851,7 @@ def _print_post_setup_instructions(platform: str, output_path: str) -> None:
             f"  1. Rename {output_path} to Jenkinsfile (or load it from your main Jenkinsfile)",
             "  2. Install 'Warnings Next Generation' plugin for SARIF ingestion:",
             "     https://plugins.jenkins.io/warnings-ng/",
-            "  3. Ensure Python 3.9+ is available on the Jenkins agent",
+            "  3. Ensure Python 3.10+ is available on the Jenkins agent",
             "  4. Trigger a build to test the pipeline",
         ],
         "bitbucket": [
@@ -457,3 +865,21 @@ def _print_post_setup_instructions(platform: str, output_path: str) -> None:
 
     for line in instructions.get(platform, []):
         click.echo(line)
+
+
+def _print_slsa_src_l3_instructions(slsa_output_path: str) -> None:
+    """W471 - explain the OIDC trust anchor + L2 -> L3 lift."""
+    click.echo("")
+    click.echo("SLSA SRC-L3 auto-trigger workflow (W471):")
+    click.echo(f"  1. Commit and push {slsa_output_path}")
+    click.echo("  2. Open a pull request to auto-emit a signed VSA + run-ledger root")
+    click.echo("  3. Verify the Rekor entry surfaces at https://search.sigstore.dev/")
+    click.echo("")
+    click.echo("Permissions required: contents:read, id-token:write, pull-requests:write")
+    click.echo("Trust anchor: GitHub Actions OIDC token (`id-token: write`).")
+    click.echo("  This OIDC token is the external trust anchor that lifts the")
+    click.echo("  assurance floor from SRC-L2 (local HMAC) to SRC-L3 (externally")
+    click.echo("  verifiable via Sigstore Fulcio + Rekor transparency log).")
+    click.echo("")
+    click.echo("Wording-lint discipline: roam supports evidence for SLSA SRC-L3 source")
+    click.echo("provenance. The verifier asserts compliance; roam emits the evidence.")

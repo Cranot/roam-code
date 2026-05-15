@@ -304,16 +304,18 @@ def test_analyze_n1_model_methods_constant_query_count(monkeypatch, n_models):
     # The pre-loop bulk fetches issue a fixed number of batched_in
     # queries regardless of n_models:
     #   * 1 — _bulk_fetch_methods_with_locations
+    #   * 1 — _bulk_fetch_methods_by_file (W86 follow-up; covers PHP
+    #         gap-models whose methods lack parent_id linkage)
     #   * 1-2 — _bulk_fetch_appends_symbols (parent_id pass + optional
     #           file-range fallback when models lack parent_id-linked
     #           appends; this fixture's synthetic models have none)
     #   * 1 — _bulk_fetch_incoming_refs
     #   * 1 — _build_controller_cache (files-where-Controller scan)
-    # Cap at 8 to absorb batched_in chunking under future expansion.
+    # Cap at 9 to absorb batched_in chunking under future expansion.
     # Old code: 1 per model for several helpers (linear in n_models).
-    assert cc.execute_calls <= 8, (
+    assert cc.execute_calls <= 9, (
         f"analyze_n1 ran {cc.execute_calls} queries for {n_models} models — "
-        f"expected <= 8 (constant). Old code: linear in n_models.\n"
+        f"expected <= 9 (constant). Old code: linear in n_models.\n"
         f"queries: {cc.queries}"
     )
 
@@ -352,6 +354,152 @@ def test_analyze_n1_appends_collection_edges_constant_query_count(monkeypatch):
     assert fifty <= one + 3, (
         f"query count grew from {one} to {fifty} as n_models went 1→50 — "
         f"expected near-constant. Bulk fetches should batch."
+    )
+
+
+def _seed_php_models_no_parent_id(conn, n_models, file_id_per_model=True):
+    """Insert N synthetic class symbols + 3 methods each, **without**
+    parent_id linkage (mimics the PHP parser path where the candidate-
+    filter fallback at cmd_n1.py:1217 used to fire per model).
+
+    Each class lives in its own file (the gap-model worst case: every
+    model in a separate file_id, so the bulk-by-file fetch must batch
+    them all into one query).
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY,
+            path TEXT,
+            language TEXT,
+            file_role TEXT
+        );
+        CREATE TABLE IF NOT EXISTS symbols (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER,
+            name TEXT,
+            qualified_name TEXT,
+            kind TEXT,
+            line_start INTEGER,
+            line_end INTEGER,
+            parent_id INTEGER,
+            signature TEXT,
+            default_value TEXT
+        );
+        CREATE TABLE IF NOT EXISTS edges (
+            id INTEGER PRIMARY KEY,
+            source_id INTEGER,
+            target_id INTEGER,
+            kind TEXT
+        );
+        """
+    )
+    models = {}
+    for i in range(n_models):
+        file_id = (i + 1) if file_id_per_model else 1
+        path = f"app/Models/Model{i}.php"
+        # Insert the file row only once per unique file_id.
+        existing = conn.execute("SELECT 1 FROM files WHERE id = ?", (file_id,)).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO files (id, path, language, file_role) VALUES (?, ?, 'php', 'source')",
+                (file_id, path),
+            )
+        class_id = 1000 + i
+        line_start = 1 if file_id_per_model else (i * 100)
+        line_end = line_start + 50
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, qualified_name, kind, line_start, line_end) "
+            "VALUES (?, ?, ?, ?, 'class', ?, ?)",
+            (class_id, file_id, f"Model{i}", f"App\\Models\\Model{i}", line_start, line_end),
+        )
+        # Methods WITHOUT parent_id — the file-range fallback path.
+        for j in range(3):
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, parent_id) "
+                "VALUES (?, ?, ?, 'method', ?, ?, NULL)",
+                (class_id * 10 + j, file_id, f"method_{j}", line_start + j * 5 + 1, line_start + j * 5 + 4),
+            )
+        models[class_id] = {
+            "id": class_id,
+            "name": f"Model{i}",
+            "qualified_name": f"App\\Models\\Model{i}",
+            "kind": "class",
+            "line_start": line_start,
+            "line_end": line_end,
+            "file_path": path,
+            "file_id": file_id,
+        }
+    conn.commit()
+    return models
+
+
+def test_bulk_fetch_methods_by_file_empty_input():
+    """Helper must tolerate empty + all-None file_ids without querying."""
+    from roam.commands import cmd_n1
+
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    real.executescript(
+        "CREATE TABLE symbols (id INTEGER, file_id INTEGER, name TEXT, kind TEXT, line_start INTEGER);"
+    )
+    cc = CountingConn(real)
+    try:
+        assert cmd_n1._bulk_fetch_methods_by_file(cc, []) == {}
+        assert cmd_n1._bulk_fetch_methods_by_file(cc, [None, None]) == {}
+    finally:
+        real.close()
+    assert cc.execute_calls == 0
+
+
+def test_candidate_filter_fallback_uses_bulk_fetch(monkeypatch):
+    """When ``methods_by_model`` is empty for every model (PHP parser
+    path: no parent_id), ``analyze_n1`` must satisfy the fallback via a
+    single bulk-by-file fetch — NOT one SELECT per gap-model.
+
+    Regression for W86 follow-up (B3.5).
+    """
+    from roam.commands import cmd_n1
+
+    def _run(n_models):
+        real = sqlite3.connect(":memory:")
+        real.row_factory = sqlite3.Row
+        models = _seed_php_models_no_parent_id(real, n_models)
+        monkeypatch.setattr(cmd_n1, "_detect_framework", lambda _conn: "laravel")
+        monkeypatch.setattr(cmd_n1, "_find_model_classes", lambda _conn: models)
+        monkeypatch.setattr(cmd_n1, "_is_test_path", lambda _p: False)
+        monkeypatch.setattr(cmd_n1, "_find_appends_properties", lambda *a, **k: [])
+        cc = CountingConn(real)
+        try:
+            cmd_n1.analyze_n1(cc)
+        finally:
+            real.close()
+        return cc.execute_calls, cc.queries
+
+    one_count, _ = _run(1)
+    fifty_count, fifty_queries = _run(50)
+
+    # The fallback file-range SELECT must NOT appear once per model.
+    # Old code emitted 1-2 of these per gap-model (one for file_id
+    # resolution if missing, plus the BETWEEN scan). After the fix the
+    # bulk-by-file fetch happens once, in-memory filter takes over.
+    fallback_selects = [
+        q for q in fifty_queries
+        if "kind = 'method'" in q and "line_start >= ?" in q
+    ]
+    assert len(fallback_selects) == 0, (
+        f"Per-model file-range fallback SELECT fired {len(fallback_selects)} "
+        f"times for 50 models — must be 0 (bulk-by-file owns this path now).\n"
+        f"queries: {fifty_queries}"
+    )
+
+    # Constant-query-count assertion (matching the existing
+    # appends/collection-edges test's slack budget).
+    assert fifty_count <= one_count + 3, (
+        f"analyze_n1 query count grew from {one_count} to {fifty_count} "
+        f"as n_models went 1→50 with no parent_id linkage — expected "
+        f"near-constant. The bulk-by-file fetch should absorb the gap.\n"
+        f"queries (n=50): {fifty_queries}"
     )
 
 
@@ -1356,4 +1504,580 @@ def test_predict_extinction_query_count_not_linear(monkeypatch):
     assert two_hundred <= ten + 1, (
         f"query count grew from {ten} to {two_hundred} as chain went 10→200 — "
         f"expected near-constant. Bulk-load adjacency once."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Regression sentinel — ROADMAP B2 controller-file read cache
+#
+# ``_find_eager_loads`` used to re-read every Laravel controller file once
+# per (model, controller) pair. ``analyze_n1`` now builds the cache once
+# via ``_build_controller_cache`` and threads ``controller_cache=`` into
+# every per-model call. These tests pin that invariant so a future
+# refactor can't silently regress to per-call ``read_text``.
+# ---------------------------------------------------------------------------
+
+
+def test_find_eager_loads_with_cache_does_not_read_disk(monkeypatch):
+    """When ``controller_cache`` is provided, ``_find_eager_loads`` must
+    NOT call ``Path.read_text`` for any controller file — the cache is
+    the authoritative source.
+
+    Old (pre-B2) code re-read every controller from disk per model.
+    """
+    from pathlib import Path as RealPath
+
+    from roam.commands import cmd_n1
+
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    # Empty schema — _find_eager_loads only needs ``symbols``/``files`` to
+    # answer the $with + resources.php queries (both will return empty,
+    # which is fine for this test). The controller-loop path is the one
+    # we're pinning, and it consumes ``controller_cache`` directly.
+    real.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY, path TEXT);
+        CREATE TABLE IF NOT EXISTS symbols (
+            id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT,
+            kind TEXT, default_value TEXT, line_start INTEGER, line_end INTEGER
+        );
+        """
+    )
+
+    # Counter wired into Path.read_text. Any disk read from inside
+    # _find_eager_loads will bump this — the assertion below says zero.
+    read_calls: list[str] = []
+    real_read_text = RealPath.read_text
+
+    def counting_read_text(self, *args, **kwargs):
+        read_calls.append(str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(RealPath, "read_text", counting_read_text)
+    # Force find_project_root → None so any "fall through to disk" path
+    # short-circuits cleanly without touching the filesystem.
+    monkeypatch.setattr(
+        "roam.db.connection.find_project_root",
+        lambda *_a, **_k: None,
+    )
+
+    cache = {
+        "app/Http/Controllers/PostController.php": (
+            "<?php\nPost::with(['comments', 'author'])->get();\n"
+        ),
+        "app/Http/Controllers/CommentController.php": (
+            "<?php\nComment::with(['post'])->get();\n"
+        ),
+    }
+
+    try:
+        rels = cmd_n1._find_eager_loads(real, "Post", controller_cache=cache)
+    finally:
+        real.close()
+
+    assert read_calls == [], (
+        f"_find_eager_loads called Path.read_text {len(read_calls)} times "
+        f"despite being passed a pre-built controller_cache — caching "
+        f"regression. paths: {read_calls}"
+    )
+    assert rels == {"comments", "author"}
+
+
+@pytest.fixture
+def laravel_controller_dir(tmp_path):
+    """Minimal Laravel layout: one controller, one model class hint.
+    Used by the cache-invariant regression test below."""
+    proj = tmp_path / "lara"
+    proj.mkdir()
+    (proj / ".git").mkdir()  # make find_project_root happy
+    ctrl_dir = proj / "app" / "Http" / "Controllers"
+    ctrl_dir.mkdir(parents=True)
+    (ctrl_dir / "PostController.php").write_text(
+        "<?php\nPost::with(['comments']);\nUser::with(['profile']);\n",
+        encoding="utf-8",
+    )
+    (ctrl_dir / "OrderController.php").write_text(
+        "<?php\nOrder::with(['items']);\nPost::with(['author']);\n",
+        encoding="utf-8",
+    )
+    return proj
+
+
+def test_build_controller_cache_reads_each_file_once(monkeypatch, laravel_controller_dir):
+    """``_build_controller_cache`` is the read-once choke point. Every
+    file path discovered by the SQL scan should be read EXACTLY once,
+    regardless of how many models will later consult the cache.
+    """
+    from pathlib import Path as RealPath
+
+    from roam.commands import cmd_n1
+
+    monkeypatch.chdir(laravel_controller_dir)
+
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    real.executescript(
+        """
+        CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
+        """
+    )
+    real.execute(
+        "INSERT INTO files (id, path) VALUES "
+        "(1, 'app/Http/Controllers/PostController.php'), "
+        "(2, 'app/Http/Controllers/OrderController.php')"
+    )
+
+    read_calls: list[str] = []
+    real_read_text = RealPath.read_text
+
+    def counting_read_text(self, *args, **kwargs):
+        read_calls.append(str(self).replace("\\", "/"))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(RealPath, "read_text", counting_read_text)
+
+    try:
+        cache = cmd_n1._build_controller_cache(real)
+    finally:
+        real.close()
+
+    # Each controller path read exactly once.
+    controller_reads = [p for p in read_calls if "Controllers/" in p]
+    assert len(controller_reads) == 2, (
+        f"_build_controller_cache should read 2 controllers exactly "
+        f"once each, got {len(controller_reads)} reads: {controller_reads}"
+    )
+    assert len(cache) == 2
+    # Subsequent simulated per-model invocations consume the cache —
+    # no additional disk reads should occur. Each call needs the minimal
+    # ``symbols`` + ``files`` schema so the $with / resources.php queries
+    # short-circuit cleanly (returning no rows is fine).
+    pre_count = len(read_calls)
+    conn2 = sqlite3.connect(":memory:")
+    conn2.row_factory = sqlite3.Row
+    conn2.executescript(
+        """
+        CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
+        CREATE TABLE symbols (
+            id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT,
+            kind TEXT, default_value TEXT, line_start INTEGER, line_end INTEGER
+        );
+        """
+    )
+    try:
+        for model in ("Post", "Order", "User", "Comment", "Tag"):
+            cmd_n1._find_eager_loads(conn2, model, controller_cache=cache)
+    finally:
+        conn2.close()
+    assert len(read_calls) == pre_count, (
+        f"per-model _find_eager_loads with shared cache did "
+        f"{len(read_calls) - pre_count} extra reads — cache bypass regression."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test — B3: bulk $with-symbol fetch + resource-config cache
+# (`_bulk_fetch_with_symbols`, `_build_resource_config_cache`)
+# ---------------------------------------------------------------------------
+
+
+def _seed_models_with_with_symbols(conn, n_models, with_every=True):
+    """Seed N models — one PHP file per model — each with a parent_id-linked
+    ``$with`` property symbol carrying a default_value array literal.
+
+    When ``with_every`` is False, only the first model gets a ``$with`` —
+    the rest are bare (so we can verify the bulk path returns ``None`` for
+    them rather than crashing).
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY,
+            path TEXT,
+            language TEXT,
+            file_role TEXT
+        );
+        CREATE TABLE IF NOT EXISTS symbols (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER,
+            name TEXT,
+            qualified_name TEXT,
+            kind TEXT,
+            line_start INTEGER,
+            line_end INTEGER,
+            parent_id INTEGER,
+            signature TEXT,
+            default_value TEXT
+        );
+        CREATE TABLE IF NOT EXISTS edges (
+            id INTEGER PRIMARY KEY,
+            source_id INTEGER,
+            target_id INTEGER,
+            kind TEXT
+        );
+        """
+    )
+    models = {}
+    for i in range(n_models):
+        file_id = 1 + i
+        class_id = 100 + i
+        path = f"app/Models/Model{i}.php"
+        conn.execute(
+            "INSERT INTO files (id, path, language, file_role) VALUES (?, ?, 'php', 'source')",
+            (file_id, path),
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, qualified_name, kind, line_start, line_end) "
+            "VALUES (?, ?, ?, ?, 'class', ?, ?)",
+            (class_id, file_id, f"Model{i}", f"App\\Models\\Model{i}", 1, 50),
+        )
+        if with_every or i == 0:
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, default_value) "
+                "VALUES (?, ?, '$with', 'property', ?, ?, ?)",
+                (class_id * 10, file_id, 5, 5, f"['rel_{i}_a', 'rel_{i}_b']"),
+            )
+        # Methods on the model — required so analyze_n1's candidate
+        # filter doesn't fall back to its per-model file-range SELECT
+        # (a separate N+1 site, outside the B3 fix surface).
+        for j in range(2):
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, parent_id) "
+                "VALUES (?, ?, ?, 'method', ?, ?, ?)",
+                (class_id * 10 + 1 + j, file_id, f"method_{j}", 10 + j * 5, 12 + j * 5, class_id),
+            )
+        models[class_id] = {
+            "id": class_id,
+            "name": f"Model{i}",
+            "qualified_name": f"App\\Models\\Model{i}",
+            "kind": "class",
+            "line_start": 1,
+            "line_end": 50,
+            "file_path": path,
+            "file_id": file_id,
+        }
+    conn.commit()
+    return models
+
+
+@pytest.mark.parametrize("n_models", [1, 10, 50])
+def test_bulk_fetch_with_symbols_single_query(n_models):
+    """``_bulk_fetch_with_symbols`` issues exactly ONE SELECT regardless
+    of how many models are passed in.
+
+    Old code: 1 SELECT per model inside ``_find_eager_loads`` —
+    100 models → 100 ``LIKE '%Model.php'`` queries. New code: 1
+    bare-table scan keyed by file_id.
+    """
+    from roam.commands import cmd_n1
+
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    models = _seed_models_with_with_symbols(real, n_models)
+
+    cc = CountingConn(real)
+    try:
+        result = cmd_n1._bulk_fetch_with_symbols(cc, models)
+    finally:
+        real.close()
+
+    # Exactly one SELECT — the bulk scan over all $with property symbols.
+    assert cc.execute_calls == 1, (
+        f"_bulk_fetch_with_symbols ran {cc.execute_calls} queries for "
+        f"{n_models} models — expected exactly 1. queries: {cc.queries}"
+    )
+    # Every model gets its $with row matched correctly.
+    assert len(result) == n_models
+    for mid, info in models.items():
+        row = result[mid]
+        assert row is not None, f"model {mid} ({info['name']}) missing $with row"
+        assert row["default_value"] == f"['rel_{mid - 100}_a', 'rel_{mid - 100}_b']"
+        assert row["file_path"] == info["file_path"]
+
+
+def test_bulk_fetch_with_symbols_returns_none_for_missing():
+    """Models without a ``$with`` property map to ``None`` in the index —
+    the sentinel that says "we fetched and found nothing" so callers
+    can distinguish from the ``_BULK_NOT_FETCHED`` legacy fallback path.
+    """
+    from roam.commands import cmd_n1
+
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    # 3 models, only model 0 has $with
+    models = _seed_models_with_with_symbols(real, 3, with_every=False)
+
+    try:
+        result = cmd_n1._bulk_fetch_with_symbols(real, models)
+    finally:
+        real.close()
+
+    # First model has a row; the other two are explicit None.
+    model_0_id = 100
+    model_1_id = 101
+    model_2_id = 102
+    assert result[model_0_id] is not None
+    assert result[model_0_id]["default_value"] == "['rel_0_a', 'rel_0_b']"
+    assert result[model_1_id] is None
+    assert result[model_2_id] is None
+
+
+def test_find_eager_loads_with_bulk_with_sym_skips_per_model_query():
+    """When ``bulk_with_sym`` is provided, ``_find_eager_loads`` must NOT
+    re-issue the ``LIKE '%Model.php'`` SELECT — it consumes the
+    pre-fetched row directly.
+
+    Counts ``execute`` calls and asserts step 1 issues zero
+    ``$with``-shaped queries when the bulk path is taken.
+    """
+    from roam.commands import cmd_n1
+
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    real.executescript(
+        """
+        CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
+        CREATE TABLE symbols (
+            id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT, kind TEXT,
+            default_value TEXT, line_start INTEGER, line_end INTEGER
+        );
+        """
+    )
+    real.commit()
+
+    pre_fetched_row = {
+        "default_value": "['author', 'tags']",
+        "line_start": 5,
+        "line_end": 5,
+        "file_path": "app/Models/Post.php",
+    }
+
+    cc = CountingConn(real)
+    try:
+        rels = cmd_n1._find_eager_loads(
+            cc, "Post",
+            controller_cache={},
+            bulk_with_sym=pre_fetched_row,
+            resource_config_contents=[],
+            model_id=100,
+        )
+    finally:
+        real.close()
+
+    # No queries — every external read is mocked out by the bulk
+    # parameters (with-sym, resource configs, controller cache).
+    assert cc.execute_calls == 0, (
+        f"_find_eager_loads issued {cc.execute_calls} queries despite "
+        f"having all 3 caches pre-populated: {cc.queries}"
+    )
+    # The relationships from the pre-fetched $with were parsed correctly.
+    assert rels == {"author", "tags"}
+
+
+def test_find_eager_loads_falls_back_when_bulk_with_sym_is_sentinel():
+    """When called WITHOUT ``bulk_with_sym`` (the default sentinel),
+    ``_find_eager_loads`` runs the original per-model
+    ``LIKE '%Model.php'`` query.
+
+    This pins the fallback path so ad-hoc callers (and the existing
+    cache-disk regression test) keep working.
+    """
+    from roam.commands import cmd_n1
+
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    real.executescript(
+        """
+        CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
+        CREATE TABLE symbols (
+            id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT, kind TEXT,
+            default_value TEXT, line_start INTEGER, line_end INTEGER
+        );
+        """
+    )
+    real.execute("INSERT INTO files (id, path) VALUES (1, 'app/Models/Post.php')")
+    real.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, default_value, line_start, line_end) "
+        "VALUES (1, 1, '$with', 'property', \"['author']\", 5, 5)"
+    )
+    real.commit()
+
+    cc = CountingConn(real)
+    try:
+        rels = cmd_n1._find_eager_loads(
+            cc, "Post",
+            controller_cache={},
+            resource_config_contents=[],
+            # bulk_with_sym deliberately omitted → sentinel → fallback.
+        )
+    finally:
+        real.close()
+
+    # Fallback path means at least the $with SELECT ran.
+    assert cc.execute_calls >= 1, (
+        "_find_eager_loads with no bulk_with_sym should run the legacy "
+        "per-model SELECT (fallback path is intentionally preserved)"
+    )
+    # CountingConn truncates SQL at 80 chars — match on the leading
+    # SELECT shape rather than the WHERE clause, which lives past the
+    # truncation boundary. ("FROM symbols" itself gets cut to "FROM symbo".)
+    has_with_query = any(
+        "default_value" in q and "line_start" in q and "FROM symbo" in q
+        for q in cc.queries
+    )
+    assert has_with_query, (
+        f"fallback SELECT missing; queries seen: {cc.queries}"
+    )
+    assert rels == {"author"}
+
+
+@pytest.fixture
+def laravel_resource_config_dir(tmp_path):
+    """Minimal Laravel layout with two resource-config files using
+    ``->eagerLoad([...])`` near model class references."""
+    proj = tmp_path / "lara"
+    proj.mkdir()
+    (proj / ".git").mkdir()  # find_project_root anchor
+    cfg_dir = proj / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "resources.php").write_text(
+        "<?php\nreturn [\n  Post::class => "
+        "(new Resource)->eagerLoad(['author', 'comments']),\n];",
+        encoding="utf-8",
+    )
+    rdir = cfg_dir / "resources"
+    rdir.mkdir()
+    (rdir / "orders.php").write_text(
+        "<?php\nreturn [\n  Order::class => "
+        "(new Resource)->eagerLoad(['items', 'customer']),\n];",
+        encoding="utf-8",
+    )
+    return proj
+
+
+def test_build_resource_config_cache_reads_each_file_once(monkeypatch, laravel_resource_config_dir):
+    """``_build_resource_config_cache`` reads every config file EXACTLY
+    once. The returned content list is then reused across all per-model
+    ``_find_eager_loads`` calls — replacing N × M reads with M.
+    """
+    from pathlib import Path as RealPath
+
+    from roam.commands import cmd_n1
+
+    monkeypatch.chdir(laravel_resource_config_dir)
+
+    real = sqlite3.connect(":memory:")
+    real.row_factory = sqlite3.Row
+    real.executescript("CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);")
+    real.execute(
+        "INSERT INTO files (id, path) VALUES "
+        "(1, 'config/resources.php'), (2, 'config/resources/orders.php')"
+    )
+    real.commit()
+
+    read_calls: list[str] = []
+    real_read_text = RealPath.read_text
+
+    def counting_read_text(self, *args, **kwargs):
+        read_calls.append(str(self).replace("\\", "/"))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(RealPath, "read_text", counting_read_text)
+
+    try:
+        contents = cmd_n1._build_resource_config_cache(real)
+    finally:
+        real.close()
+
+    # Two config files = exactly two reads.
+    config_reads = [p for p in read_calls if "config/" in p]
+    assert len(config_reads) == 2, (
+        f"_build_resource_config_cache should read 2 files exactly once "
+        f"each, got {len(config_reads)} reads: {config_reads}"
+    )
+    assert len(contents) == 2
+
+    # Now simulate the per-model loop: 5 models share the same cache.
+    # No additional disk reads should happen.
+    pre_count = len(read_calls)
+    conn2 = sqlite3.connect(":memory:")
+    conn2.row_factory = sqlite3.Row
+    conn2.executescript(
+        """
+        CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);
+        CREATE TABLE symbols (
+            id INTEGER PRIMARY KEY, file_id INTEGER, name TEXT, kind TEXT,
+            default_value TEXT, line_start INTEGER, line_end INTEGER
+        );
+        """
+    )
+    try:
+        for model in ("Post", "Order", "User", "Comment", "Tag"):
+            cmd_n1._find_eager_loads(
+                conn2, model,
+                controller_cache={},
+                resource_config_contents=contents,
+                bulk_with_sym=None,
+            )
+    finally:
+        conn2.close()
+
+    assert len(read_calls) == pre_count, (
+        f"per-model _find_eager_loads with shared resource_config_contents "
+        f"did {len(read_calls) - pre_count} extra reads — cache bypass regression."
+    )
+
+
+def test_analyze_n1_eager_loads_constant_query_count(monkeypatch):
+    """End-to-end: ``analyze_n1`` issues a constant number of queries
+    inside ``_find_eager_loads`` regardless of how many models flow
+    through. Compares 1-model vs 50-model runs.
+
+    Pre-B3 (with controller-cache only): scaled by N because each
+    model still ran 2 queries (``$with`` SELECT + config-file SELECT).
+    Post-B3: both are pre-fetched once; per-model query count stays flat.
+    """
+    from roam.commands import cmd_n1
+
+    def _run(n_models):
+        real = sqlite3.connect(":memory:")
+        real.row_factory = sqlite3.Row
+        models = _seed_models_with_with_symbols(real, n_models)
+        # Append an appended-property so _find_eager_loads is reached
+        # for every model (not short-circuited by empty appended).
+        monkeypatch.setattr(cmd_n1, "_detect_framework", lambda _conn: "laravel")
+        monkeypatch.setattr(cmd_n1, "_find_model_classes", lambda _conn: models)
+        monkeypatch.setattr(cmd_n1, "_is_test_path", lambda _p: False)
+        # Surface a synthetic appended attr + a single accessor so the
+        # candidate filter passes and step 3 (_find_eager_loads) runs
+        # for every model.
+        monkeypatch.setattr(cmd_n1, "_find_appends_properties", lambda *a, **k: ["full_name"])
+        monkeypatch.setattr(
+            cmd_n1, "_find_accessor_methods",
+            lambda conn, mid, minfo, names, **kw: [
+                ({"id": 9000 + mid, "name": "getFullNameAttribute",
+                  "qualified_name": f"M{mid}::getFullNameAttribute",
+                  "file_path": minfo["file_path"], "line_start": 10, "line_end": 12}, "full_name"),
+            ],
+        )
+        # Avoid touching the disk for resource configs.
+        monkeypatch.setattr(cmd_n1, "_build_resource_config_cache", lambda _conn: [])
+        # Drop edge-trace work so we measure pre-loop fetches only.
+        monkeypatch.setattr(cmd_n1, "_trace_accessor_io", lambda *a, **k: [])
+        cc = CountingConn(real)
+        try:
+            cmd_n1.analyze_n1(cc)
+        finally:
+            real.close()
+        return cc.execute_calls
+
+    one = _run(1)
+    fifty = _run(50)
+    # Allow modest batched_in slack (chunk threshold) but reject any
+    # solution that scales with n_models. Old code: 2 per model inside
+    # _find_eager_loads → +98 queries. New code: should be flat.
+    assert fifty <= one + 5, (
+        f"analyze_n1 query count grew from {one} to {fifty} as n_models "
+        f"went 1→50 — _find_eager_loads should be fully bulk-fetched."
     )

@@ -36,6 +36,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
+from roam.output.risk import risk_rank
 
 
 @roam_capability(
@@ -103,16 +104,31 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
     with open_db(readonly=True) as conn:
         steps = [_evaluate_move(conn, m) for m in moves]
 
-    # Order: low risk first, then medium, then high
-    risk_order = {"low": 0, "medium": 1, "high": 2}
-    steps.sort(key=lambda s: (risk_order.get(s["risk"], 3), -s["blast_radius"]))
+    # Order: low risk first, then medium, then high; unknown last.
+    # W631: risk_rank polarity is "higher = worse" (critical=4, high=3,
+    # medium=2, low=1, unknown=-1). Pre-W631 unknown sorted LAST (the
+    # local table defaulted unknowns to 3, one past high=2); preserve
+    # that by treating rank<0 as a large sentinel for ordering.
+    def _order_key(risk: str) -> int:
+        r = risk_rank(risk)
+        return r if r >= 0 else 999
 
-    # Apply the max-risk gate
-    threshold = risk_order[max_risk]
+    steps.sort(key=lambda s: (_order_key(s["risk"]), -s["blast_radius"]))
+
+    # Apply the max-risk gate. ``max_risk`` is one of {low, medium, high}
+    # (validated by Click); risk_rank(max_risk) is in {1, 2, 3}. A step
+    # passes the gate when its (known) rank is at-or-below the threshold;
+    # unknown risk (rank -1) is excluded by the ``0 < s_rank`` clause,
+    # matching the pre-W631 ``risk_order.get(..., 3) <= threshold`` polarity
+    # which placed unknown above every valid max-risk and therefore
+    # skipped it for low/medium gates and, for high gate, ``3<=2`` was
+    # False so unknown skipped there too.
+    threshold_rank = risk_rank(max_risk)
     plan: list[dict] = []
     skipped: list[dict] = []
     for s in steps:
-        if risk_order.get(s["risk"], 3) <= threshold:
+        s_rank = risk_rank(s["risk"])
+        if 0 < s_rank <= threshold_rank:
             plan.append(s)
         else:
             skipped.append(s)
@@ -260,7 +276,7 @@ def _has_test_coverage(conn: sqlite3.Connection, symbol_name: str) -> bool:
             "JOIN symbols src ON src.id = e.src_symbol_id "
             "JOIN files f ON f.id = src.file_id "
             "WHERE (s.qualified_name = ? OR s.name = ?) "
-            "AND (f.path LIKE 'tests/%' OR f.path LIKE '%test_%' OR f.path LIKE '%_test.%')",
+            "AND (f.path LIKE 'tests/%' OR f.path LIKE '%test\\_%' ESCAPE '\\' OR f.path LIKE '%\\_test.%' ESCAPE '\\')",
             (symbol_name, symbol_name),
         )
         return int(cur.fetchone()[0]) > 0

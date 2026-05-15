@@ -139,7 +139,7 @@ def test_add_affected_pure_function_no_auto_risk(
     assert "process" not in kinds, kinds
     # No risk should reference this symbol.
     risk_ids = [r.get("id", "") for r in bundle["risks"]]
-    assert f"side_effect_add" not in risk_ids, bundle["risks"]
+    assert "side_effect_add" not in risk_ids, bundle["risks"]
 
 
 # ---------------------------------------------------------------------------

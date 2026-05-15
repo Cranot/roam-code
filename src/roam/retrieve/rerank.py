@@ -14,10 +14,10 @@ compute:
 * A retained lexical baseline from the FTS5 score so candidates with
   weak structural signal but strong textual relevance still rank.
 
-`beta` (co-change), `gamma` (layer-distance) and `delta` (runtime hotspot)
-are present in the weights dict for forward-compatibility but the v12.0
-MVP does not yet apply them. They land in the v12.1 reranker once the
-incremental signal plumbing is wired through the daemon.
+`beta` (co-change) and `delta` (runtime hotspot) are applied in the
+scoring blend below (`structural_score`); `gamma` (layer-distance) is
+reserved in the weights dict for forward-compatibility but is not yet
+wired through.
 """
 
 from __future__ import annotations
@@ -328,6 +328,50 @@ def _rule_yaml_penalty(candidates: list[dict], task: str) -> dict[int, float]:
     return out
 
 
+#: Directory prefixes that mark a test path (rerank-local semantics —
+#: narrower than :func:`roam.commands.changed_files.is_test_file` by
+#: design; rerank's penalty has been tuned against the 30-task bench
+#: with THIS exact pattern set and broadening it changes recall numbers).
+_RERANK_TEST_DIR_PREFIXES = ("tests/", "test/", "spec/")
+
+#: Directory fragments that mark a test path (substring match).
+_RERANK_TEST_DIR_FRAGMENTS = ("/tests/", "/test/", "/spec/", "/__tests__/")
+
+#: Basename suffixes / fragments that mark a test file (rerank-local).
+_RERANK_TEST_BASENAME_SUFFIXES = ("_test.py", "_test.go", "_test.rs")
+_RERANK_TEST_BASENAME_FRAGMENTS = (".test.", ".spec.")
+
+
+def _is_test_path(path: str) -> bool:
+    """Return True when ``path`` looks like a test file under rerank semantics.
+
+    Callers MUST pass an already-normalised path: forward slashes only
+    and lower-cased (rerank's call-sites pre-normalise at the candidate
+    boundary). This helper consolidates the test-path detection that
+    was inlined at the call-site in :func:`_test_file_penalty`.
+
+    Deliberately narrower than
+    :func:`roam.commands.changed_files.is_test_file` — broadening would
+    add ``conftest.py``, ``_test.java``, etc. and reshape the test-vs-
+    impl ranking trade-off that was tuned against the 30-task bench
+    (see ``Magnitude: -0.18`` rationale in :func:`_test_file_penalty`).
+    """
+    if not path:
+        return False
+    if any(path.startswith(prefix) for prefix in _RERANK_TEST_DIR_PREFIXES):
+        return True
+    if any(fragment in path for fragment in _RERANK_TEST_DIR_FRAGMENTS):
+        return True
+    basename = path.rsplit("/", 1)[-1]
+    if basename.startswith("test_"):
+        return True
+    if any(basename.endswith(suffix) for suffix in _RERANK_TEST_BASENAME_SUFFIXES):
+        return True
+    if any(fragment in basename for fragment in _RERANK_TEST_BASENAME_FRAGMENTS):
+        return True
+    return False
+
+
 def _test_file_penalty(candidates: list[dict], task: str) -> dict[int, float]:
     """Demote test-file candidates for implementation-style queries. dogfood, 2026-05-04: a query like *"where is the patch
     verifier with clones-not-edited check"* surfaced
@@ -372,29 +416,7 @@ def _test_file_penalty(candidates: list[dict], task: str) -> dict[int, float]:
         path = (c.get("file_path") or c.get("file") or "").replace("\\", "/").lower()
         if not sid or not path:
             continue
-        # Path-prefix patterns
-        is_test_path = (
-            path.startswith("tests/")
-            or path.startswith("test/")
-            or path.startswith("spec/")
-            or "/tests/" in path
-            or "/test/" in path
-            or "/spec/" in path
-            or "/__tests__/" in path
-        )
-        if not is_test_path:
-            # Basename patterns
-            basename = path.rsplit("/", 1)[-1]
-            if (
-                basename.startswith("test_")
-                or basename.endswith("_test.py")
-                or basename.endswith("_test.go")
-                or basename.endswith("_test.rs")
-                or ".test." in basename
-                or ".spec." in basename
-            ):
-                is_test_path = True
-        if is_test_path:
+        if _is_test_path(path):
             out[sid] = -0.18
     return out
 

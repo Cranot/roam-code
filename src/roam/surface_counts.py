@@ -42,7 +42,13 @@ def _literal_assignment(module: ast.Module, name: str):
 
 
 def cli_commands() -> dict[str, tuple[str, str]]:
-    """Return raw CLI command registration from `_COMMANDS`."""
+    """Return raw CLI command registration from `_COMMANDS`.
+
+    Scope: core roam commands only. Plugin commands registered at runtime
+    via ``ctx.register_command()`` are NOT included — this loader is
+    AST-only by design so doc-headline counts reflect what ships with
+    ``pip install roam-code``.
+    """
     cli_path = _repo_root() / "src" / "roam" / "cli.py"
     module = _load_ast(cli_path)
     commands = _literal_assignment(module, "_COMMANDS")
@@ -75,7 +81,17 @@ def canonical_cli_commands() -> list[str]:
 
 
 def mcp_tool_names() -> list[str]:
-    """Return all MCP tool names registered via `@_tool(name=...)` decorators."""
+    """Return all MCP tool names registered via `@_tool(name=...)` decorators.
+
+    W444 fail-loud (W531 discipline): historically this helper returned
+    ``sorted(set(names))`` which silently collapsed duplicate ``@_tool(name=...)``
+    decorations across the source file. Callers then treated the collapsed
+    list as the truth, hiding the W432-class duplicate-registration bug from
+    every downstream consumer (README count, wrapper-coverage test, surface
+    count). Now we raise ``ValueError`` with the duplicate entries instead;
+    combined with the runtime smoke test ``tests/test_w444_mcp_tool_names_no_dedupe.py``
+    this is defense-in-depth against duplicate-registration regressions.
+    """
     mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
     module = _load_ast(mcp_path)
     names: list[str] = []
@@ -89,7 +105,91 @@ def mcp_tool_names() -> list[str]:
                 if kw.arg == "name" and isinstance(kw.value, ast.Constant):
                     if isinstance(kw.value.value, str):
                         names.append(kw.value.value)
-    return sorted(set(names))
+    duplicates = sorted(name for name, c in Counter(names).items() if c > 1)
+    if duplicates:
+        raise ValueError(
+            f"duplicate @_tool(name=...) decorations in mcp_server.py: {duplicates}"
+        )
+    return sorted(names)
+
+
+def mcp_tool_descriptions() -> list[tuple[str, str]]:
+    """Return ``(tool_name, description)`` for every ``@_tool(...)`` decoration.
+
+    The description is pulled from the decorator's ``description=`` kwarg when
+    it is a literal string (or a tuple of string fragments concatenated by the
+    parser, which ``ast.literal_eval`` handles transparently). When the
+    decorator omits ``description=`` the helper falls back to the wrapped
+    function's docstring first sentence (single-line, period-stripped). When
+    neither is available the entry carries an empty string so the caller can
+    decide on a placeholder.
+
+    Sorted alphabetically by tool name. Used by
+    ``dev/build_readme_counts.py`` to auto-generate the README MCP tool
+    table — eliminates the recurring drift class where every wrapper batch
+    landed without a README update (W299..W306, W449).
+    """
+    mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
+    module = _load_ast(mcp_path)
+    entries: dict[str, str] = {}
+    for node in ast.walk(module):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not _is_tool_decorator(decorator):
+                continue
+            name: str | None = None
+            description: str | None = None
+            for kw in decorator.keywords:
+                if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    name = kw.value.value
+                elif kw.arg == "description":
+                    try:
+                        val = ast.literal_eval(kw.value)
+                        if isinstance(val, str):
+                            description = val
+                    except Exception:
+                        description = None
+            if name is None:
+                continue
+            if not description:
+                # Fall back to the wrapped function's docstring first sentence.
+                doc = ast.get_docstring(node) or ""
+                if doc:
+                    first = doc.strip().split("\n", 1)[0].strip()
+                    # Trim at first period for a one-liner; keep up to ~200 chars.
+                    if "." in first:
+                        first = first.split(".", 1)[0].strip() + "."
+                    description = first[:240]
+            entries[name] = (description or "").strip()
+    return sorted(entries.items())
+
+
+def mcp_tool_decorations() -> list[tuple[str, str, int]]:
+    """Return every `@_tool(name=...)` decoration as (tool_name, def_name, lineno).
+
+    Distinct from :func:`mcp_tool_names` (which dedupes into a sorted set):
+    this preserves the raw list so callers can detect duplicate-name
+    registrations. Two ``@_tool`` decorations with the same ``name`` kwarg
+    silently overwrite ``_TOOL_METADATA[name]`` and produce undefined
+    dispatch behaviour under FastMCP — see W432.
+    """
+    mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
+    module = _load_ast(mcp_path)
+    decorations: list[tuple[str, str, int]] = []
+    for node in ast.walk(module):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not _is_tool_decorator(decorator):
+                continue
+            for kw in decorator.keywords:
+                if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                    if isinstance(kw.value.value, str):
+                        decorations.append(
+                            (kw.value.value, node.name, node.lineno)
+                        )
+    return decorations
 
 
 def cli_surface_counts() -> dict:

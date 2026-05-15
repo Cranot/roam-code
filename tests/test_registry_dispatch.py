@@ -28,7 +28,9 @@ def _make_conn() -> sqlite3.Connection:
             file_id INTEGER NOT NULL,
             name TEXT NOT NULL,
             qualified_name TEXT,
-            kind TEXT NOT NULL
+            kind TEXT NOT NULL,
+            line_start INTEGER,
+            line_end INTEGER
         );
         CREATE TABLE edges (
             id INTEGER PRIMARY KEY,
@@ -48,10 +50,20 @@ def _add_file(conn, file_id, path, role="source"):
     )
 
 
-def _add_symbol(conn, sym_id, file_id, name, qualified_name=None, kind="function"):
+def _add_symbol(
+    conn,
+    sym_id,
+    file_id,
+    name,
+    qualified_name=None,
+    kind="function",
+    line_start=1,
+    line_end=1,
+):
     conn.execute(
-        "INSERT INTO symbols (id, file_id, name, qualified_name, kind) VALUES (?, ?, ?, ?, ?)",
-        (sym_id, file_id, name, qualified_name or name, kind),
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, line_start, line_end)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (sym_id, file_id, name, qualified_name or name, kind, line_start, line_end),
     )
 
 
@@ -74,7 +86,11 @@ class TestRegistryDispatch:
         conn = _make_conn()
         _add_file(conn, 1, str(cli))
         _add_file(conn, 2, str(target))
-        _add_symbol(conn, 10, 1, "_COMMANDS", "_COMMANDS", kind="variable")
+        # The _COMMANDS dict literal is on line 1 of the test fixture.
+        # W749: the resolver now looks up the symbol whose extent covers
+        # the assignment's lineno, so the symbol's line_start/line_end
+        # must contain line 1.
+        _add_symbol(conn, 10, 1, "_COMMANDS", "_COMMANDS", kind="variable", line_start=1, line_end=3)
         # The target symbol's file_path needs to map to "myproj.commands.cmd_run"
         # via the by_module_dotted lookup. The lookup builds the module
         # name from the file path with src/ stripped; using full absolute
@@ -85,7 +101,7 @@ class TestRegistryDispatch:
         # project root for the dotted lookup to work. Since the helper
         # uses by_qualified as a fallback when by_module_dotted misses,
         # add a qualified_name match too.
-        _add_symbol(conn, 20, 2, "run", qualified_name="run")
+        _add_symbol(conn, 20, 2, "run", qualified_name="run", line_start=1, line_end=2)
 
         monkeypatch.chdir(tmp_path)
         # Update files.path to relative form so by_module_dotted resolves
@@ -111,8 +127,10 @@ class TestRegistryDispatch:
         )
         conn = _make_conn()
         _add_file(conn, 1, "cli.py")
-        _add_symbol(conn, 10, 1, "_THINGS", "_THINGS", kind="variable")
-        _add_symbol(conn, 20, 1, "a", qualified_name="a")
+        # W749: _THINGS spans the full dict literal (lines 1-6 of the
+        # test fixture).
+        _add_symbol(conn, 10, 1, "_THINGS", "_THINGS", kind="variable", line_start=1, line_end=6)
+        _add_symbol(conn, 20, 1, "a", qualified_name="a", line_start=1, line_end=1)
         monkeypatch.chdir(tmp_path)
         n = resolve_registry_dispatch(conn, package_prefix="myproj.")
         assert n == 1
@@ -135,26 +153,33 @@ class TestRegistryDispatch:
         )
         conn = _make_conn()
         _add_file(conn, 1, "cli.py")
-        # Symbol 5 is the file's first / module-level synthetic source.
-        # 10 and 11 are the two detector functions.
-        _add_symbol(conn, 5, 1, "<module>", qualified_name="<module>")
-        _add_symbol(conn, 10, 1, "detect_django_n1", qualified_name="detect_django_n1")
-        _add_symbol(conn, 11, 1, "detect_sqlalchemy_lazy", qualified_name="detect_sqlalchemy_lazy")
+        # W749: source attribution moved from "first symbol in file" to
+        # "the symbol whose extent covers the assignment's lineno".
+        # The _DETECTORS list literal starts on line 7 of the fixture, so
+        # add a registry symbol with that span and use it as the expected
+        # source.
+        _add_symbol(conn, 5, 1, "_DETECTORS", qualified_name="_DETECTORS", kind="variable", line_start=7, line_end=10)
+        _add_symbol(conn, 10, 1, "detect_django_n1", qualified_name="detect_django_n1", line_start=1, line_end=2)
+        _add_symbol(conn, 11, 1, "detect_sqlalchemy_lazy", qualified_name="detect_sqlalchemy_lazy", line_start=4, line_end=5)
         monkeypatch.chdir(tmp_path)
         n = resolve_registry_dispatch(conn, package_prefix="myproj.")
         assert n == 2
-        targets = {
-            r["target_id"] for r in conn.execute("SELECT target_id FROM edges WHERE kind = 'dispatch'").fetchall()
-        }
+        rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'dispatch'").fetchall()
+        sources = {r["source_id"] for r in rows}
+        targets = {r["target_id"] for r in rows}
         assert targets == {10, 11}
+        # W749: dispatch edge source is now the registry symbol that
+        # actually holds the dispatch table, not the first symbol in file.
+        assert sources == {5}
 
     def test_idempotent_reindex(self, tmp_path, monkeypatch):
         cli = tmp_path / "cli.py"
         cli.write_text('_C = {\n    "a": ("myproj.x", "a"),\n}\n')
         conn = _make_conn()
         _add_file(conn, 1, "cli.py")
-        _add_symbol(conn, 10, 1, "_C", "_C", kind="variable")
-        _add_symbol(conn, 20, 1, "a", qualified_name="a")
+        # W749: _C dict literal spans lines 1-3 in the fixture.
+        _add_symbol(conn, 10, 1, "_C", "_C", kind="variable", line_start=1, line_end=3)
+        _add_symbol(conn, 20, 1, "a", qualified_name="a", line_start=1, line_end=1)
         monkeypatch.chdir(tmp_path)
         assert resolve_registry_dispatch(conn, package_prefix="myproj.") == 1
         # Second run should drop and re-derive — count stays at 1.

@@ -39,6 +39,14 @@ These are **v1 starting points**, not legal advice. Each template should be:
   workflows and safety outcomes.
 - **Custom Rules / Framework Intelligence Pack** — paid rule, extractor, or
   plugin work for a customer's stack.
+- **Codebase Due Diligence** — investor/board-facing technical risk report
+  covering code health, architecture, security, ownership, and remediation.
+- **AI Adoption Readiness Audit** — assessment of where coding agents can
+  safely work and which gates must exist first.
+- **Migration / Refactor Assurance** — before/after structural evidence for
+  large migrations, dependency upgrades, or service splits.
+- **Post-Incident Replay** — structural postmortem that turns an incident into
+  rules, tests, and Review/Governance gates.
 
 ## Anti-pattern reminders
 
@@ -47,3 +55,6 @@ These are **v1 starting points**, not legal advice. Each template should be:
 - Do NOT use these templates without your own attorney's review for the
   governing law you actually intend to use. Liability cap, IP assignment, and
   governing-law sections are the highest-risk clauses to leave at default.
+- Do NOT describe governance deliverables as compliance certification. Use
+  "evidence export", "control mapping", or "supports audit review" unless a
+  qualified attorney approves stronger wording.

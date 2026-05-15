@@ -151,13 +151,12 @@ def _check_max_file_length(conn, G, threshold):
     return [make_violation(file=row[0], reason="{} lines exceeds limit {}".format(row[1], limit)) for row in rows]
 
 
-def _is_test_path(path: str) -> bool:
-    """Return True if path looks like a test file."""
-    p = path.replace("\\", "/").lower()
-    base = os.path.basename(p)
-    if base.startswith("test_") or base.endswith("_test.py"):
-        return True
-    return "tests/" in p or "test/" in p or "__tests__/" in p or "spec/" in p
+# W886: delegate to the canonical commands-layer helper (W873 audit).
+# The local variant duplicated the pre-hoist ``detectors._is_test_path``
+# (one of the three identical copies W873 flagged). Canonical helper
+# widens coverage to Go ``*_test.go``, Java/PHP ``*Test.<ext>``, JS
+# ``*.spec.ts``, ``testing/`` directories, and ``conftest.py``.
+from roam.commands.changed_files import is_test_file as _is_test_path
 
 
 def _check_test_file_exists(conn, G, threshold):

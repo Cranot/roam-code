@@ -90,10 +90,38 @@ scannable is the higher-priority goal.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from roam.runs.ledger import latest_in_progress_run, log_event
+
+
+# W294 - closed-allowlist of authority-shaped event fields that callers
+# may stamp onto a run-ledger event via :func:`auto_log` 's
+# ``extra_event_fields`` kwarg. The set mirrors
+# :data:`roam.evidence.collector._RUN_LEDGER_AUTHORITY_FIELDS` exactly:
+# these are the fields the W292 corroboration harvester reads when
+# building the ``(authority_kind, authority_id)`` corroboration set, so
+# only these field names can promote an ``AuthorityRef`` to
+# ``provenance="run_ledger"``.
+#
+# Defense-in-depth: a closed whitelist prevents a future caller from
+# smuggling arbitrary state into the ledger via this kwarg. Fields not
+# in the whitelist are silently dropped (auto_log is best-effort and
+# must never raise from a gate-command path); extending the whitelist
+# is a deliberate source-code edit, not a runtime hack. Keep this set
+# in sync with ``_RUN_LEDGER_AUTHORITY_FIELDS`` in the collector.
+_AUTHORITY_EVENT_FIELDS: frozenset[str] = frozenset({
+    "mode",
+    "active_mode",
+    "mode_to",
+    "mode_from",
+    "permit_id",
+    "lease_id",
+    "approval_id",
+    "rule_id",
+})
 
 
 def get_active_run_id(repo_root: Path) -> Optional[str]:
@@ -120,6 +148,8 @@ def auto_log(
     action: str,
     target: str = "",
     repo_root: Optional[Path] = None,
+    *,
+    extra_event_fields: Optional[Mapping[str, Any]] = None,
 ) -> Optional[int]:
     """Append an event to the active run, derived from a roam envelope.
 
@@ -143,6 +173,16 @@ def auto_log(
 
     Consumers (``roam runs show``, future ``roam replay``) can render
     a run timeline straight from this stream.
+
+    W294 extension - ``extra_event_fields`` lets writer-side call sites
+    stamp authority-shaped corroboration fields onto the emitted event
+    so the W292 collector harvester
+    (:data:`roam.evidence.collector._RUN_LEDGER_AUTHORITY_FIELDS`) can
+    promote matching ``AuthorityRef`` rows to ``provenance="run_ledger"``.
+    Only keys in :data:`_AUTHORITY_EVENT_FIELDS` survive the safety
+    filter; everything else is silently dropped (this kwarg is NOT an
+    arbitrary-state escape hatch). The whitelist matches the harvester's
+    closed read-list exactly.
     """
     if not isinstance(envelope, dict):
         envelope = {}
@@ -166,6 +206,20 @@ def auto_log(
         agent_contract = envelope.get("agent_contract") or {}
         if not isinstance(agent_contract, dict):
             agent_contract = {}
+
+        # W294 - merge whitelisted authority-shaped fields. Non-string
+        # values and unknown keys are silently dropped: log_event's
+        # signature accepts **event_fields so any string survives, but
+        # we constrain the surface to what the W292 harvester reads.
+        extra_fields_safe: dict[str, str] = {}
+        if isinstance(extra_event_fields, Mapping):
+            for k, v in extra_event_fields.items():
+                if k not in _AUTHORITY_EVENT_FIELDS:
+                    continue
+                if not isinstance(v, str) or not v:
+                    continue
+                extra_fields_safe[k] = v
+
         return log_event(
             repo_root,
             run_id,
@@ -178,6 +232,7 @@ def auto_log(
                 "facts": agent_contract.get("facts", []) or [],
                 "next_commands": agent_contract.get("next_commands", []) or [],
             },
+            **extra_fields_safe,
         )
     except Exception:
         # Auto-logging is OPPORTUNISTIC. We must never crash the gate

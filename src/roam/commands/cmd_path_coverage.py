@@ -11,6 +11,7 @@ from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.risk import risk_rank
 
 # ---------------------------------------------------------------------------
 # Entry point discovery
@@ -204,10 +205,16 @@ _DESTRUCTIVE_EFFECTS = {"writes_db"}
 def _classify_risk(path_ids, tested_set, sink_effects):
     """Return a risk label for a single path.
 
-    CRITICAL  — zero tested nodes AND sink has destructive effect (writes_db)
-    HIGH      — zero tested nodes
-    MEDIUM    — only entry point tested, rest untested
-    LOW       — most nodes tested
+    W718: risk labels are lowercase canonical roam vocabulary (W547):
+
+    * ``critical``  — zero tested nodes AND sink has destructive
+      effect (writes_db).
+    * ``high``      — zero tested nodes.
+    * ``medium``    — only entry point tested, rest untested.
+    * ``low``       — most nodes tested.
+
+    Pre-W718 the labels were UPPER-cased; the W631 ``risk_rank`` sort
+    is case-insensitive so both spellings sort identically.
     """
     tested_count = sum(1 for nid in path_ids if nid in tested_set)
     total = len(path_ids)
@@ -216,14 +223,14 @@ def _classify_risk(path_ids, tested_set, sink_effects):
 
     if tested_count == 0:
         if sink_effect in _DESTRUCTIVE_EFFECTS:
-            return "CRITICAL"
-        return "HIGH"
+            return "critical"
+        return "high"
     if tested_count == 1 and path_ids[0] in tested_set and total > 1:
-        return "MEDIUM"
+        return "medium"
     ratio = tested_count / total
     if ratio >= 0.5:
-        return "LOW"
-    return "MEDIUM"
+        return "low"
+    return "medium"
 
 
 # ---------------------------------------------------------------------------
@@ -449,9 +456,12 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
             if tested_count == 0:
                 untested_paths_for_cover.append(path_ids)
 
-        # Sort: CRITICAL first, then HIGH, MEDIUM, LOW
-        _RISK_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-        classified_paths.sort(key=lambda p: _RISK_ORDER.get(p["risk"], 4))
+        # Sort: critical first, then high, medium, low (W631 + W718).
+        # risk_rank polarity is "higher = worse" (critical=4 ... low=1,
+        # unknown=-1). Negate for the pre-W631 "lower = worse" sort key
+        # polarity; unknown maps to ``-(-1) = 1`` so it sorts AFTER low,
+        # matching the pre-W631 default of 4.
+        classified_paths.sort(key=lambda p: -risk_rank(p["risk"]))
 
         # --- 6. Suggest test insertion points ---
         suggestion_ids = _suggest_test_points(untested_paths_for_cover, tested_set)
@@ -469,20 +479,35 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
             )
 
         # --- Summary counts ---
+        # W718: bucket keys are lowercase canonical risk labels (W547).
+        # Per-path ``risk`` values are already canonical lowercase
+        # (see :func:`_classify_risk`); the ``.lower()`` call is
+        # defensive so legacy callers that hand-roll UPPER-cased risk
+        # strings still bucket correctly.
         total_paths = len(classified_paths)
-        counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for cp in classified_paths:
-            counts[cp["risk"]] = counts.get(cp["risk"], 0) + 1
+            key = str(cp["risk"]).strip().lower()
+            # W756: fail-loud on unknown risk labels (Pattern 1 variant D).
+            # `_classify_risk()` returns a closed lowercase enum
+            # ({critical,high,medium,low}); any other key is a producer-
+            # contract violation we want to surface, not silently bucket
+            # into a new dict slot that downstream verdict math ignores.
+            if key not in counts:
+                raise ValueError(
+                    f"unknown risk label: {key!r} (expected one of {sorted(counts)})"
+                )
+            counts[key] += 1
 
-        untested_paths_count = counts["CRITICAL"] + counts["HIGH"]
+        untested_paths_count = counts["critical"] + counts["high"]
 
-        critical_high = counts["CRITICAL"] + counts["HIGH"]
-        if counts["CRITICAL"] > 0:
+        critical_high = counts["critical"] + counts["high"]
+        if counts["critical"] > 0:
             verdict = (
-                f"{counts['CRITICAL']} critical path{'s' if counts['CRITICAL'] != 1 else ''} with zero test coverage"
+                f"{counts['critical']} critical path{'s' if counts['critical'] != 1 else ''} with zero test coverage"
             )
-        elif counts["HIGH"] > 0:
-            verdict = f"{counts['HIGH']} high-risk path{'s' if counts['HIGH'] != 1 else ''} with zero test coverage"
+        elif counts["high"] > 0:
+            verdict = f"{counts['high']} high-risk path{'s' if counts['high'] != 1 else ''} with zero test coverage"
         elif critical_high == 0 and total_paths > 0:
             verdict = f"{total_paths} path{'s' if total_paths != 1 else ''} found, all partially tested"
         else:
@@ -503,8 +528,8 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
                             "verdict": verdict,
                             "total_paths": total_paths,
                             "untested_paths": untested_paths_count,
-                            "critical": counts["CRITICAL"],
-                            "high": counts["HIGH"],
+                            "critical": counts["critical"],
+                            "high": counts["high"],
                         },
                         budget=token_budget,
                         paths=paths_clean,

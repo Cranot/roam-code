@@ -14,19 +14,20 @@ from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output._severity import severity_rank
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
-# Severity ordering
+# Severity ordering (W564: ranks via canonical ``severity_rank``)
 # ---------------------------------------------------------------------------
-
-_SEVERITY_ORDER = {"CRITICAL": 4, "HIGH": 3, "WARNING": 2, "INFO": 1}
-
+# CLI ``--severity`` floor mapping. Each value maps to the canonical
+# ``severity_rank`` of the equivalent label so the filter compares
+# directly against finding ranks below.
 _MIN_SEVERITY = {
-    "low": 1,
-    "medium": 2,
-    "high": 3,
-    "critical": 4,
+    "low": severity_rank("low"),
+    "medium": severity_rank("medium"),
+    "high": severity_rank("high"),
+    "critical": severity_rank("critical"),
 }
 
 
@@ -654,13 +655,13 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # ------------------------------------------------------------------
         # Filter by minimum severity
         # ------------------------------------------------------------------
-        min_sev = _MIN_SEVERITY.get(severity.lower(), 1)
-        challenges = [c for c in challenges if _SEVERITY_ORDER.get(c["severity"], 0) >= min_sev]
+        min_sev = _MIN_SEVERITY.get(severity.lower(), severity_rank("low"))
+        challenges = [c for c in challenges if severity_rank(c["severity"]) >= min_sev]
 
         # ------------------------------------------------------------------
         # Sort: critical first, then high, warning, info
         # ------------------------------------------------------------------
-        challenges.sort(key=lambda c: -_SEVERITY_ORDER.get(c["severity"], 0))
+        challenges.sort(key=lambda c: -severity_rank(c["severity"]))
 
         # ------------------------------------------------------------------
         # Compute summary counts

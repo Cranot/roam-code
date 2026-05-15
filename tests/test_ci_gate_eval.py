@@ -5,10 +5,12 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from tests._helpers.repo_root import repo_root
+
 
 def _load_gate_eval_module():
     """Load .github/scripts/gate_eval.py as a Python module."""
-    root = Path(__file__).resolve().parents[1]
+    root = repo_root()
     script = root / ".github" / "scripts" / "gate_eval.py"
     spec = importlib.util.spec_from_file_location("gate_eval", script)
     if spec is None or spec.loader is None:

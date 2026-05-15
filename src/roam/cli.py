@@ -184,6 +184,7 @@ _COMMANDS = {
     "fn-coupling": ("roam.commands.cmd_fn_coupling", "fn_coupling"),
     "alerts": ("roam.commands.cmd_alerts", "alerts"),
     "fitness": ("roam.commands.cmd_fitness", "fitness"),
+    "findings": ("roam.commands.cmd_findings", "findings"),
     "patterns": ("roam.commands.cmd_patterns", "patterns"),
     "preflight": ("roam.commands.cmd_preflight", "preflight"),
     "permit": ("roam.commands.cmd_permit", "permit_cmd"),
@@ -291,6 +292,7 @@ _COMMANDS = {
     "agents-md": ("roam.commands.cmd_agents_md", "agents_md_cmd"),
     "syntax-check": ("roam.commands.cmd_syntax_check", "syntax_check"),
     "vibe-check": ("roam.commands.cmd_vibe_check", "vibe_check"),
+    "llm-smells": ("roam.commands.cmd_llm_smells", "llm_smells"),
     "ai-readiness": ("roam.commands.cmd_ai_readiness", "ai_readiness"),
     "check-rules": ("roam.commands.cmd_check_rules", "check_rules"),
     "codeowners": ("roam.commands.cmd_codeowners", "codeowners"),
@@ -374,6 +376,9 @@ _COMMANDS = {
     "mode": ("roam.commands.cmd_mode", "mode_cmd"),
     "intent-check": ("roam.commands.cmd_intent_check", "intent_check_cmd"),
     "lease": ("roam.commands.cmd_lease", "lease_group"),
+    "evidence-diff": ("roam.commands.cmd_evidence_diff", "evidence_diff"),
+    "evidence-doctor": ("roam.commands.cmd_evidence_doctor", "evidence_doctor"),
+    "evidence-oscal": ("roam.commands.cmd_evidence_oscal", "evidence_oscal"),
 }
 
 # Command categories for organized --help display
@@ -449,6 +454,9 @@ _CATEGORIES = {
         "dogfood-aggregate",
         "suppress",
         "pr-diff",
+        "evidence-diff",
+        "evidence-doctor",
+        "evidence-oscal",
         "api-changes",
         "semantic-diff",
         "test-gaps",
@@ -493,6 +501,7 @@ _CATEGORIES = {
         "health",
         "smells",
         "vibe-check",
+        "llm-smells",
         "ai-readiness",
         "check-rules",
         "ai-ratio",
@@ -566,6 +575,7 @@ _CATEGORIES = {
         "relate",
         "endpoints",
         "metrics",
+        "findings",
     ],
     "Reports & CI": [
         "report",
@@ -889,7 +899,7 @@ class LazyGroup(click.Group):
 
         formatter.write("\nCommon next steps:\n\n")
         common = [
-            ("roam doctor", "diagnose your install (17 checks)"),
+            ("roam doctor", "diagnose your install (20 checks)"),
             ("roam tour", "5-minute guided walkthrough"),
             ("roam mcp-setup <editor>", "wire roam into your AI agent"),
             ("roam --help-all", f"every command ({len(_COMMANDS)} total)"),
@@ -912,7 +922,7 @@ class LazyGroup(click.Group):
             ("--budget N", "max output tokens (0 = unlimited)"),
             ("--include-excluded", "include files normally excluded by .roamignore"),
             ("--override-mode", "bypass mode-based command blocking (logs to audit trail)"),
-            ("--ci", "CI mode: stricter defaults (over-fetch --leaks-only, pr-bundle --strict)"),
+            ("--ci", "CI mode: stricter defaults (over-fetch --leaks-only, pr-bundle --strict + --strict-resolved)"),
             ("--help-all", "list every command (no categories)"),
         ]
         for flag, blurb in global_opts:
@@ -1228,7 +1238,7 @@ def _run_check(ctx: click.Context, param: click.Parameter, value: bool) -> None:
     """Eager callback for --check: run critical install checks and exit.
 
     Validates the five minimum requirements for roam-code to function:
-      1. Python >= 3.9
+      1. Python >= 3.10
       2. tree-sitter importable
       3. tree-sitter-language-pack importable
       4. git on PATH
@@ -1242,8 +1252,8 @@ def _run_check(ctx: click.Context, param: click.Parameter, value: bool) -> None:
     issues: list[str] = []
 
     # 1. Python version
-    if sys.version_info < (3, 9):
-        issues.append(f"Python {sys.version_info.major}.{sys.version_info.minor} < 3.9")
+    if sys.version_info < (3, 10):
+        issues.append(f"Python {sys.version_info.major}.{sys.version_info.minor} < 3.10")
 
     # 2. tree-sitter
     try:
@@ -1410,8 +1420,9 @@ def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> No
     default=False,
     help=(
         "CI mode: stricter defaults across subcommands "
-        "(over-fetch --leaks-only, pr-bundle --strict, machine-friendly output). "
-        "Per-command flags ALWAYS override these implications. "
+        "(over-fetch --leaks-only, pr-bundle --strict AND --strict-resolved, "
+        "machine-friendly output). Per-command flags ALWAYS override these "
+        "implications (LAW 11: explicit --no-strict / --no-strict-resolved wins). "
         "Also enabled by ROAM_CI=1 in the environment."
     ),
 )

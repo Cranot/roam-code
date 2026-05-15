@@ -1,0 +1,59 @@
+id: java-sqli
+description: User-controlled input from HttpServletRequest (servlet API) flowing into a String-form Statement.executeQuery / executeUpdate / Connection.prepareStatement sink without going through PreparedStatement parameter binding. Maps to CWE-89 / OWASP A03:2021 Injection (#2 on CWE Top 25 2025). Uses qualified_only matching (W454) — Java's bare 'executeQuery' / 'createQuery' / 'setString' get redefined as user-method names in DAOs and ORMs constantly, so only import-qualified java.sql.* / javax.sql.* / javax.persistence.* paths count.
+severity: error
+cwe: CWE-89
+owasp_top10: A03:2021_Injection
+qualified_only: true
+languages:
+  - java
+sources:
+  # qualified_only=true: bare-name entries are NO-OPS under W467's
+  # tightened matcher (they would match any same-named user def).
+  # Only dotted sources match — keep the import-qualified forms.
+  - HttpServletRequest.getParameter
+  - HttpServletRequest.getHeader
+  - HttpServletRequest.getCookies
+  - HttpServletRequest.getRequestURI
+  - HttpServletRequest.getQueryString
+  - javax.servlet.http.HttpServletRequest.getParameter
+  - javax.servlet.http.HttpServletRequest.getHeader
+  - javax.servlet.http.HttpServletRequest.getCookies
+  - javax.servlet.http.HttpServletRequest.getRequestURI
+  - javax.servlet.http.HttpServletRequest.getQueryString
+  - jakarta.servlet.http.HttpServletRequest.getParameter
+  - jakarta.servlet.http.HttpServletRequest.getHeader
+  - jakarta.servlet.http.HttpServletRequest.getCookies
+  - jakarta.servlet.http.HttpServletRequest.getRequestURI
+  - jakarta.servlet.http.HttpServletRequest.getQueryString
+sinks:
+  # All sinks MUST be dotted under qualified_only=true. Bare
+  # 'executeQuery' / 'execute' / 'createQuery' constantly get
+  # redefined as user-method names in DAOs/ORMs (W467 root FP).
+  - Statement.executeQuery
+  - Statement.executeUpdate
+  - Statement.execute
+  - Connection.prepareStatement
+  - java.sql.Statement.executeQuery
+  - java.sql.Statement.executeUpdate
+  - java.sql.Statement.execute
+  - java.sql.Connection.prepareStatement
+  - EntityManager.createQuery
+  - EntityManager.createNativeQuery
+  - javax.persistence.EntityManager.createQuery
+  - javax.persistence.EntityManager.createNativeQuery
+  - jakarta.persistence.EntityManager.createQuery
+  - jakarta.persistence.EntityManager.createNativeQuery
+sanitizers:
+  # Dotted-only — bare setString/setInt would silently no-op.
+  - PreparedStatement.setString
+  - PreparedStatement.setInt
+  - PreparedStatement.setLong
+  - PreparedStatement.setBoolean
+  - PreparedStatement.setDate
+  - PreparedStatement.setTimestamp
+  - java.sql.PreparedStatement.setString
+  - java.sql.PreparedStatement.setInt
+  - java.sql.PreparedStatement.setLong
+  - java.sql.PreparedStatement.setBoolean
+  - java.sql.PreparedStatement.setDate
+  - java.sql.PreparedStatement.setTimestamp

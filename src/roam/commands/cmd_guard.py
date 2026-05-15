@@ -25,6 +25,7 @@ from roam.commands.context_helpers import (
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import abbrev_kind, budget_truncate, json_envelope, loc, to_json
+from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 _DEFAULT_CALLER_CAP = 8
 _DEFAULT_CALLEE_CAP = 8
@@ -376,7 +377,7 @@ def guard(ctx, name):
                     "risk_score": risk_score,
                     "risk_level": risk_level,
                     "callers": len(context["non_test_callers"]),
-                    "caller_metric_definition": "raw_edge_rows",
+                    "caller_metric_definition": CALLER_METRIC_RAW,
                     "callees": len(context["callees"]),
                     "test_files": total_test_files,
                     "layer_violations": layers["violation_count"],

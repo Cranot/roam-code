@@ -11,8 +11,8 @@ patch, each grounded in a roam DB query (not vibes):
    co-change partners that should have moved with this file but didn't.
 4. **Did it do the task** — semantic-diff vs the stated PR/commit intent.
 
-v12.0 MVP focuses on (2) and a minimal (1). The rest stay scaffolded
-behind clear hooks for v12.1.
+Currently implements (1), (2), and (4); (3) is reserved behind clear
+hooks for future expansion.
 
 Public API:
 

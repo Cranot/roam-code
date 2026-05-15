@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
+import sqlite3
 from collections import Counter
 
 import click
@@ -10,6 +13,168 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
+
+
+# W154 (W93 follow-up): dark-matter is the Nth detector migrating onto the
+# central findings registry (after ``clones`` in W95, ``dead`` in W99,
+# ``complexity`` in W102, ``smells`` in W109, ``bus-factor`` in W115,
+# ``pr-risk`` in W134, etc.). The shape mirrors those — a stable detector
+# version stamp and a deterministic ``finding_id_str`` so re-runs upsert
+# instead of duplicating rows. Bump this when the engine's category
+# vocabulary, NPMI / lift formulas, or hypothesis output shape changes.
+DARK_MATTER_DETECTOR_VERSION: str = "1.0.0"
+
+
+# W154 — category-driven confidence tier mapping.
+#
+# Dark-matter pairs come in two evidence classes:
+#
+# * Typed hypotheses (the HypothesisEngine resolved a concrete reason via
+#   shared-DB / event-bus / shared-config / shared-API / text-similarity
+#   pattern matching — graph history + source-pattern evidence both
+#   used) → ``structural``. The pair has a *named* cause beyond the
+#   raw correlation.
+# * UNKNOWN (the engine ran but didn't match any pattern) → ``heuristic``.
+#   No resolved cause; pure statistical correlation (NPMI + co-change
+#   count) — higher false-positive risk.
+#
+# A pair whose hypothesis was never computed (e.g. ``--explain`` not
+# passed in the legacy text path) falls back to ``heuristic`` via the
+# default below — but the ``--persist`` branch always classifies, so the
+# typical write produces a clean structural/heuristic split.
+_DARK_MATTER_TYPED_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "SHARED_DB",
+        "EVENT_BUS",
+        "SHARED_CONFIG",
+        "SHARED_API",
+        "TEXT_SIMILARITY",
+        # Spec-named categories preserved for forward-compat; the engine
+        # doesn't currently emit these but a future hypothesizer could.
+        "COPY_PASTE",
+        "NAMING",
+    }
+)
+_DARK_MATTER_DEFAULT_CONFIDENCE: str = "heuristic"
+
+
+def _dark_matter_confidence_for_category(category: str | None) -> str:
+    """Map a hypothesis category to a confidence tier.
+
+    ``UNKNOWN`` (or missing) → ``heuristic`` (pure statistical
+    correlation). Typed categories → ``structural`` (graph + source
+    evidence both used to reach the verdict).
+    """
+    if not category or category == "UNKNOWN":
+        return _DARK_MATTER_DEFAULT_CONFIDENCE
+    if category in _DARK_MATTER_TYPED_CATEGORIES:
+        return "structural"
+    # Unknown new category — treat as heuristic until the mapping is
+    # explicitly updated. Mirrors the ``_SMELL_DEFAULT_CONFIDENCE``
+    # fallback pattern in W109.
+    return _DARK_MATTER_DEFAULT_CONFIDENCE
+
+
+def _canonical_pair(path_a: str, path_b: str) -> tuple[str, str]:
+    """Return the (lo, hi) lexicographic ordering of a file-pair.
+
+    Dark-matter couplings are undirected — ``(A, B)`` and ``(B, A)``
+    describe the same hidden coupling. We canonicalise to lexicographic
+    sort so the finding id is independent of the engine's emission
+    order.
+    """
+    return (path_a, path_b) if path_a <= path_b else (path_b, path_a)
+
+
+def _dark_matter_finding_id(path_a: str, path_b: str) -> str:
+    """Stable, deterministic finding id for one dark-matter pair.
+
+    The pair is sorted lexicographically before hashing so ``(A, B)``
+    and ``(B, A)`` produce the same id — same hidden coupling, same
+    registry row. Format mirrors W95 clones / W109 smells:
+    ``"<detector>:<kind>:<sha1[:12]>"``.
+    """
+    lo, hi = _canonical_pair(path_a, path_b)
+    raw = f"{lo}::{hi}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"dark-matter:arch.dark_matter:{digest}"
+
+
+def _emit_dark_matter_findings(
+    conn: sqlite3.Connection,
+    pairs: list[dict],
+    source_version: str,
+) -> int:
+    """Mirror each dark-matter pair into the central findings registry.
+
+    Returns the count of finding rows written. Caller is responsible
+    for opening ``conn`` writable; ``emit_finding`` does not commit
+    (the caller commits once at the end of the persist branch).
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (without the ``findings`` table) silently no-ops rather than
+    crashing the standard dark-matter command path.
+
+    ``subject_kind`` is the NEW ``file_pair`` vocabulary (W154) — the
+    first file-pair subject on the registry. ``subject_id`` stays NULL
+    because file pairs don't map to ``symbols.id``; consumers join on
+    ``(subject_kind = 'file_pair' AND finding_id_str = ?)`` instead.
+    Mirrors the W134 pr-risk NULL-subject pattern.
+    """
+    # Local import keeps the cost out of the read-only path —
+    # callers without --persist never reach here.
+    from roam.db.findings import FindingRecord, emit_finding
+
+    written = 0
+    for p in pairs:
+        path_a = p.get("path_a") or ""
+        path_b = p.get("path_b") or ""
+        if not path_a or not path_b:
+            # Skip malformed engine output — every legitimate row has
+            # both paths populated.
+            continue
+
+        lo, hi = _canonical_pair(path_a, path_b)
+        hyp = p.get("hypothesis") or {}
+        category = hyp.get("category") or "UNKNOWN"
+        detail = hyp.get("detail") or ""
+
+        finding_id = _dark_matter_finding_id(path_a, path_b)
+        qualified_name = f"{lo}::{hi}"
+
+        evidence = {
+            "qualified_name": qualified_name,
+            "path_a": lo,
+            "path_b": hi,
+            "npmi": p.get("npmi"),
+            "lift": p.get("lift"),
+            "strength": p.get("strength"),
+            "cochange_count": p.get("cochange_count"),
+            "hypothesis_category": category,
+            "hypothesis_detail": detail,
+            "hypothesis_confidence": hyp.get("confidence"),
+        }
+        claim = (
+            f"dark-matter coupling: {lo} <-> {hi} "
+            f"(NPMI {p.get('npmi', 0)}, co-changes {p.get('cochange_count', 0)}, "
+            f"hypothesis {category})"
+        )
+        confidence = _dark_matter_confidence_for_category(category)
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="file_pair",
+                subject_id=None,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=confidence,
+                source_detector="dark-matter",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+    return written
 
 
 @roam_capability(
@@ -32,8 +197,21 @@ from roam.output.formatter import json_envelope, to_json
 @click.option("--min-cochanges", default=3, type=int, show_default=True, help="Minimum co-change count")
 @click.option("--explain", is_flag=True, help="Add hypothesis for each pair")
 @click.option("--category", is_flag=True, help="Group output by hypothesis category")
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Persist findings to .roam/index.db findings registry "
+        "(cross-detector queryable via `roam findings list --detector dark-matter`). "
+        "The detector-specific output is unchanged; the registry rows are "
+        "the denormalised cross-detector surface. Persisted set always "
+        "carries hypothesis categories — the engine is invoked unconditionally "
+        "under --persist so the confidence tier is computed for every pair."
+    ),
+)
 @click.pass_context
-def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category):
+def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist):
     """Detect dark matter: file pairs that co-change but have no structural link.
 
     Unlike ``coupling`` (which measures file-level co-change frequency),
@@ -50,16 +228,33 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category):
 
     from roam.graph.dark_matter import HypothesisEngine, dark_matter_edges
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         pairs = dark_matter_edges(conn, min_cochanges=min_cochanges, min_npmi=min_npmi)
         pairs = pairs[:limit]
 
-        # Run hypothesis engine when needed
-        need_hypotheses = explain or category or json_mode
+        # Run hypothesis engine when needed.
+        # --persist always classifies so the confidence tier is computed
+        # for every row written into the registry; otherwise we only pay
+        # the classification cost when the human-facing output needs it.
+        need_hypotheses = explain or category or json_mode or persist
         if need_hypotheses and pairs:
             root = find_project_root()
             engine = HypothesisEngine(root)
             engine.classify_all(pairs)
+
+        # --- W154: mirror into the central findings registry ---
+        # Runs ONLY with --persist. The persisted set is independent of
+        # any display-time filtering (``--explain`` / ``--category``);
+        # we emit every detected pair (already capped by ``-n``) so the
+        # registry stays comprehensive regardless of how a particular
+        # invocation slices the view.
+        if persist and pairs:
+            try:
+                _emit_dark_matter_findings(conn, pairs, DARK_MATTER_DETECTOR_VERSION)
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
         if json_mode:
             by_cat: dict[str, int] = Counter()

@@ -45,6 +45,7 @@ from roam.commands.git_helpers import git_origin_url
 from roam.commands.resolve import ensure_index
 from roam.exit_codes import EXIT_SUCCESS
 from roam.output.formatter import json_envelope, to_json
+from roam.output.metric_definitions import ARTICLE_12_READINESS_DEFINITION
 
 # ---------------------------------------------------------------------------
 # Checklist items — each mapped to an Article / Annex
@@ -379,6 +380,12 @@ def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):
                         "passed": passed,
                         "total": total,
                         "governance_compliance_score": gov_score,
+                        # W331b (Pattern 3a): pair the readiness score with
+                        # an explicit definition of what the 6 checks map
+                        # to. Wording follows the agentic-assurance
+                        # guardrails: "maps to" / "supports evidence
+                        # for", never "certifies" / "makes compliant".
+                        "governance_compliance_score_definition": ARTICLE_12_READINESS_DEFINITION,
                         "compliance_kind": "eu_ai_act_governance_readiness",
                         "compliance_kind_definition": (
                             "Repo-level readiness for EU AI Act Article 12: 6 "

@@ -20,6 +20,7 @@ from collections import Counter
 from pathlib import Path
 
 from roam.db.connection import find_project_root
+from roam.db.edge_kinds import CALL_EDGE_KINDS
 
 _IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
 
@@ -66,9 +67,13 @@ def _match_glob(path: str, pattern: str | None) -> bool:
     return Path(norm).match(pat)
 
 
-def _is_test_path(path: str) -> bool:
-    p = (path or "").replace("\\", "/").lower()
-    return "/tests/" in p or "/test/" in p or p.endswith("_test.py") or p.endswith(".spec.js") or p.endswith(".spec.ts")
+# W886: delegate to the canonical commands-layer helper (W873 audit).
+# The local variant covered the JS spec-suffix case (``.spec.js``/
+# ``.spec.ts``) but missed Vue SFC specs (``.spec.vue``), Go
+# ``*_test.go``, PHP ``*Test.php``, ``__tests__/`` / ``spec/`` /
+# ``testing/`` directories, and ``conftest.py``. Canonical helper
+# covers all of those via ``test_conventions.is_test_file``.
+from roam.commands.changed_files import is_test_file as _is_test_path
 
 
 def _parse_param_names(signature: str | None) -> list[str]:
@@ -325,9 +330,12 @@ def _inter_unused_return_findings(conn, file_glob: str | None) -> list[dict]:
         fp = (row["file_path"] or "").replace("\\", "/")
         if file_glob and not _match_glob(fp, file_glob):
             continue
+        # W512: edge-kind vocabulary lives in roam.db.edge_kinds. Pure
+        # call edges only — unused-return is a call-site concept.
+        _df_call_kind_ph = ", ".join("?" for _ in CALL_EDGE_KINDS)
         caller_count = conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE target_id = ? AND kind = 'calls'",
-            (row["symbol_id"],),
+            f"SELECT COUNT(*) FROM edges WHERE target_id = ? AND kind IN ({_df_call_kind_ph})",
+            (row["symbol_id"], *CALL_EDGE_KINDS),
         ).fetchone()[0]
         if caller_count > 0:
             out.append(

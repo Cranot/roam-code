@@ -1,0 +1,48 @@
+#!/bin/sh
+# commit-msg hook — reject any Co-Authored-By trailer or AI attribution.
+#
+# Enforces: commits on this repo are authored solely by Cranot.
+# No "Co-Authored-By:" trailers, no Anthropic/Claude attribution, no
+# AI-tool credits. This is intentional and load-bearing for the
+# public-facing git history.
+#
+# To install on a fresh clone:
+#   git config core.hooksPath .githooks
+#
+# To bypass for a one-off legitimate commit (rare): --no-verify, but
+# audit the commit message manually first.
+
+set -e
+
+MSG_FILE="$1"
+
+# Case-insensitive: catch Co-Authored-By, Co-authored-by, CO-AUTHORED-BY, etc.
+if grep -iE '^[[:space:]]*Co-Authored-By:' "$MSG_FILE" > /dev/null; then
+    echo "ERROR: commit-msg hook (.githooks/commit-msg)" >&2
+    echo "" >&2
+    echo "  This repo does NOT accept Co-Authored-By: trailers." >&2
+    echo "  All commits are authored solely by Cranot." >&2
+    echo "" >&2
+    echo "  Offending line(s):" >&2
+    grep -iE '^[[:space:]]*Co-Authored-By:' "$MSG_FILE" | sed 's/^/    /' >&2
+    echo "" >&2
+    echo "  Fix: remove the Co-Authored-By line from your commit message." >&2
+    echo "  If you used 'git commit -m', re-run without it." >&2
+    echo "  If your tooling auto-adds it, update the tool config or template." >&2
+    exit 1
+fi
+
+# Also reject explicit AI / Anthropic attribution patterns in the message body.
+if grep -iE '(anthropic\.com|noreply@anthropic|claude (opus|sonnet|haiku|code))' "$MSG_FILE" > /dev/null; then
+    echo "ERROR: commit-msg hook (.githooks/commit-msg)" >&2
+    echo "" >&2
+    echo "  This repo does NOT accept AI attribution in commit messages." >&2
+    echo "" >&2
+    echo "  Offending line(s):" >&2
+    grep -iE '(anthropic\.com|noreply@anthropic|claude (opus|sonnet|haiku|code))' "$MSG_FILE" | sed 's/^/    /' >&2
+    echo "" >&2
+    echo "  Fix: remove the AI-attribution line from your commit message." >&2
+    exit 1
+fi
+
+exit 0

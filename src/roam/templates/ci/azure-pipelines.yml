@@ -4,7 +4,7 @@
 # Publishes SARIF results and posts a PR comment with quality summary.
 #
 # Prerequisites:
-#   - Python 3.9+ (uses UsePythonVersion task)
+#   - Python 3.10+ (uses UsePythonVersion task)
 #   - pip install roam-code
 #
 # Variables (set in pipeline definition or variable group):

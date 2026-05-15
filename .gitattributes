@@ -1,7 +1,9 @@
-# Normalize line endings for all text files
-* text=auto
+# Normalize line endings: auto-detect text files, force LF on commit.
+# Silences "warning: CRLF will be replaced by LF" on Windows checkouts
+# (W683; surfaced repeatedly by doc-sync runs — W672 / W557 / W563).
+* text=auto eol=lf
 
-# Ensure Python files always use LF
+# Ensure key text formats always use LF (explicit beats implicit).
 *.py text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
@@ -11,3 +13,37 @@
 *.html text eol=lf
 *.css text eol=lf
 *.js text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.sh text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.txt text eol=lf
+
+# Binary files (explicit; preserve as-is, no EOL normalization).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.tgz binary
+*.bz2 binary
+*.7z binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.so binary
+*.dll binary
+*.dylib binary
+*.pyc binary
+*.pyo binary

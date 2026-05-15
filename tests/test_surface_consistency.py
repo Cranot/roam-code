@@ -37,7 +37,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from roam.cli import _CATEGORIES, _COMMANDS, _DEPRECATED_COMMANDS
+import json
+
+from click.testing import CliRunner
+
+from roam.cli import _CATEGORIES, _COMMANDS, _DEPRECATED_COMMANDS, cli as roam_cli
+from roam.commands.cmd_surface import _build_surface
+
+from tests._helpers.repo_root import repo_root
 
 # ---------------------------------------------------------------------------
 # Allowlists for intentional exceptions
@@ -159,7 +166,7 @@ def _declared_mcp_tools() -> set[str]:
     import time. ``_REGISTERED_TOOLS`` would only show the subset that
     passed preset filtering.
     """
-    src = (Path(__file__).resolve().parents[1] / "src" / "roam" / "mcp_server.py").read_text(encoding="utf-8")
+    src = (repo_root() / "src" / "roam" / "mcp_server.py").read_text(encoding="utf-8")
     # Match `@_tool(...)` decorations and pull the `name=` arg out of the
     # arglist. Regex spans newlines because the decorator is multi-line.
     pattern = re.compile(r'@_tool\((?:[^()]|\([^()]*\))*?name\s*=\s*"([^"]+)"', re.DOTALL)
@@ -283,3 +290,80 @@ def test_tool_metadata_keys_are_declared():
         f"as available tools, but FastMCP has no registered handler — "
         f"calls would fail with 'no such tool'."
     )
+
+
+# ---------------------------------------------------------------------------
+# 7. W58: mcp_introspection_available distinguishes "no fastmcp" from "0 tools"
+# ---------------------------------------------------------------------------
+
+
+def test_surface_envelope_has_mcp_introspection_field():
+    """``mcp_introspection_available`` is the explicit signal consumers use to
+    distinguish "fastmcp not installed -> 0 tools" from "fastmcp installed
+    but no tools registered". Without this flag a lean CI runner can't tell
+    whether the 0 count is a real regression or a missing optional dep.
+    """
+    data = _build_surface()
+    assert "mcp_introspection_available" in data
+    assert isinstance(data["mcp_introspection_available"], bool)
+    # The flag must mirror the import-time sentinel in mcp_server.
+    import roam.mcp_server as mcp_mod
+
+    assert data["mcp_introspection_available"] == (mcp_mod.FastMCP is not None)
+
+
+def test_surface_envelope_mcp_unavailable_signals_match(monkeypatch):
+    """With FastMCP unavailable, surface must report
+    ``mcp_introspection_available: False`` AND a note pointing the user at
+    the optional install extra.
+
+    After W138: ``mcp_tool_count`` is env-independent — it reads
+    ``_TOOL_METADATA`` (populated unconditionally by every ``@_tool``
+    decorator) rather than ``_REGISTERED_TOOLS`` (only populated when the
+    transport is present). So when FastMCP is None, the SERVER cannot
+    actually serve these tools, but the count of *defined* tools is
+    unchanged. The two signals are now on independent axes:
+    ``mcp_introspection_available`` (transport present) vs
+    ``mcp_tool_count`` (tools defined in source).
+    """
+    import roam.mcp_server as mcp_mod
+
+    monkeypatch.setattr(mcp_mod, "FastMCP", None)
+    monkeypatch.setattr(mcp_mod, "_REGISTERED_TOOLS", [])
+
+    data = _build_surface()
+    assert data["mcp_introspection_available"] is False
+    assert "mcp_tools_note" in data
+    assert "fastmcp" in data["mcp_tools_note"].lower()
+    # The count is the env-independent code-level total.
+    from roam.surface_counts import mcp_surface_counts
+
+    expected_count = mcp_surface_counts()["registered_tools"]
+    assert data["mcp_tool_count"] == expected_count
+
+
+def test_surface_json_envelope_summary_exposes_mcp_introspection(monkeypatch):
+    """The boolean must reach JSON consumers via ``summary.mcp_introspection_available``.
+    This is the field CI runners read.
+
+    After W138: ``mcp_tool_count`` is env-independent (see neighbouring
+    test) — assert against the AST-derived ground truth rather than 0.
+    """
+    import roam.mcp_server as mcp_mod
+
+    monkeypatch.setattr(mcp_mod, "FastMCP", None)
+    monkeypatch.setattr(mcp_mod, "_REGISTERED_TOOLS", [])
+
+    runner = CliRunner()
+    result = runner.invoke(roam_cli, ["--json", "surface"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    summary = payload.get("summary", {})
+    assert "mcp_introspection_available" in summary
+    assert summary["mcp_introspection_available"] is False
+    assert "mcp_tools_note" in summary
+    assert "fastmcp" in summary["mcp_tools_note"].lower()
+    from roam.surface_counts import mcp_surface_counts
+
+    expected_count = mcp_surface_counts()["registered_tools"]
+    assert summary["mcp_tool_count"] == expected_count

@@ -27,6 +27,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import format_table, json_envelope, to_json
 from roam.runs.helpers import auto_log
 from roam.world_model.tx_boundaries import (
@@ -174,12 +175,11 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
         partial_success = False
 
     # Rank for surfacing: severity desc, then confidence, then file len.
-    _CONF_RANK = {"high": 3, "medium": 2, "low": 1}
-
+    # W596: canonical confidence-LEVEL rank — higher = more confident.
     def _key(c):
         return (
             _SEVERITY_RANK.get(c.classification, 0),
-            _CONF_RANK.get(c.confidence, 0),
+            confidence_level_rank(c.confidence, fallback=-1),
             -len(c.file or ""),
         )
 

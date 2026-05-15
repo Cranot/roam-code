@@ -22,7 +22,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests._helpers.repo_root import repo_root
+
+REPO_ROOT = repo_root()
 
 PRE_COMMIT_CONFIG = REPO_ROOT / ".pre-commit-config.yaml"
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"

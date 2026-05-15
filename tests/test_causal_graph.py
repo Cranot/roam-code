@@ -279,3 +279,33 @@ def test_envelope_includes_by_kind_distribution(project_factory, monkeypatch, cl
     )
     # next_commands must be imperative roam strings
     assert all(nc.startswith("roam ") for nc in ac["next_commands"])
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _extract_params_from_signature None-safety (W1034)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_params_from_signature_none_returns_empty():
+    """``signature is None`` (NULL signature column) short-circuits to []."""
+    from roam.world_model.causal_graph import _extract_params_from_signature
+
+    assert _extract_params_from_signature(None) == []
+
+
+def test_extract_params_from_signature_empty_string_returns_empty():
+    """Empty signature string short-circuits to [] same as None."""
+    from roam.world_model.causal_graph import _extract_params_from_signature
+
+    assert _extract_params_from_signature("") == []
+
+
+def test_extract_params_from_signature_normal_signature_returns_params():
+    """Normal signature extracts params (defaults + type hints stripped)."""
+    from roam.world_model.causal_graph import _extract_params_from_signature
+
+    assert _extract_params_from_signature("(self, path: str, mode='w')") == [
+        "path",
+        "mode",
+    ]
+    assert _extract_params_from_signature("(name, email)") == ["name", "email"]

@@ -365,6 +365,68 @@ class TestAnnotateCommand:
         )
         assert result.exit_code == 0
         assert "Annotation saved" in result.output
+        # W324 — unresolved path discloses state in text output
+        assert "unresolved" in result.output
+
+    def test_annotate_json_resolution_state_symbol(self, annotated_project, cli_runner, monkeypatch):
+        """W324 — JSON envelope discloses ``resolution: symbol`` on a real symbol."""
+        monkeypatch.chdir(annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            ["annotate", "User", "note"],
+            cwd=annotated_project,
+            json_mode=True,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["summary"]["resolution"] == "symbol"
+        assert data["summary"]["partial_success"] is False
+        assert data["summary"]["verdict"] == "Annotation saved"
+        assert data["symbol_id"] is not None
+        assert data["resolution"] == "symbol"
+
+    def test_annotate_json_resolution_state_file(self, annotated_project, cli_runner, monkeypatch):
+        """W324 — JSON envelope discloses ``resolution: file`` on a real file path."""
+        monkeypatch.chdir(annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            ["annotate", "src/auth.py", "note"],
+            cwd=annotated_project,
+            json_mode=True,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["summary"]["resolution"] == "file"
+        assert data["summary"]["partial_success"] is False
+        assert data["summary"]["verdict"] == "Annotation saved"
+        assert data["symbol_id"] is None
+
+    def test_annotate_json_resolution_state_unresolved(self, annotated_project, cli_runner, monkeypatch):
+        """W324 — JSON envelope discloses ``resolution: unresolved`` + ``partial_success`` on a dangling target.
+
+        Pattern-2 fix: a fake symbol/file used to silently succeed with the
+        same ``"Annotation saved"`` verdict as a real one. The agent had no
+        way to tell whether the annotation was actually linked or stored as
+        a dangling qualified_name awaiting future reindex.
+        """
+        monkeypatch.chdir(annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            ["annotate", "definitely_not_a_real_target_xyz", "note"],
+            cwd=annotated_project,
+            json_mode=True,
+        )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["summary"]["resolution"] == "unresolved"
+        assert data["summary"]["partial_success"] is True
+        # Verdict explicitly names the dangling-name state so a single-line
+        # consumer (LAW 6) can tell resolved from unresolved.
+        assert "unresolved" in data["summary"]["verdict"]
+        assert data["symbol_id"] is None
+        assert data["resolution"] == "unresolved"
+        # agent_contract.facts mirrors the verdict.
+        assert any("unresolved" in f for f in data["agent_contract"]["facts"])
 
 
 class TestAnnotationsCommand:

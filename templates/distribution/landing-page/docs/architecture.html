@@ -208,6 +208,294 @@
     </section>
 
     <section>
+      <h2>Findings Registry</h2>
+      <p>
+        Roam ships many detectors — clones, dead code, complexity, smells, N+1, missing index,
+        over-fetch, bus factor, auth gaps, vulns, taint, AI rot, invariants, hotspots, vibe-check —
+        and historically each emitted findings in its own format, in its own table, with its own
+        vocabulary. The findings registry is a normalised cross-detector table that lets an agent
+        ask <em>"what's wrong with this workspace right now?"</em> in one query, instead of
+        running ten detectors and reconciling ten output shapes. Detectors continue to write to
+        their detector-specific tables; they ALSO upsert a row to the central <code>findings</code>
+        table, which becomes the denormalised surface for CLI consumers, SARIF emit, and
+        suppression management.
+      </p>
+
+      <h3>Schema</h3>
+      <table>
+        <thead>
+          <tr><th>Column</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>finding_id_str</code></td>
+            <td>Stable string identifier (UNIQUE). Deterministic — rerunning a detector refreshes the same row in place. Convention: <code>"&lt;detector&gt;:&lt;subject&gt;:&lt;hash&gt;"</code>.</td>
+          </tr>
+          <tr>
+            <td><code>subject_kind</code></td>
+            <td>What kind of thing the finding is about: <code>symbol</code>, <code>file</code>, <code>edge</code>, <code>commit</code>, <code>package</code>, etc.</td>
+          </tr>
+          <tr>
+            <td><code>subject_id</code></td>
+            <td>Foreign key into the table named by <code>subject_kind</code>. Nullable — not every subject maps to a row id.</td>
+          </tr>
+          <tr>
+            <td><code>claim</code></td>
+            <td>Human-readable summary of the finding.</td>
+          </tr>
+          <tr>
+            <td><code>evidence_json</code></td>
+            <td>Detector-specific structured fields. Schema is owned by the detector, not by the registry.</td>
+          </tr>
+          <tr>
+            <td><code>confidence</code></td>
+            <td>One of <code>heuristic</code>, <code>structural</code>, <code>static_analysis</code>, <code>runtime</code>. See the tier table below.</td>
+          </tr>
+          <tr>
+            <td><code>source_detector</code></td>
+            <td>Which detector emitted the row: <code>clones</code>, <code>dead</code>, <code>complexity</code>, etc.</td>
+          </tr>
+          <tr>
+            <td><code>source_version</code></td>
+            <td>Detector version stamp. Consumers can spot rows produced under a stale detector shape.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Confidence tiers</h3>
+      <p>
+        Every finding carries a confidence label drawn from a closed enumeration of four tiers.
+        Detectors pick the tier that matches their evidence — never mint new strings.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Tier</th><th>Definition</th><th>Example</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>heuristic</code></td>
+            <td>Name-pattern matching, length thresholds, fuzzy NLP signals.</td>
+            <td>vibe-check's <code>comment_anomalies</code> — comments don't match code semantics.</td>
+          </tr>
+          <tr>
+            <td><code>structural</code></td>
+            <td>Graph-pattern matching over the symbol / edge / call graph.</td>
+            <td>n1's loop-with-dependent-write — a loop body issues a DB call that depends on the loop variable.</td>
+          </tr>
+          <tr>
+            <td><code>static_analysis</code></td>
+            <td>Deterministic AST / CFG / dataflow analysis.</td>
+            <td>complexity scores; missing-index's unconditional-predicate finding.</td>
+          </tr>
+          <tr>
+            <td><code>runtime</code></td>
+            <td>Requires ingested runtime traces (OpenTelemetry / Jaeger / Zipkin / coverage).</td>
+            <td>hotspots's <code>UPGRADE</code> / <code>CONFIRMED</code> / <code>DOWNGRADE</code> classification.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>CLI surface</h3>
+<pre><code>roam findings list                       # all findings on this workspace
+roam findings list --detector clones     # filter by detector
+roam findings list --confidence=static_analysis
+roam findings show &lt;finding_id&gt;          # one record, full evidence
+roam findings count                      # per-detector totals</code></pre>
+      <p>
+        Full reference and flags: <a href="/docs/command-reference#findings">command reference for <code>roam findings</code></a>.
+      </p>
+
+      <h3>Detectors that persist findings</h3>
+      <p>
+        Detectors emit to the registry when invoked with <code>--persist</code>. Migration is per-detector
+        work; the list below reflects the current state.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Detector</th><th>Wave</th><th>Status</th><th>What it finds</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>clones</code></td><td>W95</td><td>shipped</td><td>copy-paste / structural duplicates</td></tr>
+          <tr><td><code>dead</code></td><td>W99</td><td>shipped</td><td>unreachable symbols</td></tr>
+          <tr><td><code>complexity</code></td><td>W102</td><td>shipped</td><td>cognitive complexity hotspots</td></tr>
+          <tr><td><code>smells</code></td><td>W109+</td><td>in flight</td><td>god class / long method / feature envy</td></tr>
+          <tr><td><code>n1</code></td><td>W109+</td><td>in flight</td><td>loop-with-dependent-query patterns</td></tr>
+          <tr><td><code>missing-index</code></td><td>W109+</td><td>in flight</td><td>unindexed predicate columns</td></tr>
+          <tr><td><code>over-fetch</code></td><td>W109+</td><td>in flight</td><td>SELECT * / wildcard column reads</td></tr>
+          <tr><td><code>bus-factor</code></td><td>W109+</td><td>in flight</td><td>single-owner critical components</td></tr>
+          <tr><td><code>auth-gaps</code></td><td>W109+</td><td>in flight</td><td>endpoints missing auth checks</td></tr>
+          <tr><td><code>vulns</code></td><td>W109+</td><td>in flight</td><td>reachable vulnerable dependencies</td></tr>
+          <tr><td><code>ai-rot</code></td><td>W109+</td><td>in flight</td><td>AI-generated drift / pattern decay</td></tr>
+          <tr><td><code>invariants</code></td><td>W109+</td><td>in flight</td><td>mined invariant violations</td></tr>
+          <tr><td><code>hotspots</code></td><td>W109+</td><td>in flight</td><td>runtime-trace classified hotspots</td></tr>
+          <tr><td><code>taint</code></td><td>W109+</td><td>in flight</td><td>source &rarr; sink dataflow leaks</td></tr>
+          <tr><td><code>vibe-check</code></td><td>W109+</td><td>in flight</td><td>fuzzy semantic anomalies</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Agent loop integration</h3>
+      <p>
+        The registry slots into the canonical agent loop as step 7a — between <code>roam critique</code>
+        (review the diff) and <code>roam pr-bundle emit</code> (close the proof bundle):
+      </p>
+<pre><code>...
+7.  roam diff | roam critique             # review the change
+7a. roam findings list                    # cross-detector findings on the workspace
+8.  roam pr-bundle emit                   # close bundle with proofs
+...</code></pre>
+      <p>
+        This is the <em>"what's wrong with this workspace right now?"</em> gate. An agent runs it
+        before closing a proof bundle so the bundle either references the surviving findings as
+        accepted or carries evidence that the change made them go away.
+      </p>
+    </section>
+
+    <section>
+      <h2>Evidence Compiler</h2>
+      <p>
+        Roam is becoming a local evidence compiler for AI-assisted software change. The findings
+        registry above is one input layer; the evidence compiler is the layer that sits on top of
+        it, aggregating findings, run events, policy decisions, tests, and approvals into typed
+        <code>ChangeEvidence</code> packets. The packet is the unit a reviewer, an auditor, or a
+        downstream system consumes &mdash; the same evidence rendered as a PR Replay report, a SARIF
+        file, an in-toto attestation, or an OSCAL-shaped export, all projected from one shared
+        record rather than rebuilt by each emitter.
+      </p>
+
+      <h3>Data model</h3>
+      <table>
+        <thead>
+          <tr><th>Type</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ChangeEvidence</code></td>
+            <td>
+              One evidence packet per code-change scope. Carries <code>evidence_id</code>,
+              <code>schema_version</code>, <code>repo_id</code>, <code>git_range</code>,
+              <code>commit_sha</code>, <code>diff_hash</code>, <code>run_ids</code>,
+              <code>mode</code>, <code>started_at</code>, <code>completed_at</code>,
+              <code>verdict</code>, <code>risk_level</code>, <code>changed_subjects</code>,
+              <code>findings</code>, <code>policy_decisions</code>, <code>tests</code>,
+              <code>approvals</code>, <code>accepted_risks</code>, <code>artifacts</code>,
+              <code>redactions</code>, and a <code>content_hash</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>EvidenceSubject</code></td>
+            <td>
+              Portable identifier wrapper around things Roam already sees &mdash; symbol, file,
+              endpoint, package, module, directory, commit, rule, control, run, bundle, finding,
+              test, artifact. Survives reindexing so reports, SARIF rows, and attestations stay
+              stable across rebuilds.
+            </td>
+          </tr>
+          <tr>
+            <td><code>EvidenceLink</code></td>
+            <td>
+              Typed edges inside a packet:
+              <code>derived_from</code>, <code>touches</code>, <code>calls</code>,
+              <code>tested_by</code>, <code>blocked_by</code>, <code>allowed_by</code>,
+              <code>accepted_by</code>, <code>satisfies_control</code>,
+              <code>maps_to_standard</code>, <code>supersedes</code>, <code>mitigates</code>.
+            </td>
+          </tr>
+          <tr>
+            <td><code>EvidenceArtifact</code></td>
+            <td>
+              File or data reference with a content hash and an optional path. Large artifacts are
+              referenced by hash rather than embedded so the packet stays small and redaction
+              metadata stays meaningful.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Projections</h3>
+      <p>
+        Every external format is a projection from the same evidence packet. No exporter owns its
+        own data-gathering logic.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Projection</th><th>Use</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Markdown / PDF</td>
+            <td>PR Replay, Due Diligence, AI Adoption Readiness, Incident Replay.</td>
+          </tr>
+          <tr>
+            <td>SARIF</td>
+            <td>GitHub Code Scanning and CI annotations.</td>
+          </tr>
+          <tr>
+            <td>in-toto / CGA</td>
+            <td>Signed proofs for code graph and change evidence.</td>
+          </tr>
+          <tr>
+            <td>OSCAL-like JSON / YAML</td>
+            <td>Governance evidence and control mapping.</td>
+          </tr>
+          <tr>
+            <td>OpenTelemetry spans / events</td>
+            <td>Agent observability bridges (LangSmith / Langfuse / Helicone).</td>
+          </tr>
+          <tr>
+            <td>CycloneDX VEX / OpenVEX</td>
+            <td>Vulnerability reachability context.</td>
+          </tr>
+          <tr>
+            <td>CDEvents / CloudEvents</td>
+            <td>Later CI/CD event interoperability.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Recipes</h3>
+      <p>
+        The compiler runs as a local recipe DAG, not a workflow engine. Each recipe declares its
+        inputs, steps, required evidence, gates, report sections, and exports &mdash; then the runner
+        executes existing Roam commands through Python APIs, collects their JSON envelopes,
+        normalises them into a <code>ChangeEvidence</code> packet, and renders the configured
+        reports and exports.
+      </p>
+<pre><code>recipe:
+  inputs:            # what the recipe needs (git range, scope, mode)
+  steps:             # ordered list of Roam command invocations
+  required_evidence: # which fields the packet must contain to close
+  gates:             # pass/fail conditions
+  report_sections:   # Markdown / structured-output sections
+  exports:           # projection list (sarif, in-toto, oscal-like, ...)</code></pre>
+      <p>
+        Example recipes: <code>pr-replay</code>, <code>governance-evidence-pack</code>,
+        <code>codebase-due-diligence</code>, <code>ai-adoption-readiness</code>,
+        <code>security-reachability-triage</code>, <code>post-incident-replay</code>,
+        <code>migration-assurance</code>.
+      </p>
+
+      <h3>Execution phases</h3>
+      <p>The compiler ships in small phases that share the same evidence model.</p>
+      <ol>
+        <li><strong>Phase 0 &mdash; Vocabulary freeze</strong> (in flight): enum-like constants for evidence subject kinds, link kinds, artifact kinds, claim severities, and redaction reasons; one test proving existing command outputs map onto these kinds.</li>
+        <li><strong>Phase 1 &mdash; Schema v0</strong> (in flight): pure dataclasses for <code>ChangeEvidence</code> / <code>EvidenceSubject</code> / <code>EvidenceLink</code> / <code>EvidenceArtifact</code>; deterministic JSON serialisation; stable content hash; <code>schema_version</code> and <code>redactions[]</code>; no DB migration.</li>
+        <li><strong>Phase 2 &mdash; Envelope collector</strong>: helper that turns existing JSON envelopes into <code>ChangeEvidence</code> for the PR Replay path, with a warning list for fields that do not yet map cleanly.</li>
+        <li><strong>Phase 3 &mdash; PR Replay compiled report</strong>: one evidence JSON, one Markdown report, optional PDF projection, and a "Suggested Review configuration" generated from the same packet.</li>
+        <li><strong>Phase 4 &mdash; Governance control mapping</strong>: YAML control map from Roam evidence types to governance-control language, OSCAL-like JSON / YAML projection, and a sample report under <code>templates/audit-report/</code>.</li>
+        <li><strong>Phase 5 &mdash; Projection consolidation</strong>: central SARIF / in-toto / OTel / VEX projections driven by the shared evidence layer; per-command emitters become thin compatibility wrappers. Customer-pulled.</li>
+      </ol>
+
+      <h3>Confidence checks</h3>
+      <ul>
+        <li>Every customer-facing recipe emits Markdown plus structured JSON.</li>
+        <li>Every evidence packet carries <code>schema_version</code>, content hash, and explicit redaction metadata.</li>
+        <li>Every governance claim uses "maps to" or "supports evidence for" &mdash; never "certifies compliance".</li>
+        <li>Every large artifact can be referenced by path or hash instead of embedded.</li>
+        <li>Every exporter is a projection from shared evidence, not a second source of truth.</li>
+      </ul>
+    </section>
+
+    <section>
       <h2>Why SQLite</h2>
       <ul>
         <li><strong>Zero-dep</strong>: ships with Python; no client/server, no infrastructure.</li>
@@ -234,7 +522,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local structural intelligence layer for coding agents.</span>
+        <span>The local codebase intelligence layer for developers and AI agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

@@ -20,13 +20,21 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from tests._helpers.repo_root import repo_root
+
 # SHA-256 of the canonical mcp-server-card.json bytes. Update via the
 # protocol in this file's docstring whenever the card changes.
-_EXPECTED_CARD_SHA256 = "b917ddd39ed7ea60831eac3e946cdb1fa28594b2e78f13eaf12bcefac22477b2"
+# W793: bumped after renaming ``display_name`` → ``title`` per SEP-2127
+# readiness. SEP-2127-ready, byte-stable change; no other card content
+# moved. W563/W789 auto-rotate is broken per W844 finding — bumped manually.
+# v13.1 (2026-05-15): bumped after version bump 13.0 → 13.1 (card body
+# only changed the ``"version"`` field; W554 audit-report YAML bundle
+# unchanged; all other card content stable).
+_EXPECTED_CARD_SHA256 = "533990df9f2d35fab41b609f60f917237f6fa90726b849ccb506f2ee13c29251"
 
 
 def _card_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "src" / "roam" / "mcp-server-card.json"
+    return repo_root() / "src" / "roam" / "mcp-server-card.json"
 
 
 def test_mcp_server_card_hash_pinned():

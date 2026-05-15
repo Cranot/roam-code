@@ -236,10 +236,16 @@ class TestAlertsCmdJson:
             assert "current_value" in alert, f"Missing 'current_value' in alert: {alert}"
 
     def test_json_alert_levels_are_valid(self, fresh_project, cli_runner):
-        """All alert level values are one of CRITICAL, WARNING, or INFO."""
+        """All alert level values are one of critical, warning, or info.
+
+        W649: canonical roam severity vocabulary is lowercase
+        (``critical`` / ``warning`` / ``info``) — see
+        :mod:`roam.output._severity`. Pre-W649 these were UPPER-cased and
+        out of vocabulary with the rest of the surface.
+        """
         result = invoke_cli(cli_runner, ["alerts"], cwd=fresh_project, json_mode=True)
         data = parse_json_output(result, "alerts")
-        valid_levels = {"CRITICAL", "WARNING", "INFO"}
+        valid_levels = {"critical", "warning", "info"}
         for alert in data.get("alerts", []):
             assert alert["level"] in valid_levels, f"Unexpected level '{alert['level']}' in: {alert}"
 
@@ -295,13 +301,13 @@ class TestAlertsInternals:
     """Unit tests for alert detection helpers imported directly."""
 
     def test_check_thresholds_health_below_60(self):
-        """health_score below 60 triggers a CRITICAL threshold alert."""
+        """health_score below 60 triggers a critical threshold alert (W649)."""
         from roam.commands.cmd_alerts import _check_thresholds
 
         alerts = _check_thresholds({"health_score": 45})
         assert len(alerts) >= 1
         levels = {a["level"] for a in alerts}
-        assert "CRITICAL" in levels
+        assert "critical" in levels
 
     def test_check_thresholds_health_above_threshold_no_alert(self):
         """health_score above 60 does not trigger a threshold alert."""
@@ -312,16 +318,16 @@ class TestAlertsInternals:
         assert len(health_alerts) == 0
 
     def test_check_thresholds_cycles_above_10(self):
-        """cycles > 10 triggers a WARNING alert."""
+        """cycles > 10 triggers a warning alert (W649 lowercase)."""
         from roam.commands.cmd_alerts import _check_thresholds
 
         alerts = _check_thresholds({"cycles": 15})
         cycle_alerts = [a for a in alerts if a["metric"] == "cycles"]
         assert len(cycle_alerts) >= 1
-        assert cycle_alerts[0]["level"] == "WARNING"
+        assert cycle_alerts[0]["level"] == "warning"
 
     def test_check_thresholds_cycles_at_threshold_no_alert(self):
-        """cycles == 10 does not trigger a WARNING (rule is strictly >, not >=)."""
+        """cycles == 10 does not trigger a warning (rule is strictly >, not >=)."""
         from roam.commands.cmd_alerts import _check_thresholds
 
         alerts = _check_thresholds({"cycles": 10})
@@ -503,20 +509,20 @@ class TestAlertsInternals:
         from roam.commands.cmd_alerts import _deduplicate
 
         alerts = [
-            {"level": "INFO", "metric": "cycles", "message": "msg1", "current_value": 5, "trend_direction": "up"},
-            {"level": "WARNING", "metric": "cycles", "message": "msg2", "current_value": 5, "trend_direction": "up"},
+            {"level": "info", "metric": "cycles", "message": "msg1", "current_value": 5, "trend_direction": "up"},
+            {"level": "warning", "metric": "cycles", "message": "msg2", "current_value": 5, "trend_direction": "up"},
         ]
         deduped = _deduplicate(alerts)
         assert len(deduped) == 1
-        assert deduped[0]["level"] == "WARNING"
+        assert deduped[0]["level"] == "warning"
 
     def test_deduplicate_preserves_different_metrics(self):
         """_deduplicate keeps alerts for distinct metrics."""
         from roam.commands.cmd_alerts import _deduplicate
 
         alerts = [
-            {"level": "CRITICAL", "metric": "health_score", "message": "low", "current_value": 40},
-            {"level": "WARNING", "metric": "cycles", "message": "high", "current_value": 12, "trend_direction": "up"},
+            {"level": "critical", "metric": "health_score", "message": "low", "current_value": 40},
+            {"level": "warning", "metric": "cycles", "message": "high", "current_value": 12, "trend_direction": "up"},
         ]
         deduped = _deduplicate(alerts)
         assert len(deduped) == 2
@@ -576,8 +582,8 @@ class TestAlertsInternals:
         """_make_alert returns a dict with all expected fields."""
         from roam.commands.cmd_alerts import _make_alert
 
-        alert = _make_alert("WARNING", "cycles", "cycles=15 (above 10 threshold)", 15)
-        assert alert["level"] == "WARNING"
+        alert = _make_alert("warning", "cycles", "cycles=15 (above 10 threshold)", 15)
+        assert alert["level"] == "warning"
         assert alert["metric"] == "cycles"
         assert alert["current_value"] == 15
         assert "message" in alert
@@ -587,5 +593,5 @@ class TestAlertsInternals:
         """_make_alert includes trend_direction when supplied."""
         from roam.commands.cmd_alerts import _make_alert
 
-        alert = _make_alert("WARNING", "cycles", "msg", 15, trend_direction="up")
+        alert = _make_alert("warning", "cycles", "msg", 15, trend_direction="up")
         assert alert["trend_direction"] == "up"

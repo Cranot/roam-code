@@ -1,24 +1,65 @@
 # Audit report templates
 
-This directory holds the markdown template + render script for a
-codebase-architecture report, plus a sample of the **PR Replay** report
-that `roam pr-replay` emits today.
+This directory holds three sample deliverables Roam ships today: a
+codebase-architecture audit, a PR Replay engagement report, and the
+**Agent Governance Evidence Pack** sample for AI-change audit support.
+
+## When to use
+
+- **Sales conversations about Governance Pack** — hand prospects
+  `sample-audit-report.md` so they see the artifact shape before signing.
+- **Customer onboarding** — use the sample as the base for the first
+  delivered report; the structure is engagement-ready.
+- **AI policy / risk-committee briefings** — share the sample as the
+  neutral evidence layer the org's AI-change policy attests to.
 
 ## Files
 
-- `audit-report.md.tmpl` — Markdown skeleton with `{{PLACEHOLDER}}` slots for
-  auto-generated content and `<!-- TODO[narrative]: ... -->` slots for the
-  auditor's prose. Used by the older codebase-architecture audit deliverable.
-- `render.py` — Chains `roam audit --json` plus supporting commands, fills the
-  auto-generated slots, and emits a partial markdown file ready for narrative
-  completion.
-- `sample-redacted.md` / `sample-redacted.pdf` — Redacted, narrative-complete
-  example of the codebase-architecture audit (~12 pages).
-- `sample-pr-replay-team.md` — **PR Replay sample** (illustrative, not real
-  customer data). The shape `roam pr-replay --tier team` produces today.
-  Share with prospects who ask "what does the Team-tier deliverable look
-  like?". Read this before quoting a paid PR Replay engagement so you and
-  the buyer align on the artefact shape.
+- `sample-audit-report.md` — **Agent Governance Evidence Pack sample**
+  (illustrative). Mirrors the seven-section outline the paid deliverable
+  ships with: which agents changed what, context each agent read, risks
+  accepted vs. mitigated, who authorized risky edits, which tests closed
+  the loop, compliance-control cross-reference, and the disclaimer.
+- `evidence-checklist.md` — Per-section command index. Maps each section
+  of the Governance sample to the exact `roam` commands and envelope
+  fields that produce its evidence.
+- `audit-report.md.tmpl` — Markdown skeleton for the older codebase-
+  architecture audit. `{{PLACEHOLDER}}` slots for auto-content,
+  `<!-- TODO[narrative]: ... -->` slots for auditor prose.
+- `render.py` — Chains `roam audit --json` plus supporting commands, fills
+  the auto-content slots of `audit-report.md.tmpl`, and emits a partial
+  markdown file ready for narrative completion.
+- `sample-redacted.md` / `sample-redacted.pdf` — Redacted, narrative-
+  complete codebase-architecture audit (~12 pages).
+- `sample-pr-replay-team.md` — **PR Replay sample** (illustrative). The
+  shape `roam pr-replay --tier team` produces today. Read this before
+  quoting a paid PR Replay engagement.
+
+## How to generate a real Governance report
+
+1. Index the target repository at the audit-period HEAD SHA:
+
+   ```bash
+   cd /path/to/target-repo && roam init
+   ```
+
+2. Verify ledger integrity for the audit period (any failure is a finding):
+
+   ```bash
+   for r in $(roam --json runs list --since 2026-04-01 | jq -r '.runs[].run_id'); do
+       roam --json runs verify "$r"
+   done
+   ```
+
+3. Walk the per-section command list in `evidence-checklist.md`. Each
+   section names the exact `roam` commands and envelope fields needed.
+
+4. Render the markdown report (start from `sample-audit-report.md` as the
+   structural template), fill in the customer name, period, and per-section
+   findings.
+
+5. Optionally render to PDF with Pandoc (see the codebase-architecture
+   workflow below for an eisvogel-template example).
 
 ## Workflow
 
@@ -82,3 +123,15 @@ that `roam pr-replay` emits today.
   policy that backs that claim.)
 - roam-code is licensed under Apache 2.0; you may share a redacted sample of this
   report (with the client's permission) as a case study.
+
+## Disclaimer (Governance Pack)
+
+The Agent Governance Evidence Pack delivers **evidence support**, not
+formal certification. The control-mapping table in
+`sample-audit-report.md` cross-references Roam artifacts to commonly-cited
+controls (SOC 2, ISO/IEC 42001, EU AI Act, NIST AI RMF) so auditors and
+risk officers can locate the relevant Roam evidence for their own
+framework. Roam does not perform compliance attestation; whether any
+particular control applies, and what additional evidence is required for
+formal certification, is a determination for qualified counsel or
+auditors.

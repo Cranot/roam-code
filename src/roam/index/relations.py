@@ -3,6 +3,269 @@
 from __future__ import annotations
 
 import os
+import re
+
+# ---------------------------------------------------------------------------
+# W167 — import-edge text verification
+# ---------------------------------------------------------------------------
+#
+# The resolver below maps unresolved import names to whichever indexed
+# symbol shares the same simple name. When the imported module is a
+# third-party / stdlib package that isn't itself indexed (``yaml``,
+# ``time``, ``timezone``...), the resolver falls back to a local symbol
+# of the same name — often a variable inside a test file. The result is
+# a ``kind='import'`` edge that does not correspond to any real import
+# statement in the source file. W158 caught the worst class of these
+# (non-test -> test) at the laws-miner layer; W167 fixes the upstream
+# generator by verifying every ``kind='import'`` edge against the raw
+# source text before it lands in the database.
+#
+# The helpers below extract the *set of imported names* from a source
+# file by scanning import statements directly. Multi-line ``from X
+# import (a, b, c)`` blocks are handled. Docstrings and ``#`` comments
+# are masked so prose like ``... should import yaml ...`` inside a
+# docstring cannot fake an import. Non-Python languages are handled by
+# generalising the keyword set (``import``, ``from ... import``,
+# ``use``, ``require``, ``#include``) and treating any token following
+# one of those keywords (on the same line or inside an immediately
+# trailing ``(...)`` / ``{...}`` block) as an "imported name".
+
+# Recognises any line whose first non-whitespace token is one of the import
+# keywords we support across languages. We match an opening ``(`` / ``{``
+# explicitly on the same line so the block-scanner can pick up multi-line
+# import bodies.
+_RX_IMPORT_LINE = re.compile(
+    r"^[ \t]*"
+    r"(?:"
+    r"import\b"          # python / java / scala / kotlin / typescript / swift
+    r"|from\s+\S+\s+import\b"   # python
+    r"|use\b"            # rust / php / scala
+    r"|using\b"          # c# / c++
+    r"|require\b"        # ruby / php / node
+    r"|require_relative\b"
+    r"|include\b"        # ruby / php / perl
+    r"|#\s*include\b"    # c / c++
+    r"|@import\b"        # objective-c / css
+    r"|package\b"        # go
+    r")"
+    r"([^\n]*)",
+    re.MULTILINE,
+)
+
+# Capture token-like names within the body of an import line/block.
+_RX_NAME_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _mask_strings_and_comments(text: str) -> str:
+    # A regex-based masker is too brittle for the cases we care about: a
+    # single-line Python string that embeds two consecutive triple-quote
+    # tokens (an actual case seen in tests/test_python_pivot.py around
+    # the generated-file fixtures) confuses a non-greedy "..."[\s\S]*?"..."
+    # match into spanning across legitimate code.  We use a small forward
+    # state machine instead.  At each character we are in exactly one of:
+    #
+    #   * normal code
+    #   * inside a ``#`` line comment (python / shell / ruby)
+    #   * inside a ``//`` line comment (c / cpp / java / js)
+    #   * inside a ``/* ... */`` block comment
+    #   * inside a single-line string ``"..."`` / ``'...'`` / ``\`...\```
+    #   * inside a triple-quoted string (``"""..."""`` or ``'''...'''``)
+    #
+    # Within a single-line string we honour ``\\`` escapes so ``"a\\"b"``
+    # stays a single string.  Backslash-newline (Python line continuation
+    # inside a string) is treated as escape, the typical case.
+    #
+    # The output has the same length and line layout as ``text``: masked
+    # regions are filled with spaces, newlines preserved.
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        nxt2 = text[i + 2] if i + 2 < n else ""
+        # ``#`` line comment (python / shell / ruby — and harmless in C++)
+        if ch == "#":
+            j = text.find("\n", i)
+            if j == -1:
+                j = n
+            out.append(" " * (j - i))
+            i = j
+            continue
+        # ``//`` line comment (c / c++ / java / js)
+        if ch == "/" and nxt == "/":
+            j = text.find("\n", i)
+            if j == -1:
+                j = n
+            out.append(" " * (j - i))
+            i = j
+            continue
+        # ``/* ... */`` block comment
+        if ch == "/" and nxt == "*":
+            j = text.find("*/", i + 2)
+            if j == -1:
+                j = n
+            else:
+                j += 2
+            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
+            i = j
+            continue
+        # String-prefix handling — ``r``/``b``/``rb``/``br`` (any case)
+        # may precede a string literal in Python. We don't blank the
+        # prefix letters (they're part of the source code), but we need
+        # to skip past them so the next iteration sees the quote.
+        # Triple-quoted ``"""..."""`` or ``'''...'''``
+        if (ch == '"' and nxt == '"' and nxt2 == '"') or (
+            ch == "'" and nxt == "'" and nxt2 == "'"
+        ):
+            quote = ch * 3
+            j = text.find(quote, i + 3)
+            if j == -1:
+                j = n
+            else:
+                j += 3
+            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
+            i = j
+            continue
+        # Single-line ``"..."`` / ``'...'`` / ``\`...\```
+        if ch in '"\'`':
+            quote = ch
+            j = i + 1
+            while j < n and text[j] != quote and text[j] != "\n":
+                if text[j] == "\\" and j + 1 < n:
+                    j += 2
+                else:
+                    j += 1
+            if j < n and text[j] == quote:
+                j += 1
+            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
+            i = j
+            continue
+        # Normal code character — pass through
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _extract_imported_names(source_text: str) -> set[str]:
+    """Return the set of names that ``source_text`` imports.
+
+    A name is considered "imported" if it appears as a token on a line
+    whose first keyword is one of the cross-language import keywords
+    handled by :data:`_RX_IMPORT_LINE`, or inside a ``(...)`` / ``{...}``
+    block opened on such a line. Multi-line ``from X import (a, b)`` and
+    Go-style ``import ( ... )`` blocks are handled by the bracket-scanner.
+
+    The set is deliberately permissive — false positives here only mean
+    a phantom import edge slips through verification, never that a real
+    import is dropped. Conversely, the set is the conservative side of
+    the W167 fix: any name NOT in this set is guaranteed to not be a
+    written import in ``source_text``.
+    """
+    if not source_text:
+        return set()
+    masked = _mask_strings_and_comments(source_text)
+    names: set[str] = set()
+    pos = 0
+    text_len = len(masked)
+    for match in _RX_IMPORT_LINE.finditer(masked):
+        if match.start() < pos:
+            continue  # inside a previously-scanned block
+        rest = match.group(1) or ""
+        # Track an open ``(`` / ``{`` so we can pick up multi-line imports.
+        line_end = masked.find("\n", match.end())
+        if line_end == -1:
+            line_end = text_len
+        block_text = rest
+        cursor = match.end()
+        if "(" in rest and ")" not in rest:
+            close = masked.find(")", cursor)
+            if close != -1:
+                block_text = masked[match.start(1) : close]
+                cursor = close + 1
+        elif "{" in rest and "}" not in rest:
+            close = masked.find("}", cursor)
+            if close != -1:
+                block_text = masked[match.start(1) : close]
+                cursor = close + 1
+        else:
+            block_text = rest
+            cursor = line_end
+        for token in _RX_NAME_TOKEN.findall(block_text):
+            if token in {"as", "from", "import", "use", "using", "require",
+                         "require_relative", "include", "package"}:
+                continue
+            names.add(token)
+        pos = cursor
+    return names
+
+
+def _verify_import_edges(
+    edges: list[dict],
+    imported_names_by_file: dict[str, set[str]],
+    drop_counter: dict[str, int],
+) -> list[dict]:
+    """Drop ``kind='import'`` edges whose target name does not appear in the
+    source file's actual import statements.
+
+    ``edges`` is the in-place list of edge dicts produced by
+    :func:`resolve_references` augmented with a transient ``_target_name``
+    field (the ref's pre-resolution name). ``imported_names_by_file`` is a
+    pre-computed cache of imported-name sets keyed by relative source path.
+    ``drop_counter`` is mutated to expose ``dropped_import_edges`` for
+    diagnostic reporting (read by the indexer log path; safe to ignore).
+
+    Non-import edges and edges whose source file we could not read are
+    passed through unchanged. The transient ``_target_name`` key is
+    stripped before returning.
+    """
+    verified: list[dict] = []
+    dropped = 0
+    for edge in edges:
+        kind = edge.get("kind", "")
+        target_name = edge.pop("_target_name", None)
+        if kind != "import" or not target_name:
+            verified.append(edge)
+            continue
+        source_path = edge.pop("_source_path", "")
+        names = imported_names_by_file.get(source_path)
+        if names is None:
+            # No text for the source file (unreadable / not on disk):
+            # err on the side of keeping the edge. Better one stray
+            # phantom than dropping a real import.
+            verified.append(edge)
+            continue
+        if target_name in names:
+            verified.append(edge)
+        else:
+            dropped += 1
+    # Additive (not overwriting): the W181 import-filter in
+    # ``_resolve_standard`` may have already incremented this key for
+    # phantom edges it caught pre-edge-emission. Both layers detect
+    # the same phantom-edge class, so a single combined counter is
+    # the right telemetry shape.
+    drop_counter["dropped_import_edges"] = (
+        drop_counter.get("dropped_import_edges", 0) + dropped
+    )
+    return verified
+
+
+def _read_source_text(rel_path: str, project_root: str | None) -> str | None:
+    """Read a source file relative to ``project_root`` (or CWD if None).
+
+    Returns ``None`` if the read fails for any reason — callers treat
+    "no source text" as "skip verification for this file".
+    """
+    if not rel_path:
+        return None
+    base = project_root or os.getcwd()
+    full = os.path.join(base, rel_path)
+    try:
+        with open(full, "r", encoding="utf-8", errors="ignore") as fh:
+            return fh.read()
+    except (OSError, ValueError):
+        return None
+
 
 # Path-priority weights for cross-file symbol resolution. When the same
 # function name is defined in both a dev/ helper script and the canonical
@@ -39,10 +302,140 @@ def _path_score(path: str) -> int:
     return score
 
 
+# ---------------------------------------------------------------------------
+# W181 — import-target shape preference
+# ---------------------------------------------------------------------------
+#
+# W158 dropped non-test -> test "import" edges at the laws-miner layer.
+# W167 added a text-check at the resolver layer (drop kind='import' edges
+# whose target name isn't written as an import in the source text). W181
+# is the *upstream* fix: when resolving an ``import X`` reference, the
+# fuzzy-name lookup must not pick a symbol whose kind is *intrinsically
+# unable* to be an import target. Local variables, function parameters,
+# block-local bindings, and instance properties are never the legitimate
+# target of ``import X`` / ``from Y import X`` — when the resolver lands
+# on one of those, it has fabricated an edge from name-collision noise.
+#
+# The cleanest fix is to PRE-FILTER the candidate set used for
+# ``kind='import'`` resolution. If the filter empties the set, the
+# resolver returns ``None`` and no edge is emitted (better than a
+# phantom). This is strictly narrower than the W167 text-check: text
+# verification still catches edges where the symbol IS a valid import
+# target shape but the source file doesn't actually contain that
+# import statement (a different bug class — e.g. resolver case-folding
+# ``time`` to a ``TIME`` constant). Both layers are kept as
+# defence-in-depth; W181 prevents the bug, W167 catches it if a
+# language extractor regresses, W158 catches it at the law layer.
+#
+# Symbol kinds that are NEVER legitimate import targets. The Python
+# extractor emits ``variable`` for module-level bindings (which CAN be
+# imported — ``from foo import SOME_VAR`` works), so we deliberately
+# DO NOT blanket-drop ``variable`` here. We only drop variables/
+# parameters/locals whose file_path is a *test* file: real import
+# targets do not live inside test modules.
+#
+# The "property" kind is always demoted: a class property is never an
+# import target. The "local"/"parameter" kinds (if any extractor emits
+# them) are also always demoted.
+_IMPORT_TARGET_DEMOTE_KINDS = frozenset({"local", "parameter", "property"})
+
+
+def _is_test_path(path: str) -> bool:
+    """Cheap, intentionally narrow test-path check used at the indexer
+    layer to guard against test-module variables being picked as
+    import targets from non-test source.
+
+    W928 verification (2026-05-15): the W873-era comment claimed this
+    helper "deliberately avoids the roam.commands import cycle" — that
+    claim was wrong. The transitive import set of
+    ``roam.commands.changed_files`` is
+    ``{roam.git_utils, roam.index.file_roles, roam.index.test_conventions}``
+    and never reaches ``roam.index.relations``. No cycle exists.
+
+    The helper is preserved as-is because its classification is
+    deliberately narrower than
+    :func:`roam.commands.changed_files.is_test_file`:
+
+    * directory-only (``tests/``, ``test/``); no ``spec/`` /
+      ``__tests__/``;
+    * no basename heuristics (``test_*``, ``*_test.go``,
+      ``conftest.py``, ``*.test.*``, ``*.spec.*``);
+    * lower-cases input so e.g. uppercase ``TESTS/`` is treated as a
+      test path on case-sensitive filesystems.
+
+    Broadening this to ``is_test_file`` would change which variables
+    survive :func:`_filter_import_candidates` (e.g. dropping a
+    module-level constant exported from ``conftest.py`` into ``src/``
+    imports) and reshape resolved import edges across the index. If
+    the broader classification is ever wanted, that is a behavioural
+    change to make deliberately with a dedicated reindex audit.
+    """
+    if not path:
+        return False
+    p = path.replace("\\", "/").lower()
+    return "/tests/" in p or "/test/" in p or p.startswith("tests/") or p.startswith("test/")
+
+
+def _filter_import_candidates(
+    candidates: list[dict],
+    source_file: str,
+) -> list[dict]:
+    """Return only candidates that can plausibly be ``import X`` targets.
+
+    Rules:
+    - Drop any candidate whose ``kind`` is in
+      :data:`_IMPORT_TARGET_DEMOTE_KINDS` (``local``, ``parameter``,
+      ``property``).
+    - Drop ``variable`` candidates that live in a test file unless the
+      *source* file is also a test file. A module-level constant in
+      tests/ is never legitimately imported from src/.
+    - If the rules empty the set, the caller emits NO edge — better
+      than a phantom.
+    """
+    if not candidates:
+        return candidates
+    source_is_test = _is_test_path(source_file)
+    out: list[dict] = []
+    for cand in candidates:
+        kind = (cand.get("kind") or "").lower()
+        if kind in _IMPORT_TARGET_DEMOTE_KINDS:
+            continue
+        if kind == "variable" and not source_is_test:
+            cand_path = cand.get("file_path") or ""
+            if _is_test_path(cand_path):
+                continue
+        out.append(cand)
+    return out
+
+
+def _filter_symbols_for_import(
+    symbols_by_name: dict[str, list[dict]],
+    target_name: str,
+    source_file: str,
+) -> dict[str, list[dict]]:
+    """Return a per-call view of ``symbols_by_name`` where the candidate
+    list for ``target_name`` is filtered by :func:`_filter_import_candidates`.
+
+    The returned dict is a shallow copy that overrides ONLY the
+    ``target_name`` entry — every other key still aliases the original
+    list. This lets us reuse :func:`_best_match` without rewriting the
+    candidate-ranking logic for the import path.
+    """
+    original = symbols_by_name.get(target_name, [])
+    filtered = _filter_import_candidates(original, source_file)
+    if filtered is original:
+        return symbols_by_name
+    view = dict(symbols_by_name)
+    view[target_name] = filtered
+    return view
+
+
 def resolve_references(
     references: list[dict],
     symbols_by_name: dict[str, list[dict]],
     files_by_path: dict[str, int],
+    project_root: str | None = None,
+    drop_stats: dict[str, int] | None = None,
 ) -> list[dict]:
     """Resolve references to concrete symbol edges.
 
@@ -51,6 +444,15 @@ def resolve_references(
         symbols_by_name: Mapping from symbol name -> list of symbol dicts
             (each with at least 'id', 'file_id', 'file_path', 'qualified_name').
         files_by_path: Mapping from file path -> file_id.
+        project_root: Optional absolute project-root path used to resolve the
+            relative ``source_file`` of each reference when reading source text
+            for the W167 import-edge verification pass. Defaults to the
+            current working directory, which is the project root during a
+            normal ``roam init`` invocation.
+        drop_stats: Optional mutable dict that the verification pass writes
+            its dropped-edge counter into (under key
+            ``dropped_import_edges``). Pass an empty dict to receive
+            indexing-time diagnostics; pass ``None`` to discard them.
 
     Returns:
         List of edge dicts with source_id, target_id, kind, line, source_file_id.
@@ -114,8 +516,11 @@ def resolve_references(
         source_sym = _best_match(source_name, source_file, symbols_by_name)
         if source_sym is None:
             # Fallback for top-level code (e.g. Vue <script setup>, Python module scope):
-            # pick the closest symbol at or before the reference line
-            source_sym = _closest_symbol(source_file, line, _file_symbols)
+            # pick the closest symbol at or before the reference line.
+            # W742: for kind='import', _closest_symbol skips the syms[0]
+            # fallback so module-scope imports don't mis-attribute to
+            # whichever function happens to be first in the file.
+            source_sym = _closest_symbol(source_file, line, _file_symbols, kind=kind)
         if source_sym is None:
             continue
 
@@ -156,6 +561,7 @@ def resolve_references(
                 symbols_by_qualified,
                 symbols_by_name_lower,
                 import_map,
+                drop_counter=drop_stats,
             )
 
         if target_sym is None:
@@ -172,15 +578,41 @@ def resolve_references(
             continue
         seen.add(edge_key)
 
-        edges.append(
-            {
-                "source_id": source_id,
-                "target_id": target_id,
-                "kind": kind,
-                "line": line,
-                "source_file_id": files_by_path.get(source_file),
-            }
-        )
+        edge_record: dict = {
+            "source_id": source_id,
+            "target_id": target_id,
+            "kind": kind,
+            "line": line,
+            "source_file_id": files_by_path.get(source_file),
+        }
+        if kind == "import":
+            # Stash the pre-resolution target name and source path on the
+            # edge so the W167 verification pass can text-check them
+            # against the actual import statements in the source file.
+            # Both keys are popped by ``_verify_import_edges`` before
+            # the edge is returned to the caller.
+            edge_record["_target_name"] = target_name
+            edge_record["_source_path"] = source_file
+        edges.append(edge_record)
+
+    # W167: drop ``kind='import'`` edges whose target name isn't written as
+    # an import in the source file. This filters resolver fuzzy-match
+    # false positives (e.g. ``import yaml`` resolving to a ``yaml`` local
+    # variable in some test file when no real ``yaml`` module is indexed).
+    if edges:
+        imported_names_by_file: dict[str, set[str]] = {}
+        for edge in edges:
+            if edge.get("kind") != "import":
+                continue
+            src_path = edge.get("_source_path", "")
+            if not src_path or src_path in imported_names_by_file:
+                continue
+            text = _read_source_text(src_path, project_root)
+            if text is None:
+                continue
+            imported_names_by_file[src_path] = _extract_imported_names(text)
+        counter: dict[str, int] = drop_stats if drop_stats is not None else {}
+        edges = _verify_import_edges(edges, imported_names_by_file, counter)
 
     return edges
 
@@ -210,28 +642,87 @@ def _resolve_standard(
     symbols_by_qualified,
     symbols_by_name_lower,
     import_map,
+    drop_counter: dict[str, int] | None = None,
 ):
-    """Standard multi-strategy resolution: qualified -> simple -> case-insensitive."""
+    """Standard multi-strategy resolution: qualified -> simple -> case-insensitive.
+
+    ``drop_counter`` is optional. When provided and the W181 import-filter
+    short-circuits an ``import`` ref to ``None`` (every candidate dropped
+    as a fabricated import target), the resolver increments
+    ``drop_counter["dropped_import_edges"]`` so the call-site can report
+    the same telemetry the W167 verification pass produces. The two
+    counters share a key because they detect the same class of phantom
+    edge at different stages (W181 = pre-edge filtering; W167 = post-edge
+    text verification).
+    """
+    # W181: for ``kind='import'`` resolution, pre-filter the candidate
+    # set to drop kinds that are never legitimate import targets
+    # (``local``, ``parameter``, ``property``) plus ``variable``
+    # candidates that live in test files (real source code does not
+    # import FROM tests/). If the filter empties the candidate set,
+    # we return ``None`` and emit no edge — strictly better than a
+    # fabricated phantom edge to a same-named local. The W167 text
+    # verification and W158 sanity filter remain as defence-in-depth.
+    if kind == "import":
+        # Compare against the unfiltered candidate set so we can tell
+        # "no candidates ever existed" (which is NOT a phantom drop —
+        # the symbol simply isn't indexed) from "candidates existed but
+        # the import-filter emptied them" (which IS a phantom drop and
+        # should be counted).
+        raw_qn_candidates = symbols_by_qualified.get(target_name, [])
+        raw_simple_candidates = symbols_by_name.get(target_name, [])
+        raw_lower_candidates = symbols_by_name_lower.get(target_name.lower(), [])
+        any_raw_candidates = bool(
+            raw_qn_candidates or raw_simple_candidates or raw_lower_candidates
+        )
+
+        view_by_name = _filter_symbols_for_import(
+            symbols_by_name, target_name, source_file,
+        )
+        view_by_name_lower = _filter_symbols_for_import(
+            symbols_by_name_lower, target_name.lower(), source_file,
+        )
+        qn_candidates = _filter_import_candidates(raw_qn_candidates, source_file)
+        # If qualified-name filtering produced an empty list but the raw
+        # list was non-empty, do NOT fall through to simple-name lookup
+        # (the simple-name lookup has its own filtered view and would
+        # produce the same emptiness).
+        candidates_for_simple = view_by_name.get(target_name, [])
+        candidates_for_lower = view_by_name_lower.get(target_name.lower(), [])
+        if not qn_candidates and not candidates_for_simple and not candidates_for_lower:
+            if any_raw_candidates and drop_counter is not None:
+                # Record the phantom drop so callers see consistent
+                # telemetry regardless of whether the filter (W181) or
+                # the verifier (W167) caught the edge.
+                drop_counter["dropped_import_edges"] = (
+                    drop_counter.get("dropped_import_edges", 0) + 1
+                )
+            return None
+    else:
+        view_by_name = symbols_by_name
+        view_by_name_lower = symbols_by_name_lower
+        qn_candidates = symbols_by_qualified.get(target_name, [])
+
     # 1. Qualified name exact match
-    qn_matches = symbols_by_qualified.get(target_name, [])
+    qn_matches = qn_candidates
     target_sym = qn_matches[0] if len(qn_matches) == 1 else None
     if len(qn_matches) > 1:
         target_sym = _best_match(
             target_name,
             source_file,
-            symbols_by_name,
+            view_by_name,
             ref_kind=kind,
             source_parent=source_parent,
             import_map=import_map,
         )
-    target_sym = _prefer_local(target_sym, target_name, source_file, symbols_by_name)
+    target_sym = _prefer_local(target_sym, target_name, source_file, view_by_name)
 
     # 2. Simple name with disambiguation
     if target_sym is None:
         target_sym = _best_match(
             target_name,
             source_file,
-            symbols_by_name,
+            view_by_name,
             ref_kind=kind,
             source_parent=source_parent,
             import_map=import_map,
@@ -242,7 +733,7 @@ def _resolve_standard(
         target_sym = _best_match(
             target_name.lower(),
             source_file,
-            symbols_by_name_lower,
+            view_by_name_lower,
             ref_kind=kind,
             source_parent=source_parent,
             import_map=import_map,
@@ -385,6 +876,7 @@ def _closest_symbol(
     source_file: str,
     ref_line: int | None,
     file_symbols: dict[str, list[dict]],
+    kind: str = "call",
 ) -> dict | None:
     """Find the symbol that contains ref_line, or fall back to file-level source.
 
@@ -392,11 +884,25 @@ def _closest_symbol(
     When no symbol contains the reference (module-scope code like watch callbacks),
     returns the first symbol in the file as a file-level source to avoid
     self-references from "closest before" matching a completed function.
+
+    W742: For ``kind='import'`` references, the file-level ``syms[0]``
+    fallback is suppressed. Module-scope imports must NOT be attributed
+    to whichever function happens to be first in the file — that produces
+    phantom IMPORT edges (e.g. a 3-line ``_format_count`` formatter
+    inheriting 18 outgoing imports from ``indexer.py`` and, via the
+    effects propagator, inheriting transitive filesystem/db/cache
+    effects it never uses). Imports at module scope should not attribute
+    to any symbol; the caller skips the edge when this returns ``None``.
     """
     syms = file_symbols.get(source_file)
     if not syms:
         return None
     if ref_line is None:
+        # W742: imports without a line cannot be safely attributed
+        # to syms[0] (module-scope imports). Other kinds keep the
+        # legacy file-level placeholder behaviour.
+        if kind == "import":
+            return None
         return syms[0]
 
     # Prefer symbol that CONTAINS the reference line (most nested wins)
@@ -410,6 +916,11 @@ def _closest_symbol(
         return containing
 
     # No containing symbol — reference is at module scope.
+    # W742: for kind='import', do NOT fall back to syms[0]. Module-scope
+    # imports otherwise mis-attribute to whichever symbol happens to be
+    # first in the file (see docstring). The caller drops the edge.
+    if kind == "import":
+        return None
     # Return first symbol in file as a "file-level" source.
     return syms[0]
 

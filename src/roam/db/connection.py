@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -66,14 +66,34 @@ def _load_project_config(project_root: Path) -> dict:
     """Load .roam/config.json if it exists.
 
     Returns an empty dict if the file is missing or malformed.
+
+    W740 rationale (narrowed from bare ``except Exception``)
+    -------------------------------------------------------
+    The original handler caught every ``Exception`` — including
+    programmer-class bugs (``NameError`` / ``AttributeError`` /
+    ``TypeError`` / ``ImportError``) — and silently returned ``{}``. Per
+    W531 fail-loud + W653 incident discipline, bug-class exceptions MUST
+    propagate so a degraded config-load path never masks a refactor that
+    broke this function. The narrow set covers the legitimate "config
+    file is unreadable or malformed" cases the empty-dict fallback was
+    designed for:
+
+    * ``OSError`` — covers ``FileNotFoundError`` (TOCTOU between
+      ``exists()`` and ``read_text()``) and ``PermissionError``
+      (filesystem ACLs / Windows handle locks).
+    * ``json.JSONDecodeError`` — malformed JSON (incomplete write,
+      hand-edited typo, partial truncation).
+    * ``UnicodeDecodeError`` — file present but not valid UTF-8 (mojibake
+      from a misconfigured editor or a binary blob mistakenly written
+      here).
     """
+    import json
+
     config_path = project_root / DEFAULT_DB_DIR / "config.json"
     if config_path.exists():
         try:
-            import json
-
             return json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             pass
     return {}
 
@@ -184,6 +204,10 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
     # bump that captures more of a 5M-LOC repo's working set without
     # over-claiming address space on smaller systems. The OS pager caps
     # effective use at the available memory anyway.
+    # Practical cap is ``min(declared, addressable)`` — on 32-bit Python /
+    # 32-bit OS builds the kernel rejects the full 1GB mapping silently
+    # (SQLite falls back to a smaller window), so the declared value is
+    # the *ceiling*, not the guaranteed working set.
     conn.execute("PRAGMA mmap_size=1073741824")  # 1GB memory-mapped I/O
     # WAL auto-checkpoint default is 1000 pages; 10000 reduces write
     # amplification 10x on heavy index loads. No-op on the cloud-sync
@@ -328,6 +352,68 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     # re-index the column reflects the actual structural signal.
     (51, "math_signals.loop_eq_with_dependent_write",
         _alter("math_signals", "loop_eq_with_dependent_write", "INTEGER DEFAULT 0")),
+    # W82 / ROADMAP A8: index_manifest.steps_status — JSON map of per-sub-step
+    # completion status ({step: {status, error_excerpt, duration_ms}}). Lets
+    # `roam doctor` surface "your index is missing X because that step failed".
+    # Older rows leave this NULL; the doctor check tolerates NULL as "no
+    # per-step data recorded for this run" (treated as pass).
+    (52, "index_manifest.steps_status", _alter("index_manifest", "steps_status", "TEXT")),
+    # W81 / ROADMAP A6: per-component VERSION stamps for drift detection.
+    # When a bridge / extractor / detector changes its inference logic,
+    # the rows it produced under the older VERSION carry stale shape.
+    # These columns let consumers (`roam doctor`, manifest diff, bundle
+    # import) spot the drift WITHOUT a full re-index — they can compare
+    # the stamped version against the ABC's current ``VERSION`` class
+    # attribute. NULL means "produced by a pre-A6 indexer" (treated as
+    # 1.0.0 for compatibility). Findings get no column because the
+    # ``findings`` TABLE doesn't exist in the schema yet (A4 / hybrid
+    # finding registry is queued; ``findings`` shows up only as a JSON
+    # field in command envelopes today). When A4 lands and creates the
+    # table, add a sibling ``findings.source_version`` migration.
+    (53, "edges.bridge_version", _alter("edges", "bridge_version", "TEXT")),
+    (54, "symbols.extractor_version", _alter("symbols", "extractor_version", "TEXT")),
+    # index_manifest.component_versions — JSON object capturing the
+    # version map at index time, shape:
+    # ``{"bridges": {name: ver}, "detectors": {task: ver}, "extractors": {lang: ver}}``.
+    # Consumers compare row-N to row-N-1 to spot a bump and decide
+    # whether to invalidate stamped rows. Older runs leave this NULL.
+    (55, "index_manifest.component_versions", _alter("index_manifest", "component_versions", "TEXT")),
+    # W90 / ROADMAP A4: hybrid findings registry table. SCHEMA_SQL creates
+    # it on fresh DBs (CREATE TABLE IF NOT EXISTS); this migration handles
+    # legacy DBs created before A4. ``ON CREATE TABLE IF NOT EXISTS`` is
+    # idempotent — re-running on an already-migrated DB is a no-op. The
+    # source_version column was reserved by W81 (ROADMAP A6); landing the
+    # table now activates that reservation. Indexes are created in the same
+    # step (also idempotent) so a consumer that runs `roam findings` on a
+    # legacy DB hits indexed scans, not full table scans.
+    (56, "findings registry table + indexes", _exec(
+        "CREATE TABLE IF NOT EXISTS findings ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "finding_id_str TEXT NOT NULL UNIQUE, "
+        "subject_kind TEXT NOT NULL, "
+        "subject_id INTEGER, "
+        "claim TEXT NOT NULL, "
+        "evidence_json TEXT, "
+        "confidence TEXT, "
+        "source_detector TEXT NOT NULL, "
+        "source_version TEXT, "
+        "supersedes_id INTEGER REFERENCES findings(id) ON DELETE SET NULL, "
+        "suppressions_json TEXT DEFAULT '[]', "
+        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        ")"
+    )),
+    (57, "idx_findings_subject", _exec(
+        "CREATE INDEX IF NOT EXISTS idx_findings_subject "
+        "ON findings(subject_kind, subject_id)"
+    )),
+    (58, "idx_findings_detector", _exec(
+        "CREATE INDEX IF NOT EXISTS idx_findings_detector "
+        "ON findings(source_detector)"
+    )),
+    (59, "idx_findings_created", _exec(
+        "CREATE INDEX IF NOT EXISTS idx_findings_created "
+        "ON findings(created_at)"
+    )),
 ]
 
 
@@ -361,7 +447,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 # The CI check tests/test_user_version_discipline.py enforces this by
 # snapshotting a hash of schema.py; if the hash drifts, the test
 # requires USER_VERSION to drift too (lockstep updates).
-USER_VERSION = 13
+USER_VERSION = 17
 
 # Derived from the ledger so adding/removing a migration auto-updates
 # the count without a manual touch. The pin test in

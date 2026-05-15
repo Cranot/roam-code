@@ -75,6 +75,18 @@ _LARAVEL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Vue Router (vue-router 4 / Nuxt): { path: '/users', component: ... }
+# Vue Router routes are declared as object literals inside createRouter({ routes: [...] }).
+# Each route object exposes ``path: '...'`` and optionally ``name``, ``component``,
+# ``redirect``. We match the path string and the next ``component:`` /
+# ``redirect:`` identifier to surface a handler.
+_VUE_ROUTER_PATH_RE = re.compile(
+    r"""\{\s*(?:[^{}]*?,\s*)?path\s*:\s*['"]([^'"]+)['"]""",
+)
+_VUE_ROUTER_COMPONENT_RE = re.compile(
+    r"""(?:component|redirect)\s*:\s*(?:\(\s*\)\s*=>\s*import\s*\(\s*['"]([^'"]+)['"]|['"]([^'"]+)['"]|(\w+))""",
+)
+
 # GraphQL: type Query { field(...): ... }
 _GRAPHQL_QUERY_RE = re.compile(
     r"""type\s+(Query|Mutation|Subscription)\s*\{([^}]+)\}""",
@@ -116,6 +128,8 @@ _METHOD_MAP = {
     "deletemapping": "DELETE",
     "requestmapping": "ANY",
     "Handle": "ANY",
+    # Vue Router doesn't carry an HTTP verb; reported verbatim.
+    "route": "ROUTE",
 }
 
 _SPRING_METHOD_MAP = {
@@ -256,6 +270,89 @@ def _detect_js_framework(source: str) -> str:
     if "next/" in src or "next/app" in src:
         return "nextjs"
     return "javascript"
+
+
+def _scan_vue_router(source: str, file_path: str, rel_path: str) -> list[dict]:
+    """Scan a JS/TS/Vue file for Vue Router route table entries.
+
+    Recognises ``createRouter({ routes: [...] })`` declarations and any
+    ``{ path: '...', component: ... }`` literals inside the routes array.
+    Vue Router is method-agnostic (it routes browser navigation, not HTTP
+    verbs), so every entry is reported as method ``ROUTE``.
+
+    Triggers only when the source mentions ``createRouter`` /
+    ``vue-router`` / ``defineRouter`` — keeps the scan from misfiring on
+    arbitrary object literals containing a ``path`` key (e.g. webpack
+    aliases).
+    """
+    # Only scan files that look like Vue Router config — the same
+    # path-literal pattern appears in plain object literals (webpack
+    # aliases, Next.js config), and we don't want false positives.
+    if not (
+        "createRouter" in source
+        or "vue-router" in source
+        or "defineRouter" in source
+        or "useRouter" in source and "routes" in source
+    ):
+        return []
+
+    endpoints: list[dict] = []
+    for m in _VUE_ROUTER_PATH_RE.finditer(source):
+        path = m.group(1)
+        line = _line_of(source, m.start())
+        # Look forward up to ~300 chars for the matching component / redirect.
+        tail = source[m.end() : m.end() + 400]
+        handler = ""
+        cm = _VUE_ROUTER_COMPONENT_RE.search(tail)
+        if cm:
+            handler = cm.group(1) or cm.group(2) or cm.group(3) or ""
+        endpoints.append(
+            {
+                "method": "ROUTE",
+                "path": path,
+                "handler": handler,
+                "file": rel_path,
+                "line": line,
+                "framework": "vue-router",
+            }
+        )
+    return endpoints
+
+
+def _scan_javascript_typescript_with_vue_router(source: str, file_path: str, rel_path: str) -> list[dict]:
+    """Wrapper: scan JS/TS source for both Express AND Vue Router routes.
+
+    Vue Router config files commonly live in ``router/index.ts`` /
+    ``src/router.js``, not in ``.vue`` SFCs. Folding both scanners into
+    one extension-map slot lets ``endpoints`` discover Vue Router
+    declarations without a separate registration per extension.
+    """
+    endpoints = _scan_javascript_typescript(source, file_path, rel_path)
+    endpoints.extend(_scan_vue_router(source, file_path, rel_path))
+    return endpoints
+
+
+def _scan_vue_sfc(source: str, file_path: str, rel_path: str) -> list[dict]:
+    """Scan a Vue SFC for routes declared inside ``<script setup>`` /
+    ``<script>`` blocks.
+
+    Strips the SFC down to its script content before reusing the JS/TS
+    scanners — Vue Router config sometimes lives inline in
+    ``App.vue`` / ``router.vue`` instead of a dedicated TS file. We
+    fall through to the same scanners ``.ts`` files use; the regexes
+    don't care about the surrounding ``<template>`` / ``<style>``
+    blocks but stripping them avoids matching path-like strings inside
+    template attributes.
+    """
+    script_blocks = re.findall(
+        r"<script(?:\s[^>]*)?>(.*?)</script>", source, re.DOTALL | re.IGNORECASE
+    )
+    if not script_blocks:
+        return []
+    joined = "\n".join(script_blocks)
+    # Reuse the JS/TS scanner so Express-style and Vue-Router-style
+    # endpoints inside SFC scripts are both picked up.
+    return _scan_javascript_typescript_with_vue_router(joined, file_path, rel_path)
 
 
 def _scan_go(source: str, file_path: str, rel_path: str) -> list[dict]:
@@ -528,12 +625,13 @@ def _extract_laravel_handler(source: str, after_pos: int) -> str:
 
 _EXT_SCANNER = {
     ".py": _scan_python,
-    ".js": _scan_javascript_typescript,
-    ".ts": _scan_javascript_typescript,
-    ".jsx": _scan_javascript_typescript,
-    ".tsx": _scan_javascript_typescript,
-    ".mjs": _scan_javascript_typescript,
-    ".cjs": _scan_javascript_typescript,
+    ".js": _scan_javascript_typescript_with_vue_router,
+    ".ts": _scan_javascript_typescript_with_vue_router,
+    ".jsx": _scan_javascript_typescript_with_vue_router,
+    ".tsx": _scan_javascript_typescript_with_vue_router,
+    ".mjs": _scan_javascript_typescript_with_vue_router,
+    ".cjs": _scan_javascript_typescript_with_vue_router,
+    ".vue": _scan_vue_sfc,
     ".java": _scan_java,
     ".rb": _scan_ruby,
     ".php": _scan_php,
@@ -666,8 +764,8 @@ def endpoints(ctx, framework, http_method, include_tests, group_by):
     this command catalogs all route definitions across 12 frameworks.
 
     Scans indexed source files for route definitions from Flask, FastAPI,
-    Django, Express, Spring, Rails, Laravel, Go net/http, GraphQL schemas,
-    and gRPC .proto files.
+    Django, Express, Spring, Rails, Laravel, Go net/http, Vue Router,
+    GraphQL schemas, and gRPC .proto files.
 
     Outputs HTTP method, URL path, handler function, file, and line.
     """
@@ -752,7 +850,7 @@ def endpoints(ctx, framework, http_method, include_tests, group_by):
         click.echo("  No endpoint definitions found in indexed files.")
         click.echo()
         click.echo("  Supported frameworks: Flask, FastAPI, Django, Express, Spring,")
-        click.echo("  Rails, Laravel, Go net/http, GraphQL (.graphql), gRPC (.proto)")
+        click.echo("  Rails, Laravel, Go net/http, Vue Router, GraphQL (.graphql), gRPC (.proto)")
         return
 
     # Group endpoints

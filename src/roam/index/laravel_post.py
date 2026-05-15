@@ -1,4 +1,4 @@
-"""Post-indexing pass for Laravel dynamic-dispatch idioms.
+r"""Post-indexing pass for Laravel dynamic-dispatch idioms.
 
 Why this exists
 ---------------
@@ -90,6 +90,20 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+
+from roam.index._containing_symbol import (
+    build_file_symbol_ranges,
+    containing_symbol_for_line,
+)
+
+# Audit A6: Laravel post-resolver is bridge-shaped (emits edges with
+# bridge='laravel') but is implemented as a module-level resolver rather
+# than a ``LanguageBridge`` subclass — the only consumer is the indexer,
+# not the registry. Module-level VERSION fills the same role as the ABC
+# class attribute: bump when the dispatch-inference regexes change in a
+# way that meaningfully alters the emitted edges. Stamped onto every
+# row via ``edges.bridge_version`` so consumers can detect drift.
+VERSION: str = "1.0.0"
 
 
 # Matches the class-string callable form: [ClassName::class, 'method']
@@ -240,24 +254,17 @@ def _build_class_id_by_name(conn) -> dict[str, int]:
     return out
 
 
-def _build_file_first_symbol(conn) -> dict[int, int]:
-    """Per-file lowest-id symbol — preferred edge source for files that
-    already have user-defined symbols. Synthetic anchors (see
-    ``_ensure_file_anchor_symbol``) are filtered out by name so a
-    previous resolver run's anchor cannot leak in as the "first" symbol
-    for a file that has since gained real symbols.
+def _build_file_symbol_ranges(conn) -> dict[int, list[tuple[int, int, int]]]:
+    """Per-file ``[(line_start, line_end, symbol_id), ...]`` ranges for
+    PHP symbols. Powers the W774 "innermost containing symbol" lookup
+    that replaced the prior ``MIN(id)`` synthetic-source.
+
+    Synthetic anchors (see ``_ensure_file_anchor_symbol``) are filtered
+    out by ``build_file_symbol_ranges`` so a previous resolver run's
+    anchor cannot leak in as a "containing" symbol for a file that has
+    since gained real symbols.
     """
-    out: dict[int, int] = {}
-    for row in conn.execute(
-        "SELECT s.file_id, MIN(s.id) AS first_id "
-        "FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE f.language = 'php' AND s.name != ? "
-        "GROUP BY s.file_id",
-        (SYNTHETIC_FILE_ANCHOR_NAME,),
-    ).fetchall():
-        if row["first_id"] is not None:
-            out[row["file_id"]] = row["first_id"]
-    return out
+    return build_file_symbol_ranges(conn, language="php")
 
 
 def _ensure_file_anchor_symbol(
@@ -309,7 +316,7 @@ def _scan_file_for_route_strings(
     project_root: Path,
     file_path: str,
     file_id: int,
-    file_first_symbol: dict[int, int],
+    file_symbol_ranges: dict[int, list[tuple[int, int, int]]],
     class_method_lookup: dict[tuple[str, str], int],
     class_id_by_name: dict[str, int],
     edges: list[tuple[int, int, str, int | None]],
@@ -319,10 +326,12 @@ def _scan_file_for_route_strings(
 ) -> None:
     """Find ``[Class::class, 'method']`` patterns and emit edges.
 
-    Edge source preference:
-    1. The file's first user-defined symbol — preferred when the route
-       file has a class or namespace declaration (e.g. an inline
-       controller using ``Route::*`` inside its constructor).
+    Edge source preference (W774 — replaces the W36.11 lowest-id pick):
+    1. The smallest user-defined symbol whose ``[line_start, line_end]``
+       contains the route declaration's line. For inline controllers
+       this is the constructor / method that holds the ``Route::*``
+       call; for top-level ``Route::get(...)`` in a class file this is
+       the class itself.
     2. A synthetic file anchor (W36.11) — for the common
        ``routes/web.php`` case where the file is all top-level
        ``Route::*`` calls with no class. The anchor's file_id is the
@@ -336,7 +345,7 @@ def _scan_file_for_route_strings(
     if "::class" not in source:
         return
 
-    file_anchor = file_first_symbol.get(file_id)
+    ranges = file_symbol_ranges.get(file_id, [])
 
     for m in _ROUTE_CLASS_STRING_RE.finditer(source):
         cls_qn = m.group(1)
@@ -345,10 +354,14 @@ def _scan_file_for_route_strings(
         target_id = class_method_lookup.get((cls_short, method))
         if target_id is None:
             continue
-        source_sym_id = file_anchor
+        line = source.count("\n", 0, m.start()) + 1
+        source_sym_id = containing_symbol_for_line(ranges, line) if ranges else None
         if source_sym_id is None:
             # W36.11: synthesize a file-anchor symbol so provenance points
-            # at the route file rather than the target class.
+            # at the route file rather than the target class. This is
+            # the correct outcome for symbol-less files (routes/web.php)
+            # and for files whose only symbols sit on lines AFTER the
+            # route declaration — never silent-fall to MIN(id) (W774).
             source_sym_id = _ensure_file_anchor_symbol(conn, file_id, anchor_cache)
         if target_id == source_sym_id:
             continue
@@ -356,7 +369,6 @@ def _scan_file_for_route_strings(
         if key in seen:
             continue
         seen.add(key)
-        line = source.count("\n", 0, m.start()) + 1
         edges.append((source_sym_id, target_id, "laravel_route", line))
 
 
@@ -544,7 +556,7 @@ def _scan_file_for_job_dispatches(
     project_root: Path,
     file_path: str,
     file_id: int,
-    file_first_symbol: dict[int, int],
+    file_symbol_ranges: dict[int, list[tuple[int, int, int]]],
     class_method_lookup: dict[tuple[str, str], int],
     class_id_by_name: dict[str, int],
     edges: list[tuple[int, int, str, int | None]],
@@ -562,11 +574,12 @@ def _scan_file_for_job_dispatches(
     notification ``Class::dispatch()`` calls (notifications use ``via``,
     not ``handle``).
 
-    Edge source preference (W36.11):
-    1. The dispatching file's first user-defined symbol — the actual
-       controller method that called ``dispatch`` is normally that
-       file's first symbol or one of its members; rolling up to the
-       file's first symbol keeps provenance file-local.
+    Edge source preference (W774 — replaces the W36.11 lowest-id pick):
+    1. The smallest user-defined symbol whose ``[line_start, line_end]``
+       contains the dispatch line. For the canonical
+       ``OrderController::store() { Bus::dispatch(new Job($x)); }``
+       case this is the *method* (``store``) — previously the resolver
+       credited the controller class because it had the lowest id.
     2. A synthetic file anchor when the dispatch site is in a file with
        no symbols (rare — most ``::dispatch`` sites are inside method
        bodies — but possible for inline closure-only files).
@@ -578,7 +591,7 @@ def _scan_file_for_job_dispatches(
     if "dispatch(" not in source:
         return
 
-    file_anchor = file_first_symbol.get(file_id)
+    ranges = file_symbol_ranges.get(file_id, [])
 
     for m in _JOB_DISPATCH_RE.finditer(source):
         job_qn = m.group(1) or m.group(2)
@@ -588,10 +601,12 @@ def _scan_file_for_job_dispatches(
         target_id = class_method_lookup.get((job_short, "handle"))
         if target_id is None:
             continue
-        source_sym_id = file_anchor
+        line = source.count("\n", 0, m.start()) + 1
+        source_sym_id = containing_symbol_for_line(ranges, line) if ranges else None
         if source_sym_id is None:
             # W36.11: synthesize a file-anchor symbol so provenance
             # points at the dispatching file rather than the job class.
+            # Never silent-fall to MIN(id) (W774).
             source_sym_id = _ensure_file_anchor_symbol(conn, file_id, anchor_cache)
         if target_id == source_sym_id:
             continue
@@ -599,7 +614,6 @@ def _scan_file_for_job_dispatches(
         if key in seen:
             continue
         seen.add(key)
-        line = source.count("\n", 0, m.start()) + 1
         edges.append((source_sym_id, target_id, "laravel_job", line))
 
 
@@ -688,8 +702,8 @@ def resolve_laravel_dispatch(conn, project_root: Path | None = None) -> int:
         return 0
 
     # W36.11: drop prior anchor rows BEFORE rebuilding lookups so the
-    # ``_build_file_first_symbol`` query doesn't pick up a stale anchor
-    # as a "real" first symbol. Edge rows that reference the dropped
+    # ``_build_file_symbol_ranges`` query doesn't pick up a stale anchor
+    # as a "real" containing symbol. Edge rows that reference the dropped
     # anchors are cleaned up by ON DELETE CASCADE on edges.source_id /
     # target_id (when the production schema is in use). The fallback
     # explicit DELETE further down covers in-memory test schemas that
@@ -706,7 +720,7 @@ def resolve_laravel_dispatch(conn, project_root: Path | None = None) -> int:
 
     class_id_by_name = _build_class_id_by_name(conn)
     class_method_lookup = _build_class_method_lookup(conn)
-    file_first_symbol = _build_file_first_symbol(conn)
+    file_symbol_ranges = _build_file_symbol_ranges(conn)
     php_files = conn.execute(
         "SELECT id, path FROM files WHERE language = 'php'"
     ).fetchall()
@@ -717,7 +731,7 @@ def resolve_laravel_dispatch(conn, project_root: Path | None = None) -> int:
             Path(project_root),
             r["path"],
             r["id"],
-            file_first_symbol,
+            file_symbol_ranges,
             class_method_lookup,
             class_id_by_name,
             edges,
@@ -752,7 +766,7 @@ def resolve_laravel_dispatch(conn, project_root: Path | None = None) -> int:
             Path(project_root),
             r["path"],
             r["id"],
-            file_first_symbol,
+            file_symbol_ranges,
             class_method_lookup,
             class_id_by_name,
             edges,
@@ -801,9 +815,14 @@ def resolve_laravel_dispatch(conn, project_root: Path | None = None) -> int:
 
     with conn:
         conn.execute(delete_sql)
+        # A6: stamp ``bridge_version`` alongside ``bridge`` so consumers
+        # can spot a Laravel resolver bump without re-running the index.
+        # Literal substitution (not a placeholder) keeps the row insert
+        # at the same arity as before; VERSION is module-controlled, not
+        # user input, so the SQL injection vector is closed.
         conn.executemany(
-            "INSERT INTO edges (source_id, target_id, kind, line, bridge, confidence) "
-            "VALUES (?, ?, ?, ?, 'laravel', 0.85)",
+            "INSERT INTO edges (source_id, target_id, kind, line, bridge, confidence, bridge_version) "
+            f"VALUES (?, ?, ?, ?, 'laravel', 0.85, '{VERSION}')",
             edges,
         )
         # Prune anchor rows that ended up with no inbound or outbound

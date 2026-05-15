@@ -12,8 +12,10 @@ from __future__ import annotations
 import json
 import sys
 
-# Duplicated from python_lang.py to avoid circular imports.
-# These are stable constants unlikely to diverge.
+# Django model + field vocabulary. Lives here because Django post-processing
+# is the only consumer in roam-code; `python_lang.py` is the generic Python
+# extractor and stays framework-agnostic. W902 audit verified these are not
+# duplicated anywhere else in the tree.
 _DJANGO_MODEL_BASES = frozenset(
     {
         "Model",

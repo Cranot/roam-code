@@ -32,7 +32,12 @@ CREATE TABLE IF NOT EXISTS symbols (
     -- Decorators applied to the symbol, comma-joined ("@property,@cached").
     -- Empty when none. Captured by the Python extractor; other languages
     -- may populate when the concept maps (TypeScript decorators).
-    decorators TEXT DEFAULT ''
+    decorators TEXT DEFAULT '',
+    -- W81 / ROADMAP A6: extractor VERSION at the time this row was written
+    -- (see ``LanguageExtractor.VERSION`` in src/roam/languages/base.py).
+    -- Consumers comparing two indexes can spot rows produced under an
+    -- older extractor shape. NULL = pre-A6 row, treat as 1.0.0-compatible.
+    extractor_version TEXT
 );
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -43,7 +48,12 @@ CREATE TABLE IF NOT EXISTS edges (
     line INTEGER,
     bridge TEXT,
     confidence REAL,
-    source_file_id INTEGER REFERENCES files(id) ON DELETE CASCADE
+    source_file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+    -- W81 / ROADMAP A6: bridge VERSION at the time this edge was emitted
+    -- (see ``LanguageBridge.VERSION`` in src/roam/bridges/base.py). Only
+    -- populated for bridge-emitted edges (``bridge`` IS NOT NULL); plain
+    -- static-call edges leave this NULL.
+    bridge_version TEXT
 );
 
 CREATE TABLE IF NOT EXISTS file_edges (
@@ -398,7 +408,55 @@ CREATE TABLE IF NOT EXISTS index_manifest (
     git_dirty_hash TEXT,
     enabled_extras TEXT NOT NULL,
     index_profile TEXT DEFAULT 'all',
-    notes TEXT
+    notes TEXT,
+    -- W82 / ROADMAP A8: per-sub-step completion status for the run that
+    -- wrote this row. JSON map of {step_name: {status, error_excerpt,
+    -- duration_ms}}. Lets `roam doctor` surface "your index is missing
+    -- taint analysis because that step failed" rather than the generic
+    -- stale-manifest signal. Older rows leave this NULL.
+    steps_status TEXT,
+    -- W81 / ROADMAP A6: JSON map of {"bridges": {name: ver},
+    -- "detectors": {task_id: ver}, "extractors": {language: ver}}
+    -- capturing every component's VERSION at index time. Compare row N
+    -- to row N-1 to spot a bump; any drift here means rows stamped
+    -- under the previous run carry a stale shape and consumers may want
+    -- to invalidate (cf. ``edges.bridge_version``, ``symbols.extractor_version``).
+    component_versions TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_index_manifest_at ON index_manifest(indexed_at);
+
+-- W90 / ROADMAP A4: Finding Registry hybrid table.
+--
+-- Every detector has its own emit shape (math_signals, taint_findings,
+-- clone_pairs, vuln rows, smells, etc.) so cross-detector dedup is
+-- impossible and suppression management has no audit trail. This table
+-- is the denormalised cross-detector surface: each detector continues
+-- to write to its detector-specific table AND emits one row here. That
+-- gives ``roam findings --filter ...`` a single index to query against
+-- + a central SARIF emit point + the substrate the queued WorkflowRun
+-- work (CODE-BACKLOG D1) will hang off.
+--
+-- ``finding_id_str`` is the deterministic stable key (detector + subject
+-- + a content hash); UNIQUE on it lets re-emits upsert evidence without
+-- duplicating rows. ``source_version`` was reserved by W81 (ROADMAP A6)
+-- specifically for this table — it stamps the detector VERSION that
+-- produced the row, so a consumer can spot rows produced under a stale
+-- detector shape without a full re-index.
+CREATE TABLE IF NOT EXISTS findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id_str TEXT NOT NULL UNIQUE,
+    subject_kind TEXT NOT NULL,
+    subject_id INTEGER,
+    claim TEXT NOT NULL,
+    evidence_json TEXT,
+    confidence TEXT,
+    source_detector TEXT NOT NULL,
+    source_version TEXT,
+    supersedes_id INTEGER REFERENCES findings(id) ON DELETE SET NULL,
+    suppressions_json TEXT DEFAULT '[]',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_findings_subject ON findings(subject_kind, subject_id);
+CREATE INDEX IF NOT EXISTS idx_findings_detector ON findings(source_detector);
+CREATE INDEX IF NOT EXISTS idx_findings_created ON findings(created_at);
 """

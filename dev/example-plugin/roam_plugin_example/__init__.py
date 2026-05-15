@@ -61,11 +61,34 @@ def register(ctx) -> None:
 
     ``ctx`` is a :class:`roam.plugins.RoamPluginContext`. See
     ``src/roam/plugins/registry.py`` for the full method surface.
+
+    Demonstrates :meth:`register_framework_profile` (W123 / Wave28.3)
+    — the richer alternative to ``register_framework_detector``. The
+    profile bundles the detector together with file_patterns,
+    recommended_commands, and conventions so downstream surfaces
+    (``roam describe``, ``roam brief``, framework-aware MCP tools) can
+    consume framework knowledge from a single declaration. The profile
+    also wires ``detect_fn`` into the detector registry under the hood
+    so legacy consumers (``autodetect_framework_profile``) keep
+    working — plugin authors do not need to call both APIs.
     """
+    from roam.plugins import FrameworkProfile
+
     ctx.declare(
         name="example",
         version="0.1.0",
         description="Reference plugin — demonstrates the register(ctx) protocol.",
     )
-    ctx.register_framework_detector(detect_framework)
+    ctx.register_framework_profile(
+        FrameworkProfile(
+            name="example",
+            detect_fn=detect_framework,
+            file_patterns=("example.config.js", "examples/**"),
+            recommended_commands=("describe", "health", "preflight"),
+            conventions={
+                "controller": "examples/controllers/*",
+                "view": "examples/views/*",
+            },
+        )
+    )
     ctx.register_detector("example-task", "naive", detect_demo_finding)

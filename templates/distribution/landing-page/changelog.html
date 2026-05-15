@@ -76,16 +76,218 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
-<h3>Added</h3>
+<h2>[13.0] — 2026-05-13</h2>
+<h3>Substrate evolution</h3>
 <ul>
+<li>R20 ledger HMAC chain with CGA signing</li>
+<li>R21 multi-agent lease system</li>
+<li>R25 plugin substrate validated end-to-end via Rails Path A clean cut</li>
+<li>atomic_io consolidation across writers</li>
+<li>Constitution/policy unified single source of truth</li>
+<li>World model: side-effects, idempotency, causal graph, tx-boundaries classifiers</li>
+</ul>
+<h3>Mode enforcement (staged rollout, opt-in)</h3>
+<ul>
+<li><code>_MODE_ALWAYS_ALLOWED</code> bootstrap allowlist (<code>index</code>/<code>init</code>/<code>reindex</code>)</li>
+<li>Test fixture sweep across 10 privileged-command test files</li>
+<li>Classification coverage for 8 additional commands</li>
+<li>Empirically validated: 251/252 pass with <code>ROAM_MODE_ENFORCEMENT=1</code></li>
+</ul>
+<h3>Real-world feedback fixes</h3>
+<ul>
+<li><code>stale-refs</code> heading-slugger now matches GitHub's algorithm (underscore + whitespace)</li>
+<li><code>stale-refs --fix</code> corruption guards: URL-half resolution + bare-backtick suppression</li>
+<li><code>algo</code> nested-lookup dataflow predicate + PHP <code>===</code>/<code>!==</code> detection</li>
+<li><code>auth-gaps</code> helper indirection (2-level same-class + ancestor descent)</li>
+<li>7 of 8 Laravel dynamic-dispatch idioms detected (Route/Eloquent-scope/Policy/ Observer/Job/Queue/Artisan) via new <code>roam/index/laravel_post.py</code></li>
+<li><code>over-fetch</code> 3-state classification (BARE / GUARDED_RELATION / UNGUARDED_RELATION)</li>
+<li><code>pr-bundle --strict-resolved</code> flag + <code>--ci</code> global mode integration</li>
+<li><code>ws resolve</code> exposes unmatched URLs with reason classification</li>
+</ul>
+<h3>New commands</h3>
+<ul>
+<li><code>roam brief</code>, <code>roam next</code>, <code>roam mode</code>, <code>roam constitution</code>, <code>roam laws</code></li>
+<li><code>roam memory</code>, <code>roam lease</code>, <code>roam runs</code>, <code>roam replay</code>, <code>roam agent-score</code></li>
+<li><code>roam agents-md</code>, <code>roam architecture-drift</code>, <code>roam graph-diff</code></li>
+<li><code>roam side-effects</code>, <code>roam idempotency</code>, <code>roam causal-graph</code>, <code>roam tx-boundaries</code></li>
+<li><code>roam batch-search</code>, <code>roam complete</code>, <code>roam mcp</code></li>
+</ul>
+<h3>Drift-guard infrastructure</h3>
+<ul>
+<li>LAW 4 anchor lint + AST-pinned <code>CLAUDE.md</code> count assertions</li>
+<li>Capability registry auto-derive (eliminated 531 LOC of bookkeeping)</li>
+<li><code>README.md</code> marker-based count auto-generation + doc-hygiene CI workflow</li>
+<li><code>--sarif</code> consumer drift-guard + <code>--budget</code> coverage survey</li>
+<li>Canonical-constant citation lint (load-bearing, allowlist empty)</li>
+<li>Extension-constant consolidation (<code>DOC_EXTENSIONS</code> canonical; <code>_BINARY_EXTENSIONS</code> aliased to <code>SKIP_EXTENSIONS</code>)</li>
+<li>Anti-leak CI gate extended with domain-term patterns</li>
+</ul>
+<h3>Renamed</h3>
+<ul>
+<li><code>summary_envelope</code> → <code>strip_list_payloads</code> (name reflects contract)</li>
+</ul>
+<h3>Schema</h3>
+<ul>
+<li>USER_VERSION 12 → 13 (migration #51: <code>loop_eq_with_dependent_write</code> column for algo nested-lookup dataflow predicate)</li>
+</ul>
+<h3>Round 10/11 — 9-agent parallel hardening pass</h3>
+<p>Nine Opus agents in two parallel waves closed the gaps surfaced by the R9 cross-rechecks. All landed in the working tree; none lost when the host PC died mid-flight.</p>
+<p><strong>R10 wave — 5 agents</strong></p>
+<ul>
+<li><strong>R10.1 — <code>roam mutate --apply</code> rollback bug fixed + apply-mode tests for all 4 transforms.</strong> <code>_apply_move</code> had no rollback: a mid-flight <code>OSError</code> left the destination file with the moved symbol AND the source file still containing it (duplicate definitions in the repo, raw <code>OSError</code> propagated up). Snapshot-and-restore now buffers pre-apply state of every touched file; on failure, newly-created targets are removed and pre-existing files are rewritten from snapshot. Wraps the exception into <code>{isError: True, error_code: "APPLY_FAILED", files_modified: []}</code>. New <code>tests/test_mutate_apply.py</code> adds 10 tests across rename / add-call / extract / move-rollback paths — all assert on file bytes after <code>--apply</code>, not just dry-run JSON shape (the prior gap).</li>
+<li><strong>R10.2 — Handle-off cache GC + SBOM as a Release asset.</strong> <code>.roam/responses/</code> used to grow unbounded (disk DoS + forensic leak). New <code>_gc_handle_dir()</code> runs amortised (once per 25 writes or when dir &gt; 50 files): TTL eviction (<code>ROAM_MCP_HANDLE_TTL_HOURS</code>, default 168 = 7d) plus oldest-mtime LRU under a max-bytes cap (<code>ROAM_MCP_HANDLE_MAX_BYTES</code>, default 100MB). Race-tolerant per-entry try/except, <code>0o700</code> dir mode, defence-in-depth <code>parent.resolve() != handle_dir.resolve()</code> guard. SBOM is now uploaded to the GitHub Release on tag-triggered runs via <code>gh release upload --clobber</code>, cosign-signed (keyless OIDC, same Sigstore chain as <code>cga emit</code>) — procurement no longer has to dig through expired workflow artifacts.</li>
+<li><strong>R10.3 — Louvain cluster cache + <code>roam_context</code> bulk-fetch.</strong> Cluster phase on a no-op reindex: ~4.3s → 63ms (signature <code>{n, m, top-64-degree-ids}</code> persisted in <code>index_manifest.notes</code>; <code>_run_clustering</code> skips when signature matches and clusters table is non-empty; <code>force=True</code> bypasses). <code>roam context &lt;symbol&gt;</code> query count: <strong>1,986 → 39</strong> (well under the 50 ceiling). <code>get_blast_radius</code>, <code>get_affected_tests_bfs</code>, and <code>get_coupling</code> in <code>context_helpers.py</code> now bulk-load reverse adjacency once; the BFS is in-memory after that. Total <code>roam index</code> wall on this repo: 100s → 93s on no-op.</li>
+<li><strong>R10.4 — <code>roam_validate_plan</code> warning-branch coverage.</strong> 12 new tests pin every WARNING code path: <code>NAME_COLLISION</code>, <code>MEDIUM_BLAST_RADIUS</code>, <code>HIGH_BLAST_RADIUS</code>, <code>FITNESS_VIOLATIONS</code>, <code>INVALID_TARGET_FILE</code>, plus aggregation (3 ops × 3 warnings → <code>warnings_count == 3</code>) and verdict precedence (blocker dominates warning). The agent also surfaced that <code>FITNESS_VIOLATIONS</code> was effectively dead code against real preflight envelopes — fixed by R11.C.</li>
+<li><strong>R10.5 — Language-extractor smoke matrix.</strong> Eight extractors with no symbol-extraction tests now have one each via a parametrised matrix in <code>tests/test_extractor_smoke.py</code>: Apex, Aura, Visualforce, SFXML, HCL, Swift, FoxPro, generic. Each verifies module import + ≥1 symbol + canonical entity present + <code>extract_references</code> returns a list. tree-sitter-language-pack updates that silently break Salesforce/Apex (a real enterprise wedge) now show up in CI.</li>
+</ul>
+<p><strong>R11 wave — 4 agents</strong></p>
+<ul>
+<li><strong>R11.A — Three more N+1 fixes (cmd_attest, cmd_module, cmd_dead).</strong> <code>_collect_blast_radius</code> in <code>cmd_attest.py:158</code> was issuing one <code>SELECT FROM file_edges</code> per source file (50-file PR = 50 queries; 500-file enterprise PR = 500). <code>cmd_module.py:_module_deps</code> and <code>_collect_sym_ids</code> ran <code>for fid in file_ids: conn.execute(FILE_IMPORTS, (fid,))</code> — 100 queries per <code>roam module &lt;dir&gt;</code> on a 50-file directory. <code>cmd_dead.py:_predict_extinction</code> issued a SELECT per BFS pop (200-node fragment = 200 queries). All three rewritten with <code>batched_in</code> + a single reverse-adjacency dict; CountingConn regression tests pin constant-query behaviour up to n=50. <strong>5-100× speedup</strong> depending on input size.</li>
+<li><strong>R11.B — <code>format_table</code> single-pass.</strong> Stringify each cell once during the width pass and reuse during emit (instead of <code>len(str(cell))</code> twice). 200 rows × 6 cols: 0.99 ms → 0.86 ms (~1.15×). Modest because table rendering is intrinsically O(rows × cols) — the win is from removing the redundant <code>str()</code>/<code>len()</code> pass. 6 byte-identity tests pin output equivalence with the pre-refactor reference.</li>
+<li><strong>R11.C — Contract drifts (3 fixes).</strong> <code>cmd_preflight.py</code> now populates <code>summary['fitness_violations']</code> as a list (was at <code>r['fitness']['rule_details']</code> only — <code>_vp_validate_one</code>'s warning was effectively dead). <code>APPLY_FAILED</code> (introduced by R10.1) added to <code>_DOC_LINKS</code> + <code>_SEVERITY_MAP</code>. <code>tests/test_mcp_server.py</code> <code>_CORE_TOOLS</code> count drift fixed: 51 → 57 (R8 added <code>roam_validate_plan</code> + 4 <code>roam_for_*</code> + <code>roam_fetch_handle</code>; expected set extended). Cascading update to <code>test_multiple_warnings_aggregate_in_summary</code> since FITNESS_VIOLATIONS now actually fires.</li>
+<li><strong>R11.D — Help-template ratchet 32 → 52 commands.</strong> Twenty more commands pinned: <code>plan</code>, <code>plan-refactor</code>, <code>suggest-refactoring</code>, <code>partition</code>, <code>layers</code>, <code>cut</code>, <code>orchestrate</code>, <code>agent-plan</code>, <code>agent-context</code>, <code>pr-diff</code>, <code>why</code>, <code>intent</code>, <code>capabilities</code>, <code>capsule</code>, <code>trends</code>, <code>audit</code>, <code>bus-factor</code>, <code>effects</code>, <code>grep</code>, <code>ci-setup</code>. 156 generated tests (52 × 3) all green. Cross-references verified against <code>_COMMANDS</code>.</li>
+</ul>
+<p><strong>Round verification</strong>: 624 targeted tests across the 15 touched test files pass on first run after the crash recovery — zero seam issues across the 3 files that received edits from 2 agents (<code>mcp_server.py</code>, <code>test_validate_plan.py</code>, <code>test_n1_fixes.py</code>).</p>
+<h3>Round 9 — code work + 5-pass cross-recheck</h3>
+<ul>
+<li><strong>R9.B7 — FTS5 incremental sync.</strong> <code>build_fts_index</code> now diffs <code>symbol_fts</code> against <code>symbols</code> and only INSERTs new rowids / DELETEs stale ones instead of full DELETE+INSERT on every reindex. Synthetic 5,000-symbol benchmark: cold build 157ms, no-op incremental 15ms (10.5× speedup), 100-row diff 16ms (10.7×). Force-rebuild path retained for <code>roam index --rebuild</code>. New <code>tests/test_fts5_incremental.py</code> (5 tests) pins the convergence + cost properties.</li>
+<li><strong>R9.A5 — Extracted baseline-diff branch from <code>health()</code>.</strong> <code>cmd_health.py:health()</code> was 920 lines; the <code>if baseline_ref:</code> branch (125 lines) is now a dedicated <code>_emit_baseline_diff</code> helper. Function down to 822 lines. Snapshot tests pass byte-identical.</li>
+<li><strong>R9.A2 — Numbered migration ledger.</strong> <code>_MIGRATIONS = [(seq, name, fn), ...]</code> in <code>db/connection.py</code> is now the source of truth for schema migrations. <code>MIGRATION_OPS_COUNT = len(_MIGRATIONS)</code> (auto-derived); the previous hand-pinned constant was off by 5 (counted comment occurrences). New tests pin (a) the derivation, (b) seq monotonicity, (c) idempotency on a fresh DB.</li>
+<li><strong>R9.G9+ — Help-template ratchet extended to 32 commands.</strong> Added <code>tour</code>, <code>file</code>, <code>uses</code>, <code>trace</code>, <code>deps</code>, <code>health</code>, <code>diagnose</code>, <code>complexity</code>, <code>pr-risk</code>, <code>affected-tests</code>, <code>fan</code>, <code>hotspots</code>, <code>n1</code>, <code>clones</code>, <code>simulate</code>, <code>mutate</code>, <code>index</code>, <code>watch</code>, <code>surface</code>, <code>taint</code>, <code>vuln-reach</code>, <code>attest</code> (delegated to a parallel agent for the mechanical sweep). Each gets <code>\b</code> + <code>Examples:</code> + <code>See also</code> block. 96 generated tests pass.</li>
+</ul>
+<h3>Recheck-driven fixes (R9 cross-pass)</h3>
+<ul>
+<li><strong><code>_strip_url_credentials</code> URL-bug fix.</strong> Previous implementation used <code>rpartition("@")</code> over the whole post-<code>://</code> string, which finds the LAST <code>@</code> anywhere. URLs with <code>@</code> in the path or query (e.g. <code>?reviewer=a@b.com</code>, <code>@scope/pkg</code> paths) got rewritten to the wrong host, putting incorrect <code>subject.name</code> in every signed CGA. Fix: scope the credential strip to the authority slice only (per RFC 3986 §3). Regression test added.</li>
+<li><strong><code>_DOC_LINKS</code> + <code>_SEVERITY_MAP</code> plug 7 missing error codes.</strong> <code>EMPTY_INPUT</code>, <code>INVALID_DIFF</code>, <code>RUN_FAILED</code>, <code>JSON_DECODE</code>, <code>ELICITATION_REQUIRED</code>, <code>FILE_NOT_FOUND</code>, <code>DIRTY_TREE</code> were emitted in production but absent from both maps — agents got generic UNKNOWN doc_links and default <code>error</code> severity for diff/critique paths. Both maps now carry every code in use.</li>
+<li><strong>Error-storm trim preserves <code>retryable</code> + <code>doc_link</code>.</strong> When the same <code>error_code</code> fires ≥3× the trimmed envelope used to drop both fields. Agents that branch on <code>retryable</code> (DB_LOCKED, INDEX_STALE) silently stopped retrying after 3 fires. Both fields are now always carried in the trimmed shape.</li>
+<li><strong><code>PRAGMA busy_timeout=30000</code> pinned explicitly.</strong> Python's <code>sqlite3.connect(timeout=30)</code> sets the driver-level retry budget but not the engine's busy_timeout PRAGMA. Raw-sqlite3 consumers (test fixtures, MCP test paths) now see the same 30s budget as <code>open_db</code>.</li>
+<li><strong><code>cmd_pr_risk</code> early-return paths now wrap with <code>json_envelope()</code>.</strong> Two <code>--json</code> exits previously emitted bare dicts (no schema_version / no summary.verdict), breaking downstream consumers expecting the contract.</li>
+<li><strong>Surface-count drift cleaned up across docs.</strong> <code>137 MCP tools</code> → <code>145</code>, <code>122 tools</code> → <code>145</code>, <code>5 prompts</code> → <code>6</code>, <code>25 default core tools</code> → <code>58</code>, <code>208 commands</code> → <code>211</code> (or <code>204 + 7 aliases</code>) — applied to README.md, CLAUDE.md, landing-page index.html, docs/index.html, docs/command-reference.html. CLAUDE.md Documentation Hub also re-pointed at the canonical <code>templates/distribution/landing-page/docs/</code> path (the deleted <code>docs/site/</code> was still referenced).</li>
+<li><strong>Broken cookbook link removed</strong> from docs/command-reference.html — <code>docs/cookbook/</code> was deleted in 12.50; replaced with a <code>roam ask --list</code> reference.</li>
+</ul>
+<h3>Correctness</h3>
+<ul>
+<li><strong>Pure renames now recover affected-neighbor edges.</strong> <code>indexer.py:1409</code> had <code>if not force and modified and changed_file_ids</code> — pure renames produce <code>modified=[]</code> and silently skipped neighbor recovery, leaving <code>roam impact &lt;renamed_symbol&gt;</code> reporting fewer callers than reality. Drop the spurious <code>and modified</code> clause; add <code>tests/test_index.py::test_pure_removal_invokes_affected_neighbor_recovery</code> as a spy-based regression guard.</li>
+<li><strong><code>roam cga verify</code> fails closed when no <code>.bundle</code> is present.</strong> Previously: a downloaded statement without its sibling bundle reported <code>verified</code> while <code>cosign: null</code> — the cryptographic-trust half was silently skipped. Now: refuses unless <code>--no-cosign</code> is passed to acknowledge predicate-only verification.</li>
+<li><strong><code>git_dirty_hash</code> + <code>git_commit_sha1</code> bound into predicate verification.</strong> Predicate now carries <code>git_dirty_hash</code>; verifier reads live values and refuses on mismatch (clean-vs-dirty, dirty-hash drift, commit-SHA mismatch). <code>roam cga emit</code> refuses on a dirty working tree by default — <code>--allow-dirty</code> records the dirty-hash and proceeds.</li>
+<li><strong><code>SQLite USER_VERSION</code> bumped 1 → 12 with a discipline pin.</strong> New <code>MIGRATION_OPS_COUNT</code> constant + <code>tests/test_db_user_version.py</code> fail CI when <code>ensure_schema</code> gains a migration without a corresponding bump. Closes the loop on the existing <code>index_manifest.schema_version</code> writer.</li>
+</ul>
+<h3>Performance</h3>
+<ul>
+<li><strong>N+1 fixes (4 sites).</strong> <code>_find_colocated_tests</code> (3 nested N+1 → 1 bulk fetch), <code>_print_mega_detail</code> (per-cluster → batched <code>IN</code>), <code>_against_mode</code> (per-fid co-change query → batched), <code>_find_eager_loads</code> (controller-file cache, 5-10× speedup on Laravel <code>roam n1</code>).</li>
+<li><strong>N+1 fixes — <code>roam n1</code> deep pass (4 more sites).</strong> <code>_find_appends_properties</code>, <code>_find_accessor_methods</code>, <code>_trace_io_via_edges</code>, <code>_find_collection_contexts</code> now drive off pre-loop <code>batched_in</code> fetches in <code>analyze_n1</code> instead of running 1-3 queries per model. <code>tests/test_n1_fixes.py::test_analyze_n1_appends_collection_edges_constant_query_count</code> pins constant-query behaviour from 1 to 50 models. Old per-loop overhead on a 100-model app: ~5 × 100 = 500 queries; now: 4-6 batched queries total.</li>
+<li><strong>Inline phase progress on <code>roam index</code>.</strong> Adds <code>[1/7]</code> … <code>[7/7]</code> markers before each pipeline phase (parse → resolve → graph metrics → git → effects/taint → health → search). First-time users now see what's happening instead of staring at a single progress bar.</li>
+<li><strong>Troubleshooting docs anchors wired to error codes.</strong> The <code>_DOC_LINKS</code> map referenced fragments (<code>#index-stale</code>, <code>#db-locked</code>, etc.) that the docs page didn't actually have as <code>id="..."</code> anchors — agents clicking the URL landed on the page but scrolled nowhere. Eight <code>id</code>s added to the troubleshooting sections; map trimmed to fragments that actually exist. New <code>tests/test_doc_link_anchors.py</code> pins the invariant in CI.</li>
+<li><strong><code>roam mcp-setup --write</code> writes the config to disk.</strong> Previously the command only printed the JSON block; users had to copy-paste into the right file. The new flag resolves the platform's expected path (<code>~/.codex/config.json</code>, <code>./.vscode/mcp.json</code>, etc.), merges the <code>roam-code</code> server entry with any existing <code>mcpServers</code> block (preserving other servers), and leaves a sibling <code>.bak</code> copy. Refuses to overwrite a corrupt JSON file.</li>
+<li><strong>Skip git-history pass when HEAD unchanged.</strong> Saves 1-10s per warm <code>roam index</code> on big-history repos. Manifest's recorded HEAD compared against live <code>git rev-parse HEAD</code>.</li>
+<li><strong>SQLite pragmas tuned.</strong> <code>mmap_size=1GB</code> (was 256MB), <code>wal_autocheckpoint=10000</code> (was 1000), <code>PRAGMA optimize</code> on commit. Closes p50 query-latency drift after heavy index loads.</li>
+<li><strong>FTS5 schema gains <code>docstring</code> column.</strong> <code>roam retrieve</code> and <code>roam search-semantic</code> now match against natural-language docstrings — previously the FTS5 BM25 path was blind to docstring text. Schema migration drops + recreates the table on first run after upgrade; build_fts_index repopulates. BM25 weight 4 (between qualified_name=5 and signature=2).</li>
+<li><strong>Memoize <code>_find_function_node</code> in <code>compute_and_store</code>.</strong> Avoid the second AST descent per callable; ~10-15% indexing win on Python/TS files.</li>
+</ul>
+<h3>Agent / MCP DX</h3>
+<ul>
+<li><strong><code>roam_validate_plan</code> MCP tool.</strong> Pre-apply validator for a multi-step change plan. Takes <code>[{kind: "rename", symbol, new_name}, …]</code> and returns a verdict (<code>ok</code> / <code>needs-review</code> / <code>blocked</code>) with per-operation blockers, warnings, and advice — symbol existence, name collisions, blast radius, target-file sanity, fitness violations. Cuts 4-call agent loops to one round-trip.</li>
+<li><strong><code>roam_for_&lt;situation&gt;</code> family.</strong> Four situation-keyed compounds: <code>roam_for_new_feature</code> (understand + search + context + complexity), <code>roam_for_bug_fix</code> (diagnose + tests + diff + context), <code>roam_for_refactor</code> (preflight + impact + complexity + clones), <code>roam_for_security_review</code> (taint + vuln + critique + adversarial). Each bundles 3-4 inspect calls into one round-trip.</li>
+<li><strong>Reference-based handles for &gt;50KB envelopes.</strong> Tools returning JSON &gt; <code>ROAM_MCP_HANDLE_KB</code> (default 50) write the payload to <code>.roam/responses/&lt;sha16&gt;.json</code> and return a tiny envelope with <code>{handle, byte_size, preview}</code>. New <code>roam_fetch_handle(handle)</code> retrieves the full payload on demand. Content-addressed: identical responses share a handle. Stops a 70KB <code>roam_understand</code> envelope from blowing the agent's context budget when the agent only needs the summary.</li>
+<li><strong><code>roam_ask</code> MCP tool.</strong> Wraps the 24-recipe TF-IDF intent dispatcher so agents on MCP clients can dispatch a recipe in one call instead of falling back to Grep+Read. Added to <code>_CORE_TOOLS</code>.</li>
+<li><strong><code>roam_session_metrics</code> MCP tool.</strong> Local-only per-tool invocation telemetry (success / rate_limited / error counts). Helps answer "which tools are agents actually using?" without phoning home.</li>
+<li><strong><code>agent_contract</code> block on every JSON envelope.</strong> ~200-token derived block: <code>{facts, risks, next_commands, confidence}</code> so context-budget-tight agents can read just this and skip the full payload. Opt-out via <code>ROAM_AGENT_CONTRACT_BLOCK=0</code>.</li>
+<li><strong>Soft contract enforcement on destructive tools.</strong> <code>roam_mutate --apply</code> checks session memory for a prior <code>roam_simulate</code> call against the same target and injects a <code>contract_compliance</code> block with actionable advice when the prerequisite was skipped. Soft-warn only, never refuses.</li>
+<li><strong>Stale-index affordance on every read-only MCP tool.</strong> When the indexed DB is older than the manifest's recorded HEAD or older than the configured threshold, the response gets prefixed with <code>INDEX STALE — call roam_reindex first.</code> and a <code>_meta.stale_index</code> marker. Recovery commands (<code>index</code>, <code>reindex</code>, <code>init</code>, <code>doctor</code>, <code>watch</code>) skip the banner.</li>
+<li><strong><code>summarize=True</code> default for compound tools when <code>ROAM_AI_ENABLED=1</code>.</strong> <code>roam_explore</code> / <code>roam_understand</code> / <code>roam_health</code> now compress responses by default for users who've explicitly consented to MCP sampling. <code>summarize=False</code> forces opt-out per call; <code>ROAM_AI_DISABLED=1</code> env var disables globally; the <code>compliance</code> preset always opts out (audit-trail evidence must be deterministic).</li>
+<li><strong><code>@_tool</code> decorator carries <code>version="1.0.0"</code>.</strong> Surfaces in <code>roam_catalog</code> so agents can detect schema drift without re-enumerating every tool. Bump per-tool when the input/output schema changes.</li>
+</ul>
+<h3>Onboarding (<code>roam init</code>)</h3>
+<ul>
+<li><strong>No more unsolicited CI workflow file.</strong> <code>roam init</code> previously dropped <code>.github/workflows/roam.yml</code> into every repo on first command — the single biggest first-run trust-damage signal flagged by the audit. Now requires <code>--with-ci=github</code> to opt in; the existing <code>roam ci-setup</code> remains the canonical path for full multi-platform CI generation.</li>
+<li><strong>Refuses outside a git repository</strong> (<code>FILE_NOT_FOUND</code> structured error). Prevents the spawn-<code>.roam/</code>-in-<code>~/Downloads</code> failure mode.</li>
+<li><strong>Auto-writes a commented <code>.roamignore</code> template</strong> when absent. Every entry commented out so the user opts in to the patterns that apply.</li>
+<li><strong>Compact welcome banner</strong> — 4 lines (stats + try-one + next + help), down from 20+ lines of agent-contract teaching at a moment when the user just wants "did it work?"</li>
+</ul>
+<h3><code>roam doctor</code></h3>
+<ul>
+<li><strong>Three-tier exit codes.</strong> <code>0</code> = clean; <code>1</code> = only advisory failures (cache age, cloud-sync, optional extras); <code>2</code> = at least one blocking failure. <code>--strict</code> promotes advisory to blocking for CI gates that require zero drift. Closes a real CI-noise gap where stale-snapshot warnings spuriously failed every roam-on-roam run.</li>
+<li><strong>Issue-template-ready summary line.</strong> <code>Roam X · Python Y · OS Z · M/N checks pass · A advisory · B blocking</code> — paste-once into a bug report.</li>
+<li><strong>Manifest drift hints expanded.</strong> <code>git_dirty_hash</code> drift surfaces as INFO; <code>config_hash</code> drift (roam config / <code>.roamignore</code> changed) as WARN.</li>
+<li><strong><code>If this looks unexpected, run \</code>roam doctor\`" hint embedded in 4 environmental error paths</strong> (DB open / schema corruption, config TOML parse failure, bundle verify failure, MCP missing-fastmcp error).</li>
+</ul>
+<h3>CLI surface</h3>
+<ul>
+<li><strong><code>roam --help</code> collapsed to a 30-line Start-here panel.</strong> Previously a 154-line dump that scattered the 5 verbs across 38 entries in "Getting Started" and a 73-name "More Commands" comma-list. Long surface still available behind <code>roam --help-all</code>.</li>
+</ul>
+<h3>Security tier-2</h3>
+<ul>
+<li><strong>Predicate IRI moved to <code>https://roam-code.com/spec/...</code></strong> — the owned, dereferenceable domain. Legacy <code>roam-code.dev</code> IRIs still verify via <code>_LEGACY_PREDICATE_TYPES</code> so old statements don't break.</li>
+<li><strong>Strip <code>username:token@</code> from git remote URL in cga subject.</strong> A repo cloned with <code>https://x:ghp_PAT@github.com/...</code> would otherwise leak the PAT verbatim into every signed CGA's <code>subject.name</code>.</li>
+<li><strong><code>vuln_store</code> ingest hardening.</strong> 50 MB size cap on scanner reports (refuses with structured error before loading); <code>ESCAPE</code> clause + escaped LIKE patterns so a hostile package_name like <code>_</code> no longer match-explodes.</li>
+<li><strong><code>taint_engine</code> <code>path_truncated</code> flag.</strong> When the BFS exits via <code>max_hops</code> or the per-node 200-edge fan-out cap, the finding carries <code>path_truncated=True</code> so OpenVEX consumers map to <code>under_investigation</code> rather than <code>vulnerable_code_not_in_execute_path</code>.</li>
+<li><strong>Hash-pinned <code>mcp-server-card.json</code>.</strong> New <code>tests/test_mcp_server_card_hash.py</code> fails CI on unintended drift — the agent-surface card is a real attack vector if tampered.</li>
+<li><strong>CSP <code>Reporting-Endpoints</code> + <code>report-to</code></strong> wired in <code>_headers</code>. Endpoint at <code>/csp-report</code> is provisional (CF Pages will 404 until a worker is wired up) but the directive is in place.</li>
+<li><strong><code>dev/pin_github_actions.sh</code></strong> — one-shot script to pin every workflow action to a commit SHA via <code>gh api</code>. Defers actual pinning to a session with network; Dependabot's existing <code>github-actions</code> schedule maintains the pins thereafter.</li>
+<li><strong>Keyless OIDC verification no longer hides under <code>continue-on-error</code>.</strong> The <code>cga-attestation.yml</code> keyless-oidc job now fails loud if the production-path emit/verify breaks. Sigstore outages are real but rare; masking flakes there hid regressions in our own emit/verify code path. The offline-key job remains the deterministic gate that runs without network.</li>
+<li><strong>CycloneDX SBOM generation in <code>publish.yml</code>.</strong> Each PyPI release now ships an <code>sbom/roam-code-&lt;version&gt;.cdx.json</code> artifact built against a fresh venv with the just-built wheel installed (resolves to the <em>runtime</em> dependency closure, not the CI build env). Audit-trail product needs verifiable bills-of-materials; this is the foundation.</li>
+</ul>
+<h3>Architecture substrate</h3>
+<ul>
+<li><strong><code>@_tool</code> carries <code>version</code></strong> (see Agent / MCP DX above) — surfaces in <code>roam_catalog</code>.</li>
+<li><strong><code>LanguageBridge.VERSION</code> + <code>LanguageExtractor.VERSION</code></strong> ABCs gain a <code>1.0.0</code> semver class attribute. Bump in subclasses when inference logic changes; downstream drift detection compares stamps.</li>
+<li><strong><code>index_manifest</code> step-completion record.</strong> Per-step <code>success / failed:&lt;ExceptionName&gt; / skipped:&lt;reason&gt;</code> status persisted as JSON in the manifest's <code>notes</code> field — <code>roam doctor</code> can later surface "your index is missing taint analysis because that step failed" instead of the generic stale-manifest signal.</li>
+</ul>
+<h3>Tests</h3>
+<ul>
+<li><strong>9 new test files</strong>: <code>test_db_user_version</code>, <code>test_doctor_hints_in_errors</code>, <code>test_extension_versioning</code>, <code>test_mcp_contract_enforcement</code>, <code>test_mcp_server_card_hash</code>, <code>test_mcp_tool_telemetry</code>, <code>test_mcp_tool_versioning</code>, <code>test_n1_fixes</code>, <code>test_surface_consistency</code>.</li>
+<li><strong>12 test files extended</strong> with new cases for the corresponding source-side changes.</li>
+<li><strong>Surface-consistency test</strong> locks the 8-way split-brain dict invariants today (every <code>_COMMANDS</code> entry has a <code>_CATEGORIES</code> entry; every <code>_CORE_TOOLS</code> member is a real <code>@_tool</code> declaration; every <code>_DEPRECATED_COMMANDS.replacement</code> resolves) before the larger Capability Registry rework lands.</li>
+<li><strong>CountingConn-based query-count regressions</strong> for every N+1 fix — proves the batched form scales O(1) in input size.</li>
+<li>2,612 tests pass on the touched-areas parallel sweep; 1,495 on the focused sequential sweep.</li>
+</ul>
+<h3>Conventions</h3>
+<ul>
+<li><strong><code>tests/conftest.py:make_src_project</code></strong> writes <code>.gitignore</code> with <code>.roam/</code> so the dirty-tree refusal behaves the same in tests as in production.</li>
+<li><strong>Categorise the formerly-orphan <code>lsp</code> command</strong> under "Refactoring" alongside <code>stale-refs</code> (the LSP server is the same engine surfaced over JSON-RPC).</li>
+<li><strong>Help-text template ratchet (R8.G9).</strong> New <code>tests/test_command_help_template.py</code> pins a curated set of high-leverage commands (<code>init</code>, <code>doctor</code>, the five Start-here verbs, and daily staples — 12 today) to a consistent shape: 1-line summary, an <code>Examples:</code> block, and an inline "See also" cross-reference. The list grows incrementally; new commands are encouraged to match. Twelve commands polished in this round.</li>
+</ul>
+<p>---</p>
+<h3>Earlier in the [Unreleased] window</h3>
+<ul>
+<li><strong><code>roam surface</code></strong> — canonical capability registry as JSON or text. Source of truth for commands, aliases, MCP tools, presets, categories, maturity. <code>--filter stable|experimental|internal|deprecated</code> and <code>--category &lt;name&gt;</code> flags. Used by docs generation, contract tests, release notes, and the marketing/landscape surfaces.</li>
+<li><strong><code>roam explain-command &lt;name&gt;</code></strong> — per-command introspection: category, maturity, aliases, deprecation, MCP exposure, DB tables touched (best-effort source-grep), optional extras detected, stale-index sensitivity (high / medium / low / unknown).</li>
+<li><strong><code>roam db-check</code></strong> — integrity sweep over the local index: orphan symbols, broken edges, duplicate file paths, missing FTS rows, invalid line spans, corrupt metrics, files with zero symbols. Exit code 5 on any high-severity finding when <code>--ci</code> is set.</li>
+<li><strong><code>roam health --baseline &lt;ref&gt;</code></strong> — compares against a stored snapshot at the named ref (any git ref, <code>last</code>, or <code>auto</code> for default-branch). Reports delta (new / fixed / regressed findings) instead of an absolute set. Verdict reflects the delta — REVIEW on new high-severity, BAD on score regression, OK otherwise. Graceful DEGRADED when no snapshot exists.</li>
+<li><strong>Index manifest table.</strong> New <code>index_manifest</code> schema records the indexer run: roam version, schema version, parser versions, grammar versions, config hash, git HEAD, dirty hash, enabled extras, index profile. <code>roam doctor</code> surfaces manifest age plus drift hints (parser-version drift, git-HEAD drift) so commands depending on graph accuracy can warn or refuse.</li>
+<li><strong><code>roam doctor</code> expansion.</strong> Four new checks: optional extras (onnxruntime / watchdog / fastmcp / scipy presence), cloud-sync detection (OneDrive / Dropbox / iCloud / Google Drive / Box / pCloud), cache permissions (<code>.roam/</code> and <code>.pytest_cache/</code> writable), and index manifest age + parser drift. 17 checks total.</li>
 <li><strong><code>roam grep</code> rewritten end-to-end with index-aware enrichment.</strong> Multi-pattern (<code>-e</code> repeatable, <code>--patterns-from FILE</code>), multi-glob (<code>-g py -g md</code>), <code>-F/--fixed-string</code>, <code>-i/-w</code> flags. Engine selection prefers ripgrep &gt; git grep &gt; indexed-file fallback (pin via <code>ROAM_GREP_ENGINE</code>). Bulk-fetch enclosing symbols once per file (interval index) — replaces the per-match <code>SELECT</code> N+1 path. New flags: <code>--reachable-from &lt;entry[,entry,...]&gt;</code> (forward BFS over the call graph), <code>--unreachable</code> (orphan / not-reachable filter), <code>--co-occur</code> (every <code>-e</code> pattern must hit the same enclosing symbol), <code>--missing-pattern P</code> (anti-correlation), <code>--rank-by importance</code> (PageRank-ordered output), <code>--group-by symbol</code> (collapse hits per fn/class), <code>--blame</code> (last author + date), <code>--heat</code> (file churn), plus opt-out <code>--no-clones</code> / <code>--no-bridges</code>. Each match carries clone-class siblings (from <code>clone_pairs</code>) and cross-language bridge links when applicable.</li>
 <li><strong><code>roam refs-text &lt;string&gt;...</code></strong> — string-audit verdict shaped like <code>safe-delete</code> but for arbitrary literals (config keys, file paths, URLs, error messages). Groups references by surface (code / test / docs / config / dead), annotates reachability for code hits, emits per-string verdict (<code>SAFE-TO-REMOVE</code> / <code>REVIEW</code> / <code>LOAD-BEARING</code>). <code>--reachable-from &lt;entry&gt;</code> anchors reachability; <code>--per-match-detail</code> includes match lists in JSON.</li>
 <li><strong><code>roam delete-check</code></strong> — gates the working diff on surviving references. Parses Python / JS / TS / Go signatures from deletion lines, searches the post-edit tree for surviving uses, classifies each deletion <code>SAFE</code> / <code>LIKELY-SAFE</code> / <code>BREAK-RISK</code>. <code>--source {working,staged,pr,head}</code>, <code>--ci</code> exits 5 on <code>BREAK-RISK</code> for CI gating. Pairs with the PR Replay narrative.</li>
 <li><strong><code>roam history-grep &lt;pattern&gt;</code></strong> — git pickaxe wrapper (<code>-S</code> / <code>-G</code>) with <code>-e</code> repeatable, <code>--since</code> / <code>--until</code>, <code>-p</code> path filter, <code>--polarity</code> to mark each commit as <code>introduced</code> / <code>removed</code> / <code>modified</code>. Useful for postmortems and provenance audits when the trace is no longer in HEAD.</li>
 </ul>
+<h3>Site / docs</h3>
+<ul>
+<li><strong>Homepage visual overhaul</strong> — paper bg (<code>#fafaf6</code>), refined card system on a unified 200ms easing curve, dot-grid hero pattern with custom code-graph SVG corner mark, dark-wedge differentiator section with light-on-navy treatment for the algorithmic-judgment moment, custom monogram in nav. Type system rebuilt with clamp() display sizes (h1 34→64, h2 26→40), <code>text-wrap: balance</code> on every heading, font-variant-numeric tabular-nums on body. Color depth via new <code>--ink</code> / <code>--bg-deep</code> / <code>--bg-tint</code> / <code>--line-soft</code> / <code>--accent-deep</code> tokens layered alongside the legacy <code>--text</code> / <code>--bg-alt</code> / <code>--border</code> (kept aliased for sub-page back-compat). Verified zero horizontal-overflow violations + WCAG-AA contrast at 320 / 390 / 768 / 1280 / 1920 viewports.</li>
+<li><strong>PR review comment mockup redesign</strong> — replaced the generic GitHub-comment block with one built on authentic Primer color tokens (<code>--gh-canvas-subtle</code>, <code>--gh-border</code>, <code>--gh-danger-bg</code>, <code>--gh-attention-bg</code>, <code>--gh-success-bg</code>). Status banner mirrors GitHub's "checks failed" pattern. Findings render as bordered cards with Primer-pill severity ("High" / "Medium"), file:line links with arrow glyph, suggested-fix block in GitHub's actual diff styling (3 context lines, green-on-paper add). New: inline blast-radius SVG visualisation under the medium finding — central red node with eight spokes to caller nodes — visualises the "47 callers" claim that competitors only state numerically.</li>
+<li><strong>Mobile-overflow guard</strong> — fixes previously silent overflow on grid layouts at narrow viewports. Direct children of <code>.products</code> / <code>.scenarios-grid</code> / <code>.demo-grid</code> / <code>.replay-tiers</code> / <code>.senses-grid</code> / <code>.numbers-grid</code> / <code>.verbs-grid</code> / <code>.flow</code> get <code>min-width: 0</code> so <code>1fr</code> tracks shrink below their content's min-content width. Inline code in scenario / PR-find / dogfood / FAQ contexts gets <code>overflow-wrap: anywhere</code>. Terminal blocks inside narrow scenario cards switch to <code>white-space: pre-wrap</code> so output wraps cleanly inside 280-360px columns instead of clipping with a horizontal scrollbar.</li>
+<li><strong>Cross-page visual propagation</strong> — the new design system applied to pricing, compare, setup, docs hub, getting-started, integration-tutorials, architecture, agent-contract, demos, command-reference. Inline <code>style="..."</code> chains replaced with class modifiers (<code>.docs-card</code>, <code>.setup-editor-grid</code>, <code>.section-intro-tight</code>, <code>.whats-in-inner--narrow</code>, <code>.verbs-grid--2</code>, <code>.numbers-grid--2</code>). Dot-grid lede applied to <code>.docs-page</code> so the four no-hero docs pages inherit the homepage texture. <code>.docs-page table { display:block; overflow-x:auto }</code> so reference tables horizontal-scroll on phones. <code>.docs-page .step pre { white-space: pre-wrap }</code> so wide commands inside step cards wrap. Class swap <code>.legal-page</code> → <code>.docs-page</code> on agent-contract + demos (legal-page was the wrong base class for a docs guide).</li>
+<li>Two new docs pages: <strong><code>/docs/how-roam-thinks</code></strong> (decision tree mapping engineering questions to the right Roam command — 9 moments, command lists, example invocations) and <strong><code>/docs/troubleshooting</code></strong> (eight common problems: stale index, cloud sync, missing extras, parser failures, MCP setup, cache permissions, OOM, slow JSON — each with symptom + diagnosis + fix). Sitemap updated.</li>
+<li><strong>Site positioning sweep</strong> — 24-page footer tagline unified to <code>The local structural intelligence layer for coding agents.</code> (locked memo phrasing). Press-kit one-liner + two-paragraph blurb rewritten. About page meta description updated. PWA manifest name + description matched. SOC 2 / ISO 42001 / AI-governance acronyms removed from homepage trust-strip + JSON-LD (framework-specific detail moved to <code>/security</code>). All Copilot mentions removed; Codex confirmed across homepage, press, audit, llms.txt. PR Replay mailto bodies trimmed from 6-7 fields to 3-4 essentials.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li><strong><code>gitignore.py:_compile_pattern</code> quadratic-string fix</strong> — the pattern compiler was building its regex via <code>regex += "..."</code> inside a <code>while</code> loop, O(n²) for n pattern segments. Rewrote to collect parts in a list and <code>"".join(...)</code> at the end. Surfaced by <code>roam math</code> running against the repo itself.</li>
+<li><strong><code>cmd_explain_command</code> json_envelope kwarg collision</strong> — <code>json_envelope("explain-command", ..., command={...})</code> collided with the function's first positional parameter named <code>command</code>. Renamed the kwarg to <code>command_info</code>. Caught by the new CLI contract test suite.</li>
+<li><strong>Stale path references in CHANGELOG.md</strong> — 12 high-confidence path-rename hints applied via <code>roam stale-refs --fix apply</code> (old <code>templates/site/</code> and <code>docs/site/</code> paths updated to current <code>templates/distribution/landing-page/</code>).</li>
+</ul>
+<h3>Tests</h3>
+<ul>
+<li>New <code>tests/test_cli_contract.py</code> — 667 contract tests: every canonical command's module + attribute imports cleanly, every command has non-empty <code>--help</code>, JSON output never tracebacks in a fresh empty dir. Plus end-to-end shape tests for <code>surface --json</code>, <code>explain-command --json</code>, <code>db-check --json</code>. Catches lazy-load drift before users hit it.</li>
+<li>New <code>tests/test_manifest.py</code> — 8 tests covering manifest schema presence, collect/write/read round-trip, drift detection (roam_version / parser_versions / git_head), empty-table behaviour, end-to-end indexer-writes-manifest.</li>
+<li>New <code>tests/test_health_baseline.py</code> — 7 tests covering <code>--baseline</code> semantics including DEGRADED no-snapshot path, REVIEW on new high-severity, BAD on score regression, JSON envelope shape, text-output rendering.</li>
+<li>Removed <code>test_generated_landscape_json_is_in_sync</code> from <code>test_competitor_site_data.py</code> — the <code>landscape.json</code> it expected was deliberately deleted in the GH Pages takedown; test had been failing on every run.</li>
+</ul>
 <h3>Internal</h3>
 <ul>
 <li>New <code>roam.commands.grep_helpers</code> module: <code>detect_engine</code>, <code>run_search</code>, <code>build_interval_index</code> / <code>find_enclosing</code>, <code>build_reachable_set</code> (multi-entry), <code>build_orphan_set</code>, <code>build_clone_index</code> / <code>lookup_clone_siblings</code>, <code>build_bridge_index</code>, <code>attach_blame</code> / <code>attach_heat</code> / <code>attach_pagerank</code>, <code>classify_surface</code>, <code>group_by_symbol</code>. Single-source primitives behind grep / refs-text / delete-check / history-grep so cross-cutting logic (reachability, clone-class join, surface classification) doesn't drift.</li>
+<li><code>_DEPRECATED_COMMANDS</code> now supports structured records (<code>{replacement, reason, removal_version}</code>); <code>_deprecation_record</code> helper normalises both legacy string entries and the new shape. Surface output exposes deprecation reason + removal version.</li>
+<li>New <code>roam.commands.stale_index</code> helper — <code>check_stale()</code> returns <code>(is_stale, reason)</code>, manifest-aware where the manifest table is present, mtime fallback otherwise. Available for any command that wants to opt into stale-index warnings.</li>
 </ul>
 <h2>[12.50] - 2026-05-09</h2>
 <h3>Release notes</h3>
@@ -245,7 +447,7 @@
 <li>Bare basenames (no <code>/</code>) referenced from source code (<code>.py</code>, <code>.ts</code>) are treated as placeholders unless the file actually exists somewhere in the repo — eliminates the <code>auth.py</code> / <code>cmd_FOO.py</code> false-positive class that markdown-link regex would otherwise drag in from regex character classes.</li>
 <li>Bare dotfile basenames (<code>.eslintrc</code>, <code>.roam-gates.yml</code>) are recognised as documentation about user-creatable optional config files.</li>
 <li>Extensionless absolute URLs (<code>href="/setup"</code>, <code>/pricing</code>) are treated as static-site router paths, not file references; pass <code>--check-absolute-routes</code> to flip to strict file-system lookup.</li>
-<li>Absolute URLs with extensions try project-root, then <code>public/</code> / <code>static/</code> / <code>assets/</code>, then walk the source file's ancestor chain — so <code>&lt;img src="/favicon.svg"&gt;</code> from <code>templates/site/about.html</code> resolves to <code>templates/site/favicon.svg</code> when that's the deploy root.</li>
+<li>Absolute URLs with extensions try project-root, then <code>public/</code> / <code>static/</code> / <code>assets/</code>, then walk the source file's ancestor chain — so <code>&lt;img src="/favicon.svg"&gt;</code> from <code>templates/distribution/landing-page/about.html</code> resolves to <code>templates/site/favicon.svg</code> when that's the deploy root.</li>
 </ul>
 <h4>Reporting</h4>
 <ul>
@@ -464,7 +666,7 @@
 </ul>
 <h3>Tests</h3>
 <ul>
-<li><code>tests/test_pivot_phase0_commands.py</code> — 7 tests covering happy- path + verdict-decision-tree for <code>permit</code>, no-commits-found path for <code>postmortem</code>, JSON envelope shape + markdown render + file- output for <code>article-12-check</code>. All pass on Python 3.9-3.13.</li>
+<li><code>tests/test_phase0_commands.py</code> — 7 tests covering happy- path + verdict-decision-tree for <code>permit</code>, no-commits-found path for <code>postmortem</code>, JSON envelope shape + markdown render + file- output for <code>article-12-check</code>. All pass on Python 3.9-3.13.</li>
 </ul>
 <h2>[12.39] - 2026-05-06</h2>
 <h3>Polish — exhaustive bugbear sweep + B904 cleanup</h3>
@@ -1307,7 +1509,7 @@
 <h2>[12.12.4] - 2026-05-04</h2>
 <p>Fix the MCP server card's tool count and add a guard test so it can't drift again.</p>
 <p>The card reports the server's capabilities to MCP-discovery surfaces (PulseMCP, mcp.so, Smithery, …). Its <code>capabilities.tools.total</code> field had been at <code>120</code> (with <code>presets.core: 33</code>) for several releases while the live MCP server registered <code>122</code> tools and the core preset had grown to <code>35</code>. The card description correctly quoted <code>"122 MCP tools"</code> in plain text but the structured number clients actually parse was stale.</p>
-<p>Updated both copies (<code>src/roam/mcp-server-card.json</code> and the canonical <code>docs/site/.well-known/mcp-server-card.json</code>). Added <code>test_card_tool_count_matches_live_count</code> which compares the card's tool count against <code>surface_counts.collect_surface_counts</code> so a future MCP-tool addition that forgets the card update fails CI rather than ships silently.</p>
+<p>Updated both copies (<code>src/roam/mcp-server-card.json</code> and the canonical <code>templates/distribution/landing-page/.well-known/mcp-server-card.json</code>). Added <code>test_card_tool_count_matches_live_count</code> which compares the card's tool count against <code>surface_counts.collect_surface_counts</code> so a future MCP-tool addition that forgets the card update fails CI rather than ships silently.</p>
 <h2>[12.12.3] - 2026-05-04</h2>
 <p>Documentation and MCP-surface polish caught while auditing the v12.12.2 release.</p>
 <h3>MCP wrappers in step with the CLI</h3>
@@ -1602,7 +1804,7 @@
 </ul>
 <h3>Added — documentation consistency CI check</h3>
 <ul>
-<li><strong><code>tests/test_doc_consistency.py</code></strong> — cross-surface consistency check. Asserts version + CLI command count + MCP tool count agree across <code>pyproject.toml</code>, <code>server.json</code>, <code>docs/site/.well-known/mcp-server-card.json</code>, <code>README.md</code>, <code>llms-install.md</code>, and <code>docs/site/data/landscape.json</code>. Optional surfaces (project-local files, missing fields) skip cleanly. Caught a real drift on first run: the docs-site landscape entry was reporting an older version and command count than the published package.</li>
+<li><strong><code>tests/test_doc_consistency.py</code></strong> — cross-surface consistency check. Asserts version + CLI command count + MCP tool count agree across <code>pyproject.toml</code>, <code>server.json</code>, <code>templates/distribution/landing-page/.well-known/mcp-server-card.json</code>, <code>README.md</code>, <code>llms-install.md</code>, and <code>docs/site/data/landscape.json</code>. Optional surfaces (project-local files, missing fields) skip cleanly. Caught a real drift on first run: the docs-site landscape entry was reporting an older version and command count than the published package.</li>
 </ul>
 <h3>Added — internal-link audit in doc-consistency check</h3>
 <ul>
@@ -1757,7 +1959,7 @@
 <li><strong><code>roam dead --json</code></strong> was missing <code>summary.verdict</code>, the only command in the surface area without it. Agents calling <code>roam_dead_code</code> over MCP now get a verdict line consistent with every other tool.</li>
 <li><strong><code>roam retrieve</code> UPPERCASE / mixed-case identifiers</strong> previously extracted zero tokens (e.g. <code>PERSONALIZED_PAGERANK</code> and <code>Personalized_Pagerank</code> both returned no candidates). Now resolve to the same FTS terms as <code>personalized_pagerank</code> via a new <code>_UPPER_SNAKE_RE</code> and a lowercase-fallback re-snake pass.</li>
 <li><strong><code>roam retrieve</code> low-confidence false-positive</strong> on real matches with a high-scoring top-1 (e.g. <code>where is email sending</code> → <code>send_welcome</code> at 0.900). Added a top-1-vs-2nd gap override: when the gap is ≥ 0.30 the structural reranker has a unique winner and the token-coverage check is skipped. Distinguishes real big-gap matches from "one common word matches everything" failure modes.</li>
-<li><strong>MCP server card</strong> at <code>docs/site/.well-known/mcp-server-card.json</code> was hardcoded to <code>"version": "12.2.0"</code>. Bumped to track the package.</li>
+<li><strong>MCP server card</strong> at <code>templates/distribution/landing-page/.well-known/mcp-server-card.json</code> was hardcoded to <code>"version": "12.2.0"</code>. Bumped to track the package.</li>
 <li><strong><code>roam mcp --list-tools-json</code></strong> was missing <code>inputSchema</code> per tool, breaking conformance for registry validators that expect a drop-in proxy of the MCP <code>tools/list</code> response. Now includes <code>tool.parameters</code> from FastMCP.</li>
 </ul>
 <h3>Verification</h3>
@@ -1834,7 +2036,7 @@
 <ul>
 <li><strong><code>roam retrieve "&lt;task&gt;"</code></strong> — graph-aware FTS5 + structural reranker (personalised PageRank + clone-canonical signal + lexical baseline) + token-budget cap. Returns ranked spans with justification tags. MCP tool: <code>roam_retrieve</code>.</li>
 <li><strong><code>roam critique</code></strong> — graph-grounded patch verifier. <code>git diff | roam critique</code> gets findings ranked by severity. The killer signal is <strong>clones-not-edited</strong>. Exits 5 on high severity (CI-gateable). MCP tool: <code>roam_critique</code>.</li>
-<li><strong><code>roam fleet plan</code></strong> — Louvain + dark-matter co-change + PageRank multi-agent partitioner. Emits <code>roam-fleet/v1</code> manifest with raw / Composio / Codex CLI adapters. MCP tool: <code>roam_fleet_plan</code>.</li>
+<li><strong><code>roam fleet plan</code></strong> — Louvain + dark-matter co-change + PageRank multi-agent partitioner. Emits <code>roam-fleet/v1</code> manifest with raw / Composio / GitHub Copilot CLI adapters. MCP tool: <code>roam_fleet_plan</code>.</li>
 <li><strong><code>roam ask</code></strong> — 12-recipe TF-IDF intent classifier dispatching <code>preflight/retrieve/critique/fleet/diagnose/trace/...</code> in-process.</li>
 <li><strong><code>roam taint</code></strong> — graph-reach BFS + 5 starter rule packs (sqli, xss, path-traversal, command-injection, deserialization). OpenVEX-correct status + justification strings (no <code>code_not_reachable</code>).</li>
 <li><strong><code>roam cga emit</code></strong> — in-toto v1 statement (predicate type <code>roam-code.dev/CodeGraph/v1</code>) with Merkle root + edge-bundle digest + optional taint reachability claims. Cosign keyless or offline signing.</li>

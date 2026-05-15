@@ -1,0 +1,31 @@
+id: php-laravel-xss
+description: Untrusted request input flowing into echo/print or unescaped Blade output ({!! !!}) — bypasses Laravel's default Blade escaping. Maps to CWE-79 / OWASP A03:2021 Injection (XSS folded into Injection in the 2021 catalog).
+severity: error
+cwe: CWE-79
+owasp_top10: A03:2021_Injection
+languages:
+  - php
+sources:
+  - input
+  - all
+  - query
+  - post
+  - get
+  - json
+  - cookie
+  - header
+sinks:
+  - echo
+  - print
+  - print_r
+  - var_dump
+  - printf
+  - vprintf
+  - blade_unescaped
+sanitizers:
+  - htmlspecialchars
+  - htmlentities
+  - strip_tags
+  - e
+  - escape
+  - escapeHtml

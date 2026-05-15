@@ -373,3 +373,111 @@ class TestCommand:
         assert "user" in res.output
         assert "2 symbols" in res.output
         assert "test_login.py" in res.output
+
+
+# ---------------------------------------------------------------------------
+# W327 — "symbol not found" emits a structured envelope, not a vacuous error
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownSymbolEmitsStructuredEnvelope:
+    """W327: ``roam pytest-fixtures <nonexistent> --json`` must emit a
+    structured envelope and exit 0 — not print a one-liner and exit 1.
+
+    The audit at ``(internal memo)``
+    classified the prior behaviour as a "vacuous error emit" adjacent to
+    Variant B of Pattern-1. Pattern-2 always-emit discipline says a "no
+    matches" outcome is a valid analytical result, not a failure.
+    """
+
+    def test_pytest_fixtures_unknown_symbol_emits_structured_envelope(self, fixture_project):
+        import json
+
+        from roam.cli import cli
+
+        runner = CliRunner()
+        res = runner.invoke(
+            cli, ["--json", "pytest-fixtures", "fake_symbol_does_not_exist"]
+        )
+        assert res.exit_code == 0, res.output
+        payload = json.loads(res.output)
+        assert payload["command"] == "pytest-fixtures"
+        assert payload["target"] == "fake_symbol_does_not_exist"
+        assert payload["fixtures"] == []
+        assert payload["chain"] == []
+        summary = payload["summary"]
+        assert summary["resolved"] is False
+        assert summary["count"] == 0
+        assert summary["symbol"] == "fake_symbol_does_not_exist"
+        assert "fake_symbol_does_not_exist" in summary["verdict"]
+
+    def test_pytest_fixtures_unknown_symbol_text_mode_exits_zero(self, fixture_project):
+        from roam.cli import cli
+
+        runner = CliRunner()
+        res = runner.invoke(cli, ["pytest-fixtures", "fake_symbol_does_not_exist"])
+        # Exit 0 even in text mode — "no matches" is not a failure.
+        assert res.exit_code == 0, res.output
+        # Verdict prints to stdout (not stderr) so agents capturing
+        # combined streams still see it.
+        assert "No pytest fixtures match" in res.output
+        assert "fake_symbol_does_not_exist" in res.output
+
+    def test_pytest_fixtures_known_symbol_with_no_fixtures(self, fixture_project):
+        """A known symbol that has no fixture chain still exits 0 with a
+        structured envelope. Pattern-2 always-emit also covers this case
+        (empty `chain` array, not silent failure)."""
+        import json
+
+        from roam.cli import cli
+
+        runner = CliRunner()
+        # ``db`` is a top-level fixture with no dependencies of its own
+        # (forward direction). The chain MUST be empty but the envelope
+        # MUST still be emitted.
+        res = runner.invoke(cli, ["--json", "pytest-fixtures", "db"])
+        assert res.exit_code == 0, res.output
+        payload = json.loads(res.output)
+        assert payload["command"] == "pytest-fixtures"
+        assert payload["chain"] == []
+        summary = payload["summary"]
+        assert summary["count"] == 0
+        # Resolved symbol — distinct verdict shape from unknown.
+        assert summary.get("symbol") == "db"
+        # Verdict explicitly explains zero dependencies (not silent SAFE).
+        assert "no fixture" in summary["verdict"].lower()
+
+    def test_pytest_fixtures_verdict_uses_concrete_noun_terminal(self, fixture_project):
+        """LAW 4 drift guard: the W327 verdict on unknown-symbol must
+        remain concrete-noun-anchored.
+
+        The verdict is a long sentence (>4 tokens) with a non-numeric
+        lead ("No"), which is one of the five anchoring rules the LAW 4
+        lint accepts. This test pins that the rule still holds — if the
+        verdict ever gets shortened to a digit-led "<N> matches" form
+        without "matches" entering the anchor set, the lint regresses.
+        """
+        import json
+        import sys
+        from pathlib import Path
+
+        # Re-use the lint's `_is_concrete_anchored` helper to assert the
+        # verdict passes runtime LAW 4 evaluation.
+        sys.path.insert(0, str(Path(__file__).parent))
+        try:
+            from test_law4_lint import _is_concrete_anchored
+        finally:
+            sys.path.pop(0)
+
+        from roam.cli import cli
+
+        runner = CliRunner()
+        res = runner.invoke(
+            cli, ["--json", "pytest-fixtures", "fake_symbol_does_not_exist"]
+        )
+        assert res.exit_code == 0, res.output
+        payload = json.loads(res.output)
+        verdict = payload["summary"]["verdict"]
+        assert _is_concrete_anchored(verdict), (
+            f"W327 unknown-symbol verdict regressed LAW 4: {verdict!r}"
+        )

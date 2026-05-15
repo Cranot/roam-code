@@ -3,20 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Roam — Local structural intelligence for coding agents</title>
-  <meta name="description" content="Roam is a local repo-intelligence layer for coding agents — call graphs, blast radius, algorithmic risk, refactor simulation, audit evidence — exposed as a CLI and 130+ MCP tools. Free locally; paid surfaces for teams.">
+  <title>Roam — Local codebase intelligence for AI agents</title>
+  <meta name="description" content="Roam Code is the local codebase intelligence layer for developers and AI agents. It maps your repo, finds algorithmic and architectural risk, gates changes, and records tamper-evident evidence. Free CLI; paid surfaces for teams.">
 
-  <meta property="og:title" content="Roam — The structural intelligence coding agents don't have">
-  <meta property="og:description" content="A queryable repo graph and 130+ MCP tools your coding agents call before, during, and after every change. Free CLI; paid surfaces for teams.">
+  <meta property="og:title" content="Roam — Local codebase intelligence for AI agents">
+  <meta property="og:description" content="Maps, gates, and evidence in one local CLI. Roam turns repo structure into retrieval, algorithmic judgment, change-safety checks, and tamper-evident records your team verifies offline.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Roam — The structural intelligence coding agents don't have">
+  <meta property="og:image:alt" content="Roam — Local codebase intelligence for AI agents">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Roam — The structural intelligence coding agents don't have">
-  <meta name="twitter:description" content="A queryable repo graph and 130+ MCP tools your coding agents call before, during, and after every change. Free CLI; paid PR bot, dashboard, and self-hosted for teams.">
+  <meta name="twitter:title" content="Roam — Local codebase intelligence for AI agents">
+  <meta name="twitter:description" content="Maps, gates, and evidence in one local CLI. Roam turns repo structure into retrieval, algorithmic judgment, change-safety checks, and tamper-evident records your team verifies offline.">
   <meta name="twitter:image" content="https://roam-code.com/og.png">
 
   <link rel="canonical" href="https://roam-code.com/">
@@ -40,13 +40,13 @@
     "applicationCategory": "DeveloperApplication",
     "applicationSubCategory": "CodeAnalysisApplication",
     "operatingSystem": "Linux, macOS, Windows",
-    "description": "Code-graph engine and MCP server that gives AI coding agents structural awareness of a codebase before they edit it. Free CLI plus paid PR bot, dashboard, and self-hosted tiers.",
+    "description": "Local codebase intelligence for developers and AI agents. Roam compiles repo graph queries, retrieval, algorithmic risk analysis, change-safety checks, and tamper-evident audit records into machine-readable outputs. Free CLI plus paid PR replay, governance evidence pack, review, and self-hosted tiers.",
     "url": "https://roam-code.com/",
     "downloadUrl": "https://pypi.org/project/roam-code/",
     "installUrl": "https://pypi.org/project/roam-code/",
     "softwareHelp": {"@type": "CreativeWork", "url": "/docs/"},
-    "softwareVersion": "12.47",
-    "softwareRequirements": "Python 3.9+",
+    "softwareVersion": "13.0",
+    "softwareRequirements": "Python 3.10+",
     "fileSize": "~ 8 MB wheel",
     "image": "https://roam-code.com/og.png",
     "screenshot": "https://roam-code.com/og.png",
@@ -137,14 +137,17 @@
     <div class="hero-inner">
       <p class="eyebrow">For teams using Cursor, Claude Code, Codex, Gemini</p>
       <h1 class="hero-headline">
-        Coding agents can write code.<br>
-        <strong>Roam is the structural intelligence they don't have.</strong>
+        Maps. Gates. Evidence.<br>
+        <strong>In one local CLI.</strong>
       </h1>
       <p class="hero-subhead">
-        A queryable repo graph plus deterministic engineering-judgment
-        tools — call graphs, blast radius, algorithmic risk, refactor
-        simulation, audit evidence — exposed as a CLI and 130+ MCP tools
-        your agents call. Free locally; paid surfaces for teams.
+        Roam indexes your repo into a local code graph, then turns that
+        structure into retrieval, algorithmic risk review, architecture
+        maps, pre-change gates, and post-change evidence. Run
+        <code>roam math</code> when code is correct but slow,
+        <code>roam preflight</code> before an agent edits, and
+        <code>roam pr-replay</code> after. Source and evidence stay on
+        your machine unless you choose otherwise.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
@@ -201,8 +204,8 @@
       <p class="lede">
         Roam indexes a typical 100k-LOC repo in seconds and exposes the
         result as deterministic local tools your agent can call before,
-        during, and after every change. No telemetry, no API keys, no
-        source ever leaves your machine.
+        during, and after every change. Your code, your control, your
+        audit trail — evidence stays on your machine and verifies offline.
       </p>
       <div class="numbers-grid">
         <div class="num-cell"><strong>200+</strong><span>CLI capabilities</span></div>
@@ -637,7 +640,7 @@
             </tr>
             <tr>
               <th scope="row">Exposes the code graph to agents via MCP</th>
-              <td class="yes">Yes (145 tools)</td>
+              <td class="yes">Yes (169 tools)</td>
               <td class="ltd">Consumes MCP<sup>***</sup></td>
               <td class="ltd">Consumes MCP<sup>***</sup></td>
               <td class="ltd">Enterprise tier<sup>***</sup></td>
@@ -671,7 +674,7 @@
         </table>
       </div>
       <p class="compare-foot">
-        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (145 tools); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and an embedded version in SonarQube Cloud in March 2026.
+        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (169 tools); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and an embedded version in SonarQube Cloud in March 2026.
         Roam runs <em>alongside</em> a semantic reviewer (CodeRabbit, Greptile, Qodo) — different layer, different bugs. Also pairs with Cursor / Claude Code / Codex / Gemini via MCP, and exports SARIF for GitHub / GitLab CI.
         See something wrong? <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
       </p>
@@ -794,8 +797,8 @@
         <span>Free forever. <a href="https://github.com/Cranot/roam-code">GitHub</a> · <a href="https://pypi.org/project/roam-code/">PyPI</a></span>
       </div>
       <div class="trust-cell">
-        <strong>The CLI sends nothing back to us</strong>
-        <span>No telemetry. No analytics. No API keys. The free CLI runs entirely on your machine — your source never leaves it. See the <a href="/security#supply-chain">security page</a> for our supply-chain posture and a comparison with hosted reviewers.</span>
+        <strong>Evidence that never leaves your machine</strong>
+        <span>Local SQLite, no telemetry, no network calls — and evidence packets that hash-verify offline. Your code stays on your machine; your audit trail lives in your repo. See the <a href="/security#supply-chain">security page</a> for our supply-chain posture and a comparison with hosted reviewers.</span>
       </div>
       <div class="trust-cell">
         <strong>28 languages, 6 cross-language bridges</strong>
@@ -1041,7 +1044,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local structural intelligence layer for coding agents.</span>
+        <span>The local codebase intelligence layer for developers and AI agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

@@ -35,6 +35,12 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
+from roam.output.metric_definitions import (
+    BLAST_RADIUS_AFFECTED_FILES,
+    BLAST_RADIUS_AFFECTED_SYMBOLS,
+    COGNITIVE_COMPLEXITY_DEFINITION,
+    PREFLIGHT_RISK_LEVEL_DEFINITION,
+)
 from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
@@ -797,12 +803,20 @@ def preflight(ctx, target, staged):
                 "symbols_checked": len(sym_ids),
                 "files_checked": len(file_paths),
                 "fitness_violations": fitness_violations_list,
+                # W331: preflight aggregates 6 dimensions into one
+                # CRITICAL/HIGH/MEDIUM/LOW verdict. Name the rollup so
+                # agents don't conflate it with a per-dimension severity.
+                "risk_level_definition": PREFLIGHT_RISK_LEVEL_DEFINITION,
             },
             blast_radius={
                 "affected_symbols": blast["affected_symbols"],
                 "affected_files": blast["affected_files"],
                 "affected_file_list": blast["affected_file_list"],
                 "severity": blast["severity"],
+                # W331: same definition as cmd_impact so two commands
+                # don't disagree on what "affected_symbols" means.
+                "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
+                "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
             },
             tests={
                 "direct": tests["direct"],
@@ -818,6 +832,8 @@ def preflight(ctx, target, staged):
                 "max_nesting_depth": compl["max_nesting_depth"],
                 "high_complexity_symbols": compl["high_complexity_symbols"],
                 "severity": compl["severity"],
+                # W331: same canonical definition as cmd_complexity.
+                "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
             },
             coupling={
                 "coupled_files": coupl["coupled_files"],

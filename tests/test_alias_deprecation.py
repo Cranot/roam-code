@@ -56,12 +56,10 @@ def cli_runner_split_stderr():
     the deprecation note must NOT leak into stdout (JSON consumers parse
     stdout and a leading non-JSON line would crash the loader).
     """
-    try:
-        return CliRunner(mix_stderr=False)
-    except TypeError:
-        # Older Click — fall back to merged stderr. The stderr assertion
-        # still works because click.echo(..., err=True) routes there.
-        return CliRunner()
+    # Click 8.3+ removed mix_stderr; result.stdout and result.stderr are
+    # always separated. The _result_stderr / _result_stdout helpers below
+    # paper over the older-Click merged-output path if anyone runs there.
+    return CliRunner()
 
 
 def _result_stderr(result) -> str:

@@ -289,18 +289,10 @@ def test_apply_strict_exits_5_on_failure(empty_repo, cli_runner):
     path = init_constitution(empty_repo, force=True)
     # Patch the constitution's before_edit gate to call a non-existent
     # roam command -- this will exit non-zero through the real CLI.
-    text = path.read_text(encoding="utf-8")
-    # Swap the existing before_edit block for a single bad call. Keep
-    # the YAML lightweight.
-    new_text = text.replace(
-        "required_checks:",
-        "required_checks:\n"
-        "  before_edit:\n"
-        "    - roam this-command-does-not-exist\n"
-        "  _orig:",
-    )
-    # Replace cleanly: drop original before_edit / after_edit / before_pr;
-    # easiest: rewrite the file with a known-bad invocation.
+    # Was: an initial text.replace() approach to surgically swap the
+    # before_edit block was abandoned in favour of rewriting the whole
+    # file with a known-bad invocation (cleaner, no replace-string
+    # coupling to the init-constitution template). See W53 audit.
     minimal = (
         "version: 1\n"
         "metadata:\n"

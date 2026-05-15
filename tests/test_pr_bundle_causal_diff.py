@@ -357,15 +357,18 @@ def test_dedup_prevents_causal_diff_double_risk(
 
 
 # ---------------------------------------------------------------------------
-# 5. pure function: no io_write edges, no causal-diff risks
+# 5. pure function: no io_write kinds, no causal-diff risks
 # ---------------------------------------------------------------------------
 
 
 def test_causal_diff_for_pure_function_no_risks(
     project_factory, cli_runner, monkeypatch
 ):
-    """A pure function never grows io_write edges so causal-diff stays
-    silent — no risks, no added/removed totals."""
+    """pure-function refactors don't surface io_write risks or
+    high-severity findings, and never trigger auto:causal-diff
+    entries. pure-kind churn (e.g. refactoring ``return a+b`` to
+    ``total = a+b; return total`` produces removed
+    ``param_to_return->return`` edges) is expected and benign."""
     proj = project_factory(
         {
             "src/pure.py": (
@@ -394,7 +397,17 @@ def test_causal_diff_for_pure_function_no_risks(
     cd_dist = data["summary"]["causal_diff_distribution"]
     # No io_write paths at all, so any potential added/removed edges
     # would still be of pure kinds (param_to_return etc.) which never
-    # surface as risks.
+    # surface as risks. Body refactors of a pure function CAN produce
+    # added/removed param_to_return->return churn (e.g. introducing
+    # an intermediate ``total =`` binding shifts the causal path);
+    # that's expected and explicitly not a risk. What MUST stay absent
+    # is any io_write kind in by_kind.
+    by_kind = cd_dist.get("by_kind", {})
+    io_write_kinds = [k for k in by_kind if "io_write" in k]
+    assert io_write_kinds == [], (
+        f"pure function should not produce io_write kinds in by_kind: "
+        f"{io_write_kinds!r} (full dist: {cd_dist!r})"
+    )
     assert data["summary"]["causal_diff_high_severity_count"] == 0, data["summary"]
     bundle = _read_bundle_file(proj)
     cd_risks = [

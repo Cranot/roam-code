@@ -262,7 +262,7 @@ def build_cga_predicate(
         # have to import roam internals.
         "openvex_status_set": sorted(OPENVEX_STATUSES),
         "openvex_justification_set": sorted(OPENVEX_JUSTIFICATIONS),
-        # v12.0: empty when --include-taint isn't passed; populated by
+        # Empty when --include-taint isn't passed; populated by
         # roam taint output otherwise. Each entry is OpenVEX-shaped so
         # CycloneDX/OpenVEX consumers can ingest directly.
         "reachability_claims": reachability_claims,

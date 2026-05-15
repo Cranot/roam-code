@@ -7,7 +7,10 @@ Exit codes:
 
 from __future__ import annotations
 
+import json as _json
+import re
 import shutil
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -17,20 +20,117 @@ import click
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
+
+# W156 — doctor is the first detector migrating an "environment" namespace
+# onto the central findings registry (after clones / dead / complexity).
+# HYBRID model: only BLOCKING check failures persist; advisory failures
+# are by-design ephemeral environment diagnostics (cache age, cloud
+# sync, dev/install drift) that would pollute the registry without
+# being actionable to anyone but the local developer. The detector
+# version stamp lets a consumer spot rows produced under an older
+# blocking-vs-advisory partition; bump it when the partition shifts.
+DOCTOR_DETECTOR_VERSION: str = "1.0.0"
+
+# Mapping check name -> env.<sub-kind> for the registry finding_id_str.
+# Names that don't fit a specific kind default to ``env.blocking``.
+_DOCTOR_CHECK_SUBKIND: dict[str, str] = {
+    "Python version": "env.python_version",
+    "tree-sitter": "env.missing_language_pack",
+    "tree-sitter-language-pack": "env.missing_language_pack",
+    "git executable": "env.missing_git",
+    "networkx": "env.missing_dependency",
+    "Cache permissions": "env.cache_permissions",
+    "CLI command registry": "env.command_registry_drift",
+    "Required tables": "env.missing_schema_table",
+    "SQLite operational": "env.sqlite_integrity_failure",
+    "CI workflow drift": "env.ci_workflow_drift",
+}
+
+
+def _doctor_finding_id(check_name: str, sub_kind: str) -> str:
+    """Stable, deterministic finding id for one blocking doctor failure.
+
+    The (check_name, sub_kind) pair is enough to re-identify the same
+    environment finding across runs — check names are stable strings
+    defined in this module. Re-running ``roam doctor --persist`` on
+    the same input upserts the existing row rather than duplicating.
+    """
+    from roam.db.findings import make_finding_id
+
+    return make_finding_id("doctor", sub_kind, check_name, sub_kind)
+
+
+def _emit_doctor_findings(conn, results: list[dict], source_version: str) -> None:
+    """Mirror BLOCKING check failures into the findings registry.
+
+    HYBRID filter (W156): advisory failures are filtered out — they're
+    ephemeral environment diagnostics (cache age, cloud sync, dev /
+    install drift) with no permanent codebase-level meaning. Only
+    blocking failures are persisted; passed checks are also skipped
+    (W145/W146 precedent — the registry documents problems, not
+    successes).
+
+    ``results`` is the list of check-result dicts produced by the
+    doctor pipeline: ``{"name", "passed", "detail", ...}``. The dict
+    shape is the contract — emit doesn't peek at private keys.
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (without the ``findings`` table) silently no-ops rather than
+    crashing the standard doctor command.
+    """
+    # Local import keeps the cost out of the no-persist path —
+    # callers without ``--persist`` never reach here.
+    from roam.db.findings import (
+        CONFIDENCE_STATIC_ANALYSIS,
+        FindingRecord,
+        emit_finding,
+    )
+
+    for r in results:
+        if r.get("passed"):
+            continue
+        name = r.get("name") or ""
+        # HYBRID filter — advisory failures are NOT persisted.
+        if name in _ADVISORY_CHECK_NAMES:
+            continue
+        sub_kind = _DOCTOR_CHECK_SUBKIND.get(name, "env.blocking")
+        finding_id = _doctor_finding_id(name, sub_kind)
+        detail = r.get("detail") or ""
+        evidence = {
+            "check_name": name,
+            "sub_kind": sub_kind,
+            "detail": detail,
+            "passed": False,
+        }
+        claim = f"Doctor blocking-failure: {name} — {detail}"
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="environment",
+                subject_id=None,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=CONFIDENCE_STATIC_ANALYSIS,
+                source_detector="doctor",
+                source_version=source_version,
+            ),
+        )
+
 # ---------------------------------------------------------------------------
 # Individual check functions
 # ---------------------------------------------------------------------------
 
 
 def _check_python_version() -> dict:
-    """Python >= 3.9 required."""
+    """Python >= 3.10 required."""
     vi = sys.version_info
     version_str = f"{vi.major}.{vi.minor}.{vi.micro}"
-    passed = (vi.major, vi.minor) >= (3, 9)
+    passed = (vi.major, vi.minor) >= (3, 10)
     return {
         "name": "Python version",
         "passed": passed,
-        "detail": f"Python {version_str} (>= 3.9 required)",
+        "detail": f"Python {version_str} (>= 3.10 required)",
     }
 
 
@@ -447,6 +547,72 @@ def _check_required_tables() -> dict:
     }
 
 
+def _check_corpus_content() -> dict:
+    """Verify the indexer extracted symbols from the corpus.
+
+    W836 fix — an empty graph means either the corpus is genuinely empty
+    OR the indexer is broken. Either way, doctor should disclose this
+    instead of silently passing. Without this check the env-only pipeline
+    emits "all N checks passed" against a clean env + empty corpus,
+    masking the most actionable symptom (W835/W836 finding).
+
+    States:
+      no_index    - DB doesn't exist (skipped, advisory pass)
+      empty       - DB exists but 0 symbols indexed (advisory fail)
+      populated   - at least one symbol present (pass)
+      error       - could not query symbols table
+    """
+    try:
+        from roam.db.connection import db_exists, open_db
+    except (ImportError, AttributeError) as exc:
+        return {
+            "name": "Corpus content",
+            "passed": False,
+            "detail": f"connection module import failed: {type(exc).__name__}: {exc}",
+        }
+
+    if not db_exists():
+        return {
+            "name": "Corpus content",
+            "passed": True,
+            "detail": "no index - corpus check skipped (run `roam init`)",
+            "_state": "no_index",
+        }
+
+    import sqlite3 as _sqlite3
+
+    try:
+        with open_db(readonly=True) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+    except _sqlite3.Error as exc:
+        return {
+            "name": "Corpus content",
+            "passed": False,
+            "detail": f"could not query symbols: {exc}",
+            "_state": "error",
+        }
+
+    count = int(count or 0)
+    if count == 0:
+        # Pattern 2: always-emit. Empty corpus is a real signal — disclose
+        # it, do not silently pass. Advisory failure keeps this from
+        # blocking CI for legitimately empty repos.
+        return {
+            "name": "Corpus content",
+            "passed": False,
+            "detail": "corpus empty (0 symbols indexed) - run `roam index --force` if unexpected",
+            "_state": "empty",
+            "_symbol_count": 0,
+        }
+    return {
+        "name": "Corpus content",
+        "passed": True,
+        "detail": f"{count} symbols indexed",
+        "_state": "populated",
+        "_symbol_count": count,
+    }
+
+
 def _check_stale_math_signal_column() -> dict:
     """Detect a stale ``math_signals.loop_eq_with_dependent_write`` column.
 
@@ -824,6 +990,264 @@ def _check_index_manifest_history() -> dict:
     }
 
 
+def _check_index_step_failures() -> dict:
+    """Surface per-sub-step failures recorded in the latest manifest.
+
+    ROADMAP A8 / W82: ``Indexer`` runs ~12 best-effort sub-steps that
+    each guard themselves with try/except (clustering, taint analysis,
+    git stats, etc.). Without a per-step record, the index can ship
+    "complete" while a key step silently failed — agents then consume
+    stale data thinking it's fresh.
+
+    The indexer now writes a JSON map into ``index_manifest.steps_status``
+    on every run. This check reads that map and emits an advisory
+    failure when ANY step has a ``failed:*`` status, naming the failing
+    steps so the user knows what to retry.
+
+    States:
+      no_index      — DB not present (advisory pass)
+      no_data       — manifest exists but no per-step record (legacy row
+                      or import-only check); advisory pass
+      all_ok        — every recorded step ran cleanly
+      failures      — at least one step is ``failed:*`` — advisory FAIL
+                      with the failing-step names + a retry hint
+    """
+    try:
+        from roam.db.connection import db_exists, open_db
+        from roam.index.manifest import latest_manifest
+    except Exception as exc:
+        return {
+            "name": "Index step manifest",
+            "passed": False,
+            "detail": f"manifest module import failed: {type(exc).__name__}: {exc}",
+        }
+
+    if not db_exists():
+        return {
+            "name": "Index step manifest",
+            "passed": True,
+            "detail": "no index — step manifest check skipped",
+            "_state": "no_index",
+        }
+
+    try:
+        with open_db(readonly=True) as conn:
+            prev = latest_manifest(conn)
+    except Exception as exc:
+        return {
+            "name": "Index step manifest",
+            "passed": False,
+            "detail": f"could not read manifest: {type(exc).__name__}: {exc}",
+        }
+
+    if prev is None:
+        return {
+            "name": "Index step manifest",
+            "passed": True,
+            "detail": "no manifest recorded — run `roam index` to capture per-step status",
+            "_state": "no_data",
+        }
+
+    steps_status = prev.get("steps_status") or {}
+    if not steps_status:
+        return {
+            "name": "Index step manifest",
+            "passed": True,
+            "detail": "no per-step data recorded (legacy manifest row)",
+            "_state": "no_data",
+        }
+
+    failures: list[tuple[str, str, str]] = []  # (step, error_class, excerpt)
+    skipped: list[str] = []
+    ok_count = 0
+    for step, entry in steps_status.items():
+        if not isinstance(entry, dict):
+            # Defensive: tolerate the older string-only shape if a
+            # mixed-vintage row sneaks in.
+            status_str = str(entry)
+            if status_str.startswith("failed:"):
+                failures.append((step, status_str.split(":", 1)[1], ""))
+            elif status_str.startswith("skipped:"):
+                skipped.append(step)
+            else:
+                ok_count += 1
+            continue
+        status = str(entry.get("status") or "")
+        if status.startswith("failed:"):
+            err_class = status.split(":", 1)[1]
+            excerpt = str(entry.get("error_excerpt") or "")
+            failures.append((step, err_class, excerpt))
+        elif status.startswith("skipped:"):
+            skipped.append(step)
+        else:
+            ok_count += 1
+
+    total = len(steps_status)
+    if not failures:
+        suffix = f" ({len(skipped)} skipped)" if skipped else ""
+        return {
+            "name": "Index step manifest",
+            "passed": True,
+            "detail": f"all {ok_count}/{total} recorded sub-steps succeeded{suffix}",
+            "_state": "all_ok",
+            "_steps_total": total,
+            "_steps_ok": ok_count,
+            "_steps_skipped": len(skipped),
+        }
+
+    # Surface up to the first 3 failing steps in the human-readable
+    # detail so we name what failed without a wall of text.
+    head = failures[:3]
+    head_text = "; ".join(
+        f"{step}: {err_class}" + (f" ({excerpt[:80]})" if excerpt else "")
+        for step, err_class, excerpt in head
+    )
+    remainder = f"; +{len(failures) - len(head)} more" if len(failures) > len(head) else ""
+    fail_names = ", ".join(step for step, _, _ in failures)
+    detail = (
+        f"{len(failures)}/{total} sub-step(s) failed in the last index run "
+        f"({fail_names}). Your index is missing data because these steps "
+        f"failed: {head_text}{remainder}. Run `roam index --rebuild` to retry."
+    )
+    return {
+        "name": "Index step manifest",
+        "passed": False,
+        "detail": detail,
+        "_state": "failures",
+        "_steps_total": total,
+        "_steps_failed": len(failures),
+        "_steps_skipped": len(skipped),
+        "_failed_steps": [
+            {"step": s, "error_class": ec, "error_excerpt": ex}
+            for s, ec, ex in failures
+        ],
+    }
+
+
+def _check_phase_timings() -> dict:
+    """Surface per-phase wall-clock from the latest index run (W408).
+
+    The indexer (W408) records the 7 user-facing phases' wallclock into
+    ``index_manifest.notes`` under the ``phase_timings`` key. This check
+    reads them back so ``roam doctor --json`` exposes the data without
+    needing a separate ``roam indexer-perf`` command. The W395-followup
+    sprint can rank optimization candidates against the real numbers
+    rather than the predicted 30-50% speedup that turned out to be ~5%.
+
+    Always-advisory: a slow phase isn't broken — it's diagnostic. The
+    check never blocks, but the ``_phase_timings`` private payload + the
+    structured envelope let downstream tooling lint specific phases.
+
+    States:
+      no_index       — DB doesn't exist (advisory pass)
+      no_data        — manifest exists but ``notes`` has no ``phase_timings``
+                       (legacy row from before this wave) — advisory pass
+      ok             — timings present; surface seconds per phase + total
+    """
+    import json as _json
+
+    try:
+        from roam.db.connection import db_exists, open_db
+        from roam.index.manifest import latest_manifest
+    except Exception as exc:
+        return {
+            "name": "Phase timings",
+            "passed": True,
+            "detail": f"manifest module import failed: {type(exc).__name__}: {exc}",
+            "_state": "no_data",
+        }
+
+    if not db_exists():
+        return {
+            "name": "Phase timings",
+            "passed": True,
+            "detail": "no index — phase-timing check skipped",
+            "_state": "no_index",
+        }
+
+    try:
+        with open_db(readonly=True) as conn:
+            prev = latest_manifest(conn)
+    except Exception as exc:
+        return {
+            "name": "Phase timings",
+            "passed": True,
+            "detail": f"could not read manifest: {type(exc).__name__}: {exc}",
+            "_state": "no_data",
+        }
+
+    if prev is None:
+        return {
+            "name": "Phase timings",
+            "passed": True,
+            "detail": "no manifest recorded — run `roam index` to capture phase timings",
+            "_state": "no_data",
+        }
+
+    notes_raw = prev.get("notes") or ""
+    if not notes_raw:
+        return {
+            "name": "Phase timings",
+            "passed": True,
+            "detail": "no phase-timing data recorded (legacy manifest row)",
+            "_state": "no_data",
+        }
+
+    try:
+        notes_obj = _json.loads(notes_raw)
+        if not isinstance(notes_obj, dict):
+            notes_obj = {}
+    except (TypeError, ValueError):
+        notes_obj = {}
+
+    phase_timings = notes_obj.get("phase_timings") or {}
+    if not isinstance(phase_timings, dict) or not phase_timings:
+        return {
+            "name": "Phase timings",
+            "passed": True,
+            "detail": "no phase-timing data recorded (legacy manifest row)",
+            "_state": "no_data",
+        }
+
+    # Normalise to (phase, seconds) tuples in the canonical order. Any
+    # extra keys the indexer added in a future revision come after the
+    # known set, preserving discoverability without breaking the order.
+    canonical_order = (
+        "discover", "parse_extract", "resolve", "graph_metrics",
+        "git_analysis", "effects_taint", "health_load", "search_indexes",
+    )
+    ordered: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    for k in canonical_order:
+        if k in phase_timings:
+            ordered.append((k, float(phase_timings[k])))
+            seen.add(k)
+    for k, v in phase_timings.items():
+        if k not in seen:
+            try:
+                ordered.append((k, float(v)))
+            except (TypeError, ValueError):
+                continue
+    total = round(sum(s for _, s in ordered), 3)
+    # Human detail: name the slowest phase + total. LAW 4 anchor: terminal
+    # token "seconds" — included in tests/test_law4_lint.py's anchor set.
+    slowest_phase, slowest_seconds = max(ordered, key=lambda p: p[1])
+    detail = (
+        f"index ran {total:.3f} seconds across {len(ordered)} phases; "
+        f"slowest phase '{slowest_phase}' took {slowest_seconds:.3f} seconds"
+    )
+    return {
+        "name": "Phase timings",
+        "passed": True,
+        "detail": detail,
+        "_state": "ok",
+        "_phase_timings": {k: round(s, 3) for k, s in ordered},
+        "_total_seconds": total,
+        "_slowest_phase": slowest_phase,
+        "_slowest_seconds": round(slowest_seconds, 3),
+    }
+
+
 def _check_installed_binary_matches_source() -> dict:
     """Detect a stale ``roam`` binary that doesn't point at this source tree.
 
@@ -1064,6 +1488,281 @@ def _check_optional_extras() -> dict:
     }
 
 
+# W482 — emitted-workflow drift detection (follow-up to W471 SLSA SRC-L3).
+#
+# When ``roam ci-setup --write`` (and ``--with-slsa-l3``) emit GitHub
+# Actions YAML, those files are then committed by the user. If a future
+# release ships an updated template (e.g. cosign-installer@v3 → v4, or a
+# new permission added), the live workflow silently drifts. This check
+# diffs every live workflow under ``.github/workflows/`` against the
+# canonical bundled template and surfaces the diff to the user.
+#
+# Registry of (template_file_name_under_templates_ci, live_workflow_path
+# relative to project root). Sourced from cmd_ci_setup so the truth stays
+# single-sourced — adding a new GitHub template to ci-setup automatically
+# extends doctor's drift check.
+def _github_template_registry() -> list[tuple[str, str]]:
+    """Return [(template_filename, live_workflow_path)] for GitHub templates.
+
+    Only GitHub-Actions templates are checked: non-GitHub platforms
+    (GitLab, Azure, Jenkins, Bitbucket) live OUTSIDE ``.github/workflows/``
+    and have a different surface area; the drift question for those is
+    distinct enough to warrant its own future check rather than mixing it
+    in here. Drive-by W-task suggestion below.
+    """
+    return [
+        # W471 — SLSA SRC-L3 auto-trigger workflow.
+        ("slsa-src-l3.yml", ".github/workflows/roam-slsa-src-l3.yml"),
+        # Pre-existing agent-review drop-in.
+        ("agent-review.yml", ".github/workflows/agent-review.yml"),
+    ]
+
+
+def _normalize_workflow_yaml(text: str) -> str:
+    """Strip comments + trailing whitespace + collapse blank-line runs.
+
+    Diff stability for the W482 drift check requires ignoring purely
+    cosmetic differences: in-file comments (which often contain dates or
+    URLs the user customised), trailing whitespace, and runs of blank
+    lines. We do NOT parse YAML here — a full ruamel.yaml round-trip
+    would normalize too aggressively (reorder keys, drop comments
+    semantically meaningful to the workflow). Line-by-line strip is the
+    right intermediate fidelity.
+    """
+    out: list[str] = []
+    prev_blank = False
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        # Strip whole-line comments (# at column 0 or after leading whitespace).
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        if not line:
+            if prev_blank:
+                continue
+            prev_blank = True
+        else:
+            prev_blank = False
+        out.append(line)
+    # Trim leading + trailing blank lines.
+    while out and not out[0]:
+        out.pop(0)
+    while out and not out[-1]:
+        out.pop()
+    return "\n".join(out) + "\n"
+
+
+# Match `python-version:` value lines in a GitHub-Actions YAML.
+# Accepts single-quoted, double-quoted, or unquoted scalar values. We
+# anchor on lstrip to avoid grabbing comment-embedded mentions.
+_PYTHON_VERSION_LINE_RE = re.compile(
+    r"""^\s*python-version\s*:\s*['"]?([^\s'"#]+)['"]?\s*(?:\#.*)?$""",
+    re.MULTILINE,
+)
+
+
+def _extract_python_version_from_workflow(text: str) -> str | None:
+    """Return the first ``python-version:`` value in a workflow YAML.
+
+    Drive-by fix for W515 — without this, drift compare uses the default
+    ``3.12`` and any user who emitted with ``--python-version 3.11``
+    gets a FALSE drift report on every ``roam doctor`` run. By feeding
+    the live file's own pin back as the substitution variable, we only
+    flag drift on *real* structural divergence.
+
+    Returns ``None`` when no ``python-version:`` line is present (e.g.
+    a template that doesn't take a python-version pin).
+    """
+    match = _PYTHON_VERSION_LINE_RE.search(text)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _check_ci_workflow_drift() -> dict:
+    """Detect drift between emitted GitHub workflows and canonical templates.
+
+    Compares live ``.github/workflows/*.yml`` files (those that came from
+    ``roam ci-setup --write``) against the bundled template under
+    ``src/roam/templates/ci/``. Drift means the template was updated
+    upstream but the user's workflow wasn't refreshed.
+
+    States:
+      not_applicable — no live workflow exists for any registered template
+                       (project doesn't use this feature; advisory pass)
+      clean          — every live workflow matches its template
+      drift          — at least one live workflow differs from its template
+      template_missing — packaging error: a registered template file is
+                       absent from the install (advisory pass; doctor's
+                       other checks already cover packaging integrity)
+
+    Advisory only — drift is informational, never blocking. Users should
+    refresh the live workflow with ``roam ci-setup --write`` (will warn
+    on file exists) or re-emit after deleting the old file.
+    """
+    try:
+        from roam.commands.cmd_ci_setup import (
+            _GITHUB_TEMPLATE,
+            _get_python_version,
+            _substitute_vars,
+            _templates_dir,
+        )
+    except Exception as exc:
+        return {
+            "name": "CI workflow drift",
+            "passed": True,
+            "detail": f"ci-setup module import failed: {type(exc).__name__}: {exc}",
+            "_state": "import_failed",
+        }
+
+    project_root = Path.cwd()
+    templates_dir = _templates_dir()
+
+    # Default substitution variables — match cmd_ci_setup's defaults so the
+    # rendered template matches what `ci-setup --write` would produce with
+    # no flags. W515 — we ALSO read the live file's python-version pin and
+    # re-substitute before diffing: a user who passed
+    # `roam ci-setup --python-version 3.11 --write` should not be told they
+    # have drift on every doctor run when the only divergence is the pin
+    # they explicitly chose. Only structural divergence is real drift.
+    default_python_version = _get_python_version()
+
+    # Carry the raw template text per pair so we can re-render after
+    # reading the live file's pin. Templates without a python_version
+    # placeholder are unaffected (substitution is a no-op).
+    inline_pairs: list[tuple[str, str, str]] = [
+        # (label, raw_template_text, live_path_relative)
+        ("roam.yml", _GITHUB_TEMPLATE, ".github/workflows/roam.yml"),
+    ]
+    file_pairs: list[tuple[str, str, str]] = []
+    for template_filename, live_rel in _github_template_registry():
+        template_path = templates_dir / template_filename
+        if not template_path.exists():
+            # Packaging error — record but don't fail the check; the
+            # "Required tables" / installer-level checks cover this.
+            file_pairs.append((template_filename, "", live_rel))
+            continue
+        file_pairs.append(
+            (template_filename, template_path.read_text(encoding="utf-8"), live_rel)
+        )
+
+    all_pairs = inline_pairs + file_pairs
+
+    checked = 0
+    drifted: list[dict] = []
+    missing: list[dict] = []
+    template_missing: list[str] = []
+
+    for label, raw_template, live_rel in all_pairs:
+        if not raw_template:
+            template_missing.append(label)
+            continue
+        live_path = project_root / live_rel
+        if not live_path.exists():
+            missing.append(
+                {
+                    "template": label,
+                    "live_path": live_rel,
+                    "state": "not_emitted",
+                }
+            )
+            continue
+        try:
+            live_text = live_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            drifted.append(
+                {
+                    "template": label,
+                    "live_path": live_rel,
+                    "state": "unreadable",
+                    "diff_summary": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            checked += 1
+            continue
+        checked += 1
+        # W515 — substitute with the live file's own python-version pin
+        # if one is present. Falls back to the bundled default for
+        # templates that don't declare the placeholder or live files
+        # without a pin (in which case the result is identical to the
+        # pre-W515 behaviour).
+        live_python_version = _extract_python_version_from_workflow(live_text)
+        rendered = _substitute_vars(
+            raw_template,
+            {"python_version": live_python_version or default_python_version},
+        )
+        live_norm = _normalize_workflow_yaml(live_text)
+        tmpl_norm = _normalize_workflow_yaml(rendered)
+        if live_norm == tmpl_norm:
+            continue
+        # Lightweight diff summary: line counts + first divergence. A full
+        # unified diff would balloon the doctor envelope; we keep it
+        # one-line and let the user re-emit to see the structural diff.
+        live_lines = live_norm.splitlines()
+        tmpl_lines = tmpl_norm.splitlines()
+        first_diverge = 0
+        for i, (a, b) in enumerate(zip(live_lines, tmpl_lines)):
+            if a != b:
+                first_diverge = i + 1  # 1-based
+                break
+        else:
+            first_diverge = min(len(live_lines), len(tmpl_lines)) + 1
+        drifted.append(
+            {
+                "template": label,
+                "live_path": live_rel,
+                "state": "drifted",
+                "diff_summary": (
+                    f"{len(live_lines)} live vs {len(tmpl_lines)} template lines; "
+                    f"first divergence at line {first_diverge}"
+                ),
+            }
+        )
+
+    # If no live workflows AND no drifted entries, the feature isn't in
+    # use here — advisory pass.
+    if checked == 0 and not drifted:
+        return {
+            "name": "CI workflow drift",
+            "passed": True,
+            "detail": "no emitted roam workflows found under .github/workflows/",
+            "_state": "not_applicable",
+            "_checked": 0,
+            "_drifted": [],
+            "_missing": missing,
+            "_template_missing": template_missing,
+        }
+
+    if drifted:
+        names = ", ".join(d["template"] for d in drifted[:3])
+        more = f" (+{len(drifted) - 3} more)" if len(drifted) > 3 else ""
+        return {
+            "name": "CI workflow drift",
+            "passed": False,
+            "detail": (
+                f"ADVISORY: {len(drifted)} workflows drifted from template ({names}{more}). "
+                "Run `roam ci-setup --platform github --write` (delete the live file first) "
+                "to refresh."
+            ),
+            "_state": "drift",
+            "_checked": checked,
+            "_drifted": drifted,
+            "_missing": missing,
+            "_template_missing": template_missing,
+        }
+
+    return {
+        "name": "CI workflow drift",
+        "passed": True,
+        "detail": f"all {checked} emitted workflows match templates",
+        "_state": "clean",
+        "_checked": checked,
+        "_drifted": [],
+        "_missing": missing,
+        "_template_missing": template_missing,
+    }
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -1084,8 +1783,13 @@ _ADVISORY_CHECK_NAMES = frozenset(
         "Index freshness",  # stale index is still functional
         "Index manifest",  # drift hints — informational
         "Index manifest history",  # cross-run drift — informational
+        "Index step manifest",  # per-sub-step failures — informational
+                                #   (W82/A8: names which sub-step degraded)
         "Installed binary",  # stale-install hint — informational
         "Stale math_signals column",  # post-migration #51 re-index hint
+        "Phase timings",  # W408 — per-phase wallclock; diagnostic only
+        "CI workflow drift",  # W482 — emitted-workflow vs template drift
+        "Corpus content",  # W836 — empty corpus is advisory, not blocking
     }
 )
 
@@ -1119,8 +1823,19 @@ _ADVISORY_CHECK_NAMES = frozenset(
         "warnings don't fail every CI run."
     ),
 )
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Write BLOCKING check failures into the central findings "
+        "registry (subject_kind='environment'). Advisory failures are "
+        "intentionally skipped — they are ephemeral environment "
+        "diagnostics with no permanent codebase-level meaning."
+    ),
+)
 @click.pass_context
-def doctor(ctx, strict):
+def doctor(ctx, strict, persist):
     """Diagnose environment setup: Python, dependencies, and index state.
 
     Unlike ``health`` (which analyzes codebase structural quality), this command
@@ -1164,6 +1879,7 @@ def doctor(ctx, strict):
     checks.append(_check_mcp_backpressure())
     checks.append(_check_plugin_discovery())
     checks.append(_check_required_tables())
+    checks.append(_check_corpus_content())
     checks.append(_check_stale_math_signal_column())
 
     # Index checks: existence feeds into freshness and SQLite checks
@@ -1175,7 +1891,17 @@ def doctor(ctx, strict):
     checks.append(_check_sqlite(db_path_str))
     checks.append(_check_index_manifest())
     checks.append(_check_index_manifest_history())
+    checks.append(_check_index_step_failures())
+    # W408: surface per-phase wallclock from the latest indexer run. The
+    # check itself is always advisory; the JSON envelope adds a top-level
+    # ``phase_timings`` block so consumers can read seconds-per-phase
+    # without parsing the human-readable detail string.
+    phase_check = _check_phase_timings()
+    checks.append(phase_check)
     checks.append(_check_installed_binary_matches_source())
+    # W482 — emitted-workflow drift (follow-up to W471 SLSA SRC-L3).
+    ci_drift_check = _check_ci_workflow_drift()
+    checks.append(ci_drift_check)
 
     # --- Compute summary, with advisory / blocking severity split ---
     total = len(checks)
@@ -1184,6 +1910,29 @@ def doctor(ctx, strict):
 
     advisory_failed = [c for c in failed if c["name"] in _ADVISORY_CHECK_NAMES]
     blocking_failed = [c for c in failed if c["name"] not in _ADVISORY_CHECK_NAMES]
+
+    # --- W156: mirror BLOCKING failures into the central findings registry.
+    # HYBRID filter — advisory failures are by-design ephemeral environment
+    # diagnostics (cache age, cloud sync, dev/install drift) and would
+    # pollute the registry with non-codebase signal. Blocking failures ARE
+    # reproducible problems the codebase or CI can act on, so they earn a
+    # row. Wrapped defensively: a pre-W89 DB (no ``findings`` table) or a
+    # missing index silently no-ops rather than crashing doctor.
+    if persist and blocking_failed:
+        try:
+            from roam.db.connection import db_exists, open_db
+
+            if db_exists():
+                with open_db(readonly=False) as _conn:
+                    _emit_doctor_findings(_conn, checks, DOCTOR_DETECTOR_VERSION)
+                    _conn.commit()
+        except sqlite3.OperationalError:
+            # findings table missing (pre-W89 schema) — degrade gracefully.
+            pass
+        except Exception:
+            # Persist is best-effort. A broken --persist must never
+            # break the normal diagnostic output path.
+            pass
 
     if not failed:
         verdict = f"all {total} checks passed"
@@ -1210,6 +1959,30 @@ def doctor(ctx, strict):
     # Strip private keys (prefixed with _) before output
     clean_checks = [{k: v for k, v in c.items() if not k.startswith("_")} for c in checks]
 
+    # W408: hoist the phase-timing payload into the envelope so consumers
+    # (CI dashboards, W395-followup perf rankers) don't have to parse the
+    # human-readable ``detail`` string. Top-level key stays compact when
+    # no index exists yet.
+    phase_timings_block: dict = {
+        "state": phase_check.get("_state", "no_data"),
+    }
+    if phase_check.get("_phase_timings"):
+        phase_timings_block["per_phase_seconds"] = phase_check["_phase_timings"]
+        phase_timings_block["total_seconds"] = phase_check.get("_total_seconds", 0.0)
+        phase_timings_block["slowest_phase"] = phase_check.get("_slowest_phase")
+        phase_timings_block["slowest_seconds"] = phase_check.get("_slowest_seconds")
+
+    # W482: hoist drift detail into a top-level ci_workflow_drift block so
+    # consumers (CI dashboards, agent contracts) read structured drift
+    # entries instead of parsing the human-readable detail string.
+    ci_workflow_drift_block: dict = {
+        "state": ci_drift_check.get("_state", "not_applicable"),
+        "templates_checked": ci_drift_check.get("_checked", 0),
+        "drifted": ci_drift_check.get("_drifted", []),
+        "missing": ci_drift_check.get("_missing", []),
+        "template_missing": ci_drift_check.get("_template_missing", []),
+    }
+
     if json_mode:
         click.echo(
             to_json(
@@ -1232,6 +2005,8 @@ def doctor(ctx, strict):
                     blocking_failed=[
                         c for c in clean_checks if c["name"] not in _ADVISORY_CHECK_NAMES and not c["passed"]
                     ],
+                    phase_timings=phase_timings_block,
+                    ci_workflow_drift=ci_workflow_drift_block,
                 )
             )
         )

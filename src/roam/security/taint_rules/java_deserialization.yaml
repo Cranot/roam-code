@@ -1,0 +1,69 @@
+id: java-deserialization
+description: User-controlled input from HttpServletRequest (servlet API) flowing into a Java deserialization sink (java.io.ObjectInputStream.readObject, java.beans.XMLDecoder.readObject, org.yaml.snakeyaml.Yaml.load, com.thoughtworks.xstream.XStream.fromXML) without going through a type-restricted ObjectInputFilter allowlist or SnakeYAML SafeConstructor / XStream allowTypes guard. Maps to CWE-502 / OWASP A08:2021 Software and Data Integrity Failures (folded the 2017 A08 Insecure Deserialization category in; 11 KEV-cited Java deserialization exploits 2023-2025). Uses qualified_only matching (W454) — bare-name 'readObject' / 'load' / 'fromXML' get redefined as user-method names on wrappers and DAOs constantly, so only import-qualified java.io.* / java.beans.* / org.yaml.snakeyaml.* / com.thoughtworks.xstream.* paths count.
+severity: error
+cwe: CWE-502
+owasp_top10: A08:2021_Software_and_Data_Integrity_Failures
+qualified_only: true
+languages:
+  - java
+sources:
+  # qualified_only=true: bare-name entries are NO-OPS under W467's
+  # tightened matcher (they would match any same-named user def).
+  # Only dotted sources match — keep the import-qualified forms.
+  # getInputStream is the canonical deserialization source per the
+  # W372-research T-X04 spec; we also accept getParameter / getCookies
+  # / getHeader because real-world exploits routinely pass serialized
+  # payloads as a parameter or cookie value that gets base64-decoded
+  # before reaching readObject (e.g. CVE-2017-9805 Struts2 REST plugin).
+  - HttpServletRequest.getInputStream
+  - HttpServletRequest.getReader
+  - HttpServletRequest.getParameter
+  - HttpServletRequest.getHeader
+  - HttpServletRequest.getCookies
+  - javax.servlet.http.HttpServletRequest.getInputStream
+  - javax.servlet.http.HttpServletRequest.getReader
+  - javax.servlet.http.HttpServletRequest.getParameter
+  - javax.servlet.http.HttpServletRequest.getHeader
+  - javax.servlet.http.HttpServletRequest.getCookies
+  - jakarta.servlet.http.HttpServletRequest.getInputStream
+  - jakarta.servlet.http.HttpServletRequest.getReader
+  - jakarta.servlet.http.HttpServletRequest.getParameter
+  - jakarta.servlet.http.HttpServletRequest.getHeader
+  - jakarta.servlet.http.HttpServletRequest.getCookies
+sinks:
+  # All sinks MUST be dotted under qualified_only=true. Bare
+  # 'readObject' / 'load' / 'fromXML' constantly get redefined as
+  # user-method names on Codec/Serializer wrappers (W467 root FP).
+  # Coverage matches the W372-research T-X04 sink list plus
+  # SnakeYAML (extremely common Java YAML deserialization gadget).
+  - ObjectInputStream.readObject
+  - ObjectInputStream.readUnshared
+  - java.io.ObjectInputStream.readObject
+  - java.io.ObjectInputStream.readUnshared
+  - XMLDecoder.readObject
+  - java.beans.XMLDecoder.readObject
+  - Yaml.load
+  - Yaml.loadAll
+  - org.yaml.snakeyaml.Yaml.load
+  - org.yaml.snakeyaml.Yaml.loadAll
+  - XStream.fromXML
+  - com.thoughtworks.xstream.XStream.fromXML
+sanitizers:
+  # Dotted-only — bare setObjectInputFilter would silently no-op.
+  # ObjectInputFilter (JEP 290, Java 9+) is the canonical JDK sanitizer
+  # for ObjectInputStream; type-restricted SnakeYAML constructors
+  # (SafeConstructor) and XStream allowlist mode (XStream.allowTypes /
+  # addPermission) are the SnakeYAML / XStream equivalents.
+  - ObjectInputStream.setObjectInputFilter
+  - ObjectInputFilter.Config.setSerialFilter
+  - java.io.ObjectInputStream.setObjectInputFilter
+  - java.io.ObjectInputFilter.Config.setSerialFilter
+  - org.yaml.snakeyaml.constructor.SafeConstructor
+  - XStream.allowTypes
+  - XStream.allowTypesByRegExp
+  - XStream.allowTypesByWildcard
+  - XStream.addPermission
+  - com.thoughtworks.xstream.XStream.allowTypes
+  - com.thoughtworks.xstream.XStream.allowTypesByRegExp
+  - com.thoughtworks.xstream.XStream.allowTypesByWildcard
+  - com.thoughtworks.xstream.XStream.addPermission

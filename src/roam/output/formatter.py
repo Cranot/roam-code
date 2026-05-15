@@ -6,6 +6,7 @@ import json as _json
 import os
 import time
 from datetime import datetime, timezone
+from typing import TypeAlias
 
 # Envelope schema versioning (semver: major.minor.patch)
 # bumped to 1.1.0 to signal additive enhancements:
@@ -16,6 +17,14 @@ from datetime import datetime, timezone
 # to work; new consumers can opt in to the richer fields.
 ENVELOPE_SCHEMA_VERSION = "1.1.0"
 ENVELOPE_SCHEMA_NAME = "roam-envelope-v1"
+
+# Pattern-2 silent-fallback warnings accumulator type. W1043 alias for
+# `list[str] | None`. Callers pass an empty list to opt into structured
+# warning collection; passing None preserves byte-identical legacy
+# silent-empty behaviour. See (internal memo) (W1039)
+# for the idiom and (internal memo) (W1016) for the
+# canonical loader helper that owns the warning format.
+WarningsOut: TypeAlias = list[str] | None
 
 _NON_CACHEABLE_COMMANDS = {
     "mutate",
@@ -417,7 +426,12 @@ def _compact_mode_enabled() -> bool:
         ctx = click.get_current_context(silent=True)
         if ctx and isinstance(ctx.obj, dict):
             return bool(ctx.obj.get("compact") or ctx.obj.get("agent"))
-    except Exception:
+    except (ImportError, RuntimeError):
+        # W677: narrowed from `except Exception` — ImportError covers the
+        # `import click` path for non-CLI callers without click installed;
+        # RuntimeError covers click.get_current_context edge cases where no
+        # active context exists. Programmer-class errors (NameError /
+        # AttributeError / TypeError) propagate per W531 fail-loud.
         pass
     return False
 
@@ -636,6 +650,8 @@ def _humanize_summary_fact(key: str, value: int | float) -> str:
         "fields",
         "options",
         "flags",
+        "literals",
+        "markers",
         "subcommands",
         "scenarios",
         "actions",
@@ -858,6 +874,10 @@ def _write_response_to_responses_dir(envelope: dict) -> None:
         return
 
 
+# W975: loose-but-honest per W966 — ``**payload`` and ``summary`` are
+# arbitrary user-supplied dicts merged via ``.update()``; do NOT TypedDict
+# this return without an at-boundary validator. See W933 _resolved_thresholds
+# for the canonical case study.
 def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **payload) -> dict:
     """Wrap command output in a self-describing envelope.
 
@@ -894,13 +914,27 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
     # cleared at the start of each new invocation. Defensive try/except: this
     # injection must never break envelope generation for non-CLI callers.
     summary = dict(summary) if summary else {}
+    # W817: Pattern 2 always-emit discipline. Detector commands (dead /
+    # complexity / clones / orphan-imports / bus-factor / auth-gaps and
+    # likely others — see W805 sweep) historically omitted
+    # `summary.partial_success` on their no-findings branches, leaving
+    # agents unable to distinguish "scanned, clean" from "didn't run".
+    # Default to ``False`` (clean) when missing — callers that genuinely
+    # had a partial run still set it to ``True`` explicitly, which wins.
+    if summary and "partial_success" not in summary:
+        summary["partial_success"] = False
     try:
         from roam.cli import _get_active_deprecation_notice
 
         _depr_notice = _get_active_deprecation_notice()
         if _depr_notice and "deprecation_warning" not in summary:
             summary["deprecation_warning"] = _depr_notice
-    except Exception:
+    except (ImportError, AttributeError):
+        # W677: narrowed from `except Exception` — ImportError covers
+        # non-CLI callers where `roam.cli` isn't importable; AttributeError
+        # covers the case where the deprecation-notice slot helper hasn't
+        # been wired up yet. Programmer-class errors (NameError /
+        # TypeError) propagate per W531 fail-loud.
         pass
 
     if _compact_mode_enabled():
@@ -1005,7 +1039,7 @@ def _index_age_seconds() -> int | None:
         db_path = get_db_path()
         if db_path.exists():
             return int(time.time() - db_path.stat().st_mtime)
-    except Exception:
+    except (OSError, FileNotFoundError):
         pass
     return None
 
@@ -1056,6 +1090,49 @@ def ws_json_envelope(command: str, workspace: str, summary: dict | None = None, 
     return out
 
 
+# W1000: list fields whose contents the caller MUST see even in
+# default-detail-off mode. Sealing these closes the Pattern 2 silent-
+# fallback hole that W994+W995 opened (warnings_out is the canonical
+# example: malformed suppression YAML or expired/missing fields append
+# to ``warnings_out``; if ``strip_list_payloads`` drops it, the user
+# sees a clean envelope and the disclosure is silently lost).
+#
+# Closed allow-set, extended only with deliberate review. Each entry
+# carries the same Pattern 2 obligation: "informational list the agent
+# NEEDS to see to know the state is degraded".
+#
+# W1006 extension: ``errors`` and ``redactions`` join the set. Same
+# Pattern-2 obligation as ``warnings_out``:
+#   * ``errors`` — emitted at top-level by ``batch-search``, ``cga-verify``,
+#     ``plugins``, ``rules-validate``, ``ws`` (and is the universal
+#     disclosure idiom for any future command). Silently dropping a
+#     non-empty ``errors`` list is the textbook Pattern-2 silent-fallback.
+#   * ``redactions`` — emitted at top-level by ``pr-bundle`` and
+#     ``evidence-doctor``. The producer comments explicitly call this
+#     "Pattern 2 — explicit absence"; the agent NEEDS to know which
+#     evidence axes were masked, otherwise it cannot tell a clean
+#     packet from a redaction-heavy one.
+# Deliberately NOT added (W1006 audit):
+#   * ``dropped_keys`` — no producer in source today.
+#   * ``dropped_reasons`` — only emitted nested under ``summary`` by
+#     ``cmd_evidence_oscal``; ``summary`` is already preserved whole.
+#   * ``stale_reasons`` — lives inside ``ChangeEvidence`` packets, not at
+#     envelope top-level; revisit if a packet flattener ever emerges.
+#   * ``enum_violations`` / ``trust_warnings`` / ``bundle_warnings`` —
+#     belong to ``evidence-doctor`` / ``pr-bundle``, neither of which
+#     calls ``strip_list_payloads``. Re-audit if that changes.
+_ALWAYS_PRESERVED_LIST_FIELDS = frozenset({
+    "warnings_out",
+    "errors",
+    "redactions",
+})
+
+# When a preserved list exceeds this length we keep the first N entries
+# and emit a sibling ``<field>_truncated: <int>`` naming how many were
+# dropped. Bounds the envelope size while keeping the disclosure honest.
+_ALWAYS_PRESERVED_LIST_MAX = 10
+
+
 def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
     """Strip list-valued payload fields from a JSON envelope in default mode.
 
@@ -1069,6 +1146,13 @@ def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
     in scalar/dict summary fields.  Commands whose headline payload IS a list
     (e.g. ``guard``, ``plan-refactor``, ``suggest-refactoring``) must use
     custom caps instead -- stripping their lists would erase the headline.
+
+    W1000 / W1006: list fields named in :data:`_ALWAYS_PRESERVED_LIST_FIELDS`
+    (``warnings_out``, ``errors``, ``redactions``) ARE kept — these are
+    Pattern 2 silent-fallback disclosures the caller must see. Lists
+    longer than :data:`_ALWAYS_PRESERVED_LIST_MAX` are capped and a
+    sibling ``<field>_truncated`` int is emitted naming how many entries
+    were dropped.
 
     Parameters
     ----------
@@ -1090,6 +1174,9 @@ def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
         "_meta",
     }
     list_counts: dict[str, int] = {}
+    # Tracks fields preserved via _ALWAYS_PRESERVED_LIST_FIELDS that
+    # had to be capped — drives the summary.truncated flag below.
+    preserved_list_truncations: dict[str, int] = {}
 
     # Build stripped result: drop all list-valued payload fields
     result: dict = {}
@@ -1100,12 +1187,23 @@ def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
             if keep_summary:
                 result[k] = dict(v) if isinstance(v, dict) else v
         elif isinstance(v, list):
-            # Drop list — record its count
-            list_counts[k] = len(v)
+            if k in _ALWAYS_PRESERVED_LIST_FIELDS:
+                # W1000: preserve the disclosure list, bounded.
+                if len(v) > _ALWAYS_PRESERVED_LIST_MAX:
+                    result[k] = list(v[:_ALWAYS_PRESERVED_LIST_MAX])
+                    dropped = len(v) - _ALWAYS_PRESERVED_LIST_MAX
+                    result[f"{k}_truncated"] = dropped
+                    preserved_list_truncations[k] = dropped
+                else:
+                    result[k] = list(v)
+            else:
+                # Drop list — record its count
+                list_counts[k] = len(v)
         else:
             result[k] = v
 
     has_non_empty_lists = any(c > 0 for c in list_counts.values())
+    has_preserved_truncations = bool(preserved_list_truncations)
 
     # Annotate summary with progressive disclosure flags.
     # Keep the annotation minimal so summary is always <= detail in size.
@@ -1113,7 +1211,7 @@ def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
         result["summary"] = {}
     if isinstance(result.get("summary"), dict):
         result["summary"]["detail_available"] = True
-        if has_non_empty_lists:
+        if has_non_empty_lists or has_preserved_truncations:
             result["summary"]["truncated"] = True
 
     return result

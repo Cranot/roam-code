@@ -12,7 +12,10 @@ codebase.
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import re
+import sqlite3
 from collections import Counter
 
 import click
@@ -33,6 +36,203 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
+
+
+# W133 (W93 follow-up): conventions is the next detector migrating onto
+# the central findings registry (after ``clones`` in W95, ``dead`` in
+# W99, ``complexity`` in W102, ``smells`` in W109, and the subsequent
+# W110-W111 emitters). The shape mirrors those — a stable detector
+# version stamp and a deterministic ``finding_id_str`` so re-runs upsert
+# instead of duplicating rows.
+#
+# **Anti-pattern Pattern 4 note.** Per ``CLAUDE.md`` Pattern 4 and the
+# 212-eval dogfood synthesis, five surfaces (``describe``,
+# ``understand``, ``minimap``, ``preflight``, and the standalone
+# ``conventions`` command) historically each computed conventions
+# differently. Fix G consolidated them onto
+# ``roam.commands.conventions_helper.compute_conventions`` — that helper
+# is *the* canonical detector. W133 deliberately wires ``--persist``
+# onto the STANDALONE ``conventions`` command only, because:
+#
+# * the helper computes the data but doesn't aggregate-then-persist
+#   anywhere (only ``conventions`` builds the violation envelope today),
+# * the other four surfaces emit summaries, not violation lists, so
+#   their ``--persist`` would either redundantly mirror the same rows or
+#   re-derive violations under different filters (re-entrenching
+#   Pattern 4 at the persistence layer).
+#
+# Bump CONVENTIONS_DETECTOR_VERSION when the violation predicate (the
+# (language_family, kind_group) majority calculation in
+# ``conventions_helper._find_outliers``) or the registry-row shape
+# changes meaningfully.
+CONVENTIONS_DETECTOR_VERSION: str = "1.0.0"
+
+
+# Per-kind confidence tier mapping for conventions findings.
+#
+# Conventions themselves are *inferred from majority patterns* — they
+# are heuristics by construction (the prompt's instruction:
+# "conventions are themselves heuristics inferred from majority
+# patterns"). The default tier is therefore ``heuristic``. Where a
+# specific subkind has a deterministic basis (file-extension family
+# defaults from ``_LANGUAGE_KIND_DEFAULTS`` — e.g. "python functions
+# should be snake_case") we upgrade to ``structural``: those rules
+# come from the language community default, not from the empirical
+# distribution in this repo, so they're a documented expectation
+# rather than a freshly-inferred guess.
+_CONVENTIONS_VIOLATION_KIND: str = "naming-outlier"
+_CONVENTIONS_DEFAULT_CONFIDENCE: str = "heuristic"
+
+
+def _conventions_violation_confidence(expected_source: str | None) -> str:
+    """Map an outlier's ``expected_source`` to a confidence tier.
+
+    ``compute_conventions`` records ``expected_source`` as either
+    ``"community_default"`` (the documented language convention from
+    ``_LANGUAGE_KIND_DEFAULTS``) or ``"empirical"`` (the codebase's own
+    majority style). Community-default violations are upgraded to
+    ``structural`` because the expected style is documented language
+    convention rather than a freshly-inferred majority. Empirical
+    violations stay at ``heuristic``.
+    """
+    if expected_source == "community_default":
+        return "structural"
+    return _CONVENTIONS_DEFAULT_CONFIDENCE
+
+
+def _conventions_finding_id(
+    family: str,
+    group: str,
+    name: str,
+    file_path: str,
+    line_start: int | None,
+) -> str:
+    """Stable, deterministic finding id for one convention violation.
+
+    The (language_family, kind_group, name, file_path, line_start)
+    tuple re-identifies the same outlier across runs. We fold the
+    (family, group) into the digest because the same symbol name in
+    two different family/group contexts is a different finding (e.g.
+    a Python ``foo`` flagged as a function-style outlier vs the same
+    symbol re-flagged as a property-style outlier).
+    """
+    raw = f"{family}|{group}|{name}|{file_path}|{int(line_start or 0)}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"conventions:{_CONVENTIONS_VIOLATION_KIND}:{digest}"
+
+
+def _resolve_convention_subject_id(
+    conn: sqlite3.Connection,
+    file_path: str,
+    symbol_name: str,
+    line_start: int | None,
+) -> int | None:
+    """Best-effort lookup of ``symbols.id`` for one outlier triple.
+
+    Mirrors ``cmd_smells._resolve_smell_subject_id`` — exact match on
+    (path, name, line_start) first, then nearest-line by name.
+    Returns ``None`` when nothing matches; the findings registry
+    permits NULL subject_id by design.
+    """
+    try:
+        row = conn.execute(
+            "SELECT s.id FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE f.path = ? AND s.name = ? AND s.line_start = ? "
+            "LIMIT 1",
+            (file_path, symbol_name, line_start),
+        ).fetchone()
+        if row is not None:
+            return int(row[0])
+        row = conn.execute(
+            "SELECT s.id FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE f.path = ? AND s.name = ? "
+            "ORDER BY ABS(COALESCE(s.line_start, 0) - ?) "
+            "LIMIT 1",
+            (file_path, symbol_name, line_start or 0),
+        ).fetchone()
+        return int(row[0]) if row is not None else None
+    except sqlite3.OperationalError:
+        return None
+
+
+def _emit_conventions_findings(
+    conn: sqlite3.Connection,
+    outliers: list[dict],
+    source_version: str,
+) -> int:
+    """Mirror each convention-violation outlier into the findings registry.
+
+    Returns the count of rows written. The caller is responsible for
+    opening ``conn`` writable; ``emit_finding`` does not commit (the
+    caller commits once at the end of the persist branch).
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (without the ``findings`` table) silently no-ops rather than
+    crashing the standard conventions command path.
+
+    Only convention **violations** (outliers) are emitted — the
+    detected conventions themselves are *state* (codebase inventory)
+    not findings, and stay in the existing per-kind / per-(family,
+    group) summary surfaces.
+    """
+    from roam.db.findings import FindingRecord, emit_finding
+
+    written = 0
+    for o in outliers:
+        name = o.get("name") or ""
+        kind = o.get("kind") or ""
+        file_path = o.get("file") or ""
+        line_start = o.get("line")
+        try:
+            line_start_int: int | None = int(line_start) if line_start is not None else None
+        except (TypeError, ValueError):
+            line_start_int = None
+        family = o.get("language_family") or "unknown"
+        group = _group_for_kind(kind)
+        actual_style = o.get("actual_style") or "?"
+        expected_style = o.get("expected_style") or "?"
+        expected_source = o.get("expected_source")
+
+        subject_id = _resolve_convention_subject_id(
+            conn, file_path, name, line_start_int
+        )
+        finding_id = _conventions_finding_id(
+            family, group, name, file_path, line_start_int
+        )
+        evidence = {
+            "name": name,
+            "kind": kind,
+            "language_family": family,
+            "kind_group": group,
+            "actual_style": actual_style,
+            "expected_style": expected_style,
+            "expected_source": expected_source,
+            "file_path": file_path,
+            "line_start": line_start_int,
+        }
+        location = f"{file_path}:{line_start_int}" if line_start_int is not None else file_path
+        claim = (
+            f"naming-outlier: {name} ({kind}) is {actual_style}, "
+            f"expected {expected_style} for {family}/{group} at {location}"
+        )
+        confidence = _conventions_violation_confidence(expected_source)
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol" if subject_id is not None else "file",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=confidence,
+                source_detector="conventions",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+    return written
 
 
 # R22 — confidence classifier for convention-violation findings.
@@ -161,6 +361,211 @@ def classify_case(name: str) -> str | None:
         return "UPPER_SNAKE"
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# W162 — false-positive carve-outs
+# ---------------------------------------------------------------------------
+#
+# The W149 dogfood audit found 39 conventions findings on roam-code, ALL of
+# which were false positives, splitting into three root causes:
+#
+#   * 27 came from ``tests/fixtures/languages/kotlin/*.kt`` — deliberately-
+#     malformed fixture files used to train extractors. The detector was
+#     reading its own training data and complaining about it. The fix is
+#     a path-prefix exclusion handled in ``conventions_helper`` (a new
+#     entry in ``DEFAULT_EXCLUDE_PREFIXES``); no carve-out needed here.
+#
+#   * 6 Python PascalCase "variables" that were actually PEP 484
+#     ``TypeAlias`` / ``NewType`` declarations (``PathLike =
+#     Union[str, os.PathLike]``, ``LockMode = Literal["read", "write"]``,
+#     ``CommandTarget = tuple[str, str]``, etc.). The python extractor
+#     stores these as ``kind="variable"`` because they look like
+#     assignments. PEP 484 says PascalCase IS the convention for type
+#     aliases — flagging them is wrong. ``is_python_type_alias_signature``
+#     below detects them from the captured assignment ``signature``.
+#
+#   * 2 ``VERSION`` "UPPER_SNAKE properties" on bridge / language base
+#     classes — they are class-level constants per PEP 8, not variables.
+#     ``is_upper_snake_constant_name`` below treats names like
+#     ``VERSION`` / ``MAX_RETRIES`` as constants regardless of the kind
+#     the extractor reported (``variable`` / ``property`` /
+#     ``constant``), which routes them into the ``constants`` group
+#     where ``UPPER_SNAKE`` is the documented expectation.
+#
+#   * 3 YAML keys (``pr``, ``pool``, ``checkout``) misclassified as
+#     Python functions because YAML files appear in the
+#     ``language_family="unknown"`` bucket alongside everything else.
+#     ``NON_CODE_CONVENTION_LANGUAGES`` below excludes them at the
+#     query-iteration level.
+
+# Languages that don't carry code-style conventions in any
+# meaningful sense. We skip their identifiers entirely so a YAML
+# pipeline file's keys don't drag everything else into the
+# ``language_family="unknown"`` bucket.
+#
+# 17 entries (10 markup/data + 4 framework templates + 3 roam-internal
+# pseudo-languages). Sourced from the W126 conventions-helper dogfood
+# pass where YAML pipeline keys (``pr``, ``pool``, ``checkout``) showed
+# up in the ``unknown`` bucket as PascalCase / snake_case "violations".
+# Excluding them at the query-iteration level drops 3 false positives on
+# the roam-code self-index and keeps the unknown-bucket signal clean.
+NON_CODE_CONVENTION_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "yaml",
+        "yml",
+        "json",
+        "toml",
+        "ini",
+        "xml",
+        "html",
+        "css",
+        "scss",
+        "less",
+        # markup / data — neither has a meaningful "variable naming
+        # convention" we can enforce.
+        "markdown",
+        "md",
+        "rst",
+        # roam-internal hand-rolled "languages" that aren't real source
+        "sfxml",  # Salesforce metadata XML
+        "visualforce",  # template language, conventions are project-defined
+        "aura",  # framework templates
+        "hcl",  # Terraform/HCL is config; keys aren't code identifiers
+    }
+)
+
+
+# Patterns whose RHS we treat as a Python type-alias expression. We try
+# to be permissive (any RHS that "looks like a type" matches) because a
+# false negative here merely keeps the historical behaviour (flag as a
+# PascalCase variable). The match is anchored on the assignment's RHS,
+# which is the ``signature`` value the extractor captures
+# (truncated at 80 chars, see ``python_lang._extract_module_assignment``).
+#
+# Cases we want to match (all observed on roam-code):
+#   ``PathLike = Union[str, os.PathLike]``
+#   ``TaintOrigin = tuple[str, Union[int, str]]``
+#   ``LockMode = Literal["read", "write", "exclusive"]``
+#   ``CommandTarget = tuple[str, str]``
+#   ``Finding = dict[str, Any]``
+#   ``DetectorSpec = tuple[str, str, Callable[[Any], list[Finding]]]``
+#   ``PluginAPI = RoamPluginContext``  (alias to another typedef)
+#   ``X: TypeAlias = list[int]``  (PEP 613)
+#   ``LockMode = NewType("LockMode", str)``  (PEP 484 NewType)
+#   ``type Alias = list[int]``  (PEP 695)
+_TYPE_ALIAS_CONTAINERS = (
+    "Union",
+    "Optional",
+    "Literal",
+    "Callable",
+    "Tuple",
+    "List",
+    "Dict",
+    "Set",
+    "FrozenSet",
+    "Type",
+    "Annotated",
+    "Sequence",
+    "Iterable",
+    "Iterator",
+    "Mapping",
+    "MutableMapping",
+    "Awaitable",
+    "Coroutine",
+    "AsyncIterator",
+    "Generator",
+    "TypedDict",
+    "Protocol",
+)
+
+
+def is_python_type_alias_signature(signature: str | None, name: str) -> bool:
+    """Return True if *signature* (an assignment text) looks like a type alias.
+
+    The extractor stores Python module-level assignments as ``"<name> =
+    <rhs[:80]>"``. We accept the assignment as a type alias if any of:
+
+    * the LHS has a ``: TypeAlias`` annotation (PEP 613)
+    * it's a PEP 695 ``type X = ...`` statement
+    * the RHS calls ``NewType(...)`` (PEP 484)
+    * the RHS opens with a generic-subscript on a typing container
+      (``Union[...]``, ``Optional[...]``, ``Literal[...]``,
+      ``Callable[...]``, etc.) or a builtin generic (``tuple[...]``,
+      ``list[...]``, ``dict[...]``, ``set[...]``, ``frozenset[...]``,
+      ``type[...]``)
+    * the RHS is a single PascalCase identifier (an alias to another
+      type, e.g. ``PluginAPI = RoamPluginContext``)
+
+    *name* is the LHS symbol name; the test patterns mostly care about
+    the RHS but a leading ``<name>:`` annotation is recognised too.
+    """
+    if not signature:
+        return False
+    sig = signature.strip()
+    # PEP 695: ``type Name = ...``
+    if sig.startswith("type ") and "=" in sig:
+        return True
+    # PEP 613 explicit annotation: ``Name: TypeAlias = ...`` (the
+    # extractor's signature for an annotated assignment may or may not
+    # include the annotation depending on the tree-sitter node walked;
+    # we accept either form).
+    if "TypeAlias" in sig:
+        return True
+    # Find RHS by splitting on the first ``=`` not inside a generic.
+    # The signature shape is always ``<lhs> = <rhs>`` for module
+    # assignments per ``python_lang._extract_module_assignment``.
+    if "=" not in sig:
+        return False
+    rhs = sig.split("=", 1)[1].strip()
+    if not rhs:
+        return False
+    # NewType call
+    if rhs.startswith("NewType(") or rhs.startswith("typing.NewType("):
+        return True
+    # Typing-container generic at the head of the RHS
+    for container in _TYPE_ALIAS_CONTAINERS:
+        if rhs.startswith(container + "[") or rhs.startswith("typing." + container + "["):
+            return True
+    # Builtin generics at the head of the RHS (PEP 585)
+    for builtin_generic in ("tuple[", "list[", "dict[", "set[", "frozenset[", "type["):
+        if rhs.startswith(builtin_generic):
+            return True
+    # Pipe-style union (PEP 604): ``str | None`` or ``int | str | bytes``
+    # We only accept this when there's a ``|`` outside any brackets in
+    # the first ~40 chars — a heuristic that avoids matching bitwise OR.
+    head = rhs.split("(", 1)[0]
+    if "|" in head and all(part.strip() and part.strip()[0].isupper() or part.strip() in ("None", "int", "str", "float", "bytes", "bool", "list", "dict", "set", "tuple") for part in head.split("|")):
+        return True
+    # Single-token RHS that is itself a PascalCase identifier —
+    # treated as an alias to another typedef (the
+    # ``PluginAPI = RoamPluginContext`` case). We restrict to clean
+    # identifiers (no parentheses, no dots beyond a single dotted
+    # module path) to avoid matching ordinary class-instantiation
+    # patterns like ``foo = SomeClass()``.
+    if "(" not in rhs and "[" not in rhs and re.match(r"^[A-Za-z_][\w\.]*$", rhs):
+        # Pure PascalCase head segment → alias-to-typedef.
+        head_ident = rhs.split(".")[-1]
+        if _SINGLE_PASCAL.match(head_ident) or _CASE_PATTERNS["PascalCase"].match(head_ident):
+            return True
+    return False
+
+
+def is_upper_snake_constant_name(name: str) -> bool:
+    """Return True if *name* should be classified as a constant per PEP 8.
+
+    Matches both single-word upper (``VERSION``) and multi-word
+    UPPER_SNAKE (``MAX_RETRIES``, ``DEFAULT_TIMEOUT_S``). Used by the
+    canonical conventions detector to re-route ``UPPER_SNAKE``-named
+    symbols into the ``constants`` group regardless of the declared
+    extractor kind (``variable`` / ``property`` / ``constant``). Aligns
+    with PEP 8 §"Naming Conventions" — "constants are usually defined
+    on a module level and written in all capital letters with
+    underscores separating words".
+    """
+    if not name or len(name) < 1:
+        return False
+    return bool(re.match(r"^[A-Z][A-Z0-9_]*$", name))
 
 
 # Per-language convention bias — each language has community defaults that
@@ -702,8 +1107,22 @@ def _find_naming_outliers(symbol_details: list[dict], naming_summary: dict[str, 
 )
 @click.command()
 @click.option("-n", "max_outliers", default=10, help="Maximum outliers to display per category")
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Persist convention-violation findings (naming outliers) to "
+        ".roam/index.db findings registry (cross-detector queryable via "
+        "`roam findings list --detector conventions`). The detector-"
+        "specific output is unchanged; the registry rows are the "
+        "denormalised cross-detector surface. Detected conventions "
+        "themselves stay as inventory in the standard envelope — only "
+        "violations are emitted as findings."
+    ),
+)
 @click.pass_context
-def conventions(ctx, max_outliers):
+def conventions(ctx, max_outliers, persist):
     """Auto-detect codebase naming, file, import, and export conventions.
 
     Unlike ``verify`` (which enforces conventions on changed files) and
@@ -725,7 +1144,7 @@ def conventions(ctx, max_outliers):
     include_excluded = ctx.obj.get("include_excluded") if ctx.obj else False
     ensure_index()
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         project = find_project_root().name
 
         # ---- 1. Naming conventions ----
@@ -736,6 +1155,21 @@ def conventions(ctx, max_outliers):
         all_symbols, naming_summary, outliers, affixes = _analyze_naming(
             conn, exclude_paths=exclude_paths
         )
+
+        # --- W133: mirror outliers into the central findings registry ---
+        # Runs ONLY with --persist. We emit one row per convention
+        # violation; the conventions themselves stay as inventory in
+        # the standard envelope (the per-(family, group) summary).
+        # Wrapped defensively so a pre-W89 DB (no ``findings`` table)
+        # degrades cleanly without breaking the standard output path.
+        if persist:
+            try:
+                _emit_conventions_findings(
+                    conn, outliers, CONVENTIONS_DETECTOR_VERSION
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
 
         # ---- 2. File organization ----
         file_rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()

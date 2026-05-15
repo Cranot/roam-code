@@ -16,6 +16,12 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
+from roam.output.metric_definitions import (
+    BLAST_RADIUS_AFFECTED_FILES,
+    BLAST_RADIUS_AFFECTED_SYMBOLS,
+    REACH_PCT_DEFINITION,
+    WEIGHTED_IMPACT_DEFINITION,
+)
 from roam.runs.helpers import auto_log
 
 
@@ -377,6 +383,11 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                     "affected_symbols": 0,
                     "affected_files": 0,
                     "in_graph": False,
+                    # W331: stamp definitions so MCP consumers see the
+                    # same envelope shape even when the target is not in
+                    # the dependency graph.
+                    "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
+                    "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
                 },
                 symbol=sym["qualified_name"] or sym["name"],
                 tip=tip,
@@ -423,11 +434,18 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
         else:
             run_state = "ok"
 
-        # Personalized PageRank for distance-weighted importance (Gleich 2015)
-        ppr = {}
+        # Personalized PageRank for distance-weighted importance (Gleich 2015).
+        # W336 — use the shared ``personalized_pagerank`` helper so we get the
+        # numpy-free degree-based fallback when scipy/numpy aren't installed.
+        # The bare ``nx.pagerank`` call previously raised ImportError on such
+        # environments, the bare ``except`` swallowed it, ppr stayed empty,
+        # and weighted_impact silently zeroed regardless of true blast radius.
+        ppr: dict[int, float] = {}
         if dependents:
             try:
-                ppr = nx.pagerank(RG, alpha=0.85, personalization={sym_id: 1.0})
+                from roam.graph.pagerank import personalized_pagerank
+
+                ppr = personalized_pagerank(RG, {sym_id: 1.0}, alpha=0.85)
             except Exception:
                 pass
 
@@ -435,7 +453,17 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             no_dep_env = json_envelope(
                 "impact",
                 budget=token_budget,
-                summary={"verdict": "no dependents", "affected_symbols": 0, "affected_files": 0},
+                summary={
+                    "verdict": "no dependents",
+                    "affected_symbols": 0,
+                    "affected_files": 0,
+                    # W331: even on the leaf-symbol path the consumer
+                    # still needs to know what these zero counts measure.
+                    "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
+                    "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
+                    "weighted_impact_definition": WEIGHTED_IMPACT_DEFINITION,
+                    "reach_pct_definition": REACH_PCT_DEFINITION,
+                },
                 symbol=sym["qualified_name"] or sym["name"],
                 affected_symbols=0,
                 affected_files=0,
@@ -513,18 +541,32 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                 "verdict": verdict,
                 "affected_symbols": len(dependents),
                 "affected_files": len(affected_files),
-                "weighted_impact": round(weighted_impact, 4),
+                # W336 — widen rounding from 4 -> 6 decimals. Per-node PageRank
+                # values on a 20k-symbol graph fall in the 1e-5 to 1e-3 range,
+                # so 4-decimal rounding truncated legitimate small sums to 0
+                # even when 100 affected symbols were reached. 6 decimals
+                # keeps the value human-readable AND non-zero for any real
+                # blast radius.
+                "weighted_impact": round(weighted_impact, 6),
                 "reach_pct": round(reach_pct, 1),
                 "sf_convention_tests": len(sf_test_files),
                 "truncated": truncated,
                 "partial_success": truncated,
                 "state": run_state,
                 "limits": limits_block,
+                # W331: stamp definitions so consumers know exactly what
+                # the four blast-radius numbers represent. Strings live
+                # in roam.output.metric_definitions to prevent drift
+                # between cmd_impact and cmd_preflight.
+                "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
+                "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
+                "weighted_impact_definition": WEIGHTED_IMPACT_DEFINITION,
+                "reach_pct_definition": REACH_PCT_DEFINITION,
             },
             symbol=sym["qualified_name"] or sym["name"],
             affected_symbols=len(dependents),
             affected_files=len(affected_files),
-            weighted_impact=round(weighted_impact, 4),
+            weighted_impact=round(weighted_impact, 6),
             reach_pct=round(reach_pct, 1),
             direct_dependents=json_deps,
             affected_file_list=affected_file_dicts,

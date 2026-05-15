@@ -17,12 +17,16 @@ _TEST_NAME_PATS = ["test_", "_test.", ".test.", ".spec."]
 _TEST_DIR_PATS = ["tests/", "test/", "__tests__/", "spec/"]
 
 
-def is_test_file(path: str) -> bool:
+def is_test_file(path: str | None) -> bool:
     """Check if a file path looks like a test file.
 
     Uses the file_roles classifier first (covers 22 language-specific test
     naming patterns) and falls back to the legacy heuristic for edge cases.
+
+    Returns ``False`` for empty / falsy inputs.
     """
+    if not path:
+        return False
     if _roles_is_test(path):
         return True
     # Legacy fallback for patterns file_roles might miss
@@ -55,11 +59,15 @@ _LOW_RISK_EXTS = {
 }
 
 
-def is_low_risk_file(path: str) -> bool:
+def is_low_risk_file(path: str | None) -> bool:
     """Check if a file is docs/config/asset with dampened risk contribution.
 
     Uses file_roles classifier first, falls back to extension check.
+
+    Returns ``False`` for empty / falsy inputs.
     """
+    if not path:
+        return False
     role = classify_file(path)
     if role in _LOW_RISK_ROLES:
         return True

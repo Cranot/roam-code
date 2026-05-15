@@ -1,7 +1,8 @@
 id: java-fileupload-path-traversal
-description: Multipart upload filename (FileItem / Part / FileUpload) into Files / FileOutputStream / Paths.get without basename or allowlist check. CodeQL 2.24 ships equivalent FileItem and javax/jakarta servlet Part models.
+description: Multipart upload filename (FileItem / Part / FileUpload) into Files / FileOutputStream / Paths.get without basename or allowlist check. CodeQL 2.24 ships equivalent FileItem and javax/jakarta servlet Part models. Maps to CWE-22 / OWASP A01:2021 Broken Access Control.
 severity: error
 cwe: CWE-22
+owasp_top10: A01:2021_Broken_Access_Control
 languages:
   - java
 sources:

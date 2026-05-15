@@ -13,6 +13,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import format_table, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
@@ -518,9 +519,8 @@ def _analyse_orphan_routes(project_root: Path, conn, limit: int) -> dict:
         }
         orphans.append(orphan)
 
-    # Sort: high → medium → low
-    _confidence_order = {"high": 0, "medium": 1, "low": 2}
-    orphans.sort(key=lambda o: _confidence_order.get(o["confidence"], 9))
+    # Sort: high → medium → low (W596: canonical rank, negated for ascending order).
+    orphans.sort(key=lambda o: -confidence_level_rank(o["confidence"], fallback=-1))
 
     if limit:
         orphans = orphans[:limit]

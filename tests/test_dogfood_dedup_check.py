@@ -40,7 +40,7 @@ def test_fix_ref_alone_classifies_as_fixed():
     # 'dead' has the W18.3 fix_ref with status:unverifiable-on-this-repo
     rows = check_commands(["dead"])
     assert rows[0]["verdict"] == "fixed", (
-        f"dead has W18.3 fix_ref; should classify as fixed regardless of status label"
+        "dead has W18.3 fix_ref; should classify as fixed regardless of status label"
     )
 
 

@@ -37,6 +37,40 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from roam.db.edge_kinds import CALL_EDGE_KINDS
+
+__all__ = [
+    # Detector registry (consumed by detectors._iter_registered_detectors).
+    "PYTHON_IDIOM_DETECTORS",
+    # Helpers used by external command modules (e.g. cmd_context).
+    "has_decorator",
+    "fixture_kind",
+    "is_model_class",
+    # Detector functions (alphabetical).
+    "detect_async_not_awaited",
+    "detect_async_with_missing",
+    "detect_bare_except",
+    "detect_broad_except",
+    "detect_dict_keys_iter",
+    "detect_django_n1",
+    "detect_except_pass",
+    "detect_fastapi_depends",
+    "detect_flask_debug_true",
+    "detect_flask_routes",
+    "detect_flask_secret_key_literal",
+    "detect_lambda_in_loop",
+    "detect_lock_without_with",
+    "detect_logger_fstring",
+    "detect_mutable_default_arg",
+    "detect_none_eq",
+    "detect_open_without_with",
+    "detect_sqlalchemy_lazy",
+    "detect_star_import",
+    "detect_sync_calls_async_via_graph",
+    "detect_sync_in_async",
+    "detect_type_eq",
+]
+
 # ---------------------------------------------------------------------------
 # Pattern regexes (compiled once)
 # ---------------------------------------------------------------------------
@@ -1354,9 +1388,13 @@ def detect_sync_calls_async_via_graph(conn: sqlite3.Connection) -> list[dict]:
     # Names that are legitimate sync→async entry points and should be
     # excluded from the scan.
     skip_source_names = {"main", "cli", "run", "entrypoint", "_main", "__main__"}
+    # W512: edge-kind vocabulary lives in roam.db.edge_kinds — pure
+    # call edges only for sync→async detection (we want the call
+    # graph, not reference reads).
+    _idioms_call_kind_ph = ", ".join("?" for _ in CALL_EDGE_KINDS)
     try:
         rows = conn.execute(
-            """
+            f"""
             SELECT e.source_id, src.name AS src_name, src.is_async AS src_async,
                    e.target_id, tgt.name AS tgt_name,
                    src_f.path AS src_file, src.line_start AS src_line
@@ -1364,13 +1402,14 @@ def detect_sync_calls_async_via_graph(conn: sqlite3.Connection) -> list[dict]:
             JOIN symbols src ON src.id = e.source_id
             JOIN symbols tgt ON tgt.id = e.target_id
             JOIN files src_f ON src_f.id = src.file_id
-            WHERE e.kind = 'call'
+            WHERE e.kind IN ({_idioms_call_kind_ph})
               AND src.kind IN ('function', 'method')
               AND tgt.kind IN ('function', 'method')
               AND tgt.is_async = 1
               AND src.is_async = 0
               AND COALESCE(src_f.file_role, '') != 'test'
-            """
+            """,
+            CALL_EDGE_KINDS,
         ).fetchall()
     except Exception:
         return findings

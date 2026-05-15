@@ -34,6 +34,8 @@ def _make_db(tmp_path: Path) -> sqlite3.Connection:
             cognitive_complexity REAL, parent_id INTEGER,
             FOREIGN KEY(file_id) REFERENCES files(id)
         );
+        -- W501: schema DEFAULT 'calls' never applies (all callers pass kind explicitly);
+        -- unrelated to W512 CALL_OR_REF_KINDS canonicalisation.
         CREATE TABLE IF NOT EXISTS edges (
             id INTEGER PRIMARY KEY, source_id INTEGER,
             target_id INTEGER, kind TEXT DEFAULT 'calls',

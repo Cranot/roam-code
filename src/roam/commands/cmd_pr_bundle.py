@@ -38,6 +38,7 @@ split-brain documented in CLAUDE.md.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -45,10 +46,42 @@ from typing import Any
 import click
 
 from roam.capability import roam_capability
-from roam.commands.git_helpers import git_branch, git_head_sha
+from roam.commands.git_helpers import git_actor, git_branch
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.confidence import confidence_level_rank
+from roam.output.formatter import WarningsOut, json_envelope, to_json
 from roam.runs.helpers import auto_log
+
+
+# ---------------------------------------------------------------------------
+# W236a / W232 secret-redaction at the producer boundary
+# ---------------------------------------------------------------------------
+#
+# The W232 leak audit found that ``verdict`` and ``human_actor`` flow
+# verbatim from the pr-bundle envelope into ``ChangeEvidence.verdict`` /
+# ``ActorRef.actor_id``. A GitHub PAT planted in ``human_actor`` (e.g.
+# ``alice+ghp_…@example.com``) lands inside the assurance-ref block.
+#
+# Fix: scrub each free-form actor / verdict string through a closed set
+# of secret-shaped patterns BEFORE it lands in the envelope. When ANY
+# pattern fires we (a) replace the match with ``[REDACTED]`` and (b)
+# append ``"secret"`` to the envelope's top-level ``redactions[]`` array
+# so downstream consumers can tell that redaction ran (Pattern 2 —
+# explicit absence beats silent absence). ``"secret"`` is one of the six
+# closed-enum REDACTION_REASONS at ``src/roam/evidence/_vocabulary.py``.
+#
+# W364 extraction: the canonical pattern set + scrubbers now live at
+# ``roam.security.redact`` so other producers (W363 MCP wrappers,
+# third-party plugins, drive-by collector paths) can scrub identically
+# without duplicating the regex set. The private names below remain as
+# thin re-export aliases for any pre-W364 test or call site that
+# reaches in by attribute name.
+from roam.security.redact import (
+    SECRET_PATTERNS as _SECRET_PATTERNS,
+    redact_secrets as _redact_secrets,
+    scrub_actor_block as _scrub_actor_block,
+)
+
 
 # ---------------------------------------------------------------------------
 # Storage layout
@@ -74,6 +107,67 @@ _RESPONSES_DIRNAME = "responses"
 # is read_only, but never destroys state. Higher modes (safe_edit / migration
 # / autonomous_pr) all permit emit.
 _MODE_RESTRICTED_STATE = "mode_restricted"
+
+
+# ---------------------------------------------------------------------------
+# W189 actor block — identity resolution for the pr-bundle envelope
+# ---------------------------------------------------------------------------
+#
+# The W186 8-evidence-questions gap audit confirmed the collector at
+# ``src/roam/evidence/collector.py:551-569`` ALREADY probes for an
+# ``actor`` block on the pr-bundle envelope, BUT the producer
+# (this module) never emitted one. As a result, every ``ChangeEvidence``
+# packet built from a real pr-bundle had empty ``agent_id`` and
+# ``human_actor`` fields. W189 closes that gap by adding the producer.
+#
+# W260 lifted the resolver into a shared helper at
+# ``roam.commands.actor_helpers`` so the pr-replay synth-envelope path
+# can call the same priority chain. The thin re-exports below preserve
+# back-compat for existing tests and call sites (search ``tests/`` for
+# ``_resolve_actor_block`` / ``_resolve_actor_kind``).
+#
+# Priority chain (first hit wins per field, LAW 11 — user intent over
+# inference):
+#   1. CLI flag (``--agent-id`` / ``--human-actor`` on ``pr-bundle emit``).
+#   2. Environment variables (``ROAM_AGENT_ID`` / ``ROAM_HUMAN_ACTOR`` /
+#      ``ROAM_MCP_CLIENT_ID`` / ``ROAM_CI_RUNNER_ID`` /
+#      ``GITHUB_ACTIONS_RUN_ID``).
+#   3. Git config ``user.email`` (human actor only).
+#   4. Active run-ledger ``RunMeta.agent`` (agent id only).
+#
+# ``actor_kind`` is then derived from which fields ended up populated.
+# Producers for ``mcp_client_id`` / ``tool_id`` are intentionally
+# env-only (or NULL); ``tool_id`` is reserved for the W196 follow-up
+# that adds per-tool-call MCP receipts.
+from roam.commands.actor_helpers import (
+    resolve_actor_block as _resolve_actor_block_impl,
+    resolve_actor_kind as _resolve_actor_kind_impl,
+)
+
+
+def _resolve_actor_block(
+    *,
+    agent_id_override: str | None,
+    human_actor_override: str | None,
+    repo_root: Path | None = None,
+) -> dict:
+    """Back-compat wrapper around :func:`roam.commands.actor_helpers.resolve_actor_block`.
+
+    New callers should import ``resolve_actor_block`` directly from
+    ``roam.commands.actor_helpers``; this thin alias only exists so
+    pre-W260 tests and the rest of this module continue to import the
+    same symbol name they always did.
+    """
+    return _resolve_actor_block_impl(
+        agent_id_override=agent_id_override,
+        human_actor_override=human_actor_override,
+        repo_root=repo_root,
+    )
+
+
+def _resolve_actor_kind(actor: dict) -> str:
+    """Back-compat wrapper around :func:`roam.commands.actor_helpers.resolve_actor_kind`."""
+    return _resolve_actor_kind_impl(actor)
 
 
 def _mode_blocks_emit(repo_root: Path) -> tuple[bool, str, str | None]:
@@ -148,6 +242,14 @@ def _empty_bundle(intent: str = "") -> dict:
             "fitness_violations": [],
             "conventions_violations": [],
         },
+        # W224b — agentic-assurance approval + risk-acceptance trails.
+        # Each row is a dict containing approver / reviewer / scope /
+        # reason / expiry / recorded_at. Persisted in the bundle file so
+        # `pr-bundle emit` can surface them in the envelope's top-level
+        # ``approvals[]`` / ``accepted_risks[]`` arrays the collector
+        # already reads.
+        "approvals": [],
+        "accepted_risks": [],
     }
 
 
@@ -182,13 +284,32 @@ def _atomic_write_bundle(path: Path, bundle: dict) -> None:
     atomic_write_text(path, payload + "\n")
 
 
-def _git_fingerprint() -> dict:
-    """Snapshot of git metadata at bundle-init time."""
+def _git_fingerprint(root: Path | None = None) -> dict:
+    """Snapshot of git metadata at bundle-init time.
+
+    W540 consolidation: resolve ``head_sha`` via the canonical
+    ``roam.attest.cga._git_commit_sha(root)`` helper (the same helper
+    that ``emit_vsa`` / ``cga`` / ``stale_refs`` already use) so every
+    bundle init shells out to ``git rev-parse HEAD`` exactly ONCE. The
+    legacy ``git_head_sha()`` wrapper (no ``cwd`` arg, "" sentinel) is
+    kept as a back-compat shim for ``pr-analyze`` / ``audit_trail`` —
+    out of scope for this task. Output shape is byte-identical: same
+    keys, same string values, same SHA bytes.
+    """
     out: dict[str, str] = {}
     branch = git_branch()
     if branch:
         out["branch"] = branch
-    sha = git_head_sha()
+    # Lazy import — avoids paying the attest-module import cost on
+    # non-init pr-bundle calls (set / add / emit / validate / show).
+    from roam.attest.cga import _git_commit_sha
+
+    if root is None:
+        try:
+            root = find_project_root()
+        except Exception:  # pragma: no cover — defensive (non-roam tree)
+            root = None
+    sha = _git_commit_sha(root) if root is not None else None
     if sha:
         out["head_sha"] = sha
     return out
@@ -564,10 +685,13 @@ def _classify_world_model_for_symbol(symbol_name: str) -> dict:
     else:
         idem_kind = "unknown"
         idem_conf = "low"
-    conf_rank = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
+    # W596: canonical confidence-LEVEL rank (includes ``unknown=0``).
+    # ``min(...)`` picks the LEAST-confident label as the world-model
+    # confidence floor; an "unknown" pair falls below every defined
+    # level so the world-model classifier's missing signal dominates.
     chosen = min(
         (se_conf, idem_conf),
-        key=lambda c: conf_rank.get(c, 0),
+        key=lambda c: confidence_level_rank(c, fallback=-1),
     )
     return {
         "side_effect_kinds": kinds,
@@ -1298,6 +1422,112 @@ def _validate_bundle(
 
 
 # ---------------------------------------------------------------------------
+# W268 - on-disk permits / leases readers for the envelope
+# ---------------------------------------------------------------------------
+#
+# The W252 producer-coverage matrix flagged ``authority`` as one of the
+# most under-served evidence axes - only ``pr-bundle`` emitted an
+# authority ref, and only for ``mode``. The W186 audit found permits and
+# leases lived ONLY as verdict-level string facades on the bundle (no
+# structured top-level array). Mirroring the W240 (approvals /
+# accepted_risks) and W266 (environment_refs) "always emit, populate
+# from disk when available" pattern: read ``.roam/permits/*.json`` and
+# ``.roam/leases/*.json`` at envelope-build time, stamp them on the
+# top-level envelope as ``permits[]`` / ``leases[]``, and let the
+# collector lift each row into an ``AuthorityRef``.
+#
+# Both readers are best-effort: a missing directory yields ``[]`` (the
+# Pattern 2 always-emit empty list); a malformed JSON file is silently
+# skipped (no warning today - the directories are tooling-only and a
+# producer that writes garbage is its own bug to fix).
+#
+# Permits note (W198): ``roam permit issue --persist`` (the W198
+# writer) now writes ``.roam/permits/<permit_id>.json`` documents that
+# this reader consumes. Pre-W198 the directory was always empty (the
+# command was strictly a verdict facade); post-W198 it carries one
+# document per issued permit. The default ``roam permit`` invocation
+# (no subcommand) remains the verdict-facade path and never writes
+# rows here, so the directory is still permitted to be empty.
+
+
+# Deprecated W422: import from roam.permits.store instead. The wrapper is
+# retained for one cycle so external code (and the W349 red-team test
+# suite) can migrate without a churn-y rename. Internal callers in this
+# repo were redirected at W422; do not add new callers here.
+def _load_permits_from_disk(
+    repo_root: Path | None,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
+    """Scan ``.roam/permits/*.json`` and return one dict per readable file.
+
+    .. deprecated:: W422
+        Import :func:`roam.permits.store.load_permits_from_disk` directly.
+        This wrapper is kept for one cycle to avoid breaking external
+        consumers (and the W349 red-team test suite) that import
+        ``cmd_pr_bundle._load_permits_from_disk`` by name.
+
+    See :func:`roam.permits.store.load_permits_from_disk` for the full
+    contract (W379 duplicate dedup / W380 schema gate / W382 malformed
+    warning surface; Pattern 2 always-emit; raw-dict pass-through).
+    """
+    # Local import avoids hard module-load cycle: ``permits.store`` is a
+    # W198 substrate module, ``cmd_pr_bundle`` is its primary consumer.
+    from roam.permits.store import load_permits_from_disk
+
+    return load_permits_from_disk(repo_root, warnings_out=warnings_out)
+
+
+def _load_leases_from_disk(
+    repo_root: Path | None,
+    warnings_out: list[str] | None = None,
+) -> list[dict]:
+    """Scan ``.roam/leases/*.json`` and return one dict per readable file.
+
+    Delegates the file walk to :func:`roam.leases.list_leases` so the
+    on-disk schema stays single-sourced - the substrate already knows
+    how to parse a lease document. We pass ``include_expired=True`` /
+    ``include_released=True`` because the envelope is an evidence
+    snapshot: a recently-released or expired lease is still proof of
+    "an agent claimed this scope during the change," which is exactly
+    the authority signal an auditor wants.
+
+    Each lease's ``to_dict()`` shape (lease_id, agent, subject_kind,
+    subject, ttl_seconds, acquired_at, expires_at, state) flows
+    verbatim onto the envelope; the collector's
+    ``_build_authority_refs`` reads ``lease_id`` to mint an
+    ``AuthorityRef(authority_kind="lease", ...)`` per row.
+
+    **Shared between pr-bundle and pr-replay** (W272 reuse). Both
+    producers stamp the resulting list onto their synth pr-bundle
+    envelope's top-level ``leases[]`` so the collector materialises one
+    ``AuthorityRef(authority_kind="lease", ...)`` per row. Keep this
+    helper module-level so the import from
+    ``roam.commands.cmd_pr_replay`` stays clean.
+
+    W425: ``warnings_out`` threads into :func:`roam.leases.list_leases`
+    so malformed / schema-invalid ``.roam/leases/*.json`` files surface
+    as actionable warnings in the bundle's ``bundle_warnings`` bucket
+    (mirrors the W377-batch permit reader contract).
+    """
+    if repo_root is None:
+        return []
+    try:
+        from roam.leases import list_leases
+    except Exception:
+        return []
+    try:
+        leases = list_leases(
+            Path(repo_root),
+            include_expired=True,
+            include_released=True,
+            warnings_out=warnings_out,
+        )
+    except Exception:
+        return []
+    return [lease.to_dict() for lease in leases]
+
+
+# ---------------------------------------------------------------------------
 # Envelope construction
 # ---------------------------------------------------------------------------
 
@@ -1308,6 +1538,9 @@ def _build_envelope(
     command_label: str = "pr-bundle",
     causal_diff_totals: dict | None = None,
     strict_resolved: bool = False,
+    actor: dict | None = None,
+    approvals: list | None = None,
+    accepted_risks: list | None = None,
 ) -> dict:
     """Convert the on-disk bundle dict into a roam envelope ready for echo.
 
@@ -1320,6 +1553,17 @@ def _build_envelope(
     unresolved (ghost) affected symbols as a missing proof, so an
     otherwise-structurally-complete bundle with ghost names is marked
     ``state="incomplete"`` and gated by ``--strict``.
+
+    ``actor`` / ``approvals`` / ``accepted_risks`` (W189): the
+    agentic-assurance identity block + approval / risk-acceptance lists.
+    When ``actor`` is None we resolve a fresh one from env + git config
+    so EVERY call site (init / set / add / emit / validate) gets a
+    populated actor block — the collector at
+    ``src/roam/evidence/collector.py:551-569`` reads this field and the
+    pr-bundle envelope was previously the only producer-side gap
+    documented in the W186 audit. ``approvals`` and ``accepted_risks``
+    default to empty lists so consumers can rely on the keys being
+    present (Pattern 2 — never silent absence).
     """
     missing, state = _validate_bundle(bundle, strict_resolved=strict_resolved)
     affected = bundle.get("affected_symbols") or []
@@ -1431,11 +1675,184 @@ def _build_envelope(
         "strict_resolved": bool(strict_resolved),
     }
 
+    # W189: resolve a default actor block when the caller didn't provide
+    # one (init / set / add / validate all hit this path). The emit path
+    # threads the CLI-flag-aware actor in via the ``actor`` kwarg so
+    # ``--agent-id`` / ``--human-actor`` win over env + git config.
+    if actor is None:
+        try:
+            repo_root = find_project_root()
+        except Exception:
+            repo_root = None
+        actor = _resolve_actor_block(
+            agent_id_override=None,
+            human_actor_override=None,
+            repo_root=repo_root,
+        )
+    if approvals is None:
+        approvals = []
+    if accepted_risks is None:
+        accepted_risks = []
+
+    # W236a / W232 producer-boundary secret scrub. Every string field on
+    # the actor block AND the envelope-level ``verdict`` flow verbatim
+    # through the collector into ``ChangeEvidence.verdict`` /
+    # ``ActorRef.actor_id``; a planted PAT / OpenAI key / AWS key would
+    # otherwise survive into the assurance-ref block. Scrub here and
+    # stamp ``redactions: ["secret"]`` so consumers can tell that
+    # redaction ran (Pattern 2 — explicit absence). The scrub is
+    # idempotent on already-scrubbed values.
+    redactions: list[str] = []
+    scrubbed_actor, actor_had_secret = _scrub_actor_block(actor)
+    scrubbed_verdict, verdict_had_secret = _redact_secrets(verdict)
+    if scrubbed_verdict != verdict:
+        verdict = scrubbed_verdict
+        summary["verdict"] = verdict
+    if actor_had_secret or verdict_had_secret:
+        redactions.append("secret")
+
+    # W224b — surface approval / accepted-risk records on the envelope.
+    # The bundle file is the single source of truth (single-file design,
+    # matching the rest of the schema). Caller-supplied approvals (e.g.
+    # via the emit --approval flag) get merged on top of the persisted
+    # rows. Each row is dict-copied (the collector reads dict-shaped
+    # rows). Producer is permissive on shape; the collector validates
+    # downstream.
+    bundle_approvals = bundle.get("approvals") or []
+    bundle_accepted = bundle.get("accepted_risks") or []
+    if not isinstance(bundle_approvals, list):
+        bundle_approvals = []
+    if not isinstance(bundle_accepted, list):
+        bundle_accepted = []
+    approvals_out = list(bundle_approvals) + list(approvals)
+    accepted_risks_out = list(bundle_accepted) + list(accepted_risks)
+
+    # W224a / W219 — promote context_read.files_inspected to a top-level
+    # context_files[] array of {path, content_hash} dicts. The collector
+    # at ``src/roam/evidence/collector.py`` probes ``context_files``
+    # directly; before this promotion the inspected files lived only
+    # under ``context_read.files_inspected`` and were invisible to the
+    # collector. Empty list when no files were inspected (Pattern 2 —
+    # explicit absence so consumers can rely on the key being present).
+    context_files_out: list[dict] = []
+    context_read = bundle.get("context_read") or {}
+    if isinstance(context_read, dict):
+        inspected = context_read.get("files_inspected") or []
+        if isinstance(inspected, list):
+            for entry in inspected:
+                if isinstance(entry, str) and entry:
+                    context_files_out.append(
+                        {"path": entry, "content_hash": None}
+                    )
+                elif isinstance(entry, dict):
+                    path_value = entry.get("path") or entry.get("file") or ""
+                    hash_value = (
+                        entry.get("content_hash")
+                        or entry.get("sha256")
+                        or None
+                    )
+                    if path_value:
+                        context_files_out.append(
+                            {"path": path_value, "content_hash": hash_value}
+                        )
+
+    # W266 - materialise EnvironmentRef rows on the pr-bundle envelope.
+    # The collector at ``src/roam/evidence/collector.py`` already
+    # synthesises environment_refs from caller args + the envelope's git
+    # block, but consumers reading the pr-bundle envelope DIRECTLY (e.g.
+    # without going through the collector) previously saw no environment
+    # signal at all. The W252 producer-coverage matrix flagged this as
+    # the most under-served evidence axis. Each ref is dict-serialised
+    # to match the rest of the envelope's JSON shape; the collector
+    # rebuilds its own EnvironmentRef tuple independently so this is
+    # additive and never overrides the collector's authoritative pass.
+    git_block = bundle.get("git") or {}
+    commit_range_for_env: str | None = None
+    # W521 - promote the persisted ``git.head_sha`` (which pr-bundle init
+    # stamps via ``_git_commit_sha`` so EVERY git-repo init carries a
+    # real SHA) to a top-level ``commit_sha`` envelope field. The
+    # ``emit_vsa.py`` collector at W509 reads ``envelope.get("commit_sha")``
+    # for SLSA VSA subject digest resolution; before this promotion the
+    # field was absent on every bundle envelope and the W509 fallback
+    # had to redo ``git rev-parse HEAD`` on every emit. With this change
+    # the producer-side identity stamp is canonical; the W509 fallback
+    # stays for hand-crafted bundles (e.g. fixtures, third-party tools)
+    # that bypass ``pr-bundle init``.
+    commit_sha_top: str | None = None
+    if isinstance(git_block, dict):
+        head_sha = git_block.get("head_sha")
+        if isinstance(head_sha, str) and head_sha:
+            commit_range_for_env = head_sha
+            commit_sha_top = head_sha
+        # The persisted bundle MAY ALSO carry a ``commit_sha`` field
+        # written by W521-aware init paths. Prefer it when present so
+        # producers that resolve the SHA via the centralised
+        # ``_git_commit_sha`` helper (not the legacy ``git_head_sha``
+        # subprocess wrapper) get their value through verbatim.
+        persisted_commit_sha = git_block.get("commit_sha")
+        if isinstance(persisted_commit_sha, str) and persisted_commit_sha:
+            commit_sha_top = persisted_commit_sha
+    try:
+        ws_root = find_project_root()
+    except Exception:
+        ws_root = None
+    try:
+        from roam.evidence.env_refs import build_environment_refs
+
+        env_refs_tuple = build_environment_refs(
+            commit_range=commit_range_for_env,
+            workspace_root=str(ws_root) if ws_root else None,
+        )
+        environment_refs_out: list[dict] = [
+            {"env_kind": r.env_kind, "env_id": r.env_id}
+            for r in env_refs_tuple
+        ]
+    except Exception:
+        # Best-effort - never block emit on env-ref construction.
+        environment_refs_out = []
+
+    # W268 - materialise authority producers (permits + leases) on the
+    # pr-bundle envelope. The collector at
+    # ``src/roam/evidence/collector.py:_build_authority_refs`` ALREADY
+    # reads these top-level arrays and mints an AuthorityRef per row;
+    # the W252 producer-coverage matrix flagged the missing producer
+    # side. Both readers are best-effort (Pattern 2 - always emit empty
+    # lists when no on-disk state exists, so consumers can rely on the
+    # keys being present).
+    #
+    # W377-batch: the permit reader now surfaces actionable warnings for
+    # malformed / schema-invalid / duplicate permit files (D3/D4/D6 from
+    # the W349 red-team gaps). Warnings are accumulated into a local
+    # ``bundle_warnings`` list and stamped on the envelope so an auditor
+    # reviewing the bundle can see which permits were dropped and why.
+    bundle_warnings: list[str] = []
+    try:
+        permits_out: list[dict] = _load_permits_from_disk(
+            ws_root,
+            warnings_out=bundle_warnings,
+        )
+    except Exception:
+        permits_out = []
+    try:
+        # W425: thread the bundle_warnings bucket so malformed /
+        # schema-invalid lease files surface alongside the permit
+        # warnings already collected above.
+        leases_out: list[dict] = _load_leases_from_disk(
+            ws_root,
+            warnings_out=bundle_warnings,
+        )
+    except Exception:
+        leases_out = []
+
     return json_envelope(
         command_label,
         summary=summary,
         intent=bundle.get("intent", ""),
         context_read=bundle.get("context_read", {}),
+        # W224a — top-level mirror of the inspected files so the
+        # evidence collector picks them up (it probes context_files,
+        # NOT context_read.files_inspected).
+        context_files=context_files_out,
         affected_symbols=bundle.get("affected_symbols", []),
         risks=bundle.get("risks", []),
         tests_required=bundle.get("tests_required", []),
@@ -1448,12 +1865,105 @@ def _build_envelope(
             "schema_version": bundle.get("schema_version"),
             "git": bundle.get("git", {}),
         },
+        # W521 - top-level ``commit_sha`` for downstream collectors that
+        # probe the envelope directly (e.g. ``roam.attest.emit_vsa`` for
+        # SLSA VSA subject digest resolution). When absent (non-git
+        # workspace OR pre-W521 hand-crafted bundle) consumers fall back
+        # to ``bundle_meta.git.head_sha`` (Pattern 2 — multi-key probe)
+        # OR the W509 ``git rev-parse HEAD`` belt-and-braces fallback.
+        commit_sha=commit_sha_top,
+        # W189 — agentic-assurance identity producers. The collector
+        # at ``src/roam/evidence/collector.py:551-669`` reads each of
+        # these top-level keys; before this change every ChangeEvidence
+        # packet built from a real pr-bundle had empty agent_id /
+        # human_actor / approvals / accepted_risks.
+        actor=scrubbed_actor,
+        approvals=approvals_out,
+        accepted_risks=accepted_risks_out,
+        # W266 — env signal materialised on the envelope itself (ci_job
+        # / workspace / branch_range / local_run). Empty list ONLY when
+        # the env_refs builder itself raised (Pattern 2 — explicit
+        # absence; the builder is total so the empty path is rare).
+        environment_refs=environment_refs_out,
+        # W268 — authority producers (permits + leases). Each row
+        # mirrors its on-disk JSON shape (.roam/permits/*.json,
+        # .roam/leases/*.json). Empty list when no on-disk rows exist
+        # (Pattern 2 — explicit absence; consumers can rely on the
+        # keys being present). The collector lifts each row into an
+        # AuthorityRef via _build_authority_refs.
+        permits=permits_out,
+        leases=leases_out,
+        # W236a — closed-enum redactions trail. Empty list when no
+        # secret-shaped substring was found (Pattern 2 — explicit
+        # absence; consumers can rely on the key being present).
+        redactions=redactions,
+        # W377-batch — actionable warnings from the permit reader
+        # (D3 / D4 / D6 of the W349 red-team gaps). Empty list when
+        # every permit file parsed + validated + had a unique id
+        # (Pattern 2 — consumers can rely on the key being present).
+        bundle_warnings=bundle_warnings,
     )
 
 
-def _emit_envelope_and_log(env: dict, json_mode: bool, target: str = "") -> None:
-    """Shared echo path -- writes JSON or text, then auto-logs to the run ledger."""
-    auto_log(env, action="pr-bundle", target=target)
+def _finalise_envelope_redactions(env: dict) -> None:
+    """Defensive scrub of the assembled envelope (W236a / W232).
+
+    Some call sites mutate ``env["summary"]["verdict"]`` AFTER
+    :func:`_build_envelope` returns (e.g. ``init`` rewrites the verdict
+    with the user-supplied intent baked in). Running the scrub one last
+    time right before echo guarantees no producer-side path leaks a
+    secret-shaped substring out of pr-bundle. Idempotent on already-
+    scrubbed values.
+    """
+    if not isinstance(env, dict):
+        return
+    redactions = list(env.get("redactions") or [])
+    had_secret = False
+
+    summary = env.get("summary")
+    if isinstance(summary, dict):
+        scrubbed_verdict, hit = _redact_secrets(summary.get("verdict"))
+        if hit:
+            summary["verdict"] = scrubbed_verdict
+            had_secret = True
+
+    actor = env.get("actor")
+    if isinstance(actor, dict):
+        scrubbed_actor, hit = _scrub_actor_block(actor)
+        if hit:
+            env["actor"] = scrubbed_actor
+            had_secret = True
+
+    if had_secret and "secret" not in redactions:
+        redactions.append("secret")
+    env["redactions"] = redactions
+
+
+def _emit_envelope_and_log(
+    env: dict,
+    json_mode: bool,
+    target: str = "",
+    *,
+    extra_event_fields: dict | None = None,
+) -> None:
+    """Shared echo path -- writes JSON or text, then auto-logs to the run ledger.
+
+    W294 - ``extra_event_fields`` lets specific pr-bundle subcommands
+    (notably ``add-approval``) stamp authority-shaped event fields on
+    the auto-log call so the W292 collector harvester can corroborate
+    the matching AuthorityRef. The kwarg is forwarded verbatim to
+    :func:`roam.runs.helpers.auto_log` which enforces the closed
+    whitelist; any non-whitelisted keys are silently dropped.
+    """
+    # W236a: belt-and-braces secret scrub at every echo point. Catches
+    # call sites that post-mutate the verdict after _build_envelope.
+    _finalise_envelope_redactions(env)
+    auto_log(
+        env,
+        action="pr-bundle",
+        target=target,
+        extra_event_fields=extra_event_fields,
+    )
     if json_mode:
         click.echo(to_json(env))
         return
@@ -1581,7 +2091,48 @@ def pr_bundle_init(ctx, intent):
     root = find_project_root()
     path = _bundle_path(root)
     bundle = _empty_bundle(intent=intent)
-    bundle["git"] = _git_fingerprint()
+    # W540 - ``_git_fingerprint`` now resolves ``head_sha`` via the same
+    # canonical ``_git_commit_sha`` helper as the W521 ``commit_sha``
+    # stamp below. We thread the project root through + reuse the SHA
+    # so init shells out to ``git rev-parse HEAD`` EXACTLY ONCE (was
+    # twice pre-W540 — once via the legacy ``git_head_sha`` wrapper in
+    # ``_git_fingerprint``, once via ``_git_commit_sha`` for the W521
+    # stamp). Output shape stays byte-identical.
+    bundle["git"] = _git_fingerprint(root)
+    # W521 - populate ``git.commit_sha`` UNCONDITIONALLY when the
+    # workspace is a git repo. Before W521 the bundle envelope's
+    # top-level ``commit_sha`` (read by the W509 emit_vsa collector for
+    # SLSA VSA subject digest resolution) was absent on every
+    # ``--no-auto-collect`` run, forcing emit_vsa to re-derive identity
+    # via ``git rev-parse HEAD``. Stamping at init time makes the
+    # producer the source-of-truth for commit identity; the W509
+    # fallback now serves only hand-crafted bundles (e.g. fixtures /
+    # third-party tools that bypass ``pr-bundle init``).
+    #
+    # W540: ``head_sha`` and ``commit_sha`` now come from the SAME
+    # subprocess invocation (``_git_fingerprint`` writes ``head_sha``;
+    # we mirror that value into ``commit_sha`` here). Skip the extra
+    # ``_git_commit_sha`` call entirely — the SHA is already in the
+    # ``bundle["git"]`` block.
+    #
+    # Crash-safe: when the workspace is not a git repo OR ``git`` is
+    # unavailable, ``head_sha`` is absent from the bundle and we stamp
+    # a ``pre_warnings`` entry so reviewers can see why ``commit_sha``
+    # is empty downstream (Pattern 2 — explicit absence beats silence).
+    init_pre_warnings: list[str] = []
+    resolved_sha = bundle["git"].get("head_sha") if isinstance(bundle.get("git"), dict) else None
+    if resolved_sha:
+        # Persist alongside ``head_sha`` (kept for back-compat with any
+        # consumer reading the legacy field). ``_build_envelope`` prefers
+        # ``commit_sha`` when present so the W521 producer value wins.
+        bundle["git"]["commit_sha"] = resolved_sha
+    else:
+        init_pre_warnings.append(
+            "commit_sha unresolved at init -- workspace is not a git repo "
+            "OR `git rev-parse HEAD` returned no output; downstream "
+            "consumers will fall back to bundle_meta.git.head_sha or to "
+            "the emit-time git probe"
+        )
     _atomic_write_bundle(path, bundle)
     env = _build_envelope(bundle, command_label="pr-bundle-init")
     env["summary"]["state"] = "initialized"
@@ -1590,6 +2141,8 @@ def pr_bundle_init(ctx, intent):
     env["summary"]["verdict"] = f"pr-bundle initialised at {path.name} (intent={intent or '(unset)'})"
     env["summary"]["missing_proofs"] = []
     env["bundle_path"] = str(path)
+    if init_pre_warnings:
+        env["pre_warnings"] = init_pre_warnings
     _emit_envelope_and_log(env, json_mode, target=intent or "")
 
 
@@ -1856,6 +2409,153 @@ def pr_bundle_add_context_file(ctx, file_path):
     _emit_envelope_and_log(env, json_mode, target=file_path)
 
 
+# ---------- add-approval / add-accepted-risk (W224b) ----------
+#
+# W224b closes the gap surfaced by W219's producer/collector contract
+# tests: the envelope schema includes ``approvals[]`` and
+# ``accepted_risks[]`` arrays the collector reads into
+# ``ChangeEvidence.approvals`` / ``.accepted_risks``, but no CLI surface
+# existed for stamping rows. These two subcommands append a dict-shaped
+# row to the bundle file's persistent ``approvals`` / ``accepted_risks``
+# lists; emit then mirrors them onto the envelope's top-level array.
+
+
+@pr_bundle_group.command("add-approval")
+@click.option(
+    "--approver",
+    required=True,
+    help="Email / identifier of the approver (e.g. alice@example.com).",
+)
+@click.option(
+    "--scope",
+    required=True,
+    help="Approval scope (e.g. 'pr-42', 'auth-changes', 'module:billing').",
+)
+@click.option("--reason", default="", help="Free-form reason for the approval.")
+@click.option(
+    "--expiry",
+    default="",
+    help="ISO-8601 expiry timestamp (e.g. 2026-06-01T00:00:00Z).",
+)
+@click.option(
+    "--id",
+    "approval_id",
+    default="",
+    help="Optional stable id; auto-generated when omitted.",
+)
+@click.pass_context
+def pr_bundle_add_approval(ctx, approver, scope, reason, expiry, approval_id):
+    """Record an approval against the current bundle (W224b).
+
+    The collector at ``src/roam/evidence/collector.py`` reads the
+    envelope's top-level ``approvals[]`` array and materialises each row
+    as an ``AuthorityRef(authority_kind="approval")`` on the resulting
+    ``ChangeEvidence`` packet. Multiple approvals are allowed; each
+    invocation appends one row.
+    """
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    root = find_project_root()
+    path = _bundle_path(root)
+    bundle = _require_bundle(ctx, path)
+    # Auto-generate a stable id when the caller didn't supply one so
+    # downstream consumers can join on it. Format ``ap_<utc-stamp>``.
+    if not approval_id:
+        approval_id = f"ap_{_utc_now().replace(':', '').replace('-', '')}"
+    # W293 — stamp ``provenance="cli_flag"`` at the producer/CLI ingestion
+    # site: an operator explicitly ran ``roam pr-bundle add-approval`` to
+    # record this approval. Best-effort: a helper-import failure leaves
+    # the field absent so the collector's ``unknown`` fallback applies.
+    record = {
+        "approval_id": approval_id,
+        "approver": approver,
+        "scope": scope,
+        "reason": reason,
+        "expiry": expiry,
+        "recorded_at": _utc_now(),
+    }
+    try:
+        from roam.evidence.provenance import provenance_label
+        record["provenance"] = provenance_label("cli_flag")
+    except Exception:  # noqa: BLE001 - helper is supposed to never fail
+        pass
+    # Schema migration: older bundles may not have the field yet.
+    bundle.setdefault("approvals", [])
+    _merge_dict_list(bundle["approvals"], [record], ("approval_id",))
+    _atomic_write_bundle(path, bundle)
+    env = _build_envelope(bundle, command_label="pr-bundle-add-approval")
+    env["bundle_path"] = str(path)
+    # W294 - stamp ``approval_id`` on the run-ledger event so the W292
+    # collector harvester corroborates the matching approval
+    # AuthorityRef and promotes it to ``provenance="run_ledger"``. The
+    # whitelist filter in ``auto_log`` short-circuits when no active
+    # run exists (mirroring W285's pattern); the emit always succeeds.
+    _emit_envelope_and_log(
+        env,
+        json_mode,
+        target=f"{approver}:{scope}",
+        extra_event_fields={"approval_id": approval_id},
+    )
+
+
+@pr_bundle_group.command("add-accepted-risk")
+@click.option(
+    "--reviewer",
+    required=True,
+    help="Email / identifier of the reviewer accepting the risk.",
+)
+@click.option(
+    "--scope",
+    required=True,
+    help="Risk scope (e.g. 'R-001', 'module:billing', 'blast-radius').",
+)
+@click.option("--reason", default="", help="Free-form rationale for accepting the risk.")
+@click.option(
+    "--expiry",
+    default="",
+    help="ISO-8601 expiry timestamp (e.g. 2026-06-01T00:00:00Z).",
+)
+@click.option(
+    "--id",
+    "risk_id",
+    default="",
+    help="Optional stable id; auto-generated when omitted.",
+)
+@click.pass_context
+def pr_bundle_add_accepted_risk(ctx, reviewer, scope, reason, expiry, risk_id):
+    """Record a risk acceptance against the current bundle (W224b).
+
+    The collector materialises each row into
+    ``ChangeEvidence.accepted_risks``. Use this when a reviewer has
+    formally accepted a high-severity risk surfaced by ``add risk`` or
+    by the world-model classifier; the row is then visible to anyone
+    auditing the proof bundle.
+    """
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    root = find_project_root()
+    path = _bundle_path(root)
+    bundle = _require_bundle(ctx, path)
+    if not risk_id:
+        risk_id = f"ar_{_utc_now().replace(':', '').replace('-', '')}"
+    record = {
+        "risk_id": risk_id,
+        "reviewer": reviewer,
+        "accepted_by": reviewer,
+        "scope": scope,
+        "reason": reason,
+        "rationale": reason,
+        "expiry": expiry,
+        "recorded_at": _utc_now(),
+    }
+    bundle.setdefault("accepted_risks", [])
+    _merge_dict_list(bundle["accepted_risks"], [record], ("risk_id",))
+    _atomic_write_bundle(path, bundle)
+    env = _build_envelope(
+        bundle, command_label="pr-bundle-add-accepted-risk"
+    )
+    env["bundle_path"] = str(path)
+    _emit_envelope_and_log(env, json_mode, target=f"{reviewer}:{scope}")
+
+
 # ---------- emit ----------
 
 
@@ -1889,8 +2589,70 @@ def pr_bundle_add_context_file(ctx, file_path):
         "pass --no-strict-resolved to override."
     ),
 )
+@click.option(
+    "--agent-id",
+    "agent_id",
+    default=None,
+    help=(
+        "Override the AI-agent identifier on the actor block (W189). "
+        "Wins over ROAM_AGENT_ID and the active run-ledger agent. "
+        "Default: resolved from env / run-ledger; empty when neither is set."
+    ),
+)
+@click.option(
+    "--human-actor",
+    "human_actor",
+    default=None,
+    help=(
+        "Override the human-actor identifier on the actor block (W189). "
+        "Wins over ROAM_HUMAN_ACTOR and `git config user.email`. "
+        "Default: resolved from env / git config; empty when neither is set."
+    ),
+)
+@click.option(
+    "--slsa-l3",
+    "slsa_l3",
+    is_flag=True,
+    help=(
+        "W451: also emit a SLSA v1 Verification Summary Attestation "
+        "(VSA, predicateType https://slsa.dev/verification_summary/v1) "
+        "projected from the bundle's ChangeEvidence + an in-toto "
+        "statement attesting to the active run-ledger HMAC root. "
+        "Outputs land alongside the bundle as `.roam/pr-bundle/<stem>.vsa.json` "
+        "and `<stem>.run-ledger-root.json`. Pair with --sign --keyless (or "
+        "--sign --key PATH) to cosign-sign both statements (Fulcio + Rekor)."
+    ),
+)
+@click.option(
+    "--sign",
+    "sign",
+    is_flag=True,
+    help=(
+        "Cosign-sign the emitted VSA + run-ledger root statements. "
+        "Requires --slsa-l3. Pair with --key PATH for offline or "
+        "--keyless for OIDC (Fulcio + Rekor). Graceful skip with a "
+        "clear reason when cosign isn't on PATH."
+    ),
+)
+@click.option(
+    "--key",
+    "sign_key",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Cosign private key. Pair with --sign for offline signing.",
+)
+@click.option(
+    "--keyless",
+    "sign_keyless",
+    is_flag=True,
+    help=(
+        "Cosign keyless OIDC signing via Fulcio + Rekor. Requires "
+        "ambient OIDC (GitHub Actions, GCP workload identity) or "
+        "interactive browser flow. Pair with --sign."
+    ),
+)
 @click.pass_context
-def pr_bundle_emit(ctx, auto_collect, strict, strict_resolved):
+def pr_bundle_emit(ctx, auto_collect, strict, strict_resolved, agent_id, human_actor, slsa_l3, sign, sign_key, sign_keyless):
     """Finalise + print the bundle envelope.
 
     With ``--auto-collect`` (default), any envelopes generated since
@@ -1906,6 +2668,14 @@ def pr_bundle_emit(ctx, auto_collect, strict, strict_resolved):
     unresolved (``resolution_state`` in ``no_db`` / ``not_found`` /
     ``lookup_failed``). Additive to ``--strict``: without it, the gate
     preserves W21.3 behavior. With it, ghost-symbol bundles fail CI.
+
+    ``--agent-id`` / ``--human-actor`` (W189): override the agentic-
+    assurance ``actor`` block on the emitted envelope. CLI flags win
+    over the ``ROAM_AGENT_ID`` / ``ROAM_HUMAN_ACTOR`` env vars (LAW 11);
+    when neither is provided we fall back to the active run-ledger
+    agent (for ``agent_id``) and to ``git config user.email`` (for
+    ``human_actor``). The full priority chain lives in
+    :func:`_resolve_actor_block`.
 
     Without ``--strict`` the envelope is always echoed with exit 0 so
     reviewers can see the bundle even when proofs are missing.
@@ -1929,6 +2699,16 @@ def pr_bundle_emit(ctx, auto_collect, strict, strict_resolved):
     path = _bundle_path(root)
     bundle = _require_bundle(ctx, path)
 
+    # W189: resolve the actor block ONCE for this emit invocation. CLI
+    # flags win over env / git config / run-ledger (LAW 11). Used by
+    # both the mode-blocked early-return and the normal-finalise paths
+    # so a read-only-blocked bundle still carries the identity.
+    resolved_actor = _resolve_actor_block(
+        agent_id_override=agent_id,
+        human_actor_override=human_actor,
+        repo_root=root,
+    )
+
     # W14.2 Synergy 2 — mode soft-gate. In read_only mode, refuse to
     # finalise the bundle but DO NOT clobber the on-disk file. Surface
     # an explicit ``mode_restricted`` state + upgrade verdict so the
@@ -1949,11 +2729,21 @@ def pr_bundle_emit(ctx, auto_collect, strict, strict_resolved):
                 "upgrade_mode": upgrade_to,
             },
             bundle_path=str(path),
+            # W224c — always surface ``mode`` at the top level so the
+            # evidence collector picks it up uniformly across blocked
+            # and non-blocked paths (Pattern 2 — explicit absence).
+            mode=active_mode or "unmoded",
             mode_block={
                 "active_mode": active_mode,
                 "upgrade_mode": upgrade_to,
                 "reason": "active mode is read_only; emit refuses to finalise",
             },
+            # W189: even when the bundle is mode-blocked we surface the
+            # actor block + empty approvals / accepted_risks so an
+            # external collector sees explicit absence (Pattern 2).
+            actor=resolved_actor,
+            approvals=[],
+            accepted_risks=[],
         )
         _emit_envelope_and_log(env, json_mode, target=bundle.get("intent", "")[:80])
         if strict:
@@ -1988,6 +2778,9 @@ def pr_bundle_emit(ctx, auto_collect, strict, strict_resolved):
         command_label="pr-bundle",
         causal_diff_totals=causal_diff_totals,
         strict_resolved=strict_resolved,
+        actor=resolved_actor,
+        approvals=[],
+        accepted_risks=[],
     )
     # W15.2 envelope reshape — auto_collect now lives under ``summary`` so it
     # sits alongside the other aggregate-data fields
@@ -1998,9 +2791,60 @@ def pr_bundle_emit(ctx, auto_collect, strict, strict_resolved):
     # (feature just landed); the top-level slot is gone, not aliased.
     env["summary"]["auto_collect"] = collect_totals
     env["bundle_path"] = str(path)
+    # W224c — always emit ``mode`` (top-level) and ``summary.active_mode``.
+    # Previously the producer only surfaced ``mode`` when the bundle was
+    # blocked by ``read_only``; on a normal emit neither field was set
+    # and the collector's mode probe came up empty (W219 gap). Default
+    # to ``"unmoded"`` when no mode is declared rather than omitting
+    # the key (Pattern 2 — explicit absence).
+    env["mode"] = active_mode or "unmoded"
+    env["summary"]["active_mode"] = active_mode or "unmoded"
+
+    # W451 - SLSA SRC-L3 wire-up. When --slsa-l3 is set, project the
+    # bundle envelope through the evidence collector into a
+    # ChangeEvidence packet, wrap it in a SLSA VSA statement, AND
+    # (when ROAM_RUN_ID is active) emit a second attestation rooted
+    # at the run-ledger HMAC chain tip. Optional cosign-sign both.
+    slsa_l3_result: dict[str, Any] | None = None
+    if slsa_l3:
+        slsa_l3_result = _emit_slsa_l3_attestations(
+            root=root,
+            envelope=env,
+            sign=sign,
+            sign_key=sign_key,
+            sign_keyless=sign_keyless,
+        )
+        env["slsa_l3"] = slsa_l3_result
+
     _emit_envelope_and_log(env, json_mode, target=bundle.get("intent", "")[:80])
     if strict and env["summary"]["state"] != "complete":
         ctx.exit(5)
+
+
+def _emit_slsa_l3_attestations(
+    *,
+    root: Path,
+    envelope: dict,
+    sign: bool,
+    sign_key: str | None,
+    sign_keyless: bool,
+) -> dict[str, Any]:
+    """W451 — emit SLSA VSA + run-ledger root attestations.
+
+    W486: delegates to the shared :func:`roam.attest.emit_vsa.emit_pr_bundle_slsa_l3`
+    helper. The wrapper stays in place so existing callers keep the
+    same import path, and to localise any future pr-bundle-specific
+    pre/post-processing.
+    """
+    from roam.attest.emit_vsa import emit_pr_bundle_slsa_l3
+
+    return emit_pr_bundle_slsa_l3(
+        root=root,
+        envelope=envelope,
+        sign=sign,
+        sign_key=sign_key,
+        sign_keyless=sign_keyless,
+    )
 
 
 # ---------- validate ----------

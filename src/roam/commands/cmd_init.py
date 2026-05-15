@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
+
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import db_exists, find_project_root
+from roam.db.fs_detect import cloud_sync_warning, detect_cloud_sync
 from roam.output.formatter import json_envelope, to_json
 
 _FITNESS_YAML = """\
@@ -143,8 +146,33 @@ def _is_inside_git_repo(project_root) -> bool:
         "For full multi-platform CI generation see `roam ci-setup`."
     ),
 )
+@click.option(
+    "--since",
+    "since",
+    default=None,
+    help=(
+        "Git history window to scan on the first index. Accepts shorthand "
+        "(``365d`` / ``12m`` / ``2y``) or any git-compatible date phrase "
+        "(``2025-01-01``, ``\"2 weeks ago\"``). Sets ``ROAM_GIT_SINCE`` for "
+        "this run. Default: 365d on a brand-new index; on a warm index the "
+        "skip-on-unchanged-HEAD optimisation usually means no git pull at "
+        "all. Pass ``--full-history`` to disable the shallow default."
+    ),
+)
+@click.option(
+    "--full-history",
+    "full_history",
+    is_flag=True,
+    default=False,
+    help=(
+        "Disable the shallow git-history default. Equivalent to "
+        "``ROAM_GIT_SINCE=0``. Use this when you need full churn / blame "
+        "history for cohort analysis (e.g. ``roam dev-profile``, "
+        "``roam bus-factor`` over years of commits)."
+    ),
+)
 @click.pass_context
-def init(ctx, root, yes, with_ci):
+def init(ctx, root, yes, with_ci, since, full_history):
     """Initialize Roam for this project: index + config.
 
     Indexes the project, creates ``.roam/`` config directory with
@@ -182,12 +210,44 @@ def init(ctx, root, yes, with_ci):
 
     created = []
     skipped = []
+    warnings: list[dict] = []
 
     # 1. Create .roam/ directory
     roam_dir = project_root / ".roam"
     roam_dir.mkdir(exist_ok=True)
 
-    # 2. Run indexing if no index exists
+    # 1a. W127 — cloud-sync detection. SQLite WAL races with OneDrive /
+    # Dropbox / iCloud / Google Drive sync agents on writes; the runtime
+    # mitigation in ``db.connection.get_connection`` already swaps the
+    # journal to DELETE + EXCLUSIVE locking, but the user should know
+    # because indexing is slower and large repos can still hit transient
+    # 'database is locked' errors. Surface a one-line advisory so the
+    # user can opt into a local cache via ``roam config --use-local-cache``
+    # or ``ROAM_DB_DIR``. Never fail init on this — strictly advisory.
+    cloud_provider = detect_cloud_sync(roam_dir)
+    if cloud_provider:
+        warnings.append(
+            {
+                "code": "cloud_sync_detected",
+                "provider": cloud_provider,
+                "path": str(roam_dir),
+                "message": cloud_sync_warning(cloud_provider, roam_dir),
+                "remediation": "roam config --use-local-cache",
+            }
+        )
+
+    # 2. Run indexing if no index exists.
+    #
+    # Shallow git-history default (W405): unless the user explicitly opted
+    # out via ``--full-history`` (or set ``ROAM_GIT_SINCE`` themselves), the
+    # indexer caps git log to ~365 days on the FIRST index. Smaller wallclock
+    # cost, same agent-relevant signal. ``--full-history`` wins over
+    # ``--since`` per LAW 11 (user intent > inference).
+    if full_history:
+        os.environ["ROAM_GIT_SINCE"] = "0"
+    elif since:
+        os.environ["ROAM_GIT_SINCE"] = since
+
     had_index = db_exists(project_root)
     if not had_index:
         if not json_mode:
@@ -253,6 +313,11 @@ def init(ctx, root, yes, with_ci):
     _symbols = health_summary.get("symbols", 0)
     _edges = health_summary.get("edges", 0)
     _verdict = f"initialized: {_files} files, {_symbols} symbols, {_edges} edges"
+    # Compact warning codes for the JSON summary — full structured
+    # entries live in the top-level ``warnings`` field so JSON consumers
+    # can branch on the code without parsing the message string.
+    warning_codes = [w["code"] for w in warnings]
+
     if json_mode:
         click.echo(
             to_json(
@@ -264,11 +329,13 @@ def init(ctx, root, yes, with_ci):
                         "skipped": skipped,
                         "had_index": had_index,
                         "health_score": health_summary.get("health_score"),
+                        "warnings": warning_codes,
                     },
                     created=created,
                     skipped=skipped,
                     had_index=had_index,
                     health=health_summary,
+                    warnings=warnings,
                 )
             )
         )
@@ -285,6 +352,16 @@ def init(ctx, root, yes, with_ci):
         health=health_summary.get("health_score", "?"),
     )
     click.echo(f"VERDICT: {_verdict}\n")
+
+    # Warnings go BEFORE the welcome banner so the user sees them
+    # before the "Try one: ..." next-steps copy. Write to stderr so
+    # piped consumers (e.g. ``roam init | tee init.log``) don't fold
+    # the advisory into the success transcript. (W127)
+    for w in warnings:
+        click.echo(w["message"], err=True)
+    if warnings:
+        click.echo("", err=True)
+
     click.echo(welcome)
 
     if created:

@@ -589,10 +589,21 @@ def store_effects(
 # ---------------------------------------------------------------------------
 
 
-def compute_and_store_effects(conn, root, G=None):
+def compute_and_store_effects(conn, root, G=None, *, source_cache=None):
     """Full effects pipeline: classify per file, propagate, store.
 
     Called from the indexer after graph construction.
+
+    Args:
+        conn: SQLite connection.
+        root: Project root path.
+        G: Optional NetworkX call graph (for propagation).
+        source_cache: Optional ``{rel_path: (source_bytes, tree)}`` mapping
+            populated upstream during Phase 2 (parse_extract). When supplied
+            and the file is present, the cached bytes + tree are reused
+            instead of re-opening + re-parsing the file from disk — the
+            single biggest win on cold Windows/OneDrive caches (W440).
+            Defaults to ``None`` (backwards-compatible).
     """
     from roam.index.parser import parse_file
 
@@ -607,15 +618,21 @@ def compute_and_store_effects(conn, root, G=None):
         if language not in _LANGUAGE_PATTERNS:
             continue
 
-        full_path = root / file_row["path"]
-        try:
-            with open(full_path, "rb") as f:
-                source = f.read()
-        except OSError:
-            continue
+        rel_path = file_row["path"]
+        cached = source_cache.get(rel_path) if source_cache else None
 
-        # Parse for AST-aware filtering
-        tree, parsed_source, lang = parse_file(full_path, language)
+        if cached is not None:
+            # W440 hot path: reuse the parsed source + tree from Phase 2.
+            source, tree = cached
+        else:
+            full_path = root / rel_path
+            try:
+                with open(full_path, "rb") as f:
+                    source = f.read()
+            except OSError:
+                continue
+            # Parse for AST-aware filtering
+            tree, _parsed_source, _lang = parse_file(full_path, language)
 
         effects = classify_file_effects(
             conn,

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json as _json
 import math
+import sqlite3
+import subprocess
 import time
 
 import click
@@ -15,6 +18,18 @@ from roam.commands.conventions_helper import (
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
+
+
+# W115 — bus-factor is the fourth detector migrating onto the central
+# findings registry (after clones W95, dead W99, complexity W102). The
+# detector stays heuristic by nature — it counts unique authors and
+# rolls up commits/churn per directory, then maps thresholds to
+# CRITICAL/HIGH/MEDIUM/LOW. The registry confidence tier is therefore
+# always ``heuristic`` regardless of sub-kind. Bump this when the
+# concentration / staleness thresholds in ``_analyse_bus_factor`` change
+# meaningfully so consumers can spot rows produced under an older
+# classifier shape.
+BUS_FACTOR_DETECTOR_VERSION: str = "1.0.0"
 
 
 def _contribution_entropy(author_shares):
@@ -294,6 +309,282 @@ def _query_brain_methods(conn):
     ]
 
 
+def _repo_identifier(project_root) -> str:
+    """Return a stable string identifying this repo.
+
+    Prefers the ``origin`` remote URL (the canonical online identity)
+    and falls back to the absolute project-root path when the repo has
+    no remote configured. Either form is stable across runs so the
+    summary finding's id can stay deterministic.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if proc.returncode == 0:
+            url = (proc.stdout or "").strip()
+            if url:
+                return url
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return str(project_root)
+
+
+def _repo_summary_finding_id(repo_id: str) -> str:
+    """Stable, deterministic id for the solo-author summary finding.
+
+    One row per repo regardless of how many directories the detector
+    surveyed — the W164 collapse rolls 65+ per-directory rows into a
+    single repo-level summary. Thin wrapper around the W935 canonical
+    ``make_finding_id`` so the sha1+truncate+prefix idiom stays in one
+    place; preserved as a function (rather than inlined) so existing
+    test imports keep working.
+    """
+    from roam.db.findings import make_finding_id
+
+    return make_finding_id("bus-factor-summary", "solo-author", repo_id)
+
+
+def _emit_solo_author_summary_finding(
+    conn,
+    results: list[dict],
+    repo_id: str,
+    source_version: str,
+) -> None:
+    """Emit ONE summary finding for a solo-author repo (W164).
+
+    Instead of N per-directory ``author-concentration`` rows that all
+    say "single author owns this directory" (unactionable on a
+    solo-author repo and pollutes ``roam findings list``), we roll the
+    signal up into a single repo-level row carrying the aggregate
+    counts. The per-directory detail is preserved in the standard
+    detector output — only the registry surface is collapsed.
+
+    Wrapped at the call site in try/except so a pre-W89 DB silently
+    no-ops.
+    """
+    from roam.db.findings import (
+        CONFIDENCE_HEURISTIC,
+        FindingRecord,
+        emit_finding,
+    )
+
+    total_directories = len(results)
+    # Aggregate the per-directory rollups back into a single
+    # repo-wide author distribution. The detector already weights by
+    # churn at the directory level, so summing churn per author across
+    # directories gives the right global share.
+    author_churn: dict[str, int] = {}
+    author_commits: dict[str, int] = {}
+    for r in results:
+        for a in r.get("top_authors") or []:
+            name = a.get("name") or ""
+            if not name:
+                continue
+            author_churn[name] = author_churn.get(name, 0) + int(a.get("churn") or 0)
+            author_commits[name] = author_commits.get(name, 0) + int(a.get("commits") or 0)
+
+    unique_authors_count = len(author_churn)
+    total_churn = sum(author_churn.values())
+    dominant_author = ""
+    dominant_share = 0.0
+    if author_churn:
+        dominant_author, dom_churn = max(author_churn.items(), key=lambda kv: kv[1])
+        dominant_share = (dom_churn / total_churn) if total_churn else 0.0
+
+    dominant_share_pct = round(dominant_share * 100)
+
+    # W198 vocabulary drift fix: the solo-author summary keeps
+    # ``dominant_author`` (git-blame term, back-compat) but adds a
+    # ``dominant_actor`` parallel field so a ``ChangeEvidence`` collector
+    # reading this evidence packet stays on the W182 ActorRef crosswalk
+    # vocabulary without needing to know the git-blame name.
+    evidence = {
+        "repo": repo_id,
+        "total_directories_analyzed": total_directories,
+        "unique_authors_count": unique_authors_count,
+        "dominant_author": dominant_author,
+        "dominant_actor": dominant_author,
+        "dominant_author_share": round(dominant_share, 3),
+        "dominant_author_share_pct": dominant_share_pct,
+        "summary_only": True,
+        "collapsed_kind": "author-concentration",
+    }
+    claim = (
+        f"Solo-author repo: {dominant_author or 'single author'} owns "
+        f"{dominant_share_pct}% of churn across {total_directories} "
+        f"directories ({unique_authors_count} unique author"
+        f"{'s' if unique_authors_count != 1 else ''}). "
+        f"Per-directory bus-factor rows collapsed into one summary "
+        f"finding; re-run with --force-team-mode for the full ranking."
+    )
+
+    emit_finding(
+        conn,
+        FindingRecord(
+            finding_id_str=_repo_summary_finding_id(repo_id),
+            # NEW vocabulary in W164: first repo-level finding.
+            # ``subject_kind`` is a free TEXT column on findings (no
+            # CHECK constraint per W89), so this is additive.
+            subject_kind="repo",
+            subject_id=None,
+            claim=claim,
+            evidence_json=_json.dumps(evidence, sort_keys=True),
+            confidence=CONFIDENCE_HEURISTIC,
+            source_detector="bus-factor",
+            source_version=source_version,
+        ),
+    )
+
+
+def _bus_factor_finding_id(directory: str, kind: str) -> str:
+    """Stable, deterministic finding id for one bus-factor risk.
+
+    The (directory, kind) pair is enough to re-identify the same risk
+    across runs — directories stay stable as long as the path layout is
+    stable, and the kind disambiguates the same directory surfacing
+    under both ``author-concentration`` and ``stale-ownership``. The
+    sha1 prefix collapses long path strings to a fixed-width slug so
+    the ``finding_id_str`` column stays bounded.
+    """
+    from roam.db.findings import make_finding_id
+
+    return make_finding_id("bus-factor", kind, directory, kind)
+
+
+def _emit_bus_factor_findings(
+    conn,
+    results: list[dict],
+    source_version: str,
+) -> None:
+    """Mirror each bus-factor risk row into the findings registry.
+
+    ``results`` is the directory ranking produced by ``_analyse_bus_factor``
+    (same shape used by the JSON envelope). We emit one finding per
+    surviving risk per directory; a directory that is both
+    ``concentrated`` AND ``stale_primary`` produces two rows (one of
+    each kind) so a consumer filtering by kind sees the right subset.
+
+    Confidence tier is always ``heuristic`` — author-count rollups and
+    inactivity proxies are fuzzy signals, even when the underlying git
+    history is precise. Don't over-classify.
+
+    Wrapped at the call site in try/except so a pre-W89 DB (no
+    ``findings`` table) silently no-ops rather than crashing the
+    standard read path.
+    """
+    from roam.db.findings import (
+        CONFIDENCE_HEURISTIC,
+        FindingRecord,
+        emit_finding,
+    )
+
+    for r in results:
+        directory = r.get("directory") or ""
+        if not directory:
+            continue
+
+        # Two distinct sub-kinds — author-concentration is the pure
+        # author-count heuristic; stale-ownership combines concentration
+        # signal with the primary author's inactivity (recency proxy).
+        # Both are emitted independently so a consumer can filter to
+        # just the stale set when triaging.
+        kinds: list[tuple[str, str]] = []
+        if r.get("concentrated"):
+            kinds.append(
+                (
+                    "author-concentration",
+                    (
+                        f"Bus-factor risk: {directory} is {r.get('primary_share_pct', 0)}%-"
+                        f"owned by {r.get('primary_author', 'unknown')} "
+                        f"({r.get('bus_factor', 1)} effective contributor"
+                        f"{'s' if r.get('bus_factor', 1) != 1 else ''}, "
+                        f"entropy {r.get('entropy', 0):.2f})"
+                    ),
+                )
+            )
+        if r.get("stale_primary"):
+            kinds.append(
+                (
+                    "stale-ownership",
+                    (
+                        f"Stale ownership: {directory} primary author "
+                        f"{r.get('primary_author', 'unknown')} "
+                        f"({r.get('primary_share_pct', 0)}% share) inactive — "
+                        f"staleness factor {r.get('staleness_factor', 1.0):.2f}"
+                    ),
+                )
+            )
+
+        if not kinds:
+            continue
+
+        # The evidence payload is shared across kinds — every risk row
+        # carries the same underlying churn / author / staleness signals,
+        # so consumers can rebuild the full picture without joining back
+        # to the per-directory ranking. Top authors are capped at 5 by
+        # the upstream aggregator already.
+        # W198 vocabulary drift fix: every persisted finding mirrors the
+        # JSON envelope — ``primary_author`` (git-blame, back-compat) is
+        # paired with ``primary_actor`` (W182 ActorRef crosswalk). Same
+        # value, two keys. ``top_authors`` rows additionally carry an
+        # ``actor`` alias of ``name`` so a consumer reading
+        # ``evidence_json`` doesn't need to know which surface produced
+        # the field.
+        top_authors_with_actor = [
+            {**a, "actor": a.get("name")} for a in (r.get("top_authors") or [])
+        ]
+        evidence = {
+            "directory": directory,
+            "bus_factor": r.get("bus_factor"),
+            "entropy": r.get("entropy"),
+            "knowledge_risk": r.get("knowledge_risk"),
+            "risk": r.get("risk"),
+            "risk_score": r.get("risk_score"),
+            "total_commits": r.get("total_commits"),
+            "total_churn": r.get("total_churn"),
+            "author_count": r.get("author_count"),
+            "primary_author": r.get("primary_author"),
+            "primary_actor": r.get("primary_author"),
+            "primary_share": r.get("primary_share"),
+            "primary_share_pct": r.get("primary_share_pct"),
+            "primary_last_active": r.get("primary_last_active"),
+            "concentrated": bool(r.get("concentrated")),
+            "stale_primary": bool(r.get("stale_primary")),
+            "staleness_factor": r.get("staleness_factor"),
+            "dir_last_active": r.get("dir_last_active"),
+            "top_authors": top_authors_with_actor,
+        }
+        evidence_json = _json.dumps(evidence, sort_keys=True)
+
+        for kind, claim in kinds:
+            finding_id = _bus_factor_finding_id(directory, kind)
+            emit_finding(
+                conn,
+                FindingRecord(
+                    finding_id_str=finding_id,
+                    # Directories aren't ``symbols.id`` rows, so we use
+                    # a non-symbol subject_kind. Consumers querying by
+                    # directory filter on ``subject_kind='directory'``
+                    # and read the path out of ``evidence_json``.
+                    subject_kind="directory",
+                    subject_id=None,
+                    claim=claim,
+                    evidence_json=evidence_json,
+                    # Bus-factor is fundamentally a heuristic detector —
+                    # author counts and inactivity proxies are fuzzy
+                    # signals. Both sub-kinds carry the same tier.
+                    confidence=CONFIDENCE_HEURISTIC,
+                    source_detector="bus-factor",
+                    source_version=source_version,
+                ),
+            )
+
+
 @roam_capability(
     name="bus-factor",
     category="reports",
@@ -324,8 +615,23 @@ def _query_brain_methods(conn):
         "to opt back into the full distributed-team rubric."
     ),
 )
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror concentrated / stale-ownership risks into the central "
+        "findings registry — visible via "
+        "``roam findings list --detector bus-factor``. The detector-specific "
+        "output is unchanged; the registry rows are the denormalised "
+        "cross-detector surface. Only directories flagged ``concentrated`` "
+        "or ``stale_primary`` are persisted — the long tail of low-risk "
+        "modules stays out of the registry."
+    ),
+)
 @click.pass_context
-def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
+def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist):
     """Detect knowledge loss risk per module (bus factor analysis).
 
     Unlike ``simulate-departure`` (which models the impact of a specific developer
@@ -360,7 +666,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
     exclude_prefixes: tuple[str, ...] = () if include_excluded else DEFAULT_EXCLUDE_PREFIXES
     ensure_index()
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         results, excluded_files_count = _analyse_bus_factor(
             conn, stale_months, exclude_prefixes=exclude_prefixes
         )
@@ -369,15 +675,67 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
         # Round 4 #13, Q: detect single-author projects so we don't flood
         # the output with "bus factor 1" warnings. Switch to a focused
         # mode that only surfaces STALE modules (the actually-actionable
-        # signal on a solo project).
+        # signal on a solo project). W164 extends this: when persist is
+        # set, collapse the per-directory findings into a single
+        # repo-level summary row instead of N redundant "single author
+        # owns this directory" rows.
         from roam.db.connection import find_project_root
         from roam.output.project_shape import detect_project_shape
 
+        project_root = find_project_root()
         try:
-            shape = detect_project_shape(conn, find_project_root())
+            shape = detect_project_shape(conn, project_root)
         except Exception:
             shape = None
         single_author_mode = not force_team_mode and shape is not None and shape.team_size == "single-author"
+
+        # W115 + W164 — mirror concentrated / stale-ownership rows into
+        # the central findings registry. Independent of the --limit
+        # display slice so re-running with a smaller --limit doesn't
+        # truncate the registry. Wrapped in try/except so a pre-W89
+        # schema (without the ``findings`` table) degrades cleanly.
+        #
+        # W164: on a solo-author repo (without --force-team-mode), the
+        # per-directory rows all say the same thing ("single author
+        # owns this directory") and pollute ``roam findings list`` with
+        # dozens of unactionable rows. Collapse into ONE repo-level
+        # summary finding instead. Stale-ownership rows still emit
+        # per-directory since "this module is forgotten" stays
+        # actionable even on a solo repo.
+        if persist and results:
+            try:
+                if single_author_mode:
+                    # Collapse author-concentration rows into a single
+                    # repo-level summary. Keep stale-ownership rows
+                    # per-directory — those name actually-actionable
+                    # forgotten modules regardless of team size.
+                    repo_id = _repo_identifier(project_root)
+                    _emit_solo_author_summary_finding(
+                        conn, results, repo_id, BUS_FACTOR_DETECTOR_VERSION
+                    )
+                    stale_only = [
+                        r for r in results if r.get("stale_primary")
+                    ]
+                    if stale_only:
+                        _emit_bus_factor_findings(
+                            conn, stale_only, BUS_FACTOR_DETECTOR_VERSION
+                        )
+                    conn.commit()
+                else:
+                    persistable = [
+                        r
+                        for r in results
+                        if r.get("concentrated") or r.get("stale_primary")
+                    ]
+                    if persistable:
+                        _emit_bus_factor_findings(
+                            conn, persistable, BUS_FACTOR_DETECTOR_VERSION
+                        )
+                        conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — silently no-op.
+                pass
+
         if single_author_mode and results:
             # Keep STALE modules — those represent forgotten code regardless of
             # team size. Drop the rest from the headline ranking.
@@ -454,6 +812,15 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
             envelope_kwargs = dict(
                 summary=summary,
                 stale_months=stale_months,
+                # W198 vocabulary drift fix: every per-directory row now
+                # carries both ``primary_author`` (git-blame vocabulary,
+                # kept for back-compat) and ``primary_actor`` (W182
+                # ActorRef crosswalk vocabulary). Same value, two keys —
+                # so a ``ChangeEvidence`` collector reading this envelope
+                # picks one canonical name without losing the original.
+                # ``top_authors`` entries get the same treatment: each
+                # row carries ``name`` (existing) and ``actor`` (new) so
+                # the crosswalk surface is consistent across the array.
                 directories=[
                     {
                         "directory": r["directory"],
@@ -466,12 +833,16 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
                         "total_churn": r["total_churn"],
                         "author_count": r["author_count"],
                         "primary_author": r["primary_author"],
+                        "primary_actor": r["primary_author"],
                         "primary_share": r["primary_share"],
                         "primary_last_active": r["primary_last_active"],
                         "concentrated": r["concentrated"],
                         "stale_primary": r["stale_primary"],
                         "staleness_factor": r["staleness_factor"],
-                        "top_authors": r["top_authors"],
+                        "top_authors": [
+                            {**a, "actor": a.get("name")}
+                            for a in r["top_authors"]
+                        ],
                     }
                     for r in limited
                 ],

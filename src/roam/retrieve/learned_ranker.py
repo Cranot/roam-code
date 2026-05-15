@@ -29,6 +29,21 @@ from pathlib import Path
 from roam.eval.harness import load_tasks
 from roam.retrieve.pipeline import run_retrieve
 
+# Optional dependency: LightGBM. Used by ``train_from_bench`` (training)
+# and ``_load_model`` (inference). Hoisted to module scope so tests can
+# monkeypatch ``lgb = None`` to exercise the missing-dep install-hint
+# path without uninstalling the real package. ``_load_model`` keeps its
+# own try/except because it ALSO catches sklearn/numpy ABI errors that
+# bubble up via ``lightgbm``'s transitive imports — those are not pure
+# ``ImportError``s, so a module-level catch would miss them.
+try:
+    import lightgbm as lgb  # type: ignore
+except ImportError as _lgb_import_exc:  # pragma: no cover - exercised via test monkeypatch
+    lgb = None  # type: ignore[assignment]
+    _LIGHTGBM_IMPORT_ERROR: ImportError | None = _lgb_import_exc
+else:
+    _LIGHTGBM_IMPORT_ERROR = None
+
 # 22-feature vector — all derivable from rerank.py's existing per-candidate
 # scores plus a couple of structural extras. Order is fixed so model
 # training and inference align.
@@ -178,10 +193,15 @@ def train_from_bench(bench_path: Path, model_out: Path, *, n_estimators: int = 2
     pairwise NDCG work. Output is a single ``.lgbm`` model file.
 
     Returns a summary dict ``{tasks, candidates, ndcg@10, model_size}``.
-    Raises ``ImportError`` when LightGBM isn't installed (caller surfaces
-    a clean install hint).
+    Raises ``ImportError`` with an install hint when LightGBM isn't
+    installed — install with ``pip install 'roam-code[learned]'``.
     """
-    import lightgbm as lgb  # type: ignore
+    if lgb is None:
+        raise ImportError(
+            "train_from_bench() requires LightGBM. "
+            "Install with: pip install 'roam-code[learned]' (or: pip install lightgbm). "
+            f"Original error: {_LIGHTGBM_IMPORT_ERROR!r}"
+        )
 
     from roam.db.connection import open_db
 

@@ -22,11 +22,8 @@ from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 @pytest.fixture
 def cli_runner():
-    """Provide a Click CliRunner compatible with Click 8.2+."""
-    try:
-        return CliRunner(mix_stderr=False)
-    except TypeError:
-        return CliRunner()
+    """Provide a Click CliRunner (Click 8.3+ removed mix_stderr)."""
+    return CliRunner()
 
 
 # ============================================================================

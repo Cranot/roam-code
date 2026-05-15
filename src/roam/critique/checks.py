@@ -10,6 +10,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 
+from roam.db.edge_kinds import call_or_ref_in_clause
 from roam.graph.clone_detect import get_clone_siblings
 
 # ---------------------------------------------------------------------------
@@ -395,8 +396,12 @@ def check_impact(
 
     findings: list[Finding] = []
     for sym in changed:
+        # W512: edge-kind vocabulary lives in roam.db.edge_kinds. Pre-W499
+        # the plural-only filter matched 0 of 14,949 caller edges on roam-code
+        # itself, silently no-op'ing the entire impact check.
         caller_rows = conn.execute(
-            "SELECT source_id FROM edges WHERE target_id = ? AND kind IN ('calls', 'references')",
+            f"SELECT source_id FROM edges WHERE target_id = ? "
+            f"AND {call_or_ref_in_clause()}",
             (sym.symbol_id,),
         ).fetchall()
         callers = len(caller_rows)
