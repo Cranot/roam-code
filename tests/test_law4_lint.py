@@ -51,7 +51,9 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests._helpers.repo_root import repo_root
+
+REPO_ROOT = repo_root()
 SRC_COMMANDS = REPO_ROOT / "src" / "roam" / "commands"
 
 _SRC_DIR = REPO_ROOT / "src"
@@ -81,6 +83,8 @@ _CONCRETE_NOUN_ANCHORS: frozenset[str] = frozenset(
         "owners", "users", "frameworks", "vulnerabilities", "challenges",
         "keys", "values", "chars", "characters", "lines", "tokens", "bytes",
         "items", "entries", "records", "fields", "options", "flags",
+        "literals",
+        "markers",
         "subcommands", "scenarios", "actions", "exits", "leaks", "gaps",
         "movers", "passed", "failed", "scanned", "checked", "owned",
         "analysed", "analyzed", "removed", "added", "skipped", "affected",

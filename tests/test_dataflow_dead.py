@@ -59,8 +59,14 @@ def _insert_symbol(conn, file_id, name, kind="function", qname=None, signature=N
     return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
 
-def _insert_edge(conn, source_id, target_id, kind="calls", line=None):
-    """Insert an edge row."""
+def _insert_edge(conn, source_id, target_id, kind="call", line=None):
+    """Insert an edge row.
+
+    W493: canonical edge kind for call edges is singular 'call' (see
+    src/roam/index/relations.py). The previous default 'calls' matched
+    the read-side typo in dataflow.py / cmd_dead.py and silently made
+    these tests assert against the bug instead of the contract.
+    """
     conn.execute(
         "INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, ?, ?)",
         (source_id, target_id, kind, line),
@@ -152,7 +158,7 @@ class TestUnusedReturn:
         sid_main = _insert_symbol(conn, fid_caller, "main", qname="main", line_start=1, line_end=3)
         sid_compute = _insert_symbol(conn, fid_target, "compute_value", qname="compute_value", line_start=1, line_end=2)
         _insert_symbol_metric(conn, sid_compute, return_count=1)
-        _insert_edge(conn, sid_main, sid_compute, kind="calls", line=2)
+        _insert_edge(conn, sid_main, sid_compute, kind="call", line=2)
         # Insert a taint summary so the table check passes
         _insert_taint_summary(conn, sid_compute)
         conn.commit()
@@ -197,7 +203,7 @@ class TestUnusedReturn:
         sid_main = _insert_symbol(conn, fid_caller, "main", qname="main", line_start=1, line_end=3)
         sid_compute = _insert_symbol(conn, fid_target, "compute_value", qname="compute_value", line_start=1, line_end=2)
         _insert_symbol_metric(conn, sid_compute, return_count=1)
-        _insert_edge(conn, sid_main, sid_compute, kind="calls", line=2)
+        _insert_edge(conn, sid_main, sid_compute, kind="call", line=2)
         _insert_taint_summary(conn, sid_compute)
         conn.commit()
 
@@ -356,7 +362,7 @@ class TestSideEffectOnly:
         sid_main = _insert_symbol(conn, fid_caller, "main", qname="main", line_start=1, line_end=3)
         sid_log = _insert_symbol(conn, fid_target, "log_event", qname="log_event", line_start=1, line_end=2)
         _insert_symbol_metric(conn, sid_log, return_count=1)
-        _insert_edge(conn, sid_main, sid_log, kind="calls", line=2)
+        _insert_edge(conn, sid_main, sid_log, kind="call", line=2)
         _insert_taint_summary(conn, sid_log)
         _insert_symbol_effect(conn, sid_log, "logging")
         conn.commit()
@@ -393,7 +399,7 @@ class TestSideEffectOnly:
         sid_main = _insert_symbol(conn, fid_caller, "main", qname="main", line_start=1, line_end=2)
         sid_write = _insert_symbol(conn, fid_target, "write_data", qname="write_data", line_start=1, line_end=2)
         _insert_symbol_metric(conn, sid_write, return_count=1)
-        _insert_edge(conn, sid_main, sid_write, kind="calls", line=2)
+        _insert_edge(conn, sid_main, sid_write, kind="call", line=2)
         _insert_taint_summary(conn, sid_write)
         _insert_symbol_effect(conn, sid_write, "filesystem")
         conn.commit()
@@ -491,7 +497,7 @@ class TestFindingsSorted:
             line_end=2,
         )
         _insert_symbol_metric(conn, sid_compute, return_count=1)
-        _insert_edge(conn, sid_main, sid_compute, kind="calls", line=2)
+        _insert_edge(conn, sid_main, sid_compute, kind="call", line=2)
 
         # Taint summary with dead param
         _insert_taint_summary(

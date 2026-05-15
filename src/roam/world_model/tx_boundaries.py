@@ -471,7 +471,6 @@ def _classify_one(
     total_mutations = mutations_inside + mutations_outside
 
     issues: list[str] = []
-    confidence = "medium"
 
     # ----- Decorator path: @transaction.atomic wraps the whole function -----
     if decorator_atomic and total_mutations > 0 and mutations_outside == 0:

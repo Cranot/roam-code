@@ -102,6 +102,86 @@ def _enabled_extras() -> list[str]:
     return found
 
 
+def _component_versions() -> dict[str, dict[str, str]]:
+    """Capture every component's ``VERSION`` at index time (Audit A6 / W81).
+
+    Shape::
+
+        {
+            "bridges":    {bridge_name: version, ...},
+            "detectors":  {task_id:     version, ...},
+            "extractors": {language:    version, ...},
+        }
+
+    Drift detection: comparing this map between successive manifest rows
+    surfaces a VERSION bump that invalidates rows stamped under the
+    previous run. Each probe is wrapped so a broken plugin or import
+    error can never block the manifest write — a partial map is more
+    useful than a missing field.
+    """
+    out: dict[str, dict[str, str]] = {"bridges": {}, "detectors": {}, "extractors": {}}
+
+    # Bridges — registry auto-discovers built-ins + plugin-contributed.
+    try:
+        from roam.bridges.base import LanguageBridge
+        from roam.bridges.registry import _auto_discover, get_bridges
+
+        _auto_discover()
+        for bridge in get_bridges():
+            try:
+                name = bridge.name
+                version = getattr(type(bridge), "VERSION", LanguageBridge.VERSION)
+                out["bridges"][str(name)] = str(version)
+            except Exception:
+                continue
+        # Laravel post-resolver is bridge-shaped but module-level; pull
+        # its VERSION alongside so the drift map covers every edge
+        # source that stamps ``bridge``.
+        try:
+            from roam.index.laravel_post import VERSION as _laravel_version
+
+            out["bridges"]["laravel"] = str(_laravel_version)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # Detectors — function-based registry. The version map lives in
+    # :mod:`roam.catalog.versions` (keyed by task_id), kept separate so
+    # the manifest writer never has to touch detectors.py.
+    try:
+        from roam.catalog.detectors import _iter_registered_detectors
+        from roam.catalog.versions import detector_version
+
+        seen: set[str] = set()
+        for task_id, _way_id, _fn in _iter_registered_detectors():
+            if task_id in seen:
+                continue
+            seen.add(task_id)
+            out["detectors"][str(task_id)] = detector_version(str(task_id))
+    except Exception:
+        pass
+
+    # Extractors — instantiate each supported language to pull its
+    # class-level VERSION. Constructors are pure; the import cost is
+    # the same one paid by the first index run, shifted to manifest time.
+    try:
+        from roam.languages.base import LanguageExtractor
+        from roam.languages.registry import get_extractor, get_supported_languages
+
+        for lang in get_supported_languages():
+            try:
+                ext = get_extractor(lang)
+                version = getattr(type(ext), "VERSION", LanguageExtractor.VERSION)
+                out["extractors"][str(lang)] = str(version)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return out
+
+
 def _config_hash(project_root: Path) -> str:
     """Hash the project's ``.roam/config.json`` + ``.roamignore`` content.
 
@@ -198,6 +278,7 @@ def collect_manifest(
     conn: sqlite3.Connection | None = None,
     notes: str | None = None,
     extra_config_inputs: list[str] | None = None,
+    steps_status: dict | None = None,
 ) -> dict:
     """Build a fresh manifest dict from environment + project state.
 
@@ -211,6 +292,10 @@ def collect_manifest(
         extra_config_inputs: Strings to mix into the config hash. Use for
             CLI flags that change indexing behaviour ("--include-excluded",
             "--force") so a flag flip invalidates the manifest comparison.
+        steps_status: Optional ``{step_name: {status, error_excerpt,
+            duration_ms}}`` map produced by the indexer's step-tracking
+            (W82/A8). Persisted into the ``steps_status`` JSON column so
+            ``roam doctor`` can surface per-sub-step degraded-mode signals.
 
     Returns a dict with stringly-typed JSON-friendly values, ready to be
     handed to :func:`write_manifest`.
@@ -238,6 +323,9 @@ def collect_manifest(
         "enabled_extras": _enabled_extras(),
         "index_profile": profile,
         "notes": notes,
+        "steps_status": steps_status,
+        # W81 / A6 — per-component VERSION map for drift detection.
+        "component_versions": _component_versions(),
     }
 
 
@@ -246,10 +334,16 @@ def write_manifest(conn: sqlite3.Connection, manifest: dict) -> int:
 
     Returns the inserted row id. JSON-encodes the dict/list fields so
     callers can pass plain Python structures.
+
+    ``steps_status`` (W82/A8) — when present in *manifest*, encoded into
+    the dedicated column so ``roam doctor`` can surface per-sub-step
+    failures without parsing the free-form ``notes`` blob.
     """
     parser_versions = manifest.get("parser_versions") or {}
     grammar_versions = manifest.get("grammar_versions")
     enabled_extras = manifest.get("enabled_extras") or []
+    steps_status = manifest.get("steps_status")
+    component_versions = manifest.get("component_versions")
 
     cursor = conn.execute(
         """
@@ -257,8 +351,8 @@ def write_manifest(conn: sqlite3.Connection, manifest: dict) -> int:
             indexed_at, roam_version, schema_version,
             parser_versions, grammar_versions, config_hash,
             git_head, git_dirty_hash, enabled_extras,
-            index_profile, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            index_profile, notes, steps_status, component_versions
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             int(manifest.get("indexed_at") or time.time()),
@@ -272,6 +366,8 @@ def write_manifest(conn: sqlite3.Connection, manifest: dict) -> int:
             json.dumps(list(enabled_extras)),
             str(manifest.get("index_profile") or "all"),
             manifest.get("notes"),
+            json.dumps(steps_status, sort_keys=True) if steps_status else None,
+            json.dumps(component_versions, sort_keys=True) if component_versions else None,
         ),
     )
     inserted = cursor.lastrowid
@@ -281,20 +377,45 @@ def write_manifest(conn: sqlite3.Connection, manifest: dict) -> int:
 def latest_manifest(conn: sqlite3.Connection) -> dict | None:
     """Return the most recent manifest row, with JSON columns decoded.
 
-    Returns None when the table is empty or doesn't exist.
+    Returns None when the table is empty or doesn't exist. The
+    ``steps_status`` field is the W82/A8 per-sub-step completion map;
+    rows written before that column existed come back with the field
+    set to None (treated as "no per-step data recorded").
+    """
+    # The ``steps_status`` column landed in migration seq 52 and
+    # ``component_versions`` in seq 55 — older DBs may not have either.
+    # Probe and select conditionally so this helper keeps working
+    # against pre-migration databases (absent columns come back as None).
+    select_steps = False
+    select_components = False
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(index_manifest)").fetchall()}
+        select_steps = "steps_status" in cols
+        select_components = "component_versions" in cols
+    except sqlite3.DatabaseError:
+        return None
+
+    # Build the column list dynamically so the index of each field stays
+    # stable regardless of which optional columns are present. The
+    # downstream ``_at`` helper keys by name when the row factory exposes
+    # one (sqlite3.Row), so positional drift is only a concern when the
+    # row is a plain tuple.
+    extra_cols = ["steps_status"] if select_steps else []
+    if select_components:
+        extra_cols.append("component_versions")
+    extra_sql = ", " + ", ".join(extra_cols) if extra_cols else ""
+
+    sql = f"""
+        SELECT id, indexed_at, roam_version, schema_version,
+               parser_versions, grammar_versions, config_hash,
+               git_head, git_dirty_hash, enabled_extras,
+               index_profile, notes{extra_sql}
+          FROM index_manifest
+      ORDER BY indexed_at DESC, id DESC
+         LIMIT 1
     """
     try:
-        row = conn.execute(
-            """
-            SELECT id, indexed_at, roam_version, schema_version,
-                   parser_versions, grammar_versions, config_hash,
-                   git_head, git_dirty_hash, enabled_extras,
-                   index_profile, notes
-              FROM index_manifest
-          ORDER BY indexed_at DESC, id DESC
-             LIMIT 1
-            """
-        ).fetchone()
+        row = conn.execute(sql).fetchone()
     except sqlite3.DatabaseError:
         return None
     if row is None:
@@ -324,6 +445,35 @@ def latest_manifest(conn: sqlite3.Connection) -> dict | None:
     except (TypeError, ValueError):
         enabled_extras = []
 
+    # Trailing optional columns are appended in the same order as
+    # ``extra_cols`` above. When only one optional column is present,
+    # ``component_versions`` shifts to index 12 if ``steps_status`` was
+    # not selected. Key lookup via ``_at`` falls back to positional
+    # access on plain tuples — compute the per-field index accordingly.
+    steps_status: dict | None = None
+    component_versions: dict | None = None
+    next_optional_idx = 12
+    if select_steps:
+        steps_raw = _at(next_optional_idx, "steps_status")
+        next_optional_idx += 1
+        if steps_raw:
+            try:
+                decoded = json.loads(steps_raw)
+                if isinstance(decoded, dict):
+                    steps_status = decoded
+            except (TypeError, ValueError):
+                steps_status = None
+    if select_components:
+        components_raw = _at(next_optional_idx, "component_versions")
+        next_optional_idx += 1
+        if components_raw:
+            try:
+                decoded = json.loads(components_raw)
+                if isinstance(decoded, dict):
+                    component_versions = decoded
+            except (TypeError, ValueError):
+                component_versions = None
+
     return {
         "id": _at(0, "id"),
         "indexed_at": _at(1, "indexed_at"),
@@ -337,6 +487,8 @@ def latest_manifest(conn: sqlite3.Connection) -> dict | None:
         "enabled_extras": enabled_extras,
         "index_profile": _at(10, "index_profile"),
         "notes": _at(11, "notes"),
+        "steps_status": steps_status,
+        "component_versions": component_versions,
     }
 
 
@@ -353,6 +505,11 @@ _DRIFT_FIELDS = (
     "git_dirty_hash",
     "enabled_extras",
     "index_profile",
+    # W81 / A6: per-component VERSION map. A bump here invalidates rows
+    # stamped with the old version (``edges.bridge_version`` /
+    # ``symbols.extractor_version``) — surfacing the delta lets the
+    # doctor recommend a re-index even when nothing else has changed.
+    "component_versions",
 )
 
 
@@ -386,12 +543,16 @@ def record_indexer_run(
     profile: str = "all",
     notes: str | None = None,
     extra_config_inputs: list[str] | None = None,
+    steps_status: dict | None = None,
 ) -> int | None:
     """Convenience: collect + write a manifest in one call.
 
     Returns the inserted row id, or None if the table is missing (which
     should only happen on a stale schema — the indexer will have called
     ``ensure_schema`` already).
+
+    *steps_status* (W82/A8): per-sub-step completion map produced by the
+    indexer; persisted into the dedicated column.
     """
     try:
         manifest = collect_manifest(
@@ -400,6 +561,7 @@ def record_indexer_run(
             conn=conn,
             notes=notes,
             extra_config_inputs=extra_config_inputs,
+            steps_status=steps_status,
         )
         return write_manifest(conn, manifest)
     except sqlite3.DatabaseError:

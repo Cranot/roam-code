@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Optional
 
 from roam.db.connection import find_project_root
+from roam.db.edge_kinds import CALL_OR_REF_KINDS
 
 # ---------------------------------------------------------------------------
 # Taxonomy
@@ -488,15 +489,25 @@ def classify_side_effects(
     for i in range(0, len(sym_ids), CHUNK):
         chunk = sym_ids[i : i + CHUNK]
         ph = ",".join("?" for _ in chunk)
+        # W512: edge-kind vocabulary lives in roam.db.edge_kinds. Pre-W511
+        # the plural-only filter matched 13 of 14,949 caller edges on
+        # roam-code itself, silently under-counting effect propagation in
+        # the side-effects classifier. We extend the canonical set with the
+        # phantom 'invokes'/'uses' kinds defensively for plugin extractors —
+        # no canonical writer emits them, but a third-party language
+        # extractor might.
+        extra_kinds = ("invokes", "uses")
+        all_kinds = CALL_OR_REF_KINDS + extra_kinds
+        kind_ph = ", ".join("?" for _ in all_kinds)
         q = (
             f"SELECT e.source_id AS sid, "
             f"       COALESCE(ts.qualified_name, ts.name) AS cname "
             f"FROM edges e "
             f"JOIN symbols ts ON e.target_id = ts.id "
             f"WHERE e.source_id IN ({ph}) "
-            f"  AND e.kind IN ('calls', 'invokes', 'reference', 'uses') "
+            f"  AND e.kind IN ({kind_ph}) "
         )
-        for row in conn.execute(q, chunk).fetchall():
+        for row in conn.execute(q, (*chunk, *all_kinds)).fetchall():
             callee_map.setdefault(row["sid"], []).append(row["cname"] or "")
 
     # 3) Group rows by file so we read each file once.

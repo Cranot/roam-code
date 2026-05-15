@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from roam.commands._command_utils import bare_command_name as _bare_command_name
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -397,15 +399,6 @@ def _project_name(repo_root: Path) -> str:
         return Path(repo_root).resolve().name
     except Exception:
         return "unknown"
-
-
-def _bare_command_name(verdict_cmd: str) -> str:
-    """Mirror of ``cmd_next._bare_command_name`` — kept local to avoid import cycle."""
-    s = verdict_cmd.strip()
-    if s.startswith("roam "):
-        s = s[5:].lstrip()
-    tokens = [t for t in s.split() if t and not t.startswith("-")]
-    return tokens[0] if tokens else s
 
 
 # ---------------------------------------------------------------------------

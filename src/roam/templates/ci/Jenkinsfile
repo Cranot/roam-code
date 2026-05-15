@@ -4,7 +4,7 @@
 // Archives SARIF artifacts and integrates with warnings-ng plugin.
 //
 // Prerequisites:
-//   - Python 3.9+ available on the agent
+//   - Python 3.10+ available on the agent
 //   - Jenkins warnings-ng plugin (optional, for SARIF ingestion)
 //   - Pipeline Utility Steps plugin (optional, for JSON parsing)
 //

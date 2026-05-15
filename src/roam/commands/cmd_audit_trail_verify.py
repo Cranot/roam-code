@@ -5,12 +5,30 @@ Walks an EU AI Act Article 12-shaped audit-trail JSONL produced by
 unbroken from the first record (genesis, ``previous_record_hash = ""``)
 to the last. Returns exit code 5 (gate failure) when the chain breaks,
 so it can be wired into CI as a tamper-detection gate.
+
+Gate semantics (W830). ``--gate`` is **fail-closed by design**. Three
+states map onto the gate as follows:
+
+* ``valid``         → exit 0  (chain verified end-to-end)
+* ``broken``        → exit 5  (real tamper / parse anomaly)
+* ``uninitialized`` → exit 5  (no trail OR empty trail at the path)
+
+The ``uninitialized`` exit is deliberate. Treating a missing or empty
+audit trail as a silent pass would let an agent ship a change with no
+evidence chain at all — exactly the failure mode the gate exists to
+prevent. To initialize the chain, run ``roam runs start`` (or
+``roam pr-analyze --audit-trail``) so a genesis record exists; the gate
+will then pass on the next run. Pattern 2 (silent-fallback) discipline:
+the structured JSON envelope always emits BEFORE the gate's
+``sys.exit(5)`` so consumers can read ``state="uninitialized"`` and
+disambiguate uninitialized-chains from tampered-chains.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json as _json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -21,6 +39,124 @@ from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.output.formatter import json_envelope, to_json
 
 EXIT_GATE_FAILURE = 5
+
+
+# W146 (W93 follow-up): audit-trail-verify is the next detector migrating
+# onto the central findings registry (after ``clones`` in W95, ``dead`` in
+# W99, ``complexity`` in W102, ``smells`` in W109, and the W110-W145
+# emitters). Each row in the registry is one per-entry chain anomaly
+# (previous_record_hash mismatch or invalid JSON) keyed deterministically
+# on ``(audit_trail_path, line_number, issue_kind)`` so a re-run upserts
+# in place. Bump this when ``_verify_chain``'s issue-shape changes.
+AUDIT_TRAIL_VERIFY_DETECTOR_VERSION: str = "1.0.0"
+
+
+# Per-issue-kind confidence tier mapping. All current issue kinds
+# emitted by ``_verify_chain`` are deterministic checks — either a
+# cryptographic hash comparison or a JSON parse failure — so they all
+# land at ``static_analysis``. Future heuristic checks (e.g.,
+# timing-based gap detection) would add ``heuristic`` entries here.
+_ISSUE_KIND_TO_CONFIDENCE: dict[str, str] = {
+    "previous_record_hash mismatch": "static_analysis",
+    "invalid JSON": "static_analysis",
+}
+_ISSUE_DEFAULT_CONFIDENCE: str = "static_analysis"
+
+
+# Map the raw issue string to a stable short slug used in the
+# finding_id_str. Keeping the slug independent of the human-readable
+# issue string means we can rephrase the issue text without forcing
+# every persisted row's id to drift.
+_ISSUE_KIND_TO_SLUG: dict[str, str] = {
+    "previous_record_hash mismatch": "hash_mismatch",
+    "invalid JSON": "invalid_json",
+}
+
+
+def _audit_trail_verify_finding_id(
+    audit_trail_path: str, line_number: int, issue: str
+) -> str:
+    """Stable, deterministic finding id for one chain anomaly.
+
+    The (audit_trail_path, line_number, issue_kind) tuple re-identifies
+    the same anomaly across runs. We hash the full path so a per-run
+    trail under ``.roam/runs/<id>/`` doesn't conflict with the canonical
+    ``.roam/audit-trail.jsonl`` rows.
+    """
+    slug = _ISSUE_KIND_TO_SLUG.get(issue, "unknown")
+    raw = f"{audit_trail_path}:{int(line_number)}:{slug}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"audit-trail-verify:{slug}:{digest}"
+
+
+def _emit_audit_trail_verify_findings(
+    conn: sqlite3.Connection,
+    issues: list[dict],
+    audit_trail_path: str,
+    source_version: str,
+) -> int:
+    """Mirror each chain anomaly into the central findings registry.
+
+    Returns the count of finding rows written. Caller is responsible
+    for opening ``conn`` writable; emit_finding does not commit
+    (the caller commits once at the end of the persist branch).
+
+    Skips the synthetic "audit trail not found" issue — that's a state
+    flag, not a per-entry tamper finding. Wrapped by the caller in a
+    defensive try/except so a pre-W89 DB (without the ``findings``
+    table) silently no-ops rather than crashing.
+
+    Subject_kind is ``ledger_entry`` — one row per JSONL line in the
+    audit trail. ``audit-trail-conformance-check`` operates at a
+    different granularity (whole-trail 6-check rollup) and uses a
+    different subject_kind by design.
+    """
+    from roam.db.findings import FindingRecord, emit_finding
+
+    written = 0
+    for issue in issues:
+        issue_kind = issue.get("issue") or ""
+        # Skip the synthetic "not found" state — that's a no-trail
+        # signal, not a per-entry tamper. The summary already reports
+        # state=uninitialized in that case.
+        if "not found" in issue_kind:
+            continue
+        line_number = int(issue.get("line") or 0)
+        finding_id = _audit_trail_verify_finding_id(
+            audit_trail_path, line_number, issue_kind
+        )
+        evidence = {
+            "audit_trail_path": audit_trail_path,
+            "line": line_number,
+            "issue": issue_kind,
+            "expected_prev": issue.get("expected_prev"),
+            "computed_prev": issue.get("computed_prev"),
+            "timestamp": issue.get("timestamp"),
+            "verdict": issue.get("verdict"),
+            "detail": issue.get("detail"),
+        }
+        claim = (
+            f"audit-trail-verify: line {line_number} of "
+            f"{audit_trail_path} — {issue_kind}"
+        )
+        confidence = _ISSUE_KIND_TO_CONFIDENCE.get(
+            issue_kind, _ISSUE_DEFAULT_CONFIDENCE
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="ledger_entry",
+                subject_id=None,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=confidence,
+                source_detector="audit-trail-verify",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+    return written
 
 
 def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
@@ -102,8 +238,24 @@ def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
     is_flag=True,
     help="Exit 5 (gate failure) if the chain is broken; useful in CI.",
 )
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Persist chain-anomaly findings to .roam/index.db findings registry "
+        "(cross-detector queryable via `roam findings list --detector "
+        "audit-trail-verify`). The detector-specific output is unchanged; "
+        "the registry rows are the denormalised cross-detector surface. "
+        "Subject_kind is `ledger_entry` (one row per anomalous JSONL line). "
+        "No-ops cleanly when .roam/index.db is missing or the findings "
+        "table is absent (pre-W89 schema)."
+    ),
+)
 @click.pass_context
-def audit_trail_verify(ctx, input_path: str | None, gate: bool) -> None:
+def audit_trail_verify(
+    ctx, input_path: str | None, gate: bool, persist: bool
+) -> None:
     """Verify SHA-256 chain integrity of a roam audit trail.
 
     \b
@@ -119,6 +271,29 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool) -> None:
 
     path = Path(input_path) if input_path else DEFAULT_AUDIT_TRAIL_PATH
     records, issues = _verify_chain(path)
+
+    # --- W146: mirror chain anomalies into the central findings registry ---
+    # Runs ONLY with --persist. We emit one row per chain anomaly
+    # (previous_record_hash mismatch / invalid JSON); the synthetic
+    # "audit trail not found" issue is filtered inside the helper so a
+    # missing trail does not get mirrored as a finding. Wrapped
+    # defensively so a missing index DB / pre-W89 schema (no
+    # ``findings`` table) degrades cleanly without breaking the
+    # standard verify output path.
+    if persist:
+        try:
+            from roam.db.connection import open_db
+
+            with open_db(readonly=False) as conn:
+                _emit_audit_trail_verify_findings(
+                    conn, issues, str(path), AUDIT_TRAIL_VERIFY_DETECTOR_VERSION
+                )
+                conn.commit()
+        except (sqlite3.OperationalError, click.ClickException):
+            # findings table missing OR no .roam/index.db yet — degrade
+            # gracefully. The verifier itself must keep working without
+            # a roam index because the audit trail is independent state.
+            pass
 
     # Fix E (Pattern 2: silent fallbacks) — distinguish "trail does not exist
     # yet" (state=uninitialized) from "trail exists but is corrupted"
@@ -193,5 +368,16 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool) -> None:
             if len(issues) > 10:
                 click.echo(f"  ... and {len(issues) - 10} more (use --json for full list)")
 
+    # W830 — Gate is fail-closed on both ``broken`` AND ``uninitialized``.
+    # The structured envelope has already been emitted above (Pattern 2
+    # always-emit), so an agent inspecting stdout can read
+    # ``summary.state`` to tell the two failure modes apart. Rationale:
+    # a missing/empty audit trail means there is no evidence chain to
+    # gate on — silently passing would defeat the purpose of the gate
+    # in CI on fresh / mis-configured projects. To get the gate to pass,
+    # initialise the chain (`roam runs start` or
+    # `roam pr-analyze --audit-trail`) so a genesis record exists.
+    # See module docstring "Gate semantics (W830)" for the full
+    # decision record.
     if gate and not chain_valid:
         sys.exit(EXIT_GATE_FAILURE)

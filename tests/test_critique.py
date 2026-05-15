@@ -716,3 +716,193 @@ class TestBenchHint:
         # The retrieve rule should produce a hint string.
         assert data["bench_hint"]
         assert data["summary"]["bench_hint"]
+
+
+# ---------------------------------------------------------------------------
+# W832 — Pattern 2 silent-fallback guard on the clean-path verdict.
+# Pins discipline: "No concerns" only when ALL checks ran cleanly with
+# zero findings. Mirror of cmd_doctor (W826) / cmd_health (W834) /
+# cmd_taint (W836).
+# ---------------------------------------------------------------------------
+
+
+class TestW832AggregatorCheckStatus:
+    """Aggregator-level guards on the per-check status contract.
+
+    The orchestrator-side wiring is exercised by
+    :class:`TestW832CritiqueCheckStatusCLI`. These tests pin the pure
+    reducer's behaviour so the contract is self-evident at the unit
+    layer too.
+    """
+
+    def test_aggregate_no_status_preserves_legacy_verdict(self):
+        # Back-compat: callers that don't pass check_status keep the
+        # legacy verdict — used by ``aggregate([])`` in cross-module
+        # tests like ``test_w547_severity_drift``.
+        result = aggregate([])
+        assert result["verdict"] == "No concerns from roam critique"
+        assert "check_status" not in result
+        assert "partial_success" not in result
+
+    def test_aggregate_all_ran_zero_findings_says_no_concerns(self):
+        status = {"clones-not-edited": "ran", "impact": "ran", "intent": "ran"}
+        result = aggregate([], check_status=status)
+        assert result["verdict"] == "No concerns from roam critique"
+        assert result["partial_success"] is False
+        assert result["check_status"] == status
+
+    def test_aggregate_skipped_check_blocks_no_concerns(self):
+        status = {
+            "clones-not-edited": "skipped:no_clone_pairs (run `roam clones --persist`)",
+            "impact": "ran",
+            "intent": "ran",
+        }
+        result = aggregate([], check_status=status)
+        # The killer-signal claim ("no concerns") is no longer alone —
+        # the verdict must disclose that some checks did not run.
+        assert "No concerns" not in result["verdict"]
+        assert "0 concerns" in result["verdict"]
+        assert "1 skipped" in result["verdict"]
+        assert "2 of 3 checks" in result["verdict"]
+        assert result["partial_success"] is True
+
+    def test_aggregate_errored_check_blocks_no_concerns(self):
+        status = {
+            "clones-not-edited": "errored:RuntimeError:boom",
+            "impact": "ran",
+            "intent": "ran",
+        }
+        result = aggregate([], check_status=status)
+        assert "No concerns" not in result["verdict"]
+        assert "1 errored" in result["verdict"]
+        assert result["partial_success"] is True
+
+    def test_aggregate_skipped_and_errored_both_disclosed(self):
+        status = {
+            "clones-not-edited": "skipped:no_changed_symbols",
+            "impact": "errored:RuntimeError:edge query failed",
+            "intent": "skipped:no_intent_text",
+        }
+        result = aggregate([], check_status=status)
+        v = result["verdict"]
+        assert "0 concerns" in v
+        assert "0 of 3 checks" in v
+        assert "2 skipped" in v
+        assert "1 errored" in v
+        assert result["partial_success"] is True
+
+    def test_aggregate_partial_with_findings_annotates_severity_line(self):
+        # Findings present AND a check skipped: don't lose the severity
+        # breakdown, but still surface the partial state.
+        findings = [Finding("impact", "high", "h1", "...", {})]
+        status = {
+            "clones-not-edited": "skipped:no_clone_pairs",
+            "impact": "ran",
+            "intent": "skipped:no_intent_text",
+        }
+        result = aggregate(findings, check_status=status)
+        v = result["verdict"]
+        assert "1 finding" in v
+        assert "1 high" in v
+        assert "1 of 3 checks ran" in v
+        assert "2 skipped" in v
+        assert result["partial_success"] is True
+
+
+class TestW832CritiqueCheckStatusCLI:
+    """End-to-end CLI guard: a forced check exception must NOT collapse to
+    a silent "No concerns" verdict — must surface partial_success.
+    """
+
+    def test_cli_check_exception_surfaces_partial_critique(
+        self, critique_project, monkeypatch
+    ):
+        from roam.commands import cmd_critique as _cmd
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("forced for W832 regression")
+
+        # Patch the impact check at the point cmd_critique imported it
+        # from. Module-level rebind so the orchestrator's call site sees
+        # the broken function.
+        monkeypatch.setattr(_cmd, "check_impact", _boom)
+
+        diff = textwrap.dedent(
+            """\
+            diff --git a/src/auth.py b/src/auth.py
+            --- a/src/auth.py
+            +++ b/src/auth.py
+            @@ -1,1 +1,2 @@
+             # placeholder
+            +# touched
+            """
+        )
+        diff_path = critique_project / "patch.diff"
+        diff_path.write_text(diff, encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--json", "critique", "--input", str(diff_path)]
+        )
+        # The crash is caught — the command must NOT exit on the
+        # exception (Pattern 1-B: partial signal beats total failure).
+        assert result.exit_code in (0, 5), (
+            f"check exception must not crash critique; "
+            f"exit={result.exit_code}\nout={result.output}\nexc={result.exception}"
+        )
+        data = json.loads(result.output)
+        summary = data["summary"]
+        # The verdict must NOT be the legacy silent-SAFE.
+        assert summary["verdict"] != "No concerns from roam critique"
+        # Partial state must be disclosed.
+        assert summary["partial_success"] is True
+        assert summary["state"] == "partial_critique"
+        # The specific check that blew up must be tagged 'errored:'.
+        assert summary["check_status"]["impact"].startswith("errored:")
+        assert "RuntimeError" in summary["check_status"]["impact"]
+
+    def test_cli_no_clone_pairs_marks_check_skipped(self, tmp_path):
+        # Build a fresh project that DOES NOT run `roam clones --persist`,
+        # so the clones-not-edited check MUST be marked skipped — not
+        # silently "ran with 0 findings". This is the dogfood-original
+        # silent fallback the W831 / W832 audit chain exists to seal.
+        proj = _make_project(tmp_path, _PROJECT_FILES)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+            # Intentionally NO `clones --persist`.
+
+            diff = textwrap.dedent(
+                """\
+                diff --git a/src/auth.py b/src/auth.py
+                --- a/src/auth.py
+                +++ b/src/auth.py
+                @@ -6,1 +6,2 @@
+                 # placeholder
+                +# touched
+                """
+            )
+            diff_path = proj / "patch.diff"
+            diff_path.write_text(diff, encoding="utf-8")
+
+            result = runner.invoke(
+                cli, ["--json", "critique", "--input", str(diff_path)]
+            )
+            assert result.exit_code in (0, 5), result.output
+            data = json.loads(result.output)
+            check_status = data["summary"]["check_status"]
+            cs = check_status["clones-not-edited"]
+            # If the diff resolves to zero changed symbols the skip
+            # reason will be ``no_changed_symbols``; otherwise it must
+            # be ``no_clone_pairs``. Either way: NOT "ran".
+            assert cs.startswith("skipped:"), f"expected skipped:*, got {cs!r}"
+            # Partial state must be disclosed.
+            assert data["summary"]["partial_success"] is True
+            assert (
+                data["summary"]["verdict"]
+                != "No concerns from roam critique"
+            )
+        finally:
+            os.chdir(old_cwd)

@@ -354,8 +354,11 @@ class TestMCPServerIntegration:
         assert "roam_complete" in _REGISTERED_TOOLS
 
     def test_summarize_param_optional(self):
-        # The understand/health/explore/repo_map tools accept summarize=False
-        # as default and don't fail when ctx is None (no MCP client connected).
+        # The understand/health/explore/repo_map tools accept summarize as
+        # optional (default None = auto-decide based on context, or False =
+        # explicit-off). What matters is summarize is NOT enabled by default —
+        # otherwise every call would attempt a sampling round-trip that
+        # silently no-ops without an MCP client.
         import inspect
 
         from roam.mcp_server import explore, health, repo_map, understand
@@ -363,4 +366,5 @@ class TestMCPServerIntegration:
         for fn in (explore, understand, health, repo_map):
             sig = inspect.signature(fn)
             assert "summarize" in sig.parameters
-            assert sig.parameters["summarize"].default is False
+            # Accept either explicit-False or auto-decide-None; reject True.
+            assert sig.parameters["summarize"].default in (False, None)

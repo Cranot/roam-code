@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Using Roam via MCP — Roam Docs · First-run, cold-start, agent flow</title>
+  <meta name="description" content="How to call Roam from Claude Code, Cursor, Codex, and other MCP clients: first-run setup, the cold-start envelope, tools that need no index, the canonical agent flow, slow-tool patterns, and troubleshooting.">
+  <link rel="canonical" href="https://roam-code.com/docs/mcp-usage">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="dns-prefetch" href="//github.com">
+  <link rel="dns-prefetch" href="//pypi.org">
+  <link rel="stylesheet" href="/landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Using Roam via MCP — Roam Docs">
+  <meta property="og:description" content="First-run setup, cold-start envelope, agent flow, and troubleshooting for Roam's MCP server.">
+  <meta property="og:url" content="https://roam-code.com/docs/mcp-usage">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://roam-code.com/"},
+      {"@type": "ListItem", "position": 2, "name": "Docs", "item": "https://roam-code.com/docs/"},
+      {"@type": "ListItem", "position": 3, "name": "Using Roam via MCP", "item": "https://roam-code.com/docs/mcp-usage"}
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span>
+        <span class="visually-hidden">Menu</span>
+      </label>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/setup">Setup</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <nav class="docs-subnav" aria-label="Documentation sections">
+    <div class="docs-subnav-inner">
+      <a href="/docs/getting-started">Getting Started</a>
+      <a href="/docs/integration-tutorials">Integrations</a>
+      <a href="/docs/mcp-usage" aria-current="page">MCP Usage</a>
+      <a href="/docs/command-reference">Command Reference</a>
+      <a href="/docs/architecture">Architecture</a>
+      <a href="/docs/agent-contract">Agent Contract</a>
+      <a href="/docs/troubleshooting">Troubleshooting</a>
+    </div>
+  </nav>
+
+  <main id="main" class="docs-page">
+    <p class="eyebrow">Reference</p>
+    <h1>Using Roam via MCP</h1>
+    <p class="subtitle">
+      How to call Roam from Claude Code, Cursor, Codex, Gemini CLI, Amp,
+      VS Code, and any other Model Context Protocol client. Covers
+      first-run setup, the cold-start envelope your agent will see on a
+      fresh repo, the tools that work without an index, the canonical
+      agent flow, slow-tool patterns, and the failure modes that have
+      tripped up real users.
+    </p>
+    <div class="callout">
+      MCP setup itself (per-platform commands and config snippets) lives
+      in <a href="/docs/integration-tutorials">Integration Tutorials</a>.
+      This page assumes the server is already wired up and focuses on
+      what your agent should actually <em>do</em> with it.
+    </div>
+
+    <section>
+      <h2 id="first-run-setup">First-run setup</h2>
+      <p>
+        Run <code>roam init</code> in your project root <strong>before</strong>
+        the first MCP call. It builds <code>.roam/index.db</code> — the
+        local SQLite graph Roam queries on every subsequent tool call.
+        Initial indexing typically takes 30 to 120 seconds on a medium
+        repo and is a one-time cost; later runs are incremental.
+      </p>
+<pre><code>cd /path/to/repo
+roam init             # creates .roam/index.db + fitness rules + CI workflow
+roam health           # verify the index is healthy (0-100 score)</code></pre>
+      <p>
+        Why this is a manual step: indexing can take long enough to
+        exceed an MCP call timeout, and forcing an automatic build on
+        first use hides that cost from the agent. We surface the cost
+        explicitly so the agent (or the human driving it) can budget
+        for it. See the next section for what your agent receives when
+        it skips this step.
+      </p>
+    </section>
+
+    <section>
+      <h2 id="the-cold-start-envelope">The cold-start envelope</h2>
+      <p>
+        When an MCP tool that needs an index is called on a project
+        where <code>.roam/index.db</code> does not exist, Roam does
+        <strong>not</strong> hang or auto-build. It returns a structured
+        envelope the agent can read and act on:
+      </p>
+<pre><code>{
+  "command": "roam_health",
+  "status": "index_not_built",
+  "summary": {
+    "verdict": "Index not built. Run `roam init` in a terminal first, then retry MCP tools.",
+    "level": "blocker",
+    "partial_success": false
+  },
+  "next_command": "roam init",
+  "expected_duration_seconds": 60,
+  "retry_after_seconds": 60,
+  "agent_contract": {
+    "facts": [
+      "0 of 8 evidence questions answered without indexed symbols",
+      "1 prerequisite command unmet -- run roam init"
+    ],
+    "next_commands": [
+      "roam init",
+      "# then retry the MCP tool that returned this envelope"
+    ]
+  },
+  "_meta": {
+    "guard": "w296_cold_start",
+    "tool": "roam_health"
+  }
+}</code></pre>
+      <p>
+        Wire your agent prompt to recognise <code>status ==
+        "index_not_built"</code> and either run <code>roam init</code>
+        itself (if the agent has shell access) or ask the human to.
+        The <code>next_command</code> field is copy-paste executable;
+        the <code>retry_after_seconds</code> field is a hint for how
+        long to wait before retrying the original tool call.
+      </p>
+      <p>
+        To bypass the guard for tests or scripts, set
+        <code>ROAM_MCP_DISABLE_COLD_START_GUARD=1</code> in the server
+        environment. Production agent setups should leave it on.
+      </p>
+    </section>
+
+    <section>
+      <h2 id="tools-without-index">Tools that don't need an index</h2>
+      <p>
+        Nine MCP tools are exempt from the cold-start guard because
+        they either create the index, diagnose the install, or operate
+        on caller-supplied data:
+      </p>
+      <table>
+        <thead><tr><th>Tool</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>roam_init</code></td><td>Build the index. Run this first.</td></tr>
+          <tr><td><code>roam_reindex</code></td><td>Rebuild the index (incremental by default).</td></tr>
+          <tr><td><code>roam_doctor</code></td><td>Diagnose the install — Python, extras, grammars, schema version, stale index.</td></tr>
+          <tr><td><code>roam_catalog</code></td><td>Machine-readable list of every registered MCP tool plus capability flags.</td></tr>
+          <tr><td><code>roam_expand_toolset</code></td><td>Switch the active preset (core / review / refactor / debug / architecture / full).</td></tr>
+          <tr><td><code>roam_session_metrics</code></td><td>Per-session counters for the current MCP connection.</td></tr>
+          <tr><td><code>roam_evidence_doctor</code></td><td>Validate a <code>ChangeEvidence</code> packet passed in by the caller.</td></tr>
+          <tr><td><code>roam_fetch_handle</code></td><td>Fetch all or part of a large MCP payload by handle (byte slice, section pick, jq projection).</td></tr>
+          <tr><td><code>roam_pr_comment_render</code></td><td>Render a markdown PR comment from a <code>roam_pr_analyze</code> envelope.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Everything else is gated by the cold-start guard. Adding a new
+        exemption is a deliberate source-code change pinned by a drift
+        test.
+      </p>
+    </section>
+
+    <section>
+      <h2 id="typical-agent-flow">Typical agent flow</h2>
+      <p>
+        The canonical sequence for an agent given a free-form change
+        request looks like this. Every call is a single MCP tool
+        invocation; no shell-out, no subprocess fan-out.
+      </p>
+<pre><code># 1. Verify the index exists (or create it).
+roam_doctor()
+roam_init()                                   # if cold-start envelope returned
+
+# 2. Orient before touching code.
+roam_health()                                 # 0-100 score + top issues
+roam_understand()                             # one-screen codebase briefing
+
+# 3. Find the relevant symbol or files for the task.
+roam_retrieve(task="where does login validate sessions", budget=4000)
+roam_context(symbol="auth_login")             # files + line ranges to read
+
+# 4. Gate before editing.
+roam_preflight(symbol="auth_login")           # blast radius + tests + fitness
+roam_impact(symbol="auth_login")              # what breaks if this changes
+
+# 5. Make the edit (out-of-band, in the editor / via the agent's edit tool).
+
+# 6. Verify the patch.
+roam_diff()                                   # blast radius of uncommitted changes
+roam_critique(diff_text="<unified diff>")     # clones-not-edited + blast radius
+
+# 7. Optional: package the proof.
+roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BLOCK</code></pre>
+      <p>
+        Steps 1 and 2 are once-per-session; steps 3 through 7 repeat
+        per task. The <a href="/docs/agent-contract">Agent Contract</a>
+        documents the five discipline rules behind this sequence
+        (context before edit, impact before delete, critique before
+        merge, simulate before refactor, math before optimise).
+      </p>
+    </section>
+
+    <section>
+      <h2 id="slow-tools">Tools that take longer than expected</h2>
+      <p>
+        A handful of tools produce envelopes large enough to push past
+        a default MCP call budget. Reach for the handle pattern or a
+        narrower scope when invoking these:
+      </p>
+      <table>
+        <thead><tr><th>Tool</th><th>Why it's heavy</th><th>What to do</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>roam_capsule_export</code></td>
+            <td>Exports the entire sanitised structural graph; can exceed 1M tokens on large repos.</td>
+            <td>Write to file via the CLI (<code>roam capsule --out capsule.json</code>) and reference the path, or scope with <code>--include</code>.</td>
+          </tr>
+          <tr>
+            <td><code>roam_orchestrate</code> / <code>roam_partition</code></td>
+            <td>Multi-agent partitioning emits one entry per cluster; thousands of entries on large repos.</td>
+            <td>Use <code>--n-agents</code> to bound output, or call <code>roam_fleet_plan</code> which emits a compact <code>.roam-fleet.json</code> instead.</td>
+          </tr>
+          <tr>
+            <td><code>roam_fingerprint</code></td>
+            <td>Per-symbol topology fingerprints across the whole graph.</td>
+            <td>Pass <code>--top N</code> or restrict to a subgraph.</td>
+          </tr>
+          <tr>
+            <td><code>roam_verify_imports</code></td>
+            <td>Cross-language import resolution over every file.</td>
+            <td>Scope to changed files with <code>--changed</code>.</td>
+          </tr>
+          <tr>
+            <td>Any tool returning more than 20K tokens</td>
+            <td>The payload may be truncated by the client.</td>
+            <td>The tool returns a <code>handle</code> field; call <code>roam_fetch_handle(handle, section=...)</code> to page through the payload.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        <code>roam_explore</code> is the recommended browse-style entry
+        point because it auto-applies the handle pattern: large
+        envelopes are split, you get a small summary plus a handle, and
+        you fetch detail by section.
+      </p>
+    </section>
+
+    <section>
+      <h2 id="troubleshooting">Troubleshooting</h2>
+      <h3>Tool hangs or times out</h3>
+      <p>
+        Check that <code>.roam/index.db</code> exists in the working
+        directory the MCP server was launched from. If it does not,
+        the cold-start guard should have returned an
+        <code>index_not_built</code> envelope rather than hanging — if
+        you see a real hang, run <code>roam doctor</code> to confirm
+        the install, then <code>roam init</code> to build the index.
+        Cloud-sync filesystems (OneDrive, Dropbox, iCloud) sometimes
+        lock the SQLite file; see <a href="/docs/troubleshooting#db-locked">Troubleshooting #2</a>.
+      </p>
+
+      <h3><code>USAGE_ERROR</code> on <code>roam_doctor</code></h3>
+      <p>
+        Known issue: <code>roam_doctor</code> emits a non-zero exit
+        even on advisory failures (missing optional extras), which the
+        MCP wrapper currently surfaces as <code>USAGE_ERROR</code>.
+        The underlying diagnostics are still present in the envelope.
+        Read <code>summary.verdict</code> and <code>checks[]</code>
+        rather than the top-level status.
+      </p>
+
+      <h3>Empty result from <code>roam_dead_code</code> or <code>roam_smells</code></h3>
+      <p>
+        Empty is a valid signal — the project may genuinely have no
+        unreferenced exports or no flagged smells. Check the JSON
+        envelope: <code>summary.verdict</code> will say "0 findings"
+        (good) rather than failing silently. If you expected findings
+        and got none, run the CLI equivalent with <code>--debug</code>
+        to confirm detector coverage.
+      </p>
+
+      <h3>Tool not found</h3>
+      <p>
+        The default preset is <code>core</code> (57 tools plus the
+        <code>roam_expand_toolset</code> meta-tool). Tools outside
+        that preset are loaded on demand:
+        <code>roam_expand_toolset(preset="full")</code> exposes all
+        149. You can also set <code>ROAM_MCP_PRESET=full</code> in the
+        server env to start with the full set.
+      </p>
+
+      <h3>Server returns stale data after a <code>git pull</code></h3>
+      <p>
+        Run <code>roam reindex</code> (or set
+        <code>ROAM_MCP_WATCH=1</code> in the server env to enable
+        reactive incremental reindexing on file changes). The watcher
+        emits <code>notifications/resources/updated</code> so
+        subscribing clients see fresh data without polling.
+      </p>
+    </section>
+
+    <section>
+      <h2 id="mcp-vs-cli">When to use MCP vs the CLI directly</h2>
+      <table>
+        <thead><tr><th>Surface</th><th>Use it when</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>MCP</strong></td>
+            <td>An AI coding agent (Claude Code, Cursor, Codex, Gemini CLI, Amp, custom) is driving the workflow. The agent gets structured envelopes, schema-versioned output, and shared session memory across calls.</td>
+          </tr>
+          <tr>
+            <td><strong>CLI</strong></td>
+            <td>A human is exploring interactively, or a CI pipeline / git hook / script is invoking Roam. CLI output supports <code>--json</code>, <code>--sarif</code>, and <code>VERDICT:</code>-first text; subprocess invocation is the right shape for non-agent automation.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Both surfaces share the same underlying engine — every MCP
+        tool is a wrapper around a CLI command. Choose by the caller,
+        not the capability.
+      </p>
+    </section>
+
+    <nav class="docs-footer-nav" aria-label="Pagination">
+      <a href="/docs/integration-tutorials">
+        <span class="label">← Back to</span>
+        Integration Tutorials
+      </a>
+      <a href="/docs/command-reference" class="next">
+        <span class="label">Next →</span>
+        Command Reference
+      </a>
+    </nav>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>The local codebase intelligence layer for developers and AI agents.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/setup">Setup</a>
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

@@ -97,8 +97,35 @@ def owner(ctx, path):
                     (f"%{path}",),
                 ).fetchone()
             if frow is None:
-                click.echo(f"Path not found in index: {path}")
-                raise SystemExit(1)
+                # W362: "path not in index" is a valid analytical result,
+                # not a failure. Emit a structured envelope and exit 0 —
+                # Pattern-2 always-emit discipline (CLAUDE.md). Concrete-
+                # noun terminal anchored via the long-sentence rule
+                # (LAW 4 rule 5: >4 tokens with non-numeric lead).
+                verdict = f"No files match {path!r} — no file indexed at that path"
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "owner",
+                                budget=token_budget,
+                                summary={
+                                    "verdict": verdict,
+                                    "state": "path_not_found",
+                                    "partial_success": False,
+                                    "target_path": path,
+                                },
+                                target_path=path,
+                                state="path_not_found",
+                                authors=[],
+                                file_count=0,
+                            )
+                        )
+                    )
+                    return
+                click.echo(f"VERDICT: {verdict}")
+                click.echo(f"  Try: roam search {path!r} to find an indexed path")
+                return
             dir_files = [frow]
 
         if json_mode:

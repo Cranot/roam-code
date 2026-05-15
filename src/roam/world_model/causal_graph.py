@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import Optional
 
 from roam.db.connection import find_project_root
+from roam.output.confidence import confidence_level_rank
 from roam.world_model.side_effects import (
     KNOWN_SIDE_EFFECTING_PREFIXES,
     SideEffectClassification,
@@ -154,12 +155,18 @@ _JS_FUNC_HEAD_RE = re.compile(
 )
 
 
-def _extract_params_from_signature(signature: str) -> list[str]:
+def _extract_params_from_signature(signature: str | None) -> list[str]:
     """Pull parameter names out of a stored signature string.
 
     Signatures in the DB look like e.g.
     ``(self, path: str, mode='w') -> None`` or ``(name, email)`` —
     we drop ``self``/``cls``, defaults, and type annotations.
+
+    ``signature`` may be ``None`` (the underlying ``symbols.signature``
+    column is NULL for symbols indexed before the signature extractor
+    landed, and for languages whose extractor never populates it); the
+    None-guard short-circuits to an empty list so callers don't need
+    a cargo-cult ``or ""`` wrapper at every call-site (W1034).
     """
     if not signature:
         return []
@@ -580,11 +587,16 @@ def _scan_one(
                 break
 
     # Compute graph-level confidence — average / consensus of edges.
+    # W596: canonical confidence-LEVEL rank — preserves the pre-W596
+    # ``{high:3, medium:2, low:1}`` polarity. Edges only emit canonical
+    # labels (see ``confidence="..."`` call sites above), so the rank
+    # for ``unknown`` (0) and bogus (-1) never fires in practice; the
+    # pre-W596 fallback was ``1`` (treat unknowns as low), and ``max(...,
+    # 1)`` here keeps that behaviour for any future label drift.
     if not edges:
         gconf = "low"
     else:
-        ranks = {"high": 3, "medium": 2, "low": 1}
-        avg = sum(ranks.get(e.confidence, 1) for e in edges) / len(edges)
+        avg = sum(max(confidence_level_rank(e.confidence, fallback=-1), 1) for e in edges) / len(edges)
         if avg >= 2.5:
             gconf = "high"
         elif avg >= 1.5:
@@ -704,7 +716,7 @@ def classify_causal_graph(
                 body = ""
 
             # Parameters — prefer signature column, fall back to body parse.
-            params = _extract_params_from_signature(r["signature"] or "")
+            params = _extract_params_from_signature(r["signature"])
             if not params and body:
                 params = _extract_params_from_body(body)
 

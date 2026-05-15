@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import time as _time
 from collections import defaultdict
 from statistics import median
@@ -17,6 +18,7 @@ from roam.commands.changed_files import is_test_file
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.db.edge_kinds import CALL_EDGE_KINDS
 from roam.output.formatter import (
     abbrev_kind,
     format_table,
@@ -30,7 +32,118 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
+from roam.output.metric_definitions import (
+    DEAD_EXPORT_ACTION_DEFINITION,
+    DEAD_EXPORT_DEFINITION,
+)
 from roam.rules.dataflow import collect_dataflow_findings
+
+
+# W96 — dead-export detector is the second migration onto the central
+# findings registry (after W95's clones). Detector version is stamped on
+# every emitted finding so consumers can spot rows produced under an
+# older dead-export classifier shape (e.g. before scaffolding was
+# recognised). Bump per the rules in roam.catalog.versions when the
+# classifier or action verdict mapping changes meaningfully.
+DEAD_DETECTOR_VERSION: str = "1.0.0"
+
+
+def _dead_finding_id(symbol_id: int, file_path: str, kind: str) -> str:
+    """Stable, deterministic finding id for one dead-export.
+
+    The (symbol_id, kind, file_path) triple is enough to re-identify the
+    same export across runs — symbols.id stays stable across re-indexes
+    of unchanged code, and the kind+path are folded in so a renamed
+    symbol that lands on the same id (rare but possible after a churn
+    rebuild) still gets a fresh id. Re-running ``roam dead --persist``
+    on the same input upserts the existing row rather than duplicating.
+    """
+    from roam.db.findings import make_finding_id
+
+    return make_finding_id("dead", "export", symbol_id, kind, file_path)
+
+
+def _dead_confidence_tier(action: str) -> str:
+    """Map the dead-export ``action`` verdict to a registry confidence tier.
+
+    - SAFE  → ``static_analysis``: the call-graph proves no production
+              consumers exist; this is the strongest signal the detector
+              can produce.
+    - REVIEW → ``structural``: heuristic patterns (API naming, barrel
+               files, test-only consumers) — graph-backed but
+               name-dependent.
+    - INTENTIONAL / INTENTIONAL_SCAFFOLDING → ``heuristic``: pure name /
+               docstring pattern match, no graph evidence.
+    """
+    from roam.db.findings import (
+        CONFIDENCE_HEURISTIC,
+        CONFIDENCE_STATIC_ANALYSIS,
+        CONFIDENCE_STRUCTURAL,
+    )
+
+    if action == "SAFE":
+        return CONFIDENCE_STATIC_ANALYSIS
+    if action == "REVIEW":
+        return CONFIDENCE_STRUCTURAL
+    # INTENTIONAL / INTENTIONAL_SCAFFOLDING / unknown — pattern match only.
+    return CONFIDENCE_HEURISTIC
+
+
+def _emit_dead_findings(conn, dead_records: list[dict]) -> None:
+    """Emit one ``FindingRecord`` per dead-export into the registry.
+
+    Each record in ``dead_records`` is the dict shape produced by the
+    json-mode build path: ``{"symbol_id", "name", "kind", "file_path",
+    "line_start", "action", "confidence_pct", "reason", "tested",
+    "scaffolding", "scaffolding_evidence"}``. The dict shape is the
+    contract — emit doesn't peek at the raw symbols row.
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (without the ``findings`` table) silently no-ops rather than
+    crashing the standard dead command.
+    """
+    # Local import to keep the cost out of the readonly read-only path —
+    # callers without --persist never reach here, so the import only
+    # runs when we're actually writing.
+    from roam.db.findings import FindingRecord, emit_finding
+
+    for d in dead_records:
+        symbol_id = d.get("symbol_id")
+        if symbol_id is None:
+            continue
+        action = d.get("action") or "UNKNOWN"
+        file_path = d.get("file_path") or ""
+        kind = d.get("kind") or ""
+        finding_id = _dead_finding_id(int(symbol_id), file_path, kind)
+        evidence = {
+            "name": d.get("name"),
+            "kind": kind,
+            "file_path": file_path,
+            "line_start": d.get("line_start"),
+            "action": action,
+            "confidence_pct": d.get("confidence_pct"),
+            "reason": d.get("reason"),
+            "tested": d.get("tested", False),
+            "scaffolding": d.get("scaffolding", False),
+            "scaffolding_evidence": d.get("scaffolding_evidence") or {},
+        }
+        claim = (
+            f"Dead export: {d.get('name')} ({kind}) at "
+            f"{file_path}:{d.get('line_start')} — action={action}"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol",
+                subject_id=int(symbol_id),
+                claim=claim,
+                evidence_json=json.dumps(evidence, sort_keys=True),
+                confidence=_dead_confidence_tier(action),
+                source_detector="dead",
+                source_version=DEAD_DETECTOR_VERSION,
+            ),
+        )
 
 
 # R22 — confidence classifier for dead-export findings.
@@ -200,6 +313,127 @@ _ABC_METHOD_NAMES = frozenset(
 )
 
 
+# W157 — runtime-decorator-registered symbols look "dead" to a static
+# call-graph analyser because the framework invokes them via the decorator
+# registry, not via a literal `foo()` call inside another extracted symbol.
+# The MCP server's `@_tool(name="roam_X")` is the worst-offender: 44 of 73
+# SAFE-tier findings on roam-code's own registry were MCP wrappers (per the
+# W149 dogfood audit). Following the SAFE recommendation would silently
+# break the MCP transport.
+#
+# Source of truth is ``roam.mcp_server._TOOL_METADATA``: every entry there
+# is a Python function whose qualified name lives in ``mcp_server.py`` and
+# whose framework consumer is FastMCP's runtime tool-registry. Importing it
+# at module-load is too expensive for the readonly path (fastmcp may not be
+# installed); resolve lazily on first need and cache.
+_MCP_TOOL_NAMES_CACHE: frozenset[str] | None = None
+
+
+def _load_mcp_tool_names() -> frozenset[str]:
+    """Return the set of MCP-tool symbol names registered via ``@_tool``.
+
+    Combines TWO sources so the gate matches the symbols-table view:
+
+    1. ``roam.mcp_server._TOOL_METADATA`` keys — the runtime
+       ``name=``-kwarg form (``roam_clean``, ``roam_doctor``, …). This
+       catches wrappers where ``@_tool(name="roam_X")`` happens to match
+       the Python ``def`` name (about 40/149 wrappers).
+    2. AST scan of ``mcp_server.py`` — collects the Python ``def`` name
+       of every function decorated with ``@_tool(...)``, regardless of
+       what the ``name=`` kwarg says. This catches the majority of
+       wrappers where the def name differs from the registered tool name
+       (e.g. ``def search_semantic`` decorated as ``roam_search_semantic``).
+
+    The symbols table stores the Python ``def`` name in
+    ``symbols.name`` — so the AST-derived set is what the dead detector
+    actually needs to match against. The ``_TOOL_METADATA`` set is
+    included as a defensive belt-and-braces source for the cases where
+    both names coincide.
+
+    Cached after first load so the per-symbol classifier stays O(1).
+
+    Degrades to an empty frozenset when neither source is reachable
+    (e.g. roam installed from a wheel without the source file on disk,
+    or fastmcp extra missing). An empty set yields the legacy un-seeded
+    behaviour — worst case is pre-W157 false positives, never a crash.
+    """
+    global _MCP_TOOL_NAMES_CACHE
+    if _MCP_TOOL_NAMES_CACHE is not None:
+        return _MCP_TOOL_NAMES_CACHE
+
+    collected: set[str] = set()
+
+    # Source 1: runtime metadata (name= kwarg form).
+    try:
+        # Importing mcp_server triggers the full ``@_tool`` decorator pass
+        # which populates _TOOL_METADATA. fastmcp is optional, but the
+        # metadata is populated *before* the fastmcp-presence check inside
+        # ``_tool`` (per the comment at mcp_server.py:927) so this works
+        # even on installs without the [mcp] extra.
+        from roam.mcp_server import _TOOL_METADATA as _meta
+        collected.update(_meta.keys())
+    except Exception:
+        pass
+
+    # Source 2: AST scan of mcp_server.py — recover the Python ``def``
+    # names that the symbols table will store. We resolve the source
+    # file via the imported module's __file__ rather than walking the
+    # filesystem so editable installs and out-of-tree checkouts both
+    # work without configuration.
+    try:
+        import ast
+        import roam.mcp_server as _mcp_mod  # noqa: F401  (module-import side effect)
+        src_path = getattr(_mcp_mod, "__file__", None)
+        if src_path:
+            with open(src_path, encoding="utf-8") as f:
+                tree = ast.parse(f.read(), filename=src_path)
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for deco in node.decorator_list:
+                    # ``@_tool(name=...)`` is a Call whose .func is the
+                    # bare Name "_tool". We only care about that shape;
+                    # bare ``@_tool`` without parens isn't used in the
+                    # codebase (the decorator signature requires kwargs).
+                    if isinstance(deco, ast.Call):
+                        target = deco.func
+                        if isinstance(target, ast.Name) and target.id == "_tool":
+                            collected.add(node.name)
+                            break
+                    elif isinstance(deco, ast.Name) and deco.id == "_tool":
+                        collected.add(node.name)
+                        break
+    except Exception:
+        # Bare except: file IO, ast parse, attribute errors — none of
+        # these should ever break the dead command's readonly path.
+        pass
+
+    _MCP_TOOL_NAMES_CACHE = frozenset(collected)
+    return _MCP_TOOL_NAMES_CACHE
+
+
+def _reset_mcp_tool_names_cache() -> None:
+    """Test hook — clear the cached MCP-tool name set."""
+    global _MCP_TOOL_NAMES_CACHE
+    _MCP_TOOL_NAMES_CACHE = None
+
+
+def _is_mcp_tool_symbol(name: str, file_path: str) -> bool:
+    """True if ``(name, file_path)`` names an MCP-tool wrapper.
+
+    Anchored on BOTH the function name being in ``_TOOL_METADATA`` AND
+    the file being ``mcp_server.py``. The two-axis check prevents a
+    coincidental shadow elsewhere (e.g. a test fixture named ``roam_clean``)
+    from being silently exempted.
+    """
+    if not name or not file_path:
+        return False
+    base = os.path.basename(file_path).lower()
+    if base != "mcp_server.py":
+        return False
+    return name in _load_mcp_tool_names()
+
+
 def _is_test_path(file_path):
     """Check if a file is a test file (discovered by pytest, not imported)."""
     return is_test_file(file_path)
@@ -277,6 +511,20 @@ def _dead_action(r, file_imported, tested=False):
         docstring = None
     if _scaffolding_signals(docstring):
         return "INTENTIONAL_SCAFFOLDING", 80
+
+    # W157 — MCP tool wrappers registered via ``@_tool(name=...)`` in
+    # ``mcp_server.py``. FastMCP invokes these at runtime through its tool
+    # registry; no static call-graph edge ever lands on them. Without this
+    # exemption, every wrapper looks SAFE-to-delete (W149 dogfood: 44/73
+    # SAFE findings were MCP wrappers — silent demolition of the MCP
+    # transport if an agent followed the verdict).
+    #
+    # Runs BEFORE the ``tested`` check because an MCP wrapper that is also
+    # imported by a test (e.g. ``tests/test_mcp_server.py``) is still
+    # primarily driven by FastMCP at runtime; reporting it as REVIEW would
+    # understate the real consumer.
+    if kind == "function" and _is_mcp_tool_symbol(name, r["file_path"]):
+        return "INTENTIONAL", 10
 
     # Test-only public surface is not production-consumed, but deleting it
     # breaks the suite and may remove intentionally preserved API behavior.
@@ -1307,6 +1555,10 @@ def _detect_unused_returns(conn, project_root) -> list[dict]:
 
     target_ids = [f["id"] for f in funcs_with_return]
     callers_by_target: dict[int, list] = {}
+    # W512: edge-kind vocabulary lives in roam.db.edge_kinds. Pure call
+    # edges only — discarded-return detection cares about call-site
+    # semantics, not reference reads.
+    _dead_call_kind_ph = ", ".join("?" for _ in CALL_EDGE_KINDS)
     for row in batched_in(
         conn,
         "SELECT e.target_id, e.source_id, e.line, s.name AS caller_name, "
@@ -1314,8 +1566,9 @@ def _detect_unused_returns(conn, project_root) -> list[dict]:
         "FROM edges e "
         "JOIN symbols s ON e.source_id = s.id "
         "JOIN files f ON s.file_id = f.id "
-        "WHERE e.target_id IN ({ph}) AND e.kind = 'calls'",
+        f"WHERE e.target_id IN ({{ph}}) AND e.kind IN ({_dead_call_kind_ph})",
         target_ids,
+        post=CALL_EDGE_KINDS,
     ):
         callers_by_target.setdefault(row["target_id"], []).append(row)
 
@@ -1554,6 +1807,18 @@ def _analyze_dataflow_dead(conn):
         "those as reason_class=unreachable_scaffolding. Round 4 feature A."
     ),
 )
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror each dead-export into the central findings registry "
+        "(``roam findings list --detector dead``). Detector-specific "
+        "output is unchanged; the registry rows are the denormalised "
+        "cross-detector surface."
+    ),
+)
 @click.pass_context
 def dead(
     ctx,
@@ -1571,6 +1836,7 @@ def dead(
     sort_by_decay,
     show_dataflow,
     reachable_only,
+    persist,
 ):
     """Show unreferenced exported symbols (dead code).
 
@@ -1592,7 +1858,7 @@ def dead(
     # caller explicitly asked for the summary-only fast path.
     compute_decay = not summary_only
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         # --- Extinction mode (separate flow) ---
         if extinction_target:
             sym, cascade = _predict_extinction(conn, extinction_target)
@@ -1709,6 +1975,10 @@ def dead(
                     "intentional": 0,
                     "unused_assignments": len(unused_assignments),
                     "dataflow_dead": len(dataflow_dead),
+                    # W331: also surface in the empty envelope so MCP
+                    # consumers see the same shape on every call.
+                    "dead_export_definition": DEAD_EXPORT_DEFINITION,
+                    "action_definition": DEAD_EXPORT_ACTION_DEFINITION,
                 }
                 click.echo(
                     to_json(
@@ -1762,6 +2032,41 @@ def dead(
         # split via the dedicated `scaffolding` field below.
         n_intent = n_intent_strict + n_scaffolding
         n_test_only = sum(1 for r in all_items if consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0)
+
+        # --- W96: mirror into the central findings registry ---
+        # Detector-specific output below is untouched; the registry rows
+        # are the denormalised cross-detector surface (``roam findings``).
+        # Wrapped so a pre-W89 DB (no ``findings`` table) silently no-ops
+        # rather than crashing the standard dead command path.
+        if persist:
+            dead_records_for_emit = []
+            for r, action, confidence_pct in all_dead:
+                docstring = r["docstring"] if "docstring" in r.keys() else None
+                scaffolding_evidence = _scaffolding_signals(docstring)
+                tested = consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0
+                dead_records_for_emit.append(
+                    {
+                        "symbol_id": r["id"],
+                        "name": r["name"],
+                        "kind": r["kind"],
+                        "file_path": r["file_path"],
+                        "line_start": r["line_start"],
+                        "action": action,
+                        "confidence_pct": confidence_pct,
+                        "reason": _dead_reason(
+                            r, consumer_meta, file_import_meta, sibling_meta
+                        ),
+                        "tested": tested,
+                        "scaffolding": scaffolding_evidence is not None,
+                        "scaffolding_evidence": scaffolding_evidence or {},
+                    }
+                )
+            try:
+                _emit_dead_findings(conn, dead_records_for_emit)
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
         # --- SARIF output ---
         if sarif_mode:
@@ -1937,6 +2242,12 @@ def dead(
                 "test_only": n_test_only,
                 "unused_assignments": len(unused_assignments),
                 "dataflow_dead": len(dataflow_dead),
+                # W331: spell out what "dead" actually means (no inbound
+                # edges) and what the SAFE / REVIEW / INTENTIONAL action
+                # labels are derived from, so consumers don't conflate
+                # them with unreachable-from-entry or unused-assignments.
+                "dead_export_definition": DEAD_EXPORT_DEFINITION,
+                "action_definition": DEAD_EXPORT_ACTION_DEFINITION,
             }
             if show_dataflow:
                 summary["dataflow_warning"] = (

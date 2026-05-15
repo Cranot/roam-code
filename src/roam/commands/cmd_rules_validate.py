@@ -371,8 +371,8 @@ def rules_validate(
 
                 path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
             except ImportError:
-                # 12.37 (2026-05-06) — Python 3.9 / installs without PyYAML
-                # use the in-tree minimal emitter so --fix still works.
+                # 12.37 (2026-05-06) — installs without PyYAML use the
+                # in-tree minimal emitter so --fix still works.
                 try:
                     from roam.rules.engine import _emit_simple_yaml
 

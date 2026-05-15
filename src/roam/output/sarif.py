@@ -18,6 +18,8 @@ import hashlib as _hashlib
 import json as _json
 from pathlib import Path
 
+from roam.output._severity import _legacy_level_map, to_sarif_level
+
 _SARIF_VERSION = "2.1.0"
 _SARIF_SCHEMA = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json"
 _TOOL_NAME = "roam-code"
@@ -32,20 +34,29 @@ def _get_version() -> str:
 
 
 # ── Severity mapping ─────────────────────────────────────────────────
+#
+# W547: the canonical roam severity vocabulary + SARIF projection now
+# lives in :mod:`roam.output._severity`. The symbols below are kept as
+# back-compat shims so external callers / older tests still resolve.
+# NEW CODE: import :func:`to_sarif_level` from
+# :mod:`roam.output._severity` directly.
 
-_LEVEL_MAP = {
-    "CRITICAL": "error",
-    "HIGH": "warning",
-    "WARNING": "warning",
-    "MEDIUM": "note",
-    "LOW": "note",
-    "INFO": "note",
-}
+_LEVEL_MAP = _legacy_level_map()
 
 
 def _to_level(severity: str) -> str:
-    """Map a roam severity string to a SARIF level."""
-    return _LEVEL_MAP.get(severity.upper(), "note")
+    """Back-compat shim — delegates to :func:`roam.output._severity.to_sarif_level`.
+
+    Closed mapping (case-insensitive, alias-aware):
+
+        CRITICAL / ERROR             -> "error"
+        HIGH / WARNING               -> "warning"
+        MEDIUM / LOW / INFO / NOTE   -> "note"
+
+    Unknown labels default to ``"note"`` so an unrecognised severity never
+    accidentally fails a CI gate keyed off SARIF level=error.
+    """
+    return to_sarif_level(severity)
 
 
 # ── Location helpers ─────────────────────────────────────────────────
@@ -136,9 +147,25 @@ def to_sarif(
 
     # Apply suppressions — load .roam/suppressions.json if present and stamp
     # matching results with the SARIF "suppressions" array.
-    suppressions = _load_suppressions()
-    if suppressions:
-        results = _apply_suppressions(results, suppressions)
+    # W736 (Phase C-1a of W692): prefer the typed loader + applier for the
+    # canonical W691 dict shape. SARIF output bytes stay byte-identical to
+    # the legacy dict-applier path — the typed surface is a
+    # discriminated-union refactor on the in-memory representation, not a
+    # behavioural change. Legacy on-disk shapes (top-level list,
+    # ``{"suppressions": [...]}`` envelope) pre-date the W691 finding_id
+    # discriminator and cannot project onto FindingIdSuppression without
+    # invention; those paths fall back to the legacy dict applier so
+    # back-compat fixtures (test_sarif_enrichment) keep passing. The
+    # legacy _load_suppressions / _apply_suppressions helpers stay in-tree
+    # for now; later sub-waves (W737/W738) will purge them once the
+    # legacy on-disk shapes are also retired.
+    suppressions_typed = _load_suppressions_typed()
+    if suppressions_typed:
+        results = _apply_suppressions_typed(results, suppressions_typed)
+    else:
+        suppressions = _load_suppressions()
+        if suppressions:
+            results = _apply_suppressions(results, suppressions)
 
     run: dict = {
         "tool": {"driver": driver},
@@ -223,28 +250,258 @@ def _version_control_provenance() -> list[dict]:
         return []
 
 
-def _load_suppressions() -> list[dict]:
-    """Load .roam/suppressions.json if present.
+def _load_suppressions(
+    *,
+    warnings_out: list[str] | None = None,
+) -> list[dict]:
+    """Load .roam/suppressions.json if present (W691: canonical-shape aware).
 
-    Schema: list of objects with at least ``rule_id`` (str) and ``location``
-    (str like "path:line"). Optional ``reason`` (str), ``status`` (active/expired/rejected),
-    ``kind`` (inSource/external).
+    Three on-disk shapes are accepted; the SARIF loader normalises them
+    all into ``list[dict]`` of ``{rule_id, location, reason, ...}`` rows
+    so :func:`_apply_suppressions` does not need to branch.
+
+    1. **Canonical dict shape** (written by ``roam suppress``):
+       ``{finding_id_hex: {reason, added_at, source, rule_id?, location?}}``.
+       The finding_id is a 16-char sha256 hash — not itself usable for
+       SARIF (ruleId, location) matching. Entries that embed ``rule_id``
+       and ``location`` ride through; entries that don't are dropped
+       silently (we cannot reverse the hash).
+
+    2. **Legacy SARIF list shape**: ``[{rule_id, location, ...}, ...]``
+       — historical shape, kept for back-compat.
+
+    3. **Legacy SARIF envelope shape**: ``{"suppressions": [...]}`` —
+       same row contents under one extra key.
+
+    The dict-vs-list disambiguation key is the value type of the first
+    item: dict entry => canonical; list / row-dict => legacy SARIF.
+
+    W1042 (Pattern 2 — silent fallback, mirror of W1009's
+    :func:`finding_suppress._load_per_finding_suppressions`): when
+    *warnings_out* is supplied as a ``list[str]``, every silent-fallback
+    path (file unreadable / OSError, malformed JSON, non-dict / non-list
+    root, malformed entry) appends an actionable warning naming the
+    path, the failure shape, and the resolution. Pre-W1042 callers that
+    don't supply ``warnings_out`` retain the byte-identical
+    silent-empty-list behaviour so existing SARIF output bytes stay
+    bit-identical when ``.roam/suppressions.json`` is well-formed.
+
+    The file-read + JSON parse + root-type check live in
+    :func:`roam.commands._yaml_loader.load_yaml_with_warnings` with
+    ``parse_error_label="JSON"`` (matching the W1019e shape from
+    :func:`finding_suppress._load_per_finding_suppressions`); the
+    per-entry validation stays inline.
     """
-    import json
-    from pathlib import Path
+    from roam.commands._yaml_loader import load_yaml_with_warnings
 
     candidate = Path.cwd() / ".roam" / "suppressions.json"
-    if not candidate.exists():
+    path_str = str(candidate)
+
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data = load_yaml_with_warnings(
+        candidate,
+        config_label="sarif-suppressions",
+        parse_error_label="JSON",  # .roam/suppressions.json is JSON-shaped
+        warnings_out=warnings_out,
+        allow_list_root=True,  # legacy list shape is valid
+    )
+    if data is None:
+        # Missing file — default state, no warning emitted by the helper.
         return []
-    try:
-        data = json.loads(candidate.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return data.get("suppressions") or []
-        if isinstance(data, list):
-            return data
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper already explained the failure (read error / malformed
+        # JSON / wrong root type). Propagate the empty result without
+        # piling on a second warning.
         return []
-    except Exception:
+
+    # Legacy list shape: top-level array of {rule_id, location, ...}
+    if isinstance(data, list):
+        rows: list[dict] = []
+        for idx, r in enumerate(data, start=1):
+            if isinstance(r, dict):
+                rows.append(r)
+            elif warnings_out is not None:
+                warnings_out.append(
+                    f"sarif-suppressions: {path_str!r}: entry #{idx} is "
+                    f"{type(r).__name__!r}, expected a mapping with "
+                    f"`rule_id` + `location` keys. Skipping entry."
+                )
+        return rows
+
+    if not isinstance(data, dict):
         return []
+
+    # Legacy SARIF envelope shape: {"suppressions": [...]}
+    if "suppressions" in data and isinstance(data["suppressions"], list):
+        rows = []
+        for idx, r in enumerate(data["suppressions"], start=1):
+            if isinstance(r, dict):
+                rows.append(r)
+            elif warnings_out is not None:
+                warnings_out.append(
+                    f"sarif-suppressions: {path_str!r}: entry #{idx} "
+                    f"under 'suppressions:' is {type(r).__name__!r}, "
+                    f"expected a mapping with `rule_id` + `location` keys. "
+                    f"Skipping entry."
+                )
+        return rows
+
+    # Canonical dict shape (W691): {finding_id_hex: entry}. Convert each
+    # entry to a SARIF-matching row when it embeds rule_id + location.
+    # Heuristic for the canonical shape: every value is a dict carrying
+    # a ``reason`` or ``added_at`` field (the cmd_suppress writer always
+    # stamps ``added_at`` and either ``reason`` or both).
+    if data and all(isinstance(v, dict) for v in data.values()):
+        rows = []
+        for fid, entry in data.items():
+            # Per-finding entry must carry the SARIF projection fields
+            # (rule_id + location) for the SARIF apply step to bind it.
+            # Entries without them are recorded by the finding_suppress
+            # layer through finding_id matching; they're correctly
+            # invisible to SARIF.
+            rule_id = entry.get("rule_id") or entry.get("ruleId")
+            location = entry.get("location")
+            if not (rule_id and location):
+                continue
+            rows.append(
+                {
+                    "rule_id": rule_id,
+                    "location": location,
+                    "reason": entry.get("reason", ""),
+                    "kind": entry.get("kind", "external"),
+                    "status": entry.get("status", "accepted"),
+                    "finding_id": str(fid),
+                }
+            )
+        return rows
+
+    # Mixed-type values under the dict root (some dict, some scalar) —
+    # not the canonical shape, not the envelope shape. Warn loudly and
+    # bail to empty so the SARIF apply step is a no-op.
+    if warnings_out is not None:
+        non_dict = sum(1 for v in data.values() if not isinstance(v, dict))
+        warnings_out.append(
+            f"sarif-suppressions: {path_str!r}: root mapping has "
+            f"{non_dict} non-dict entries; expected the canonical "
+            f"{{finding_id_hex: {{...}}}} shape or the legacy "
+            f"{{'suppressions': [...]}} envelope. Skipping file."
+        )
+    return []
+
+
+def _load_suppressions_typed(
+    *,
+    warnings_out: list[str] | None = None,
+) -> list:
+    """Typed counterpart of :func:`_load_suppressions` (W723 Phase B-b).
+
+    Returns the SARIF-visible subset of ``.roam/suppressions.json`` as
+    :class:`roam.policy.suppression_v2.FindingIdSuppression` instances —
+    i.e. ONLY entries that carry the SARIF projection fields
+    (``rule_id`` + ``location``). Hash-only entries are filtered out
+    because the SARIF apply step cannot bind them to (ruleId, location)
+    tuples without reversing the hash.
+
+    Mirrors the Phase A pattern shipped in
+    :func:`roam.commands.suppression.load_suppressions_typed` and the
+    Phase B-a pattern shipped in
+    :func:`roam.commands.smells_suppress.load_smells_suppressions_typed`.
+
+    The dict-shaped legacy view via :func:`_load_suppressions` stays the
+    canonical entry point used by :func:`_apply_suppressions`; this typed
+    surface is the bridge new code reaches for (W724 Phase C will
+    migrate the applier itself).
+
+    Legacy on-disk shapes (top-level list, ``{"suppressions": [...]}``
+    envelope) are NOT projected here — the dataclass discriminator is
+    ``finding_id``-keyed, and the legacy shapes pre-date that key. Use
+    :func:`_load_suppressions` if you need the legacy projection.
+
+    W1042 (Pattern 2 — silent fallback, mirror of W1017's
+    :func:`finding_suppress.load_per_finding_suppressions_typed`): when
+    *warnings_out* is supplied as a ``list[str]``, every silent-fallback
+    path (file unreadable / OSError, malformed JSON, non-dict root,
+    legacy non-finding-id shape) appends an actionable warning. Pre-W1042
+    callers that don't supply ``warnings_out`` retain byte-identical
+    silent-empty-list behaviour. The typed surface uses the SAME on-disk
+    parser (:func:`load_yaml_with_warnings`) as
+    :func:`_load_suppressions` so cross-loader warning shapes stay
+    consistent.
+    """
+    # Local import keeps the policy package out of the import chain for
+    # callers that only touch the legacy dict surface.
+    from roam.commands._yaml_loader import load_yaml_with_warnings
+    from roam.policy.suppression_v2 import FindingIdSuppression
+
+    candidate = Path.cwd() / ".roam" / "suppressions.json"
+    path_str = str(candidate)
+
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data = load_yaml_with_warnings(
+        candidate,
+        config_label="sarif-suppressions",
+        parse_error_label="JSON",  # .roam/suppressions.json is JSON-shaped
+        warnings_out=warnings_out,
+        allow_list_root=True,  # legacy list shape acknowledged via warning below
+    )
+    if data is None:
+        # Missing file — default state, no warning emitted by the helper.
+        return []
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper already explained the failure (read error / malformed
+        # JSON / wrong root type). Propagate the empty result without
+        # piling on a second warning.
+        return []
+
+    # Typed surface is canonical-only: dict-keyed by finding_id with
+    # rule_id + location embedded. Legacy list / envelope shapes don't
+    # have a finding_id discriminator so they cannot be projected onto
+    # FindingIdSuppression without invention.
+    if isinstance(data, list):
+        if warnings_out is not None and data:
+            warnings_out.append(
+                f"sarif-suppressions: {path_str!r}: legacy top-level "
+                f"list shape pre-dates the finding_id discriminator; "
+                f"typed surface cannot project these rows onto "
+                f"FindingIdSuppression. Migrate to the canonical "
+                f"{{finding_id_hex: {{...}}}} shape or use the legacy "
+                f"dict loader."
+            )
+        return []
+    if not isinstance(data, dict):
+        return []
+    if "suppressions" in data:
+        if warnings_out is not None:
+            warnings_out.append(
+                f"sarif-suppressions: {path_str!r}: legacy "
+                f"{{'suppressions': [...]}} envelope shape pre-dates "
+                f"the finding_id discriminator; typed surface cannot "
+                f"project these rows onto FindingIdSuppression. Migrate "
+                f"to the canonical {{finding_id_hex: {{...}}}} shape or "
+                f"use the legacy dict loader."
+            )
+        return []
+
+    if not (data and all(isinstance(v, dict) for v in data.values())):
+        if warnings_out is not None and data:
+            non_dict = sum(1 for v in data.values() if not isinstance(v, dict))
+            warnings_out.append(
+                f"sarif-suppressions: {path_str!r}: root mapping has "
+                f"{non_dict} non-dict entries; expected the canonical "
+                f"{{finding_id_hex: {{...}}}} shape. Skipping file."
+            )
+        return []
+
+    out: list[FindingIdSuppression] = []
+    for fid, entry in data.items():
+        rule_id = entry.get("rule_id") or entry.get("ruleId")
+        location = entry.get("location")
+        # Match the visibility contract of the legacy SARIF loader: an
+        # entry without rule_id + location is invisible to SARIF.
+        if not (rule_id and location):
+            continue
+        out.append(FindingIdSuppression.from_dict(str(fid), entry))
+    return out
 
 
 def _apply_suppressions(results: list[dict], suppressions: list[dict]) -> list[dict]:
@@ -272,7 +529,7 @@ def _apply_suppressions(results: list[dict], suppressions: list[dict]) -> list[d
             uri = phys["artifactLocation"]["uri"]
             line = phys.get("region", {}).get("startLine")
             loc_key = f"{uri}:{line}" if line else uri
-        except Exception:
+        except (KeyError, IndexError, TypeError):
             pass
         match = suppression_map.get((rule_id, loc_key))
         if match:
@@ -281,6 +538,57 @@ def _apply_suppressions(results: list[dict], suppressions: list[dict]) -> list[d
                     "kind": match.get("kind", "external"),
                     "status": match.get("status", "accepted"),
                     "justification": match.get("reason", ""),
+                }
+            ]
+    return results
+
+
+def _apply_suppressions_typed(results: list[dict], suppressions: list) -> list[dict]:
+    """Typed counterpart of :func:`_apply_suppressions` (W736 Phase C-1a).
+
+    Same matching semantics + same output bytes as the legacy dict
+    applier above. The only change is the *input* type: a list of
+    :class:`roam.policy.suppression_v2.FindingIdSuppression` dataclasses
+    rather than a list of raw dicts. The output bytes are bit-identical
+    to the legacy path so the SARIF hash-stability mandate holds.
+
+    Defaults preserve the legacy behaviour:
+
+    * ``kind`` defaults to ``"external"`` (FindingIdSuppression does
+      not carry a ``kind`` field; the writer never sets one).
+    * ``status`` defaults to ``"accepted"`` when the dataclass coerced
+      the on-disk value to ``None`` (i.e. anything outside the closed
+      ``{safe, acknowledged, wont-fix}`` enumeration, including the
+      legacy unwritten case).
+    """
+    suppression_map: dict[tuple[str, str], "object"] = {}
+    for s in suppressions:
+        rule_id = s.rule_id or ""
+        loc = s.location or ""
+        if rule_id:
+            suppression_map[(rule_id, loc)] = s
+
+    if not suppression_map:
+        return results
+
+    for r in results:
+        rule_id = r.get("ruleId") or ""
+        # Pull the primary location's file:line
+        loc_key = ""
+        try:
+            phys = r["locations"][0]["physicalLocation"]
+            uri = phys["artifactLocation"]["uri"]
+            line = phys.get("region", {}).get("startLine")
+            loc_key = f"{uri}:{line}" if line else uri
+        except (KeyError, IndexError, TypeError):
+            pass
+        match = suppression_map.get((rule_id, loc_key))
+        if match is not None:
+            r["suppressions"] = [
+                {
+                    "kind": "external",
+                    "status": match.status or "accepted",
+                    "justification": match.reason or "",
                 }
             ]
     return results
@@ -917,21 +1225,35 @@ def taint_to_sarif(findings: list[dict]) -> dict:
         rule_id = f.get("rule_id", "taint/unknown")
         severity = f.get("severity", "warning")
         cwe = f.get("cwe") or ""
+        owasp = f.get("owasp_top10") or ""
         sanitized = bool(f.get("sanitizer_in_path"))
         # Sanitized findings are downgraded to note so they don't
         # break a CI gate that fails on warnings/errors.
         level = "note" if sanitized else _to_level(severity.upper())
 
+        # W453: build the per-finding tags list once and reuse it on
+        # both the rule (first time we see it) and the result. The SARIF
+        # spec stores tags under `properties.tags` as a list of strings;
+        # GitHub Code Scanning surfaces them in the UI and lets dashboard
+        # consumers filter by CWE / OWASP category.
+        tags = ["security", "taint"]
+        if cwe:
+            tags.append(cwe)
+        if owasp:
+            tags.append(owasp)
+
         if rule_id not in seen_rules:
             short = f"Taint: {rule_id}"
             if cwe:
                 short += f" ({cwe})"
-            seen_rules[rule_id] = {
+            rule_entry: dict = {
                 "id": rule_id,
                 "shortDescription": short,
                 "helpUri": _HELP_BASE + "taint",
                 "defaultLevel": _to_level(severity.upper()),
+                "properties": {"tags": list(tags)},
             }
+            seen_rules[rule_id] = rule_entry
 
         sink = f.get("sink") or {}
         sink_file = sink.get("file") or ""
@@ -966,6 +1288,12 @@ def taint_to_sarif(findings: list[dict]) -> dict:
             "level": level,
             "message": {"text": " ".join(msg_parts)},
             "locations": locations,
+            # W453: result.properties.tags[] — the SARIF idiom for free-form
+            # categorisation tags. GitHub Code Scanning + VSCode SARIF
+            # Viewer render these as filter chips. Always present
+            # ("security", "taint" at minimum); CWE / OWASP appended when
+            # the rule declares them.
+            "properties": {"tags": list(tags)},
         }
         if thread_locations:
             result["codeFlows"] = [{"threadFlows": [{"locations": thread_locations}]}]

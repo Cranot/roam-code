@@ -64,6 +64,7 @@ def _make_conn() -> sqlite3.Connection:
             qualified_name TEXT,
             kind TEXT NOT NULL,
             line_start INTEGER,
+            line_end INTEGER,
             visibility TEXT DEFAULT 'public',
             is_exported INTEGER DEFAULT 1,
             parent_id INTEGER
@@ -75,7 +76,11 @@ def _make_conn() -> sqlite3.Connection:
             kind TEXT NOT NULL,
             line INTEGER,
             bridge TEXT,
-            confidence REAL
+            confidence REAL,
+            -- A6 / W81: stamped by the Laravel post-resolver alongside
+            -- ``bridge`` so consumers can detect drift in the dispatch
+            -- inference regex set.
+            bridge_version TEXT
         );
         """
     )
@@ -89,11 +94,11 @@ def _add_file(conn, file_id, path, language="php"):
     )
 
 
-def _add_symbol(conn, sym_id, file_id, name, qualified_name, kind, line_start=1):
+def _add_symbol(conn, sym_id, file_id, name, qualified_name, kind, line_start=1, line_end=None):
     conn.execute(
-        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, line_start) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (sym_id, file_id, name, qualified_name, kind, line_start),
+        "INSERT INTO symbols (id, file_id, name, qualified_name, kind, line_start, line_end) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (sym_id, file_id, name, qualified_name, kind, line_start, line_end),
     )
 
 
@@ -636,8 +641,11 @@ class TestObserverRegistration:
 class TestJobDispatch:
     def test_bus_dispatch_new_recognized(self, tmp_path):
         """``Bus::dispatch(new SyncJob(...))`` -> ``SyncJob::handle`` is
-        reached via a ``laravel_job`` edge anchored on the dispatching
-        file's first symbol."""
+        reached via a ``laravel_job`` edge anchored on the containing
+        *method* (W774 — was the *class* under the prior ``MIN(id)``
+        attribution, which gave ``roam impact SyncJob::handle`` a
+        misleading caller-of-record).
+        """
         root = _setup_laravel_root(tmp_path)
         (root / "app").mkdir()
         (root / "app" / "Http").mkdir()
@@ -652,24 +660,40 @@ class TestJobDispatch:
         conn = _make_conn()
         _add_file(conn, 1, "app/Http/Controllers/OrderController.php")
         _add_file(conn, 2, "app/Jobs/SyncJob.php")
+        # Realistic line ranges: class wraps lines 2..6, method wraps 3..5.
+        # The Bus::dispatch call is on line 4 — inside store().
         _add_symbol(conn, 100, 1, "OrderController",
-                    "App\\Http\\Controllers\\OrderController", "class")
+                    "App\\Http\\Controllers\\OrderController", "class",
+                    line_start=2, line_end=6)
         _add_symbol(conn, 101, 1, "store",
-                    "App\\Http\\Controllers\\OrderController\\store", "method")
-        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class")
+                    "App\\Http\\Controllers\\OrderController\\store", "method",
+                    line_start=3, line_end=5)
+        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class",
+                    line_start=1, line_end=3)
         _add_symbol(conn, 201, 2, "handle",
-                    "App\\Jobs\\SyncJob\\handle", "method")
+                    "App\\Jobs\\SyncJob\\handle", "method",
+                    line_start=2, line_end=2)
 
         resolve_laravel_dispatch(conn, root)
         rows = conn.execute(
             "SELECT source_id, target_id FROM edges WHERE kind = 'laravel_job'"
         ).fetchall()
         edges = {(r["source_id"], r["target_id"]) for r in rows}
-        # Anchor is the dispatching file's first symbol (OrderController, id 100).
-        assert (100, 201) in edges
+        # W774: edge source is the *method* that called dispatch (store, 101),
+        # NOT the enclosing class (OrderController, 100). The class is also
+        # *not* present as a source — the prior MIN(id) bug would have it.
+        assert (101, 201) in edges, (
+            "Expected dispatch attribution to the containing method (W774). "
+            "If this asserts (100, 201), the MIN(id) anti-pattern has regressed."
+        )
+        assert (100, 201) not in edges
 
     def test_static_dispatch_recognized(self, tmp_path):
-        """``SyncJob::dispatch(...)`` -> ``SyncJob::handle`` reached."""
+        """``SyncJob::dispatch(...)`` -> ``SyncJob::handle`` reached.
+
+        W774: the edge source is the *method* (``schedule``) that
+        contained the dispatch call, not the enclosing ``Kernel`` class.
+        """
         root = _setup_laravel_root(tmp_path)
         (root / "app").mkdir()
         (root / "app" / "Console").mkdir()
@@ -683,19 +707,25 @@ class TestJobDispatch:
         conn = _make_conn()
         _add_file(conn, 1, "app/Console/Kernel.php")
         _add_file(conn, 2, "app/Jobs/SyncJob.php")
-        _add_symbol(conn, 100, 1, "Kernel", "App\\Console\\Kernel", "class")
+        _add_symbol(conn, 100, 1, "Kernel", "App\\Console\\Kernel", "class",
+                    line_start=2, line_end=6)
         _add_symbol(conn, 101, 1, "schedule",
-                    "App\\Console\\Kernel\\schedule", "method")
-        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class")
+                    "App\\Console\\Kernel\\schedule", "method",
+                    line_start=3, line_end=5)
+        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class",
+                    line_start=1, line_end=3)
         _add_symbol(conn, 201, 2, "handle",
-                    "App\\Jobs\\SyncJob\\handle", "method")
+                    "App\\Jobs\\SyncJob\\handle", "method",
+                    line_start=2, line_end=2)
 
         resolve_laravel_dispatch(conn, root)
         rows = conn.execute(
-            "SELECT target_id FROM edges WHERE kind = 'laravel_job'"
+            "SELECT source_id, target_id FROM edges WHERE kind = 'laravel_job'"
         ).fetchall()
-        targets = {r["target_id"] for r in rows}
-        assert 201 in targets
+        edges = {(r["source_id"], r["target_id"]) for r in rows}
+        # W774: containing method, not containing class.
+        assert (101, 201) in edges
+        assert (100, 201) not in edges
 
 
 class TestQueueHandler:
@@ -1037,3 +1067,169 @@ class TestSyntheticFileAnchorProvenance:
             "SELECT source_id FROM edges WHERE kind = 'laravel_route' AND target_id = 101"
         ).fetchone()
         assert row["source_id"] == 50
+
+
+# ---------------------------------------------------------------------------
+# W774 — containing-symbol attribution (replaces MIN(id) anti-pattern)
+# ---------------------------------------------------------------------------
+
+
+class TestW774ContainingSymbolAttribution:
+    """W749/W774 — every synthesised laravel edge attributes to the
+    smallest *containing* symbol for the dispatch line, not whichever
+    symbol owns the lowest id in the file. The prior ``MIN(id)`` pick
+    silently credited the controller class for every dispatch its
+    methods made, polluting ``roam impact``'s caller list with one
+    spurious class entry per dispatching file.
+    """
+
+    def test_job_dispatch_picks_innermost_method_not_outer_class(self, tmp_path):
+        """Two methods in the same controller, each dispatching a
+        different job. Each edge must attribute to its own method —
+        the controller class itself must not appear as a source for
+        any of the four resulting laravel_job edges."""
+        root = _setup_laravel_root(tmp_path)
+        (root / "app").mkdir()
+        (root / "app" / "Http").mkdir()
+        (root / "app" / "Http" / "Controllers").mkdir()
+        # Two methods each dispatching one job.
+        (root / "app" / "Http" / "Controllers" / "OrderController.php").write_text(
+            "<?php\n"                          # 1
+            "class OrderController {\n"        # 2
+            "  public function store() {\n"    # 3
+            "    Bus::dispatch(new SyncJob);\n"# 4
+            "  }\n"                            # 5
+            "  public function ship() {\n"     # 6
+            "    Bus::dispatch(new ShipJob);\n"# 7
+            "  }\n"                            # 8
+            "}\n"                              # 9
+        )
+
+        conn = _make_conn()
+        _add_file(conn, 1, "app/Http/Controllers/OrderController.php")
+        _add_file(conn, 2, "app/Jobs/SyncJob.php")
+        _add_file(conn, 3, "app/Jobs/ShipJob.php")
+        _add_symbol(conn, 100, 1, "OrderController",
+                    "App\\Http\\Controllers\\OrderController", "class",
+                    line_start=2, line_end=9)
+        _add_symbol(conn, 101, 1, "store",
+                    "App\\Http\\Controllers\\OrderController\\store", "method",
+                    line_start=3, line_end=5)
+        _add_symbol(conn, 102, 1, "ship",
+                    "App\\Http\\Controllers\\OrderController\\ship", "method",
+                    line_start=6, line_end=8)
+        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class",
+                    line_start=1, line_end=3)
+        _add_symbol(conn, 201, 2, "handle",
+                    "App\\Jobs\\SyncJob\\handle", "method",
+                    line_start=2, line_end=2)
+        _add_symbol(conn, 300, 3, "ShipJob", "App\\Jobs\\ShipJob", "class",
+                    line_start=1, line_end=3)
+        _add_symbol(conn, 301, 3, "handle",
+                    "App\\Jobs\\ShipJob\\handle", "method",
+                    line_start=2, line_end=2)
+
+        resolve_laravel_dispatch(conn, root)
+        edges = {
+            (r["source_id"], r["target_id"])
+            for r in conn.execute(
+                "SELECT source_id, target_id FROM edges WHERE kind = 'laravel_job'"
+            ).fetchall()
+        }
+        # Each dispatch attributes to its own containing method.
+        assert (101, 201) in edges
+        assert (102, 301) in edges
+        # The class is NEVER credited (would be the MIN(id) bug).
+        assert all(src != 100 for src, _ in edges), (
+            f"W774 regression: OrderController class attributed as caller. "
+            f"Edges: {edges}"
+        )
+
+    def test_route_inside_method_attributes_to_method(self, tmp_path):
+        """An inline ``Route::get(...)`` inside a service-provider's
+        ``boot()`` method must attribute to ``boot`` — not to the
+        provider *class* (the MIN(id) caller for that file)."""
+        root = _setup_laravel_root(tmp_path)
+        (root / "app").mkdir()
+        (root / "app" / "Providers").mkdir()
+        (root / "app" / "Providers" / "RouteServiceProvider.php").write_text(
+            "<?php\n"                                                 # 1
+            "class RouteServiceProvider {\n"                          # 2
+            "  public function boot() {\n"                            # 3
+            "    Route::get('/foo', [FooController::class, 'index']);\n"  # 4
+            "  }\n"                                                   # 5
+            "}\n"                                                     # 6
+        )
+
+        conn = _make_conn()
+        _add_file(conn, 1, "app/Providers/RouteServiceProvider.php")
+        _add_file(conn, 2, "app/Http/Controllers/FooController.php")
+        _add_symbol(conn, 50, 1, "RouteServiceProvider",
+                    "App\\Providers\\RouteServiceProvider", "class",
+                    line_start=2, line_end=6)
+        _add_symbol(conn, 51, 1, "boot",
+                    "App\\Providers\\RouteServiceProvider\\boot", "method",
+                    line_start=3, line_end=5)
+        _add_symbol(conn, 100, 2, "FooController",
+                    "App\\Http\\Controllers\\FooController", "class",
+                    line_start=1, line_end=5)
+        _add_symbol(conn, 101, 2, "index",
+                    "App\\Http\\Controllers\\FooController\\index", "method",
+                    line_start=2, line_end=4)
+
+        resolve_laravel_dispatch(conn, root)
+        row = conn.execute(
+            "SELECT source_id FROM edges WHERE kind = 'laravel_route' AND target_id = 101"
+        ).fetchone()
+        assert row is not None
+        # boot() (51) — not RouteServiceProvider class (50).
+        assert row["source_id"] == 51
+
+    def test_no_containing_symbol_falls_through_to_synthetic_anchor(self, tmp_path):
+        """When the dispatch line lies *outside* every symbol's range
+        (top-level statement in a file whose only declared symbols are
+        function/class bodies elsewhere), the resolver must NOT silently
+        attribute to the lowest-id symbol — it must synthesise a file
+        anchor instead (W774 + Pattern 2 silent-fallback discipline)."""
+        root = _setup_laravel_root(tmp_path)
+        (root / "routes").mkdir()
+        (root / "routes" / "web.php").write_text(
+            "<?php\n"                                                 # 1
+            "function helper() { return 1; }\n"                       # 2
+            "Route::get('/foo', [FooController::class, 'index']);\n"  # 3
+        )
+        (root / "app").mkdir()
+        (root / "app" / "Http").mkdir()
+        (root / "app" / "Http" / "Controllers").mkdir()
+        (root / "app" / "Http" / "Controllers" / "FooController.php").write_text(
+            "<?php\nclass FooController { public function index() {} }\n"
+        )
+
+        conn = _make_conn()
+        _add_file(conn, 1, "routes/web.php")
+        _add_file(conn, 2, "app/Http/Controllers/FooController.php")
+        # helper() lives only on line 2 — does NOT contain line 3 where Route::get is.
+        _add_symbol(conn, 50, 1, "helper", "helper", "function",
+                    line_start=2, line_end=2)
+        _add_symbol(conn, 100, 2, "FooController",
+                    "App\\Http\\Controllers\\FooController", "class",
+                    line_start=2, line_end=2)
+        _add_symbol(conn, 101, 2, "index",
+                    "App\\Http\\Controllers\\FooController\\index", "method",
+                    line_start=2, line_end=2)
+
+        resolve_laravel_dispatch(conn, root)
+        row = conn.execute(
+            """
+            SELECT s.name AS source_name, s.file_id AS source_file_id
+            FROM edges e
+            JOIN symbols s ON e.source_id = s.id
+            WHERE e.kind = 'laravel_route' AND e.target_id = 101
+            """
+        ).fetchone()
+        assert row is not None
+        # The Route::get line (3) is outside helper()'s range (2..2).
+        # Resolver must synthesise a file anchor — never fall through to
+        # the lowest-id symbol (50 = helper).
+        assert row["source_name"] == SYNTHETIC_FILE_ANCHOR_NAME
+        assert row["source_file_id"] == 1

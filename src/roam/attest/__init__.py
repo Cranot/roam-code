@@ -5,20 +5,15 @@ Baseline conformance: every PR ships a signed in-toto attestation
 that any CI / supply-chain scanner / AI agent can verify in 50 ms
 without re-indexing.
 
-This v12.0 scaffold ships:
+Currently ships:
 
 * :mod:`attest.cga` — build the in-toto v1 Statement + the
   ``https://roam-code.com/spec/CodeGraph/v1`` predicate body. Merkle root
   over symbol fingerprints, edge bundle digest, language summary.
-* :mod:`commands.cmd_cga` — CLI to emit and verify unsigned
-  attestations.
-
-v12.1 ships:
-
-* Cosign keyless signing (Fulcio + Rekor)
-* Embedded CycloneDX 1.7 + OpenVEX predicates
-* Reachability claims integrated with ``roam taint`` output
-* GitHub Artifact Attestations upload action
+* :mod:`commands.cmd_cga` — CLI to emit and verify attestations,
+  with optional Cosign keyless signing (Fulcio + Rekor).
+* CycloneDX 1.7 + OpenVEX predicate embedding.
+* Reachability claims integrated with ``roam taint`` output.
 """
 
 from __future__ import annotations

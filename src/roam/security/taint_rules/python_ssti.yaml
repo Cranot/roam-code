@@ -1,0 +1,33 @@
+id: python-ssti
+description: User-controlled input flowing into a server-side template render call (Jinja2 / Flask / Django / Mako). Maps to CWE-94 / OWASP A03:2021 Injection. 7 KEV entries since 2023 cite SSTI as primary exploit vector.
+severity: error
+cwe: CWE-94
+owasp_top10: A03:2021_Injection
+languages:
+  - python
+sources:
+  - request.args
+  - request.form
+  - request.GET
+  - request.POST
+  - request.json
+  - request.values
+  - request.data
+  - request.body
+  - request.cookies
+sinks:
+  - render_template_string
+  - flask.render_template_string
+  - jinja2.Template
+  - jinja2.Environment.from_string
+  - Template.render
+  - Environment.from_string
+  - django.template.Template
+  - mako.template.Template
+  - Mako.Template
+sanitizers:
+  - markupsafe.escape
+  - flask.escape
+  - bleach.clean
+  - html.escape
+  - markupsafe.Markup

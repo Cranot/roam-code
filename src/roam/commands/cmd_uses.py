@@ -10,6 +10,7 @@ from roam.commands.resolve import ensure_index, symbol_not_found_hint
 from roam.db.connection import find_project_root, open_db
 from roam.languages import JS_FAMILY_LANGUAGES
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 
 def _test_text_consumers(conn, name: str, existing_files: set[str]) -> list[dict]:
@@ -194,7 +195,7 @@ def uses(ctx, name, full):
                                 "test_consumers": 0,
                                 "tested": False,
                                 "total_files": 0,
-                                "caller_metric_definition": "raw_edge_rows",
+                                "caller_metric_definition": CALLER_METRIC_RAW,
                             },
                             symbol=name,
                             consumers={},
@@ -269,7 +270,7 @@ def uses(ctx, name, full):
                             "test_consumers": len(test_rows),
                             "tested": bool(test_rows),
                             "total_files": len(files),
-                            "caller_metric_definition": "raw_edge_rows",
+                            "caller_metric_definition": CALLER_METRIC_RAW,
                         },
                         budget=token_budget,
                         symbol=name,

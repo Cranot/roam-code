@@ -409,3 +409,224 @@ def test_plugin_detector_findings_reach_catalog_runner(monkeypatch, tmp_path):
     assert findings
     assert findings[0]["task_id"] == "substrate-task"
     assert findings[0]["reason"] == "substrate finding fired"
+
+
+# ---------------------------------------------------------------------------
+# 9. register_framework_detector typed contract (W56)
+# ---------------------------------------------------------------------------
+
+
+def test_register_framework_detector_annotates_path_argument():
+    """The detector contract is Callable[[Path], str | None] — pinned.
+
+    Third-party plugins that call ``detect_fn(project_root)`` with a
+    ``str`` instead of a ``pathlib.Path`` will raise ``TypeError`` the
+    moment the detector does ``project_root / "Gemfile"``. The annotation
+    on :meth:`RoamPluginContext.register_framework_detector` is the
+    contract that lets IDEs and type-checkers warn the caller.
+
+    This test exists to lock the annotation in place so it cannot
+    silently regress to ``Callable`` (untyped) or ``Any``. See W56.
+    """
+    import inspect
+
+    from roam.plugins.registry import RoamPluginContext
+
+    sig = inspect.signature(RoamPluginContext.register_framework_detector)
+    detect_fn = sig.parameters.get("detect_fn")
+    assert detect_fn is not None, "register_framework_detector must accept detect_fn"
+    annotation = str(detect_fn.annotation)
+    # Annotations are evaluated under PEP 563 (from __future__ import
+    # annotations) so they reach inspect as their source string.
+    assert "Path" in annotation and "str | None" in annotation, (
+        f"detect_fn must annotate Callable[[Path], str | None]; got {annotation!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 10. FrameworkProfile registration (W123 / Wave28.3)
+# ---------------------------------------------------------------------------
+
+
+def _make_profile(name: str = "demo-fw", **overrides):
+    """Build a FrameworkProfile with sensible defaults for tests."""
+    from roam.plugins import FrameworkProfile
+
+    def detect(root):  # pragma: no cover — exercised in dedicated tests
+        return name if (root / "DEMO").exists() else None
+
+    kwargs = {
+        "name": name,
+        "detect_fn": detect,
+        "file_patterns": ("demo.config.js", "demo/**"),
+        "recommended_commands": ("describe", "health"),
+        "conventions": {"controller": "demo/controllers/*"},
+    }
+    kwargs.update(overrides)
+    return FrameworkProfile(**kwargs)
+
+
+def test_register_framework_profile_stores_profile(monkeypatch):
+    """A registered FrameworkProfile is retrievable by name."""
+    from roam.plugins import (
+        RoamPluginContext,
+        get_framework_profile,
+        get_framework_profiles,
+        get_plugin_framework_profiles,
+    )
+
+    ctx = RoamPluginContext()
+    profile = _make_profile("demo-fw")
+    ctx.register_framework_profile(profile)
+
+    fetched = get_framework_profile("demo-fw")
+    assert fetched is profile
+    assert fetched.file_patterns == ("demo.config.js", "demo/**")
+    assert fetched.recommended_commands == ("describe", "health")
+    assert fetched.conventions == {"controller": "demo/controllers/*"}
+
+    all_profiles = get_framework_profiles()
+    assert "demo-fw" in all_profiles
+    assert all_profiles["demo-fw"] is profile
+
+    # The discovery-aware getter sees the same record.
+    plugins_profiles = get_plugin_framework_profiles()
+    assert "demo-fw" in plugins_profiles
+
+
+def test_register_framework_profile_also_registers_detector(tmp_path):
+    """The profile's detect_fn is wired into the legacy detector registry."""
+    from roam.plugins import RoamPluginContext, get_plugin_framework_detectors
+
+    ctx = RoamPluginContext()
+    profile = _make_profile("downstream-fw")
+    ctx.register_framework_profile(profile)
+
+    detectors = get_plugin_framework_detectors()
+    assert len(detectors) == 1, (
+        "register_framework_profile must wire profile.detect_fn into the "
+        "detector registry so autodetect_framework_profile sees it"
+    )
+
+    # And the wired detector behaves like the profile's detect_fn.
+    sentinel_dir = tmp_path / "with_signal"
+    sentinel_dir.mkdir()
+    (sentinel_dir / "DEMO").write_text("x", encoding="utf-8")
+    assert detectors[0](sentinel_dir) == "downstream-fw"
+
+    miss_dir = tmp_path / "no_signal"
+    miss_dir.mkdir()
+    assert detectors[0](miss_dir) is None
+
+
+def test_get_framework_profile_returns_none_for_unknown():
+    """Querying an unregistered framework name returns None, not KeyError."""
+    from roam.plugins import get_framework_profile
+
+    assert get_framework_profile("never-registered") is None
+    assert get_framework_profile("") is None
+
+
+def test_framework_profile_is_frozen():
+    """FrameworkProfile is frozen — assignment after construction raises."""
+    import dataclasses
+
+    profile = _make_profile()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        profile.name = "renamed"  # type: ignore[misc]
+
+
+def test_register_framework_detector_still_works_without_profile(tmp_path):
+    """Legacy register_framework_detector path is unchanged by W123."""
+    from roam.plugins import (
+        RoamPluginContext,
+        get_framework_profile,
+        get_plugin_framework_detectors,
+    )
+
+    def detect(root):
+        return "legacy-fw" if (root / "LEGACY").exists() else None
+
+    ctx = RoamPluginContext()
+    ctx.register_framework_detector(detect)
+
+    detectors = get_plugin_framework_detectors()
+    assert len(detectors) == 1
+    sentinel = tmp_path / "legacy"
+    sentinel.mkdir()
+    (sentinel / "LEGACY").write_text("x", encoding="utf-8")
+    assert detectors[0](sentinel) == "legacy-fw"
+
+    # The legacy path leaves no profile record — get_framework_profile is None.
+    assert get_framework_profile("legacy-fw") is None
+
+
+def test_register_framework_profile_rejects_duplicate_name():
+    """Two profiles with the same name raise — matches command-registration semantics."""
+    from roam.plugins import RoamPluginContext
+
+    ctx = RoamPluginContext()
+    ctx.register_framework_profile(_make_profile("dup-fw"))
+    with pytest.raises(ValueError, match="duplicate framework profile"):
+        ctx.register_framework_profile(_make_profile("dup-fw"))
+
+
+def test_register_framework_profile_rejects_non_profile():
+    """Passing a non-FrameworkProfile (e.g. a bare callable) raises TypeError."""
+    from roam.plugins import RoamPluginContext
+
+    ctx = RoamPluginContext()
+    with pytest.raises(TypeError, match="FrameworkProfile"):
+        ctx.register_framework_profile(lambda root: None)  # type: ignore[arg-type]
+
+
+def test_register_framework_profile_rejects_empty_name():
+    """An empty FrameworkProfile.name raises ValueError."""
+    from roam.plugins import RoamPluginContext
+
+    ctx = RoamPluginContext()
+    with pytest.raises(ValueError, match="non-empty"):
+        ctx.register_framework_profile(_make_profile(name=""))
+
+
+def test_register_framework_profile_records_capability(monkeypatch, tmp_path):
+    """A profile registration tags the plugin with the 'framework_profile' capability."""
+    module_name = _write_plugin(
+        tmp_path,
+        "roam_substrate_profile_plugin",
+        "from pathlib import Path\n"
+        "\n"
+        "def detect_fw(root):\n"
+        "    return 'profile-fw' if (root / 'PROFILE').exists() else None\n"
+        "\n"
+        "def register(ctx):\n"
+        "    from roam.plugins import FrameworkProfile\n"
+        "    ctx.declare(name='profile-demo', version='0.0.1', description='demo')\n"
+        "    ctx.register_framework_profile(FrameworkProfile(\n"
+        "        name='profile-fw',\n"
+        "        detect_fn=detect_fw,\n"
+        "        file_patterns=('profile.config',),\n"
+        "        recommended_commands=('describe',),\n"
+        "        conventions={'view': 'profile/views/*'},\n"
+        "    ))\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv("ROAM_PLUGIN_MODULES", module_name)
+
+    _reset_plugin_runtime()
+    from roam.plugins import get_framework_profile, get_plugins
+
+    plugins = get_plugins()
+    demo = next((p for p in plugins if p.name == "profile-demo"), None)
+    assert demo is not None
+    assert "framework_profile" in demo.capabilities
+    # And the detector capability is recorded too — the profile path
+    # also calls register_framework_detector under the hood.
+    assert "framework_detection" in demo.capabilities
+
+    # Profile retrieval through the discovery-aware getter works.
+    fetched = get_framework_profile("profile-fw")
+    assert fetched is not None
+    assert fetched.file_patterns == ("profile.config",)
+    assert fetched.recommended_commands == ("describe",)
+    assert fetched.conventions == {"view": "profile/views/*"}

@@ -1,16 +1,25 @@
 """Lockstep discipline for schema.py and USER_VERSION.
 
-This test snapshots a hash of ``src/roam/db/schema.py``. If the hash
-drifts (i.e. the schema file has been edited), the test requires
-``USER_VERSION`` in ``connection.py`` to also have drifted from the
-snapshotted value below. The two MUST move together: editing the
-schema without bumping the contract version is a silent corruption
-hazard for downstream consumers (manifest writer, bundle import,
-``roam doctor`` drift checks).
+Schema-hash discipline. Hashes both ``src/roam/db/schema.py`` AND the
+FTS5 virtual-table column definition (which lives in connection.py as
+``_FTS5_SCHEMA_COLUMNS``).
+
+Widened in W97 after W94 found that FTS5 changes silently slip through
+the schema.py-only hash. Now any change to either surface forces a
+coordinated USER_VERSION bump or this test fails.
+
+If the combined hash drifts (i.e. either the schema file or the FTS5
+column tuple has been edited), the test requires ``USER_VERSION`` in
+``connection.py`` to also have drifted from the snapshotted value
+below. The two MUST move together: editing the schema without bumping
+the contract version is a silent corruption hazard for downstream
+consumers (manifest writer, bundle import, ``roam doctor`` drift
+checks).
 
 Workflow when this test fails:
 
-1. Edit ``src/roam/db/schema.py`` (e.g. add a column).
+1. Edit ``src/roam/db/schema.py`` (e.g. add a column) and/or
+   ``_FTS5_SCHEMA_COLUMNS`` in ``src/roam/db/connection.py``.
 2. Edit ``src/roam/db/connection.py`` and bump ``USER_VERSION``.
 3. Recompute the schema hash and update ``_SNAPSHOT_SCHEMA_HASH``
    and ``_SNAPSHOT_USER_VERSION`` below. Both updates land in the
@@ -25,20 +34,38 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from roam.db.connection import USER_VERSION
+from roam.db.connection import USER_VERSION, _FTS5_SCHEMA_COLUMNS
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCHEMA_PATH = _REPO_ROOT / "src" / "roam" / "db" / "schema.py"
 
 # Snapshot captured at commit time. Update both values together when
-# schema.py legitimately changes. See module docstring for workflow.
-_SNAPSHOT_SCHEMA_HASH = "df3d5462893ad729"
-_SNAPSHOT_USER_VERSION = 13
+# schema.py or _FTS5_SCHEMA_COLUMNS legitimately changes. See module
+# docstring for workflow.
+_SNAPSHOT_SCHEMA_HASH = "1911eb4e9a5e0b19"
+_SNAPSHOT_USER_VERSION = 17
 
 
 def _current_schema_hash() -> str:
-    return hashlib.sha256(_SCHEMA_PATH.read_bytes()).hexdigest()[:16]
+    """Compute the combined schema hash.
+
+    Inputs:
+
+    * Full contents of ``src/roam/db/schema.py``
+    * The FTS5 virtual-table column tuple (``_FTS5_SCHEMA_COLUMNS``),
+      which lives in ``connection.py`` as a separate module constant
+      but is part of the on-disk schema contract.
+
+    The FTS5 tuple is serialised as ``FTS5:col1,col2,...`` and
+    appended (after a newline) to the schema-file bytes before
+    hashing. The ``FTS5:`` prefix anchors the contribution so a
+    trailing comment in schema.py can't accidentally mimic it.
+    """
+    schema_bytes = _SCHEMA_PATH.read_bytes()
+    fts5_signature = "FTS5:" + ",".join(_FTS5_SCHEMA_COLUMNS)
+    combined = schema_bytes + b"\n" + fts5_signature.encode("utf-8")
+    return hashlib.sha256(combined).hexdigest()[:16]
 
 
 def test_schema_file_exists():
@@ -50,15 +77,17 @@ def test_schema_file_exists():
 
 
 def test_user_version_bumps_when_schema_changes():
-    """If schema.py drifts from the snapshot, USER_VERSION must drift too.
+    """If the schema surface drifts from the snapshot, USER_VERSION must drift too.
 
     This is the lockstep discipline. Either:
 
-    * schema.py is unchanged → USER_VERSION may stay at the snapshot;
-    * schema.py changed → USER_VERSION MUST differ from the snapshot.
+    * schema.py AND _FTS5_SCHEMA_COLUMNS are unchanged from snapshot
+      → USER_VERSION may stay at the snapshot;
+    * either surface changed → USER_VERSION MUST differ from the snapshot.
 
     A snapshot mismatch with a still-snapshot USER_VERSION is the
-    failure mode: someone edited schema.py and forgot the version bump.
+    failure mode: someone edited the schema (schema.py or the FTS5
+    column tuple) and forgot the version bump.
     """
     current_hash = _current_schema_hash()
     if current_hash == _SNAPSHOT_SCHEMA_HASH:
@@ -66,8 +95,10 @@ def test_user_version_bumps_when_schema_changes():
         return
 
     assert USER_VERSION != _SNAPSHOT_USER_VERSION, (
-        f"schema.py hash changed ({_SNAPSHOT_SCHEMA_HASH} -> {current_hash}) "
-        f"but USER_VERSION is still {USER_VERSION}. Bump USER_VERSION in "
-        f"src/roam/db/connection.py and update the snapshot values "
-        f"(_SNAPSHOT_SCHEMA_HASH, _SNAPSHOT_USER_VERSION) in this test."
+        f"schema hash changed ({_SNAPSHOT_SCHEMA_HASH} -> {current_hash}) "
+        f"but USER_VERSION is still {USER_VERSION}. The hash covers both "
+        f"src/roam/db/schema.py and _FTS5_SCHEMA_COLUMNS in connection.py. "
+        f"Bump USER_VERSION in src/roam/db/connection.py and update the "
+        f"snapshot values (_SNAPSHOT_SCHEMA_HASH, _SNAPSHOT_USER_VERSION) "
+        f"in this test."
     )

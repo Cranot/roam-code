@@ -106,6 +106,7 @@ _KNOWN_LOCAL_STATE_COMMANDS: set[str] = {
     "replay",         # re-narrate a past run from the ledger
     "pr-replay",      # generate buyer-facing replay report
     "suppress",       # record audit-trail-friendly suppression
+    "triage",         # triage manages .roam-suppressions.yml -- local-state mutator like suppress
     "permit",         # structural-permission verdict facade
     "intent-check",   # pre-flight on intended command (uses on-disk mode)
     "ws",             # workspace state (multi-repo grouping)
@@ -119,11 +120,21 @@ _KNOWN_DAEMON_COMMANDS: set[str] = {
 # 4) REPL / interactive helpers — N/A in MCP context.
 _KNOWN_REPL_HELPERS: set[str] = set()  # currently empty; reserved.
 
+# 5) Deprecated aliases — the canonical command IS wrapped; the deprecated
+#    alias would only add a duplicate MCP surface emitting the same payload
+#    plus a deprecation warning. The CLI keeps the alias working for legacy
+#    callers; MCP callers should learn the canonical tool name from the
+#    replacement command's wrapper (e.g. ``roam_algo`` for ``math``).
+_KNOWN_DEPRECATED_ALIAS_COMMANDS: set[str] = {
+    "math",  # deprecated alias of `algo` (W306) — wrap `roam_algo` instead.
+}
+
 _ALL_SKIPPED = (
     _KNOWN_SETUP_COMMANDS
     | _KNOWN_LOCAL_STATE_COMMANDS
     | _KNOWN_DAEMON_COMMANDS
     | _KNOWN_REPL_HELPERS
+    | _KNOWN_DEPRECATED_ALIAS_COMMANDS
 )
 
 
@@ -157,6 +168,23 @@ _KNOWN_TOOL_ALIASES: dict[str, set[str]] = {
     "file":            {"roam_file_info"},
     "review":          {"roam_review_change"},
     "annotate-symbol": {"roam_annotate_symbol"},
+    # W299: ``findings`` is a click group; per-subcommand wrappers match
+    # the audit-trail-* precedent (roam_audit_trail_verify /
+    # roam_audit_trail_export are separate wrappers, not collapsed).
+    "findings":        {"roam_findings_list", "roam_findings_show", "roam_findings_count"},
+    # W305: ``oracle`` is a click group with 5 boolean-oracle subcommands.
+    # The advisory audit recognizes the group as wrapped when ANY of the
+    # per-subcommand wrappers is registered (same precedent as findings).
+    # ``oracle batch`` is intentionally NOT wrapped (takes a JSONL file
+    # path the agent would have to prepare on disk); the 5 boolean
+    # subcommands below are the MCP-idiomatic surface.
+    "oracle":          {
+        "roam_oracle_symbol_exists",
+        "roam_oracle_route_exists",
+        "roam_oracle_is_test_only",
+        "roam_oracle_is_reachable_from_entry",
+        "roam_oracle_is_clone_of",
+    },
 }
 
 # A small set of suffixes that show up repeatedly in MCP tool names but
@@ -207,6 +235,7 @@ def test_allowlists_reference_real_commands() -> None:
         ("_KNOWN_LOCAL_STATE_COMMANDS", _KNOWN_LOCAL_STATE_COMMANDS),
         ("_KNOWN_DAEMON_COMMANDS", _KNOWN_DAEMON_COMMANDS),
         ("_KNOWN_REPL_HELPERS", _KNOWN_REPL_HELPERS),
+        ("_KNOWN_DEPRECATED_ALIAS_COMMANDS", _KNOWN_DEPRECATED_ALIAS_COMMANDS),
     ):
         stale = allowlist - real_cmds
         assert not stale, (
@@ -220,8 +249,9 @@ def test_mcp_wrapper_coverage_advisory() -> None:
     """Advisory audit: surface CLI commands missing an MCP wrapper.
 
     A "real gap" is any unwrapped command that does NOT appear in one of
-    the four skip-taxonomy allowlists (setup/bootstrap, local-state,
-    daemon, REPL helper). When ``XFAIL_ON_GAP`` is ``True`` (default),
+    the five skip-taxonomy allowlists (setup/bootstrap, local-state,
+    daemon, REPL helper, deprecated-alias). When ``XFAIL_ON_GAP`` is
+    ``True`` (default),
     a non-empty gap raises ``pytest.xfail`` with the offending list so
     CI surfaces drift without blocking unrelated PRs. Flip it to
     ``False`` once the gap is closed to convert this to a hard gate.
@@ -251,11 +281,52 @@ def test_mcp_wrapper_coverage_advisory() -> None:
         pytest.fail(message)
 
 
+def test_no_duplicate_mcp_tool_names() -> None:
+    """W432 guard: no two ``@_tool(name=...)`` decorations may share a name.
+
+    Two decorations with the same ``name`` kwarg silently overwrite
+    ``_TOOL_METADATA[name]`` (second wins) and queue two registrations
+    against the FastMCP server, which is undefined behaviour at dispatch
+    time. W347 caught one such pair (``roam_oracle_route_exists``); the
+    follow-up audit found four siblings (the W306 cluster duplicated the
+    full pre-W306 oracle quintet). This test pins the AST-level invariant
+    so any future double-decoration fails CI on the very first commit.
+    """
+    from collections import Counter
+
+    from roam.surface_counts import mcp_tool_decorations
+
+    decorations = mcp_tool_decorations()
+    counts = Counter(name for name, _fn, _ln in decorations)
+    duplicates = {name: count for name, count in counts.items() if count > 1}
+
+    if duplicates:
+        # Surface every offending decoration site so the failure message
+        # tells the dev exactly which functions to merge / rename / delete.
+        sites: dict[str, list[str]] = {}
+        for name, fn, ln in decorations:
+            if name in duplicates:
+                sites.setdefault(name, []).append(f"def {fn} at line {ln}")
+        rendered = "\n".join(
+            f"  {name!r} ({counts[name]}x): " + "; ".join(sites[name])
+            for name in sorted(duplicates)
+        )
+        raise AssertionError(
+            "Duplicate @_tool(name=...) registrations in "
+            "src/roam/mcp_server.py:\n"
+            + rendered
+            + "\n\nTwo decorations with the same name silently overwrite "
+            "_TOOL_METADATA and queue undefined-behaviour FastMCP "
+            "registrations. Pick one canonical wrapper and delete the "
+            "other, or rename one of the @_tool name kwargs."
+        )
+
+
 def test_skip_taxonomy_categories_are_disjoint() -> None:
     """A command must fit in at most one skip-taxonomy category.
 
     Overlapping allowlists make rationale ambiguous — if a command is
-    both "local-state" and "daemon", which is it? Force the four sets
+    both "local-state" and "daemon", which is it? Force the five sets
     to be mutually disjoint so each allowlist entry has one clear reason.
     """
     pairs = [
@@ -263,6 +334,7 @@ def test_skip_taxonomy_categories_are_disjoint() -> None:
         ("local-state", _KNOWN_LOCAL_STATE_COMMANDS),
         ("daemon", _KNOWN_DAEMON_COMMANDS),
         ("repl-helper", _KNOWN_REPL_HELPERS),
+        ("deprecated-alias", _KNOWN_DEPRECATED_ALIAS_COMMANDS),
     ]
     for i, (lbl_a, set_a) in enumerate(pairs):
         for lbl_b, set_b in pairs[i + 1:]:

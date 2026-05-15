@@ -1,0 +1,33 @@
+id: php-path-traversal
+description: Untrusted request input used as a filesystem path (file_get_contents, fopen, include/require, Storage::get/put) — allows ../ escape. Maps to CWE-22 / OWASP A01:2021 Broken Access Control.
+severity: error
+cwe: CWE-22
+owasp_top10: A01:2021_Broken_Access_Control
+languages:
+  - php
+sources:
+  - input
+  - all
+  - query
+  - post
+  - get
+  - file
+  - getClientOriginalName
+sinks:
+  - file_get_contents
+  - file_put_contents
+  - fopen
+  - readfile
+  - include
+  - include_once
+  - require
+  - require_once
+  - Storage.get
+  - Storage.put
+  - Storage.delete
+  - Storage.disk
+sanitizers:
+  - basename
+  - realpath
+  - pathinfo
+  - sanitizeFilename

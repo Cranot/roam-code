@@ -36,8 +36,10 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from tests._helpers.repo_root import repo_root
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+
+REPO_ROOT = repo_root()
 SRC_COMMANDS = REPO_ROOT / "src" / "roam" / "commands"
 
 # Ensure we import roam from the working tree (not a globally-installed copy

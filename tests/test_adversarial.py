@@ -526,12 +526,17 @@ class TestAdversarialInternalFunctions:
         assert ch["location"] == ""
 
     def test_severity_order_constants(self):
-        """_SEVERITY_ORDER maps severities to correct numeric values."""
-        from roam.commands.cmd_adversarial import _SEVERITY_ORDER
+        """severity_rank() preserves CRITICAL > HIGH > WARNING > INFO order.
 
-        assert _SEVERITY_ORDER["CRITICAL"] > _SEVERITY_ORDER["HIGH"]
-        assert _SEVERITY_ORDER["HIGH"] > _SEVERITY_ORDER["WARNING"]
-        assert _SEVERITY_ORDER["WARNING"] > _SEVERITY_ORDER["INFO"]
+        W564: the local ``_SEVERITY_ORDER`` table was consolidated into
+        :func:`roam.output._severity.severity_rank`. Order contract
+        stays the same (case-insensitive).
+        """
+        from roam.output._severity import severity_rank
+
+        assert severity_rank("CRITICAL") > severity_rank("HIGH")
+        assert severity_rank("HIGH") > severity_rank("WARNING")
+        assert severity_rank("WARNING") > severity_rank("INFO")
 
     def test_format_text_verdict_first(self):
         """_format_text() always starts with VERDICT:."""

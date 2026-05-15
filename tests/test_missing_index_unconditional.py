@@ -93,10 +93,8 @@ def _write_project(tmp_path, controller_php: str, name: str = "app") -> Path:
 
 @pytest.fixture
 def cli_runner():
-    try:
-        return CliRunner(mix_stderr=False)
-    except TypeError:
-        return CliRunner()
+    # Click 8.3+ removed mix_stderr; use result.stderr_bytes manually if needed
+    return CliRunner()
 
 
 def _run_missing_index(cli_runner, proj, monkeypatch) -> dict:

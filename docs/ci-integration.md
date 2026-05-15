@@ -1,9 +1,61 @@
 # CI Integration
 
-roam-code provides a composite GitHub Action for automated code analysis on
-every pull request. No Docker build, no API keys, sub-60s PR analysis.
+Two supported paths:
 
-## Quick Start
+1. **Plain pip** -- `pip install roam-code`, run any commands, upload SARIF
+   yourself. Works on every CI platform (GitHub Actions, GitLab CI, Jenkins,
+   Azure Pipelines, BitBucket, CircleCI, ...).
+2. **Composite GitHub Action** -- `uses: Cranot/roam-code@main`. Adds sticky
+   PR comments, guardrail-enforced SARIF upload, and quality gates with one
+   block.
+
+Pick the plain pip path if you want explicit control or are not on GitHub
+Actions; pick the composite action if you want the batteries-included PR
+experience. Both share the same underlying CLI and SARIF output.
+
+## Quickstart -- plain pip (any CI)
+
+Five lines of real work. Copy into `.github/workflows/roam.yml`:
+
+```yaml
+name: Roam scan
+on: [push, pull_request]
+permissions:
+  contents: read
+  security-events: write  # required for SARIF upload
+jobs:
+  roam:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install roam-code
+      - run: roam init
+      - run: roam --sarif health > roam-health.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: roam-health.sarif
+```
+
+Results appear in the PR's **Security** tab under **Code scanning alerts**.
+
+For non-GitHub platforms, roam ships ready-made templates -- run once at the
+repo root:
+
+```bash
+roam ci-setup --platform github     # writes .github/workflows/roam.yml
+roam ci-setup --platform gitlab     # writes .gitlab-ci.yml
+roam ci-setup --platform jenkins    # writes Jenkinsfile
+roam ci-setup --platform azure      # writes azure-pipelines.yml
+roam ci-setup --platform bitbucket  # writes bitbucket-pipelines.yml
+```
+
+Each template runs `roam init`, generates SARIF, applies a health-score gate,
+and archives JSON+SARIF artifacts -- adapt the variables at the top to taste.
+
+## Quickstart -- composite GitHub Action
 
 Copy this workflow into your repository at `.github/workflows/roam.yml`:
 
@@ -135,18 +187,59 @@ The PR comment will show the gate result as `PASSED` or `FAILED`.
 
 ## SARIF Integration
 
-When `sarif: 'true'`, the action:
+### Commands that emit SARIF
+
+Fourteen commands honour the global `--sarif` flag. The authoritative list
+lives at `src/roam/cli.py` -- `_SARIF_CONSUMERS` (drift-guarded by
+`tests/test_sarif_consumer_list.py`). To print the current list at any time:
+
+```bash
+roam --help 2>&1 | grep -A1 -- '--sarif'
+```
+
+The W26.1-audited set (alphabetical):
+
+```
+algo, audit-trail-conformance-check, check-rules, complexity, dead, health,
+py-modern, py-types, rules, secrets, stale-refs, supply-chain, taint, vulns
+```
+
+Any other command run with `--sarif` falls back to its native JSON envelope
+-- no error, just no SARIF.
+
+### Upload to GitHub Code Scanning
+
+Use the official `github/codeql-action/upload-sarif@v3` step:
+
+```yaml
+- run: roam --sarif health > roam-health.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: roam-health.sarif
+    category: roam-health          # optional; distinguishes multiple uploads
+```
+
+After upload, findings appear in the PR's **Security tab > Code scanning
+alerts**, get auto-deduplicated across pushes via SARIF's `partialFingerprints`,
+and can block merges when severity gates trip (configure via repo Security
+settings > Code scanning > Tool configuration).
+
+Requires `security-events: write` permission. Free for public repos and
+GitHub Advanced Security customers; on private repos without GHAS the upload
+step no-ops gracefully.
+
+### Composite-action SARIF mode
+
+When using the composite action with `sarif: 'true'` it performs the
+equivalent flow with extra guardrails:
+
 1. Generates SARIF per command from `sarif-commands` (or `auto` subset)
 2. Merges SARIF runs into one payload
 3. Applies upload guardrails (`sarif-max-runs`, `sarif-max-results`, `sarif-max-bytes`)
 4. Uploads via `github/codeql-action/upload-sarif` using resolved `sarif-category`
 5. Emits truncation warning metadata when guardrails drop findings
-6. Results appear in the **Security** tab under **Code scanning alerts**
 
-This requires the `security-events: write` permission and GitHub Advanced
-Security (free for public repositories).
-
-### Guardrail Notes
+#### Guardrail Notes
 
 - `sarif-max-runs` and `sarif-max-results` align with documented GitHub SARIF
   scale constraints.
@@ -155,9 +248,20 @@ Security (free for public repositories).
 - If truncation occurs, use `sarif-truncated` and `sarif-results` outputs to
   surface that in downstream CI steps.
 
-### SARIF rule categories
+### Best practices
 
-roam-code generates SARIF results for:
+- **One category per command.** Set `category: roam-<cmd>` on each upload so
+  GitHub doesn't merge unrelated findings into one alert stream.
+- **Upload incrementally.** Run SARIF-emitting commands in parallel jobs and
+  upload each result separately -- faster feedback, finer-grained gating.
+- **Pin the roam-code version** in CI (`pip install roam-code==<version>`) so
+  a release with new rules does not silently re-open a wave of alerts.
+- **Combine with `--json` gates.** SARIF is for humans browsing the Security
+  tab; use `roam --json health` + a `jq` check (or the composite action's
+  `gate:` input) to fail the build on hard thresholds.
+
+### Example: example findings shown by `roam --sarif health`
+
 - `health/cycle` -- Dependency cycles
 - `health/god-component` -- Components with excessive coupling
 - `health/bottleneck` -- High-betweenness bottleneck symbols
@@ -216,7 +320,7 @@ Any roam command can be passed via the `commands` input. Common choices:
 | `breaking` | Detect breaking API changes |
 | `conventions` | Naming convention violations |
 
-Run `roam --help` for all 233 commands.
+Run `roam --help` for all 238 commands.
 
 ## Exit Codes
 

@@ -629,6 +629,61 @@ class TestDetectors:
                 f"format_table is a rendering loop, should not flag nested-lookup: {hits}"
             )
 
+    def test_nested_lookup_cell_formatting_structural_discriminator(
+        self, project_factory, monkeypatch
+    ):
+        """Regression sentinel: the W36.4 ``loop_eq_with_dependent_write``
+        signal must independently exclude cell-formatting nested loops,
+        even when the function name is NOT in the bounded-nested skip list.
+
+        Pairs with ``test_nested_lookup_suppresses_format_table`` (name-based
+        skip). This test deliberately uses a non-suppressed name
+        (``compute_column_widths``) so the only thing standing between
+        the body and a finding is the structural discriminator: the body
+        has no equality comparison on per-iter loop variables, therefore
+        ``loop_eq_with_dependent_write = 0`` and ``detect_nested_lookup``
+        must return zero hits.
+        """
+        proj = project_factory(
+            {
+                "layout.py": (
+                    "def compute_column_widths(headers, rows):\n"
+                    "    widths = [len(h) for h in headers]\n"
+                    "    for row in rows:\n"
+                    "        for i in range(len(headers)):\n"
+                    "            if row[i] is not None:\n"
+                    "                cell = str(row[i])\n"
+                    "                if len(cell) > widths[i]:\n"
+                    "                    widths[i] = len(cell)\n"
+                    "    return widths\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_nested_lookup
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            # Sanity-check the underlying signal: no per-iter equality
+            # check means no dependent-write fingerprint.
+            sig_row = conn.execute(
+                "SELECT ms.loop_eq_with_dependent_write "
+                "FROM math_signals ms "
+                "JOIN symbols s ON s.id = ms.symbol_id "
+                "WHERE s.name = 'compute_column_widths'"
+            ).fetchone()
+            assert sig_row is not None, "math_signals row missing for symbol"
+            assert sig_row["loop_eq_with_dependent_write"] == 0, (
+                "Cell-formatting body should not match the hash-joinable "
+                "lookup fingerprint (loop_eq_with_dependent_write must be 0)"
+            )
+
+            hits = detect_nested_lookup(conn)
+            assert len(hits) == 0, (
+                f"Cell-formatting loop must be excluded by the structural "
+                f"discriminator even without name-based suppression: {hits}"
+            )
+
     def test_nested_loop_with_real_inefficiency_still_flagged(self, project_factory, monkeypatch):
         """Skip-list must not suppress genuine n*m cross-product bugs.
         A user-lookup function with nested loops over two unrelated lists

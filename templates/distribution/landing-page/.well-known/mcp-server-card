@@ -1,0 +1,156 @@
+{
+  "$schema": "https://schemas.modelcontextprotocol.io/server-card/v1",
+  "name": "roam-code",
+  "title": "roam — instant codebase intelligence",
+  "version": "13.0",
+  "description": "Architectural sight for AI agents before they edit. Pre-indexes symbols, call graphs, dependencies, architecture layers, and git history into a local SQLite DB. 224 MCP tools, 10 resources, 6 prompts, 28 languages. 100% local, zero API keys.",
+  "vendor": {
+    "name": "Cranot",
+    "url": "https://github.com/Cranot"
+  },
+  "homepage": "https://roam-code.com/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Cranot/roam-code"
+  },
+  "documentation": "https://roam-code.com/docs/getting-started",
+  "license": "Apache-2.0",
+  "spdx_license_id": "Apache-2.0",
+  "categories": [
+    "code-intelligence",
+    "static-analysis",
+    "code-graph",
+    "ai-coding",
+    "supply-chain",
+    "security",
+    "attestation"
+  ],
+  "tags": [
+    "code-intelligence",
+    "tree-sitter",
+    "mcp-server",
+    "code-graph",
+    "graph-analysis",
+    "code-quality",
+    "openvex",
+    "in-toto",
+    "cosign",
+    "code-rag",
+    "agent-tools"
+  ],
+  "transport": {
+    "primary": "stdio",
+    "supported": ["stdio", "sse", "streamable-http"],
+    "default_command": ["roam", "mcp"]
+  },
+  "install": {
+    "pypi": "roam-code",
+    "command": "pip install \"roam-code[mcp]\"",
+    "min_python": "3.9",
+    "post_install": "roam init"
+  },
+  "capabilities": {
+    "tools": {
+      "total": 224,
+      "presets": {
+        "core": 57,
+        "review": 62,
+        "refactor": 62,
+        "debug": 61,
+        "architecture": 63,
+        "compliance": 13,
+        "full": 224
+      },
+      "tasks_api": {
+        "supported": true,
+        "spec_version": "2025-11-25",
+        "required_tools": [
+          "roam_init",
+          "roam_reindex",
+          "roam_health",
+          "roam_understand",
+          "roam_simulate"
+        ]
+      },
+      "sampling": true,
+      "completions": true,
+      "progress": true
+    },
+    "resources": {
+      "total": 10,
+      "watched": true
+    },
+    "prompts": {
+      "total": 6
+    }
+  },
+  "languages_supported": [
+    "python", "javascript", "typescript", "java", "go", "rust", "c",
+    "csharp", "php", "ruby", "kotlin", "swift", "scala", "sql", "foxpro",
+    "apex", "aura", "visualforce", "sfxml", "hcl", "yaml", "vue", "tsx",
+    "jsx", "html", "css", "objective-c"
+  ],
+  "compliance_artifacts": {
+    "in_toto_v1_predicate": "https://roam-code.dev/CodeGraph/v1",
+    "in_toto_v1_aibom_predicate": "https://roam-code.dev/CodeGraph-AIBOM/v1",
+    "openvex_compatible": true,
+    "openvex_disallowed_labels": ["code_not_reachable"],
+    "sbom_formats": ["cyclonedx-1.7", "spdx-2.3"],
+    "aibom_extension_version": "0.1",
+    "sigstore": {
+      "keyless_signing": true,
+      "offline_signing": true,
+      "verify_command": "roam cga verify <statement>"
+    }
+  },
+  "agent_first_features": {
+    "boolean_oracles": [
+      "roam_oracle_symbol_exists",
+      "roam_oracle_route_exists",
+      "roam_oracle_is_test_only",
+      "roam_oracle_is_reachable_from_entry",
+      "roam_oracle_is_clone_of"
+    ],
+    "compound_tools": [
+      "roam_explore",
+      "roam_prepare_change",
+      "roam_review_change",
+      "roam_diagnose_issue"
+    ],
+    "intent_classifier": "roam_ask",
+    "fleet_planner": "roam_fleet_plan",
+    "patch_verifier": "roam_critique",
+    "graph_aware_retrieval": "roam_retrieve",
+    "llm_augmented_taint": "roam_taint_classify"
+  },
+  "operational": {
+    "telemetry": "none",
+    "network_required": false,
+    "api_keys_required": false,
+    "container_required": false,
+    "average_index_time_seconds_per_kloc": 0.6,
+    "typical_db_size_per_kloc_kb": 80
+  },
+  "compatibility": {
+    "claude_code": "tested",
+    "claude_desktop": "tested",
+    "cursor": "tested",
+    "windsurf": "tested",
+    "vscode": "tested",
+    "gemini_cli": "tested",
+    "codex_cli": "tested",
+    "continue_dev": "via mcp-setup snippet"
+  },
+  "discovery": {
+    "registries": [
+      "pypi",
+      "github",
+      "modelcontextprotocol.io",
+      "pulsemcp.com",
+      "smithery.ai",
+      "mcp.so"
+    ],
+    "card_url": "https://roam-code.com/.well-known/mcp-server-card.json"
+  },
+  "schema_version": 1
+}

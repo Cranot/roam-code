@@ -215,11 +215,22 @@ def suppress(
             if fid in current:
                 already.append(fid)
                 continue
-            current[fid] = {
+            entry_record: dict = {
                 "reason": reason,
                 "added_at": _utc_now_iso(),
                 "source": "from-finding",
             }
+            # W691 — capture rule_id + location so the SARIF reader can
+            # match this dict-shaped suppression against (ruleId, location)
+            # results. finding_id alone is a one-way hash so we cannot
+            # reverse it from the SARIF result side.
+            rule_id_val = f.get("rule_id") or f.get("ruleId")
+            location_val = f.get("location")
+            if rule_id_val:
+                entry_record["rule_id"] = str(rule_id_val)
+            if location_val:
+                entry_record["location"] = str(location_val)
+            current[fid] = entry_record
             added.append(fid)
         if not dry_run:
             path.write_text(_json.dumps(current, indent=2, sort_keys=True), encoding="utf-8")

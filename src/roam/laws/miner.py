@@ -449,7 +449,7 @@ def _mine_testing_laws(
         test_files = {
             (r["path"] or "").replace("\\", "/")
             for r in conn.execute("SELECT path FROM files").fetchall()
-            if is_test_file(r["path"] or "")
+            if is_test_file(r["path"])
         }
     except Exception:
         return []

@@ -24,11 +24,135 @@ from roam.cli import cli
 
 @pytest.fixture
 def cli_runner():
-    """Provide a Click CliRunner compatible with Click 8.2+."""
+    """Provide a Click CliRunner (W840: Click 8.3+ dropped mix_stderr kwarg)."""
+    return CliRunner()
+
+
+# W414: All refactoring-command tests in this file are read-only against
+# the indexed project (dead/safe-delete/split/conventions/breaking). Re-
+# indexing on every test costs ~2s x 41. Override at module scope so the
+# project is built and indexed once per worker. Mirrors W346's pattern in
+# test_json_contracts.
+@pytest.fixture(scope="module")
+def indexed_project(tmp_path_factory):
+    """Module-scoped indexed Python project for read-only refactoring tests."""
+    import textwrap
+
+    proj = tmp_path_factory.mktemp("commands_refactoring_proj")
+    (proj / ".gitignore").write_text(".roam/\n", encoding="utf-8")
+    src = proj / "src"
+    src.mkdir()
+
+    (src / "models.py").write_text(
+        textwrap.dedent(
+            '''\
+            class User:
+                """A user model."""
+                def __init__(self, name, email):
+                    self.name = name
+                    self.email = email
+
+                def display_name(self):
+                    return self.name.title()
+
+                def validate_email(self):
+                    return "@" in self.email
+
+
+            class Admin(User):
+                """An admin user."""
+                def __init__(self, name, email, role="admin"):
+                    super().__init__(name, email)
+                    self.role = role
+
+                def promote(self, user):
+                    pass
+            '''
+        ),
+        encoding="utf-8",
+    )
+    (src / "service.py").write_text(
+        textwrap.dedent(
+            '''\
+            from models import User, Admin
+
+
+            def create_user(name, email):
+                """Create a new user."""
+                user = User(name, email)
+                if not user.validate_email():
+                    raise ValueError("Invalid email")
+                return user
+
+
+            def get_display(user):
+                """Get display name."""
+                return user.display_name()
+
+
+            def unused_helper():
+                """This function is never called (dead code)."""
+                return 42
+            '''
+        ),
+        encoding="utf-8",
+    )
+    (src / "utils.py").write_text(
+        textwrap.dedent(
+            '''\
+            def format_name(first, last):
+                """Format a full name."""
+                return f"{first} {last}"
+
+
+            def parse_email(raw):
+                """Parse an email address."""
+                if "@" not in raw:
+                    return None
+                parts = raw.split("@")
+                return {"user": parts[0], "domain": parts[1]}
+
+
+            UNUSED_CONSTANT = "never_referenced"
+            '''
+        ),
+        encoding="utf-8",
+    )
+
+    import os
+    import subprocess
+
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "t@t.com",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_COMMITTER_EMAIL": "t@t.com",
+    }
+    subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@t.com"], cwd=str(proj), capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=str(proj), capture_output=True
+    )
+    subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=str(proj),
+        capture_output=True,
+        env=env,
+    )
+
+    runner = CliRunner()
+    old_cwd = os.getcwd()
     try:
-        return CliRunner(mix_stderr=False)
-    except TypeError:
-        return CliRunner()
+        os.chdir(str(proj))
+        result = runner.invoke(cli, ["index"], catch_exceptions=False)
+    finally:
+        os.chdir(old_cwd)
+    assert result.exit_code == 0, f"roam index failed:\n{result.output}"
+    return proj
 
 
 # ============================================================================

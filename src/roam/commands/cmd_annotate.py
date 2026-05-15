@@ -61,12 +61,14 @@ def annotate(ctx, target, content, tag, author, expires):
         symbol_id = None
         qualified_name = None
         file_path = None
+        resolution = "unresolved"  # W324: explicit resolution-state disclosure
 
         # Try symbol resolution first
         sym = find_symbol(conn, target)
         if sym is not None:
             symbol_id = sym["id"]
             qualified_name = sym["qualified_name"] or sym["name"]
+            resolution = "symbol"
         else:
             # Try as file path
             frow = conn.execute(
@@ -75,9 +77,11 @@ def annotate(ctx, target, content, tag, author, expires):
             ).fetchone()
             if frow:
                 file_path = frow["path"]
+                resolution = "file"
             else:
                 # Store as unresolved qualified_name for future linking
                 qualified_name = target
+                resolution = "unresolved"
 
         conn.execute(
             "INSERT INTO annotations "
@@ -86,18 +90,33 @@ def annotate(ctx, target, content, tag, author, expires):
             (symbol_id, qualified_name, file_path, tag, content, author, expires),
         )
 
+        # W324 — Pattern-2 fix: disclose resolution state in the verdict so
+        # agents can tell whether the target was actually linked (symbol/file)
+        # or stored as a dangling qualified_name awaiting future reindex.
+        # The dangling-name path is intentional design (annotations relink on
+        # reindex, see test_annotation_relinked_after_force), but silent-
+        # success vocabulary masks that distinction. Keep the resolved verdict
+        # as "Annotation saved" so existing consumers / tests still match.
+        if resolution == "unresolved":
+            verdict = "Annotation saved as unresolved name (relinks on reindex)"
+        else:
+            verdict = "Annotation saved"
+
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "annotate",
                         summary={
-                            "verdict": "Annotation saved",
+                            "verdict": verdict,
+                            "resolution": resolution,
                             "target": qualified_name or file_path or target,
                             "tag": tag,
+                            "partial_success": resolution == "unresolved",
                         },
                         target=qualified_name or file_path or target,
                         symbol_id=symbol_id,
+                        resolution=resolution,
                         tag=tag,
                         author=author,
                         expires_at=expires,
@@ -108,7 +127,8 @@ def annotate(ctx, target, content, tag, author, expires):
 
         resolved = qualified_name or file_path or target
         tag_str = f" [{tag}]" if tag else ""
-        click.echo(f"Annotation saved for {resolved}{tag_str}")
+        suffix = " (unresolved -- relinks on reindex)" if resolution == "unresolved" else ""
+        click.echo(f"Annotation saved for {resolved}{tag_str}{suffix}")
 
 
 # ---------------------------------------------------------------------------

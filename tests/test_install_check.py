@@ -20,11 +20,8 @@ from roam.cli import cli
 
 
 def _make_runner():
-    """Return a CliRunner, using mix_stderr=False when available (Click < 8.2)."""
-    try:
-        return CliRunner(mix_stderr=False)
-    except TypeError:
-        return CliRunner()
+    """Return a CliRunner (Click 8.3+ removed mix_stderr)."""
+    return CliRunner()
 
 
 def invoke_check(*extra_args):

@@ -186,22 +186,70 @@ def _write_lease(lease: Lease) -> None:
     atomic_write_json(path, lease.to_dict())
 
 
-def read_lease(repo_root: Path, lease_id: str) -> Optional[Lease]:
-    """Load a lease by id, or ``None`` if missing / unparseable."""
+def read_lease(
+    repo_root: Path,
+    lease_id: str,
+    *,
+    warnings_out: Optional[list[str]] = None,
+) -> Optional[Lease]:
+    """Load a lease by id, or ``None`` if missing / unparseable.
+
+    W448: when *warnings_out* is supplied, every drop path (malformed
+    JSON / non-dict top-level / schema-invalid dict) appends one
+    actionable warning naming the offending file + the closed-form
+    reason — mirrors the format already emitted by :func:`_iter_leases`
+    so callers that thread the same bucket get a consistent shape
+    whether they read one lease by id or iterate the whole directory.
+    A missing path is NOT a warning (the caller asked for a specific
+    id that simply isn't on disk); ``None`` (default) preserves the
+    pre-W448 silent-drop behaviour.
+    """
+    def _emit_warning(message: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(message)
+
     path = _lease_path(repo_root, lease_id)
     if not path.exists():
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        _emit_warning(
+            f"lease file {path.name!s} skipped: malformed JSON "
+            f"({type(exc).__name__}: {exc})"
+        )
         return None
     if not isinstance(raw, dict):
+        _emit_warning(
+            f"lease file {path.name!s} skipped: top-level value "
+            f"is not a JSON object (got {type(raw).__name__})"
+        )
         return None
-    return _lease_from_dict(raw, repo_root)
+    lease = _lease_from_dict(raw, repo_root)
+    if lease is None:
+        raw_lid = raw.get("lease_id")
+        id_phrase = (
+            f"lease_id={raw_lid!r}"
+            if isinstance(raw_lid, str) and raw_lid
+            else "lease_id=<missing>"
+        )
+        _emit_warning(
+            f"lease file {path.name!s} skipped: schema validation "
+            f"failed ({id_phrase}); fields missing or invalid per "
+            f"Lease contract"
+        )
+        return None
+    return lease
 
 
 def _lease_from_dict(raw: dict, repo_root: Path) -> Optional[Lease]:
-    """Build a :class:`Lease` from a parsed dict; ``None`` on shape error."""
+    """Build a :class:`Lease` from a parsed dict; ``None`` on shape error.
+
+    Returns ``None`` when a required field is missing OR a typed coercion
+    fails (``KeyError`` / ``TypeError`` / ``ValueError``). Callers that
+    care WHY a dict was rejected (W425) re-validate at the caller layer
+    and emit an actionable warning.
+    """
     try:
         return Lease(
             lease_id=str(raw["lease_id"]),
@@ -228,18 +276,53 @@ def _iter_lease_files(repo_root: Path):
             yield child
 
 
-def _iter_leases(repo_root: Path):
-    """Yield every parseable :class:`Lease` under the repo."""
+def _iter_leases(
+    repo_root: Path,
+    *,
+    warnings_out: Optional[list[str]] = None,
+):
+    """Yield every parseable :class:`Lease` under the repo.
+
+    W425: when *warnings_out* is supplied, every dropped row (malformed
+    JSON / non-dict top-level / schema-invalid dict) appends one
+    actionable warning naming the offending file + the closed-form
+    reason. ``None`` (default) silently drops, preserving the pre-W425
+    behavior for callers that don't care.
+    """
+    def _emit_warning(message: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(message)
+
     for path in _iter_lease_files(repo_root):
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            _emit_warning(
+                f"lease file {path.name!s} skipped: malformed JSON "
+                f"({type(exc).__name__}: {exc})"
+            )
             continue
         if not isinstance(raw, dict):
+            _emit_warning(
+                f"lease file {path.name!s} skipped: top-level value "
+                f"is not a JSON object (got {type(raw).__name__})"
+            )
             continue
         lease = _lease_from_dict(raw, repo_root)
-        if lease is not None:
-            yield lease
+        if lease is None:
+            raw_lid = raw.get("lease_id")
+            id_phrase = (
+                f"lease_id={raw_lid!r}"
+                if isinstance(raw_lid, str) and raw_lid
+                else "lease_id=<missing>"
+            )
+            _emit_warning(
+                f"lease file {path.name!s} skipped: schema validation "
+                f"failed ({id_phrase}); fields missing or invalid per "
+                f"Lease contract"
+            )
+            continue
+        yield lease
 
 
 # ---------------------------------------------------------------------------
@@ -313,8 +396,12 @@ def claim_lease(
     # Best-effort GC pass — frees stale leases so they don't block this claim.
     try:
         gc_expired_leases(repo_root)
-    except Exception:
-        # GC failures must NEVER block a claim attempt.
+    except OSError:
+        # W746: narrowed from bare Exception. gc_expired_leases walks
+        # the .roam/leases/ directory; only filesystem I/O failures are
+        # realistic. Programmer-class errors (NameError / AttributeError)
+        # now propagate per W531 — a broken GC must crash visibly rather
+        # than silently leave stale leases in place forever.
         pass
 
     subject_list = [str(s) for s in subject]
@@ -377,6 +464,7 @@ def list_leases(
     agent: Optional[str] = None,
     include_expired: bool = False,
     include_released: bool = True,
+    warnings_out: Optional[list[str]] = None,
 ) -> list[Lease]:
     """List leases for this repo, newest first.
 
@@ -387,10 +475,19 @@ def list_leases(
     A lease is treated as wall-clock-expired even before its on-disk
     state has been rewritten — readers see the same truth that
     :func:`find_conflict` sees.
+
+    W425: *warnings_out* is an optional list the reader appends one
+    warning per dropped on-disk ``.roam/leases/*.json`` document to.
+    Default ``None`` preserves the pre-W425 silent-drop behavior. The
+    warning format mirrors :func:`roam.permits.store.load_permits_from_disk`
+    (W379/W380/W382): each line names the offending file and the closed-
+    form reason (malformed JSON / non-dict top-level / schema-invalid
+    dict) so an operator can locate and repair the underlying lease
+    without grepping.
     """
     now = _utc_now()
     out: list[Lease] = []
-    for lease in _iter_leases(repo_root):
+    for lease in _iter_leases(repo_root, warnings_out=warnings_out):
         if agent is not None and lease.agent != agent:
             continue
         effective_state = lease.state

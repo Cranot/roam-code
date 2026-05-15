@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import re
+import sqlite3
 from collections import Counter, defaultdict
 
 import click
@@ -10,7 +13,75 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.index.file_roles import is_test as _is_test
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+
+
+# W165 — Test / fixture / production bucketing for duplicates findings.
+#
+# The 212-eval dogfood corpus (internal/dogfood/SYNTHESIS-2026-05-12.md)
+# surfaced 713/853 (84%) duplicate clusters living in tests/ — intentional
+# pytest parametrize patterns that drown real refactor candidates. The fix
+# is symmetric with W165 on the clones detector: classify each cluster into
+# {production, test_intentional, mixed}, attach the bucket to every
+# emitted ``findings`` row, surface per-bucket counts in the verdict line,
+# and let agents filter via ``--exclude-tests`` / ``--exclude-fixtures``.
+#
+# Mixed is preserved through ``--exclude-tests`` (one side src, one side
+# test ⇒ potential test-leakage signal worth keeping).
+
+_FIXTURE_PATTERN = re.compile(
+    r"(^|/)(fixtures?|test_fixtures|testdata|test_data)(/|$)"
+)
+
+
+def _is_fixture_path(path: str) -> bool:
+    """True if *path* lives under a fixture / testdata directory.
+
+    Path-only (no I/O). Matches ``fixtures/``, ``test_fixtures/``,
+    ``testdata/``, ``test_data/`` at any depth. The bigger overlap on
+    roam-code is ``tests/fixtures/`` which is also caught by
+    ``_is_test``; both flags are kept independent so callers can filter
+    just fixtures (parametrize-corpora) without filtering tests.
+    """
+    if not path:
+        return False
+    return _FIXTURE_PATTERN.search(path.replace("\\", "/")) is not None
+
+
+def _role_bucket_for_files(files: list[str]) -> str:
+    """Classify a multi-member cluster by the role mix of its files.
+
+    All-test (is_test ∪ fixture) ⇒ test_intentional; all-source ⇒
+    production; mixed ⇒ mixed. Empty input ⇒ production (the caller
+    already filtered empty clusters).
+    """
+    if not files:
+        return "production"
+    test_sides = [
+        bool(f and (_is_test(f) or _is_fixture_path(f))) for f in files
+    ]
+    if all(test_sides):
+        return "test_intentional"
+    if any(test_sides):
+        return "mixed"
+    return "production"
+
+
+# W136 (W93 follow-up): duplicates is the next detector migrating onto the
+# central findings registry, alongside the already-migrated ``clones``
+# (W95), ``dead`` (W99), ``complexity`` (W102), and ``smells`` (W109).
+# Where ``clones`` compares AST subtree hashes (Type-2 textual clones),
+# ``duplicates`` clusters functions by weighted similarity of AST-derived
+# metrics read from the DB (``symbol_metrics`` + ``math_signals`` +
+# ``graph_metrics``). The two detectors emit under distinct
+# ``source_detector`` values — ``"clones"`` vs ``"duplicates"`` — so the
+# registry can tell their findings apart.
+#
+# Bump this stamp when the weight formula in :func:`_compute_similarity`
+# or the bucketing / pre-filter shape changes meaningfully — both affect
+# which clusters survive thresholding and therefore which findings emit.
+DUPLICATES_DETECTOR_VERSION: str = "1.0.0"
 
 # ---------------------------------------------------------------------------
 # Name tokenization
@@ -252,6 +323,163 @@ def _suggest_refactor(names: list[str], pattern: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# W136 — findings registry emit
+# ---------------------------------------------------------------------------
+
+
+def _duplicates_cluster_finding_id(member_qnames: list[str]) -> str:
+    """Stable, deterministic finding id for one duplicate cluster.
+
+    A cluster is identified by the SORTED tuple of its member qualified
+    names. Sorting makes the id independent of the order Union-Find walks
+    the members in — the same set of duplicates always hashes to the
+    same id, so re-running ``roam duplicates --persist`` upserts in
+    place rather than churning rows.
+
+    We hash the joined sorted qnames (rather than a raw set repr) to keep
+    the id short and stable across Python versions / set-ordering quirks.
+    """
+    raw = "|".join(sorted(qn for qn in member_qnames if qn))
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"duplicates:cluster:{digest}"
+
+
+def _emit_duplicates_findings(
+    conn: sqlite3.Connection,
+    clusters: list[dict],
+    source_version: str,
+) -> int:
+    """Mirror each duplicate cluster into the central findings registry.
+
+    Returns the count of finding rows written (one per cluster). The
+    caller is responsible for opening ``conn`` writable and committing;
+    :func:`emit_finding` does not commit on its own.
+
+    Confidence tier rationale: every duplicate cluster surfaces from
+    deterministic AST-derived metric comparison (``symbol_metrics`` +
+    ``math_signals``) plus name-token Jaccard, gated by a fixed
+    threshold and weight formula. No regex, no pattern matching — same
+    input always produces the same cluster shape. That maps to
+    :data:`CONFIDENCE_STRUCTURAL` per the W109 substrate definitions
+    ("AST / graph evidence"). The 0..1 similarity score is preserved in
+    the evidence payload for consumers that want to weight by it; the
+    registry's confidence tier is the detector-level evidence class,
+    not a per-finding gradation.
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (no ``findings`` table) silently no-ops rather than crashing the
+    standard duplicates read path.
+    """
+    # Local import keeps the cost out of the read-only path — callers
+    # without --persist never reach here, so the import only runs when
+    # we're actually writing.
+    from roam.db.findings import (
+        CONFIDENCE_STRUCTURAL,
+        FindingRecord,
+        emit_finding,
+    )
+
+    written = 0
+    for c in clusters:
+        functions = c.get("functions") or []
+        if len(functions) < 2:
+            # Defensive: a single-member "cluster" isn't a duplicate.
+            # The cluster-builder already filters this, but the registry
+            # write should stay tolerant.
+            continue
+
+        # Collect qualified names, falling back to bare name if the row
+        # carries no qualified_name (rare, but possible on some
+        # languages where the extractor doesn't synthesise qnames).
+        member_qnames: list[str] = []
+        for r in functions:
+            qn = r["qualified_name"] or r["name"] or ""
+            if qn:
+                member_qnames.append(str(qn))
+        if len(member_qnames) < 2:
+            continue
+
+        # Subject linkage: pick the symbol with the highest PageRank as
+        # the cluster's "anchor" subject. Mirrors the clone-cluster
+        # pattern of attaching one representative subject_id while the
+        # full member list lives in evidence. NULL subject_id is allowed
+        # by the registry, but populating it lets ``roam findings``
+        # filter by symbol JOINs.
+        anchor = max(
+            functions,
+            key=lambda r: (r["pagerank"] or 0.0, r["id"] or 0),
+        )
+        subject_id: int | None = None
+        try:
+            subject_id = int(anchor["id"]) if anchor["id"] is not None else None
+        except (TypeError, ValueError):
+            subject_id = None
+
+        finding_id = _duplicates_cluster_finding_id(member_qnames)
+
+        members_evidence = []
+        for r in functions:
+            members_evidence.append(
+                {
+                    "name": r["name"],
+                    "qualified_name": r["qualified_name"],
+                    "kind": r["kind"],
+                    "file": r["file_path"],
+                    "line_start": r["line_start"],
+                    "line_count": r["line_count"] or 0,
+                    "pagerank": round(r["pagerank"] or 0.0, 4),
+                }
+            )
+
+        # W165 — bucket the cluster (production / test_intentional /
+        # mixed) and persist it on every finding so registry consumers
+        # (``roam findings list --detector duplicates``) can post-filter.
+        role_bucket = _role_bucket_for_files(
+            [r["file_path"] for r in functions]
+        )
+
+        evidence = {
+            "similarity": c.get("similarity"),
+            "size": c.get("size") or len(functions),
+            "pattern": c.get("pattern"),
+            "suggestion": c.get("suggestion"),
+            "total_pagerank": c.get("total_pagerank"),
+            "members": members_evidence,
+            "role_bucket": role_bucket,
+        }
+
+        # Build a short, human-readable claim. We name the anchor and the
+        # cluster size — the agent-contract anchor for a duplicate finding
+        # is "cluster" (a concrete-noun terminal in the W109 anchor set).
+        sim = c.get("similarity")
+        sim_pct = round(float(sim) * 100) if sim is not None else 0
+        anchor_name = anchor["name"] or "?"
+        claim = (
+            f"Duplicate cluster: {len(functions)} functions "
+            f"({sim_pct}% avg similarity) anchored at {anchor_name}"
+        )
+
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol" if subject_id is not None else "file",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                # All duplicates findings are structural — deterministic
+                # metric comparison from DB tables, no regex / pattern
+                # heuristics. See module docstring for the tier rationale.
+                confidence=CONFIDENCE_STRUCTURAL,
+                source_detector="duplicates",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+    return written
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -294,8 +522,51 @@ def _suggest_refactor(names: list[str], pattern: str) -> str:
     type=int,
     help="Cap on number of duplicate-pair clusters reported (0=unlimited)",
 )
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror each duplicate cluster into the central findings registry "
+        "(``roam findings list --detector duplicates``). The detector-"
+        "specific text/JSON output is unchanged; the registry rows are the "
+        "denormalised cross-detector surface. The persisted set is the FULL "
+        "pre-truncation cluster list, so --max-pairs only affects display. "
+        "Re-running with the same source upserts in place (no duplicates)."
+    ),
+)
+@click.option(
+    "--exclude-tests",
+    is_flag=True,
+    default=False,
+    help=(
+        "Drop duplicate clusters where ALL participating files are tests "
+        "(role_bucket=test_intentional — usually pytest parametrize). "
+        "Mixed-bucket clusters (one side src, one side test) survive — "
+        "they surface possible test-leakage and are worth keeping."
+    ),
+)
+@click.option(
+    "--exclude-fixtures",
+    is_flag=True,
+    default=False,
+    help=(
+        "Drop duplicate clusters where any participating file lives under "
+        "a fixtures/ / testdata/ / test_data/ directory."
+    ),
+)
 @click.pass_context
-def duplicates(ctx, threshold, min_lines, scope, sample, max_pairs):
+def duplicates(
+    ctx,
+    threshold,
+    min_lines,
+    scope,
+    sample,
+    max_pairs,
+    persist,
+    exclude_tests,
+    exclude_fixtures,
+):
     """Detect semantically duplicate functions via structural similarity.
 
     Unlike ``smells`` (which detects structural anti-patterns like god classes),
@@ -309,7 +580,7 @@ def duplicates(ctx, threshold, min_lines, scope, sample, max_pairs):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         # ── 1. Candidate selection ───────────────────────────────────
         scope_clause = ""
         params: list = []
@@ -537,6 +808,51 @@ def duplicates(ctx, threshold, min_lines, scope, sample, max_pairs):
         # Sort by: size desc, similarity desc, pagerank desc
         cluster_list.sort(key=lambda c: (-c["size"], -c["similarity"], -c["total_pagerank"]))
 
+        # ── 5.W165 Bucket + filter ──────────────────────────────────
+        # Attach role_bucket to every cluster on the live structure so
+        # downstream paths (verdict, JSON output, persist) share one
+        # classification call. ``--exclude-tests`` drops only the
+        # test_intentional bucket — mixed clusters (one side src, one
+        # side test) survive deliberately as a test-leakage signal.
+        # ``--exclude-fixtures`` drops any cluster touching a fixtures/
+        # / testdata/ path regardless of bucket.
+        for c in cluster_list:
+            c["role_bucket"] = _role_bucket_for_files(
+                [r["file_path"] for r in c["functions"]]
+            )
+
+        if exclude_tests or exclude_fixtures:
+            filtered: list[dict] = []
+            for c in cluster_list:
+                files = [r["file_path"] for r in c["functions"]]
+                if exclude_fixtures and any(_is_fixture_path(f) for f in files):
+                    continue
+                if exclude_tests and c["role_bucket"] == "test_intentional":
+                    continue
+                filtered.append(c)
+            cluster_list = filtered
+
+        # Per-bucket cluster counts surfaced in the verdict line
+        # (Pattern-3 vocabulary improvement: buckets at the surface, not
+        # hidden in JSON).
+        bucket_counts = {"production": 0, "test_intentional": 0, "mixed": 0}
+        for c in cluster_list:
+            bucket_counts[c.get("role_bucket", "production")] += 1
+
+        # ── 5a. W136: mirror full cluster set into findings registry ─
+        # Runs ONLY with --persist. We emit BEFORE --max-pairs truncation
+        # so the registry stays comprehensive regardless of how the
+        # current invocation slices the display. Wrapped so a pre-W89 DB
+        # (no ``findings`` table) silently no-ops rather than crashing
+        # the standard duplicates read path.
+        if persist:
+            try:
+                _emit_duplicates_findings(conn, cluster_list, DUPLICATES_DETECTOR_VERSION)
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
+
         # ── 5b. Apply --max-pairs truncation ─────────────────────────
         total_clusters_found = len(cluster_list)
         truncated = False
@@ -558,7 +874,10 @@ def duplicates(ctx, threshold, min_lines, scope, sample, max_pairs):
         if cluster_list:
             verdict_parts.append(
                 f"{len(cluster_list)} duplicate cluster"
-                f"{'s' if len(cluster_list) != 1 else ''} found ({total_functions} functions)"
+                f"{'s' if len(cluster_list) != 1 else ''} found ({total_functions} functions) "
+                f"({bucket_counts['production']} production"
+                f" · {bucket_counts['test_intentional']} test_intentional"
+                f" · {bucket_counts['mixed']} mixed)"
             )
         else:
             verdict_parts.append("No semantic duplicates detected")
@@ -595,6 +914,10 @@ def duplicates(ctx, threshold, min_lines, scope, sample, max_pairs):
                         ],
                         "pattern": c["pattern"],
                         "suggestion": c["suggestion"],
+                        # W165 — bucket on the live cluster object so JSON
+                        # consumers can filter without going through the
+                        # registry.
+                        "role_bucket": c.get("role_bucket", "production"),
                     }
                 )
 
@@ -604,6 +927,8 @@ def duplicates(ctx, threshold, min_lines, scope, sample, max_pairs):
                 "total_functions": total_functions,
                 "estimated_reducible_lines": estimated_lines,
                 "candidate_count": original_candidate_count,
+                # W165 — per-bucket cluster counts in the summary.
+                "role_buckets": bucket_counts,
             }
             if partial_success:
                 summary_payload["partial_success"] = True
@@ -634,7 +959,10 @@ def duplicates(ctx, threshold, min_lines, scope, sample, max_pairs):
 
         click.echo()
         for i, c in enumerate(cluster_list):
-            click.echo(f"CLUSTER {i + 1} (similarity {c['similarity']:.2f}, {c['size']} functions):")
+            click.echo(
+                f"CLUSTER {i + 1} (similarity {c['similarity']:.2f}, "
+                f"{c['size']} functions) [{c.get('role_bucket', 'production')}]:"
+            )
             for r in c["functions"]:
                 kind_str = abbrev_kind(r["kind"])
                 click.echo(

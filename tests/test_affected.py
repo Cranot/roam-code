@@ -25,11 +25,12 @@ from roam.cli import cli
 
 @pytest.fixture
 def cli_runner():
-    """Provide a Click CliRunner compatible with Click 8.2+."""
-    try:
-        return CliRunner(mix_stderr=False)
-    except TypeError:
-        return CliRunner()
+    """Provide a Click CliRunner.
+
+    Click 8.3+ removed ``mix_stderr`` and always separates ``result.stdout``
+    from ``result.stderr``. Use ``result.stderr_bytes`` manually if needed.
+    """
+    return CliRunner()
 
 
 # ---------------------------------------------------------------------------

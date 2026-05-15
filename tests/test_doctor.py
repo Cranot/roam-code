@@ -101,6 +101,7 @@ class TestDoctorCheckCoverage:
         "SQLite operational",
         "Plugin discovery",
         "Required tables",
+        "Corpus content",
     }
 
     def test_all_expected_checks_present(self):
@@ -120,7 +121,12 @@ class TestDoctorCheckCoverage:
         # check — total 18. W14.3 added the stale-install advisory
         # ("Installed binary") — total 19. W38.x added the post-migration
         # #51 stale-signal advisory ("Stale math_signals column") — total 20.
-        assert data["summary"]["total"] == 20
+        # W82 / ROADMAP A8 added the per-sub-step manifest advisory
+        # ("Index step manifest") — total 21. W408 added the per-phase
+        # wallclock advisory ("Phase timings") — total 22. W482 added
+        # the emitted-workflow drift advisory ("CI workflow drift") — total 23.
+        # W836 added the corpus-content advisory (Pattern 2 sweep) — total 24.
+        assert data["summary"]["total"] == 24
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()
@@ -135,7 +141,7 @@ class TestDoctorCheckCoverage:
 
 class TestDoctorPythonCheck:
     def test_python_check_passes_current_version(self):
-        """Current Python must be >= 3.9 to run roam-code at all."""
+        """Current Python must be >= 3.10 to run roam-code at all."""
         result, data = invoke_doctor_json()
         py_check = next(c for c in data["checks"] if c["name"] == "Python version")
         assert py_check["passed"] is True
@@ -154,13 +160,13 @@ class TestDoctorPythonCheck:
             check = _check_python_version()
         assert check["passed"] is False
 
-    def test_python_check_passes_39(self):
+    def test_python_check_fails_39(self):
         from roam.commands.cmd_doctor import _check_python_version
 
         fake_vi = type("VI", (), {"major": 3, "minor": 9, "micro": 0})()
         with patch.object(sys, "version_info", fake_vi):
             check = _check_python_version()
-        assert check["passed"] is True
+        assert check["passed"] is False
 
     def test_python_check_passes_310(self):
         from roam.commands.cmd_doctor import _check_python_version

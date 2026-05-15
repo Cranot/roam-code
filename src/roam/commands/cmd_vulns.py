@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json as _json
 import sqlite3
 from pathlib import Path
@@ -11,12 +12,171 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.output._severity import (
+    severity_breakdown as _canonical_severity_breakdown,
+)
+from roam.output._severity import severity_rank as _canonical_severity_rank
 from roam.output.confidence import (
     confidence_distribution,
     verdict_with_high_count,
     wrap_findings,
 )
 from roam.output.formatter import format_table, json_envelope, to_json
+
+
+# W117 — vulns is the fourth detector migrating onto the central findings
+# registry (after clones in W95, dead in W99, complexity in W102). The
+# shape mirrors those three: a stable detector version stamp and a
+# deterministic ``finding_id_str`` so re-runs upsert instead of
+# duplicating rows. Bump this when the source-to-confidence map or the
+# reachability tier encoding in ``_emit_vuln_findings`` changes
+# meaningfully — those values drive what the registry row's
+# ``confidence`` and ``evidence_json.reachability`` shape look like.
+VULNS_DETECTOR_VERSION: str = "1.0.0"
+
+
+# W117 — confidence-tier mapping for vulnerability findings.
+#
+# The choice depends on TWO signals: ingestion source and reachability.
+#
+# * ``static_analysis``: a curated CVE database (npm-audit / pip-audit /
+#   trivy / osv) reported a deterministic match against a dependency in
+#   the project's manifest. This is the strongest signal the detector
+#   can produce — the scanner did the version-comparison work upstream.
+# * ``heuristic``: source == "generic" (raw user-supplied JSON, no
+#   curated CVE DB validated this) OR source is unknown. We don't know
+#   whether the version match is exact or fuzzy, so treat as heuristic.
+#
+# Reachability is captured as a separate dimension in ``evidence_json``
+# (``reachability: reachable | unreachable | unknown``) rather than
+# collapsing into the confidence tier — downstream consumers can
+# deprioritise unreachable findings without losing the underlying
+# static-analysis grade. This mirrors the wave-117 brief:
+# "unreachable-vuln stays static_analysis but flag in evidence_json".
+_CURATED_VULN_SOURCES = {
+    "npm-audit",
+    "npm_audit",
+    "pip-audit",
+    "pip_audit",
+    "trivy",
+    "osv",
+}
+
+
+def _vuln_confidence_tier(source: str | None) -> str:
+    """Map a vuln ingestion source to a registry confidence tier."""
+    from roam.db.findings import CONFIDENCE_HEURISTIC, CONFIDENCE_STATIC_ANALYSIS
+
+    src = (source or "generic").lower()
+    if src in _CURATED_VULN_SOURCES:
+        return CONFIDENCE_STATIC_ANALYSIS
+    return CONFIDENCE_HEURISTIC
+
+
+def _vuln_reachability_tag(reachable: int | None) -> str:
+    """Encode the integer reachability code as a stable evidence tag."""
+    if reachable == 1:
+        return "reachable"
+    if reachable == -1:
+        return "unreachable"
+    return "unknown"
+
+
+def _vuln_finding_id(cve_id: str | None, package_name: str | None) -> str:
+    """Stable, deterministic finding id for one vulnerability.
+
+    The (cve_id, package_name) pair re-identifies the same vuln across
+    runs: cve_id is the canonical CVE/GHSA identifier from the scanner,
+    package_name is the affected dependency. When cve_id is absent
+    (some generic / user JSON shapes lack it) we fall back to the
+    package name alone — re-running with the same input upserts the
+    existing row rather than duplicating.
+    """
+    cve = (cve_id or "").strip() or "no-cve"
+    pkg = (package_name or "").strip() or "unknown-pkg"
+    raw = f"{cve}:{pkg}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"vulns:cve:{digest}"
+
+
+def _emit_vuln_findings(
+    conn: sqlite3.Connection,
+    vuln_rows: list[dict],
+    source_version: str = VULNS_DETECTOR_VERSION,
+) -> None:
+    """Mirror each vulnerability row into the central findings registry.
+
+    ``vuln_rows`` is the list of dicts produced by ``_query_vulns`` (the
+    same shape the JSON envelope renders). Each row maps to ONE finding:
+
+    * ``subject_kind`` is ``"symbol"`` when ``matched_symbol_id`` is
+      populated (the vuln has been resolved to a concrete call-site in
+      this codebase), otherwise ``"package"`` (the vuln lives in a
+      dependency we haven't located a call-site for — still actionable,
+      but at the manifest level rather than the call-graph level).
+    * ``confidence`` is derived from the ingestion source (curated CVE
+      DB = ``static_analysis``, generic / unknown = ``heuristic``).
+    * Reachability is captured separately in ``evidence_json`` so
+      consumers can deprioritise unreachable findings without losing the
+      ``static_analysis`` grade.
+
+    Wrapped at the call site in try/except so a pre-W89 DB (no
+    ``findings`` table) silently no-ops rather than crashing the
+    standard vulns read/import path.
+    """
+    from roam.db.findings import FindingRecord, emit_finding
+
+    for v in vuln_rows:
+        cve_id = v.get("cve_id")
+        package_name = v.get("package_name")
+        severity = (v.get("severity") or "unknown").lower()
+        title = v.get("title") or ""
+        source = v.get("source") or "generic"
+        matched_symbol_id = v.get("matched_symbol_id")
+        matched_file = v.get("matched_file")
+        reachable = v.get("reachable", 0)
+
+        finding_id = _vuln_finding_id(cve_id, package_name)
+        reachability = _vuln_reachability_tag(reachable)
+        # subject_kind: "symbol" when we've resolved a call-site,
+        # otherwise "package" (the affected dependency in the manifest).
+        # Pick "package" over "dependency" so the term lines up with the
+        # ecosystem vocabulary (npm/pip/trivy/osv all call them packages).
+        subject_kind = "symbol" if matched_symbol_id is not None else "package"
+        subject_id = int(matched_symbol_id) if matched_symbol_id is not None else None
+
+        evidence = {
+            "cve_id": cve_id,
+            "package_name": package_name,
+            "severity": severity,
+            "title": title,
+            "source": source,
+            "matched_symbol_id": matched_symbol_id,
+            "matched_file": matched_file,
+            "reachability": reachability,
+            "reachable_int": reachable,
+            "hop_count": v.get("hop_count"),
+            "shortest_path": v.get("shortest_path"),
+        }
+        cve_display = cve_id or "(no CVE)"
+        pkg_display = package_name or "(unknown)"
+        claim = (
+            f"Vulnerability {cve_display} in {pkg_display} "
+            f"(severity={severity}, source={source}, reachability={reachability})"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind=subject_kind,
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=_vuln_confidence_tier(source),
+                source_detector="vulns",
+                source_version=source_version,
+            ),
+        )
 
 
 # R22 — confidence-derivation rule for vulnerabilities:
@@ -166,24 +326,31 @@ def _ingest_report(conn: sqlite3.Connection, report_path: str, fmt: str) -> list
 # Severity helpers
 # ---------------------------------------------------------------------------
 
-_SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "unknown": 0}
-
-
+# W564: severity ordering now sourced from
+# roam.output._severity.severity_rank — canonical, shared across all
+# roam commands. The thin ``_severity_rank`` wrapper is kept so the
+# 5-tier vuln vocab (critical/high/medium/low/unknown) collapses to a
+# single sort key the rest of this module can use unchanged. The
+# canonical rank assigns ``unknown`` to -1 (vs. the legacy 0); we
+# remap to 0 here so the local floor semantics around ``--severity
+# low`` (rank=1) stay byte-identical.
 def _severity_rank(sev: str) -> int:
-    return _SEVERITY_ORDER.get((sev or "unknown").lower(), 0)
+    canonical = _canonical_severity_rank(sev or "unknown")
+    return canonical if canonical >= 0 else 0
 
 
 def _severity_breakdown(vulns: list[dict], key: str = "severity") -> dict[str, int]:
-    """Compute a severity breakdown dict from a list of vuln dicts."""
-    counts: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0, "unknown": 0}
-    for v in vulns:
-        sev = (v.get(key) or "unknown").lower()
-        if sev in counts:
-            counts[sev] += 1
-        else:
-            counts["unknown"] += 1
-    # Remove zero-count entries for cleaner output
-    return {k: v for k, v in counts.items() if v > 0}
+    """Compute a severity breakdown dict from a list of vuln dicts.
+
+    W566 — delegates to the canonical
+    :func:`roam.output._severity.severity_breakdown` helper. Vocab is
+    the CVSS 5-tier + ``unknown`` (the default), unknown labels route
+    to the ``unknown`` bucket, and zero-count buckets are dropped —
+    byte-identical to the pre-W566 contract here. Kept as a private
+    thin wrapper so the call sites elsewhere in this module stay
+    unchanged.
+    """
+    return _canonical_severity_breakdown(vulns, key=key)
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +360,8 @@ def _severity_breakdown(vulns: list[dict], key: str = "severity") -> dict[str, i
 
 def _vulns_to_sarif(vulns: list[dict]) -> dict:
     """Convert vulnerability findings to SARIF 2.1.0 format."""
-    from roam.output.sarif import _TOOL_NAME, _get_version, _location, _slugify, _to_level, to_sarif
+    from roam.output._severity import to_sarif_level
+    from roam.output.sarif import _TOOL_NAME, _get_version, _location, _slugify, to_sarif
 
     seen_rules: dict[str, dict] = {}
     results: list[dict] = []
@@ -207,12 +375,16 @@ def _vulns_to_sarif(vulns: list[dict]) -> dict:
 
         rule_id = f"vuln/{_slugify(cve)}" if cve != "unknown" else f"vuln/{_slugify(pkg)}"
 
+        # W547: canonical roam->SARIF severity contract lives in
+        # roam.output._severity. Single source of truth for every CI gate.
+        sarif_level = to_sarif_level(severity)
+
         if rule_id not in seen_rules:
             seen_rules[rule_id] = {
                 "id": rule_id,
                 "shortDescription": f"Vulnerability: {title}",
                 "helpUri": f"https://nvd.nist.gov/vuln/detail/{cve}" if cve.startswith("CVE-") else "",
-                "defaultLevel": _to_level(severity.upper()),
+                "defaultLevel": sarif_level,
             }
 
         locations = []
@@ -230,7 +402,7 @@ def _vulns_to_sarif(vulns: list[dict]) -> dict:
         results.append(
             {
                 "ruleId": rule_id,
-                "level": _to_level(severity.upper()),
+                "level": sarif_level,
                 "message": {"text": " | ".join(msg_parts)},
                 "locations": locations,
             }
@@ -284,8 +456,23 @@ def _vulns_to_sarif(vulns: list[dict]) -> dict:
     default=False,
     help="Only show vulnerabilities reachable from entry points.",
 )
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror vulnerabilities into the central findings registry — "
+        "visible via ``roam findings list --detector vulns``. The "
+        "detector-specific output (text / JSON / SARIF) is unchanged; "
+        "the registry rows are the denormalised cross-detector surface. "
+        "Confidence tier is derived from the ingestion source (curated "
+        "scanners -> static_analysis, generic JSON -> heuristic); "
+        "reachability is captured separately in evidence_json."
+    ),
+)
 @click.pass_context
-def vulns(ctx, import_file, fmt, reachable_only):
+def vulns(ctx, import_file, fmt, reachable_only, persist):
     """Scan and manage vulnerability inventory.
 
     Import vulnerability reports from npm-audit, pip-audit, trivy, osv, or
@@ -305,12 +492,28 @@ def vulns(ctx, import_file, fmt, reachable_only):
 
     # If importing, we need write access
     if import_file:
-        _do_import(import_file, fmt, json_mode, sarif_mode, token_budget, reachable_only)
+        _do_import(
+            import_file,
+            fmt,
+            json_mode,
+            sarif_mode,
+            token_budget,
+            reachable_only,
+            persist,
+        )
     else:
-        _do_inventory(json_mode, sarif_mode, token_budget, reachable_only)
+        _do_inventory(json_mode, sarif_mode, token_budget, reachable_only, persist)
 
 
-def _do_import(import_file, fmt, json_mode, sarif_mode, token_budget, reachable_only):
+def _do_import(
+    import_file,
+    fmt,
+    json_mode,
+    sarif_mode,
+    token_budget,
+    reachable_only,
+    persist,
+):
     """Import a vulnerability report and show results."""
     with open_db(readonly=False) as conn:
         ingested = _ingest_report(conn, import_file, fmt)
@@ -318,6 +521,14 @@ def _do_import(import_file, fmt, json_mode, sarif_mode, token_budget, reachable_
 
         # Now query the full inventory
         vuln_rows = _query_vulns(conn, reachable_only)
+
+        if persist:
+            try:
+                _emit_vuln_findings(conn, vuln_rows)
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
     _output_results(
         vuln_rows,
@@ -328,10 +539,21 @@ def _do_import(import_file, fmt, json_mode, sarif_mode, token_budget, reachable_
     )
 
 
-def _do_inventory(json_mode, sarif_mode, token_budget, reachable_only):
+def _do_inventory(json_mode, sarif_mode, token_budget, reachable_only, persist):
     """Show current vulnerability inventory from DB."""
-    with open_db(readonly=True) as conn:
+    # When --persist is set we need a writable connection so the
+    # findings emit can land — otherwise stay readonly to honour the
+    # principle that listing inventory is side-effect-free.
+    with open_db(readonly=not persist) as conn:
         vuln_rows = _query_vulns(conn, reachable_only)
+
+        if persist:
+            try:
+                _emit_vuln_findings(conn, vuln_rows)
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
     _output_results(vuln_rows, json_mode, sarif_mode, token_budget)
 

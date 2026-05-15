@@ -1,11 +1,11 @@
 # roam-code
 
-> The local structural intelligence layer for coding agents. AI agents can write code; they can't see what else it touches, which tests cover it, which loop just went quadratic, or whether they're editing one of three near-identical clones. Roam exposes that engineering judgment as deterministic local tools.
+> Local codebase intelligence for developers and AI agents — maps, gates, and evidence in one CLI. Roam parses a repo into a local SQLite-backed graph, then turns that graph into retrieval, algorithmic judgment, change-safety checks, and tamper-evident evidence. Source and evidence stay on the machine unless the user explicitly sends them elsewhere.
 
 roam-code (`pip install roam-code`) is a local code-graph engine. It parses
 your repo once, stores structural facts in a local SQLite graph (symbols,
 dependencies, call graphs, architecture layers, git history, runtime
-traces), and exposes the graph through 233 CLI commands and 149 MCP tools
+traces), and exposes the graph through 238 CLI commands and 224 MCP tools
 across 28 languages. AI agents (Claude Code, Cursor, Codex, Aider, your own)
 call it before, during, and after every change.
 
@@ -33,7 +33,7 @@ nothing else in the AI-code-review space catches it deterministically.
 Roam complements linters, SAST, and AI semantic reviewers — it answers
 graph-aware change questions they don't.
 
-100% local. No telemetry. No API keys. Apache 2.0. 28 languages supported.
+Evidence stays on your machine and hash-verifies offline. No telemetry, no network calls. Apache 2.0. 28 languages supported.
 
 ## Products
 

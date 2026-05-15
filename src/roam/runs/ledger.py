@@ -68,6 +68,15 @@ class RunMeta:
     """
 
     run_id: str
+    # Vocabulary note (W198): in ChangeEvidence + ActorRef this field is
+    # named ``agent_id`` (id-suffixed). The run-ledger uses the
+    # unsuffixed ``agent`` for historical reasons (RunMeta predates the
+    # W182 agentic-assurance crosswalk vocabulary). The collector at
+    # ``evidence/collector.py:_build_actor_refs`` maps
+    # ``RunMeta.agent`` -> ``ActorRef(actor_kind="agent",
+    # actor_id=<RunMeta.agent>)`` explicitly so the on-disk ledger
+    # shape stays back-compat while the crosswalk surface stays
+    # consistent.
     agent: str
     started_at: str
     ended_at: Optional[str] = None

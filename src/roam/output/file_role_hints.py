@@ -56,13 +56,18 @@ _DOC_DIRS = (
 _DEFAULT_EXCLUDED_DIRS: frozenset[str] = frozenset((*_TOOLING_DIRS, *_GENERATED_DIRS, *_EXAMPLE_DIRS, *_DOC_DIRS))
 
 
-def is_excluded_path(path: str, *, extra_dirs: frozenset[str] | None = None) -> bool:
+def is_excluded_path(path: str | None, *, extra_dirs: frozenset[str] | None = None) -> bool:
     """Return True when ``path`` lives in a directory we exclude from
     headline metrics by default.
 
     Match is "any segment of the path equals one of the excluded
     directory names". Both Unix and Windows separators are normalised.
     Pass ``extra_dirs`` to add to the default set without redefining it.
+
+    W1029: ``path`` accepts ``None`` so callers can pass raw
+    ``row["file_path"]`` without the cargo-cult ``or ""`` defensive
+    wrapper. Returns ``False`` on ``None``/empty (a path we can't
+    classify can't be excluded).
     """
     if not path:
         return False

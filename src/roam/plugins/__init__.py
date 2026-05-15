@@ -43,9 +43,12 @@ from typing import Any
 from .registry import (
     DetectorSpec,
     Finding,
+    FrameworkProfile,
     RoamPlugin,
     RoamPluginContext,
     _registry_state,
+    get_framework_profile,
+    get_framework_profiles,
 )
 
 # Backward-compatible alias — existing plugins import this name.
@@ -60,14 +63,18 @@ __all__ = [
     "CommandTarget",
     "DetectorSpec",
     "Finding",
+    "FrameworkProfile",
     "PluginAPI",
     "RoamPlugin",
     "RoamPluginContext",
     "discover_plugins",
+    "get_framework_profile",
+    "get_framework_profiles",
     "get_plugin_commands",
     "get_plugin_detectors",
     "get_plugin_errors",
     "get_plugin_framework_detectors",
+    "get_plugin_framework_profiles",
     "get_plugin_bridges",
     "get_plugin_language_extensions",
     "get_plugin_language_extractors",
@@ -172,7 +179,13 @@ def _discover_entry_points(ctx: RoamPluginContext) -> None:
             if dist is not None:
                 version = dist.version
                 description = (dist.metadata.get("Summary") or "").strip()
-        except Exception:  # noqa: BLE001
+        except (AttributeError, KeyError):
+            # W746: narrowed from bare Exception. The realistic failures
+            # for an entry-point dist lookup are: ``ep.dist`` not present
+            # on path-installed entry points (AttributeError) and missing
+            # metadata fields (KeyError on ``.get`` of an exotic Message
+            # subclass). Programmer-class errors elsewhere in the loop
+            # now propagate per W531.
             pass
 
         state.current_plugin_meta = (ep.name, version, description)
@@ -257,6 +270,17 @@ def get_plugin_framework_detectors() -> list:
     """Return registered framework detectors (callables ``(Path) -> Optional[str]``)."""
     discover_plugins()
     return list(_registry_state().framework_detectors)
+
+
+def get_plugin_framework_profiles() -> dict[str, FrameworkProfile]:
+    """Return registered framework profiles keyed by framework name (W123).
+
+    Plugins call :meth:`RoamPluginContext.register_framework_profile`
+    to declare a richer :class:`FrameworkProfile` than the legacy
+    detector-only API. Returns an empty dict on a clean install.
+    """
+    discover_plugins()
+    return dict(_registry_state().framework_profiles)
 
 
 def get_plugin_bridges() -> list:

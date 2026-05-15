@@ -48,10 +48,13 @@ from roam.commands.cmd_conventions import (
     _LANGUAGE_KIND_DEFAULTS,
     _MIN_NAME_LEN,
     _SKIP_NAMES,
+    NON_CODE_CONVENTION_LANGUAGES,
     _detect_affixes,
     _group_for_kind,
     _language_family,
     classify_case,
+    is_python_type_alias_signature,
+    is_upper_snake_constant_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -79,6 +82,27 @@ DEFAULT_EXCLUDE_PREFIXES: tuple[str, ...] = (
     "target/",  # rust/java build
     ".next/",  # next.js build
     ".cache/",
+    # W162: detector-training corpora and fixture files are deliberately
+    # malformed (camelCase methods in a Kotlin fixture, mismatched
+    # property casing, etc.) — they exist to exercise the EXTRACTORS,
+    # not to model the project's own conventions. Reading them as
+    # conventions data was the largest false-positive source on
+    # roam-code (27/41 findings, 100% noise) per the W149 audit. The
+    # ``fixtures/`` prefix catches both ``tests/fixtures/`` and any
+    # nested ``<lang>/tests/fixtures/`` layout because
+    # ``is_excluded_path`` matches the prefix as a path component, not
+    # just at the string head.
+    "tests/fixtures/",
+    "fixtures/",
+    "testdata/",
+    "test_data/",
+    "tests/data/",
+    # Code-generation templates (``src/roam/templates/`` in this repo)
+    # produce YAML / Jinja files whose identifiers are framework
+    # vocabulary (``pr``, ``pool``, ``checkout``, ``setup-python``),
+    # not project conventions. Excluding ``templates/`` keeps them out
+    # of the empirical pool.
+    "templates/",
 )
 
 
@@ -207,7 +231,7 @@ def compute_conventions(
     kinds_csv = ",".join(f"'{k}'" for k in _ANALYZED_KINDS)
     all_symbols = conn.execute(
         f"""
-        SELECT s.name, s.kind, s.line_start, f.path as file_path,
+        SELECT s.name, s.kind, s.signature, s.line_start, f.path as file_path,
                COALESCE(f.language, '') as language
         FROM symbols s
         JOIN files f ON s.file_id = f.id
@@ -228,13 +252,57 @@ def compute_conventions(
         if is_excluded_path(path, exclude):
             excluded_count += 1
             continue
+        language = (sym["language"] or "").lower()
+        # W162: data / markup / template languages don't have meaningful
+        # code-style conventions. Their identifiers (YAML keys, JSON
+        # property names, markdown headings) shouldn't drag everything
+        # else into the ``language_family="unknown"`` empirical bucket.
+        if language in NON_CODE_CONVENTION_LANGUAGES:
+            excluded_count += 1
+            continue
         name = sym["name"]
         kind = sym["kind"]
         style = classify_case(name)
         if not style:
             continue
-        group = _group_for_kind(kind)
+        # W162: re-route names that are PEP-8 constants into the
+        # ``constants`` group regardless of the extractor's declared
+        # kind. The python extractor emits ``kind="property"`` for
+        # class-level ``VERSION = "1.0.0"`` declarations on
+        # ``LanguageExtractor`` and ``LanguageBridge`` base classes —
+        # these are constants per PEP 8, not variables. Without this
+        # re-route they land in the ``python/variables`` group and get
+        # flagged as ``snake_case`` outliers (false positive).
+        if is_upper_snake_constant_name(name) and kind in (
+            "variable",
+            "property",
+            "field",
+            "constant",
+        ):
+            group = "constants"
+        else:
+            group = _group_for_kind(kind)
         family = _language_family(sym["language"])
+
+        # W162: PEP 484 / PEP 585 / PEP 613 / PEP 695 type aliases and
+        # ``NewType`` constructions are stored by the python extractor
+        # as ``kind="variable"`` with a PascalCase name (e.g.
+        # ``PathLike = Union[str, os.PathLike]``,
+        # ``LockMode = NewType("LockMode", str)``,
+        # ``CommandTarget = tuple[str, str]``). PEP 8 / PEP 484 say
+        # PascalCase IS the correct case for type aliases, so flagging
+        # them is wrong. We skip them entirely from convention
+        # detection — they're a third class (alongside "variable" and
+        # "constant") that just happens to share the ``variable``
+        # extractor kind.
+        if (
+            family == "python"
+            and kind in ("variable", "constant")
+            and style == "PascalCase"
+            and is_python_type_alias_signature(sym["signature"], name)
+        ):
+            excluded_count += 1
+            continue
 
         by_kind_counts[kind][style] += 1
         by_family_group_counts[(family, group)][style] += 1

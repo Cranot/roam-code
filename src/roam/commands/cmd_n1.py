@@ -23,8 +23,11 @@ Detection algorithm:
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import os
 import re
+import sqlite3
 from collections import defaultdict
 
 import click
@@ -35,10 +38,180 @@ from roam.db.connection import open_db
 from roam.index.test_conventions import is_test_file as _is_canonical_test_file
 from roam.output.confidence import (
     confidence_distribution,
+    confidence_level_rank,
     verdict_with_high_count,
     wrap_findings,
 )
 from roam.output.formatter import json_envelope, loc, to_json
+
+
+# W110: n1 is the fourth detector migrating onto the central findings
+# registry (after `clones` in W95, `dead` in W99, and `complexity` in
+# W102). The shape mirrors those — a stable detector version stamp and
+# a deterministic ``finding_id_str`` so re-runs upsert instead of
+# duplicating rows. Bump this when the confidence-derivation rule in
+# :func:`_n1_classify` or the I/O-tracing predicates in
+# :func:`analyze_n1` change meaningfully — both shape the registry
+# row's ``claim`` / ``confidence``.
+N1_DETECTOR_VERSION: str = "1.0.0"
+
+
+def _n1_finding_id(
+    model_qname: str,
+    accessor_name: str,
+    relationship: str,
+    appended_attribute: str,
+) -> str:
+    """Stable, deterministic finding id for one N+1 finding.
+
+    The (model_qname, accessor_name, relationship, appended_attribute)
+    tuple uniquely identifies one N+1 pattern: "model X's accessor Y
+    triggers lazy-load of relationship Z via appended attribute W".
+    Re-running ``roam n1 --persist`` on unchanged source upserts the
+    existing row rather than duplicating.
+
+    We avoid keying on ``symbol_id`` because the n1 analyzer doesn't
+    surface a stable subject_id for the accessor at the finding-build
+    site (the dict carries ``accessor_name`` / ``model_name`` strings,
+    not ids). Hashing the readable identifiers keeps the id stable
+    across reindex cycles that re-mint symbol ids.
+    """
+    raw = f"{model_qname}|{accessor_name}|{relationship}|{appended_attribute}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"n1:pattern:{digest}"
+
+
+def _resolve_accessor_subject_id(conn, finding: dict) -> int | None:
+    """Resolve the accessor's ``symbols.id`` from the finding dict.
+
+    The n1 finding shape carries the accessor's name + display location
+    (``"file:line"``) rather than a numeric symbol id. We re-query
+    ``symbols`` by name + line_start so registry rows can JOIN back to
+    the canonical symbol table. Returns ``None`` when the accessor
+    can't be resolved — :func:`emit_finding` tolerates a NULL
+    subject_id by design.
+    """
+    accessor_name = finding.get("accessor_name") or ""
+    accessor_location = finding.get("accessor_location") or ""
+    if not accessor_name or ":" not in accessor_location:
+        return None
+    # ``loc()`` formats as ``path:line`` (may include extra suffixes on
+    # some output paths — we take the LAST colon-separated token as the
+    # candidate line number).
+    parts = accessor_location.rsplit(":", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        line_start = int(parts[1])
+    except (TypeError, ValueError):
+        return None
+    try:
+        row = conn.execute(
+            "SELECT s.id FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.name = ? AND s.line_start = ? AND f.path = ? "
+            "LIMIT 1",
+            (accessor_name, line_start, parts[0]),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        # Fall back to a name-only match — handles cases where the
+        # ``loc()`` format includes trailing decoration that defeats
+        # exact path equality.
+        try:
+            row = conn.execute(
+                "SELECT s.id FROM symbols s "
+                "WHERE s.name = ? AND s.line_start = ? LIMIT 1",
+                (accessor_name, line_start),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+    if row is None:
+        return None
+    try:
+        return int(row[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def _emit_n1_findings(conn, findings: list[dict]) -> int:
+    """Mirror each N+1 finding into the central findings registry.
+
+    Returns the count of rows emitted (one per N+1 finding). Wrapped by
+    the caller in try/except so a pre-W89 DB (no ``findings`` table)
+    silently no-ops rather than crashing the standard read path.
+
+    All n1 findings are STRUCTURAL by nature — they detect a graph
+    pattern (an accessor whose outgoing edges trace into a relationship
+    or query-builder method), then check that the model is referenced
+    from a controller / service. Every emitted row gets
+    ``CONFIDENCE_STRUCTURAL``. The high / medium / low gradation
+    surfaced in the JSON envelope is a refactor-priority signal, not a
+    detector-confidence signal, so it lives in the evidence payload
+    rather than collapsing into the registry's confidence tier.
+    """
+    # Local imports keep the cost out of the read-only path — callers
+    # without --persist never reach here, so the import only runs when
+    # we're actually writing.
+    from roam.db.findings import (
+        CONFIDENCE_STRUCTURAL,
+        FindingRecord,
+        emit_finding,
+    )
+
+    emitted = 0
+    for f in findings:
+        model_name = f.get("model_name") or ""
+        accessor_name = f.get("accessor_name") or ""
+        relationship = f.get("relationship") or ""
+        appended = f.get("appended_attribute") or ""
+        if not (model_name and accessor_name and relationship):
+            # Defensive: skip malformed rows so a missing key doesn't
+            # poison the whole batch. analyze_n1 always populates these
+            # today, but the registry write should stay tolerant.
+            continue
+        finding_id = _n1_finding_id(model_name, accessor_name, relationship, appended)
+        subject_id = _resolve_accessor_subject_id(conn, f)
+        evidence = {
+            "model_name": model_name,
+            "model_location": f.get("model_location"),
+            "accessor_name": accessor_name,
+            "accessor_location": f.get("accessor_location"),
+            "appended_attribute": appended,
+            "relationship": relationship,
+            "io_type": f.get("io_type"),
+            "eager_loaded": bool(f.get("eager_loaded")),
+            "confidence_label": f.get("confidence"),
+            "severity": f.get("severity"),
+            "collection_contexts": f.get("collection_contexts") or [],
+            "suggestion": f.get("suggestion"),
+        }
+        claim = (
+            f"Implicit N+1: {model_name}.{accessor_name} triggers "
+            f"{f.get('io_type') or 'I/O'} on relationship '{relationship}' "
+            f"via appended attribute '{appended}'"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                # All n1 findings are structural — they detect a
+                # deterministic graph pattern (accessor → relationship /
+                # query-builder edge) plus an optional reference-context
+                # signal. Manual review is for prioritisation, not for
+                # questioning the detector's evidence.
+                confidence=CONFIDENCE_STRUCTURAL,
+                source_detector="n1",
+                source_version=N1_DETECTOR_VERSION,
+            ),
+        )
+        emitted += 1
+    return emitted
 
 # Sentinel used by helpers that accept pre-fetched bulk data. Distinct from
 # ``None`` because ``None`` is a valid "caller pre-fetched and there's no
@@ -483,6 +656,43 @@ def _bulk_fetch_methods_with_locations(conn, model_ids):
     return out
 
 
+def _bulk_fetch_methods_by_file(conn, file_ids):
+    """Bulk-fetch every ``kind='method'`` symbol across a set of files.
+
+    Returns ``{file_id: [{"id", "name", "kind", "line_start"}, ...]}``
+    sorted by ``line_start`` per file. Used by the candidate-filter
+    fallback in :func:`analyze_n1` when a model's methods aren't
+    parent_id-linked (common in PHP) — pre-fetching everything in a
+    single batched ``IN`` query eliminates the per-model file-range
+    SELECT that defeated the surrounding bulk-fetch work.
+
+    Edge cases: empty ``file_ids`` → ``{}``. Files with no methods
+    simply don't appear in the result; the caller treats a missing key
+    as "no methods for this model" — same semantics as the old
+    per-model SELECT returning ``[]``.
+    """
+    from roam.db.connection import batched_in
+
+    out: dict[int, list[dict]] = {}
+    if not file_ids:
+        return out
+    # De-dup before batching — multiple models can share one file_id.
+    unique_ids = list({int(fid) for fid in file_ids if fid is not None})
+    if not unique_ids:
+        return out
+    for r in batched_in(
+        conn,
+        "SELECT s.file_id, s.id, s.name, s.kind, s.line_start FROM symbols s "
+        "WHERE s.kind = 'method' AND s.file_id IN ({ph}) "
+        "ORDER BY s.file_id, s.line_start",
+        unique_ids,
+    ):
+        out.setdefault(int(r["file_id"]), []).append(
+            {"id": r["id"], "name": r["name"], "kind": r["kind"], "line_start": r["line_start"]}
+        )
+    return out
+
+
 def _find_accessor_methods(conn, model_id, model_info, appended_names, *, bulk_methods=_BULK_NOT_FETCHED):
     """Find accessor methods for appended attributes.
 
@@ -801,7 +1011,106 @@ def _build_controller_cache(conn) -> dict[str, str]:
     return cache
 
 
-def _find_eager_loads(conn, model_name, controller_cache: dict[str, str] | None = None):
+def _bulk_fetch_with_symbols(conn, models):
+    """Pre-loop bulk fetch: single SELECT for every ``with`` / ``$with``
+    property symbol in the codebase, then match each one back to its
+    owning model by ``file_id``.
+
+    Pre-fix, :func:`_find_eager_loads` issued one
+    ``WHERE name IN ('with', '$with') AND f.path LIKE '%{model_name}.php'``
+    SELECT per model — N queries on a Laravel app with N models.
+    Building one ``{model_id: with_sym_row | None}`` dict up-front
+    collapses that to a single query (B3 / W80 follow-up).
+
+    Returns ``{int(model_id): with_sym_dict | None}`` where the row
+    dict contains ``default_value``, ``line_start``, ``line_end``,
+    ``file_path``. Models without a matching ``$with`` map to ``None``
+    so callers can distinguish "fetched and absent" from "not fetched".
+    """
+    out: dict[int, dict | None] = {int(mid): None for mid in models}
+    if not models:
+        return out
+
+    file_id_to_model: dict[int, int] = {}
+    for mid, minfo in models.items():
+        fid = minfo.get("file_id")
+        if fid is not None:
+            # If two models share a file (rare — separate classes in
+            # one PHP file), the last one wins; the historical
+            # per-model query used a file-path LIKE that also had this
+            # ambiguity, so the bulk path preserves the same behavior.
+            file_id_to_model[int(fid)] = int(mid)
+
+    if not file_id_to_model:
+        return out
+
+    rows = conn.execute(
+        "SELECT s.file_id, s.default_value, s.line_start, s.line_end, "
+        "f.path as file_path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.name IN ('with', '$with') AND s.kind = 'property'"
+    ).fetchall()
+    for r in rows:
+        mid = file_id_to_model.get(int(r["file_id"]))
+        if mid is None:
+            continue
+        # First match wins per model — fetchone() semantics from the
+        # old per-model query.
+        if out.get(mid) is None:
+            out[mid] = {
+                "default_value": r["default_value"],
+                "line_start": r["line_start"],
+                "line_end": r["line_end"],
+                "file_path": r["file_path"],
+            }
+    return out
+
+
+def _build_resource_config_cache(conn) -> list[str]:
+    """Pre-loop bulk fetch: read every Laravel resource-config file
+    once and return the list of file contents.
+
+    Pre-fix, :func:`_find_eager_loads` re-issued the
+    ``LIKE '%config/resources.php'`` SELECT AND re-read every matching
+    file from disk on every model. On a 100-model app with 5 resource
+    configs that's 500 reads of the SAME files. The cached contents
+    are model-name-independent (the per-model filter happens inside
+    the eagerLoad-match loop), so one shared list serves all models.
+
+    Returns a list of file-content strings. Files whose ``read_text``
+    fails are silently skipped.
+    """
+    from roam.db.connection import find_project_root
+
+    contents: list[str] = []
+    root = find_project_root()
+    if root is None:
+        return contents
+    rows = conn.execute(
+        "SELECT f.path FROM files f "
+        "WHERE f.path LIKE '%config/resources.php' "
+        "OR f.path LIKE '%config/resources/%'"
+    ).fetchall()
+    for row in rows:
+        abs_path = root / row["path"]
+        if not abs_path.is_file():
+            continue
+        try:
+            contents.append(abs_path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return contents
+
+
+def _find_eager_loads(
+    conn,
+    model_name,
+    controller_cache: dict[str, str] | None = None,
+    *,
+    bulk_with_sym=_BULK_NOT_FETCHED,
+    resource_config_contents: list[str] | None = None,
+    model_id: int | None = None,
+):
     """Find eager loading configuration for a model.
 
     Checks:
@@ -820,6 +1129,23 @@ def _find_eager_loads(conn, model_name, controller_cache: dict[str, str] | None 
         directory scan + per-controller ``read_text`` is skipped. Pass
         ``None`` (default) for ad-hoc invocations; ``analyze_n1`` builds
         the cache once and threads it through every per-model call.
+    bulk_with_sym:
+        Pre-fetched ``$with`` symbol row (or ``None`` for "fetched and
+        absent") from :func:`_bulk_fetch_with_symbols`. When provided,
+        the per-model SELECT in step 1 is skipped. The model_id-based
+        index is the bulk path; ad-hoc callers without a model_id can
+        still trigger the legacy ``LIKE '%{model_name}.php'`` query by
+        leaving this as the sentinel.
+    resource_config_contents:
+        Pre-read list of resource-config file contents from
+        :func:`_build_resource_config_cache`. When provided, the
+        per-model SQL scan + ``read_text`` for resource configs is
+        skipped. The eagerLoad-match logic still runs per-model since
+        the model name is part of the heuristic.
+    model_id:
+        Used together with ``bulk_with_sym`` to look up the bulk
+        symbol — the bulk index keys by model id, not name. Optional
+        when ``bulk_with_sym`` is the sentinel.
 
     Returns set of relationship names that are eager loaded.
     """
@@ -830,13 +1156,16 @@ def _find_eager_loads(conn, model_name, controller_cache: dict[str, str] | None 
     root = find_project_root()
 
     # --- 1. Check $with property on the model ---
-    with_sym = conn.execute(
-        "SELECT s.default_value, s.line_start, s.line_end, f.path as file_path "
-        "FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE s.name IN ('with', '$with') AND s.kind = 'property' "
-        "AND f.path LIKE ?",
-        (f"%{model_name}.php",),
-    ).fetchone()
+    if bulk_with_sym is _BULK_NOT_FETCHED:
+        with_sym = conn.execute(
+            "SELECT s.default_value, s.line_start, s.line_end, f.path as file_path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE s.name IN ('with', '$with') AND s.kind = 'property' "
+            "AND f.path LIKE ?",
+            (f"%{model_name}.php",),
+        ).fetchone()
+    else:
+        with_sym = bulk_with_sym
 
     if with_sym:
         if with_sym["default_value"]:
@@ -856,38 +1185,30 @@ def _find_eager_loads(conn, model_name, controller_cache: dict[str, str] | None 
                     pass
 
     # --- 2. Check resource config files for eagerLoad ---
-    config_files = conn.execute(
-        "SELECT f.path FROM files f WHERE f.path LIKE '%config/resources.php'   OR f.path LIKE '%config/resources/%'"
-    ).fetchall()
-
     # Convert model class name to resource key pattern
     # e.g., "Post" → look for Post::class or 'posts' near eagerLoad
     model_lower = model_name.lower()
 
-    for cf in config_files:
-        if not root:
-            continue
-        abs_path = root / cf["path"]
-        if not abs_path.is_file():
-            continue
-        try:
-            content = abs_path.read_text(encoding="utf-8", errors="replace")
-            # Find eagerLoad([...]) calls and extract relationship names
-            # Pattern: ->eagerLoad(['rel1', 'rel2', ...])
-            for match in re.finditer(
-                r"->eagerLoad\(\s*\[(.*?)\]\s*\)",
-                content,
-                re.DOTALL,
-            ):
-                # Check if this eagerLoad is near the model reference
-                # Look backwards from match for the model class name
-                start = max(0, match.start() - 500)
-                context = content[start : match.end()]
-                if model_name in context or f"{model_name}::class" in context or model_lower in context.lower():
-                    rels = re.findall(r"['\"](\w+)['\"]", match.group(1))
-                    eager_loaded.update(rels)
-        except OSError:
-            pass
+    if resource_config_contents is not None:
+        config_contents_iter = resource_config_contents
+    else:
+        config_contents_iter = _iter_resource_config_contents(conn, root)
+
+    for content in config_contents_iter:
+        # Find eagerLoad([...]) calls and extract relationship names
+        # Pattern: ->eagerLoad(['rel1', 'rel2', ...])
+        for match in re.finditer(
+            r"->eagerLoad\(\s*\[(.*?)\]\s*\)",
+            content,
+            re.DOTALL,
+        ):
+            # Check if this eagerLoad is near the model reference
+            # Look backwards from match for the model class name
+            start = max(0, match.start() - 500)
+            context = content[start : match.end()]
+            if model_name in context or f"{model_name}::class" in context or model_lower in context.lower():
+                rels = re.findall(r"['\"](\w+)['\"]", match.group(1))
+                eager_loaded.update(rels)
 
     # --- 3. Check controller with() calls ---
     # Look for Model::with(['rel']) or ->with(['rel']) near model references.
@@ -903,6 +1224,28 @@ def _find_eager_loads(conn, model_name, controller_cache: dict[str, str] | None 
         eager_loaded.update(_extract_with_calls(content, model_name))
 
     return eager_loaded
+
+
+def _iter_resource_config_contents(conn, root):
+    """Stream resource-config contents on demand — fallback when
+    :func:`_find_eager_loads` is called without a pre-built
+    ``resource_config_contents`` list (ad-hoc callers).
+    """
+    if root is None:
+        return
+    rows = conn.execute(
+        "SELECT f.path FROM files f "
+        "WHERE f.path LIKE '%config/resources.php' "
+        "OR f.path LIKE '%config/resources/%'"
+    ).fetchall()
+    for row in rows:
+        abs_path = root / row["path"]
+        if not abs_path.is_file():
+            continue
+        try:
+            yield abs_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
 
 
 def _iter_controller_contents(conn, root):
@@ -1050,6 +1393,36 @@ def analyze_n1(conn, confidence_filter=None):
     # AND for the lighter ``model_method_names`` lookup below)
     methods_by_model = _bulk_fetch_methods_with_locations(conn, model_ids)
 
+    # W86 follow-up (B3.5): pre-fetch every method symbol in any model file
+    # so the candidate-filter fallback below can resolve methods by file_id
+    # in memory instead of running a per-model file-range SELECT. The
+    # parent_id-linked bulk fetch above misses PHP models (parser doesn't
+    # set parent_id), so on Laravel apps the fallback used to fire for
+    # every model and defeat the surrounding bulk work.
+    model_file_ids = [
+        int(mi["file_id"]) for mi in models.values() if mi.get("file_id") is not None
+    ]
+    # Resolve file_id for any model that arrived without one (defensive —
+    # ``_find_model_classes`` selects file_id, but consumers could in
+    # principle pass a model dict missing it). Single batched IN query.
+    missing_fid_model_ids = [
+        int(mid) for mid, mi in models.items() if mi.get("file_id") is None
+    ]
+    if missing_fid_model_ids:
+        from roam.db.connection import batched_in
+
+        for r in batched_in(
+            conn,
+            "SELECT id, file_id FROM symbols WHERE id IN ({ph})",
+            missing_fid_model_ids,
+        ):
+            mid = int(r["id"])
+            fid = r["file_id"]
+            if fid is not None and mid in models:
+                models[mid]["file_id"] = int(fid)
+                model_file_ids.append(int(fid))
+    methods_by_file = _bulk_fetch_methods_by_file(conn, model_file_ids)
+
     # $appends symbols (replaces _find_appends_properties N+1)
     appends_by_model = _bulk_fetch_appends_symbols(conn, model_ids, models)
 
@@ -1062,6 +1435,15 @@ def analyze_n1(conn, confidence_filter=None):
     # Build the cache once here; per-model lookups become dict scans.
     controller_cache = _build_controller_cache(conn)
 
+    # B3: bulk fetch every ``$with`` property symbol once instead of
+    # one per-model ``LIKE '%{Model}.php'`` SELECT. Key by model id.
+    with_sym_by_model = _bulk_fetch_with_symbols(conn, models)
+
+    # B3: read every Laravel resource-config file once instead of
+    # per-model. Contents are model-name-independent so a single
+    # shared list serves all models.
+    resource_config_contents = _build_resource_config_cache(conn)
+
     # First pass: filter to (model_id, model_info, accessors, model_methods)
     # tuples we'll actually trace. We need this to know all accessor IDs
     # before bulk-fetching their outgoing edges.
@@ -1073,18 +1455,33 @@ def analyze_n1(conn, confidence_filter=None):
         # Get all methods on this model (for relationship detection).
         model_methods = methods_by_model.get(model_id, [])
         if not model_methods:
-            # File-range fallback for models without parent_id-linked methods.
-            model_methods = conn.execute(
-                "SELECT s.id, s.name, s.kind FROM symbols s "
-                "WHERE s.file_id = ? AND s.kind = 'method' "
-                "AND s.line_start >= ? AND s.line_start <= ?",
-                (
-                    model_info.get("file_id")
-                    or conn.execute("SELECT file_id FROM symbols WHERE id = ?", (model_id,)).fetchone()["file_id"],
-                    model_info["line_start"],
-                    model_info.get("line_end") or 999999,
-                ),
-            ).fetchall()
+            # File-range fallback for models without parent_id-linked
+            # methods (PHP, primarily). Uses the pre-fetched
+            # ``methods_by_file`` map so this stays a constant-cost
+            # in-memory filter instead of one SELECT per gap-model.
+            fid = model_info.get("file_id")
+            line_start = model_info.get("line_start") or 0
+            line_end = model_info.get("line_end") or 999999
+            if fid is not None:
+                model_methods = [
+                    m for m in methods_by_file.get(int(fid), [])
+                    if line_start <= m["line_start"] <= line_end
+                ]
+            else:
+                # ``model_file_ids`` resolution above should have filled
+                # this in; preserve the legacy per-model query as a last
+                # resort so we don't silently drop methods.
+                row = conn.execute(
+                    "SELECT file_id FROM symbols WHERE id = ?", (model_id,)
+                ).fetchone()
+                fallback_fid = row["file_id"] if row else None
+                if fallback_fid is not None:
+                    model_methods = conn.execute(
+                        "SELECT s.id, s.name, s.kind, s.line_start FROM symbols s "
+                        "WHERE s.file_id = ? AND s.kind = 'method' "
+                        "AND s.line_start >= ? AND s.line_start <= ?",
+                        (fallback_fid, line_start, line_end),
+                    ).fetchall()
 
         # Step 1: Find $appends / virtual properties (uses bulk-fetched row)
         appended = _find_appends_properties(
@@ -1112,8 +1509,15 @@ def analyze_n1(conn, confidence_filter=None):
     for model_id, model_info, accessors, model_methods in candidates:
         model_name = model_info["name"]
 
-        # Step 3: Find what's already eager loaded
-        eager_loaded = _find_eager_loads(conn, model_name, controller_cache=controller_cache)
+        # Step 3: Find what's already eager loaded (uses bulk-fetched
+        # ``$with`` symbol + cached resource-config contents)
+        eager_loaded = _find_eager_loads(
+            conn, model_name,
+            controller_cache=controller_cache,
+            bulk_with_sym=with_sym_by_model.get(model_id),
+            resource_config_contents=resource_config_contents,
+            model_id=model_id,
+        )
 
         # Step 4: Find collection contexts (uses bulk-fetched refs)
         collection_ctxs = _find_collection_contexts(
@@ -1249,8 +1653,21 @@ def _build_suggestion(framework, model_name, rel_name, attr_name, io_type):
 )
 @click.option("--limit", "-n", default=30, help="Max findings to show")
 @click.option("--verbose", "-v", is_flag=True, help="Show I/O trace chains")
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror each N+1 pattern into the central findings registry "
+        "(``roam findings list --detector n1``). The detector-specific "
+        "output is unchanged; the registry rows are the denormalised "
+        "cross-detector surface. Re-running with the same source upserts "
+        "in place (no duplicates)."
+    ),
+)
 @click.pass_context
-def n1_cmd(ctx, confidence_filter, limit, verbose):
+def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
     """Detect implicit N+1 I/O patterns in ORM models.
 
     Finds computed properties on model classes that trigger database
@@ -1276,12 +1693,26 @@ def n1_cmd(ctx, confidence_filter, limit, verbose):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         findings, framework = analyze_n1(conn, confidence_filter)
 
-        # Sort: high first
-        _conf_order = {"high": 0, "medium": 1, "low": 2}
-        findings.sort(key=lambda f: _conf_order.get(f["confidence"], 9))
+        # --- W110: mirror findings into the central findings registry ---
+        # Runs ONLY with --persist. The persisted set is the FULL finding
+        # list (independent of the --limit display slice) so re-running
+        # with a smaller --limit doesn't truncate the registry. The
+        # detector-specific output (text / JSON) below is unchanged.
+        # Wrapped so a pre-W89 DB (no ``findings`` table) silently
+        # no-ops rather than crashing the standard read path.
+        if persist:
+            try:
+                _emit_n1_findings(conn, findings)
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
+
+        # Sort: high first (W596: canonical rank, negated for ascending order).
+        findings.sort(key=lambda f: -confidence_level_rank(f["confidence"], fallback=-1))
 
         # Apply limit
         truncated = len(findings) > limit

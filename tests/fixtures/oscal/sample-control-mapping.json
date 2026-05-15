@@ -1,0 +1,1979 @@
+{
+  "control-mapping": {
+    "uuid": "e9c226a9-cb6b-5e73-8f60-e72a86371c5f",
+    "metadata": {
+      "title": "Roam control mapping \u2014 supports evidence for governance frameworks",
+      "last-modified": "2026-05-14T12:00:00Z",
+      "version": "1",
+      "oscal-version": "1.1.2",
+      "remarks": "This Control Mapping maps to / supports evidence for the listed controls. It does not certify compliance and is not a substitute for an authorising body's assessment. Roam emits evidence packets that customers present to their auditor; the auditor remains the authority.",
+      "props": [
+        {
+          "ns": "urn:roam:oscal:v1",
+          "name": "schema_version",
+          "value": "control_mapping/v1"
+        },
+        {
+          "ns": "urn:roam:oscal:v1",
+          "name": "roam_control_count",
+          "value": "23"
+        },
+        {
+          "ns": "urn:roam:oscal:v1",
+          "name": "roam_framework_count",
+          "value": "9"
+        }
+      ]
+    },
+    "mappings": [
+      {
+        "uuid": "acb6aa3e-b921-59af-9781-c94b11c4d349",
+        "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+        "target-resource-id": "df138066-9e2b-5a07-a531-1641bcbc392c",
+        "props": [
+          {
+            "ns": "urn:roam:oscal:v1",
+            "name": "source-framework",
+            "value": "eu_ai_act_art_12"
+          }
+        ],
+        "maps": [
+          {
+            "uuid": "6c221fa0-dcff-5e49-a118-7b4b656b763c",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_AGENT_RECORD_KEEPING",
+            "target-control-id": "eu_ai_act_art_12:AI_AGENT_RECORD_KEEPING",
+            "remarks": "Roam's run ledger maps to EU AI Act Article 12 record-keeping by capturing timestamp, actor, and action for every recorded agent event.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Each AI-agent action is recorded with timestamp and actor."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "actor_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.timestamp"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.agent"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.action"
+              }
+            ]
+          },
+          {
+            "uuid": "c1cac16a-51a6-58eb-8c8c-d159dd09f788",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_AGENT_CHANGE_PROVENANCE",
+            "target-control-id": "eu_ai_act_art_12:AI_AGENT_CHANGE_PROVENANCE",
+            "remarks": "Each PR bundle carries a run_id, agent identifier, and intent string, which supports evidence for traceability of AI-generated changes.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Every AI-generated code change is traceable to a run_id and agent."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "actor_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "changed_subjects"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.run_id"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.agent"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.intent"
+              }
+            ]
+          },
+          {
+            "uuid": "f66ab74c-e6dd-5635-be84-5223e697bef0",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_AGENT_AUDIT_TRAIL_INTACT",
+            "target-control-id": "eu_ai_act_art_12:AI_AGENT_AUDIT_TRAIL_INTACT",
+            "remarks": "`roam runs verify` produces an audit-ready record of HMAC-chain integrity, which maps to Article 12 expectations for tamper-evident activity logs.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "audit-ready record"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "The audit-trail HMAC chain verifies with no gaps in event sequence."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.chain_verified"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.seq"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.prev_hash"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "79f2c28f-0c21-536a-9fe0-998f304dc093",
+        "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+        "target-resource-id": "84786eb6-4d8a-53ce-bae6-5fb42a99e6c0",
+        "props": [
+          {
+            "ns": "urn:roam:oscal:v1",
+            "name": "source-framework",
+            "value": "internal_ai_change_policy"
+          }
+        ],
+        "maps": [
+          {
+            "uuid": "898a816b-6069-5dd9-b466-2f09af1ca57d",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_CHANGE_CONTEXT_REVIEWED",
+            "target-control-id": "internal_ai_change_policy:AI_CHANGE_CONTEXT_REVIEWED",
+            "remarks": "The PR bundle's `context_read` manifest, combined with a recorded preflight verdict on the changed subjects, supports evidence for the internal AI-change-policy expectation that the agent reviewed relevant context before editing.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Agent read relevant context before edit."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "changed_subjects"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "findings"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "policy_decisions"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.context_read"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "preflight.verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "changed_subjects"
+              }
+            ]
+          },
+          {
+            "uuid": "7b113022-0e5a-5de5-82a4-5fd1b1d5b931",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_CHANGE_TESTS_GATED",
+            "target-control-id": "internal_ai_change_policy:AI_CHANGE_TESTS_GATED",
+            "remarks": "Where the bundle declared `tests_required` and recorded a non-empty `tests_run` with at least one passing entry, Roam supports evidence for the internal AI-change-policy test gate.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "conditional"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Required tests were declared and at least one passed before merge."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "tests_required"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "tests_run"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.tests_required"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.tests_run"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.tests_run.passed"
+              }
+            ]
+          },
+          {
+            "uuid": "c9fa0f9d-054a-558c-b9bd-81149b602689",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_CHANGE_BLAST_RADIUS_REVIEWED",
+            "target-control-id": "internal_ai_change_policy:AI_CHANGE_BLAST_RADIUS_REVIEWED",
+            "remarks": "For changes whose affected_symbols include a blast_radius above the site's configured threshold, the bundle's `risks[]` rationale, combined with a named authorizer on the run, maps to the internal AI-change policy's high-blast review requirement.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "conditional"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "High-blast-radius changes have an additional approval signal."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "findings"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "accepted_risks"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "approvals"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "authority_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "changed_subjects"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "security-reachability"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.affected_symbols.blast_radius"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.risks"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.authorizer"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "a060afae-18d7-5f56-a519-fe17e3c4876c",
+        "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+        "target-resource-id": "8fd9045d-3bf1-5e2f-a3c8-48d718e2d407",
+        "props": [
+          {
+            "ns": "urn:roam:oscal:v1",
+            "name": "source-framework",
+            "value": "iso_iec_42001"
+          }
+        ],
+        "maps": [
+          {
+            "uuid": "71de9fbc-7543-5a49-a5b3-a36c33268198",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_AGENT_OPERATIONAL_BOUNDARIES",
+            "target-control-id": "iso_iec_42001:AI_AGENT_OPERATIONAL_BOUNDARIES",
+            "remarks": "Roam's mode substrate maps to ISO/IEC 42001 expectations for operational boundaries by recording the active mode at every event and the explicit mode-switch events that change it.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Agents operate within declared modes (read_only, safe_edit, migration, autonomous_pr)."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "authority_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "mode.active"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.mode"
+              }
+            ]
+          },
+          {
+            "uuid": "209a812d-fe45-5def-93f8-c4c1ae38a3af",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_AGENT_RISK_ASSESSMENT",
+            "target-control-id": "iso_iec_42001:AI_AGENT_RISK_ASSESSMENT",
+            "remarks": "Where the PR bundle's `context_read.commands_run` includes a preflight or impact invocation, Roam supports evidence for ISO/IEC 42001 AI-risk assessment requirements.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "any_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "A pre-edit blast-radius analysis exists for changes the agent later applied."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "policy_decisions"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "findings"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "changed_subjects"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.context_read.commands_run"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.affected_symbols"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "preflight.verdict"
+              }
+            ]
+          },
+          {
+            "uuid": "ef310f45-8da9-5d3d-8bae-71434874de64",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_AGENT_GOVERNANCE_REVIEW",
+            "target-control-id": "iso_iec_42001:AI_AGENT_GOVERNANCE_REVIEW",
+            "remarks": "For runs that invoked `migration` or `autonomous_pr`, the ledger's mode-switch event records a named authorizer and rationale; this maps to ISO/IEC 42001 governance-review requirements.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "conditional"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Sensitive edits above safe_edit are linked to a named human authorizer."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "authority_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "approvals"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "accepted_risks"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.mode_switch"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.authorizer"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.rationale"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "49c1dd75-64f2-503b-afa0-abac12c766fd",
+        "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+        "target-resource-id": "56f494d5-2cf6-54b5-a268-511cddcbbe46",
+        "props": [
+          {
+            "ns": "urn:roam:oscal:v1",
+            "name": "source-framework",
+            "value": "nist_ai_600_1"
+          }
+        ],
+        "maps": [
+          {
+            "uuid": "722fd816-4124-58ee-972c-0f1e7155c28b",
+            "relationship": "supports",
+            "source-control-id": "roam:AI600_VALUE_CHAIN_PROVENANCE",
+            "target-control-id": "nist_ai_600_1:AI600_VALUE_CHAIN_PROVENANCE",
+            "remarks": "Roam's pr-bundle and run ledger maps to NIST AI 600-1 GV-1.2-001 value-chain transparency by recording actor, run, and content-hash provenance for every AI-assisted code change. Scope note: GV-1.2-001 targets model version and training-data provenance; roam covers code-change provenance (same structure, different subject).",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Every AI-agent code change carries actor, run, and content-hash provenance."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "actor_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.run_id"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.agent"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.actor"
+              }
+            ]
+          },
+          {
+            "uuid": "f689a00c-1bf2-5c7c-9ec7-5c71075274be",
+            "relationship": "supports",
+            "source-control-id": "roam:AI600_STOP_BUILD_AUTHORITY",
+            "target-control-id": "nist_ai_600_1:AI600_STOP_BUILD_AUTHORITY",
+            "remarks": "Roam's constitution-gate evaluation and mode substrate (with read_only blocking the write surface) supports evidence for NIST AI 600-1 GV-1.3-006/007 stop-build authority. Scope note: gate enforcement is repo-local; no external deployment pipeline integration today.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Constitution gates and mode substrate block writes on unacceptable risk."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "authority_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "policy_decisions"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "constitution.gates"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "mode.active"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.chain_verified"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "dec98f14-c4a3-5268-ba2a-ac686cf81a17",
+        "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+        "target-resource-id": "e60e8160-be69-5f4d-bd73-e8c7ae555732",
+        "props": [
+          {
+            "ns": "urn:roam:oscal:v1",
+            "name": "source-framework",
+            "value": "nist_ai_rmf"
+          }
+        ],
+        "maps": [
+          {
+            "uuid": "0811ae1c-27cc-50bc-bab1-fbb798635a71",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_GOVERN_MAP",
+            "target-control-id": "nist_ai_rmf:AI_GOVERN_MAP",
+            "remarks": "Roam's cumulative mode substrate (read_only / safe_edit / migration / autonomous_pr) supports evidence for NIST AI RMF GOVERN function requirements by making each agent's action surface explicit.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Each AI agent has documented capability boundaries via declared mode."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "authority_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "actor_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "team-mcp-gateway"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "mode.active"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "mode.allowed_actions"
+              }
+            ]
+          },
+          {
+            "uuid": "55fe2f3c-1f8d-5f54-8b77-86944594133a",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_MEASURE_RISK",
+            "target-control-id": "nist_ai_rmf:AI_MEASURE_RISK",
+            "remarks": "The PR bundle's `risks[]` array, together with per-symbol `blast_radius` values, maps to NIST AI RMF MEASURE function expectations for risk identification and quantification.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Run-level risk verdicts and per-symbol risk entries are recorded."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "findings"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "changed_subjects"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "accepted_risks"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "security-reachability"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.risks"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.affected_symbols.blast_radius"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "critique.verdict"
+              }
+            ]
+          },
+          {
+            "uuid": "3d0ef044-deaa-5ab4-8954-75d102ee4906",
+            "relationship": "supports",
+            "source-control-id": "roam:AI_MANAGE_CONTROL",
+            "target-control-id": "nist_ai_rmf:AI_MANAGE_CONTROL",
+            "remarks": "Roam records each policy-relevant event (mode switch, gate evaluation, lease claim) on the chained ledger; this maps to NIST AI RMF MANAGE function expectations for decision context.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Policy decisions are recorded with timestamp and decision context."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "policy_decisions"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "authority_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "team-mcp-gateway"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.timestamp"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.action"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "constitution.gates"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "c96edecf-495c-58f3-8582-a346896ff5a9",
+        "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+        "target-resource-id": "0ad4e083-9013-5ea1-8a42-1eb69c09b1d0",
+        "props": [
+          {
+            "ns": "urn:roam:oscal:v1",
+            "name": "source-framework",
+            "value": "nist_sp_800_218a"
+          }
+        ],
+        "maps": [
+          {
+            "uuid": "29b0ccbd-9b18-57ee-a1e5-46288451d6ff",
+            "relationship": "supports",
+            "source-control-id": "roam:SSDF218A_CODE_PROVENANCE",
+            "target-control-id": "nist_sp_800_218a:SSDF218A_CODE_PROVENANCE",
+            "remarks": "Roam's ChangeEvidence (actor_refs, run_ids, commit_sha, context_read) maps to the NIST SP 800-218A PW.3.2 provenance definition for AI-assisted code changes. Scope note: PW.3.2 targets model training-data provenance; roam covers code-change provenance (same structure, different subject).",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "AI-assisted code changes carry the provenance fields defined in SP 800-218A PW.3.2."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "actor_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "changed_subjects"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "due-diligence"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.run_id"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.actor_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.context_read"
+              }
+            ]
+          },
+          {
+            "uuid": "01794401-605f-568f-93d6-32da978fdffc",
+            "relationship": "supports",
+            "source-control-id": "roam:SSDF218A_CODE_REVIEW_AI_OUTPUT",
+            "target-control-id": "nist_sp_800_218a:SSDF218A_CODE_REVIEW_AI_OUTPUT",
+            "remarks": "Where the PR bundle records a roam critique invocation before merge, Roam maps to NIST SP 800-218A PW.6 code-review requirements for AI-generated output. Scope note: critique applies uniformly today; no explicit \"AI-generated\" flag on reviewed hunks.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "any_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Pre-merge critique gates AI-generated diff before merge."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "findings"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "tests_run"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.context_read.commands_run"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "critique.verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "critique.severity"
+              }
+            ]
+          },
+          {
+            "uuid": "ad271156-83db-53df-9662-a51c0b41eb7d",
+            "relationship": "supports",
+            "source-control-id": "roam:SSDF218A_DEVELOPER_AUTHORIZATION",
+            "target-control-id": "nist_sp_800_218a:SSDF218A_DEVELOPER_AUTHORIZATION",
+            "remarks": "Roam's mode substrate (cumulative read_only / safe_edit / migration / autonomous_pr) and permit records supports evidence for NIST SP 800-218A PO.3.2 developer-authorization requirements. Scope note: authorization is repo-local; no org-level IdP/SSO integration today.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Write-surface actions are gated by declared mode and named permit."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "authority_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "approvals"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "team-mcp-gateway"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "mode.active"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "mode.allowed_actions"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.authorizer"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "ffa01ea2-bd0a-5bf9-9455-513bf50ced6d",
+        "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+        "target-resource-id": "4d5883f8-5694-509d-bc63-f3a188b4e8d6",
+        "props": [
+          {
+            "ns": "urn:roam:oscal:v1",
+            "name": "source-framework",
+            "value": "slsa_src_l2"
+          }
+        ],
+        "maps": [
+          {
+            "uuid": "8d96d785-c51b-5852-89a6-55263e754d23",
+            "relationship": "supports",
+            "source-control-id": "roam:SLSA_SRC_L2_AUTHORITY",
+            "target-control-id": "slsa_src_l2:SLSA_SRC_L2_AUTHORITY",
+            "remarks": "Roam's mode substrate (cumulative read_only / safe_edit / migration / autonomous_pr) and constitution-gate evaluations, recorded on `ChangeEvidence.authority_refs[]`, maps to SLSA SRC-L2 authority requirements for protected-branch change controls. Scope note: authority enforcement is repo-local; SCM-level branch protections remain the SCM's responsibility.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Protected-branch actions are gated by declared mode and recorded authority."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "authority_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "policy_decisions"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "mode.active"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "constitution.gates"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.authority_refs"
+              }
+            ]
+          },
+          {
+            "uuid": "a922bdb3-ce6c-53c8-bed0-e76693b9f0e3",
+            "relationship": "supports",
+            "source-control-id": "roam:SLSA_SRC_L2_PROVENANCE",
+            "target-control-id": "slsa_src_l2:SLSA_SRC_L2_PROVENANCE",
+            "remarks": "Roam's HMAC-chained run ledger and pr-bundle (actor_refs, commit_sha, run_id, per-event timestamps) maps to SLSA SRC-L2 contemporaneous source-provenance requirements. Scope note: the ledger HMAC is locally tamper-evident; external transparency anchoring is the SRC-L3 lift covered by `SLSA_SRC_L3_VSA_PREDICATE` below.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "maps to"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Each revision carries contemporaneous actor, timestamp, and revision-id provenance."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "actor_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "due-diligence"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.timestamp"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "runs.event.actor"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.run_id"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.actor_refs"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "c6a4de06-8bb4-591e-9cdd-493da5b40fad",
+        "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+        "target-resource-id": "bb666de4-abae-5cf7-a9f3-610aaf0237c9",
+        "props": [
+          {
+            "ns": "urn:roam:oscal:v1",
+            "name": "source-framework",
+            "value": "slsa_src_l3"
+          }
+        ],
+        "maps": [
+          {
+            "uuid": "150b27cc-7345-5d85-90d0-ff834f793397",
+            "relationship": "supports",
+            "source-control-id": "roam:SLSA_SRC_L3_VSA_PREDICATE",
+            "target-control-id": "slsa_src_l3:SLSA_SRC_L3_VSA_PREDICATE",
+            "remarks": "Roam's `pr-bundle emit --slsa-l3 --sign --keyless` (and the parallel `cga emit --also-vsa` surface) wraps `ChangeEvidence` in an in-toto v1 Statement carrying `predicateType: https://slsa.dev/verification_summary/v1`, signed via Fulcio + Rekor. This supports evidence for SLSA SRC-L3 verification-summary attestation requirements. Scope note: roam emits the VSA evidence; external slsa-verifier consumers issue the level claim.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "A Verification Summary Attestation in SLSA v1 VSA shape is emitted with the change."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "actor_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "due-diligence"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.artifacts.vsa"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.run_id"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.signature_ref"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "uuid": "e0e341bc-0f4c-5c50-bab0-8600b6549d90",
+        "source-resource-id": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+        "target-resource-id": "55d81eef-6a90-58db-bf39-3e7b40b88528",
+        "props": [
+          {
+            "ns": "urn:roam:oscal:v1",
+            "name": "source-framework",
+            "value": "soc_2_cc8_1"
+          }
+        ],
+        "maps": [
+          {
+            "uuid": "0618a831-0d41-5528-9307-d4ca470cda88",
+            "relationship": "supports",
+            "source-control-id": "roam:CHANGE_AUTHORIZATION",
+            "target-control-id": "soc_2_cc8_1:CHANGE_AUTHORIZATION",
+            "remarks": "Each emitted PR bundle ties its commit_sha to a run_id and named agent, which supports evidence for SOC 2 CC8.1 change-authorization records.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Each commit links to a documented run_id and agent actor."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "actor_refs"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "git_range"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "due-diligence"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.run_id"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.agent"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.commit_sha"
+              }
+            ]
+          },
+          {
+            "uuid": "35bd43a5-8831-5803-b981-21f38e336822",
+            "relationship": "supports",
+            "source-control-id": "roam:CHANGE_REVIEW",
+            "target-control-id": "soc_2_cc8_1:CHANGE_REVIEW",
+            "remarks": "Where the PR bundle records a `roam critique` or `roam impact` invocation before merge, Roam supports evidence for SOC 2 CC8.1 change-review requirements.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "supports evidence for"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "any_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "Pre-merge review evidence exists in the PR bundle (critique + impact)."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "findings"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "changed_subjects"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "tests_run"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "review"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.context_read.commands_run"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "critique.verdict"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "impact.affected_symbols"
+              }
+            ]
+          },
+          {
+            "uuid": "2fd309f5-4934-5d7c-accd-e0c11fdc21ef",
+            "relationship": "supports",
+            "source-control-id": "roam:CHANGE_TRACEABILITY",
+            "target-control-id": "soc_2_cc8_1:CHANGE_TRACEABILITY",
+            "remarks": "The PR bundle composes commit_sha, run_id, context_read, and tests_run into an audit-ready record that maps to SOC 2 CC8.1 traceability requirements.",
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "wording_guard",
+                "value": "audit-ready record"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "pass_condition",
+                "value": "all_required_present"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "claim",
+                "value": "A commit links to its run, the context the agent read, and the tests it ran."
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "git_range"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "run_ids"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "tests_run"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "evidence_type",
+                "value": "audit_trail"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "pr-replay"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "governance-pack"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "surface",
+                "value": "due-diligence"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.commit_sha"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.run_id"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.context_read"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "required_evidence",
+                "value": "pr_bundle.tests_run"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "back-matter": {
+      "resources": [
+        {
+          "uuid": "a874962e-4bb2-51a0-9e6c-37d2274f6d96",
+          "title": "Roam ChangeEvidence",
+          "description": "Portable evidence packet emitted per code change. Source of evidence that maps to the listed governance controls.",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "evidence_source"
+            }
+          ]
+        },
+        {
+          "uuid": "df138066-9e2b-5a07-a531-1641bcbc392c",
+          "title": "EU AI Act, Article 12 (record-keeping)",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "framework"
+            },
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "framework_slug",
+              "value": "eu_ai_act_art_12"
+            }
+          ]
+        },
+        {
+          "uuid": "84786eb6-4d8a-53ce-bae6-5fb42a99e6c0",
+          "title": "Internal AI-change policy",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "framework"
+            },
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "framework_slug",
+              "value": "internal_ai_change_policy"
+            }
+          ]
+        },
+        {
+          "uuid": "8fd9045d-3bf1-5e2f-a3c8-48d718e2d407",
+          "title": "ISO/IEC 42001 (AI management system)",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "framework"
+            },
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "framework_slug",
+              "value": "iso_iec_42001"
+            }
+          ]
+        },
+        {
+          "uuid": "56f494d5-2cf6-54b5-a268-511cddcbbe46",
+          "title": "NIST AI 600-1 (Generative AI Profile)",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "framework"
+            },
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "framework_slug",
+              "value": "nist_ai_600_1"
+            }
+          ]
+        },
+        {
+          "uuid": "e60e8160-be69-5f4d-bd73-e8c7ae555732",
+          "title": "NIST AI Risk Management Framework",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "framework"
+            },
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "framework_slug",
+              "value": "nist_ai_rmf"
+            }
+          ]
+        },
+        {
+          "uuid": "0ad4e083-9013-5ea1-8a42-1eb69c09b1d0",
+          "title": "NIST SP 800-218A (SSDF GenAI Community Profile)",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "framework"
+            },
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "framework_slug",
+              "value": "nist_sp_800_218a"
+            }
+          ]
+        },
+        {
+          "uuid": "4d5883f8-5694-509d-bc63-f3a188b4e8d6",
+          "title": "SLSA v1.2 Source Track Level 2 (history + provenance)",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "framework"
+            },
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "framework_slug",
+              "value": "slsa_src_l2"
+            }
+          ]
+        },
+        {
+          "uuid": "bb666de4-abae-5cf7-a9f3-610aaf0237c9",
+          "title": "SLSA v1.2 Source Track Level 3 (continuous technical controls)",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "framework"
+            },
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "framework_slug",
+              "value": "slsa_src_l3"
+            }
+          ]
+        },
+        {
+          "uuid": "55d81eef-6a90-58db-bf39-3e7b40b88528",
+          "title": "SOC 2 CC8.1 (change management)",
+          "props": [
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "roam_resource_kind",
+              "value": "framework"
+            },
+            {
+              "ns": "urn:roam:oscal:v1",
+              "name": "framework_slug",
+              "value": "soc_2_cc8_1"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -29,6 +29,7 @@ from roam.commands.resolve import ensure_index, file_not_found_hint, find_symbol
 from roam.db.connection import batched_in, open_db
 from roam.db.queries import FILE_BY_PATH
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 _TASK_CHOICES = ["refactor", "debug", "extend", "review", "understand"]
 
@@ -816,7 +817,7 @@ def _render_single_json(data, budget=0):
     summary = {
         "verdict": verdict,
         "callers": len(non_test_callers),
-        "caller_metric_definition": "raw_edge_rows",
+        "caller_metric_definition": CALLER_METRIC_RAW,
         "callees": len(callees),
         "tests": len(test_callers),
         "files_to_read": len(files_to_read),
@@ -996,7 +997,7 @@ def _render_file_json(data, budget=0):
         "verdict": verdict,
         "symbol_count": data["symbol_count"],
         "caller_files": len(data["callers"]),
-        "caller_metric_definition": "raw_edge_rows",
+        "caller_metric_definition": CALLER_METRIC_RAW,
         "callee_files": len(data["callees"]),
         "test_files": len(data["tests"]),
         "coupling_partners": len(data["coupling"]),
@@ -1094,7 +1095,7 @@ def _render_batch_json(data, budget=0):
                     "shared_callers": len(shared_callers),
                     "shared_callees": len(shared_callees),
                     "files_to_read": len(scored_files),
-                    "caller_metric_definition": "raw_edge_rows",
+                    "caller_metric_definition": CALLER_METRIC_RAW,
                 },
                 mode="batch",
                 symbols=[

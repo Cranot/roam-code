@@ -165,7 +165,12 @@ class TestRunRoam:
         mock_result.exit_code = 0
         mock_result.output = json.dumps(payload)
         mock_result.exception = None
-        with patch("click.testing.CliRunner.invoke", return_value=mock_result):
+        # W839 (W791 follow-up): pin a non-stale index so `_annotate_stale`
+        # doesn't decorate the envelope with `_meta.stale_index` + a verdict
+        # banner, which would break the success-path equality assertion.
+        with patch("click.testing.CliRunner.invoke", return_value=mock_result), patch(
+            "roam.mcp_server._check_stale_with_cache", return_value=(False, None)
+        ):
             result = _run_roam(["health"], ".")
             assert result == payload
 
@@ -202,7 +207,12 @@ class TestRunRoam:
         from roam.mcp_server import _run_roam
 
         payload = {"summary": {"health_score": 85}}
-        with patch("subprocess.run") as mock:
+        # W839 (W791 follow-up): mirror the inprocess-success test —
+        # pin non-stale so `_annotate_stale` is a no-op on the parsed
+        # subprocess JSON, preserving the equality assertion's intent.
+        with patch("subprocess.run") as mock, patch(
+            "roam.mcp_server._check_stale_with_cache", return_value=(False, None)
+        ):
             mock.return_value = MagicMock(
                 returncode=0,
                 stdout=json.dumps(payload),
@@ -630,6 +640,47 @@ class TestMcpCmd:
             assert data["tools"][0]["name"] == "roam_demo"
             assert data["tools"][0]["task_support"] == "optional"
 
+    def test_mcp_card_flag_emits_canonical_json(self):
+        """``roam mcp --card`` should emit parseable JSON with the canonical schema URL.
+
+        W695 drive-by: W642 dropped the triple-parent fallback from the
+        ``--card`` handler, leaving the CLI path itself uncovered. Only
+        ``test_mcp_server_card_hash.py`` pins the bundled file's bytes;
+        this test pins the CLI surface that ships the file to agents.
+        """
+        from roam.mcp_server import mcp_cmd
+
+        runner = CliRunner()
+        result = runner.invoke(mcp_cmd, ["--card"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["$schema"] == "https://schemas.modelcontextprotocol.io/server-card/v1"
+        assert data["name"] == "roam-code"
+
+    def test_mcp_card_flag_matches_bundled_file(self):
+        """``roam mcp --card`` output must equal the bundled file byte-for-byte.
+
+        W695 drive-by: guards against the handler accidentally re-encoding
+        or pretty-printing the JSON. The handler ``rstrip()``s before
+        ``click.echo`` (which re-adds a trailing newline), so we compare
+        against the bundled file's content with the same rstrip.
+        """
+        from tests._helpers.repo_root import repo_root
+
+        from roam.mcp_server import mcp_cmd
+
+        bundled = (repo_root() / "src" / "roam" / "mcp-server-card.json").read_text(
+            encoding="utf-8"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(mcp_cmd, ["--card"])
+        assert result.exit_code == 0, result.output
+        # click.echo appends a trailing newline to whatever it prints;
+        # the handler echoed ``rstrip()``ed bytes, so output without the
+        # trailing newline equals the bundled file's rstrip()ed content.
+        assert result.output.rstrip("\n") == bundled.rstrip()
+
 
 # ---------------------------------------------------------------------------
 # Tool wrapper argument construction tests
@@ -638,6 +689,20 @@ class TestMcpCmd:
 
 class TestToolWrappers:
     """Test that tool wrappers construct correct CLI arguments."""
+
+    @pytest.fixture(autouse=True)
+    def _bypass_cold_start_guard(self, monkeypatch):
+        """W843: bypass the W296 cold-start guard so the inner wrapper
+        body actually reaches ``_run_roam``.
+
+        Without this, every tool that needs an index (i.e. almost all of
+        them) short-circuits at ``_wrap_with_cold_start_guard`` and the
+        ``_run_roam`` mock never fires -- producing the
+        ``Expected '_run_roam' to have been called once. Called 0 times``
+        failure shape. The guard ships with a documented env-var bypass
+        (``src/roam/mcp_extras/preflight.py`` line 166).
+        """
+        monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
 
     def _check_args(self, fn, kwargs, expected_args):
         """Call a tool function with mocked _run_roam and verify args."""
@@ -1102,6 +1167,14 @@ class TestCompoundEnvelope:
 class TestCompoundOperations:
     """Test compound MCP operations."""
 
+    @pytest.fixture(autouse=True)
+    def _bypass_cold_start_guard(self, monkeypatch):
+        """W843: bypass the W296 cold-start guard so each sub-command in
+        a compound recipe reaches ``_run_roam``. See the matching fixture
+        on ``TestToolWrappers`` for the full rationale.
+        """
+        monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+
     def test_explore_without_symbol(self):
         from roam.mcp_server import explore
 
@@ -1165,7 +1238,7 @@ class TestCompoundOperations:
         eff = {"summary": {"verdict": "2 effects"}, "effects": []}
         with patch("roam.mcp_server._run_roam") as mock:
             mock.side_effect = [pf, ctx, eff]
-            result = prepare_change(target="my_func")
+            result = prepare_change(symbol="my_func")
             assert mock.call_count == 3
             assert mock.call_args_list[0][0][0] == ["preflight", "my_func"]
             assert mock.call_args_list[1][0][0] == ["context", "my_func", "--task", "refactor"]
@@ -1173,7 +1246,10 @@ class TestCompoundOperations:
         assert "preflight" in result
         assert "context" in result
         assert "effects" in result
-        assert result["summary"]["target"] == "my_func"
+        # W430: ``prepare_change`` now forwards ``symbol=symbol`` to
+        # ``_compound_envelope``, so the meta-kwarg surfaces under the
+        # canonical name in summary.
+        assert result["summary"]["symbol"] == "my_func"
 
     def test_prepare_change_with_personalization(self):
         from roam.mcp_server import prepare_change
@@ -1184,7 +1260,7 @@ class TestCompoundOperations:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.side_effect = [pf, ctx, eff]
             prepare_change(
-                target="my_func",
+                symbol="my_func",
                 session_hint="refactor billing domain",
                 recent_symbols="Invoice,Payment",
             )
@@ -1209,7 +1285,7 @@ class TestCompoundOperations:
         eff = {"summary": {"verdict": "ok"}}
         with patch("roam.mcp_server._run_roam") as mock:
             mock.side_effect = [pf, ctx, eff]
-            prepare_change(target="func", staged=True)
+            prepare_change(symbol="func", staged=True)
             # First call should include --staged
             assert "--staged" in mock.call_args_list[0][0][0]
 

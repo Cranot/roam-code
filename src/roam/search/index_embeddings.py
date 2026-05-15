@@ -9,24 +9,40 @@ import sqlite3
 from typing import Any
 
 from roam.search.framework_packs import search_pack_symbols
-from roam.search.tfidf import cosine_similarity, tokenize
+from roam.search.tfidf import _RE_CAMEL_SPLIT, _RE_UPPER_SPLIT, cosine_similarity, tokenize
+
+# W901: ``_camel_split`` is imported by ``roam.retrieve.seeds`` (single
+# source of truth across the search/retrieve boundary). The leading
+# underscore is preserved to avoid churning the 4 internal call-sites,
+# but ``__all__`` declares it intentionally exported so private-access
+# lints don't flag the cross-module import.
+__all__ = ["_camel_split"]
 
 # ---------------------------------------------------------------------------
 # camelCase preprocessing for FTS5 tokenizer
 # ---------------------------------------------------------------------------
 
 
-def _camel_split(text: str) -> str:
+def _camel_split(text: str | None) -> str:
     """Insert spaces at camelCase/PascalCase boundaries for FTS5.
 
-    ``OpenDatabase`` β†’ ``Open Database``
-    ``XMLParser``    β†’ ``XML Parser``
-    ``file_path``    β†’ ``file_path`` (underscores handled by unicode61)
+    ``OpenDatabase`` -> ``Open Database``
+    ``XMLParser``    -> ``XML Parser``
+    ``file_path``    -> ``file_path`` (underscores handled by unicode61)
+
+    W929: the two regex patterns are reused from the pre-compiled module-level
+    constants in ``roam.search.tfidf`` so the camelCase / PascalCase split
+    semantics stay in lockstep across the search/retrieve boundary. A drift
+    here previously meant two regex bodies could diverge silently.
+
+    W1029: ``text`` accepts ``None`` so callers can pass raw SQL row values
+    without the cargo-cult ``or ""`` defensive wrapper. Returns ``""`` on
+    ``None``/empty.
     """
     if not text:
         return ""
-    result = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    result = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", result)
+    result = _RE_CAMEL_SPLIT.sub(r"\1 \2", text)
+    result = _RE_UPPER_SPLIT.sub(r"\1 \2", result)
     return result
 
 
@@ -195,9 +211,9 @@ def build_fts_index(
         batch.append(
             (
                 row["id"],
-                _camel_split(row["name"] or ""),
-                _camel_split(row["qualified_name"] or ""),
-                _camel_split(row["signature"] or ""),
+                _camel_split(row["name"]),
+                _camel_split(row["qualified_name"]),
+                _camel_split(row["signature"]),
                 row["docstring"] or "",
                 row["kind"] or "",
                 row["file_path"] or "",

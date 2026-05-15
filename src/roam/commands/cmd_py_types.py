@@ -139,7 +139,7 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
       modern forms.
 
     Use this to direct typing-fix sprints to the highest-leverage
-    files, or as a CI gate (``--ci`` lands in v12.5).
+    files, or as a CI gate (pair ``--ci`` with ``--min-coverage``).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

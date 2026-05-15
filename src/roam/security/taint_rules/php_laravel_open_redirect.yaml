@@ -1,0 +1,27 @@
+id: php-laravel-open-redirect
+description: Untrusted request input passed to redirect()/Redirect::to() without an allowlist — attacker controls the destination URL. Maps to CWE-601 / OWASP A01:2021 Broken Access Control (open redirect bypasses authorization boundaries).
+severity: warning
+cwe: CWE-601
+owasp_top10: A01:2021_Broken_Access_Control
+languages:
+  - php
+sources:
+  - input
+  - all
+  - query
+  - post
+  - get
+  - header
+sinks:
+  - redirect
+  - to
+  - Redirect.to
+  - Redirect.away
+  - away
+  - header
+sanitizers:
+  - url
+  - URL.to
+  - route
+  - validateRedirect
+  - allowedHosts

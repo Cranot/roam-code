@@ -16,11 +16,20 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Valid status values
-# ---------------------------------------------------------------------------
+from roam.policy.suppression_v2 import (
+    RuleFileSuppression,
+    VALID_STATUSES,  # re-export for back-compat
+)
 
-VALID_STATUSES = frozenset({"safe", "acknowledged", "wont-fix"})
+# Re-exported for code that imports VALID_STATUSES from this module.
+__all__ = [
+    "VALID_STATUSES",
+    "is_suppressed",
+    "load_suppressions",
+    "load_suppressions_typed",
+    "save_suppression",
+    "suppression_stats",
+]
 
 # ---------------------------------------------------------------------------
 # Simple YAML parser for suppression files (no PyYAML dependency)
@@ -97,6 +106,104 @@ def _parse_suppressions_yaml(text: str) -> list[dict]:
     return suppressions
 
 
+def _parse_suppressions_yaml_root_dict(text: str) -> dict:
+    """Tiny-parser wrapper: text -> ``{"suppressions": [rows]}`` root dict.
+
+    The W1032 tiny_parser for :func:`load_yaml_with_warnings`. Pure
+    structural parse — no validation; the required-field check
+    (``rule`` + ``file``) runs in :func:`_validate_suppression_rows`
+    after the helper returns, mirroring the W1019b pattern used by
+    :mod:`roam.commands.smells_suppress`.
+    """
+    rows: list[dict] = []
+    current: dict | None = None
+    in_block = False
+
+    for raw_line in text.split("\n"):
+        stripped = raw_line.strip()
+
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if stripped == "suppressions:":
+            in_block = True
+            continue
+
+        if not in_block:
+            continue
+
+        if stripped.startswith("- "):
+            if current is not None:
+                rows.append(current)
+            current = {}
+            rest = stripped[2:].strip()
+            if ":" in rest:
+                key, _, val = rest.partition(":")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if val:
+                    current[key] = _coerce_value(key, val)
+        elif current is not None and ":" in stripped:
+            key, _, val = stripped.partition(":")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if val:
+                current[key] = _coerce_value(key, val)
+
+    if current is not None:
+        rows.append(current)
+
+    return {"suppressions": rows}
+
+
+def _validate_suppression_rows(
+    rows: list,
+    *,
+    warnings_out: list[str] | None = None,
+    source_path: str | None = None,
+) -> list[dict]:
+    """Apply required-field validation to a list of parsed suppression rows.
+
+    Each row must declare both ``rule`` and ``file`` keys; rows that miss
+    either are dropped (matching the pre-W1032 silent-skip behaviour).
+    When *warnings_out* is supplied, every dropped row appends a structured
+    warning naming the 1-based row index + the missing field so an agent
+    can fix the file (W1032 — Pattern 2 silent-fallback).
+
+    The validator mirrors the W995 vocabulary used by
+    :mod:`roam.commands.smells_suppress` so the cross-loader warning
+    shape stays consistent.
+    """
+    suppressions: list[dict] = []
+    dropped: list[tuple[int, str]] = []
+    for idx, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            dropped.append((idx, "rule"))
+            continue
+        if "rule" not in row or "file" not in row:
+            missing = "rule" if "rule" not in row else "file"
+            dropped.append((idx, missing))
+            continue
+        suppressions.append(row)
+
+    if warnings_out is not None and dropped:
+        loc = source_path or ".roam-suppressions.yml"
+        for idx, missing in dropped:
+            warnings_out.append(
+                f"suppressions: {loc!r}: entry #{idx} dropped — missing "
+                f"required field {missing!r}; each row must declare both "
+                f"'rule' and 'file' fields."
+            )
+        if len(dropped) > 1:
+            warnings_out.append(
+                f"suppressions: {loc!r}: dropped {len(dropped)} malformed "
+                f"suppression entries total; fix the listed rows to restore "
+                f"them."
+            )
+
+    return suppressions
+
+
 def _coerce_value(key: str, val: str) -> object:
     """Coerce a string value to the appropriate Python type.
 
@@ -128,8 +235,9 @@ def _serialize_suppressions(suppressions: list[dict]) -> str:
             if val is None:
                 continue
             if first:
+                # Only the first field of each entry gets the leading dash;
+                # subsequent fields are indented continuation lines.
                 lines.append(f"  - {key}: {val}")
-                first = True  # only the first field gets the dash
                 first = False
             else:
                 lines.append(f"    {key}: {val}")
@@ -144,25 +252,99 @@ def _serialize_suppressions(suppressions: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def load_suppressions(project_root: str | Path) -> list[dict]:
+def load_suppressions(
+    project_root: str | Path,
+    *,
+    warnings_out: list[str] | None = None,
+) -> list[dict]:
     """Load suppressions from ``.roam-suppressions.yml`` in *project_root*.
 
     Returns an empty list if the file does not exist or cannot be parsed.
     Each suppression dict has at least ``rule`` and ``file`` keys, and
     optionally ``line``, ``reason``, ``status``, ``author``, ``date``.
+
+    W1032 (Pattern 2 — silent fallback, mirror of W706's
+    :func:`finding_suppress._load_ignore_findings_file` and W1019b's
+    :func:`smells_suppress.load_smells_suppressions`): when *warnings_out*
+    is supplied as a ``list[str]``, every silent-fallback path (file
+    unreadable / OSError, malformed YAML/JSON, non-dict root, missing or
+    non-list ``suppressions:`` key, malformed entry without required
+    ``rule`` / ``file``) appends an actionable warning naming the path,
+    the failure shape, and the resolution. Pre-W1032 callers that don't
+    supply ``warnings_out`` retain byte-identical silent-empty-list
+    behaviour so existing happy-path consumers (``cmd_triage``,
+    ``save_suppression`` dedup) keep emitting byte-identical envelopes
+    when ``.roam-suppressions.yml`` is well-formed.
+
+    The file-read + YAML parse + no-PyYAML fallback + root-type check
+    live in :func:`roam.commands._yaml_loader.load_yaml_with_warnings`;
+    the per-entry validation (required ``rule`` + ``file``) stays here
+    via :func:`_validate_suppression_rows`. Mirrors the W1019b pattern
+    from :mod:`roam.commands.smells_suppress`.
     """
+    from roam.commands._yaml_loader import load_yaml_with_warnings
+
     root = Path(project_root)
     config_path = root / ".roam-suppressions.yml"
 
-    if not config_path.is_file():
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data = load_yaml_with_warnings(
+        config_path,
+        tiny_parser=_parse_suppressions_yaml_root_dict,
+        config_label="suppressions",
+        warnings_out=warnings_out,
+    )
+    if data is None:
+        # Missing file — default state, no warning emitted by the helper.
+        return []
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper already explained the failure (read error / malformed
+        # YAML / wrong root type / tiny-parser fallback). Propagate the
+        # empty result without piling on a second "no `suppressions:` key"
+        # warning that would just confuse the caller.
+        return []
+    # ``data`` is a Mapping when ``allow_list_root`` is left at False
+    # (the default we want for ``.roam-suppressions.yml``). The helper's
+    # root-type check guarantees this; the assert keeps the type checker
+    # happy on the post-helper rows-extraction logic.
+    assert isinstance(data, dict)
+    rows = data.get("suppressions")
+    if not isinstance(rows, list):
+        # No `suppressions:` key or wrong type — treat as empty. The
+        # tiny_parser always emits a list (possibly empty) so this branch
+        # is only reached when PyYAML parsed a file with no
+        # `suppressions:` key. Silent-empty matches pre-W1032 behaviour.
         return []
 
-    try:
-        text = config_path.read_text(encoding="utf-8")
-    except OSError:
-        return []
+    return _validate_suppression_rows(
+        rows, warnings_out=warnings_out, source_path=str(config_path)
+    )
 
-    return _parse_suppressions_yaml(text)
+
+def load_suppressions_typed(
+    project_root: str | Path,
+    *,
+    warnings_out: list[str] | None = None,
+) -> list[RuleFileSuppression]:
+    """Typed counterpart of :func:`load_suppressions` (W692).
+
+    Returns the same on-disk rows as :class:`RuleFileSuppression` instances
+    instead of raw dicts. The legacy ``load_suppressions`` stays the
+    canonical entry point until every caller migrates — this function is the
+    bridge new code should reach for.
+
+    W1032 (Pattern 2 — silent fallback, mirror of W1017's
+    :func:`finding_suppress.load_per_finding_suppressions_typed`): when
+    *warnings_out* is supplied as a ``list[str]``, it is threaded through
+    to :func:`load_suppressions` so the typed surface receives the same
+    actionable warnings on malformed input that the dict-shaped surface
+    does. Pre-W1032 callers that don't supply ``warnings_out`` retain
+    byte-identical silent-empty-list behaviour.
+    """
+    return [
+        RuleFileSuppression.from_dict(d)
+        for d in load_suppressions(project_root, warnings_out=warnings_out)
+    ]
 
 
 def is_suppressed(
@@ -248,16 +430,21 @@ def save_suppression(
         raise ValueError(f"Invalid status '{status}'. Must be one of: {', '.join(sorted(VALID_STATUSES))}")
 
     root = Path(project_root)
-    existing = load_suppressions(root)
+    # W738 (W692 Phase C-1c): typed dedup check via load_suppressions_typed.
+    # We project back to dicts for the serialiser, which writes the on-disk
+    # YAML. Malformed pre-existing entries (invalid status / unparseable date)
+    # are dropped by the typed coercion; this is intentional — save is also
+    # a chance to normalise the file.
+    existing_typed = load_suppressions_typed(root)
 
-    # Check for duplicates
+    # Check for duplicates against the typed view (match keys: rule, file, line).
     norm_file = file.replace("\\", "/")
-    for sup in existing:
-        if sup.get("rule") == rule and sup.get("file", "").replace("\\", "/") == norm_file and sup.get("line") == line:
+    for sup in existing_typed:
+        if sup.rule == rule and sup.file == norm_file and sup.line == line:
             # Already suppressed -- nothing to do
             return
 
-    # Build the new entry
+    # Build the new entry (legacy dict shape consumed by _serialize_suppressions).
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     entry: dict = {
         "rule": rule,
@@ -271,6 +458,9 @@ def save_suppression(
         entry["author"] = author
     entry["date"] = today
 
+    # Round-trip the pre-existing typed rows back to dicts so the serialiser
+    # sees the canonical key set. Append the new dict entry last.
+    existing = [s.to_dict() for s in existing_typed]
     existing.append(entry)
 
     config_path = root / ".roam-suppressions.yml"

@@ -335,8 +335,13 @@ class TestPathCoverage:
             assert suggestion["paths_covered"] >= 1
 
     def test_path_coverage_risk_labels_valid(self, path_cov_project, cli_runner):
-        """All path risk labels are one of the four valid values."""
-        valid_risks = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+        """All path risk labels are one of the four valid values.
+
+        W718: risk labels are lowercase canonical roam vocabulary
+        (``critical``/``high``/``medium``/``low``) per W547. Pre-W718
+        they were UPPER-cased.
+        """
+        valid_risks = {"critical", "high", "medium", "low"}
         result = invoke_path_coverage(cli_runner, cwd=path_cov_project, json_mode=True)
         data = parse_json_output(result, "path-coverage")
         for path in data.get("paths", []):

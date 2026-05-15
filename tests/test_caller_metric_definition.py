@@ -215,10 +215,14 @@ _CALLER_FIELD_RE = re.compile(
     # Conservative: look for the key as a quoted string literal inside a
     # summary={ ... } or summary block. Multi-line summaries are common so
     # this is intentionally a loose substring check on the file content.
+    # W335: added ``caller_count`` — cmd_invariants emits this as a raw
+    # ``len(callers)`` count (raw_edge_rows shape) so it must be labeled
+    # like cmd_uses / cmd_context.
     r"""(?xs)
     summary\s*=\s*\{[^{}]*?
     ['"](
         callers
+      | caller_count
       | total_consumers
       | production_consumers
       | upstream_count

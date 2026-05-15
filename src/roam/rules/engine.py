@@ -68,7 +68,7 @@ def _parse_simple_yaml(path: Path) -> dict | None:
       ``rules:`` block in rules.yml is the canonical use)
 
     12.34 (2026-05-06) — added list-of-dicts support; CI 12.33 failed
-    on Python 3.9 (PyYAML not installed) because
+    on the PyYAML-not-installed lane because
     ``test_load_rules_yaml_simple`` uses that shape.
 
     Frames track ``(indent, container, kind, parent_key)``. When we hit
@@ -228,7 +228,7 @@ def _emit_simple_yaml(doc: dict) -> str:
     round-trip).
 
     12.37 (2026-05-06) — added so the `--fix` write-back works on
-    Python 3.9 without PyYAML installed.
+    installs without PyYAML.
     """
 
     def _dump_scalar(v) -> str:

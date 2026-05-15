@@ -2,7 +2,7 @@
 
 Designed for agents: each subcommand returns a single boolean (plus a short
 reason) so the agent's prompt stays tight. Direct counter to CKB v9.2's
-``symbolExists`` pattern. Five oracles ship in v12.1:
+``symbolExists`` pattern. Five oracles plus a batch runner:
 
 * ``symbol-exists <name>``        — does any symbol with that name/qname exist?
 * ``route-exists <path>``         — does any HTTP route match this path?
@@ -25,8 +25,10 @@ from dataclasses import dataclass
 import click
 
 from roam.capability import roam_capability
+from roam.commands.cmd_dead import _scaffolding_signals
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.db.edge_kinds import call_or_ref_in_clause
 from roam.output.formatter import json_envelope, to_json
 
 
@@ -78,10 +80,6 @@ def _scaffolding_evidence(conn: sqlite3.Connection, name: str) -> str | None:
         "SELECT s.docstring FROM symbols s WHERE s.name = ? OR s.qualified_name = ?",
         (name, name),
     ).fetchall()
-    try:
-        from roam.commands.cmd_dead import _scaffolding_signals  # noqa: PLC0415 — lazy to avoid circular import
-    except Exception:
-        return None
     for r in rows:
         evidence = _scaffolding_signals(r[0] if not hasattr(r, "keys") else r["docstring"])
         if evidence:
@@ -280,7 +278,7 @@ def oracle_is_test_only(conn: sqlite3.Connection, name: str) -> OracleResult:
         f"FROM edges e "
         f"JOIN symbols s ON s.id = e.source_id "
         f"JOIN files f ON f.id = s.file_id "
-        f"WHERE e.target_id IN ({placeholders}) AND e.kind IN ('call', 'reference', 'calls', 'references')",
+        f"WHERE e.target_id IN ({placeholders}) AND {call_or_ref_in_clause('e.kind')}",
         target_ids,
     ).fetchall()
     if not caller_rows:
@@ -315,7 +313,8 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
     """Is there a path from ANY entry-point symbol to this target?
 
     Entry points = symbols in files with ``file_role = 'entry'`` OR
-    ``is_entry = 1``. Uses BFS over ``edges.kind IN ('calls', 'references')``.
+    ``is_entry = 1``. Uses BFS over the canonical call-or-reference
+    edge-kind set (:data:`roam.db.edge_kinds.CALL_OR_REF_KINDS`).
 
     ``max_hops`` is clamped to ``[1, 1000]`` — values below 1 produce
     confusing "unreachable within -5 hops" messages, and values above
@@ -389,7 +388,7 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
             rows = conn.execute(
                 f"SELECT target_id FROM edges "
                 f"WHERE source_id IN ({placeholders}) "
-                f"  AND kind IN ('call', 'reference', 'calls', 'references')",
+                f"  AND {call_or_ref_in_clause()}",
                 chunk,
             ).fetchall()
             for r in rows:

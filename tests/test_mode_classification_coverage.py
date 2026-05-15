@@ -64,7 +64,13 @@ def test_unclassified_command_count_does_not_grow_in_policy():
     # ceiling whenever a new wave classifies more commands. Increment
     # ONLY by adding to _MODE_ALWAYS_ALLOWED or _MODE_EXTRAS — never
     # by raising this ceiling silently.
-    UNCLASSIFIED_CEILING = 153
+    # W104 classified `findings` and `x-lang` into ``safe_edit``; W107
+    # demoted both to ``read_only`` (still classified — just in a
+    # different mode), so the ceiling is unchanged.
+    # W248 classified `ws` into ``safe_edit`` (Click group; ws init /
+    # ws resolve write to .roam-workspace.json + workspace DB), so the
+    # ceiling decrements from 153 → 152.
+    UNCLASSIFIED_CEILING = 152
 
     assert len(unclassified) <= UNCLASSIFIED_CEILING, (
         f"{len(unclassified)} commands lack mode classification "
@@ -281,4 +287,161 @@ def test_w26_4_classifications_pinned_in_policy():
         "W26.4 mode classifications regressed: "
         + "; ".join(failures)
         + " — see tests/test_mode_classification_coverage.py for context."
+    )
+
+
+# ---------------------------------------------------------------------------
+# W107 — `findings` and `x-lang` demoted from safe_edit to read_only
+# ---------------------------------------------------------------------------
+
+
+def test_findings_command_is_read_only_mode():
+    """W107 — ``findings`` is a pure DB query; it lives in ``read_only``.
+
+    W104 originally added ``findings`` to ``safe_edit`` extras as the
+    cheapest classification fix when the mode-classification drift
+    catch surfaced it. W106's review flagged this as opinionated:
+    all three subcommands (``list``/``show``/``count``) open the DB
+    with ``readonly=True`` and never mutate filesystem or DB. The risk
+    profile matches ``search`` / ``describe`` / ``fan`` (all already
+    ``read_only``), not ``diff`` / ``critique`` / ``pr-bundle`` (the
+    actual ``safe_edit`` surface). W107 demotes accordingly.
+
+    The cumulative-inheritance rule means ``findings`` is still
+    reachable from every higher mode — the demotion just lets a
+    ``read_only`` agent inspect the findings registry without
+    upgrading to ``safe_edit``.
+    """
+    from roam.modes.policy import _MODE_EXTRAS
+
+    assert "findings" in _MODE_EXTRAS["read_only"], (
+        "W107: `findings` must live in read_only extras (pure DB query, "
+        "no edit semantics). If you moved it back to safe_edit, add a "
+        "comment explaining what edit semantics were added."
+    )
+    assert "findings" not in _MODE_EXTRAS["safe_edit"], (
+        "W107: `findings` must NOT also be listed in safe_edit extras — "
+        "the cumulative materialisation already lifts it into safe_edit. "
+        "Duplicate entries break the assumption that each verb is owned "
+        "by exactly one mode."
+    )
+
+
+def test_x_lang_command_is_read_only_mode():
+    """W107 — ``x-lang`` is a pure DB query; it lives in ``read_only``.
+
+    ``x-lang`` lists cross-language bridges by reading ``files`` and
+    ``symbols`` — purely read-only DB inspection, no FS writes. Same
+    reasoning as ``findings`` above: it belongs alongside ``search``
+    and ``describe`` at ``read_only``, not at ``safe_edit`` where the
+    actual edit-review surfaces live.
+    """
+    from roam.modes.policy import _MODE_EXTRAS
+
+    assert "x-lang" in _MODE_EXTRAS["read_only"], (
+        "W107: `x-lang` must live in read_only extras (pure DB query "
+        "listing cross-language bridges). If you moved it back to "
+        "safe_edit, add a comment explaining what edit semantics were "
+        "added."
+    )
+    assert "x-lang" not in _MODE_EXTRAS["safe_edit"], (
+        "W107: `x-lang` must NOT also be listed in safe_edit extras — "
+        "the cumulative materialisation already lifts it into safe_edit."
+    )
+
+
+def test_w107_demotion_preserves_unclassified_ceiling():
+    """W107 — moving commands between modes must not change the ceiling.
+
+    W107 demotes ``findings`` and ``x-lang`` from ``safe_edit`` to
+    ``read_only``. Both stay CLASSIFIED, just in a different mode.
+    The unclassified ceiling must be unchanged. If this test fails,
+    the W107 demotion accidentally dropped a verb from ``_MODE_EXTRAS``
+    entirely rather than moving it.
+    """
+    from roam.cli import _COMMANDS, _MODE_ALWAYS_ALLOWED
+    from roam.modes.policy import _MODE_EXTRAS
+
+    all_modes_combined: set[str] = set()
+    for verbs in _MODE_EXTRAS.values():
+        all_modes_combined |= set(verbs)
+
+    unclassified = [
+        cmd
+        for cmd in _COMMANDS
+        if cmd not in _MODE_ALWAYS_ALLOWED and cmd not in all_modes_combined
+    ]
+
+    # Same ceiling as ``test_unclassified_command_count_does_not_grow_in_policy``.
+    UNCLASSIFIED_CEILING = 152
+    assert len(unclassified) <= UNCLASSIFIED_CEILING, (
+        f"W107 demotion changed the unclassified count "
+        f"({len(unclassified)} > {UNCLASSIFIED_CEILING}). "
+        "Did the demotion drop a verb from _MODE_EXTRAS entirely "
+        "instead of moving it?"
+    )
+
+
+# ---------------------------------------------------------------------------
+# W248 — `ws` (Click group) classified into safe_edit
+# ---------------------------------------------------------------------------
+
+
+def test_ws_command_is_classified():
+    """W248 — ``ws`` is reachable from at least one mode's extras.
+
+    Background: W107 left 153 unclassified verbs at the UNCLASSIFIED_CEILING.
+    `ws` was the 153rd, so any new command without classification would
+    have raised the ceiling and tripped the CI gate. W248 classifies the
+    `ws` Click group at the group level (option (a) — most conservative).
+
+    The `ws` group has 7 subcommands; two write to .roam-workspace.json
+    and the workspace DB (`ws init`, `ws resolve`), the other five are
+    read-only. Group-level safe_edit covers both surfaces because
+    cumulative inheritance lifts safe_edit into migration/autonomous_pr.
+    """
+    from roam.modes.policy import _MODE_EXTRAS
+
+    located_in = [mode for mode, verbs in _MODE_EXTRAS.items() if "ws" in verbs]
+    assert located_in, (
+        "W248: `ws` must be present in at least one mode's extras. "
+        "It is a Click group whose `init` and `resolve` subcommands "
+        "write to .roam-workspace.json + workspace DB — classify at "
+        "the group level (safe_edit) to cover the strictest subcommand."
+    )
+    # Pin the chosen tier so a refactor cannot silently re-tier the
+    # group (e.g. demoting to read_only would expose ws init/resolve
+    # writes at a tier that promises no FS mutation).
+    assert "ws" in _MODE_EXTRAS["safe_edit"], (
+        "W248: `ws` must live in safe_edit extras specifically — "
+        "the group contains `ws init` and `ws resolve` which write "
+        "to .roam-workspace.json and the workspace DB. read_only "
+        "would be a false promise of no FS mutation."
+    )
+
+
+def test_unclassified_ceiling_decremented_to_152():
+    """W248 — UNCLASSIFIED_CEILING must be 152 after classifying `ws`.
+
+    The W248 wave classifies exactly one previously-unclassified verb
+    (`ws`), so the ceiling decrements from 153 → 152. This test pins
+    the new value so a future change can't silently raise it back.
+    """
+    from roam.cli import _COMMANDS, _MODE_ALWAYS_ALLOWED
+    from roam.modes.policy import _MODE_EXTRAS
+
+    all_modes_combined: set[str] = set()
+    for verbs in _MODE_EXTRAS.values():
+        all_modes_combined |= set(verbs)
+
+    unclassified = [
+        cmd
+        for cmd in _COMMANDS
+        if cmd not in _MODE_ALWAYS_ALLOWED and cmd not in all_modes_combined
+    ]
+
+    assert len(unclassified) <= 152, (
+        f"W248: expected ≤152 unclassified commands after classifying "
+        f"`ws`, got {len(unclassified)}. Either a new command was added "
+        "without classification, or `ws` was dropped from _MODE_EXTRAS."
     )

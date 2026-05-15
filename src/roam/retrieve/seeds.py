@@ -460,18 +460,12 @@ def _has_symbol_fts(conn: sqlite3.Connection) -> bool:
         return False
 
 
-def _camel_split(text: str) -> str:
-    """Mirror of :func:`roam.search.index_embeddings._camel_split`.
-
-    The FTS5 indexer expands ``UserSession`` to ``User Session`` at insert
-    time (see ``search/index_embeddings.build_fts_index``). Query tokens
-    must be split the same way or MATCH returns zero rows.
-    """
-    if not text:
-        return ""
-    out = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    out = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", out)
-    return out
+# ``_camel_split`` is the same camelCase/PascalCase splitter the FTS5
+# indexer uses at insert time (see ``search/index_embeddings``). Query
+# tokens must be split the same way or MATCH returns zero rows, so we
+# re-export the canonical implementation rather than maintain a literal
+# clone here (W879).
+from roam.search.index_embeddings import _camel_split
 
 
 def _fts5_query_for(token: str) -> str:

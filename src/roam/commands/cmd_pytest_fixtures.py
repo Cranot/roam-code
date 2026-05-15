@@ -270,8 +270,32 @@ def pytest_fixtures(ctx, symbol: str | None, max_depth: int, unused: bool, rever
 
         sym = find_symbol(conn, symbol)
         if not sym:
-            click.echo(f"VERDICT: no symbol matched {symbol!r}", err=True)
-            ctx.exit(1)
+            # W327: "symbol not found" is a valid analytical result, not a
+            # failure. Emit a structured envelope with empty results and
+            # exit 0 — Pattern-2 always-emit discipline. Concrete-noun
+            # terminal "fixtures" anchors the verdict (LAW 4).
+            verdict = f"No pytest fixtures match {symbol!r} — no symbol indexed by that name"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "pytest-fixtures",
+                            summary={
+                                "verdict": verdict,
+                                "symbol": symbol,
+                                "resolved": False,
+                                "count": 0,
+                                "direction": "reverse" if reverse else "forward",
+                            },
+                            target=symbol,
+                            fixtures=[],
+                            chain=[],
+                        )
+                    )
+                )
+                return
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(f"  Try: roam search {symbol!r} to find candidate symbol names")
             return
 
         chain = _fetch_chain(conn, sym["id"], max_depth=max_depth, reverse=reverse)

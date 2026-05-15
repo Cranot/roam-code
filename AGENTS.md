@@ -3,13 +3,13 @@
 ## What this project is
 
 <!-- BEGIN auto-count:Codex-headline -->
-roam-code is a CLI tool that gives AI coding agents instant codebase comprehension.
+roam-code is a local codebase intelligence CLI for developers and AI coding agents.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. **233 commands · 57 core MCP tools (149 in `full` preset) · 28 languages · 100% local · zero API keys.**
+a local SQLite DB. **238 commands · 224 MCP tools (57 in the default `core` preset) · 28 languages · 100% local · zero API keys.**
 <!-- END auto-count:Codex-headline -->
 
 <!-- BEGIN auto-count:Codex-authoritative -->
-Authoritative counts: `roam surface` returns `command_count: 233 · canonical_count: 226 · category_count: 7 · mcp_tool_count: 57`.
+Authoritative counts (AST-derived, env-independent): `command_count: 238 · canonical_count: 231 · category_count: 7 · mcp tools registered: 224 · mcp tools in core preset: 57`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
 <!-- END auto-count:Codex-authoritative -->
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
@@ -257,7 +257,7 @@ tests/                 # 267 test files
 
 - **Command template:** Every command follows this pattern:
   ```python
-  from __future__ import annotations  # required for Python 3.9 compat
+  from __future__ import annotations  # project convention (lazy annotations on 3.10+)
   import click
   from roam.db.connection import open_db
   from roam.output.formatter import to_json, json_envelope
@@ -280,7 +280,7 @@ tests/                 # 267 test files
           click.echo("VERDICT: ...")
   ```
 
-- **`from __future__ import annotations`** — Required at top of every file for Python 3.9 compatibility.
+- **`from __future__ import annotations`** — Required at top of every source file. The project requires Python 3.10+ (`pyproject.toml`); the import keeps annotations lazy (cheaper import, safer forward references, avoids PEP 604 runtime evaluation) rather than acting as a 3.9 back-compat shim.
 
 - **Batched IN-clauses:** Never write raw `WHERE id IN (...)` with a list > 400 items. Use `batched_in()` from `connection.py` instead.
 
@@ -296,11 +296,14 @@ tests/                 # 267 test files
 
 ### The control-plane thesis
 
-Roam evolved from a CLI of analysis helpers to a local control plane for AI coding
-agents — the substrate that lets agents (a) earn the right to change code via gates,
-(b) record their work in a tamper-evident ledger, and (c) compose proof bundles a
-human reviewer can trust. Everything below is repo-local (stored under `.roam/`),
-zero-network, and additive to the analysis core.
+Roam's base layer is local codebase intelligence: a SQLite-backed model of
+symbols, calls, imports, dependencies, architecture, git history, risks,
+smells, security flows, and algorithmic patterns. The Agent OS substrate is the
+control-plane layer built on top of that model — it lets agents (a) earn the
+right to change code via gates, (b) record their work in a tamper-evident
+ledger, and (c) compose proof bundles a human reviewer can trust. Everything
+below is repo-local (stored under `.roam/`), zero-network, and additive to the
+analysis core.
 
 ### The 10 substrate packages
 

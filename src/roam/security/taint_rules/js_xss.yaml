@@ -1,7 +1,8 @@
 id: js-xss
-description: Untrusted input flowing into the DOM without escaping
+description: Untrusted input flowing into the DOM without escaping. Maps to CWE-79 / OWASP A03:2021 Injection (XSS folded into Injection in the 2021 catalog).
 severity: error
 cwe: CWE-79
+owasp_top10: A03:2021_Injection
 languages:
   - javascript
   - typescript

@@ -370,7 +370,7 @@ def risk(ctx, count, domain_keywords, explain, include_tests, show_suppressed):
         if not include_tests:
             kept = []
             for r in rows:
-                if is_test_file(r["file_path"] or ""):
+                if is_test_file(r["file_path"]):
                     suppressions["test_files"] += 1
                     if show_suppressed:
                         suppressed_items.append(

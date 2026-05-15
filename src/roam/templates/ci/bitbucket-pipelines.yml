@@ -4,7 +4,7 @@
 # Creates a Bitbucket Code Insights report via the API.
 #
 # Prerequisites:
-#   - Python 3.9+ (uses python:3.12-slim image by default)
+#   - Python 3.10+ (uses python:3.12-slim image by default)
 #   - pip install roam-code
 #
 # Repository variables (set in Repository Settings > Pipelines > Variables):

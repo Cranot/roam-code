@@ -9,42 +9,121 @@ Severity levels:
 - warning: Moderate issue worth investigating
 - info: Minor concern or code style observation
 
-15 deterministic detectors querying the SQLite index. No heuristics,
-no source reading -- pure DB queries for speed and reproducibility.
+24 deterministic detectors querying the SQLite index. Most are pure DB
+queries; ``detect_empty_catch``, ``detect_switch_statement``,
+``detect_comment_density``, and a few others also read source files
+referenced in the ``files`` table to walk their AST or scan comment
+lines (the indexer does not extract every AST node or comment span
+into queryable tables).
+
+Three detectors live in their own modules to keep this file from
+ballooning past the size already needed for the in-file detectors:
+``detect_parallel_hierarchy`` (``roam.catalog.parallel_hierarchy``),
+``detect_cross_layer_clones`` (``roam.catalog.clones_cross_layer``,
+W856), and ``detect_type_switch`` (``roam.catalog.type_switch``,
+W852). All three are imported here and registered via direct
+``detector(...)(fn)`` calls near the bottom of this module so the
+@detector decorator stays the single source of truth for the
+registry. ``ALL_DETECTORS`` is a derived view over
+``roam.catalog.registry.all_detectors()`` as of W941 -- the decorator
+is the canonical registration point, not this list.
 """
 
 from __future__ import annotations
 
+import ast
+import logging
 import re
 import sqlite3
+from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+from roam.catalog._shared import find_workspace_root as _find_workspace_root
+from roam.catalog._shared import loc as _loc
+from roam.catalog._shared import make_smell_finding as _finding
+from roam.catalog.clones_cross_layer import detect_cross_layer_clones
+from roam.catalog.parallel_hierarchy import detect_parallel_hierarchy
+from roam.catalog.registry import all_detectors, detector, freeze_registry
+from roam.catalog.type_switch import detect_type_switch
+from roam.db.findings import (
+    CONFIDENCE_HEURISTIC,
+    CONFIDENCE_STATIC_ANALYSIS,
+    CONFIDENCE_STRUCTURAL,
+)
+from roam.output._severity import severity_rank
+
+log = logging.getLogger(__name__)
 
 
-def _loc(path: str, line: int | None) -> str:
-    if line is not None:
-        return f"{path}:{line}"
-    return path
+# W1037: pin the OBSERVABLE module surface. New detectors are
+# auto-included in ``ALL_DETECTORS`` via the @detector decorator (W941
+# made the list a derived view over ``registry.all_detectors()``), so
+# the public smell-detector surface is the derived view itself plus the
+# top-level entry points (``run_all_detectors`` /
+# ``file_health_scores``). The 21 in-file ``detect_*`` symbols are
+# named individually because external test suites import them by name
+# (``test_smells.py``, ``test_w853_speculative_generality.py``, ...).
+__all__ = [
+    "ALL_DETECTORS",
+    "run_all_detectors",
+    "file_health_scores",
+    # Detector functions (alphabetical).
+    "detect_boolean_parameter",
+    "detect_brain_method",
+    "detect_comment_density",
+    "detect_data_clumps",
+    "detect_dead_params",
+    "detect_deep_nesting",
+    "detect_duplicate_conditionals",
+    "detect_empty_catch",
+    "detect_feature_envy",
+    "detect_god_class",
+    "detect_large_class",
+    "detect_long_params",
+    "detect_low_cohesion",
+    "detect_magic_numbers",
+    "detect_message_chain",
+    "detect_primitive_obsession",
+    "detect_refused_bequest",
+    "detect_shotgun_surgery",
+    "detect_speculative_generality",
+    "detect_switch_statement",
+    "detect_temporal_coupling",
+]
 
 
-def _finding(
-    smell_id: str,
-    severity: str,
-    symbol_name: str,
-    kind: str,
-    location: str,
-    metric_value: float | int,
-    threshold: float | int,
-    description: str,
-) -> dict:
-    return {
-        "smell_id": smell_id,
-        "severity": severity,
-        "symbol_name": symbol_name,
-        "kind": kind,
-        "location": location,
-        "metric_value": metric_value,
-        "threshold": threshold,
-        "description": description,
-    }
+# W875 / W923: The canonical structural-smell envelope builder lives
+# in ``roam.catalog._shared.make_smell_finding`` (aliased at import-
+# time as ``_finding`` above). It is INTENTIONALLY NOT consolidated
+# with the similarly-named ``_finding`` in ``roam.catalog.detectors``.
+# The two share only 3 of ~14 union field names (``symbol_name``,
+# ``kind``, ``location``) — a 21% Jaccard overlap on key sets. They
+# produce semantically distinct envelopes:
+#
+#   - ``smells._finding`` (now == ``_shared.make_smell_finding``) is
+#     the canonical STRUCTURAL-SMELL shape (fixed 8-key dict:
+#     smell_id/severity/symbol_name/kind/location/metric_value/
+#     threshold/description). Extended by
+#     ``clones_cross_layer._make_finding`` and
+#     ``parallel_hierarchy._finding`` with evidence/confidence/
+#     detector_version via the same builder's kwargs. Callers pass
+#     plain strings + numbers.
+#   - ``detectors._finding`` is the ALGORITHM-CATALOG shape
+#     (task_id/detected_way/suggested_way/symbol_id/symbol_line/
+#     confidence/reason + optional evidence/fix). Callers pass a
+#     sqlite3.Row ``sym`` and the helper derives ``symbol_name`` /
+#     ``kind`` / ``location`` from it AND integrates with
+#     ``tasks.best_way()``.
+#
+# Hoisting a shared base between the two FAMILIES would require
+# either (a) collapsing both call-site contracts to the union (each
+# detector then carries 14 unused fields) or (b) a thin base + two
+# wrappers that's larger than the duplication it would replace.
+# Both are net-negative. The W856 cross-layer-clone detector likely
+# flagged this on the shared ``def _finding`` name — false positive
+# at the consolidation layer.
 
 
 def _parse_param_count(signature: str | None) -> int:
@@ -86,6 +165,9 @@ def _parse_param_count(signature: str | None) -> int:
 # ---------------------------------------------------------------------------
 
 
+# Tier: static_analysis — deterministic AST/CFG metric thresholds
+# (cognitive_complexity + LOC). Same input -> same score, no name patterns.
+@detector("brain-method", confidence=CONFIDENCE_STATIC_ANALYSIS)
 def detect_brain_method(conn: sqlite3.Connection) -> list[dict]:
     """Functions with complexity > 60 AND > 100 LOC."""
     rows = conn.execute(
@@ -117,6 +199,9 @@ def detect_brain_method(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# Tier: static_analysis — deterministic AST metric (nesting_depth) over a
+# fixed threshold; no heuristic or name match involved.
+@detector("deep-nesting", confidence=CONFIDENCE_STATIC_ANALYSIS)
 def detect_deep_nesting(conn: sqlite3.Connection) -> list[dict]:
     """Symbols with nesting depth > 4."""
     rows = conn.execute(
@@ -146,6 +231,9 @@ def detect_deep_nesting(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# Tier: static_analysis — deterministic parameter-count parsing of the
+# stored signature; self/cls excluded; threshold predicate, no FP-prone signal.
+@detector("long-params", confidence=CONFIDENCE_STATIC_ANALYSIS)
 def detect_long_params(conn: sqlite3.Connection) -> list[dict]:
     """Functions with > 5 parameters (excluding self/cls)."""
     rows = conn.execute(
@@ -176,6 +264,9 @@ def detect_long_params(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# Tier: static_analysis — class-LOC + method-count, both deterministic
+# AST-derived metrics. Threshold-only predicate, no heuristic signal.
+@detector("large-class", confidence=CONFIDENCE_STATIC_ANALYSIS)
 def detect_large_class(conn: sqlite3.Connection) -> list[dict]:
     """Classes with > 500 LOC AND > 20 methods."""
     rows = conn.execute(
@@ -212,6 +303,11 @@ def detect_large_class(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# Tier: structural — combines method-count and class-LOC from the
+# symbols/files graph; predicate is a threshold over graph-extracted shape,
+# not a name match. Higher signal than ``large-class`` but still a threshold,
+# so it lands on the structural tier rather than static_analysis.
+@detector("god-class", confidence=CONFIDENCE_STRUCTURAL)
 def detect_god_class(conn: sqlite3.Connection) -> list[dict]:
     """Classes with > 30 methods OR > 1000 LOC."""
     rows = conn.execute(
@@ -252,6 +348,10 @@ def detect_god_class(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# Tier: structural — walks the call-graph edges of each function and checks
+# the cross-file ratio. The signal is graph topology (target file_ids vs
+# source file_id), not name pattern, so the tier is structural.
+@detector("feature-envy", confidence=CONFIDENCE_STRUCTURAL)
 def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
     """Functions where > 50% of edge targets are in other files (min 4 refs)."""
     rows = conn.execute(
@@ -292,6 +392,9 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# Tier: structural — in_degree comes from the precomputed graph_metrics
+# table; threshold over a graph-edge count, no name heuristic.
+@detector("shotgun-surgery", confidence=CONFIDENCE_STRUCTURAL)
 def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
     """Symbols with in_degree > 7 in graph_metrics."""
     rows = conn.execute(
@@ -320,6 +423,10 @@ def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# Tier: heuristic — groups by the sorted top-3 param NAMES across signatures.
+# Name-dependent pattern (two functions can share param names without
+# carrying the same concept) -> heuristic tier surfaces the FP risk.
+@detector("data-clumps", confidence=CONFIDENCE_HEURISTIC)
 def detect_data_clumps(conn: sqlite3.Connection) -> list[dict]:
     """3+ params repeated across 3+ functions (group by sorted first-3 param names)."""
     rows = conn.execute(
@@ -395,21 +502,119 @@ def detect_data_clumps(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# W163: names whose "many params, low complexity" shape is the
+# DEFINITION of the symbol, not a smell. Per W149 dogfood audit, ~40 %
+# of dead-params findings were on constructors / lifecycle hooks where
+# the body legitimately just stores params to ``self`` (or is empty
+# because the implementation is auto-generated). Filtering these out
+# at the detector level keeps the smell honest.
+#
+# Coverage:
+#   * ``__init__``        — Python constructors.
+#   * ``__post_init__``   — dataclass post-init hook.
+#   * ``__new__``         — Python factory constructors.
+#   * ``setUp`` / ``tearDown`` / ``setup_*`` / ``teardown_*`` —
+#     pytest + unittest lifecycle hooks; canonically receive fixtures
+#     and store them to self or to module-level state.
+_DEAD_PARAMS_EXEMPT_NAMES: frozenset[str] = frozenset(
+    {
+        "__init__",
+        "__post_init__",
+        "__new__",
+        "setUp",
+        "tearDown",
+    }
+)
+
+# Prefix-based exemptions (pytest's ``setup_method``, ``setup_class``,
+# ``setup_function``, plus the ``teardown_*`` mirrors). Kept as a small
+# tuple for ``str.startswith()`` rather than a frozenset because the
+# match is a prefix, not equality.
+_DEAD_PARAMS_EXEMPT_PREFIXES: tuple[str, ...] = ("setup_", "teardown_")
+
+
+def _is_dead_params_exempt(symbol_name: str, parent_decorators: str | None) -> bool:
+    """Decide whether to suppress a dead-params finding for this symbol.
+
+    Suppresses when:
+      1. ``symbol_name`` is a constructor / dataclass / lifecycle dunder
+         in ``_DEAD_PARAMS_EXEMPT_NAMES``.
+      2. ``symbol_name`` starts with ``setup_`` / ``teardown_`` (pytest
+         + unittest fixture lifecycle).
+      3. The enclosing class is decorated with ``@dataclass`` — the
+         method body is auto-generated by the decorator, so "many
+         params, low complexity" is by construction, not a smell.
+
+    The dataclass check is symbol-table-based: ``decorators`` on the
+    parent class is the comma-joined output of the Python extractor
+    (``@dataclass`` or ``@dataclass(frozen=True)`` …), so a simple
+    substring match against ``dataclass`` is sufficient without any
+    re-parsing.
+    """
+    if symbol_name in _DEAD_PARAMS_EXEMPT_NAMES:
+        return True
+    if any(symbol_name.startswith(p) for p in _DEAD_PARAMS_EXEMPT_PREFIXES):
+        return True
+    if parent_decorators and "dataclass" in parent_decorators:
+        return True
+    return False
+
+
+# Tier: static_analysis — joins param-count parsing with the cognitive-
+# complexity AST metric. Deterministic per-symbol predicate; constructors
+# / lifecycle hooks / dataclass methods are filtered upstream via
+# ``_is_dead_params_exempt`` so the residual FP rate is low.
+@detector("dead-params", confidence=CONFIDENCE_STATIC_ANALYSIS)
 def detect_dead_params(conn: sqlite3.Connection) -> list[dict]:
-    """Functions with 4+ params but complexity <= 1 (likely unused params)."""
-    rows = conn.execute(
-        "SELECT s.name, s.kind, s.line_start, s.signature, f.path as file_path, "
-        "sm.cognitive_complexity "
-        "FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "JOIN symbol_metrics sm ON sm.symbol_id = s.id "
-        "WHERE s.kind IN ('function', 'method') "
-        "AND sm.cognitive_complexity <= 1 "
-        "AND s.signature IS NOT NULL "
-        "AND s.signature != ''"
-    ).fetchall()
+    """Functions with 4+ params but complexity <= 1 (likely unused params).
+
+    W163: skip constructors (``__init__`` / ``__new__``), dataclass
+    auto-generated methods (parent class decorated with ``@dataclass``,
+    plus ``__post_init__``), and pytest/unittest lifecycle hooks
+    (``setUp`` / ``tearDown`` / ``setup_*`` / ``teardown_*``). For
+    these shapes "many params, low complexity" is the definition of
+    the symbol, not a code smell — see W149 dogfood audit.
+
+    The decorator-on-parent-class arm of the rule reads
+    ``symbols.decorators`` via a LEFT JOIN on ``parent_id``. Pre-v9
+    indexes (and the hand-rolled minimal schema used by some unit
+    tests) lack that column; the query falls back transparently to a
+    name-only exemption check in that case.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT s.name, s.kind, s.line_start, s.signature, f.path as file_path, "
+            "sm.cognitive_complexity, p.decorators as parent_decorators "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "JOIN symbol_metrics sm ON sm.symbol_id = s.id "
+            "LEFT JOIN symbols p ON p.id = s.parent_id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND sm.cognitive_complexity <= 1 "
+            "AND s.signature IS NOT NULL "
+            "AND s.signature != ''"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # ``symbols.decorators`` absent (pre-v9 index, or test fixture
+        # with a stripped-down schema). Run the legacy query and treat
+        # parent_decorators as NULL for every row — name-based
+        # exemptions still fire, dataclass detection silently degrades
+        # to a no-op.
+        rows = conn.execute(
+            "SELECT s.name, s.kind, s.line_start, s.signature, f.path as file_path, "
+            "sm.cognitive_complexity, NULL as parent_decorators "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "JOIN symbol_metrics sm ON sm.symbol_id = s.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND sm.cognitive_complexity <= 1 "
+            "AND s.signature IS NOT NULL "
+            "AND s.signature != ''"
+        ).fetchall()
     results = []
     for r in rows:
+        if _is_dead_params_exempt(r["name"], r["parent_decorators"]):
+            continue
         count = _parse_param_count(r["signature"])
         if count >= 4:
             loc_str = _loc(r["file_path"], r["line_start"])
@@ -428,11 +633,319 @@ def detect_dead_params(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# ---------------------------------------------------------------------------
+# W370 — empty-catch detector
+#
+# Definition: a try/except (Python) or try/catch (other langs) block where
+# the handler body is trivially empty (``pass`` / ``...`` / empty block /
+# comment-only / single log-call / single ``return None``). This is the
+# highest-signal AI-rot pattern per the 2025 research papers (per the
+# W368 detector-competitive audit). AI-generated code commonly emits these
+# to "satisfy" exception-handling without actually handling the failure.
+#
+# Re-raise (``raise`` / ``throw``) is NOT empty-catch — the handler
+# propagates the error up, which is meaningful.
+# Recovery code (assignments, function calls other than logging) is NOT
+# empty-catch — the handler did something useful.
+#
+# The indexer does not extract exception_handler bodies into a queryable
+# table (only ``except_clause`` / ``catch_clause`` AST nodes — used for
+# complexity scoring, not persisted). So this detector reads source files
+# referenced in the ``files`` table and applies per-language regex.
+# ---------------------------------------------------------------------------
+
+# Trivial single-statement bodies (matched against the body text after
+# stripping comments + whitespace). A handler counts as empty-catch when
+# the body matches one of these AFTER excluding re-raise lines.
+_TRIVIAL_BODY_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(r"^\s*pass\s*$"),
+    re.compile(r"^\s*\.\.\.\s*$"),
+    re.compile(r"^\s*$"),  # truly empty body
+    re.compile(r"^\s*(?:return|return\s+None|return\s+null|return\s+undefined)\s*;?\s*$"),
+    # single log call: print(...) / console.log(...) / logger.X(...) /
+    # log.X(...) / System.out.println(...). Anchored so we don't match a
+    # call with chained behaviour.
+    re.compile(
+        r"^\s*(?:print|console\.(?:log|error|warn|info|debug)|"
+        r"(?:log|logger|logging|fmt|sys\.stderr|sys\.stdout)\.[A-Za-z_][A-Za-z0-9_]*|"
+        r"System\.(?:out|err)\.println)\s*\([^;{}]*\)\s*;?\s*$"
+    ),
+)
+
+# Re-raise / throw — lines that mean "I did NOT swallow the error".
+_RERAISE_LINE = re.compile(r"^\s*(?:raise|throw)\b")
+
+# Locate Python ``except ...:`` headers in a single pass with their
+# column offsets — we need the indent level to find the body's end.
+_PY_EXCEPT_HEADER = re.compile(r"^([ \t]*)except\b[^\n:]*:\s*(?:#.*)?$", re.MULTILINE)
+
+# Locate ``catch (...)`` openings for brace languages (JS/TS/Java/C#/Kotlin/Swift).
+# The ``(?<!\.)`` guard avoids Promise ``.catch(...)`` fallbacks like
+# ``response.json().catch(() => ({}))``.
+_BRACE_CATCH_HEADER = re.compile(
+    r"(?<![A-Za-z0-9_.])catch\s*(?:\([^)]*\)\s*)?\{", re.MULTILINE
+)
+
+# Languages whose catch syntax is brace-delimited.
+_BRACE_LANGS: frozenset[str] = frozenset(
+    {"javascript", "typescript", "java", "c_sharp", "kotlin", "swift", "scala"}
+)
+
+
+def _strip_comments_and_blanks(body: str, lang: str) -> str:
+    """Remove comments + blank lines from a handler body.
+
+    Used as the "is this body trivial?" preprocessor. Multi-line block
+    comments are stripped first so a body of just ``/* TODO */`` reduces
+    to empty.
+    """
+    if not body:
+        return ""
+    # Strip block comments first (brace langs).
+    if lang in _BRACE_LANGS:
+        body = re.sub(r"/\*.*?\*/", "", body, flags=re.DOTALL)
+    # Strip line comments per language.
+    if lang == "python":
+        body = re.sub(r"#.*$", "", body, flags=re.MULTILINE)
+    elif lang in _BRACE_LANGS or lang == "go":
+        body = re.sub(r"//.*$", "", body, flags=re.MULTILINE)
+    elif lang == "ruby":
+        body = re.sub(r"#.*$", "", body, flags=re.MULTILINE)
+    # Drop blank lines.
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    return "\n".join(lines)
+
+
+def _is_trivial_body(body: str, lang: str) -> bool:
+    """Decide whether *body* counts as an empty-catch handler.
+
+    Returns True when (after stripping comments + blank lines):
+      * body is empty, OR
+      * body is exactly one of the trivial statements (pass / ... /
+        return / single log call), AND
+      * body contains NO ``raise`` / ``throw`` lines (re-raise excludes).
+
+    Multi-statement bodies are not trivial. A single log call followed
+    by ``raise`` is re-raise, not empty-catch.
+    """
+    cleaned = _strip_comments_and_blanks(body, lang)
+    if not cleaned:
+        return True
+    # Re-raise guard: any line that looks like ``raise`` / ``throw`` ->
+    # not empty-catch.
+    for line in cleaned.splitlines():
+        if _RERAISE_LINE.match(line):
+            return False
+    # Single-statement check.
+    lines = [ln for ln in cleaned.splitlines() if ln.strip()]
+    if len(lines) != 1:
+        return False
+    single = lines[0]
+    return any(p.match(single) for p in _TRIVIAL_BODY_PATTERNS)
+
+
+def _extract_python_handlers(source: str) -> list[tuple[int, str]]:
+    """Yield (line_number, body_text) per ``except`` block in Python source.
+
+    Body extraction follows the indent rule: the body runs from the line
+    after the ``except:`` header until the next line whose indent is
+    ``<=`` the header's indent (or end of file).
+    """
+    lines = source.split("\n")
+    handlers: list[tuple[int, str]] = []
+    for m in _PY_EXCEPT_HEADER.finditer(source):
+        header_indent = m.group(1)
+        header_start = m.start()
+        header_line_no = source.count("\n", 0, header_start) + 1
+        # Find body lines.
+        body_lines: list[str] = []
+        # Same-line body: ``except E: pass`` style.
+        same_line_tail = lines[header_line_no - 1].split(":", 1)[-1].strip()
+        # Strip trailing comment on the header line itself.
+        same_line_tail = re.sub(r"#.*$", "", same_line_tail).strip()
+        if same_line_tail:
+            body_lines.append(same_line_tail)
+        # Next-line indented body.
+        i = header_line_no  # 0-based index of next line
+        while i < len(lines):
+            line = lines[i]
+            if not line.strip():
+                body_lines.append(line)
+                i += 1
+                continue
+            # Indent of this line.
+            line_indent = line[: len(line) - len(line.lstrip(" \t"))]
+            # Body must be indented MORE than the header.
+            if len(line_indent) > len(header_indent):
+                body_lines.append(line)
+                i += 1
+            else:
+                break
+        body = "\n".join(body_lines)
+        handlers.append((header_line_no, body))
+    return handlers
+
+
+def _extract_brace_handlers(source: str) -> list[tuple[int, str]]:
+    """Yield (line_number, body_text) per ``catch (...) { ... }`` block.
+
+    Body extraction uses brace-balancing starting from the ``{`` matched
+    by the catch header. Strings + nested braces are tracked so the body
+    is the literal text between the matched ``{`` and its closing ``}``.
+    """
+    handlers: list[tuple[int, str]] = []
+    for m in _BRACE_CATCH_HEADER.finditer(source):
+        open_brace_pos = m.end() - 1  # the matched ``{``
+        line_no = source.count("\n", 0, m.start()) + 1
+        # Brace-balance to find the matching close.
+        depth = 0
+        i = open_brace_pos
+        in_string: str | None = None
+        in_line_comment = False
+        in_block_comment = False
+        end = -1
+        while i < len(source):
+            ch = source[i]
+            nxt = source[i + 1] if i + 1 < len(source) else ""
+            if in_line_comment:
+                if ch == "\n":
+                    in_line_comment = False
+            elif in_block_comment:
+                if ch == "*" and nxt == "/":
+                    in_block_comment = False
+                    i += 1
+            elif in_string is not None:
+                if ch == "\\":
+                    i += 1  # skip escape
+                elif ch == in_string:
+                    in_string = None
+            else:
+                if ch == "/" and nxt == "/":
+                    in_line_comment = True
+                    i += 1
+                elif ch == "/" and nxt == "*":
+                    in_block_comment = True
+                    i += 1
+                elif ch in ('"', "'", "`"):
+                    in_string = ch
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+            i += 1
+        if end < 0:
+            continue
+        body = source[open_brace_pos + 1 : end]
+        handlers.append((line_no, body))
+    return handlers
+
+
+def _enclosing_symbol(
+    conn: sqlite3.Connection, file_id: int, line: int
+) -> tuple[str, str, int]:
+    """Return (symbol_name, kind, line_start) for the enclosing function.
+
+    Falls back to (``"<module>"``, ``"file"``, ``line``) when no enclosing
+    function/method is found (top-level try/except).
+    """
+    row = conn.execute(
+        "SELECT name, kind, line_start FROM symbols "
+        "WHERE file_id = ? AND kind IN ('function', 'method') "
+        "AND line_start <= ? AND COALESCE(line_end, line_start) >= ? "
+        "ORDER BY line_start DESC LIMIT 1",
+        (file_id, line, line),
+    ).fetchone()
+    if row is not None:
+        return row["name"], row["kind"], int(row["line_start"] or line)
+    return "<module>", "file", line
+
+
+# Tier: static_analysis — predicate is a deterministic closed list of
+# trivial-body signatures (``pass`` / ``...`` / empty block / single
+# print|log call / bare return). Regex on source, but the body-shape
+# enumeration is fixed; re-raise (``raise`` / ``throw``) is explicitly
+# excluded so the FP rate stays low.
+@detector("empty-catch", confidence=CONFIDENCE_STATIC_ANALYSIS)
 def detect_empty_catch(conn: sqlite3.Connection) -> list[dict]:
-    """Placeholder: empty catch/except blocks. Returns []."""
-    return []
+    """Detect exception handlers with trivial / empty bodies.
+
+    W370. Reads source files referenced in the ``files`` table, locates
+    each ``except``/``catch`` block, and flags handlers whose body is
+    one of:
+      * ``pass`` (Python), ``...`` (Python ellipsis stub)
+      * empty block ``{}`` (JS/TS/Java/C#/Kotlin/Swift/Scala)
+      * comment-only body
+      * single ``print(...)`` / ``console.log(...)`` /
+        ``logger.X(...)`` / ``log.X(...)`` call (logging without recovery)
+      * single ``return`` / ``return None`` / ``return null``
+
+    Re-raise (``raise`` / ``throw``) is excluded — the handler propagates
+    the error. Multi-statement bodies + recovery code (assignments,
+    non-log calls) are also excluded.
+    """
+    results: list[dict] = []
+    try:
+        files = conn.execute(
+            "SELECT id, path, language FROM files "
+            "WHERE language IN ('python', 'javascript', 'typescript', "
+            "'java', 'c_sharp', 'kotlin', 'swift', 'scala', 'ruby', 'go')"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    workspace = _find_workspace_root()
+
+    for f in files:
+        file_id = f["id"]
+        rel_path = f["path"]
+        lang = f["language"]
+        # Best-effort source read. Skip files we can't open (deleted,
+        # binary, permission errors).
+        try:
+            source = (workspace / rel_path).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except (OSError, ValueError):
+            continue
+
+        if lang == "python":
+            handlers = _extract_python_handlers(source)
+        elif lang in _BRACE_LANGS:
+            handlers = _extract_brace_handlers(source)
+        else:
+            # Go / Ruby: covered by ``vibe-check`` but not flagged here
+            # (idiomatic patterns vary too much per project — high FP).
+            continue
+
+        for line_no, body in handlers:
+            if not _is_trivial_body(body, lang):
+                continue
+            symbol_name, kind, _line_start = _enclosing_symbol(
+                conn, file_id, line_no
+            )
+            results.append(
+                _finding(
+                    "empty-catch",
+                    "warning",
+                    symbol_name,
+                    kind,
+                    _loc(rel_path, line_no),
+                    1,
+                    0,
+                    f"Empty exception handler at {rel_path}:{line_no} "
+                    f"(body has no recovery and does not re-raise)",
+                )
+            )
+    return results
 
 
+# Tier: structural — counts intra-class edges via ``edges.source_id``/
+# ``target_id`` joins; predicate is "internal edges < methods/2" over the
+# call graph, not a name match.
+@detector("low-cohesion", confidence=CONFIDENCE_STRUCTURAL)
 def detect_low_cohesion(conn: sqlite3.Connection) -> list[dict]:
     """Classes with 5+ methods but fewer than methods/2 internal edges."""
     rows = conn.execute(
@@ -480,6 +993,10 @@ def detect_low_cohesion(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# Tier: structural — mirror of ``shotgun-surgery`` on the outgoing axis.
+# out_degree comes from precomputed graph_metrics; threshold over graph
+# topology, no name signal.
+@detector("message-chain", confidence=CONFIDENCE_STRUCTURAL)
 def detect_message_chain(conn: sqlite3.Connection) -> list[dict]:
     """Functions with out_degree > 10 in graph_metrics."""
     rows = conn.execute(
@@ -509,60 +1026,2045 @@ def detect_message_chain(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# ---------------------------------------------------------------------------
+# W370c — refused-bequest detector
+#
+# Definition: a subclass that inherits from a parent but overrides >= 2 of the
+# parent's methods with a trivial body (``pass`` / ``return None`` / single
+# ``raise NotImplementedError``). The class "refuses the bequest" from its
+# parent -- the inheritance relationship exists structurally but most of what
+# the parent provides is either thrown away or rejected outright. Classic
+# Fowler smell; typically indicates the wrong inheritance choice.
+#
+# Re-use ``_TRIVIAL_BODY_PATTERNS`` + ``_strip_comments_and_blanks`` from
+# the W370 empty-catch detector for body classification, plus the
+# explicit ``raise NotImplementedError`` shape that's the canonical refusal
+# pattern.
+#
+# Severity: warning (structural). Threshold: >= 2 trivial overrides per child.
+# Lower bound chosen to keep FP rate manageable -- a single trivial override
+# is often a legitimate "intentionally do nothing" hook (e.g. ``setUp``).
+# ---------------------------------------------------------------------------
+
+# Refusal-specific trivial bodies layered on top of ``_TRIVIAL_BODY_PATTERNS``.
+# ``raise NotImplementedError`` / ``raise NotImplementedError(...)`` / Java/C#
+# ``throw new UnsupportedOperationException(...)`` are the canonical "I am
+# explicitly refusing this method" signatures.
+_REFUSAL_RAISE_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(r"^\s*raise\s+NotImplementedError\s*(?:\(.*\))?\s*$"),
+    re.compile(
+        r"^\s*throw\s+new\s+(?:UnsupportedOperationException|NotImplementedException)\s*\(.*\)\s*;?\s*$"
+    ),
+)
+
+
+def _is_refusal_body(body: str, lang: str) -> bool:
+    """Return True when *body* counts as a refused-bequest override.
+
+    Trivial bodies from ``_TRIVIAL_BODY_PATTERNS`` (pass / ... / return / empty)
+    AND the explicit refusal-raise shapes both qualify. Multi-statement bodies
+    are not refusals -- a method that does any real work, even ahead of a
+    final ``raise NotImplementedError``, is not refusing the bequest.
+    """
+    cleaned = _strip_comments_and_blanks(body, lang)
+    if not cleaned:
+        return True
+    lines = [ln for ln in cleaned.splitlines() if ln.strip()]
+    if len(lines) != 1:
+        return False
+    single = lines[0]
+    if any(p.match(single) for p in _TRIVIAL_BODY_PATTERNS):
+        return True
+    return any(p.match(single) for p in _REFUSAL_RAISE_PATTERNS)
+
+
+def _extract_method_body(source: str, line_start: int, line_end: int, lang: str) -> str:
+    """Slice a method body out of *source* between line_start..line_end.
+
+    Best-effort: returns the indented body lines for Python (after the header
+    line), or the brace-delimited body for brace languages. The exact-syntax
+    nuance does not matter -- the body just needs to be classifiable by
+    ``_is_refusal_body``, which already collapses whitespace + comments.
+    """
+    if not source or line_start <= 0 or line_end < line_start:
+        return ""
+    lines = source.split("\n")
+    if line_end > len(lines):
+        line_end = len(lines)
+    body_lines = lines[line_start:line_end]  # skip the header line itself
+    return "\n".join(body_lines)
+
+
+# Tier: structural — walks ``edges.kind='inherits'`` to find (child, parent)
+# class pairs and inspects override-body shape. The signal is graph (inherits
+# edge) + AST (trivial-body match) combined; the threshold (>= 2 trivial
+# overrides) avoids the legitimate single-hook case, keeping the FP rate
+# inside the structural tier rather than dropping to heuristic.
+@detector("refused-bequest", confidence=CONFIDENCE_STRUCTURAL)
 def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
-    """Placeholder: classes that override parent methods to do nothing. Returns []."""
-    return []
+    """Detect subclasses that override >= 2 parent methods with trivial bodies.
+
+    W370c. Walks ``edges.kind='inherits'`` to find (child, parent) class
+    pairs, then for each pair counts how many of the child's methods share
+    a name with a parent method AND have a trivial body
+    (``pass`` / ``return None`` / ``...`` / ``raise NotImplementedError``).
+    Threshold: >= 2 trivial overrides per child. Single trivial overrides
+    are legitimate "intentionally do nothing" hooks and not flagged.
+
+    Languages: same set as ``detect_empty_catch`` (Python + brace languages).
+    Source files are read from the workspace -- the indexer does not extract
+    method bodies into a queryable table.
+    """
+    results: list[dict] = []
+    try:
+        # Pull (child_class, parent_class) pairs from inherits edges. Limit
+        # to in-repo parents (target_id resolves to a known symbol) -- this
+        # is the default for the inherits edge kind, but explicitly named
+        # to make the intent obvious.
+        inherits = conn.execute(
+            "SELECT s_child.id AS child_id, s_child.name AS child_name, "
+            "s_child.line_start AS child_line_start, s_child.line_end AS child_line_end, "
+            "s_child.file_id AS child_file_id, f_child.path AS child_path, "
+            "f_child.language AS child_lang, "
+            "s_parent.id AS parent_id, s_parent.name AS parent_name "
+            "FROM edges e "
+            "JOIN symbols s_child ON e.source_id = s_child.id "
+            "JOIN symbols s_parent ON e.target_id = s_parent.id "
+            "JOIN files f_child ON s_child.file_id = f_child.id "
+            "WHERE e.kind = 'inherits' "
+            "AND s_child.kind = 'class' "
+            "AND s_parent.kind = 'class'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    if not inherits:
+        return []
+
+    workspace = _find_workspace_root()
+    # Cache source reads per file: a single child class typically has many
+    # methods checked; we don't want to re-read the file for each one.
+    source_cache: dict[int, str | None] = {}
+
+    for row in inherits:
+        child_path = row["child_path"]
+        child_lang = row["child_lang"]
+        # Limit to languages where we can reasonably parse a method body.
+        if child_lang != "python" and child_lang not in _BRACE_LANGS:
+            continue
+
+        # Load the child source.
+        if row["child_file_id"] not in source_cache:
+            try:
+                source_cache[row["child_file_id"]] = (
+                    workspace / child_path
+                ).read_text(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                source_cache[row["child_file_id"]] = None
+        source = source_cache[row["child_file_id"]]
+        if not source:
+            continue
+
+        # Methods in the child class. Use line-range containment because
+        # parent_id may not be reliably set across all languages for
+        # methods; line-range is the universal containment signal.
+        c_start = int(row["child_line_start"] or 0)
+        c_end = int(row["child_line_end"] or c_start)
+        try:
+            child_methods = conn.execute(
+                "SELECT id, name, line_start, line_end FROM symbols "
+                "WHERE file_id = ? AND kind = 'method' "
+                "AND line_start >= ? AND COALESCE(line_end, line_start) <= ?",
+                (row["child_file_id"], c_start, c_end),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue
+
+        # Parent method names (so we only count overrides, not new methods).
+        try:
+            parent_method_names_rows = conn.execute(
+                "SELECT name FROM symbols "
+                "WHERE kind = 'method' AND parent_id = ?",
+                (row["parent_id"],),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            parent_method_names_rows = []
+        parent_method_names: set[str] = {
+            r["name"] for r in parent_method_names_rows if r["name"]
+        }
+        # If parent has no known methods (e.g. it's a stdlib base class
+        # we didn't index), we can't tell what's an override vs a new
+        # method. Fall back to "every trivial method on the child is a
+        # refusal candidate" -- noisier but still useful, since the smell
+        # really is "this class declares mostly do-nothing methods".
+        require_override = bool(parent_method_names)
+
+        trivial_overrides: list[tuple[str, int]] = []
+        for m in child_methods:
+            mname = m["name"]
+            if require_override and mname not in parent_method_names:
+                continue
+            m_start = int(m["line_start"] or 0)
+            m_end = int(m["line_end"] or m_start)
+            body = _extract_method_body(source, m_start, m_end, child_lang)
+            if _is_refusal_body(body, child_lang):
+                trivial_overrides.append((mname, m_start))
+
+        if len(trivial_overrides) >= 2:
+            child_line = int(row["child_line_start"] or 1)
+            loc_str = _loc(child_path, child_line)
+            method_summary = ", ".join(
+                f"{name}()" for name, _ in trivial_overrides[:5]
+            )
+            if len(trivial_overrides) > 5:
+                method_summary += f", +{len(trivial_overrides) - 5} more"
+            results.append(
+                _finding(
+                    "refused-bequest",
+                    "warning",
+                    row["child_name"],
+                    "class",
+                    loc_str,
+                    len(trivial_overrides),
+                    2,
+                    (
+                        f"Refused bequest: {row['child_name']} overrides "
+                        f"{len(trivial_overrides)} {row['parent_name']} method"
+                        f"{'s' if len(trivial_overrides) != 1 else ''} "
+                        f"with trivial body ({method_summary})"
+                    ),
+                )
+            )
+    return results
 
 
+# ---------------------------------------------------------------------------
+# W370c — primitive-obsession detector
+#
+# Definition: a function/method with >= 4 parameters where the OVERWHELMING
+# majority (>= 75%) are bare primitive types (``int`` / ``str`` / ``float`` /
+# ``bool`` / ``bytes``) or Optional wrappers around primitives. The smell
+# shape: a "data clump"-adjacent pattern where the function is passing around
+# tuples of primitives instead of a named type.
+#
+# Polyadic value parameters (`id: int, name: str, age: int, ...`) on
+# constructors are exempt -- by definition the constructor primitives become
+# the attributes of a value object.
+#
+# Severity: info (heuristic). Confidence tier: heuristic (parses signature
+# strings, not AST; some legitimate primitive-heavy APIs trip it).
+# ---------------------------------------------------------------------------
+
+# Bare primitive type spellings we recognise. Tier 1: Python builtins +
+# common stdlib spellings. Tier 2: Optional[<primitive>] / <primitive> | None
+# patterns. Tier 3: foreign-language primitives (JS/TS/Java/C#/Go) so the
+# detector isn't Python-only.
+_PRIMITIVE_TYPE_NAMES: frozenset[str] = frozenset(
+    {
+        # Python
+        "int", "str", "float", "bool", "bytes", "bytearray", "complex",
+        "none", "nonetype",
+        # JS / TS
+        "string", "number", "boolean", "bigint", "symbol", "undefined", "null",
+        # Java / C# / Kotlin / Swift / Scala
+        "integer", "long", "short", "byte", "char", "character", "double",
+        "decimal", "object",
+        # Go
+        "int8", "int16", "int32", "int64", "uint", "uint8", "uint16",
+        "uint32", "uint64", "rune", "float32", "float64",
+    }
+)
+
+
+def _is_primitive_annotation(annotation: str | None) -> bool:
+    """Return True when *annotation* names a bare primitive type.
+
+    Recognises:
+      * Bare primitive names (``int``, ``str``, ``bool``, …)
+      * Optional / nullable wrappers: ``Optional[str]``, ``str | None``
+      * Default-value-only params with no annotation are NOT primitive --
+        the type is unknown, so we don't count them either way.
+
+    Returns False for collection types (``list[str]``, ``dict[str, int]``,
+    ``tuple[int, str]``) -- those count as compound types because they
+    package the primitives. The smell is about LOOSE primitives being
+    passed around individually, not about lists of primitives.
+    """
+    if not annotation:
+        return False
+    s = annotation.strip()
+    if not s:
+        return False
+    # Strip outer parens / brackets we don't need.
+    s = s.strip("()").strip()
+    # Optional[X] -> X
+    m = re.match(r"^Optional\s*\[\s*(.+?)\s*\]\s*$", s)
+    if m:
+        return _is_primitive_annotation(m.group(1))
+    # X | None / None | X -> X
+    if "|" in s:
+        parts = [p.strip() for p in s.split("|")]
+        non_none = [
+            p for p in parts if p.lower() not in ("none", "nonetype", "null")
+        ]
+        if len(non_none) == 1:
+            return _is_primitive_annotation(non_none[0])
+        # Union of multiple non-None types: only primitive if EVERY arm is
+        # primitive (e.g. ``int | float``). Mixed unions like ``int | str``
+        # are still primitive obsession -- the caller still has to know
+        # which one. Be lenient here.
+        return all(_is_primitive_annotation(p) for p in non_none)
+    # Collection types are NOT primitive -- they package the data.
+    lower = s.lower()
+    if lower.startswith(("list[", "list ", "tuple[", "tuple ", "dict[",
+                          "dict ", "set[", "set ", "frozenset[", "iterable[",
+                          "sequence[", "mapping[", "callable[", "type[",
+                          "list<", "array<", "map<", "set<")):
+        return False
+    # Bare primitive name match (case-insensitive).
+    # Strip any trailing generic / nullable markers that survived.
+    bare = re.split(r"[\[\<\s]", lower, maxsplit=1)[0].rstrip("?")
+    return bare in _PRIMITIVE_TYPE_NAMES
+
+
+def _split_signature_params(signature: str) -> list[str]:
+    """Split a signature into raw param strings, handling nested brackets.
+
+    Mirrors ``_parse_param_count``'s logic but returns the raw strings so
+    each can be type-classified. Excludes self / cls.
+    """
+    if not signature:
+        return []
+    m = re.search(r"\(([^)]*\))", signature) or re.search(r"\(([^)]*)\)", signature)
+    if not m:
+        return []
+    params_str = m.group(1).strip()
+    # Drop trailing ``)`` if the inner-search consumed it.
+    if params_str.endswith(")"):
+        params_str = params_str[:-1].strip()
+    if not params_str:
+        return []
+    # Re-extract with bracket-balanced split.
+    m2 = re.search(r"\((.*)\)", signature)
+    if m2:
+        params_str = m2.group(1).strip()
+    depth = 0
+    parts: list[str] = []
+    current: list[str] = []
+    for ch in params_str:
+        if ch in ("(", "[", "<", "{"):
+            depth += 1
+            current.append(ch)
+        elif ch in (")", "]", ">", "}"):
+            depth -= 1
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append("".join(current).strip())
+    out: list[str] = []
+    for p in parts:
+        if not p:
+            continue
+        name_part = p.split(":", 1)[0].split("=", 1)[0].strip().lower()
+        if name_part in ("self", "cls"):
+            continue
+        out.append(p)
+    return out
+
+
+def _extract_param_annotation(param: str) -> str | None:
+    """Pull the type annotation out of a single param spec.
+
+    Handles ``name: int``, ``name: int = 0``, ``name: Optional[str] = None``,
+    ``name`` (no annotation -> None), ``int name`` (Java/C# style ->
+    leading type).
+    """
+    if not param:
+        return None
+    s = param.strip()
+    if ":" in s:
+        # Python / TS style: ``name: type [= default]``
+        after_colon = s.split(":", 1)[1].strip()
+        if "=" in after_colon:
+            after_colon = after_colon.split("=", 1)[0].strip()
+        return after_colon or None
+    if "=" in s:
+        # Default-value only, no annotation
+        return None
+    # Java / C# / Go style: ``type name`` -- leading token is the type.
+    # Only treat as a type when it's a single token followed by an
+    # identifier (so ``name`` alone returns None).
+    tokens = s.split()
+    if len(tokens) >= 2:
+        # The LAST token is the param name; preceding tokens form the type.
+        # Drop trailing ``[]`` if present (Java arrays).
+        type_part = " ".join(tokens[:-1]).rstrip("[]")
+        return type_part or None
+    return None
+
+
+# Tier: heuristic — name-pattern check over the type annotation (``int`` /
+# ``str`` / ``bool`` / ``float`` / ``Optional<primitive>``). Whether a bare
+# primitive is "the right type" is project-dependent (some domains
+# legitimately pass IDs as raw ints), so the tier surfaces the FP risk.
+@detector("primitive-obsession", confidence=CONFIDENCE_HEURISTIC)
 def detect_primitive_obsession(conn: sqlite3.Connection) -> list[dict]:
-    """Placeholder: excessive use of primitive types. Returns []."""
-    return []
+    """Detect functions with >= 4 params where >= 75% are bare primitives.
+
+    W370c. Parses ``symbols.signature`` for each function/method, counts the
+    type-annotated params whose type is a bare primitive (``int`` / ``str`` /
+    ``bool`` / ``float`` / ``bytes`` / Optional<primitive> / language-foreign
+    primitives), and flags signatures where that count >= 4 AND the primitive
+    ratio is >= 75%.
+
+    Constructors (__init__ / __new__) and dataclass auto-generated methods
+    are exempt -- by definition the constructor's primitive params become
+    attributes of a value object. The exemption uses the same
+    ``_is_dead_params_exempt`` helper as the dead-params detector for
+    consistency.
+
+    The detector is intentionally conservative: a param with NO annotation
+    contributes neither to the primitive count nor the total. This keeps
+    the FP rate low on un-annotated code (which is the bulk of older
+    JavaScript / Python 2 corpora).
+    """
+    try:
+        rows = conn.execute(
+            "SELECT s.name, s.kind, s.line_start, s.signature, f.path as file_path, "
+            "p.decorators as parent_decorators "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "LEFT JOIN symbols p ON p.id = s.parent_id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND s.signature IS NOT NULL "
+            "AND s.signature != ''"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Pre-v9 schema without ``decorators`` -- run without the parent
+        # join. dataclass exemption silently degrades, name-based
+        # exemptions still fire.
+        try:
+            rows = conn.execute(
+                "SELECT s.name, s.kind, s.line_start, s.signature, f.path as file_path, "
+                "NULL as parent_decorators "
+                "FROM symbols s "
+                "JOIN files f ON s.file_id = f.id "
+                "WHERE s.kind IN ('function', 'method') "
+                "AND s.signature IS NOT NULL "
+                "AND s.signature != ''"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+    results: list[dict] = []
+    for r in rows:
+        # Re-use the dead-params exemption logic: constructors / dataclass
+        # auto-generated / pytest lifecycle hooks all get a pass.
+        if _is_dead_params_exempt(r["name"], r["parent_decorators"]):
+            continue
+        params = _split_signature_params(r["signature"])
+        # Only consider params with an explicit type annotation. An
+        # un-annotated param contributes nothing -- we can't tell what
+        # the caller is passing.
+        annotated_total = 0
+        primitive_count = 0
+        for p in params:
+            ann = _extract_param_annotation(p)
+            if ann is None:
+                continue
+            annotated_total += 1
+            if _is_primitive_annotation(ann):
+                primitive_count += 1
+        if annotated_total < 4:
+            continue
+        ratio = primitive_count / annotated_total
+        if ratio < 0.75:
+            continue
+        loc_str = _loc(r["file_path"], r["line_start"])
+        results.append(
+            _finding(
+                "primitive-obsession",
+                "info",
+                r["name"],
+                r["kind"],
+                loc_str,
+                primitive_count,
+                4,
+                (
+                    f"Primitive obsession: {primitive_count}/{annotated_total} "
+                    f"params ({ratio:.0%}) are bare primitives -- consider "
+                    f"a value object"
+                ),
+            )
+        )
+    return results
 
 
+# ---------------------------------------------------------------------------
+# W370b — duplicate-conditionals detector
+#
+# Definition: a function/method where the SAME ``if`` predicate is repeated
+# >= 3 times in independent (NOT chained via ``elif`` / ``else if``)
+# statements. The smell shape:
+#
+#     def foo(x):
+#         if x == 1: do_a()
+#         if x == 1: do_b()    # duplicate predicate
+#         if x == 1: do_c()    # duplicate predicate
+#
+# is duplicate-conditionals -- the predicate is re-evaluated for each
+# branch even though one ``if/elif`` ladder would express the same intent.
+#
+# Polyadic dispatch via ``elif`` is INTENTIONAL and MUST NOT flag:
+#
+#     def bar(x):
+#         if x == "a": do_a()
+#         elif x == "b": do_b()
+#         elif x == "c": do_c()  # different predicates -> dispatch
+#
+# Implementation: per-source-file regex extraction of ``if`` headers, then
+# AST-signature hashing of the normalized predicate text. Scope = the
+# enclosing function/method from the ``symbols`` table (or ``<module>``
+# for top-level code). Threshold = 3 (per W370 audit recommendation).
+#
+# Languages: python (indent-based ``if X:`` headers) + brace languages
+# (``if (X)`` headers). Lines preceded by ``elif`` / ``else if`` / ``else
+# if`` are skipped -- those are the polyadic-dispatch case, not duplicates.
+# ---------------------------------------------------------------------------
+
+# Python ``if`` and ``elif`` header lines. Captures the leading indent so
+# we can locate the enclosing line range and the predicate text up to the
+# trailing ``:`` (excluding any inline comment).
+_PY_IF_HEADER = re.compile(r"^([ \t]*)if\b(.+?):\s*(?:#.*)?$", re.MULTILINE)
+_PY_ELIF_HEADER = re.compile(r"^[ \t]*elif\b", re.MULTILINE)
+
+# Brace-language ``if (X)`` headers. The ``(?<![A-Za-z0-9_.])`` guard
+# avoids matching method names or identifiers that happen to end in
+# ``if`` (e.g. ``noVerify(...)``). The predicate text is the parenthesised
+# group; we balance parens so nested calls survive.
+_BRACE_IF_KEYWORD = re.compile(r"(?<![A-Za-z0-9_.])if\s*\(", re.MULTILINE)
+# An ``else if`` / ``else  if`` chain head -- the brace-language equivalent
+# of Python's ``elif``. We test the LITERAL bytes preceding the ``if`` for
+# a trailing ``else`` (whitespace-separated) so we can skip those headers.
+_BRACE_ELSE_IF_TAIL = re.compile(r"else\s*$")
+
+# Predicate normalization for hash comparison. The hash should treat
+# ``if x==1:`` and ``if x == 1:`` and ``if (x == 1):`` as the same
+# predicate. Strategy: collapse whitespace + strip outermost balanced
+# parens. Don't try to normalise operator spelling (``==`` vs ``is``) --
+# those mean different things even when the SHAPE is similar.
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+# Whitespace adjacent to a non-word, non-whitespace character (operators,
+# parens, commas, brackets, dots). Removing this kind of whitespace makes
+# ``x == 1`` and ``x==1`` hash identically WITHOUT also collapsing
+# ``x and y`` -> ``xandy`` (keyword boundaries between word characters
+# are preserved).
+_OPERATOR_ADJ_WS = re.compile(r"\s*([^\w\s])\s*")
+
+
+def _normalize_predicate(text: str) -> str:
+    """Normalise a predicate string for hashing.
+
+    Strips outer balanced parens, then canonicalises whitespace:
+      * collapses runs of whitespace to a single space, AND
+      * removes whitespace adjacent to operator / punctuation characters
+        (``==``, ``!=``, ``<``, ``>``, ``(``, ``)``, ``,``, ``.``, etc.).
+
+    This makes ``x == 1``, ``x==1``, and ``x  ==  1`` all hash to the
+    same canonical form ``x==1`` while preserving the whitespace inside
+    ``x and y`` (so it does not collide with a hypothetical identifier
+    ``xandy``).
+    """
+    s = text.strip()
+    # Repeatedly strip outermost matched parens: ``((x == 1))`` -> ``x == 1``.
+    while len(s) >= 2 and s[0] == "(" and s[-1] == ")":
+        # Confirm the outermost parens are balanced (don't strip
+        # ``(a) and (b)`` -> ``a) and (b``).
+        depth = 0
+        balanced = True
+        for i, ch in enumerate(s):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and i != len(s) - 1:
+                    balanced = False
+                    break
+        if not balanced:
+            break
+        s = s[1:-1].strip()
+    # Remove whitespace adjacent to operator / punctuation characters
+    # FIRST so that ``a == b`` and ``a==b`` produce the same backbone.
+    s = _OPERATOR_ADJ_WS.sub(r"\1", s)
+    # Collapse remaining whitespace runs (these sit between word
+    # characters, preserving keyword boundaries like ``x and y``).
+    return _WHITESPACE_RUN.sub(" ", s)
+
+
+def _extract_python_if_predicates(source: str) -> list[tuple[int, str]]:
+    """Yield (line_number, normalized_predicate) per top-level ``if``.
+
+    ``elif`` headers are deliberately skipped -- they form an intentional
+    polyadic dispatch ladder, not a duplicate-predicate smell.
+    """
+    out: list[tuple[int, str]] = []
+    # Pre-compute the set of line numbers that are ``elif`` so we can
+    # skip them when scanning ``if`` headers. ``if`` and ``elif`` are
+    # disjoint at the regex level (``if\b`` requires a word break, so
+    # ``elif`` does not match the ``_PY_IF_HEADER`` pattern), but we
+    # also need to skip the lines whose textual content is ``elif`` to
+    # avoid double-counting in odd edge cases.
+    elif_lines: set[int] = set()
+    for m in _PY_ELIF_HEADER.finditer(source):
+        elif_lines.add(source.count("\n", 0, m.start()) + 1)
+    for m in _PY_IF_HEADER.finditer(source):
+        line_no = source.count("\n", 0, m.start()) + 1
+        if line_no in elif_lines:
+            continue
+        predicate_raw = m.group(2)
+        predicate = _normalize_predicate(predicate_raw)
+        if predicate:
+            out.append((line_no, predicate))
+    return out
+
+
+def _extract_brace_if_predicates(source: str) -> list[tuple[int, str]]:
+    """Yield (line_number, normalized_predicate) per top-level ``if (...)``.
+
+    ``else if`` headers are skipped -- the brace-language polyadic
+    dispatch ladder. Paren-balancing walks from the ``(`` matched by the
+    header to its closing ``)``; the body between those parens is the
+    predicate text (stripped of comments + whitespace by
+    ``_normalize_predicate``).
+    """
+    out: list[tuple[int, str]] = []
+    for m in _BRACE_IF_KEYWORD.finditer(source):
+        # Skip ``else if`` chains: scan back from the ``if`` keyword to
+        # the prior non-whitespace token; if it's ``else``, this is a
+        # chain head, not an independent ``if``.
+        prefix = source[: m.start()]
+        if _BRACE_ELSE_IF_TAIL.search(prefix):
+            continue
+        # Open paren is the character right before m.end()'s position
+        # -- the regex matches up through the ``(``.
+        open_paren_pos = m.end() - 1
+        depth = 0
+        i = open_paren_pos
+        end = -1
+        in_string: str | None = None
+        while i < len(source):
+            ch = source[i]
+            if in_string is not None:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == in_string:
+                    in_string = None
+            else:
+                if ch in ('"', "'", "`"):
+                    in_string = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+            i += 1
+        if end < 0:
+            continue
+        predicate_raw = source[open_paren_pos + 1 : end]
+        predicate = _normalize_predicate(predicate_raw)
+        if predicate:
+            line_no = source.count("\n", 0, m.start()) + 1
+            out.append((line_no, predicate))
+    return out
+
+
+def _scope_for_line(
+    scope_ranges: list[tuple[int, int, str, str, int]], line: int
+) -> tuple[str, str, int]:
+    """Find the innermost enclosing (name, kind, line_start) for *line*.
+
+    ``scope_ranges`` is a pre-sorted list of (line_start, line_end, name,
+    kind, line_start) tuples. Falls back to (``"<module>"``, ``"file"``,
+    line) when no function/method contains the line.
+    """
+    best: tuple[str, str, int] | None = None
+    best_span = None
+    for line_start, line_end, name, kind, ls_for_loc in scope_ranges:
+        if line_start <= line <= line_end:
+            span = line_end - line_start
+            if best_span is None or span < best_span:
+                best = (name, kind, ls_for_loc)
+                best_span = span
+    if best is not None:
+        return best
+    return "<module>", "file", line
+
+
+# Tier: heuristic — predicate-hash bucketing over normalised ``if`` text.
+# The hash is deterministic (whitespace collapse + outer-paren strip), BUT
+# the same predicate can have semantically different effects in different
+# control-flow contexts, so the tier stays at heuristic to flag the FP risk.
+@detector("duplicate-conditionals", confidence=CONFIDENCE_HEURISTIC)
 def detect_duplicate_conditionals(conn: sqlite3.Connection) -> list[dict]:
-    """Placeholder: repeated conditional logic. Returns []."""
-    return []
+    """Detect functions where the same ``if`` predicate repeats >= 3 times.
+
+    W370b. Reads source files referenced in the ``files`` table, extracts
+    ``if`` statement headers (Python ``if X:`` / brace-language ``if (X)``),
+    normalizes the predicate text (whitespace collapse + outer-paren
+    strip), hashes the canonical form, and flags any (enclosing-scope,
+    predicate) bucket with >= 3 occurrences as a single finding.
+
+    Approach: AST-signature hashing of ``if`` predicate text per
+    function/method scope -- same shape as ``clones`` but scoped to ``if``
+    nodes only. Threshold = 3 per W370 audit recommendation (2 produces
+    too many false positives on guard clauses).
+
+    Polyadic dispatch via ``elif`` / ``else if`` is INTENTIONAL and not
+    flagged -- those are different predicates in a dispatch ladder, not
+    a single duplicated predicate.
+
+    The indexer does not extract ``if`` statement AST nodes into a
+    queryable table -- this detector reads source files directly,
+    mirroring ``detect_empty_catch``.
+    """
+    results: list[dict] = []
+    try:
+        files = conn.execute(
+            "SELECT id, path, language FROM files "
+            "WHERE language IN ('python', 'javascript', 'typescript', "
+            "'java', 'c_sharp', 'kotlin', 'swift', 'scala', 'go')"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    workspace = _find_workspace_root()
+
+    for f in files:
+        file_id = f["id"]
+        rel_path = f["path"]
+        lang = f["language"]
+        try:
+            source = (workspace / rel_path).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except (OSError, ValueError):
+            continue
+
+        if lang == "python":
+            predicates = _extract_python_if_predicates(source)
+        elif lang in _BRACE_LANGS or lang == "go":
+            predicates = _extract_brace_if_predicates(source)
+        else:
+            continue
+
+        if not predicates:
+            continue
+
+        # Pre-fetch the enclosing-scope candidates for this file. One
+        # query per file is dramatically cheaper than one query per
+        # ``if`` header. Skip files with no function/method scopes
+        # (top-level scripts) -- they collapse to the ``<module>``
+        # bucket.
+        try:
+            scope_rows = conn.execute(
+                "SELECT name, kind, line_start, line_end FROM symbols "
+                "WHERE file_id = ? AND kind IN ('function', 'method')",
+                (file_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            scope_rows = []
+        scope_ranges: list[tuple[int, int, str, str, int]] = [
+            (
+                int(r["line_start"] or 0),
+                int(r["line_end"] or r["line_start"] or 0),
+                r["name"],
+                r["kind"],
+                int(r["line_start"] or 0),
+            )
+            for r in scope_rows
+        ]
+
+        # Bucket predicates by (scope_key, predicate_hash). The scope
+        # key is the function's name + line_start so two distinct
+        # functions with the same name in nested scopes don't collide.
+        from collections import defaultdict
+
+        buckets: dict[tuple[str, int, str], list[int]] = defaultdict(list)
+        scope_meta: dict[tuple[str, int], tuple[str, str, int]] = {}
+        for line_no, predicate in predicates:
+            scope_name, scope_kind, scope_line = _scope_for_line(
+                scope_ranges, line_no
+            )
+            scope_key = (scope_name, scope_line)
+            scope_meta[scope_key] = (scope_name, scope_kind, scope_line)
+            buckets[(scope_name, scope_line, predicate)].append(line_no)
+
+        for (scope_name, scope_line, predicate), lines in buckets.items():
+            if len(lines) < 3:
+                continue
+            scope_name_out, scope_kind_out, _ = scope_meta[
+                (scope_name, scope_line)
+            ]
+            # Use the FIRST occurrence as the canonical location -- it's
+            # where a developer naturally lands when investigating the
+            # duplicate-predicate cluster.
+            first_line = min(lines)
+            # Predicate excerpt is the canonical form, truncated so the
+            # description stays compact in tables.
+            excerpt = predicate
+            if len(excerpt) > 60:
+                excerpt = excerpt[:57] + "..."
+            occurrence_summary = ", ".join(str(ln) for ln in sorted(lines))
+            results.append(
+                _finding(
+                    "duplicate-conditionals",
+                    "warning",
+                    scope_name_out,
+                    scope_kind_out,
+                    _loc(rel_path, first_line),
+                    len(lines),
+                    3,
+                    (
+                        f"Duplicate conditionals: predicate `if {excerpt}` "
+                        f"repeats {len(lines)} times in {scope_name_out} "
+                        f"(lines {occurrence_summary})"
+                    ),
+                )
+            )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# W603 — magic-numbers detector
+#
+# Definition: a numeric literal NOT in {-1, 0, 1, 2} that appears >= 3 times
+# in a single function body. Numbers like -1/0/1/2 are universal idioms
+# (sentinel, length checks, off-by-one, dimensionality) so they are exempt.
+# Any other repeated literal -- 7, 60, 256, 100, 3.14 -- screams "extract a
+# named constant" and is the canonical magic-number smell.
+#
+# Implementation: ast.parse per Python file, walk every function/method,
+# Counter on the literal values seen inside that function's body. The
+# scope is the immediate enclosing FunctionDef / AsyncFunctionDef; nested
+# functions are counted as their OWN scope (an inner helper that repeats a
+# constant is a separate smell from its enclosing function).
+#
+# Confidence tier: heuristic -- repeated literals can be deliberate (loop
+# bounds, byte sizes) and the AST has no way to tell intent. Reviewers
+# decide whether to extract.
+# ---------------------------------------------------------------------------
+
+# Literals exempted from the magic-numbers count. Boolean True/False are
+# excluded separately (they are not ``int`` even though Python's bool is
+# an int subclass) via an explicit ``type() is int`` check in the walker.
+_MAGIC_NUMBER_EXEMPT: frozenset[int | float] = frozenset({-1, 0, 1, 2})
+
+# Threshold: >= 3 occurrences of the SAME literal value inside one function.
+_MAGIC_NUMBER_THRESHOLD: int = 3
+
+
+def _collect_numeric_literals_in_function(
+    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> Counter:
+    """Count numeric literals inside *func_node*'s body, skipping nested defs.
+
+    Returns a ``Counter`` keyed by the literal value. ``True``/``False`` are
+    rejected (``type() is bool`` is True for Python booleans even though
+    they subclass ``int``). Negative literals like ``-1`` arrive at the
+    AST as ``UnaryOp(USub, Constant(1))`` -- we fold those into a single
+    int so ``-1`` is correctly exempted.
+
+    Nested function definitions are NOT traversed: their literals belong to
+    their own scope. The outer detector walks every FunctionDef in the file
+    separately so each scope is counted exactly once.
+    """
+    counts: Counter = Counter()
+
+    # W866: dispatch by ``type(child)`` instead of an isinstance chain.
+    # Each handler may return ``True`` to suppress the default recursive
+    # ``visit(child)`` call (used by the Constant + UnaryOp arms whose
+    # semantics differ from "just recurse"). The Function/AsyncFunctionDef
+    # arms map to a no-op + ``True`` so nested defs are skipped without
+    # recursion -- their literals belong to their own scope. This zeros
+    # out the W852 isinstance-chain finding on the inner ``visit`` walker
+    # while preserving the exact original semantics.
+    def _on_def(_child: ast.AST) -> bool:
+        # Nested def: skip (it's processed as its own scope by the
+        # outer walker that called us).
+        return True
+
+    def _on_constant(child: ast.AST) -> bool:
+        v = child.value  # type: ignore[attr-defined]
+        # ``isinstance(True, int)`` is True -- exclude booleans.
+        if type(v) is int or type(v) is float:
+            counts[v] += 1
+        return False  # still recurse: a Constant has no children but the
+                      # call is cheap and keeps the dispatch table uniform.
+
+    def _on_unaryop(child: ast.AST) -> bool:
+        # Fold ``-N`` into a single literal so ``-1`` is exempted. Only
+        # the USub-of-numeric-Constant shape is a literal; other UnaryOps
+        # (Not, Invert, USub-of-Name, ...) fall through to the default
+        # recursive walk so embedded literals are still counted.
+        if (
+            isinstance(child.op, ast.USub)  # type: ignore[attr-defined]
+            and isinstance(child.operand, ast.Constant)  # type: ignore[attr-defined]
+            and type(child.operand.value) in (int, float)  # type: ignore[attr-defined]
+        ):
+            counts[-child.operand.value] += 1  # type: ignore[attr-defined]
+            return True
+        return False
+
+    _handlers: dict[type, Callable[[ast.AST], bool]] = {
+        ast.FunctionDef: _on_def,
+        ast.AsyncFunctionDef: _on_def,
+        ast.Constant: _on_constant,
+        ast.UnaryOp: _on_unaryop,
+    }
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            handler = _handlers.get(type(child))
+            if handler is not None and handler(child):
+                continue
+            visit(child)
+
+    # Iterate the function BODY directly so the def's own signature defaults
+    # (e.g. ``def f(timeout: int = 30):``) are still counted: those are
+    # genuine magic numbers in the public surface. Nested ``def`` statements
+    # in the body are their own scope -- skip them at the top level too so
+    # the outer scope's counts don't include the inner scope's literals
+    # (``visit()`` already skips them on recursive descent, but the body
+    # iteration here calls ``visit(stmt)`` on each top-level statement so
+    # we have to filter ``FunctionDef`` here as well).
+    _SKIP_TOPLEVEL: tuple[type, ...] = (ast.FunctionDef, ast.AsyncFunctionDef)
+    for stmt in func_node.body:
+        if type(stmt) in _SKIP_TOPLEVEL:
+            continue
+        visit(stmt)
+    for default in func_node.args.defaults:
+        visit(default)
+    for kw_default in func_node.args.kw_defaults:
+        if kw_default is not None:
+            visit(kw_default)
+    return counts
+
+
+# Tier: heuristic — counts literal occurrences per function with a
+# threshold gate. The exempt set (-1/0/1/2) handles the obvious cases, but a
+# legitimate constant repeated across short helpers will still flag, hence
+# heuristic.
+@detector("magic-numbers", confidence=CONFIDENCE_HEURISTIC)
+def detect_magic_numbers(conn: sqlite3.Connection) -> list[dict]:
+    """Detect numeric literals (not -1/0/1/2) appearing >= 3x per function.
+
+    W603. Walks every Python file's AST, counts non-exempt numeric literals
+    per function/method, and flags any (function, literal_value) pair with
+    >= 3 occurrences. Suggests extracting a named constant.
+
+    Severity: info -- magic numbers are a style/readability smell, not a
+    correctness bug.
+
+    Python-only. JavaScript/TypeScript magic-number detection would need
+    a separate parser path; punt to a follow-up if/when there is demand.
+    """
+    results: list[dict] = []
+    try:
+        files = conn.execute(
+            "SELECT id, path, language FROM files WHERE language = 'python'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    workspace = _find_workspace_root()
+
+    for f in files:
+        rel_path = f["path"]
+        try:
+            source = (workspace / rel_path).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except (OSError, ValueError):
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+
+        # Walk every FunctionDef / AsyncFunctionDef in the file. Each
+        # function/method gets its own counter; the helper above skips
+        # nested defs so we don't double-count.
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            counts = _collect_numeric_literals_in_function(node)
+            for value, occurrences in counts.items():
+                if occurrences < _MAGIC_NUMBER_THRESHOLD:
+                    continue
+                if value in _MAGIC_NUMBER_EXEMPT:
+                    continue
+                # Distinguish methods (have a class ancestor) from
+                # top-level functions. The AST doesn't carry a parent
+                # pointer; the symbols table is the source of truth for
+                # kind on the persistence side, but for the in-memory
+                # finding shape we look at the col_offset (methods are
+                # always inside a ClassDef which indents them).
+                kind = "function"
+                # The symbols-table lookup happens at persist time
+                # (``_resolve_smell_subject_id`` in cmd_smells.py); the
+                # in-memory finding just declares ``function`` and
+                # ``cmd_smells`` re-resolves to the real kind.
+                results.append(
+                    _finding(
+                        "magic-numbers",
+                        "info",
+                        node.name,
+                        kind,
+                        _loc(rel_path, node.lineno),
+                        occurrences,
+                        _MAGIC_NUMBER_THRESHOLD,
+                        (
+                            f"Magic number: {value!r} repeats {occurrences} "
+                            f"times in {node.name} -- consider a named "
+                            f"constant for these literals"
+                        ),
+                    )
+                )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# W604 — boolean-parameter detector
+#
+# Definition: a call site with >= 2 positional boolean literal arguments
+# (``True`` / ``False``). The smell shape:
+#
+#     do_thing(True, False, retries=3)
+#
+# is boolean-parameter -- the caller has to guess which positional bool
+# means what; a keyword arg or an enum would be self-documenting.
+#
+# Implementation: ast.parse per Python file, find every Call node, count
+# positional ``Constant(value=True|False)`` args. >= 2 -> flag the call.
+# Keyword bool args (``f(verbose=True)``) are explicitly NOT flagged --
+# those are the FIX, not the smell.
+#
+# Confidence tier: structural -- the predicate is deterministic AST shape,
+# no name patterns or thresholds involved.
+# ---------------------------------------------------------------------------
+
+
+# Threshold: >= 2 positional bool literals at one call site.
+_BOOLEAN_PARAMETER_THRESHOLD: int = 2
+
+
+@detector("boolean-parameter", confidence=CONFIDENCE_STRUCTURAL)
+def detect_boolean_parameter(conn: sqlite3.Connection) -> list[dict]:
+    """Detect call sites with >= 2 positional boolean literal arguments.
+
+    W604. Walks every Python file's AST, examines every ``Call`` node, and
+    counts the positional args that are ``Constant(value=True|False)``. A
+    call with >= 2 positional bool literals is the boolean-parameter smell:
+    the caller can't tell from the call site which bool means what.
+
+    Keyword bool arguments (``f(verbose=True, strict=False)``) are the
+    canonical fix and are explicitly NOT flagged.
+
+    Severity: info -- semantic ambiguity at the call site, not a
+    correctness defect.
+
+    Python-only -- mirrors ``detect_magic_numbers`` in scope.
+    """
+    results: list[dict] = []
+    try:
+        files = conn.execute(
+            "SELECT id, path, language FROM files WHERE language = 'python'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    workspace = _find_workspace_root()
+
+    for f in files:
+        file_id = f["id"]
+        rel_path = f["path"]
+        try:
+            source = (workspace / rel_path).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except (OSError, ValueError):
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+
+        # Pre-fetch enclosing-scope rows so each call site is attributed to
+        # the function/method it lives in. Falls back to ``<module>`` for
+        # top-level calls.
+        try:
+            scope_rows = conn.execute(
+                "SELECT name, kind, line_start, line_end FROM symbols "
+                "WHERE file_id = ? AND kind IN ('function', 'method')",
+                (file_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            scope_rows = []
+        scope_ranges: list[tuple[int, int, str, str, int]] = [
+            (
+                int(r["line_start"] or 0),
+                int(r["line_end"] or r["line_start"] or 0),
+                r["name"],
+                r["kind"],
+                int(r["line_start"] or 0),
+            )
+            for r in scope_rows
+        ]
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            # Count positional bool literals only. ``Constant(value=True)``
+            # and ``Constant(value=False)`` -- explicit ``type() is bool``
+            # check because Python's ``True`` / ``False`` are ``int``
+            # subclasses and we MUST NOT collapse them with ``1`` / ``0``.
+            bool_args = sum(
+                1
+                for a in node.args
+                if isinstance(a, ast.Constant) and type(a.value) is bool
+            )
+            if bool_args < _BOOLEAN_PARAMETER_THRESHOLD:
+                continue
+            # Best-effort call-name rendering for the description. Plain
+            # ``f(...)`` -> "f"; ``self.f(...)`` -> "self.f"; ``a.b.c(...)``
+            # -> "a.b.c". Anything more exotic (subscript, call-of-call)
+            # collapses to ``<call>`` so the description stays compact.
+            call_name = _render_call_name(node.func)
+            # Attribute to enclosing function/method scope.
+            scope_name, scope_kind, _ = _scope_for_line(
+                scope_ranges, node.lineno
+            )
+            results.append(
+                _finding(
+                    "boolean-parameter",
+                    "info",
+                    scope_name,
+                    scope_kind,
+                    _loc(rel_path, node.lineno),
+                    bool_args,
+                    _BOOLEAN_PARAMETER_THRESHOLD,
+                    (
+                        f"Boolean parameter: {call_name}(...) passes "
+                        f"{bool_args} positional bool flags -- prefer "
+                        f"keyword args or an enum"
+                    ),
+                )
+            )
+    return results
+
+
+def _render_call_name(func: ast.AST) -> str:
+    """Best-effort string rendering of a Call.func AST node.
+
+    Handles ``Name`` and ``Attribute`` chains; anything else collapses to
+    ``<call>``. Used only for human-readable description text; no
+    semantic decisions hang on this.
+    """
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        head = _render_call_name(func.value)
+        return f"{head}.{func.attr}" if head != "<call>" else func.attr
+    return "<call>"
+
+
+# ---------------------------------------------------------------------------
+# W601 -- switch-statement detector
+#
+# Definition: a ``match`` statement OR an ``if`` / ``elif`` chain with >= 8
+# arms whose every test discriminates on the SAME single variable. Both
+# shapes are polyadic dispatch on one discriminator; >= 8 arms suggests the
+# logic would be clearer as a strategy / polymorphic dispatch table.
+#
+# Implementation: ast.parse per Python file, walk every node. For each
+# ``ast.Match`` whose ``subject`` is a single ``Name``, count cases; if
+# >= 8, flag. For each top-level ``ast.If`` (one whose parent does NOT
+# treat it as the ``orelse`` ``elif`` continuation of another ``If``),
+# walk the ``orelse`` chain counting arms and the discriminator names;
+# >= 8 arms AND all arms share the same single-variable discriminator
+# means a switch-statement smell.
+#
+# Discriminator detection accepts the canonical dispatch shapes:
+#   * ``x == lit``           (Compare(Name, [Eq], [Constant]))
+#   * ``x is lit``           (Compare(Name, [Is], [Constant]))
+#   * ``x in (...)``         (Compare(Name, [In], [...]))
+#   * ``isinstance(x, T)``   (Call(Name('isinstance'), [Name, ...]))
+# A chain mixing isinstance and equality on the same ``x`` is still a
+# single-discriminator switch.
+#
+# Severity: info -- polyadic dispatch is sometimes idiomatic (parser
+# tables, codecs). The detector surfaces it for review.
+# Confidence tier: structural -- pure AST shape, no name heuristics.
+# Python-only -- brace-language switch/case detection is a follow-up.
+# ---------------------------------------------------------------------------
+
+_SWITCH_STATEMENT_THRESHOLD: int = 8
+
+
+def _switch_discriminator(test: ast.AST) -> str | None:
+    """Return the discriminator variable name for a switch-shape test.
+
+    Recognises the four canonical polyadic-dispatch shapes:
+
+      * ``x == lit``, ``x is lit``   -> ``"x"``
+      * ``x in (...)``               -> ``"x"``
+      * ``isinstance(x, T)``         -> ``"x"``
+
+    Returns ``None`` for anything else (compound expressions, method
+    calls, attribute access). The caller requires every arm in a chain
+    to return the same non-``None`` name.
+    """
+    # isinstance(x, T) -- accept Name(x) as the discriminator.
+    if (
+        isinstance(test, ast.Call)
+        and isinstance(test.func, ast.Name)
+        and test.func.id == "isinstance"
+        and test.args
+        and isinstance(test.args[0], ast.Name)
+    ):
+        return test.args[0].id
+    # x == lit / x is lit / x in (...) -- single comparator, Name on left.
+    if (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], (ast.Eq, ast.Is, ast.In))
+    ):
+        return test.left.id
+    return None
+
+
+# Tier: structural — AST-shape predicate over ``Match`` / ``If``-``Elif``
+# chains. The discriminator-equality check is deterministic and the
+# threshold (>= 8 arms) filters short dispatch ladders; no name match,
+# so structural rather than heuristic.
+@detector("switch-statement", confidence=CONFIDENCE_STRUCTURAL)
+def detect_switch_statement(conn: sqlite3.Connection) -> list[dict]:
+    """Detect ``match`` / ``if``-``elif`` chains with >= 8 arms on one var.
+
+    W601. Walks every Python file's AST. Flags two shapes:
+
+      * ``match x: case a: ...; case b: ...`` with >= 8 ``case`` arms and
+        ``x`` a single ``Name``.
+      * ``if x == a: ... elif x == b: ... elif x == c: ...`` (or the
+        ``isinstance`` / ``in`` variants) with >= 8 arms, all arms
+        discriminating on the same single variable.
+
+    Suggests refactoring to a dispatch table / strategy pattern.
+
+    Severity: info -- structural smell, not a defect.
+    Python-only -- brace-language ``switch``/``case`` detection is a
+    follow-up if/when demand surfaces.
+    """
+    results: list[dict] = []
+    try:
+        files = conn.execute(
+            "SELECT id, path, language FROM files WHERE language = 'python'"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    workspace = _find_workspace_root()
+
+    for f in files:
+        file_id = f["id"]
+        rel_path = f["path"]
+        try:
+            source = (workspace / rel_path).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except (OSError, ValueError):
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+
+        # Pre-collect every ``If`` node that is the orelse-tail of another
+        # ``If`` -- those are the ``elif`` continuations and must NOT be
+        # treated as independent chain heads. We process each chain
+        # exactly once at its head ``If``.
+        elif_nodes: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If) and len(node.orelse) == 1 and isinstance(
+                node.orelse[0], ast.If
+            ):
+                elif_nodes.add(id(node.orelse[0]))
+
+        for node in ast.walk(tree):
+            # match-statement form.
+            if isinstance(node, ast.Match):
+                if not isinstance(node.subject, ast.Name):
+                    continue
+                if len(node.cases) < _SWITCH_STATEMENT_THRESHOLD:
+                    continue
+                discriminator = node.subject.id
+                scope_name, scope_kind, _ = _enclosing_symbol(
+                    conn, file_id, node.lineno
+                )
+                results.append(
+                    _finding(
+                        "switch-statement",
+                        "info",
+                        scope_name,
+                        scope_kind,
+                        _loc(rel_path, node.lineno),
+                        len(node.cases),
+                        _SWITCH_STATEMENT_THRESHOLD,
+                        (
+                            f"Switch statement: match on `{discriminator}` "
+                            f"with {len(node.cases)} cases in {scope_name} -- "
+                            f"consider a dispatch table or strategy pattern"
+                        ),
+                    )
+                )
+                continue
+
+            # if-elif chain form. Skip when this ``If`` is itself the
+            # orelse-tail of an enclosing ``If`` (an ``elif`` continuation).
+            if not isinstance(node, ast.If):
+                continue
+            if id(node) in elif_nodes:
+                continue
+
+            # Walk the chain counting arms + their discriminators.
+            chain_discs: list[str | None] = []
+            cur = node
+            while isinstance(cur, ast.If):
+                chain_discs.append(_switch_discriminator(cur.test))
+                if len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If):
+                    cur = cur.orelse[0]
+                else:
+                    break
+
+            arms = len(chain_discs)
+            if arms < _SWITCH_STATEMENT_THRESHOLD:
+                continue
+            # Every arm must resolve to a single non-``None`` discriminator
+            # AND every arm must share the same variable name.
+            head = chain_discs[0]
+            if head is None or any(d != head for d in chain_discs):
+                continue
+
+            scope_name, scope_kind, _ = _enclosing_symbol(
+                conn, file_id, node.lineno
+            )
+            results.append(
+                _finding(
+                    "switch-statement",
+                    "info",
+                    scope_name,
+                    scope_kind,
+                    _loc(rel_path, node.lineno),
+                    arms,
+                    _SWITCH_STATEMENT_THRESHOLD,
+                    (
+                        f"Switch statement: if/elif chain on `{head}` with "
+                        f"{arms} arms in {scope_name} -- consider a dispatch "
+                        f"table or strategy pattern"
+                    ),
+                )
+            )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# W602 -- temporal-coupling detector
+#
+# Definition: a pair of (function, method) symbols across two different
+# files that (a) frequently change together (``git_cochange.cochange_count
+# >= 10``) AND (b) have a direct call-graph edge between them in either
+# direction. Sequential coupling that should be encapsulated -- the pair
+# is logically one operation that's been split across two modules.
+#
+# Implementation: single SQL JOIN. ``git_cochange`` is file-pair scoped,
+# but ``edges`` is symbol-scoped, so we join ``git_cochange`` to
+# ``symbols`` on both sides and then to ``edges`` to find the function-
+# pair instances. The cross-file constraint is automatic: the JOIN keys
+# ``file_id_a`` and ``file_id_b`` are always distinct in
+# ``git_cochange`` rows (the table tracks PAIRS of files, never
+# self-pairs).
+#
+# We dedupe at the (sorted source_id, sorted target_id) tuple level so a
+# bidirectional edge between two symbols emits ONE finding, not two.
+#
+# Confidence tier: heuristic -- combines a co-change signal (history,
+# sometimes noisy) with an edge signal (structural). The combination is
+# stronger than either alone but still benefits from human review.
+# Severity: warning -- temporal coupling is more actionable than info-tier
+# style smells; the pair often hides a missing abstraction.
+#
+# W647 -- symbol-centric rollup. After the pair scan completes, group the
+# pair findings by canonical symbol (each pair contributes ONE entry to
+# each of its two endpoints). Any symbol that appears in N>=2 distinct
+# pairs is the strongest "missing abstraction" signal in the data: the
+# symbol is coupled to multiple OTHER symbols, so the right fix is
+# rarely "extract a 2-symbol interface" -- it is "extract a cluster
+# interface" or "stop reaching across the seam from N different sites".
+# We emit one ADDITIONAL cluster finding per such symbol; the pair
+# findings stay (operators want both views: pair history + cluster
+# topology). The cluster smell_id is ``temporal-coupling-cluster`` and
+# its confidence tier is ``structural`` -- the predicate "appears in
+# >=2 heuristic pairs" is a graph-level pattern over the pair set, not
+# a fresh history heuristic.
+# ---------------------------------------------------------------------------
+
+_TEMPORAL_COUPLING_COCHANGE_THRESHOLD: int = 10
+_TEMPORAL_COUPLING_CLUSTER_MIN_PARTNERS: int = 2
+
+
+# W894: parent tier is HEURISTIC (joins git_cochange history-signal to edges;
+# the combination is stronger than either alone but history can still mis-pair
+# files refactored together). The rollup ``temporal-coupling-cluster`` is
+# STRUCTURAL — the predicate "symbol appears in >=2 distinct pair findings" is
+# a graph-level pattern over the pair set rather than a fresh history heuristic.
+# W895: parent + rollup register in a single declaration via ``rollup_kinds``.
+@detector(
+    "temporal-coupling",
+    confidence=CONFIDENCE_HEURISTIC,
+    rollup_kinds={"cluster": CONFIDENCE_STRUCTURAL},
+)
+def detect_temporal_coupling(conn: sqlite3.Connection) -> list[dict]:
+    """Detect function pairs that co-change AND are call-graph connected.
+
+    W602. Joins ``git_cochange`` to ``symbols`` + ``edges`` to find pairs
+    of (function, method) symbols across two files that change together
+    >= 10 times AND have a direct call-graph edge in either direction.
+
+    The pair is cross-file by construction (``git_cochange`` only stores
+    inter-file pairs). Each unique symbol pair emits exactly one finding;
+    bidirectional edges are deduped via a sorted-id key.
+
+    Severity: warning -- a strong "missing abstraction" signal worth a
+    human review.
+    """
+    results: list[dict] = []
+    try:
+        rows = conn.execute(
+            "SELECT gc.cochange_count AS cc, "
+            "       sa.id AS sa_id, sa.name AS sa_name, sa.kind AS sa_kind, "
+            "       sa.line_start AS sa_line, fa.path AS fa_path, "
+            "       sb.id AS sb_id, sb.name AS sb_name, sb.kind AS sb_kind, "
+            "       sb.line_start AS sb_line, fb.path AS fb_path "
+            "FROM git_cochange gc "
+            "JOIN files fa ON fa.id = gc.file_id_a "
+            "JOIN files fb ON fb.id = gc.file_id_b "
+            "JOIN symbols sa ON sa.file_id = gc.file_id_a "
+            "JOIN symbols sb ON sb.file_id = gc.file_id_b "
+            "JOIN edges e ON (e.source_id = sa.id AND e.target_id = sb.id) "
+            "             OR (e.source_id = sb.id AND e.target_id = sa.id) "
+            "WHERE gc.cochange_count >= ? "
+            "  AND sa.kind IN ('function', 'method') "
+            "  AND sb.kind IN ('function', 'method')",
+            (_TEMPORAL_COUPLING_COCHANGE_THRESHOLD,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Pre-W21 schema (no git_cochange) or missing files/edges tables.
+        return []
+
+    # Dedupe: sorted symbol-id pair is the canonical key. A pair with a
+    # bidirectional edge surfaces twice in the JOIN -- once per direction.
+    seen: set[tuple[int, int]] = set()
+    # W647 -- cluster rollup state. Each symbol id maps to a tuple
+    # (name, kind, path, line_start, [(partner_name, partner_path, cc), ...]).
+    # We populate as we walk the dedup'd pair set and emit cluster findings
+    # after the pair loop. Using id as the key (not name+path) so a rename
+    # in either half of a pair doesn't collide two distinct symbols.
+    clusters: dict[int, dict] = {}
+
+    def _bump_cluster(
+        sym_id: int,
+        sym_name: str,
+        sym_kind: str,
+        sym_path: str,
+        sym_line: int | None,
+        partner_name: str,
+        partner_path: str,
+        cc: int,
+    ) -> None:
+        bucket = clusters.get(sym_id)
+        if bucket is None:
+            bucket = {
+                "name": sym_name,
+                "kind": sym_kind,
+                "path": sym_path,
+                "line": sym_line,
+                "partners": [],
+            }
+            clusters[sym_id] = bucket
+        bucket["partners"].append((partner_name, partner_path, cc))
+
+    for r in rows:
+        sa_id = int(r["sa_id"])
+        sb_id = int(r["sb_id"])
+        if sa_id == sb_id:
+            # Defensive: should be impossible because file_id_a != file_id_b
+            # in git_cochange and (sa, sb) live in different files.
+            continue
+        key = (min(sa_id, sb_id), max(sa_id, sb_id))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Canonical ordering: the symbol whose id matches ``key[0]`` is
+        # symbol A (so the finding's primary location is stable across
+        # re-runs regardless of which JOIN direction surfaced the row).
+        if sa_id == key[0]:
+            primary_id = sa_id
+            primary_name = r["sa_name"]
+            primary_kind = r["sa_kind"]
+            primary_path = r["fa_path"]
+            primary_line = r["sa_line"]
+            other_id = sb_id
+            other_name = r["sb_name"]
+            other_kind = r["sb_kind"]
+            other_path = r["fb_path"]
+            other_line = r["sb_line"]
+        else:
+            primary_id = sb_id
+            primary_name = r["sb_name"]
+            primary_kind = r["sb_kind"]
+            primary_path = r["fb_path"]
+            primary_line = r["sb_line"]
+            other_id = sa_id
+            other_name = r["sa_name"]
+            other_kind = r["sa_kind"]
+            other_path = r["fa_path"]
+            other_line = r["sa_line"]
+
+        cc = int(r["cc"])
+        results.append(
+            _finding(
+                "temporal-coupling",
+                "warning",
+                primary_name,
+                primary_kind,
+                _loc(primary_path, primary_line),
+                cc,
+                _TEMPORAL_COUPLING_COCHANGE_THRESHOLD,
+                (
+                    f"Temporal coupling: {primary_name} ({primary_path}) and "
+                    f"{other_name} ({other_path}) co-change in {cc} commits "
+                    f"AND have a direct call-graph edge -- consider "
+                    f"encapsulating the pair behind a single interface"
+                ),
+            )
+        )
+
+        # Each pair contributes one entry to each of its two endpoints.
+        _bump_cluster(
+            primary_id,
+            primary_name,
+            primary_kind,
+            primary_path,
+            primary_line,
+            other_name,
+            other_path,
+            cc,
+        )
+        _bump_cluster(
+            other_id,
+            other_name,
+            other_kind,
+            other_path,
+            other_line,
+            primary_name,
+            primary_path,
+            cc,
+        )
+
+    # W647 -- emit cluster findings. Sort by symbol id for determinism so a
+    # second run produces a byte-identical list (matters for findings-
+    # registry upsert and the schema-migration hash-stability mandate).
+    for sym_id in sorted(clusters.keys()):
+        bucket = clusters[sym_id]
+        partners = bucket["partners"]
+        # Distinct partners only: a single underlying pair contributes one
+        # entry, but defensive against future shape changes.
+        unique_partners = sorted({(pn, pp) for pn, pp, _cc in partners})
+        if len(unique_partners) < _TEMPORAL_COUPLING_CLUSTER_MIN_PARTNERS:
+            continue
+        # Highest co-change in the cluster -- the cluster's "strength".
+        max_cc = max(cc for _pn, _pp, cc in partners)
+        partners_render = ", ".join(
+            f"{pn} ({pp})" for pn, pp in unique_partners
+        )
+        results.append(
+            _finding(
+                "temporal-coupling-cluster",
+                "warning",
+                bucket["name"],
+                bucket["kind"],
+                _loc(bucket["path"], bucket["line"]),
+                len(unique_partners),
+                _TEMPORAL_COUPLING_CLUSTER_MIN_PARTNERS,
+                (
+                    f"Temporal coupling cluster: {bucket['name']} "
+                    f"({bucket['path']}) co-changes with "
+                    f"{len(unique_partners)} distinct partners "
+                    f"(max {max_cc} commits) -- {partners_render} -- "
+                    f"consider extracting a single abstraction the cluster "
+                    f"can call through instead of N pairwise call sites"
+                ),
+            )
+        )
+    return results
+
+
+# W647 rollup: detect_temporal_coupling emits BOTH ``temporal-coupling`` (the
+# pair findings) AND ``temporal-coupling-cluster`` (a per-symbol rollup over
+# the pair set). The rollup has no separate ALL_DETECTORS row -- it's emitted
+# from inside the same function body. W895 collapsed the two registrations
+# into the single ``rollup_kinds={"cluster": CONFIDENCE_STRUCTURAL}`` kwarg
+# on the @detector decorator above, so no separate register_rollup_kind call
+# is needed here.
+
+
+# ---------------------------------------------------------------------------
+# W605 -- comment-density (TODO / FIXME / XXX / HACK marker rate)
+#
+# Definition: per file, count comment lines that mention TODO / FIXME / XXX
+# / HACK. Flag the file when:
+#
+#   * marker_count >= _COMMENT_DENSITY_MIN_MARKERS (3), AND
+#   * marker_count / total_lines >= _COMMENT_DENSITY_MIN_RATE (0.05)
+#
+# Both gates must hold: the absolute floor avoids flagging short files with
+# one stray TODO; the rate gate avoids flagging long files with a small
+# absolute number of markers. The smell shape is tech-debt accumulation --
+# files where unresolved markers have piled up faster than the surrounding
+# code has been cleaned.
+#
+# Confidence tier: heuristic -- the predicate is a regex over source lines,
+# and a project might legitimately use TODO comments as a workflow anchor
+# rather than as debt. Surfaces the FP risk to consumers.
+#
+# Severity: info -- style / hygiene signal, not a correctness defect.
+# ---------------------------------------------------------------------------
+
+
+# Thresholds: both gates must hold. ``_COMMENT_DENSITY_MIN_RATE`` is the
+# fraction of marker-bearing lines over total file lines.
+_COMMENT_DENSITY_MIN_MARKERS: int = 3
+_COMMENT_DENSITY_MIN_RATE: float = 0.05
+
+# W705 -- unified per-language comment syntax record. One row per
+# language gives ``detect_comment_density`` a single lookup table for
+# both the line-comment pass (W605) and the block-comment pass (W650).
+#
+# Each entry names ``line`` prefixes (e.g. ``("#",)``, ``("//", "#")``
+# for PHP which honours both) and ``block`` delimiter pairs (e.g.
+# ``(("/*", "*/"),)``, ``(("<!--", "-->"),)``). Either tuple may be
+# empty -- CSS has no line comments, shell has no block comments.
+#
+# Language keys use the indexer's stored ``files.language`` values
+# (e.g. ``c_sharp`` not ``csharp``, ``bash`` not ``shell``) so the
+# detector's lookup matches the database without an alias hop. The
+# regex tier stays ``heuristic`` -- a marker inside a string literal
+# is still scanned because we do NOT tokenize the source.
+@dataclass(frozen=True)
+class _CommentSyntax:
+    """Per-language comment markers for the comment-density detector.
+
+    ``line``: tuple of line-comment prefixes (e.g. ``("//",)`` or
+    ``("//", "#")`` for PHP). A line is treated as a comment when its
+    lstripped form starts with any prefix.
+
+    ``block``: tuple of ``(open, close)`` delimiter pairs for
+    span-style comments (e.g. ``(("/*", "*/"),)`` or
+    ``(("<!--", "-->"),)``). Each pair is matched non-greedy across
+    newlines and inner ``\\b(TODO|FIXME|XXX|HACK)\\b`` occurrences
+    are counted via ``findall``.
+    """
+
+    line: tuple[str, ...] = ()
+    block: tuple[tuple[str, str], ...] = ()
+
+
+_COMMENT_SYNTAX_BY_LANG: dict[str, _CommentSyntax] = {
+    # Hash-line only.
+    "python":     _CommentSyntax(line=("#",)),
+    "ruby":       _CommentSyntax(line=("#",)),
+    "bash":       _CommentSyntax(line=("#",)),
+    "yaml":       _CommentSyntax(line=("#",)),
+    # C-family: ``//`` line + ``/* */`` block.
+    "javascript": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "typescript": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "java":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "c":          _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "cpp":        _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "c_sharp":    _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "go":         _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "rust":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "kotlin":     _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "swift":      _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "scala":      _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "dart":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    # PHP honours both ``//`` and ``#`` line comments.
+    "php":        _CommentSyntax(line=("//", "#"), block=(("/*", "*/"),)),
+    # Block-only.
+    "css":        _CommentSyntax(block=(("/*", "*/"),)),
+    "scss":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    # HTML-family: ``<!-- -->`` only.
+    "html":       _CommentSyntax(block=(("<!--", "-->"),)),
+    # SQL: ``--`` line + ``/* */`` block.
+    "sql":        _CommentSyntax(line=("--",), block=(("/*", "*/"),)),
+    # HCL/Terraform: ``#`` and ``//`` line + ``/* */`` block.
+    "hcl":        _CommentSyntax(line=("#", "//"), block=(("/*", "*/"),)),
+    # Apex (Salesforce): ``//`` line + ``/* */`` block.
+    "apex":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    # W703: round out the canonical 28-language coverage. ``tsx`` and
+    # ``jsonc`` are pure C-family. Vue / Svelte single-file components
+    # carry a ``<script>`` block (C-family) AND an HTML template region
+    # (``<!-- -->``); union the markers so both halves are scanned. The
+    # Salesforce metadata languages (sfxml / aura / visualforce) are XML
+    # so only ``<!-- -->`` applies.
+    "tsx":          _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "jsonc":        _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "vue":          _CommentSyntax(line=("//",), block=(("/*", "*/"), ("<!--", "-->"))),
+    "svelte":       _CommentSyntax(line=("//",), block=(("/*", "*/"), ("<!--", "-->"))),
+    "sfxml":        _CommentSyntax(block=(("<!--", "-->"),)),
+    "aura":         _CommentSyntax(block=(("<!--", "-->"),)),
+    "visualforce":  _CommentSyntax(block=(("<!--", "-->"),)),
+}
+
+
+# W703: explicit skip-set for canonical languages that intentionally do
+# NOT participate in comment-density scanning. Membership is justified
+# in-line; the drift-guard test in tests/test_w703_comment_syntax_coverage.py
+# asserts every canonical language is either in ``_COMMENT_SYNTAX_BY_LANG``
+# OR here -- no silent omission (Pattern 2 fallback).
+_COMMENT_DENSITY_NO_SUPPORT: frozenset[str] = frozenset({
+    # FoxPro uses ``*`` at line-start and ``&&`` end-of-line markers.
+    # The current detector models neither (``*`` collides with VFP's
+    # multiplication operator if mid-line; ``&&`` overlaps with logical
+    # AND in other languages). Legacy tier-2 corpus is small enough
+    # that the cost of a dedicated branch outweighs the signal.
+    "foxpro",
+    # MDX is Markdown + JSX. Markdown uses ``<!-- -->``; JSX uses
+    # ``{/* */}`` which is neither a plain block nor a plain line
+    # syntax. No canonical single comment vocabulary, so we skip
+    # rather than guess and emit noisy heuristics.
+    "mdx",
+})
+
+# Word-boundary match: ``\b(TODO|FIXME|XXX|HACK)\b``. Pre-compile because the
+# detector walks every file row and re-compiling per call is wasteful.
+_COMMENT_DENSITY_MARKER_RE = re.compile(r"\b(TODO|FIXME|XXX|HACK)\b")
+
+# Per-language block-comment regex cache. Built once per ``(open, close)``
+# delimiter pair -- non-greedy across newlines so a multi-line
+# ``/** ... */`` or ``<!-- ... -->`` block is one match. ``re.escape``
+# the delimiters because ``*``, ``/``, ``<``, ``!``, ``-``, ``>`` are
+# all literal but some are regex metacharacters.
+_COMMENT_BLOCK_RE_CACHE: dict[tuple[str, str], re.Pattern[str]] = {}
+
+
+def _block_re(open_delim: str, close_delim: str) -> re.Pattern[str]:
+    """Get or build the non-greedy regex for ``open ... close`` spans."""
+    key = (open_delim, close_delim)
+    pat = _COMMENT_BLOCK_RE_CACHE.get(key)
+    if pat is None:
+        pat = re.compile(
+            re.escape(open_delim) + r"[\s\S]*?" + re.escape(close_delim)
+        )
+        _COMMENT_BLOCK_RE_CACHE[key] = pat
+    return pat
+
+
+@detector("comment-density", confidence=CONFIDENCE_HEURISTIC)
+def detect_comment_density(conn: sqlite3.Connection) -> list[dict]:
+    """Detect files where TODO/FIXME/XXX/HACK markers accumulate.
+
+    W605 + W650 + W705. Walks every indexed source file in a supported
+    language, counts comment regions that mention a marker word, and
+    flags the file when BOTH the absolute count and the per-line rate
+    clear the thresholds.
+
+    Marker detection is language-aware via ``_COMMENT_SYNTAX_BY_LANG``:
+
+    * Hash-line languages (Python / Ruby / Bash / YAML): ``#``-prefixed
+      line comments.
+    * C-family (JS / TS / Java / C / C++ / C# / Go / Rust / Kotlin /
+      Swift / Scala / Dart / SCSS): ``//`` line + ``/* ... */`` block.
+    * PHP: ``//`` AND ``#`` line + ``/* ... */`` block.
+    * CSS: ``/* ... */`` block only (no line-comment syntax).
+    * HTML: ``<!-- ... -->`` block only.
+    * SQL: ``--`` line + ``/* ... */`` block.
+    * HCL/Terraform: ``#`` AND ``//`` line + ``/* ... */`` block.
+    * Apex: ``//`` line + ``/* ... */`` block.
+
+    The regex ``\\b(TODO|FIXME|XXX|HACK)\\b`` matches the four canonical
+    markers. Line scans count one marker per line that hits; block scans
+    count each marker occurrence inside a block (a multi-line JSDoc
+    ``/** TODO: ... */`` that names a single marker still counts once,
+    NOT once per physical line). Block comments DO count toward
+    ``marker_count`` but DO NOT inflate ``total_lines`` -- the rate
+    denominator stays "physical lines in the file".
+
+    Confidence: heuristic. Severity: info.
+    """
+    results: list[dict] = []
+    try:
+        files = conn.execute(
+            "SELECT id, path, language FROM files "
+            "WHERE language IS NOT NULL"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    workspace = _find_workspace_root()
+
+    for f in files:
+        lang = f["language"]
+        syntax = _COMMENT_SYNTAX_BY_LANG.get(lang)
+        if syntax is None:
+            # W703: silent-fallback guard. Languages with a deliberate
+            # skip entry stay quiet; anything else logs at debug so an
+            # operator chasing missing findings can see WHICH language
+            # was passed through (Pattern 2).
+            if lang not in _COMMENT_DENSITY_NO_SUPPORT:
+                log.debug(
+                    "detect_comment_density: skipped unsupported language %r",
+                    lang,
+                )
+            continue
+
+        rel_path = f["path"]
+        try:
+            source = (workspace / rel_path).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except (OSError, ValueError):
+            continue
+
+        lines = source.splitlines()
+        total_lines = len(lines)
+        if total_lines == 0:
+            continue
+
+        marker_count = 0
+        # ---- Line-comment pass (W605) -----------------------------------
+        # Match against any of the language's line prefixes. PHP wires
+        # both ``//`` and ``#``; one matching prefix per line is
+        # sufficient -- we count the LINE once, not once per prefix.
+        if syntax.line:
+            for ln in lines:
+                stripped = ln.lstrip()
+                # Pick the longest matching prefix so ``//`` doesn't
+                # mis-strip a future ``///`` doc-comment variant.
+                matched_prefix: str | None = None
+                for prefix in syntax.line:
+                    if stripped.startswith(prefix):
+                        if (
+                            matched_prefix is None
+                            or len(prefix) > len(matched_prefix)
+                        ):
+                            matched_prefix = prefix
+                if matched_prefix is None:
+                    continue
+                # Strip the comment prefix before regex match so a token
+                # like ``//TODO`` (no whitespace) still hits the
+                # word-boundary at the START of the comment body.
+                body = stripped[len(matched_prefix):]
+                if _COMMENT_DENSITY_MARKER_RE.search(body):
+                    marker_count += 1
+
+        # ---- Block-comment pass (W650 + W705) ---------------------------
+        # Iterate each ``(open, close)`` pair the language supports.
+        # Markers inside a block are counted by ``findall`` so a
+        # ``/** TODO: a; FIXME: b */`` block contributes 2 markers,
+        # while a single TODO that wraps over multiple physical lines
+        # inside one block contributes 1.
+        for open_delim, close_delim in syntax.block:
+            pat = _block_re(open_delim, close_delim)
+            for block in pat.findall(source):
+                marker_count += len(_COMMENT_DENSITY_MARKER_RE.findall(block))
+
+        if marker_count < _COMMENT_DENSITY_MIN_MARKERS:
+            continue
+        rate = marker_count / total_lines
+        if rate < _COMMENT_DENSITY_MIN_RATE:
+            continue
+
+        # File-level finding: ``symbol_name`` is the file path so the
+        # finding renders without needing an enclosing symbol; ``kind``
+        # is ``file`` so cmd_smells maps the registry subject_kind to
+        # ``file`` (NULL subject_id) rather than ``symbol``.
+        pct = round(rate * 100.0, 1)
+        results.append(
+            _finding(
+                "comment-density",
+                "info",
+                rel_path,
+                "file",
+                _loc(rel_path, None),
+                marker_count,
+                _COMMENT_DENSITY_MIN_MARKERS,
+                (
+                    f"Comment density: {rel_path} has {marker_count} "
+                    f"TODO/FIXME/XXX/HACK markers in {total_lines} lines "
+                    f"({pct}% rate) -- review and resolve accumulated debt markers"
+                ),
+            )
+        )
+    return results
+
+
+@detector("speculative-generality", confidence=CONFIDENCE_STRUCTURAL)
+def detect_speculative_generality(conn: sqlite3.Connection) -> list[dict]:
+    """YAGNI: symbols used only by tests, never by production code.
+
+    ``dead`` detects ZERO incoming refs. This detector catches the
+    sibling pattern: a production symbol has incoming refs but ALL
+    come from test files -- the symbol exists to be tested, not to
+    serve production. Common cause: speculative abstract base or
+    extension point that nobody ever extends. AI agents over-engineer
+    for hypothetical futures; this surfaces those markers.
+
+    Requires >= 2 incoming refs so single-test fluke does not flag.
+    Severity is ``info`` because some test-only abstractions are
+    legitimate (protocol interfaces, test seams). Confidence tier is
+    ``structural``: pure graph + file-role query, no name heuristics.
+
+    W853 (W848-RESEARCH top-2 recommendation).
+    """
+    rows = conn.execute(
+        """
+        WITH incoming AS (
+            SELECT
+                e.target_id AS sym_id,
+                COUNT(*) AS total_refs,
+                SUM(CASE WHEN f.file_role = 'test' THEN 1 ELSE 0 END) AS test_refs
+            FROM edges e
+            JOIN symbols s_src ON e.source_id = s_src.id
+            JOIN files f ON s_src.file_id = f.id
+            GROUP BY e.target_id
+            HAVING total_refs >= 2
+        )
+        SELECT
+            i.sym_id, i.total_refs, i.test_refs,
+            s.name, s.kind, s.line_start, s.line_end,
+            sf.path AS file_path, sf.file_role AS sym_file_role
+        FROM incoming i
+        JOIN symbols s ON i.sym_id = s.id
+        JOIN files sf ON s.file_id = sf.id
+        WHERE i.test_refs = i.total_refs
+          AND sf.file_role != 'test'
+        """
+    ).fetchall()
+    results: list[dict] = []
+    for r in rows:
+        loc_str = _loc(r["file_path"], r["line_start"])
+        total_refs = r["total_refs"]
+        results.append(
+            _finding(
+                "speculative-generality",
+                "info",
+                r["name"],
+                r["kind"],
+                loc_str,
+                total_refs,
+                2,
+                f"Speculative generality: {total_refs} refs, all from test files",
+            )
+        )
+    return results
 
 
 # ---------------------------------------------------------------------------
 # Detector registry
 # ---------------------------------------------------------------------------
 
-ALL_DETECTORS: list[tuple[str, callable]] = [
-    ("brain-method", detect_brain_method),
-    ("deep-nesting", detect_deep_nesting),
-    ("long-params", detect_long_params),
-    ("large-class", detect_large_class),
-    ("god-class", detect_god_class),
-    ("feature-envy", detect_feature_envy),
-    ("shotgun-surgery", detect_shotgun_surgery),
-    ("data-clumps", detect_data_clumps),
-    ("dead-params", detect_dead_params),
-    ("empty-catch", detect_empty_catch),
-    ("low-cohesion", detect_low_cohesion),
-    ("message-chain", detect_message_chain),
-    ("refused-bequest", detect_refused_bequest),
-    ("primitive-obsession", detect_primitive_obsession),
-    ("duplicate-conditionals", detect_duplicate_conditionals),
-]
+# W871 bulk migration: register the three out-of-file detectors that ship as
+# their own modules (parallel_hierarchy, clones_cross_layer, type_switch).
+# Calling ``detector(...)(fn)`` directly here keeps the decorator-driven
+# registry single-sourced in ``smells.py`` rather than scattering @detector
+# annotations across the helper modules they were extracted into. The
+# returned function is the original ``fn`` unchanged (decorator is
+# side-effect only), so callers that already imported the symbol keep
+# working unchanged.
+# Tier: structural — each lifts a graph/AST shape pattern rather than a
+# name match:
+#   * parallel-hierarchy: detects parallel inheritance chains via the
+#     ``edges.kind='inherits'`` graph (siblings with mirrored structure).
+#   * cross-layer-clone: clone-pair set joined to layer assignments; the
+#     "same content across layers" predicate is graph-anchored.
+#   * type-switch: AST-shape ``isinstance`` ladders, structurally similar
+#     to ``switch-statement`` (also structural).
+detector("parallel-hierarchy", confidence=CONFIDENCE_STRUCTURAL)(detect_parallel_hierarchy)
+detector("cross-layer-clone", confidence=CONFIDENCE_STRUCTURAL)(detect_cross_layer_clones)
+detector("type-switch", confidence=CONFIDENCE_STRUCTURAL)(detect_type_switch)
 
-_SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
+
+# W941: derived view -- single source of truth is the @detector decorator
+# above. The decorator wires the registry at import time; by the time this
+# module-level statement runs, ``all_detectors()`` returns the full set.
+# Sorted alphabetically by smell_id per W896 (SARIF-stable, grep-friendly).
+# Eliminates the parallel-maintenance class fixed-in-place by the W862 lint.
+ALL_DETECTORS: list[tuple[str, Callable]] = list(all_detectors())
+
+# W564: severity sort key sources from roam.output._severity.severity_rank
+# (canonical, higher = worse). Negate to keep "critical first" ordering.
 
 
 def run_all_detectors(conn: sqlite3.Connection) -> list[dict]:
-    """Run all 15 smell detectors and return combined findings.
+    """Run all 24 smell detectors and return combined findings.
 
     Returns list of finding dicts sorted by severity (critical first).
+
+    W897: ``freeze_registry()`` runs first as the construction-time
+    correctness gate -- if any decorator side-effect was bypassed or any
+    rollup confidence-tier mapping lost its parent during a refactor,
+    the run fails loudly here rather than silently mis-classifying
+    findings downstream.
     """
+    freeze_registry()
     findings: list[dict] = []
     for _smell_id, detect_fn in ALL_DETECTORS:
         try:
             hits = detect_fn(conn)
-        except Exception:
+        except sqlite3.Error as err:
+            # Per-detector DB error: one bad query shouldn't kill the run.
+            # Log + continue so the remaining detectors still produce
+            # findings the operator can act on.
+            log.warning(
+                "smells detector %s failed with sqlite error: %s",
+                getattr(detect_fn, "__name__", _smell_id),
+                err,
+            )
             continue
+        except (NameError, ImportError, AttributeError, TypeError) as err:
+            # Programmer bug (missing import, wrong attribute, signature drift):
+            # fail-loud per W531 + CLAUDE.md "Pattern-2 always-emit" discipline.
+            # W601/W602 dropped a Counter import that this exact handler used to
+            # swallow silently — W653 fixes that bug class at the loop level.
+            raise RuntimeError(
+                f"smells detector {getattr(detect_fn, '__name__', _smell_id)} "
+                f"crashed with programmer error: {type(err).__name__}: {err}"
+            ) from err
         findings.extend(hits)
-    # Sort: critical first, then warning, then info
-    findings.sort(key=lambda f: _SEVERITY_ORDER.get(f.get("severity", "info"), 2))
+    # Sort: critical first, then warning, then info (negated canonical rank).
+    findings.sort(key=lambda f: -severity_rank(f.get("severity", "info")))
     return findings
 
 

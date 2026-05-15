@@ -8,10 +8,12 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+from tests._helpers.repo_root import repo_root
+
 
 def _load_sarif_guard_module():
     """Load .github/scripts/sarif_guard.py as a Python module."""
-    root = Path(__file__).resolve().parents[1]
+    root = repo_root()
     script = root / ".github" / "scripts" / "sarif_guard.py"
     spec = importlib.util.spec_from_file_location("sarif_guard", script)
     if spec is None or spec.loader is None:

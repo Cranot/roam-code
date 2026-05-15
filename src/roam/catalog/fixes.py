@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+__all__ = [
+    "get_fix",
+]
+
 _LANG_ALIASES = {
     "js": "javascript",
     "ts": "typescript",

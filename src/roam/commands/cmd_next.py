@@ -30,6 +30,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
+from roam.commands._command_utils import bare_command_name as _bare_command_name
 from roam.db.connection import db_exists, find_project_root, get_db_path
 from roam.output.formatter import json_envelope, to_json
 
@@ -233,21 +234,6 @@ def _read_recent_envelope_next_command(root: Path) -> tuple[str | None, str | No
                 return (first, newest.name)
 
     return (None, None)
-
-
-def _bare_command_name(verdict_cmd: str) -> str:
-    """Extract a canonical command name (just the verb) from a raw string.
-
-    Accepts forms like ``"roam preflight <sym>"``, ``"preflight"``, or
-    ``"roam --json preflight"`` and returns the leading subcommand verb.
-    """
-    s = verdict_cmd.strip()
-    # Strip a leading 'roam '
-    if s.startswith("roam "):
-        s = s[5:].lstrip()
-    # Drop any leading flags like '--json'
-    tokens = [t for t in s.split() if t and not t.startswith("-")]
-    return tokens[0] if tokens else s
 
 
 def _read_recent_mode_block(root: Path) -> tuple[str | None, str | None, str | None]:

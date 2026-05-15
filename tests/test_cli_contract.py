@@ -85,6 +85,11 @@ _AUTO_INDEX_OK = set(CANONICAL_COMMANDS)
 
 # Commands xfailed below — see the bottom of this file for the table and
 # the reason for each entry. Keep this set in sync with the xfail markers.
+# Intentionally empty — retained as a regression ratchet. If a new command
+# emits a Python traceback in --json mode (instead of a structured error
+# envelope), add it here as a known-failing entry; do NOT delete this set.
+# See test_command_json_no_traceback_in_empty_dir below — it is parametrized
+# over _NO_TRACEBACK_SAMPLE and dispatches `pytest.xfail` on membership here.
 _XFAIL_NO_TRACEBACK_JSON: set[str] = set()
 
 

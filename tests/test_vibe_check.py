@@ -304,12 +304,32 @@ class TestVibeCheckJSON:
         assert summary["score"] <= 100
 
     def test_json_patterns_array(self, cli_runner, clean_project):
-        """JSON includes patterns array with all 8 patterns."""
+        """JSON includes patterns array with all 10 patterns.
+
+        W371 added two informational patterns (``modular_mirage`` and
+        ``boilerplate_inflation``) on top of the score-bearing 8. The
+        informational rows carry ``weight: 0`` and
+        ``informational: True`` so the canonical AI rot score stays
+        computed off the original 8.
+        """
         result = _invoke(cli_runner, clean_project, json_mode=True)
         data = json.loads(result.output)
         assert "patterns" in data
         patterns = data["patterns"]
-        assert len(patterns) == 8
+        assert len(patterns) == 10
+        score_bearing = [p for p in patterns if not p.get("informational")]
+        informational = [p for p in patterns if p.get("informational")]
+        assert len(score_bearing) == 8, (
+            "8 score-bearing patterns must remain; W371 must not promote "
+            "informational patterns into the weight set"
+        )
+        assert len(informational) == 2
+        info_names = {p["name"] for p in informational}
+        assert info_names == {"modular_mirage", "boilerplate_inflation"}
+        for p in informational:
+            assert p["weight"] == 0, (
+                f"informational pattern {p['name']} must have weight 0"
+            )
         for p in patterns:
             assert "name" in p
             assert "found" in p

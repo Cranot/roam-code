@@ -1,0 +1,23 @@
+# .editorconfig - IDE-level consistency mirroring .gitattributes (W689)
+root = true
+
+[*]
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+indent_style = space
+
+[*.py]
+indent_size = 4
+
+[*.{js,ts,jsx,tsx,json,yaml,yml,html,css,scss,md}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.{png,jpg,gif,ico,woff,woff2,pdf,zip,gz}]
+# Binary - no normalization
+trim_trailing_whitespace = false
+insert_final_newline = false

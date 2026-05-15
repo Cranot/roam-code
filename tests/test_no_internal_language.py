@@ -20,7 +20,9 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests._helpers.repo_root import repo_root
+
+REPO_ROOT = repo_root()
 
 
 # ---------------------------------------------------------------------------
@@ -168,14 +170,6 @@ WHITELIST_FILES = {
     "src/roam/security/aibom_extension.py",
     "tests/test_ai_ratio.py",
     "tests/test_v12_2.py",
-    # W41.1 temporary: ``src/roam/mcp_server.py`` contains four
-    # ``useKiniseisBalance`` docstring examples (lines 2869-2870 and
-    # 3043-3044) that explain why ``roam_batch_search`` switched to
-    # symbol-name-only matching. The current sprint forbids edits to
-    # ``mcp_server.py`` (all-sprint constraint). Remove from whitelist
-    # and scrub the docstring in a follow-up wave when the constraint
-    # is lifted.
-    "src/roam/mcp_server.py",
     # Anchor-slugifier regression suite. ``PFPA_EPIL.IN_PFPA_EPIL-4.DBF``
     # is a real header from the dogfood corpus that broke the slugifier
     # by producing ``pfpaepilinpfpaepil-4dbf``; the test fixtures need

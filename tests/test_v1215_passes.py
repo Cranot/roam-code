@@ -45,11 +45,26 @@ def test_pass29_prefetch_thread_pool_populates_cache(tmp_path, monkeypatch):
     assert cache["b.py"] == b"print('b')\n"
 
 
-def test_pass29_prefetch_disabled_by_default(tmp_path, monkeypatch):
-    """No env var → no prefetch (back-compat / opt-in)."""
+def test_pass29_prefetch_enabled_by_default(tmp_path, monkeypatch):
+    """W404: prefetch is on-by-default; no env var → prefetch runs."""
     from roam.index.indexer import Indexer
 
+    (tmp_path / "a.py").write_bytes(b"print('a')\n")
     monkeypatch.delenv("ROAM_PARALLEL_INDEX", raising=False)
+    idx = Indexer(project_root=tmp_path)
+    idx.root = tmp_path
+    idx._prefetch_sources(["a.py"], verbose=False)
+    cache = getattr(idx, "_source_cache", None)
+    assert cache is not None
+    assert cache["a.py"] == b"print('a')\n"
+
+
+def test_pass29_prefetch_opt_out_via_env_zero(tmp_path, monkeypatch):
+    """W404: ROAM_PARALLEL_INDEX=0 forces serial (no prefetch)."""
+    from roam.index.indexer import Indexer
+
+    (tmp_path / "a.py").write_bytes(b"print('a')\n")
+    monkeypatch.setenv("ROAM_PARALLEL_INDEX", "0")
     idx = Indexer(project_root=tmp_path)
     idx.root = tmp_path
     idx._prefetch_sources(["a.py"], verbose=False)

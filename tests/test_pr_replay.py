@@ -382,3 +382,227 @@ def test_json_envelope_exposes_pdf_fields(tmp_path):
     assert "pdf_backend" in summary
     assert summary["pdf_path"] is None
     assert summary["pdf_backend"] is None
+
+
+# ---------------------------------------------------------------------------
+# Review-suggestion block — BUILD-PRIORITIES P1.2
+#
+# Every paid PR Replay should suggest a starter Roam Review configuration
+# derived from the detector classes that actually fired. The block is
+# absent (not empty) when there's nothing to suggest — Pattern 1 in
+# CLAUDE.md: never emit {} where None / absence is the honest signal.
+# ---------------------------------------------------------------------------
+
+
+def test_build_review_suggestions_returns_none_on_empty_input():
+    """No detector hits → no suggestions (explicit absence, Pattern 1)."""
+    from roam.commands.cmd_pr_replay import _build_review_suggestions
+
+    out = _build_review_suggestions(by_detector=[], commits=[], tier="sample")
+    assert out is None, "empty replay must return None, not {}"
+
+
+def test_build_review_suggestions_emits_block_when_recurring_detector_present():
+    """Recurring detector class → all four suggestion parts populated."""
+    from roam.commands.cmd_pr_replay import _build_review_suggestions
+
+    by_detector = [
+        # Recurring: 5 findings across 3 PRs
+        {"detector": "clones-not-edited", "total_findings": 5, "commits_with_finding": 3},
+        # Recurring: 2 findings on 2 PRs (low watermark)
+        {"detector": "layer-violation", "total_findings": 2, "commits_with_finding": 2},
+        # Not recurring: one-off — filtered out
+        {"detector": "intent", "total_findings": 1, "commits_with_finding": 1},
+    ]
+    commits = [
+        {"short_sha": "abc1234", "date": "2026-05-01", "subject": "Fix X",
+         "high": 2, "medium": 1, "kinds": ["clones-not-edited x2", "impact x1"]},
+        {"short_sha": "def5678", "date": "2026-05-02", "subject": "Refactor Y",
+         "high": 0, "medium": 2, "kinds": ["intent x2"]},
+    ]
+    out = _build_review_suggestions(by_detector=by_detector, commits=commits, tier="team")
+    assert out is not None, "non-empty replay must return suggestions dict"
+
+    # recurring_risk_classes filters out the one-off
+    classes = {row["class"] for row in out["recurring_risk_classes"]}
+    assert "clones-not-edited" in classes
+    assert "layer-violation" in classes
+    assert "intent" not in classes  # one-off, not recurring
+
+    # suggested_roam_rules_yml is a string with copy-pasteable rules
+    yml = out["suggested_roam_rules_yml"]
+    assert isinstance(yml, str)
+    assert "rules:" in yml
+    assert "gate-clones-not-edited" in yml
+    assert "gate-no-layer-violations" in yml
+
+    # suggested_ci_gates lists concrete `roam <cmd>` invocations w/ rationale
+    gates = out["suggested_ci_gates"]
+    assert len(gates) >= 1
+    for gate in gates:
+        assert gate["gate"].startswith("roam "), "gate must be a copy-paste-executable command"
+        assert "rationale" in gate and gate["rationale"]
+    # Umbrella gate is appended
+    gate_strs = {g["gate"] for g in gates}
+    assert "roam critique --ci" in gate_strs
+
+    # what_review_would_have_blocked includes the high-severity commit only
+    blocked = out["what_review_would_have_blocked"]
+    shas = {b["sha"] for b in blocked}
+    assert "abc1234" in shas  # high=2 → blocked
+    assert "def5678" not in shas  # medium-only → review, not block
+    for b in blocked:
+        assert "rationale" in b and b["rationale"]
+
+    # Marketing nudge
+    assert "Roam Review" in out["upgrade_pitch"]
+    assert "https://roam-code.com" in out["upgrade_pitch"]
+
+    # Tier hint round-trips
+    assert out["replay_tier"] == "team"
+
+
+def test_build_review_suggestions_omits_yaml_when_no_template_match():
+    """Recurring detectors with NO known template → no fake yaml is generated."""
+    from roam.commands.cmd_pr_replay import _build_review_suggestions
+
+    by_detector = [
+        # Imaginary detector class — we MUST NOT mock a rule for it
+        {"detector": "novel-unknown-detector-xyz", "total_findings": 5, "commits_with_finding": 3},
+    ]
+    out = _build_review_suggestions(by_detector=by_detector, commits=[], tier="deep")
+    assert out is not None  # the unknown detector IS still recurring
+    assert out["recurring_risk_classes"][0]["class"] == "novel-unknown-detector-xyz"
+    # But we don't fabricate a rule for it
+    assert "suggested_roam_rules_yml" not in out, (
+        "must NOT generate a YAML rule for an unmapped detector — Pattern 1"
+    )
+
+
+def test_pr_replay_envelope_omits_review_suggestions_when_no_findings():
+    """JSON envelope: no detector hits ⇒ no review_suggestions key (explicit absence)."""
+    # The current repo's recent commits may or may not flag detectors; we
+    # exercise the empty-data path via a stubbed postmortem.
+    from roam.commands import cmd_pr_replay as mod
+
+    real_postmortem = mod._run_postmortem
+
+    def _empty_postmortem(commit_range, *, limit):
+        return {
+            "summary": {"verdict": "no findings", "commits_scanned": 0,
+                        "commits_with_findings": 0, "total_high": 0, "total_medium": 0},
+            "commits": [],
+        }
+
+    mod._run_postmortem = _empty_postmortem
+    try:
+        code, out = _invoke("--tier", "sample", json_mode=True)
+    finally:
+        mod._run_postmortem = real_postmortem
+    assert code == 0
+
+    envelope = _json.loads(out[out.find("{") :])
+    # The key MUST be absent — not an empty object, not null.
+    assert "review_suggestions" not in envelope, (
+        "Pattern 1: empty replay must omit the key entirely, not emit {}"
+    )
+    # Summary boolean reflects absence
+    assert envelope["summary"]["review_suggestions_present"] is False
+
+
+def test_pr_replay_envelope_emits_review_suggestions_when_data_present():
+    """JSON envelope: detector hits ⇒ review_suggestions block populated."""
+    from roam.commands import cmd_pr_replay as mod
+
+    real_postmortem = mod._run_postmortem
+
+    def _flagged_postmortem(commit_range, *, limit):
+        return {
+            "summary": {
+                "verdict": "11/30 PRs would have been flagged",
+                "commits_scanned": 30,
+                "commits_with_findings": 11,
+                "total_high": 4,
+                "total_medium": 7,
+            },
+            "commits": [
+                {
+                    "short_sha": "abc1234", "date": "2026-05-01",
+                    "subject": "Touch many things",
+                    "high": 2, "medium": 1,
+                    "kinds": ["clones-not-edited x2", "impact x1"],
+                },
+                {
+                    "short_sha": "def5678", "date": "2026-05-02",
+                    "subject": "Refactor a layer",
+                    "high": 1, "medium": 0,
+                    "kinds": ["layer-violation x1"],
+                },
+                {
+                    "short_sha": "ff09abc", "date": "2026-05-03",
+                    "subject": "Add clone",
+                    "high": 0, "medium": 2,
+                    "kinds": ["clones-not-edited x2"],
+                },
+            ],
+        }
+
+    mod._run_postmortem = _flagged_postmortem
+    try:
+        code, out = _invoke("--tier", "team", json_mode=True)
+    finally:
+        mod._run_postmortem = real_postmortem
+    assert code == 0
+
+    envelope = _json.loads(out[out.find("{") :])
+    assert "review_suggestions" in envelope, (
+        "non-empty replay must surface review_suggestions block"
+    )
+    assert envelope["summary"]["review_suggestions_present"] is True
+
+    block = envelope["review_suggestions"]
+    # All four mandatory sub-keys present
+    assert "recurring_risk_classes" in block
+    assert "suggested_ci_gates" in block
+    assert "what_review_would_have_blocked" in block
+    assert "upgrade_pitch" in block
+
+    # The clones-not-edited detector recurred ⇒ it must be in the list
+    recurring_classes = {r["class"] for r in block["recurring_risk_classes"]}
+    assert "clones-not-edited" in recurring_classes
+
+    # YAML preview present (we have templates for both recurring classes)
+    assert "suggested_roam_rules_yml" in block
+    assert "gate-clones-not-edited" in block["suggested_roam_rules_yml"]
+
+    # Blocked PRs are the high-severity ones only
+    blocked_shas = {b["sha"] for b in block["what_review_would_have_blocked"]}
+    assert "abc1234" in blocked_shas
+    assert "def5678" in blocked_shas
+    assert "ff09abc" not in blocked_shas  # medium-only
+
+    # Per-PR rationale is concrete (cites detector kinds, not a generic string)
+    for b in block["what_review_would_have_blocked"]:
+        assert "BLOCK" in b["rationale"]
+
+
+def test_review_suggestions_bounded_to_at_most_ten_items():
+    """Suggestion lists honour the 5-10 items max constraint."""
+    from roam.commands.cmd_pr_replay import _build_review_suggestions
+
+    # 15 recurring detector classes (well over the cap)
+    by_detector = [
+        {"detector": f"detector-{i}", "total_findings": 5, "commits_with_finding": 3}
+        for i in range(15)
+    ]
+    # 15 high-severity commits
+    commits = [
+        {"short_sha": f"sha{i:04d}", "date": "2026-05-01", "subject": f"PR {i}",
+         "high": 1, "medium": 0, "kinds": [f"detector-{i} x1"]}
+        for i in range(15)
+    ]
+    out = _build_review_suggestions(by_detector=by_detector, commits=commits, tier="deep")
+    assert out is not None
+    assert len(out["recurring_risk_classes"]) <= 10
+    assert len(out["suggested_ci_gates"]) <= 10
+    assert len(out["what_review_would_have_blocked"]) <= 10

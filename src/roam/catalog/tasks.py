@@ -8,6 +8,14 @@ code to the *detected_way* and suggest the top-ranked alternative.
 
 from __future__ import annotations
 
+__all__ = [
+    "CATALOG",
+    "get_task",
+    "get_way",
+    "best_way",
+    "get_tip",
+]
+
 CATALOG: dict[str, dict] = {
     "sorting": {
         "name": "Sorting",

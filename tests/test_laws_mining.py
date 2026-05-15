@@ -277,6 +277,137 @@ def test_mine_import_layering(layered_project):
     assert handler_law.evidence["conformance_pct"] >= 90
 
 
+# ---------------------------------------------------------------------------
+# W158 regression — laws miner must NOT fabricate import edges from
+# non-import symbol edges. The fabrication came from reading
+# ``file_edges`` (which labels every aggregated edge as ``'imports'``
+# regardless of underlying kind, per ``build_file_edges`` in
+# ``roam/index/relations.py``). The miner now reads ``edges`` directly
+# and filters on ``edges.kind = 'import'`` (singular).
+# ---------------------------------------------------------------------------
+
+
+def _seed_mixed_kind_edges(conn) -> None:
+    """Seed a synthetic project with one file pair connected by two
+    edges: a real ``import`` (src/lib -> src/db) and a misresolved
+    ``call`` (src/lib -> tests/) — the exact W158 shape."""
+    # Two files in src/lib (gives us min_sample headroom for the real law)
+    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
+                 (101, "src/lib/a.py", "python", "h1"))
+    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
+                 (102, "src/lib/b.py", "python", "h2"))
+    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
+                 (103, "src/lib/c.py", "python", "h3"))
+    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
+                 (104, "src/lib/d.py", "python", "h4"))
+    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
+                 (105, "src/lib/e.py", "python", "h5"))
+    # Five files in src/db (real import targets)
+    for fid, name in [(201, "x"), (202, "y"), (203, "z"), (204, "w"), (205, "v")]:
+        conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
+                     (fid, f"src/db/{name}.py", "python", f"hd{fid}"))
+    # One file in tests/ (the fabrication target)
+    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
+                 (301, "tests/test_unit.py", "python", "ht"))
+
+    # Symbols: caller in each src/lib file, callee in each src/db file,
+    # plus one callee in tests/.
+    for sid, name, fid in [
+        (1001, "use_x", 101), (1002, "use_y", 102), (1003, "use_z", 103),
+        (1004, "use_w", 104), (1005, "use_v", 105),
+        (2001, "x", 201), (2002, "y", 202), (2003, "z", 203),
+        (2004, "w", 204), (2005, "v", 205),
+        (3001, "_add", 301),
+    ]:
+        conn.execute(
+            "INSERT INTO symbols (id, name, kind, file_id, line_start, line_end) "
+            "VALUES (?, ?, 'function', ?, 1, 2)",
+            (sid, name, fid),
+        )
+
+    # Edges: 5 real imports src/lib -> src/db
+    for sid, tid in [(1001, 2001), (1002, 2002), (1003, 2003), (1004, 2004), (1005, 2005)]:
+        conn.execute("INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, 'import', 1)",
+                     (sid, tid))
+    # Two fabricated edges:
+    #   (a) a misresolved CALL from src/lib -> tests/ — only the
+    #       ``file_edges`` aggregator would surface this as an import.
+    conn.execute("INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, 'call', 1)",
+                 (1001, 3001))
+    #   (b) an import row whose RESOLVER picked a tests/ symbol (the
+    #       gate_presets.py ``import yaml`` failure mode). Kind is
+    #       legitimately 'import' but the resolution is fabricated;
+    #       only the W158 sanity filter (non-test -> test edges are
+    #       structurally impossible) catches this.
+    conn.execute("INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, 'import', 1)",
+                 (1002, 3001))
+    # And the file_edges aggregation labels ALL as 'imports' (the bug).
+    for s, t in [(101, 201), (102, 202), (103, 203), (104, 204), (105, 205), (101, 301), (102, 301)]:
+        conn.execute(
+            "INSERT INTO file_edges (source_file_id, target_file_id, kind, symbol_count) "
+            "VALUES (?, ?, 'imports', 1)",
+            (s, t),
+        )
+
+
+def test_mine_imports_excludes_non_import_edge_kinds(tmp_path, monkeypatch):
+    """W158 regression: the import-mining strategy must filter to
+    ``edges.kind = 'import'`` (singular) and ignore ``file_edges``
+    rows whose underlying symbol edge is a call/reference. Without the
+    fix, the miner emits a phantom src/lib -> tests law from a single
+    misresolved call edge.
+    """
+    proj = tmp_path / "w158"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+
+    # Bootstrap a minimal DB with the schema applied.
+    from roam.db.connection import ensure_schema
+    import sqlite3 as _sql
+    (proj / ".roam").mkdir()
+    db_path = proj / ".roam" / "index.db"
+    conn = _sql.connect(str(db_path))
+    conn.row_factory = _sql.Row
+    ensure_schema(conn)
+    _seed_mixed_kind_edges(conn)
+    conn.commit()
+
+    # Run the miner against this synthetic DB at a low sample threshold
+    # so the 5-edge src/lib -> src/db signal qualifies.
+    laws = mine_laws(conn, min_sample_size=5)
+
+    import_laws = [law for law in laws if law.kind == "import"]
+    # Strict assertion: NO law may name ``tests`` as a target dir.
+    # If the bug regresses, the fabricated ``imports_src_lib_to_tests``
+    # law will surface here.
+    tests_laws = [law for law in import_laws if law.rule.get("to_dir", "").endswith("tests")]
+    assert not tests_laws, (
+        f"W158 regression: miner fabricated a src/lib -> tests import law "
+        f"from a non-import edge. Offending laws: "
+        f"{[(law.id, law.rule) for law in tests_laws]}"
+    )
+
+    # Positive control: the real src/lib -> src/db law DOES surface.
+    lib_to_db = [
+        law for law in import_laws
+        if law.rule.get("from_dir") == "src/lib" and law.rule.get("to_dir") == "src/db"
+    ]
+    assert lib_to_db, (
+        f"expected a real src/lib -> src/db law from the 5 import edges, "
+        f"got import_laws={[(law.id, law.rule) for law in import_laws]}"
+    )
+
+    # And its examples MUST come from real import edges, not the call.
+    examples = lib_to_db[0].evidence.get("examples", [])
+    for ex in examples:
+        assert "tests/" not in ex, (
+            f"example cites a tests/ path which means it was sourced "
+            f"from the misresolved call edge — example: {ex!r}"
+        )
+
+    conn.close()
+
+
 def test_check_import_violation():
     law = Law(
         id="imports_src_handlers_to_src_db",

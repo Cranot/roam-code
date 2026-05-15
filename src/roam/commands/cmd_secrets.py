@@ -13,6 +13,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output._severity import severity_breakdown, severity_rank
 from roam.output.confidence import (
     confidence_distribution,
     verdict_with_high_count,
@@ -127,8 +128,10 @@ for _pdef in _SECRET_PATTERN_DEFS:
         }
     )
 
-# Severity ordering for filtering
-_SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
+# W564: severity ordering now sourced from
+# roam.output._severity.severity_rank — canonical, alias-aware, shared
+# with every other roam command. Filter semantics preserved: ``high``
+# (rank=4) > ``medium`` (rank=2) > ``low`` (rank=1).
 
 # Words in a line that indicate example/placeholder values (case-insensitive)
 _PLACEHOLDER_WORDS = frozenset(
@@ -426,7 +429,7 @@ def _high_entropy_passes(pat: dict, match) -> bool:
 
 def _match_pattern_to_finding(line: str, pat: dict, file_path: str, line_num: int, min_rank: int) -> dict | None:
     """Try one pattern against one line. Returns a finding dict or None."""
-    if _SEVERITY_RANK.get(pat["severity"], 0) < min_rank:
+    if severity_rank(pat["severity"]) < min_rank:
         return None
     match = pat["regex"].search(line)
     if not match:
@@ -452,7 +455,7 @@ def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: 
     if patterns is None:
         patterns = _COMPILED_PATTERNS
 
-    min_rank = 0 if min_severity == "all" else _SEVERITY_RANK.get(min_severity, 0)
+    min_rank = -1 if min_severity == "all" else severity_rank(min_severity)
 
     findings: list[dict] = []
     try:
@@ -520,7 +523,7 @@ def scan_project(
         all_findings.extend(file_findings)
 
     # Sort: high severity first, then by file path, then line number
-    all_findings.sort(key=lambda f: (-_SEVERITY_RANK.get(f["severity"], 0), f["file"], f["line"]))
+    all_findings.sort(key=lambda f: (-severity_rank(f["severity"]), f["file"], f["line"]))
     return all_findings
 
 
@@ -582,12 +585,22 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     project_root = find_project_root()
     findings = scan_project(project_root, min_severity=severity, include_tests=include_tests)
 
-    # Compute summary stats
+    # Compute summary stats. W566 — bucketing delegates to the canonical
+    # ``severity_breakdown`` helper. Secrets patterns at module-load
+    # time only emit ``high`` / ``medium`` / ``low`` severities, so the
+    # ``unknown_bucket=None`` (drop-silently) path is unreachable in
+    # practice; keeping the 3-tier vocab + ``drop_zero=False`` makes the
+    # zero-padded output byte-identical to the pre-W566 contract that
+    # the downstream verdict-build expects.
     total = len(findings)
     files_affected = len({f["file"] for f in findings})
-    by_severity = {"high": 0, "medium": 0, "low": 0}
-    for f in findings:
-        by_severity[f["severity"]] = by_severity.get(f["severity"], 0) + 1
+    by_severity = severity_breakdown(
+        findings,
+        key="severity",
+        vocab=("high", "medium", "low"),
+        unknown_bucket=None,
+        drop_zero=False,
+    )
 
     if total == 0:
         verdict = "No secrets found"

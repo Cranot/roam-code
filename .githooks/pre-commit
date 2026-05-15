@@ -1,0 +1,68 @@
+#!/bin/sh
+# pre-commit hook -- doc-hygiene drift gate (W250 / Wave30.1).
+#
+# Re-runs the same two doc-hygiene checks that gate the `doc-hygiene` job
+# in .github/workflows/roam-ci.yml, so a developer catches count drift
+# locally before the PR fails in CI.
+#
+# Checks:
+#   1. python dev/build_readme_counts.py --check
+#        Marker-protected blocks in README.md / CLAUDE.md /
+#        llms-install.md and both mcp-server-card.json files.
+#        Exits non-zero on drift.
+#   2. python scripts/sync_surface_counts.py
+#        Free-form prose surfaces (landing-page HTML, llms.txt,
+#        server.json, skills/roam/SKILL.md, etc). Defaults to dry-run
+#        and exits non-zero on drift.
+#
+# To install on a fresh clone (same one-liner as the commit-msg hook):
+#   git config core.hooksPath .githooks
+#
+# To bypass for a one-off legitimate commit (rare): commit with
+# --no-verify, then run the counts script with --apply / --write
+# and commit the regenerated counts as a follow-up.
+
+set -e
+
+# Resolve the repo root so the hook works no matter where git invokes it.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+PY="${PYTHON:-python}"
+if ! command -v "$PY" >/dev/null 2>&1; then
+    if command -v python3 >/dev/null 2>&1; then
+        PY=python3
+    else
+        echo "ERROR: pre-commit hook (.githooks/pre-commit)" >&2
+        echo "  No 'python' or 'python3' on PATH; skipping doc-hygiene check." >&2
+        echo "  Install Python or run 'git commit --no-verify' to bypass." >&2
+        exit 1
+    fi
+fi
+
+# --- 1. Marker-protected count blocks (README/CLAUDE/llms-install/cards) ----
+if ! "$PY" "$REPO_ROOT/dev/build_readme_counts.py" --check; then
+    echo "" >&2
+    echo "ERROR: pre-commit hook (.githooks/pre-commit)" >&2
+    echo "" >&2
+    echo "  README / CLAUDE / llms-install count drift detected." >&2
+    echo "" >&2
+    echo "  Fix: run" >&2
+    echo "    python dev/build_readme_counts.py --apply" >&2
+    echo "  then re-stage the updated files and commit again." >&2
+    exit 1
+fi
+
+# --- 2. Free-form prose surface counts (landing page, server.json, ...) -----
+if ! "$PY" "$REPO_ROOT/scripts/sync_surface_counts.py"; then
+    echo "" >&2
+    echo "ERROR: pre-commit hook (.githooks/pre-commit)" >&2
+    echo "" >&2
+    echo "  Free-form surface count drift detected." >&2
+    echo "" >&2
+    echo "  Fix: run" >&2
+    echo "    python scripts/sync_surface_counts.py --write" >&2
+    echo "  then re-stage the updated files and commit again." >&2
+    exit 1
+fi
+
+exit 0

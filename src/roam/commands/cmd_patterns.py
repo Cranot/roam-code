@@ -10,6 +10,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.db.edge_kinds import CALL_EDGE_KINDS
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 
@@ -121,9 +122,9 @@ def _detect_factory(conn, *, strict=False):
         "s.line_start "
         "FROM symbols s JOIN files f ON s.file_id = f.id "
         "WHERE ("
-        "  s.name LIKE 'create_%' OR s.name LIKE 'Create%' "
-        "  OR s.name LIKE 'make_%' OR s.name LIKE 'Make%' "
-        "  OR s.name LIKE 'build_%' OR s.name LIKE 'Build%' "
+        "  s.name LIKE 'create\\_%' ESCAPE '\\' OR s.name LIKE 'Create%' "
+        "  OR s.name LIKE 'make\\_%' ESCAPE '\\' OR s.name LIKE 'Make%' "
+        "  OR s.name LIKE 'build\\_%' ESCAPE '\\' OR s.name LIKE 'Build%' "
         "  OR s.name LIKE '%Factory' OR s.name LIKE '%factory' "
         "  OR s.name LIKE '%Builder' OR s.name LIKE '%builder' "
         ") "
@@ -374,18 +375,22 @@ def _detect_middleware(conn):
         seen.add(r["id"])
 
         # Look for call-chain: what does this symbol call, and what calls it?
+        # W512: edge-kind vocabulary lives in roam.db.edge_kinds. Pure call
+        # edges only — middleware chains are call-graph relationships,
+        # not reference relationships.
+        call_kind_ph = ", ".join("?" for _ in CALL_EDGE_KINDS)
         callees = conn.execute(
-            "SELECT DISTINCT t.id, t.name, t.kind FROM edges e "
-            "JOIN symbols t ON e.target_id = t.id "
-            "WHERE e.source_id = ? AND e.kind = 'call'",
-            (r["id"],),
+            f"SELECT DISTINCT t.id, t.name, t.kind FROM edges e "
+            f"JOIN symbols t ON e.target_id = t.id "
+            f"WHERE e.source_id = ? AND e.kind IN ({call_kind_ph})",
+            (r["id"], *CALL_EDGE_KINDS),
         ).fetchall()
 
         callers = conn.execute(
-            "SELECT DISTINCT t.id, t.name, t.kind FROM edges e "
-            "JOIN symbols t ON e.source_id = t.id "
-            "WHERE e.target_id = ? AND e.kind = 'call'",
-            (r["id"],),
+            f"SELECT DISTINCT t.id, t.name, t.kind FROM edges e "
+            f"JOIN symbols t ON e.source_id = t.id "
+            f"WHERE e.target_id = ? AND e.kind IN ({call_kind_ph})",
+            (r["id"], *CALL_EDGE_KINDS),
         ).fetchall()
 
         # Check if part of a chain (has both callers and callees, or

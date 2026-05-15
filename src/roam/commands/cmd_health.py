@@ -33,7 +33,10 @@ friendly explanation, marks the run as ``DEGRADED`` (``summary.reason =
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import math
+import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +61,10 @@ from roam.graph.cycles import (
 from roam.graph.layers import detect_layers, find_violations
 from roam.quality.cycles import definition as cycles_definition
 from roam.quality.god_components import definition as god_components_definition
+from roam.output.metric_definitions import (
+    HEALTH_SCORE_DEFINITION,
+    TANGLE_RATIO_DEFINITION,
+)
 from roam.output.formatter import (
     abbrev_kind,
     format_table,
@@ -67,6 +74,77 @@ from roam.output.formatter import (
     to_json,
 )
 from roam.output.framework_filter import FRAMEWORK_PRIMITIVE_NAMES as _FRAMEWORK_NAMES
+
+
+# W151 (W93 follow-up): health is the fifth detector migrating onto the
+# central findings registry (after ``clones`` in W95, ``dead`` in W99,
+# ``complexity`` in W102, and ``smells`` in W109). It continues to
+# compute its 4 architecture-level finding arrays (cycles, god
+# components, bottlenecks, layer violations) in-line and ALSO emits one
+# row per finding to the ``findings`` table when invoked with
+# ``--persist``. Bump this when the predicate / claim shape of any of
+# the four kinds changes meaningfully.
+HEALTH_DETECTOR_VERSION: str = "1.0.0"
+
+
+# W151 — per-kind confidence tier mapping.
+#
+# health emits four arch-level finding kinds; each is mapped to a tier
+# that reflects the evidence class used:
+#
+# * ``arch.cycle`` — Tarjan SCC over the call graph, fully deterministic
+#   for a fixed DB state → ``static_analysis``.
+# * ``arch.god_component`` — degree threshold (in_degree + out_degree
+#   > 20) from ``graph_metrics``; uses the canonical helper in
+#   ``roam.quality.god_components`` for shared severity bands →
+#   ``static_analysis``.
+# * ``arch.bottleneck`` — betweenness-percentile thresholds (p70 / p90)
+#   on ``graph_metrics.betweenness``; graph-backed but the band split
+#   is heuristic-flavoured → ``structural``.
+# * ``arch.layer_violation`` — topological-layer cross-edge from
+#   ``detect_layers`` + ``find_violations``; deterministic edge-level
+#   check → ``static_analysis``.
+_HEALTH_KIND_TO_CONFIDENCE: dict[str, str] = {
+    "arch.cycle": "static_analysis",
+    "arch.god_component": "static_analysis",
+    "arch.bottleneck": "structural",
+    "arch.layer_violation": "static_analysis",
+}
+
+
+# ---------------------------------------------------------------------------
+# W718 — canonical lowercase severity vocabulary.
+# ---------------------------------------------------------------------------
+# Pre-W718 the health command emitted UPPER-cased severity labels
+# (``CRITICAL`` / ``WARNING`` / ``INFO``) across every surface: JSON
+# envelope (``summary.severity``, per-issue ``severity`` fields),
+# findings-registry rows, SARIF input, and text output. Out of
+# vocabulary with the rest of roam — agents reading the envelope across
+# commands would get mixed casing for the same concept (W547 canonical
+# vocab is lowercase). W718 makes the lowercase form the only spelling
+# that ever appears in code or output; legacy UPPER-cased inputs (from
+# baseline snapshots stored before W718) are normalised at read time
+# via :func:`_normalise_health_severity`.
+CRITICAL = "critical"
+WARNING = "warning"
+INFO = "info"
+
+
+def _normalise_health_severity(sev: str | None) -> str:
+    """Canonicalise a health severity label to lowercase (W718).
+
+    Returns one of ``"critical"`` / ``"warning"`` / ``"info"`` for
+    known labels (case-insensitive), and ``"info"`` as the CI-safety
+    floor for unknown / None inputs (the W531 lesson: a typo'd label
+    must NOT promote a finding into a CI-failing rank).
+    """
+    if not sev:
+        return INFO
+    canon = str(sev).strip().lower()
+    if canon in {CRITICAL, WARNING, INFO}:
+        return canon
+    return INFO
+
 
 # ---- Location-aware utility detection ----
 
@@ -163,20 +241,428 @@ def _unique_dirs(file_paths):
 
 
 def _severity_counts(items):
-    counts = {"CRITICAL": 0, "WARNING": 0, "INFO": 0}
+    # W718: bucket keys are lowercase canonical labels. Per-item
+    # ``severity`` values are normalised at read time so legacy
+    # UPPER-cased baseline snapshots stored before W718 still bucket
+    # correctly under their canonical lowercase key.
+    counts = {CRITICAL: 0, WARNING: 0, INFO: 0}
     for item in items:
-        sev = item.get("severity", "INFO")
+        sev = _normalise_health_severity(item.get("severity"))
         if sev in counts:
             counts[sev] += 1
     return counts
 
 
 def _format_severity_counts(counts):
+    # W718: text formatter renders lowercase canonical labels in
+    # UPPER-case for human readability (display polish, not
+    # vocabulary). Counts dict keys are canonical lowercase.
     parts = []
-    for sev in ("CRITICAL", "WARNING", "INFO"):
+    for sev in (CRITICAL, WARNING, INFO):
         if counts.get(sev, 0):
-            parts.append(f"{counts[sev]} {sev}")
+            parts.append(f"{counts[sev]} {sev.upper()}")
     return ", ".join(parts) if parts else "0 issues"
+
+
+# ---------------------------------------------------------------------------
+# W151: emit to the central findings registry
+# ---------------------------------------------------------------------------
+
+
+def _health_cycle_finding_id(member_names: list[str]) -> str:
+    """Stable, deterministic finding id for one cycle (SCC).
+
+    Cycles don't map cleanly to a single (file, symbol, line) anchor —
+    the SCC IS the finding. We fold the SORTED list of member symbol
+    names into the digest so a re-run on the same SCC upserts rather
+    than duplicates, regardless of which symbol the in-memory order
+    surfaces first. A symbol entering or leaving the SCC changes the
+    digest → a fresh id, which is the desired behaviour (the previous
+    cycle is structurally different).
+    """
+    sorted_names = sorted(member_names)
+    raw = "|".join(sorted_names)
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"health:arch.cycle:{digest}"
+
+
+def _health_god_finding_id(symbol_qname: str) -> str:
+    """Stable id for a god-component finding, keyed on qualified name."""
+    return f"health:arch.god_component:{symbol_qname}"
+
+
+def _health_bottleneck_finding_id(symbol_qname: str) -> str:
+    """Stable id for a bottleneck finding, keyed on qualified name."""
+    return f"health:arch.bottleneck:{symbol_qname}"
+
+
+def _health_layer_violation_finding_id(from_qname: str, to_qname: str) -> str:
+    """Stable id for a layer-violation edge finding.
+
+    Keyed on the (from, to) pair — layer violations are edge-level
+    findings, the first ``subject_kind="edge"`` user in the registry.
+    """
+    return f"health:arch.layer_violation:{from_qname}:{to_qname}"
+
+
+def _qname_for_symbol(file_path: str | None, name: str | None) -> str:
+    """Cheap qualified-name string for finding-id stability.
+
+    The DB doesn't always carry a fully-qualified name on every symbol
+    row, but ``file_path::name`` is unique enough for the upsert key
+    and survives renames of the surrounding directory better than a
+    bare name. ``None`` components collapse to empty.
+    """
+    fp = (file_path or "").replace("\\", "/")
+    return f"{fp}::{name or ''}"
+
+
+def _resolve_symbol_id_by_name(
+    conn: sqlite3.Connection, name: str | None, file_path: str | None
+) -> int | None:
+    """Best-effort lookup of ``symbols.id`` for a (name, file) pair.
+
+    Returns ``None`` when nothing matches; the findings registry
+    permits NULL subject_id by design.
+    """
+    if not name:
+        return None
+    try:
+        if file_path:
+            row = conn.execute(
+                "SELECT s.id FROM symbols s "
+                "JOIN files f ON s.file_id = f.id "
+                "WHERE f.path = ? AND s.name = ? LIMIT 1",
+                (file_path, name),
+            ).fetchone()
+            if row is not None:
+                return int(row[0])
+        # Fallback: name-only (file path may be empty or not match
+        # exactly because of normalisation drift across consumers).
+        row = conn.execute(
+            "SELECT id FROM symbols WHERE name = ? LIMIT 1",
+            (name,),
+        ).fetchone()
+        return int(row[0]) if row is not None else None
+    except sqlite3.OperationalError:
+        return None
+
+
+def _pick_cycle_anchor(
+    conn: sqlite3.Connection, member_ids: list[int]
+) -> tuple[int | None, str, str | None]:
+    """Pick the highest-PageRank member of an SCC as the cycle's anchor.
+
+    Returns ``(symbol_id, name, file_path)``. Falls back to the first
+    resolved member (by id) if no PageRank data exists.
+    """
+    if not member_ids:
+        return None, "", None
+    try:
+        rows = list(
+            batched_in(
+                conn,
+                "SELECT s.id, s.name, f.path AS file_path, "
+                "       COALESCE(gm.pagerank, 0) AS pagerank "
+                "FROM symbols s "
+                "JOIN files f ON s.file_id = f.id "
+                "LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id "
+                "WHERE s.id IN ({ph})",
+                list(member_ids),
+            )
+        )
+    except sqlite3.OperationalError:
+        return None, "", None
+    if not rows:
+        return None, "", None
+    # Highest pagerank first; tie-break by lowest id for determinism.
+    rows.sort(key=lambda r: (-(r["pagerank"] or 0), r["id"]))
+    top = rows[0]
+    return int(top["id"]), str(top["name"] or ""), str(top["file_path"] or "")
+
+
+def _emit_health_findings(
+    conn: sqlite3.Connection,
+    cycles: list[dict],
+    god_items: list[dict],
+    bn_items: list[dict],
+    violations: list[dict],
+    source_version: str,
+    *,
+    v_lookup: dict | None = None,
+    raw_by_formatted_cycle: list | None = None,
+) -> int:
+    """Mirror the 4 health-finding arrays into the central findings registry.
+
+    Returns the count of finding rows written. The caller is
+    responsible for opening ``conn`` writable; ``emit_finding`` does
+    not commit (the caller commits once after this returns).
+
+    The persisted set is intentionally the FULL set produced by the
+    detection passes — NOT the subsequently-filtered display set.
+    Re-runs upsert on ``finding_id_str`` so the registry stays in
+    sync with the latest detection without duplicating rows.
+
+    Parameters
+    ----------
+    cycles
+        The formatted-cycle list from ``format_cycles`` +
+        ``mark_actionable_cycles`` — each dict has ``symbols``,
+        ``files``, ``size``, ``actionable``, ``severity``.
+    god_items
+        The degree-thresholded god components list, severity-classified.
+    bn_items
+        The betweenness-thresholded bottlenecks list, severity-
+        classified.
+    violations
+        The topological-layer violation list from ``find_violations`` —
+        each dict has ``source``, ``target``, ``source_layer``,
+        ``target_layer`` (and an injected ``severity``).
+    source_version
+        Detector-version stamp; the caller passes
+        :data:`HEALTH_DETECTOR_VERSION`.
+    v_lookup
+        Optional ``{symbol_id: row}`` lookup for resolving the source /
+        target symbol names of layer violations. When omitted the
+        helper falls back to per-row DB lookups.
+    raw_by_formatted_cycle
+        Optional ``[(scc_ids, formatted_cycle), ...]`` pairing so we
+        can recover the raw SCC member ids for anchor selection.
+    """
+    from roam.db.findings import FindingRecord, emit_finding
+
+    written = 0
+
+    # --- arch.cycle ---
+    # Anchor each cycle on the highest-PageRank SCC member; encode the
+    # full member list in evidence_json so consumers can reconstruct
+    # the SCC without joining the registry against ``symbols``.
+    cycle_iter: list[tuple[list[int], dict]]
+    if raw_by_formatted_cycle is not None:
+        cycle_iter = list(raw_by_formatted_cycle)
+    else:
+        # Fall back to deriving member ids from the formatted symbols
+        # list. The caller usually passes the raw pairing, so this is a
+        # safety net for direct callers / tests.
+        cycle_iter = [
+            ([s["id"] for s in cyc.get("symbols", []) if "id" in s], cyc)
+            for cyc in cycles
+        ]
+
+    for scc_ids, cyc in cycle_iter:
+        symbols = cyc.get("symbols", []) or []
+        member_names = [s.get("name", "") for s in symbols if s.get("name")]
+        if not member_names:
+            continue
+        anchor_id, anchor_name, anchor_file = _pick_cycle_anchor(conn, scc_ids)
+        finding_id = _health_cycle_finding_id(member_names)
+        evidence = {
+            "kind": "arch.cycle",
+            "size": cyc.get("size", len(member_names)),
+            "severity": _normalise_health_severity(cyc.get("severity")),
+            "actionable": bool(cyc.get("actionable")),
+            "local_only": bool(cyc.get("local_only")),
+            "has_test_file": bool(cyc.get("has_test_file")),
+            "file_count": cyc.get("file_count", len(set(cyc.get("files", [])))),
+            "files": list(cyc.get("files", [])),
+            "cycle_members": [
+                {
+                    "id": s.get("id"),
+                    "name": s.get("name"),
+                    "kind": s.get("kind"),
+                    "file_path": s.get("file_path"),
+                }
+                for s in symbols
+            ],
+            "anchor_symbol_id": anchor_id,
+            "anchor_symbol_name": anchor_name,
+            "anchor_file_path": anchor_file,
+        }
+        claim = (
+            f"arch.cycle: SCC of {cyc.get('size', len(member_names))} symbols "
+            f"across {len(cyc.get('files', []))} file(s); anchor "
+            f"{anchor_name or '?'}"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol" if anchor_id is not None else "cycle",
+                subject_id=anchor_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.cycle"],
+                source_detector="health",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+
+    # --- arch.god_component ---
+    for g in god_items:
+        name = g.get("name") or ""
+        file_path = g.get("file") or ""
+        if not name:
+            continue
+        qname = _qname_for_symbol(file_path, name)
+        subject_id = _resolve_symbol_id_by_name(conn, name, file_path)
+        finding_id = _health_god_finding_id(qname)
+        evidence = {
+            "kind": "arch.god_component",
+            "name": name,
+            "symbol_kind": g.get("kind"),
+            "degree": g.get("degree"),
+            "file_path": file_path,
+            "severity": _normalise_health_severity(g.get("severity")),
+            "category": g.get("category", "actionable"),
+        }
+        claim = (
+            f"arch.god_component: {name} ({g.get('kind') or '?'}) — "
+            f"degree {g.get('degree')} in {file_path or '?'}"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.god_component"],
+                source_detector="health",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+
+    # --- arch.bottleneck ---
+    for b in bn_items:
+        name = b.get("name") or ""
+        file_path = b.get("file") or ""
+        if not name:
+            continue
+        qname = _qname_for_symbol(file_path, name)
+        subject_id = _resolve_symbol_id_by_name(conn, name, file_path)
+        finding_id = _health_bottleneck_finding_id(qname)
+        evidence = {
+            "kind": "arch.bottleneck",
+            "name": name,
+            "symbol_kind": b.get("kind"),
+            "betweenness": b.get("betweenness"),
+            "file_path": file_path,
+            "severity": _normalise_health_severity(b.get("severity")),
+            "category": b.get("category", "actionable"),
+        }
+        claim = (
+            f"arch.bottleneck: {name} ({b.get('kind') or '?'}) — "
+            f"betweenness {b.get('betweenness')} in {file_path or '?'}"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.bottleneck"],
+                source_detector="health",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+
+    # --- arch.layer_violation ---
+    # First edge-level subject_kind in the registry. The from/to
+    # symbol ids are encoded in evidence rather than the subject row
+    # because the registry's subject_id column is single-valued.
+    for v in violations:
+        src_id = v.get("source")
+        tgt_id = v.get("target")
+        src_row = (v_lookup or {}).get(src_id, {})
+        tgt_row = (v_lookup or {}).get(tgt_id, {})
+        src_name = src_row.get("name") if isinstance(src_row, dict) else None
+        if src_name is None and hasattr(src_row, "keys") and "name" in src_row.keys():
+            src_name = src_row["name"]
+        tgt_name = tgt_row.get("name") if isinstance(tgt_row, dict) else None
+        if tgt_name is None and hasattr(tgt_row, "keys") and "name" in tgt_row.keys():
+            tgt_name = tgt_row["name"]
+        src_file = src_row.get("file_path") if isinstance(src_row, dict) else None
+        if src_file is None and hasattr(src_row, "keys") and "file_path" in src_row.keys():
+            src_file = src_row["file_path"]
+        tgt_file = tgt_row.get("file_path") if isinstance(tgt_row, dict) else None
+        if tgt_file is None and hasattr(tgt_row, "keys") and "file_path" in tgt_row.keys():
+            tgt_file = tgt_row["file_path"]
+
+        # Best-effort name lookup for source/target if v_lookup didn't carry them.
+        if not src_name and src_id is not None:
+            try:
+                r = conn.execute(
+                    "SELECT s.name AS name, f.path AS file_path FROM symbols s "
+                    "JOIN files f ON s.file_id = f.id WHERE s.id = ?",
+                    (src_id,),
+                ).fetchone()
+                if r is not None:
+                    src_name = r["name"] if "name" in r.keys() else r[0]
+                    src_file = r["file_path"] if "file_path" in r.keys() else r[1]
+            except sqlite3.OperationalError:
+                pass
+        if not tgt_name and tgt_id is not None:
+            try:
+                r = conn.execute(
+                    "SELECT s.name AS name, f.path AS file_path FROM symbols s "
+                    "JOIN files f ON s.file_id = f.id WHERE s.id = ?",
+                    (tgt_id,),
+                ).fetchone()
+                if r is not None:
+                    tgt_name = r["name"] if "name" in r.keys() else r[0]
+                    tgt_file = r["file_path"] if "file_path" in r.keys() else r[1]
+            except sqlite3.OperationalError:
+                pass
+
+        src_name = src_name or ""
+        tgt_name = tgt_name or ""
+        if not src_name or not tgt_name:
+            # Can't form a stable id without both endpoints — skip.
+            continue
+
+        from_qname = _qname_for_symbol(src_file, src_name)
+        to_qname = _qname_for_symbol(tgt_file, tgt_name)
+        finding_id = _health_layer_violation_finding_id(from_qname, to_qname)
+        evidence = {
+            "kind": "arch.layer_violation",
+            "from_symbol_id": src_id,
+            "from_symbol_name": src_name,
+            "from_file_path": src_file or "",
+            "from_layer": v.get("source_layer"),
+            "to_symbol_id": tgt_id,
+            "to_symbol_name": tgt_name,
+            "to_file_path": tgt_file or "",
+            "to_layer": v.get("target_layer"),
+            "layer_distance": v.get("layer_distance"),
+            "severity": _normalise_health_severity(v.get("severity") or WARNING),
+            "edge_severity_score": v.get("severity"),
+        }
+        claim = (
+            f"arch.layer_violation: {src_name} (L{v.get('source_layer')}) -> "
+            f"{tgt_name} (L{v.get('target_layer')})"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="edge",
+                subject_id=None,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.layer_violation"],
+                source_detector="health",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+
+    return written
 
 
 def _parse_simple_yaml(text: str) -> dict:
@@ -238,11 +724,15 @@ def _load_gate_config() -> dict:
 # is the only inverted metric (higher is better).
 _BASELINE_METRICS = (
     # (snapshot_col, kind, severity, lower_is_better)
-    ("cycles", "cycle", "WARNING", True),
-    ("god_components", "god_component", "WARNING", True),
-    ("bottlenecks", "bottleneck", "WARNING", True),
-    ("dead_exports", "dead_export", "INFO", True),
-    ("layer_violations", "layer_violation", "WARNING", True),
+    # W718: lowercase canonical severity vocabulary (W547). Pre-W718
+    # this table emitted UPPER-cased labels into the baseline-diff
+    # ``severity`` field; the consumer paths now expect the canonical
+    # lowercase form throughout.
+    ("cycles", "cycle", WARNING, True),
+    ("god_components", "god_component", WARNING, True),
+    ("bottlenecks", "bottleneck", WARNING, True),
+    ("dead_exports", "dead_export", INFO, True),
+    ("layer_violations", "layer_violation", WARNING, True),
 )
 
 
@@ -354,10 +844,10 @@ def _compute_baseline_delta(current: dict, baseline: dict) -> dict:
         }
         if worsened:
             # If the metric grew by more than 50% (and at least 2 absolute),
-            # promote to CRITICAL — that's the "high-severity new finding"
+            # promote to critical — that's the "high-severity new finding"
             # signal the verdict logic looks for.
             if abs(delta) >= 2 and (was == 0 or abs(delta) / max(was, 1) >= 0.5):
-                finding["severity"] = "CRITICAL"
+                finding["severity"] = CRITICAL
             new_findings.append(finding)
             regressed.append(finding)
         elif improved:
@@ -373,7 +863,7 @@ def _compute_baseline_delta(current: dict, baseline: dict) -> dict:
             {
                 "kind": "health_score",
                 "target": "health_score",
-                "severity": "CRITICAL" if abs(score_diff) >= 10 else "WARNING",
+                "severity": CRITICAL if abs(score_diff) >= 10 else WARNING,
                 "was": base_score,
                 "now": cur_score,
             }
@@ -391,14 +881,19 @@ def _baseline_verdict(delta: dict) -> str:
     """Apply the documented verdict policy to a delta block.
 
     * ``BAD``    — composite health_score regressed against baseline.
-    * ``REVIEW`` — at least one new CRITICAL finding (even if score held).
+    * ``REVIEW`` — at least one new ``critical`` finding (even if score held).
     * ``OK``     — otherwise.
+
+    W718: severity comparison is case-insensitive via
+    :func:`_normalise_health_severity` so legacy baseline snapshots
+    stored before W718 (with UPPER-cased severity values) still
+    classify correctly.
     """
     score_diff = delta["score_delta"].get("health_score", 0)
     if score_diff < 0:
         return "BAD"
     for f in delta["new_findings"]:
-        if f.get("severity") == "CRITICAL":
+        if _normalise_health_severity(f.get("severity")) == CRITICAL:
             return "REVIEW"
     return "OK"
 
@@ -463,6 +958,9 @@ def _emit_baseline_diff(
                     "reason": "no_baseline_snapshot",
                     "baseline_ref": baseline_ref,
                     "health_score": health_score,
+                    # W331: surface the score definition wherever the
+                    # score appears in a summary.
+                    "health_score_definition": HEALTH_SCORE_DEFINITION,
                 },
                 baseline_ref=baseline_ref,
                 message=degraded_msg,
@@ -502,6 +1000,8 @@ def _emit_baseline_diff(
                 "regressed_count": regressed_count,
                 "health_score": health_score,
                 "score_delta": delta["score_delta"],
+                # W331: baseline-mode envelope also surfaces health_score.
+                "health_score_definition": HEALTH_SCORE_DEFINITION,
             },
             delta=delta_block,
             health_score=health_score,
@@ -589,8 +1089,23 @@ def _emit_baseline_diff(
         "Run `roam trends --save` regularly (or in CI) to populate baseline snapshots."
     ),
 )
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Persist the 4 arch-level findings (cycles, god components, "
+        "bottlenecks, layer violations) to the .roam/index.db findings "
+        "registry (cross-detector queryable via `roam findings list "
+        "--detector health`). The detector-specific output is unchanged; "
+        "the registry rows are the denormalised cross-detector surface. "
+        "Persisted set ignores --no-framework display filtering — every "
+        "detected hit is mirrored so a downstream consumer doesn't see a "
+        "truncated registry."
+    ),
+)
 @click.pass_context
-def health(ctx, no_framework, gate, explain, baseline_ref):
+def health(ctx, no_framework, gate, explain, baseline_ref, persist):
     """Show code health: cycles, god components, bottlenecks.
 
     \b
@@ -609,7 +1124,78 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     detail = ctx.obj.get("detail", False) if ctx.obj else False
     ensure_index()
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
+        # W834 — empty-corpus carve-out (Pattern 2 silent-fallback fix).
+        # If the corpus has zero indexed symbols, every health factor
+        # collapses to 1.0 (no signal) and the geometric mean returns
+        # 100/100, producing a false "Healthy codebase" verdict on an
+        # unanalyzed repo. Mirror ``cmd_vulns`` Fix E + ``cmd_missing_index``
+        # no-migrations carve-out: emit a structured envelope that
+        # discloses the empty state, sets ``partial_success=True``, and
+        # offers an actionable hint. Done BEFORE the expensive graph
+        # build so a no-symbols repo doesn't pay for it.
+        _early_symbol_count = (
+            conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] or 0
+        )
+        if _early_symbol_count == 0:
+            empty_verdict = (
+                "no symbols to analyze (corpus empty — run `roam index --force` "
+                "to populate the index)"
+            )
+            empty_facts = [
+                "0 indexed symbols",
+                "no health score computed — 0 factors with signal",
+                "run `roam index --force` to populate the index",
+            ]
+            if json_mode:
+                envelope = json_envelope(
+                    "health",
+                    budget=token_budget,
+                    summary={
+                        "verdict": empty_verdict,
+                        "state": "empty_corpus",
+                        "partial_success": True,
+                        "health_score": None,
+                        "tangle_ratio": None,
+                        "propagation_cost": None,
+                        "algebraic_connectivity": None,
+                        "issue_count": 0,
+                        "severity": {CRITICAL: 0, WARNING: 0, INFO: 0},
+                        "actionable_cycles": 0,
+                        "ignored_cycles": 0,
+                        "total_cycles": 0,
+                        "cycles_total": 0,
+                        "cycles_actionable": 0,
+                        "god_components": 0,
+                        "health_score_definition": HEALTH_SCORE_DEFINITION,
+                        "tangle_ratio_definition": TANGLE_RATIO_DEFINITION,
+                    },
+                    health_score=None,
+                    issue_count=0,
+                    severity={CRITICAL: 0, WARNING: 0, INFO: 0},
+                    indexed_symbols=0,
+                    agent_contract={
+                        "facts": empty_facts,
+                        "next_commands": ["roam index --force"],
+                    },
+                )
+                click.echo(to_json(envelope))
+            else:
+                click.echo(f"VERDICT: {empty_verdict}")
+                click.echo()
+                click.echo("  0 indexed symbols — nothing to analyze.")
+                click.echo("  Run `roam index --force` to populate the index.")
+            # --gate on an empty corpus must fail loudly (W531 fail-loud):
+            # a "healthy / passing" exit on an unanalyzed repo would let
+            # CI green-light any branch with a broken/missing index.
+            if gate:
+                from roam.exit_codes import GateFailureError
+
+                raise GateFailureError(
+                    "Quality gate failed: empty corpus (0 indexed symbols)"
+                )
+            return
+
         G = build_symbol_graph(conn)
 
         # --- Cycles ---
@@ -705,7 +1291,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                 v_lookup[r["id"]] = r
 
         # ---- Classify issue severity (location-aware) ----
-        sev_counts = {"CRITICAL": 0, "WARNING": 0, "INFO": 0}
+        # W718: severity labels are canonical lowercase (W547).
+        sev_counts = {CRITICAL: 0, WARNING: 0, INFO: 0}
 
         # Cycle severity: directory-aware, but local/test-involved SCCs are
         # informational and excluded from health scoring. They commonly come
@@ -715,11 +1302,11 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
             dirs = _unique_dirs(cyc["files"])
             cyc["directories"] = len(dirs)
             if not cyc["actionable"]:
-                cyc["severity"] = "INFO"
+                cyc["severity"] = INFO
             elif len(cyc["files"]) > 3:
-                cyc["severity"] = "CRITICAL"
+                cyc["severity"] = CRITICAL
             else:
-                cyc["severity"] = "WARNING"
+                cyc["severity"] = WARNING
             sev_counts[cyc["severity"]] += 1
 
         actionable_cycles = [c for c in formatted_cycles if c.get("actionable")]
@@ -735,20 +1322,20 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                 utility_count += 1
                 # Relaxed thresholds for utilities (3x)
                 if g["degree"] > 150:
-                    g["severity"] = "CRITICAL"
+                    g["severity"] = CRITICAL
                 elif g["degree"] > 90:
-                    g["severity"] = "WARNING"
+                    g["severity"] = WARNING
                 else:
-                    g["severity"] = "INFO"
+                    g["severity"] = INFO
             else:
                 actionable_count += 1
                 # Standard thresholds for non-utility code
                 if g["degree"] > 50:
-                    g["severity"] = "CRITICAL"
+                    g["severity"] = CRITICAL
                 elif g["degree"] > 30:
-                    g["severity"] = "WARNING"
+                    g["severity"] = WARNING
                 else:
-                    g["severity"] = "INFO"
+                    g["severity"] = INFO
             sev_counts[g["severity"]] += 1
 
         # Sort: actionable first, then utilities; within each group by degree desc
@@ -773,11 +1360,11 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
             else:
                 bn_actionable += 1
             if b["betweenness"] > bn_p90 * mult:
-                b["severity"] = "CRITICAL"
+                b["severity"] = CRITICAL
             elif b["betweenness"] > bn_p70 * mult:
-                b["severity"] = "WARNING"
+                b["severity"] = WARNING
             else:
-                b["severity"] = "INFO"
+                b["severity"] = INFO
             sev_counts[b["severity"]] += 1
 
         # Sort: actionable first, then utilities; within each group by betweenness desc
@@ -789,8 +1376,34 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
         )
 
         for v in violations:
-            v["severity"] = "WARNING"
-            sev_counts["WARNING"] += 1
+            v["severity"] = WARNING
+            sev_counts[WARNING] += 1
+
+        # --- W151: mirror into the central findings registry ---
+        # Runs ONLY with --persist. The persisted set sits after
+        # severity classification (so evidence carries the
+        # severity/category fields) but before the gate / sarif /
+        # json / text display branches — the registry stays
+        # comprehensive regardless of how a particular invocation
+        # slices the view. Wrapped in try/except sqlite3.OperationalError
+        # so a pre-W89 DB (without the ``findings`` table) silently
+        # no-ops rather than crashing the standard health command path.
+        if persist:
+            try:
+                _emit_health_findings(
+                    conn,
+                    formatted_cycles,
+                    god_items,
+                    bn_items,
+                    violations,
+                    HEALTH_DETECTOR_VERSION,
+                    v_lookup=v_lookup,
+                    raw_by_formatted_cycle=raw_by_formatted_cycle,
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
         # --- Tangle ratio ---
         total_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] or 1
@@ -829,14 +1442,14 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
         # already classifies them ("23 actionable, 27 expected utilities");
         # the score should match the display.
         god_actionable = [g for g in god_items if g.get("category") == "actionable"]
-        god_critical = sum(1 for g in god_actionable if g.get("severity") == "CRITICAL")
+        god_critical = sum(1 for g in god_actionable if g.get("severity") == CRITICAL)
         # Normalise by codebase size so a 14k-symbol repo with 23 actionable
         # god components (0.16%) doesn't score the same as a 100-symbol
         # repo with 23 (23%). 1k symbols is the unit; signal scales linearly.
         size_norm = max(1.0, total_symbols / 1000.0)
         god_signal = (god_critical * 3 + len(god_actionable) * 0.5) / size_norm
         bn_actionable_items = [b for b in bn_items if b.get("category") == "actionable"]
-        bn_critical = sum(1 for b in bn_actionable_items if b.get("severity") == "CRITICAL")
+        bn_critical = sum(1 for b in bn_actionable_items if b.get("severity") == CRITICAL)
         bn_signal = (bn_critical * 2 + len(bn_actionable_items) * 0.3) / size_norm
 
         coverage_import = imported_coverage_overview(conn)
@@ -902,10 +1515,10 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
         # sees "25 critical" and has to dig into the breakdown to
         # know whether to fix cycles first or god components first.
         _cat_counts = {
-            "cycles": sum(1 for c in actionable_cycles if c.get("severity") == "CRITICAL"),
-            "god_components": sum(1 for g in god_items if g.get("severity") == "CRITICAL"),
-            "bottlenecks": sum(1 for b in bn_items if b.get("severity") == "CRITICAL"),
-            "layer_violations": sum(1 for v in violations if v.get("severity") == "CRITICAL"),
+            "cycles": sum(1 for c in actionable_cycles if c.get("severity") == CRITICAL),
+            "god_components": sum(1 for g in god_items if g.get("severity") == CRITICAL),
+            "bottlenecks": sum(1 for b in bn_items if b.get("severity") == CRITICAL),
+            "layer_violations": sum(1 for v in violations if v.get("severity") == CRITICAL),
         }
         _top_category, _top_count = max(_cat_counts.items(), key=lambda x: x[1])
         _focus_hint = f", focus: {_top_category}" if _top_count > 0 else ""
@@ -913,26 +1526,26 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
         # ignored by category or framework filter), the verdict should say
         # so explicitly. Otherwise users see "29 critical issues" but the
         # next line says "0 actionable" — confusing.
-        if actionable_count == 0 and sev_counts["CRITICAL"] > 0:
+        if actionable_count == 0 and sev_counts[CRITICAL] > 0:
             _focus_hint = " (all flagged as utility / non-actionable)"
 
         # --- Verdict ---
         if health_score >= 80:
-            verdict = f"Healthy codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical issues{_focus_hint}"
+            verdict = f"Healthy codebase ({health_score}/100) — {sev_counts[CRITICAL]} critical issues{_focus_hint}"
         elif health_score >= 60:
             verdict = (
                 f"Fair codebase ({health_score}/100) — "
-                f"{sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings{_focus_hint}"
+                f"{sev_counts[CRITICAL]} critical, {sev_counts[WARNING]} warnings{_focus_hint}"
             )
         elif health_score >= 40:
             verdict = (
                 f"Needs attention ({health_score}/100) — "
-                f"{sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings{_focus_hint}"
+                f"{sev_counts[CRITICAL]} critical, {sev_counts[WARNING]} warnings{_focus_hint}"
             )
         else:
             verdict = (
                 f"Unhealthy codebase ({health_score}/100) — "
-                f"{sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings{_focus_hint}"
+                f"{sev_counts[CRITICAL]} critical, {sev_counts[WARNING]} warnings{_focus_hint}"
             )
 
         # --- Baseline-diff mode ---
@@ -1025,6 +1638,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                         "health_score": health_score,
                         "gate_passed": all_passed,
                         "imported_coverage_pct": coverage_import.get("coverage_pct"),
+                        # W331: gate-mode envelope also reports a score.
+                        "health_score_definition": HEALTH_SCORE_DEFINITION,
                     },
                     gate_results=gate_results,
                     health_score=health_score,
@@ -1058,11 +1673,16 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
         if sarif_mode:
             from roam.output.sarif import health_to_sarif, write_sarif
 
+            # W718: lowercase canonical severity (W547). The SARIF
+            # projection in ``health_to_sarif`` calls ``_to_level`` with
+            # ``severity.upper()`` so either case feeds the projection
+            # correctly; we keep the canonical lowercase form on the
+            # input so the SARIF input shape matches the JSON envelope.
             issues = {
                 "cycles": [
                     {
                         "size": c["size"],
-                        "severity": c.get("severity", "WARNING"),
+                        "severity": _normalise_health_severity(c.get("severity") or WARNING),
                         "symbols": [s["name"] for s in c["symbols"]],
                         "files": c["files"],
                     }
@@ -1074,7 +1694,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                         "kind": g["kind"],
                         "degree": g["degree"],
                         "file": g["file"],
-                        "severity": g.get("severity", "WARNING"),
+                        "severity": _normalise_health_severity(g.get("severity") or WARNING),
                     }
                     for g in god_items
                 ],
@@ -1084,13 +1704,13 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                         "kind": b["kind"],
                         "betweenness": b["betweenness"],
                         "file": b["file"],
-                        "severity": b.get("severity", "WARNING"),
+                        "severity": _normalise_health_severity(b.get("severity") or WARNING),
                     }
                     for b in bn_items
                 ],
                 "layer_violations": [
                     {
-                        "severity": "WARNING",
+                        "severity": WARNING,
                         "source": v_lookup.get(v["source"], {}).get("name", "?"),
                         "source_layer": v["source_layer"],
                         "target": v_lookup.get(v["target"], {}).get("name", "?"),
@@ -1113,7 +1733,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                 "health",
                 {
                     "score": health_score,
-                    "critical_issues": sev_counts["CRITICAL"],
+                    "critical_issues": sev_counts[CRITICAL],
                     "cycles": len(actionable_cycles),
                 },
             )
@@ -1144,6 +1764,10 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                     "god_components": len(god_items),
                     "cycles_definition": cycles_definition(),
                     "god_components_definition": god_components_definition(),
+                    # W331: stamp the canonical score + tangle definitions
+                    # next to the existing cycles + god-components ones.
+                    "health_score_definition": HEALTH_SCORE_DEFINITION,
+                    "tangle_ratio_definition": TANGLE_RATIO_DEFINITION,
                     "imported_coverage_pct": coverage_import.get("coverage_pct"),
                     "imported_coverage_files": coverage_import.get("files_with_coverage", 0),
                 },
@@ -1202,7 +1826,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
                 bottlenecks=[{**b, "severity": b["severity"], "category": b["category"]} for b in bn_items],
                 layer_violations=[
                     {
-                        "severity": "WARNING",
+                        "severity": WARNING,
                         "source": v_lookup.get(v["source"], {}).get("name", "?"),
                         "source_layer": v["source_layer"],
                         "target": v_lookup.get(v["target"], {}).get("name", "?"),
@@ -1280,13 +1904,16 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
             if ignored_cycles:
                 click.echo(f"  ({len(ignored_cycles)} informational local/test cycle(s) ignored for scoring)")
         else:
+            # W718: ``sev_counts`` keys are lowercase canonical labels.
+            # Text output preserves the historical UPPER-cased polish
+            # via ``.upper()`` — display polish, not vocabulary.
             sev_parts = []
-            if sev_counts["CRITICAL"]:
-                sev_parts.append(f"{sev_counts['CRITICAL']} CRITICAL")
-            if sev_counts["WARNING"]:
-                sev_parts.append(f"{sev_counts['WARNING']} WARNING")
-            if sev_counts["INFO"]:
-                sev_parts.append(f"{sev_counts['INFO']} INFO")
+            if sev_counts[CRITICAL]:
+                sev_parts.append(f"{sev_counts[CRITICAL]} {CRITICAL.upper()}")
+            if sev_counts[WARNING]:
+                sev_parts.append(f"{sev_counts[WARNING]} {WARNING.upper()}")
+            if sev_counts[INFO]:
+                sev_parts.append(f"{sev_counts[INFO]} {INFO.upper()}")
             click.echo(f"Health: {issue_count} issue{'s' if issue_count != 1 else ''} — {', '.join(sev_parts)}")
             detail_str = ", ".join(parts)
             if filtered_count:
@@ -1306,9 +1933,9 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
             top_critical = [
                 item
                 for item_list in [
-                    [(c, "cycle") for c in formatted_cycles if c.get("severity") == "CRITICAL"],
-                    [(g, "god") for g in god_items if g.get("severity") == "CRITICAL"],
-                    [(b, "bottleneck") for b in bn_items if b.get("severity") == "CRITICAL"],
+                    [(c, "cycle") for c in formatted_cycles if c.get("severity") == CRITICAL],
+                    [(g, "god") for g in god_items if g.get("severity") == CRITICAL],
+                    [(b, "bottleneck") for b in bn_items if b.get("severity") == CRITICAL],
                 ]
                 for item in item_list
             ]
@@ -1416,7 +2043,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref):
             "health",
             {
                 "score": health_score,
-                "critical_issues": sev_counts["CRITICAL"],
+                "critical_issues": sev_counts[CRITICAL],
                 "cycles": len(actionable_cycles),
             },
         )

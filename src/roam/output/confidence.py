@@ -107,6 +107,108 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.15
 CONFIDENCE_LEVELS: tuple[str, str, str] = ("high", "medium", "low")
 
 
+# ---------------------------------------------------------------------------
+# W596 — Canonical confidence-LEVEL rank.
+#
+# Pre-W596 the contract was implicit: 14 distinct rank tables hand-rolled
+# across commands/, world_model/causal_graph and laws/miner. Two polarity
+# camps: 7 sites with ``{high:3, medium:2, low:1}`` (higher=more-confident
+# sort keys), 7 sites with ``{high:0, medium:1, low:2}`` (lower=better
+# filter-order). Same Pattern-3a metric-divergence symptom as W547 / W564
+# but on the confidence-LEVEL axis instead of severity.
+#
+# This is the single source of truth for ORDER on the confidence-LEVEL
+# axis. Polarity: **higher = more confident** (matches the natural
+# "high > medium > low" reading; sort callers that want lower=better
+# pass ``-confidence_level_rank(x)`` as the sort key).
+#
+# NOTE on vocabulary. This helper operates on the *confidence-LEVEL*
+# axis (``high``/``medium``/``low``) NOT the *confidence-TIER* axis
+# (``heuristic``/``structural``/``static_analysis``/``runtime``)
+# declared in :mod:`roam.db.findings`. See the long-form note in
+# :mod:`roam.output._severity` (the W565 section) for why these are
+# independent axes — a structural-TIER detector can emit a medium-LEVEL
+# finding, and the findings-registry row carries TIER on a separate
+# column from whatever per-finding LEVEL the ranker assigns.
+#
+# Rank values are chosen so:
+#   * canonical CONFIDENCE_LEVELS map to ``high=3 / medium=2 / low=1``;
+#   * ``unknown`` (the cmd_pr_bundle alias for "missing confidence
+#     signal") collapses to ``0`` so it sorts below every defined
+#     level — same W531 CI-safety lesson as severity_rank;
+#   * any other label / ``None`` collapses to ``-1`` so a typo can
+#     never accidentally promote a finding into a CI-gating rank.
+_CONFIDENCE_LEVEL_RANK: dict[str, int] = {
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+    # ``unknown`` is a real label — cmd_pr_bundle emits it when the
+    # world-model classifier returns no signal — but ranks BELOW every
+    # defined level. NOT ``-1``: pr_bundle's pre-W596 table mapped it
+    # to ``0`` to keep it inside the sortable range, and downstream
+    # consumers depend on that polarity (``min(...)`` over a confidence
+    # tuple).
+    "unknown": 0,
+}
+
+
+def confidence_level_rank(level: str | None, *, fallback: int | None = None) -> int:
+    """Canonical rank for a confidence-LEVEL label (higher = more confident).
+
+    Single source of truth for confidence-LEVEL ORDER across commands.
+    Returns an integer suitable for direct comparison or as a ``sorted``
+    key — use ``-confidence_level_rank(x)`` for the inverse polarity
+    (which several pre-W596 sites used as a "high-first" filter order).
+
+    The vocabulary is the closed :data:`CONFIDENCE_LEVELS` triple
+    (``high`` / ``medium`` / ``low``) plus the pr_bundle ``unknown``
+    sentinel that the world-model classifier emits when no signal is
+    available.
+
+    W634 — fail-loud by default. Unknown labels and ``None`` raise
+    :class:`ValueError` so a programmer-class typo (``"hihg"``,
+    ``"HIGH-CONFIDENCE"``) surfaces at the call site rather than
+    silently bucketing into a default rank that could promote or demote
+    a finding through a CI gate. Data-path callers that genuinely want
+    silent bucketing on classifier-drift / unknown labels MUST opt in
+    explicitly via ``fallback=<int>``; the canonical opt-in value is
+    ``fallback=-1`` (matches the pre-W634 silent default), which sorts
+    below every known level (the W531 CI-safety lesson).
+
+    Examples
+    --------
+    >>> confidence_level_rank("high")
+    3
+    >>> confidence_level_rank("HIGH")
+    3
+    >>> confidence_level_rank("medium")
+    2
+    >>> confidence_level_rank("low")
+    1
+    >>> confidence_level_rank("unknown")
+    0
+    >>> confidence_level_rank("bogus", fallback=-1)
+    -1
+    >>> confidence_level_rank(None, fallback=-1)
+    -1
+    >>> confidence_level_rank("bogus")
+    Traceback (most recent call last):
+        ...
+    ValueError: unknown confidence level: 'bogus'
+    """
+    if not level:
+        if fallback is None:
+            raise ValueError(f"unknown confidence level: {level!r}")
+        return fallback
+    s = str(level).strip().lower()
+    rank = _CONFIDENCE_LEVEL_RANK.get(s)
+    if rank is None:
+        if fallback is None:
+            raise ValueError(f"unknown confidence level: {level!r}")
+        return fallback
+    return rank
+
+
 def is_low_confidence(top_score: float, threshold: float = DEFAULT_CONFIDENCE_THRESHOLD) -> bool:
     """Return True when *top_score* indicates the answer is junk.
 

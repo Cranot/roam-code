@@ -1,6 +1,6 @@
 """Detect AI code anti-patterns and compute AI rot score.
 
-The vibe-check command scans for 8 categories of AI-generated code smells:
+The vibe-check command scans for 10 categories of AI-generated code smells:
 
 1. Dead exports / orphaned symbols — public symbols with zero callers
 2. Short-term churn — files revised heavily within 14 days
@@ -10,8 +10,29 @@ The vibe-check command scans for 8 categories of AI-generated code smells:
 6. Error handling inconsistency — mixed patterns in same module
 7. Comment density anomalies — files with outlier comment ratios
 8. Copy-paste functions — duplicate normalized function bodies
+9. Modular Mirage — exported helpers with exactly 1 caller (W371)
+10. Boilerplate Inflation — comment-restates-code + shallow wrappers (W371)
 
-Produces a composite 0-100 "AI rot score" and per-file issue counts.
+Patterns 1-8 contribute to the canonical 0-100 "AI rot score". Patterns
+9 and 10 (W371) emit findings into the registry but do NOT alter the
+canonical score — they are informational layers added on top of the
+existing 8-pattern composite so downstream consumers reading the
+``ai_rot_score`` see the same number before and after W371.
+
+W371 research backing:
+
+* Modular Mirage — Zhu, Tsantalis, Rigby, "AI-Generated Smells: An
+  Analysis of Code and Architecture in LLM- and Agent-Driven
+  Development" (arxiv:2605.02741). Defines the pattern as agents
+  achieving "superficial structural modularity (file separation) but
+  fail[ing] to create semantic cohesion" — operationalised here as
+  exported symbols with a single inbound caller (the helper exists as
+  if it were a reusable abstraction, but there's exactly one consumer).
+* Boilerplate Inflation — variant of the redundant-implementation
+  smell discussed in the same corpus + the LLM-code-smell catalog
+  (arxiv:2512.18020). Operationalised here as comment-restates-code
+  occurrences and shallow Python wrappers (docstring + single
+  delegation line).
 
 Counts are at occurrence level (not function level) and span all
 indexed languages. For a Python-only, function-level, actionable list
@@ -23,7 +44,9 @@ design — vibe-check is a coarse health signal.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
@@ -34,6 +57,13 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 from roam.quality.ai_rot import DEFINITION as AI_ROT_DEFINITION
+
+# W125 — detector version stamp. Bump per the W81 / ROADMAP A6 rules when
+# the pattern set, confidence-tier mapping, or evidence-shape changes
+# meaningfully. Re-using the W81 module-level pattern (DEAD_DETECTOR_VERSION,
+# CLONES_DETECTOR_VERSION) so consumers can ``import VIBE_CHECK_DETECTOR_VERSION``
+# the same way.
+VIBE_CHECK_DETECTOR_VERSION: str = "1.0.0"
 
 # ---------------------------------------------------------------------------
 # Severity labels
@@ -56,6 +86,111 @@ def _severity_label(score: int) -> str:
 # ---------------------------------------------------------------------------
 # Pattern 1: Dead exports / orphaned symbols
 # ---------------------------------------------------------------------------
+
+# W161: Framework hook allowlist — names that the call graph cannot see
+# because the runtime invokes them via duck-typing, reflection, or
+# protocol-method dispatch. Without this, the dogfood audit (W149) found
+# 405 dead-exports on roam-code, most of them false positives in two
+# clusters:
+#
+#  1. Click ``MultiCommand`` / ``Group`` overrides on ``cli.py:LazyGroup``
+#     (``list_commands``, ``get_command``, ``resolve_command``,
+#     ``parse_args``, ``format_help``, ``invoke``, ...) — Click's runtime
+#     calls these by name on every ``roam <subcmd>`` invocation; the
+#     static call graph has zero edges to them.
+#
+#  2. Quality-envelope ``as_envelope_dict`` methods in
+#     ``quality/cycles.py``, ``quality/god_components.py``,
+#     ``quality/public_symbols.py`` — consumers call ``obj.as_envelope_dict()``
+#     via attribute reflection on a result object; the indexer can't
+#     resolve the attribute access.
+#
+# This is a NAME-BASED allowlist (cheap, no class-hierarchy walk). Per
+# the W161 brief, a class-hierarchy variant (exempt anything inheriting
+# from ``click.MultiCommand`` / ``click.Group`` / ``click.Command``) is
+# explicitly deferred; the name set below already catches the high-FP
+# cases the dogfood audit surfaced.
+#
+# Categorised so the rationale stays auditable when a future detector
+# tunes adds or removes entries.
+_FRAMEWORK_HOOK_NAMES: frozenset[str] = frozenset(
+    {
+        # --- Click ``MultiCommand`` / ``Group`` method overrides ---
+        # cli.py:LazyGroup ships ~half of these; the rest cover sibling
+        # ``Command`` subclasses we'd want to allowlist consistently.
+        "list_commands",
+        "get_command",
+        "resolve_command",
+        "parse_args",
+        "format_help",
+        "invoke",
+        "format_options",
+        "format_usage",
+        "format_help_text",
+        "format_epilog",
+        "format_commands",
+        "get_help",
+        "get_short_help_str",
+        "get_usage",
+        # --- Click ``Group`` / ``Command`` registration / callbacks ---
+        "add_command",
+        "command",
+        "group",
+        "result_callback",
+        # --- Reflective dataclass-style serialisation methods ---
+        # ``quality/cycles.py``, ``quality/god_components.py``,
+        # ``quality/public_symbols.py``, ``quality/ai_rot.py`` all expose
+        # ``as_envelope_dict`` called via ``obj.as_envelope_dict()``
+        # reflection from consumers.
+        "as_envelope_dict",
+        "as_dict",
+        "to_dict",
+        "to_json",
+        "from_dict",
+        "from_json",
+        "from_yaml",
+        "to_yaml",
+        # --- Dunders that the runtime always reaches ---
+        # NOTE: most of these are already excluded upstream by the
+        # ``name NOT LIKE '_%'`` SQL filter on ``_detect_dead_exports``
+        # (which strips any leading-underscore name). They're listed
+        # here explicitly so the allowlist documents *intent* — and so
+        # the future class-hierarchy variant (which won't have the leading
+        # underscore filter) inherits the right exemptions without a
+        # second pass.
+        "__init__",
+        "__call__",
+        "__enter__",
+        "__exit__",
+        "__iter__",
+        "__next__",
+        "__getitem__",
+        "__setitem__",
+        "__contains__",
+        "__len__",
+        "__hash__",
+        "__eq__",
+        "__repr__",
+        "__str__",
+        "__bool__",
+        "__init_subclass__",
+        "__class_getitem__",
+        "__post_init__",
+        # --- pytest fixture / lifecycle hooks ---
+        # pytest discovers these by attribute lookup on test classes /
+        # modules; the call graph never resolves them. Included even
+        # though the existing test-file exclusion already covers most
+        # callers — kept consistent with the rest of the policy and so
+        # an in-tree ``conftest.py`` extension lives outside ``tests/``
+        # is still exempt.
+        "setup_method",
+        "teardown_method",
+        "setup_class",
+        "teardown_class",
+        "setup_module",
+        "teardown_module",
+    }
+)
 
 
 def _detect_dead_exports(conn) -> tuple[int, int]:
@@ -84,8 +219,11 @@ def _detect_dead_exports(conn) -> tuple[int, int]:
     questions, so labelling them with a ``_definition`` field is the
     fix per CLAUDE.md Pattern 3.
 
-    Excludes test files, dunders, CLI command files, and entry-point
-    names to reduce false positives common to AI-generated code.
+    Excludes test files, dunders, CLI command files, framework hook
+    names (W161 — Click ``MultiCommand`` overrides, reflective
+    ``as_envelope_dict`` callbacks, pytest lifecycle hooks), and
+    entry-point names to reduce false positives common to
+    AI-generated code.
 
     Returns (found, total_public_symbols).
     """
@@ -99,12 +237,21 @@ def _detect_dead_exports(conn) -> tuple[int, int]:
         "AND f.path NOT LIKE '%cmd\\_%' ESCAPE '\\' "
     )
 
+    # W161: framework-hook name allowlist — applied AT THE SQL LEVEL so
+    # both the ``total`` and ``dead`` counts agree, and so the per-symbol
+    # ``_collect_dead_export_findings`` query (which mirrors this WHERE
+    # clause for the findings registry) emits the same row set.
+    hook_names = tuple(sorted(_FRAMEWORK_HOOK_NAMES))
+    hook_placeholders = ",".join("?" * len(hook_names))
+    _HOOK_SQL = f"AND s.name NOT IN ({hook_placeholders}) "
+
     total = conn.execute(
         "SELECT COUNT(*) FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "WHERE s.kind IN ('function', 'class', 'method') "
         "AND s.name NOT LIKE '\\_%' ESCAPE '\\' "
-        "AND s.is_exported = 1 " + _EXCLUDE_SQL
+        "AND s.is_exported = 1 " + _EXCLUDE_SQL + _HOOK_SQL,
+        hook_names,
     ).fetchone()[0]
 
     dead = conn.execute(
@@ -113,7 +260,8 @@ def _detect_dead_exports(conn) -> tuple[int, int]:
         "WHERE s.kind IN ('function', 'class', 'method') "
         "AND s.name NOT LIKE '\\_%' ESCAPE '\\' "
         "AND s.is_exported = 1 "
-        "AND s.id NOT IN (SELECT target_id FROM edges) " + _EXCLUDE_SQL
+        "AND s.id NOT IN (SELECT target_id FROM edges) " + _EXCLUDE_SQL + _HOOK_SQL,
+        hook_names,
     ).fetchone()[0]
 
     return dead, max(total, 1)
@@ -674,9 +822,378 @@ def _detect_copy_paste(conn, project_root: Path) -> tuple[int, int, list[dict]]:
 
 
 # ---------------------------------------------------------------------------
+# Pattern 9 (W371): Modular Mirage — single-caller exported helpers
+#
+# Operationalises the "Modular Mirage" smell from arxiv:2605.02741
+# (Zhu / Tsantalis / Rigby, "AI-Generated Smells", May 2026). The paper
+# defines the pattern as agents achieving "superficial structural
+# modularity (file separation) but fail[ing] to create semantic
+# cohesion". The cheapest reliable proxy on the roam index: count
+# EXPORTED symbols (function / method) that have exactly ONE incoming
+# edge — the helper exists as if it were a reusable abstraction, but
+# there's only one consumer.
+#
+# Distinct from ``copy_paste`` (which fires on duplicated bodies) and
+# from ``dead_exports`` (zero callers). Single-caller helpers sit at the
+# boundary: not dead, not reused, just an unjustified split. The paper
+# co-occurs this with "Scattered Functionality + Unstable Dependencies"
+# — both are richer signals that require AST-level coupling analysis
+# (deferred; see "drive-by findings" in the W371 report).
+#
+# Reuses the same exclusion clauses as ``_detect_dead_exports``:
+# excludes test/cmd files, dunders, leading-underscore privates, and
+# the framework-hook allowlist (Click ``MultiCommand`` overrides,
+# reflective ``as_envelope_dict`` callbacks, pytest lifecycle hooks).
+# That keeps the two detectors mutually consistent: a symbol is either
+# dead (0 callers), modular-mirage (1 caller), or reused (>=2 callers).
+# ---------------------------------------------------------------------------
+
+
+def _detect_modular_mirage(conn) -> tuple[int, int, list[dict]]:
+    """Find exported function / method symbols with exactly 1 caller.
+
+    Returns (found, total_eligible_exports, details). ``details`` is one
+    dict per single-caller export, carrying the symbol id + file + line
+    + the single caller's file so the W125-style finding emit can attach
+    structured evidence.
+
+    The eligible-population denominator matches ``_detect_dead_exports``
+    (same WHERE clauses, same hook allowlist) so the per-detector rate
+    is comparable across the three caller-count tiers.
+    """
+    _EXCLUDE_SQL = (
+        "AND f.path NOT LIKE '%test\\_%' ESCAPE '\\' "
+        "AND f.path NOT LIKE '%\\_test.%' ESCAPE '\\' "
+        "AND f.path NOT LIKE '%/tests/%' "
+        "AND f.path NOT LIKE '%/test/%' "
+        "AND f.path NOT LIKE '%conftest%' "
+        "AND f.path NOT LIKE '%cmd\\_%' ESCAPE '\\' "
+    )
+    hook_names = tuple(sorted(_FRAMEWORK_HOOK_NAMES))
+    hook_placeholders = ",".join("?" * len(hook_names))
+    _HOOK_SQL = f"AND s.name NOT IN ({hook_placeholders}) "
+
+    total_eligible = conn.execute(
+        "SELECT COUNT(*) FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND s.name NOT LIKE '\\_%' ESCAPE '\\' "
+        "AND s.is_exported = 1 " + _EXCLUDE_SQL + _HOOK_SQL,
+        hook_names,
+    ).fetchone()[0]
+
+    # Symbols with exactly 1 DISTINCT caller. The indexer emits both an
+    # ``import`` and a ``call`` edge for the same source/target pair in
+    # Python, so a raw ``COUNT(*) = 1`` would miss every Python case.
+    # ``COUNT(DISTINCT source_id) = 1`` correctly collapses the
+    # multi-edge-per-caller indexer artifact and counts unique callers.
+    # Class symbols are excluded because a single-instantiation class is
+    # a different (and weaker) signal than a single-caller function —
+    # we want the function/method form which directly maps to the
+    # paper's "scattered helper" example.
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.kind, s.line_start, f.path AS file_path, "
+        "       (SELECT f2.path FROM edges e2 "
+        "          JOIN symbols s2 ON e2.source_id = s2.id "
+        "          JOIN files f2 ON s2.file_id = f2.id "
+        "          WHERE e2.target_id = s.id LIMIT 1) AS caller_file "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND s.name NOT LIKE '\\_%' ESCAPE '\\' "
+        "AND s.is_exported = 1 "
+        "AND s.id IN ("
+        "  SELECT target_id FROM edges "
+        "  GROUP BY target_id HAVING COUNT(DISTINCT source_id) = 1"
+        ") " + _EXCLUDE_SQL + _HOOK_SQL,
+        hook_names,
+    ).fetchall()
+
+    details: list[dict] = []
+    for r in rows:
+        # Filter out same-file "callers" — if the only caller lives in
+        # the SAME file as the callee, this is a within-file
+        # refactor-split, not a cross-file modular mirage. The paper's
+        # signal is specifically about cross-file abstraction.
+        caller_file = r["caller_file"] or ""
+        if caller_file and caller_file == r["file_path"]:
+            continue
+        details.append(
+            {
+                "symbol_id": int(r["id"]),
+                "name": r["name"],
+                "kind": r["kind"],
+                "file": r["file_path"],
+                "file_path": r["file_path"],
+                "line_start": r["line_start"],
+                "caller_file": caller_file,
+                "count": 1,
+            }
+        )
+
+    return len(details), max(total_eligible, 1), details
+
+
+# ---------------------------------------------------------------------------
+# Pattern 10 (W371): Boilerplate Inflation
+#
+# Operationalises the "boilerplate inflation" variant of the
+# redundant-implementation pattern discussed in arxiv:2605.02741 (the
+# paper calls it "Redundant Implementation / PAU — copy-paste invocation
+# style that inflates code volume") and intersects with the LLM
+# code-smell catalog in arxiv:2512.18020. Two sub-heuristics, both
+# implementable with the existing file-content scan path:
+#
+#   A) ``comment_restates_code`` — a single-line comment whose stripped
+#      text is a prefix-substring of the next non-empty code line.
+#      Example: ``# call save()`` immediately followed by ``save()``.
+#      AI-rot signature: comments that document the next statement
+#      verbatim rather than explaining intent.
+#
+#   B) ``shallow_wrapper`` (Python only) — an exported function whose
+#      entire body is a docstring + a single statement (``return X(...)``
+#      or ``X(...)``). The wrapper has more documentation than code; a
+#      common pattern in AI-generated "professional-looking" scaffolds.
+#
+# Both fire at OCCURRENCE level (one finding per match). The detector
+# returns aggregated per-file counts in ``details`` so the worst-files
+# aggregation works the same way as for other patterns.
+#
+# Heuristic confidence: ``heuristic`` (regex on source text). Defensive
+# None-check detection on statically-non-None values would be a richer
+# signal but requires dataflow — deferred as a drive-by.
+# ---------------------------------------------------------------------------
+
+# Regex matching a single-line Python/JS/TS/Go/Java/C# comment followed
+# by the next non-blank line. We match on the COMMENT TEXT (after the
+# marker) and check below whether it is a case-insensitive substring of
+# the following code line.
+_COMMENT_CODE_PATTERNS = {
+    "python": re.compile(r"^[ \t]*#[ \t]*([^\n]+)\n[ \t]*([^\n#]+)$", re.MULTILINE),
+    "ruby": re.compile(r"^[ \t]*#[ \t]*([^\n]+)\n[ \t]*([^\n#]+)$", re.MULTILINE),
+    "javascript": re.compile(r"^[ \t]*//[ \t]*([^\n]+)\n[ \t]*([^\n/]+)$", re.MULTILINE),
+    "typescript": re.compile(r"^[ \t]*//[ \t]*([^\n]+)\n[ \t]*([^\n/]+)$", re.MULTILINE),
+    "java": re.compile(r"^[ \t]*//[ \t]*([^\n]+)\n[ \t]*([^\n/]+)$", re.MULTILINE),
+    "c_sharp": re.compile(r"^[ \t]*//[ \t]*([^\n]+)\n[ \t]*([^\n/]+)$", re.MULTILINE),
+    "go": re.compile(r"^[ \t]*//[ \t]*([^\n]+)\n[ \t]*([^\n/]+)$", re.MULTILINE),
+}
+
+# Tokens we tolerate (small words AI uses interchangeably with the code).
+# A comment is "restating" if 60%+ of its >=3-char tokens appear in the
+# code line below, case-insensitively. Pure boolean substring matching
+# is too lossy ("Save the file" vs ``save_file()`` — both should match).
+_RESTATE_TOLERATED: frozenset[str] = frozenset(
+    {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for",
+     "with", "this", "that", "if", "is", "are"}
+)
+
+
+def _comment_restates_code(comment_text: str, code_line: str) -> bool:
+    """True when *comment_text* essentially restates *code_line*.
+
+    Two acceptance criteria, both AI-rot signatures observed in the
+    arxiv:2605.02741 corpus:
+
+    1. **Identifier-echo** — the comment uses the same identifier as
+       the next line (case-insensitive). Example: ``# update counter``
+       above ``counter = counter + 1``. A SINGLE identifier overlap is
+       enough when the comment is short.
+
+    2. **High-overlap paraphrase** — >=60% of the comment's content
+       tokens appear (as substrings, case-insensitive) in the code
+       line, ignoring small stop words. Catches direct restatements
+       where the AI literally translates the code into English.
+
+    Both criteria are needed: pure substring matching catches "set X to
+    Y" → "X = Y" only when "X" appears (criterion 1), and high-overlap
+    catches "return the user_id value" → "return user_id" (criterion 2).
+    """
+    code_lower = code_line.lower()
+    # First, the comment has to be SHORT — long-form comments that
+    # happen to mention a code identifier are usually explaining
+    # context ("Edge case discovered in prod 2026-03-12 — empty
+    # payloads."). Restating comments are terse and run-on-style
+    # ("# set counter to value plus one"). Cap at 10 content words.
+    all_words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", comment_text)
+    if len(all_words) > 10:
+        return False
+    content_tokens = [
+        t.lower() for t in all_words
+        if len(t) >= 3 and t.lower() not in _RESTATE_TOLERATED
+    ]
+    if not content_tokens:
+        return False
+    matched_count = sum(1 for t in content_tokens if t in code_lower)
+    if matched_count == 0:
+        return False
+    # Density gate: at least 40% of meaningful content words must
+    # appear in the code line. This filters "Reuses the legacy
+    # seven-day rollup window agreed with finance." (one match in 8
+    # content words = 12%) from "set counter to value plus one" (one
+    # match in 4 content words = 25% — still rejected) and
+    # "update counter" (one match in 2 content words = 50% — flagged).
+    # The threshold + the 10-word cap together separate inline
+    # restatements from contextual commentary.
+    density = matched_count / len(content_tokens)
+    if density >= 0.4:
+        return True
+    return False
+
+
+# Python "shallow wrapper" pattern: ``def NAME(...):`` followed by
+# ``"""docstring"""`` followed by EITHER ``return CALL(...)`` OR
+# ``CALL(...)`` as the ONLY remaining body statement.
+_SHALLOW_WRAPPER_PY = re.compile(
+    r"^([ \t]*)def\s+(\w+)\s*\([^)]*\)\s*(?:->[^:]*)?:\s*\n"  # def header
+    r"\1[ \t]+(?:r|b|rb|br)?(?P<q>\"{3}|\'{3})(?P<doc>.*?)(?P=q)\s*\n"  # docstring
+    r"\1[ \t]+(?:return\s+)?\w[\w.]*\s*\([^)]*\)\s*\n"  # single call / return
+    r"(?=\1[^\s]|\Z)",  # next def at same/lower indent OR EOF
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _detect_boilerplate_inflation(
+    conn, project_root: Path
+) -> tuple[int, int, list[dict]]:
+    """Scan source files for boilerplate-inflation occurrences.
+
+    Returns (found, total_files_scanned, details). ``details`` is one
+    record per file with at least one occurrence; each record carries a
+    ``count`` (total occurrences in this file) and ``occurrences``
+    (per-occurrence line/kind/snippet payload). Per-occurrence detail
+    is kept so the finding emit can produce one row per location.
+    """
+    files = conn.execute(
+        "SELECT id, path, language FROM files WHERE language IS NOT NULL"
+    ).fetchall()
+
+    found = 0
+    total_files_scanned = 0
+    details: list[dict] = []
+
+    for f in files:
+        lang = f["language"]
+        if lang not in _COMMENT_CODE_PATTERNS and lang != "python":
+            continue
+
+        # Skip the same scaffolding paths the rest of the detector
+        # already ignores. Same predicate as ``_detect_dead_exports``'s
+        # exclusion list, expressed at Python level here.
+        path = f["path"] or ""
+        if (
+            "/tests/" in path
+            or "/test/" in path
+            or "conftest" in path
+            or "cmd_" in path.rsplit("/", 1)[-1]
+            or path.endswith("_test.py")
+            or "test_" in path.rsplit("/", 1)[-1]
+        ):
+            continue
+
+        file_path = project_root / path
+        try:
+            source = file_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        total_files_scanned += 1
+        occurrences: list[dict] = []
+
+        # --- Sub-heuristic A: comment_restates_code -----------------
+        pat = _COMMENT_CODE_PATTERNS.get(lang)
+        if pat is not None:
+            # Build a list of (line_number, line_text) so we can map
+            # match offsets back to line numbers.
+            line_starts: list[int] = [0]
+            for idx, ch in enumerate(source):
+                if ch == "\n":
+                    line_starts.append(idx + 1)
+            for m in pat.finditer(source):
+                comment_text = m.group(1).strip()
+                code_line = m.group(2).strip()
+                # Ignore special markers and section dividers.
+                if not comment_text or comment_text.startswith(
+                    ("---", "===", "***", "TODO", "FIXME", "NOTE", "XXX")
+                ):
+                    continue
+                if not code_line or code_line.startswith(("#", "//")):
+                    continue
+                if not _comment_restates_code(comment_text, code_line):
+                    continue
+                # Find the line number where the COMMENT lives.
+                start = m.start()
+                line_no = 1
+                for i, ls in enumerate(line_starts):
+                    if ls > start:
+                        line_no = i
+                        break
+                else:
+                    line_no = len(line_starts)
+                occurrences.append(
+                    {
+                        "line": line_no,
+                        "subkind": "comment_restates_code",
+                        "snippet": f"# {comment_text[:60]} / {code_line[:60]}",
+                    }
+                )
+
+        # --- Sub-heuristic B: shallow_wrapper (Python only) ----------
+        if lang == "python":
+            line_starts = [0]
+            for idx, ch in enumerate(source):
+                if ch == "\n":
+                    line_starts.append(idx + 1)
+            for m in _SHALLOW_WRAPPER_PY.finditer(source):
+                name = m.group(2)
+                # Private wrappers are below-the-fold by convention.
+                if name.startswith("_"):
+                    continue
+                doc = (m.group("doc") or "").strip()
+                # Empty docstrings are caught by abandoned_stubs; we
+                # need a real docstring to call this "inflation".
+                if len(doc) < 10:
+                    continue
+                start = m.start()
+                line_no = 1
+                for i, ls in enumerate(line_starts):
+                    if ls > start:
+                        line_no = i
+                        break
+                else:
+                    line_no = len(line_starts)
+                occurrences.append(
+                    {
+                        "line": line_no,
+                        "subkind": "shallow_wrapper",
+                        "name": name,
+                        "snippet": f"def {name}(...): \"\"\"{doc[:60]}...\"\"\" + 1 stmt",
+                    }
+                )
+
+        if occurrences:
+            found += len(occurrences)
+            details.append(
+                {
+                    "file": path,
+                    "count": len(occurrences),
+                    "occurrences": occurrences,
+                    "pattern": "boilerplate_inflation",
+                }
+            )
+
+    return found, max(total_files_scanned, 1), details
+
+
+# ---------------------------------------------------------------------------
 # Composite score
 # ---------------------------------------------------------------------------
 
+# W371: ``_WEIGHTS`` intentionally LEAVES OUT ``modular_mirage`` and
+# ``boilerplate_inflation`` so the canonical 0-100 AI rot score stays
+# byte-identical pre- and post-W371. Adding them to the weight set would
+# change every AI-rot number every downstream consumer reads. The new
+# patterns are surfaced as ``weight: 0`` rows in the envelope and in the
+# findings registry — informational, not score-bearing.
 _WEIGHTS = {
     "dead_exports": 15,
     "short_churn": 10,
@@ -688,6 +1205,17 @@ _WEIGHTS = {
     "copy_paste": 10,
 }
 
+# Patterns that the detector RUNS but that do NOT contribute to the
+# canonical AI rot score. W371's two additions sit here. New
+# informational patterns should be added to this set and to
+# ``_PATTERN_NAMES`` but NOT to ``_WEIGHTS``.
+_INFORMATIONAL_PATTERNS: frozenset[str] = frozenset(
+    {
+        "modular_mirage",
+        "boilerplate_inflation",
+    }
+)
+
 _PATTERN_NAMES = {
     "dead_exports": "Dead exports",
     "short_churn": "Short-term churn (<14d)",
@@ -697,6 +1225,8 @@ _PATTERN_NAMES = {
     "error_inconsistency": "Error handling inconsistency",
     "comment_anomalies": "Comment density anomalies",
     "copy_paste": "Copy-paste functions",
+    "modular_mirage": "Modular Mirage (single-caller exports)",
+    "boilerplate_inflation": "Boilerplate Inflation",
 }
 
 # Pattern 3 / W19: Where two commands compute the "same" metric
@@ -778,6 +1308,436 @@ def _aggregate_worst_files(all_details: dict[str, list[dict]], limit: int = 5) -
 
 
 # ---------------------------------------------------------------------------
+# W125: persist findings into the central registry
+# ---------------------------------------------------------------------------
+#
+# Tier mapping per kind, derived from reading each detector's actual
+# implementation (not the docstring claims). Reasoning:
+#
+# - dead_exports: pure graph query (incoming-edge count). Structural.
+# - hallucinated_imports: graph query (file_edges with empty-symbol targets
+#   + orphan target_id symbols). Structural.
+# - copy_paste: deterministic block-hash on regex-normalised source —
+#   3+ functions with the same hash form a clone group. Structural
+#   evidence (the hash equality is an exact match), even though body
+#   normalisation is regex-based.
+# - empty_handlers, abandoned_stubs: regex pattern matching on raw source
+#   (NOT AST traversal). Heuristic.
+# - short_churn: combo of file commit count + 14-day time window.
+#   Threshold heuristic.
+# - error_inconsistency: regex pattern presence count per file with a
+#   >=3 distinct patterns threshold. Heuristic.
+# - comment_anomalies: statistical z-score on regex-counted comment lines.
+#   Heuristic (NLP-flavoured).
+#
+# Diverges from the W125 brief on three kinds:
+#  * empty_handlers + stubs: brief suggested static_analysis; the actual
+#    detector is regex-on-source not AST. Downgraded to heuristic.
+#  * hallucinated_imports: brief suggested static_analysis; the actual
+#    detector is graph-table queries. Promoted to structural.
+#  * copy_paste: brief suggested static_analysis; the actual detector is
+#    a block-hash on normalised source. Kept at structural (the equality
+#    test IS deterministic; the normalisation isn't AST-based).
+
+
+def _vibe_check_tier(kind: str) -> str:
+    """Map a vibe-check pattern kind to a registry confidence tier."""
+    from roam.db.findings import (
+        CONFIDENCE_HEURISTIC,
+        CONFIDENCE_STRUCTURAL,
+    )
+
+    structural_kinds = {
+        "dead_exports",
+        "hallucinated_imports",
+        "copy_paste",
+        # W371: ``modular_mirage`` is a pure graph-edge query
+        # (``GROUP BY target_id HAVING COUNT(*) = 1``). The signal IS
+        # the structural fact "exactly 1 inbound edge" — deterministic,
+        # same tier as ``dead_exports`` (which uses zero-inbound edges).
+        "modular_mirage",
+    }
+    if kind in structural_kinds:
+        return CONFIDENCE_STRUCTURAL
+    # short_churn, empty_handlers, abandoned_stubs,
+    # error_inconsistency, comment_anomalies,
+    # boilerplate_inflation (W371: regex-on-source, same shape as
+    # empty_handlers / abandoned_stubs).
+    return CONFIDENCE_HEURISTIC
+
+
+def _vibe_finding_id(kind: str, subject: str, line_start: int | None) -> str:
+    """Stable, deterministic finding id for one vibe-check finding.
+
+    The (kind, subject, line_start) triple is enough to re-identify the
+    same finding across runs. ``subject`` is either a symbol qname or a
+    file path; ``line_start`` is None for whole-file findings (short_churn,
+    error_inconsistency, comment_anomalies). Re-running
+    ``roam vibe-check --persist`` on the same input upserts the existing
+    row rather than duplicating.
+    """
+    line_part = str(line_start) if line_start is not None else "0"
+    raw = f"{kind}:{subject}:{line_part}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"vibe-check:{kind}:{digest}"
+
+
+def _collect_dead_export_findings(conn) -> list[dict]:
+    """Re-query dead-exports at symbol granularity for finding emit.
+
+    ``_detect_dead_exports`` returns only counts. To emit one finding
+    per dead export we re-run its SELECT with full symbol detail. Uses
+    the SAME exclusion clauses and predicates as the count query — the
+    row count returned here MUST match ``_detect_dead_exports``'s
+    ``dead`` value or the migration would drift.
+    """
+    _EXCLUDE_SQL = (
+        "AND f.path NOT LIKE '%test\\_%' ESCAPE '\\' "
+        "AND f.path NOT LIKE '%\\_test.%' ESCAPE '\\' "
+        "AND f.path NOT LIKE '%/tests/%' "
+        "AND f.path NOT LIKE '%/test/%' "
+        "AND f.path NOT LIKE '%conftest%' "
+        "AND f.path NOT LIKE '%cmd\\_%' ESCAPE '\\' "
+    )
+    # W161: framework-hook allowlist — MUST mirror the WHERE clause used
+    # by ``_detect_dead_exports`` so the row count returned here matches
+    # that detector's ``dead`` value (the count and the per-symbol detail
+    # are two reads of the same predicate; drift here means the findings
+    # registry shows more rows than the verdict claims).
+    hook_names = tuple(sorted(_FRAMEWORK_HOOK_NAMES))
+    hook_placeholders = ",".join("?" * len(hook_names))
+    _HOOK_SQL = f"AND s.name NOT IN ({hook_placeholders}) "
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.kind, s.line_start, f.path AS file_path "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'class', 'method') "
+        "AND s.name NOT LIKE '\\_%' ESCAPE '\\' "
+        "AND s.is_exported = 1 "
+        "AND s.id NOT IN (SELECT target_id FROM edges) " + _EXCLUDE_SQL + _HOOK_SQL,
+        hook_names,
+    ).fetchall()
+    return [
+        {
+            "symbol_id": int(r["id"]),
+            "name": r["name"],
+            "kind": r["kind"],
+            "line_start": r["line_start"],
+            "file_path": r["file_path"],
+        }
+        for r in rows
+    ]
+
+
+def _collect_copy_paste_findings(conn, project_root: Path) -> list[dict]:
+    """Re-derive copy-paste groups at symbol granularity for finding emit.
+
+    Mirrors ``_detect_copy_paste`` exactly — same body normalisation,
+    same minimum-length filter, same >=3-group threshold. Returns one
+    record per CLONE-GROUP MEMBER (so a group of 4 produces 4 records).
+    The detector's ``found`` value is the sum across all groups, which
+    this function reproduces by yielding one record per member.
+    """
+    functions = conn.execute(
+        "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, "
+        "  f.path as file_path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND s.line_start IS NOT NULL AND s.line_end IS NOT NULL "
+        "AND (s.line_end - s.line_start) >= 3"
+    ).fetchall()
+    if len(functions) < 3:
+        return []
+
+    by_file: dict[str, list] = defaultdict(list)
+    for fn in functions:
+        by_file[fn["file_path"]].append(fn)
+
+    body_hashes: dict[str, list[dict]] = defaultdict(list)
+    for file_path, fns in by_file.items():
+        full_path = project_root / file_path
+        try:
+            source_lines = full_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).split("\n")
+        except OSError:
+            continue
+        for fn in fns:
+            start = (fn["line_start"] or 1) - 1
+            end = fn["line_end"] or start + 1
+            body = "\n".join(source_lines[start:end])
+            normalized = _normalize_body(body)
+            if len(normalized) < 30:
+                continue
+            h = hashlib.md5(normalized.encode("utf-8")).hexdigest()
+            body_hashes[h].append(
+                {
+                    "symbol_id": int(fn["id"]),
+                    "name": fn["name"],
+                    "file_path": file_path,
+                    "line_start": fn["line_start"],
+                    "line_end": fn["line_end"],
+                    "group_hash": h,
+                }
+            )
+
+    records: list[dict] = []
+    for h, group in body_hashes.items():
+        if len(group) >= 3:
+            group_members = [
+                {"name": m["name"], "file": m["file_path"], "line": m["line_start"]}
+                for m in group
+            ]
+            for m in group:
+                rec = dict(m)
+                rec["group_size"] = len(group)
+                rec["group_members"] = group_members[:5]
+                records.append(rec)
+    return records
+
+
+def _emit_vibe_check_findings(
+    conn,
+    findings_by_kind: dict[str, list[dict]],
+    source_version: str,
+) -> int:
+    """Emit one ``FindingRecord`` per vibe-check finding into the registry.
+
+    ``findings_by_kind`` maps each pattern key (``dead_exports``,
+    ``short_churn``, ...) to a list of record dicts. The record shape is
+    detector-specific; the helper inspects each kind to build the right
+    claim string and evidence JSON.
+
+    Returns the number of rows emitted. Wrapped by the caller in a
+    defensive try/except so a pre-W89 DB (no ``findings`` table) silently
+    no-ops rather than crashing the standard vibe-check command.
+    """
+    from roam.db.findings import FindingRecord, emit_finding
+
+    emitted = 0
+    for kind, records in findings_by_kind.items():
+        tier = _vibe_check_tier(kind)
+        for rec in records:
+            # Per-kind subject + claim shape.
+            if kind == "dead_exports":
+                subject_kind = "symbol"
+                subject_id = rec.get("symbol_id")
+                file_path = rec.get("file_path") or ""
+                line_start = rec.get("line_start")
+                finding_id = _vibe_finding_id(
+                    kind, f"{file_path}:{rec.get('name')}", line_start
+                )
+                claim = (
+                    f"AI-rot dead-export: {rec.get('name')} ({rec.get('kind')}) at "
+                    f"{file_path}:{line_start} — zero incoming edges"
+                )
+                evidence = {
+                    "name": rec.get("name"),
+                    "kind": rec.get("kind"),
+                    "file_path": file_path,
+                    "line_start": line_start,
+                    "pattern": "dead_exports",
+                    "note": (
+                        "Coarser than `roam dead` — uses raw edges only, "
+                        "no test-consumer / barrel / scaffolding filters."
+                    ),
+                }
+            elif kind == "short_churn":
+                subject_kind = "file"
+                subject_id = None
+                file_path = rec.get("file") or ""
+                finding_id = _vibe_finding_id(kind, file_path, None)
+                claim = (
+                    f"AI-rot short-churn: {file_path} — "
+                    f"{rec.get('commits')} commits over {rec.get('span_days')}d"
+                )
+                evidence = {
+                    "file_path": file_path,
+                    "commits": rec.get("commits"),
+                    "span_days": rec.get("span_days"),
+                    "pattern": "short_churn",
+                }
+            elif kind == "empty_handlers":
+                subject_kind = "file"
+                subject_id = None
+                file_path = rec.get("file") or ""
+                finding_id = _vibe_finding_id(kind, file_path, None)
+                count = rec.get("count", 0)
+                claim = (
+                    f"AI-rot empty-handlers: {file_path} — "
+                    f"{count} empty error handler(s)"
+                )
+                evidence = {
+                    "file_path": file_path,
+                    "count": count,
+                    "pattern": "empty_handlers",
+                }
+            elif kind == "abandoned_stubs":
+                subject_kind = "file"
+                subject_id = None
+                file_path = rec.get("file") or ""
+                finding_id = _vibe_finding_id(kind, file_path, None)
+                count = rec.get("count", 0)
+                claim = (
+                    f"AI-rot abandoned-stubs: {file_path} — "
+                    f"{count} stub function(s)"
+                )
+                evidence = {
+                    "file_path": file_path,
+                    "count": count,
+                    "pattern": "abandoned_stubs",
+                }
+            elif kind == "hallucinated_imports":
+                subject_kind = "file"
+                subject_id = None
+                file_path = rec.get("file") or ""
+                finding_id = _vibe_finding_id(kind, file_path, None)
+                count = rec.get("count", 0)
+                claim = (
+                    f"AI-rot hallucinated-imports: {file_path} — "
+                    f"{count} unresolvable import(s)"
+                )
+                evidence = {
+                    "file_path": file_path,
+                    "count": count,
+                    "pattern": "hallucinated_imports",
+                }
+            elif kind == "error_inconsistency":
+                subject_kind = "file"
+                subject_id = None
+                file_path = rec.get("file") or ""
+                finding_id = _vibe_finding_id(kind, file_path, None)
+                patterns = rec.get("patterns", [])
+                claim = (
+                    f"AI-rot error-inconsistency: {file_path} — "
+                    f"{len(patterns)} distinct error patterns mixed"
+                )
+                evidence = {
+                    "file_path": file_path,
+                    "patterns": list(patterns),
+                    "count": rec.get("count", len(patterns)),
+                    "pattern": "error_inconsistency",
+                }
+            elif kind == "comment_anomalies":
+                subject_kind = "file"
+                subject_id = None
+                file_path = rec.get("file") or ""
+                finding_id = _vibe_finding_id(kind, file_path, None)
+                direction = rec.get("direction", "")
+                ratio = rec.get("comment_ratio")
+                z = rec.get("z_score")
+                claim = (
+                    f"AI-rot comment-anomaly: {file_path} — "
+                    f"{direction} comments (ratio={ratio}, z={z})"
+                )
+                evidence = {
+                    "file_path": file_path,
+                    "comment_ratio": ratio,
+                    "z_score": z,
+                    "direction": direction,
+                    "pattern": "comment_anomalies",
+                }
+            elif kind == "copy_paste":
+                subject_kind = "symbol"
+                subject_id = rec.get("symbol_id")
+                file_path = rec.get("file_path") or ""
+                line_start = rec.get("line_start")
+                finding_id = _vibe_finding_id(
+                    kind,
+                    f"{file_path}:{rec.get('name')}:{rec.get('group_hash')}",
+                    line_start,
+                )
+                claim = (
+                    f"AI-rot copy-paste: {rec.get('name')} at "
+                    f"{file_path}:{line_start} — member of {rec.get('group_size')}-way clone group"
+                )
+                evidence = {
+                    "name": rec.get("name"),
+                    "file_path": file_path,
+                    "line_start": line_start,
+                    "line_end": rec.get("line_end"),
+                    "group_size": rec.get("group_size"),
+                    "group_members": rec.get("group_members", []),
+                    "group_hash": rec.get("group_hash"),
+                    "pattern": "copy_paste",
+                }
+            elif kind == "modular_mirage":
+                # W371: one finding per single-caller exported helper.
+                # subject is the symbol (not the file) so consumers can
+                # join on ``symbols.id``.
+                subject_kind = "symbol"
+                subject_id = rec.get("symbol_id")
+                file_path = rec.get("file_path") or ""
+                line_start = rec.get("line_start")
+                finding_id = _vibe_finding_id(
+                    kind, f"{file_path}:{rec.get('name')}", line_start
+                )
+                caller_file = rec.get("caller_file") or ""
+                claim = (
+                    f"AI-rot modular-mirage: {rec.get('name')} ({rec.get('kind')}) "
+                    f"at {file_path}:{line_start} — exactly 1 cross-file caller "
+                    f"({caller_file or 'unknown'})"
+                )
+                evidence = {
+                    "name": rec.get("name"),
+                    "kind": rec.get("kind"),
+                    "file_path": file_path,
+                    "line_start": line_start,
+                    "caller_file": caller_file,
+                    "caller_count": 1,
+                    "pattern": "modular_mirage",
+                    "research": "arxiv:2605.02741",
+                }
+            elif kind == "boilerplate_inflation":
+                # W371: one finding per OCCURRENCE inside a file (not
+                # one per file) — so a file with 4 comment-restates +
+                # 1 shallow-wrapper produces 5 finding rows. The
+                # caller of ``_emit_vibe_check_findings`` flattens the
+                # per-file ``occurrences`` list before passing here.
+                subject_kind = "file"
+                subject_id = None
+                file_path = rec.get("file_path") or rec.get("file") or ""
+                line_start = rec.get("line")
+                subkind = rec.get("subkind", "boilerplate_inflation")
+                finding_id = _vibe_finding_id(
+                    kind, f"{file_path}:{subkind}", line_start
+                )
+                snippet = rec.get("snippet", "")
+                claim = (
+                    f"AI-rot boilerplate-inflation ({subkind}): {file_path}:"
+                    f"{line_start} — {snippet[:80]}"
+                )
+                evidence = {
+                    "file_path": file_path,
+                    "line": line_start,
+                    "subkind": subkind,
+                    "snippet": snippet,
+                    "pattern": "boilerplate_inflation",
+                    "research": "arxiv:2605.02741+2512.18020",
+                }
+            else:
+                # Unknown kind — defensive skip rather than crash on a
+                # future detector that forgets to register here.
+                continue
+
+            emit_finding(
+                conn,
+                FindingRecord(
+                    finding_id_str=finding_id,
+                    subject_kind=subject_kind,
+                    subject_id=subject_id,
+                    claim=claim,
+                    evidence_json=json.dumps(evidence, sort_keys=True),
+                    confidence=tier,
+                    source_detector="vibe-check",
+                    source_version=source_version,
+                ),
+            )
+            emitted += 1
+    return emitted
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -798,8 +1758,20 @@ def _aggregate_worst_files(all_details: dict[str, list[dict]], limit: int = 5) -
 )
 @click.command("vibe-check")
 @click.option("--threshold", type=int, default=0, help="Fail if AI rot score exceeds threshold (0=no gate)")
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror each vibe-check finding into the central findings registry "
+        "(``roam findings list --detector vibe-check``). Detector-specific "
+        "output is unchanged; the registry rows are the denormalised "
+        "cross-detector surface."
+    ),
+)
 @click.pass_context
-def vibe_check(ctx, threshold):
+def vibe_check(ctx, threshold, persist):
     """Detect AI code anti-patterns and compute AI rot score.
 
     Unlike ``smells`` (which detects structural complexity anti-patterns from
@@ -814,8 +1786,8 @@ def vibe_check(ctx, threshold):
 
     project_root = find_project_root()
 
-    with open_db(readonly=True) as conn:
-        # Run all 8 detectors
+    with open_db(readonly=not persist) as conn:
+        # Run all 8 score-bearing detectors
         p1_found, p1_total = _detect_dead_exports(conn)
         p2_found, p2_total, p2_details = _detect_short_churn(conn)
         p3_found, p3_total, p3_details = _detect_empty_handlers(conn, project_root)
@@ -824,6 +1796,61 @@ def vibe_check(ctx, threshold):
         p6_found, p6_total, p6_details = _detect_error_inconsistency(conn, project_root)
         p7_found, p7_total, p7_details = _detect_comment_anomalies(conn, project_root)
         p8_found, p8_total, p8_details = _detect_copy_paste(conn, project_root)
+        # W371: two additional informational detectors. NOT in
+        # ``_WEIGHTS`` — the canonical AI rot score stays computed off
+        # the 8 detectors above, so downstream consumers see the same
+        # number pre- and post-W371.
+        p9_found, p9_total, p9_details = _detect_modular_mirage(conn)
+        p10_found, p10_total, p10_details = _detect_boilerplate_inflation(
+            conn, project_root
+        )
+
+        # --- W125: mirror into the central findings registry ---
+        # Detector-specific output below is untouched; the registry rows
+        # are the denormalised cross-detector surface (``roam findings``).
+        # Wrapped so a pre-W89 DB (no ``findings`` table) silently no-ops
+        # rather than crashing the standard vibe-check command path.
+        if persist:
+            # dead_exports needs per-symbol detail re-queried (the count
+            # detector throws the rows away). copy_paste likewise needs
+            # symbol-level membership rebuilt for finding emit.
+            dead_export_records = _collect_dead_export_findings(conn)
+            copy_paste_records = _collect_copy_paste_findings(conn, project_root)
+            # W371: boilerplate_inflation reports per-FILE aggregates;
+            # we flatten to per-OCCURRENCE records before emit so each
+            # match becomes a distinct registry row.
+            boilerplate_records: list[dict] = []
+            for fd in p10_details:
+                file_path = fd.get("file", "")
+                for occ in fd.get("occurrences", []):
+                    rec = dict(occ)
+                    rec["file_path"] = file_path
+                    boilerplate_records.append(rec)
+            findings_by_kind: dict[str, list[dict]] = {
+                "dead_exports": dead_export_records,
+                "short_churn": p2_details,
+                "empty_handlers": p3_details,
+                "abandoned_stubs": p4_details,
+                "hallucinated_imports": p5_details,
+                "error_inconsistency": p6_details,
+                "comment_anomalies": p7_details,
+                "copy_paste": copy_paste_records,
+                # W371 additions — informational, but persisted so the
+                # findings-registry consumers (``roam findings list``,
+                # SARIF emit, ``roam dashboard``) can read them.
+                "modular_mirage": p9_details,
+                "boilerplate_inflation": boilerplate_records,
+            }
+            try:
+                _emit_vibe_check_findings(
+                    conn,
+                    findings_by_kind,
+                    source_version=VIBE_CHECK_DETECTOR_VERSION,
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
         # Build patterns dict
         def _rate(found, total):
@@ -866,10 +1893,28 @@ def vibe_check(ctx, threshold):
                 "rate": _rate(p7_found, p7_total),
             },
             "copy_paste": {"found": p8_found, "total": p8_total, "rate": _rate(p8_found, p8_total)},
+            # W371 informational patterns — surfaced in the envelope and
+            # findings registry but NOT used by ``_compute_score``.
+            "modular_mirage": {
+                "found": p9_found,
+                "total": p9_total,
+                "rate": _rate(p9_found, p9_total),
+            },
+            "boilerplate_inflation": {
+                "found": p10_found,
+                "total": p10_total,
+                "rate": _rate(p10_found, p10_total),
+            },
         }
 
+        # ``_compute_score`` reads ``_WEIGHTS`` which intentionally omits
+        # the W371 informational patterns; the canonical score is still
+        # the 8-pattern composite.
         score = _compute_score(patterns)
         severity = _severity_label(score)
+        # ``total_issues`` includes informational patterns so the
+        # surface count tells an honest "raw issues seen" story even
+        # though the SCORE is unaffected.
         total_issues = sum(p["found"] for p in patterns.values())
         files_scanned = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
 
@@ -895,6 +1940,11 @@ def vibe_check(ctx, threshold):
             "error_inconsistency": p6_details,
             "comment_anomalies": p7_details,
             "copy_paste": p8_details,
+            # W371: include the informational patterns in worst-files
+            # aggregation so an agent reading the worst-file list sees
+            # boilerplate / mirage hot spots alongside score-bearing ones.
+            "modular_mirage": p9_details,
+            "boilerplate_inflation": p10_details,
         }
         worst_files = _aggregate_worst_files(all_details)
 
@@ -915,6 +1965,18 @@ def vibe_check(ctx, threshold):
         if patterns["copy_paste"]["found"] > 0:
             recommendations.append(
                 f"Extract {patterns['copy_paste']['found']} copy-pasted functions into shared utilities"
+            )
+        # W371: informational-pattern recommendations name the same
+        # follow-up commands an agent would otherwise have to guess.
+        if patterns["modular_mirage"]["found"] > 5:
+            recommendations.append(
+                f"Review {patterns['modular_mirage']['found']} single-caller exports — "
+                "inline or co-locate to remove modular-mirage abstractions"
+            )
+        if patterns["boilerplate_inflation"]["found"] > 0:
+            recommendations.append(
+                f"Trim {patterns['boilerplate_inflation']['found']} boilerplate-inflation "
+                "occurrences (redundant comments + shallow wrappers)"
             )
 
         verdict = f"AI rot score {score}/100 -- {severity}"
@@ -969,7 +2031,11 @@ def vibe_check(ctx, threshold):
                         "total": pdata["total"],
                         "rate": pdata["rate"],
                         "severity": pdata["severity"],
-                        "weight": _WEIGHTS[key],
+                        # W371: informational patterns sit at weight 0;
+                        # consumers reading ``weight`` know which rows
+                        # contribute to the score and which do not.
+                        "weight": _WEIGHTS.get(key, 0),
+                        "informational": key in _INFORMATIONAL_PATTERNS,
                         # Per-pattern definition: only ``dead_exports``
                         # has a documented W19 divergence right now;
                         # others may follow as we surface them.
@@ -1003,7 +2069,9 @@ def vibe_check(ctx, threshold):
         click.echo(f"VERDICT: {verdict}")
         click.echo()
 
-        # Pattern table
+        # Pattern table — score-bearing patterns first, then the W371
+        # informational patterns marked ``[info]`` so readers can tell
+        # which rows feed the canonical AI-rot score.
         headers = ["Pattern", "Found", "Total", "Rate"]
         rows = []
         for key in _WEIGHTS:
@@ -1014,6 +2082,21 @@ def vibe_check(ctx, threshold):
             rows.append(
                 [
                     _PATTERN_NAMES[key],
+                    str(pdata["found"]),
+                    str(pdata["total"]),
+                    rate_str,
+                ]
+            )
+        for key in sorted(_INFORMATIONAL_PATTERNS):
+            pdata = patterns.get(key)
+            if pdata is None:
+                continue
+            rate_str = f"{pdata['rate']:.1f}%"
+            if pdata["rate"] >= 25:
+                rate_str += "  !!"
+            rows.append(
+                [
+                    f"{_PATTERN_NAMES[key]} [info]",
                     str(pdata["found"]),
                     str(pdata["total"]),
                     rate_str,

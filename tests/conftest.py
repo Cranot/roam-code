@@ -107,6 +107,27 @@ def _clear_graph_cache_between_tests():
         pass
 
 
+@pytest.fixture(autouse=True)
+def _disable_shallow_git_history_for_marked_tests(request, monkeypatch):
+    """W984: tests marked ``@pytest.mark.git_history`` get ``ROAM_GIT_SINCE=0``.
+
+    The W405 ``_DEFAULT_SINCE = "365d"`` in ``src/roam/index/git_stats.py``
+    silently drops fixture commits dated more than 1 year ago, which was the
+    W978 bug on ``test_bus_factor_stale_kind_emitted``: the fixture backdates
+    a commit to 2024-01-01 to exercise the ``stale-ownership`` kind, but the
+    first-index ``git log --since=365d`` window dropped it, yielding zero git
+    stats and zero findings.
+
+    Mark-gated rather than unconditional: W405 is the correct default for
+    fresh indexes on real repos; tests that explicitly want to verify
+    shallow-history behaviour (e.g. ``test_very_short_window_no_commits`` in
+    ``test_dev_profile.py``) MUST leave the mark off. Tests that backdate
+    fixture commits past 365 days from now opt IN by adding the mark.
+    """
+    if request.node.get_closest_marker("git_history"):
+        monkeypatch.setenv("ROAM_GIT_SINCE", "0")
+
+
 @pytest.fixture
 def cli_runner():
     """Provide a Click CliRunner for in-process CLI testing."""

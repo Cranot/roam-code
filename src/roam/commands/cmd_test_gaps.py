@@ -16,6 +16,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import load_symbol_coverage_map
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output._severity import severity_rank
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 _MAX_HOPS = 10
@@ -160,7 +161,24 @@ def _detect_stale_tests(conn, symbol_ids, coverage_map):
 # Severity classification
 # ---------------------------------------------------------------------------
 
-_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+# W564: severity ordering routed through roam.output._severity.severity_rank.
+# This command uses a local 3-tier index (high=0, medium=1, low=2) for its
+# ``--severity`` floor math; ``_severity_idx`` derives it from the canonical
+# rank so the contract stays single-sourced.
+_TEST_GAPS_TIER_INDEX: dict[int, int] = {
+    severity_rank("high"): 0,
+    severity_rank("medium"): 1,
+    severity_rank("low"): 2,
+}
+
+
+def _severity_idx(label: str) -> int:
+    """Return the local 3-tier index (high=0, medium=1, low=2) for *label*.
+
+    Unknown labels collapse to the ``medium`` tier so ``--severity foo``
+    keeps the W564 baseline behaviour of including medium + above.
+    """
+    return _TEST_GAPS_TIER_INDEX.get(severity_rank(label), 1)
 
 
 def _classify_severity(symbol_row, pagerank):
@@ -256,7 +274,7 @@ def test_gaps(ctx, files, changed, min_severity):
             click.echo("Provide file paths or use --changed to analyze git diff.")
         return
 
-    min_sev_idx = _SEVERITY_ORDER.get(min_severity.lower(), 1)
+    min_sev_idx = _severity_idx(min_severity)
 
     with open_db(readonly=True) as conn:
         # Resolve paths to DB file IDs

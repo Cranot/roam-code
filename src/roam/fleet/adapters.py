@@ -3,7 +3,7 @@
 Each adapter takes the canonical fleet envelope (see
 :func:`fleet.manifest.build_fleet_manifest`) and shapes it for one
 runtime. We start with three: raw, Composio Agent Orchestrator,
-Copilot CLI ``/fleet``. Cursor Background Agents lands in v12.1.
+Copilot CLI ``/fleet``. Cursor Background Agents adapter is planned.
 """
 
 from __future__ import annotations

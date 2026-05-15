@@ -73,8 +73,8 @@ def _default_task_path() -> Path:
     is_flag=True,
     help=(
         "Run the harness across a small grid of weight vectors. "
-        "Output the best-scoring vector. v12.0 ships a baseline-only "
-        "sweep (full weight injection arrives in v12.1)."
+        "Output the best-scoring vector. Weights are plumbed end-to-end "
+        "through ``run_retrieve(weights=...)`` so the rerank score rotates."
     ),
 )
 @click.option(

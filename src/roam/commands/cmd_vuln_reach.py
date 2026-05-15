@@ -7,6 +7,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.output._severity import severity_rank
 from roam.output.formatter import json_envelope, to_json
 
 
@@ -148,13 +149,13 @@ def _output_all(ctx, results: list[dict], json_mode: bool) -> None:
     click.echo(f"VERDICT: {verdict}")
     click.echo("")
 
-    # Show reachable first, sorted by severity
-    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "unknown": 4}
+    # Show reachable first, sorted by severity (W564 canonical rank,
+    # negated so critical/high/medium sort ahead of low/unknown).
     sorted_results = sorted(
         results,
         key=lambda r: (
             0 if r["reachable"] == 1 else 1,
-            severity_order.get((r.get("severity") or "unknown").lower(), 5),
+            -severity_rank(r.get("severity") or "unknown"),
         ),
     )
 

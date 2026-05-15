@@ -17,12 +17,84 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import os
 import re
 import sqlite3
+from typing import Any, Callable, Iterable, Mapping
+
+from roam.catalog._shared import is_test_path as _shared_is_test_path
+from roam.catalog._shared import loc as _loc
 
 from roam.catalog.tasks import best_way
+from roam.catalog.versions import detector_version as _detector_version_for_task
+from roam.db.edge_kinds import CALL_EDGE_KINDS
+from roam.db.findings import (
+    CONFIDENCE_HEURISTIC,
+    CONFIDENCE_RUNTIME,
+    CONFIDENCE_STATIC_ANALYSIS,
+    CONFIDENCE_STRUCTURAL,
+)
 from roam.languages import JS_FAMILY_LANGUAGES
+
+# W1037: public surface declaration. New detector functions added below
+# follow the ``detect_*`` naming convention and should be appended to
+# the alphabetical list below at the same time as their @detector
+# decoration. Constants and helpers prefixed with a leading underscore
+# (``_DETECTOR_REGISTRY``, ``_DETECTOR_METADATA``, ``_finding``, ...)
+# are intentionally OMITTED — tests that need them import by explicit
+# name (``__all__`` only affects ``from foo import *``).
+__all__ = [
+    # Registry + decorator (public API).
+    "detector",
+    "list_registered_detectors",
+    "run_detectors",
+    # Framework-profile API.
+    "list_framework_profiles",
+    "autodetect_framework_profile",
+    "set_active_framework_profile",
+    # Query-cost vocabulary (closed enum, named constants).
+    "QUERY_COST_LOW",
+    "QUERY_COST_MEDIUM",
+    "QUERY_COST_HIGH",
+    # Detector functions (alphabetical).
+    "detect_async_blocking_sleep",
+    "detect_async_fire_and_forget",
+    "detect_async_nested_run",
+    "detect_branching_recursion",
+    "detect_broad_except_swallow",
+    "detect_busy_wait",
+    "detect_chained_collection_walks",
+    "detect_dangerous_eval",
+    "detect_defer_in_loop",
+    "detect_io_in_loop",
+    "detect_linear_search",
+    "detect_list_membership",
+    "detect_list_prepend",
+    "detect_loop_invariant_call",
+    "detect_loop_lookup",
+    "detect_manual_accumulation",
+    "detect_manual_dedup",
+    "detect_manual_gcd",
+    "detect_manual_groupby",
+    "detect_manual_maxmin",
+    "detect_manual_power",
+    "detect_manual_sort",
+    "detect_matrix_mult",
+    "detect_naive_fibonacci",
+    "detect_nested_lookup",
+    "detect_quadratic_string",
+    "detect_regex_in_loop",
+    "detect_serial_await_loop",
+    "detect_sort_to_select",
+    "detect_spread_accumulator",
+    "detect_string_concat_loop",
+    "detect_string_reverse",
+    "detect_unremoved_event_listener",
+    "detect_useeffect_missing_deps",
+]
+
+log = logging.getLogger(__name__)
 
 # Inline-bound SQL fragment for JS-family language filters. Catalog
 # detectors that target the TS / JS / Vue / Svelte ecosystem use this
@@ -33,40 +105,143 @@ from roam.languages import JS_FAMILY_LANGUAGES
 _JS_FAMILY_SQL_TUPLE = "(" + ", ".join(f"'{lang}'" for lang in JS_FAMILY_LANGUAGES) + ")"
 
 
+# ---------------------------------------------------------------------------
+# A3 — Detector registry + @detector decorator
+# ---------------------------------------------------------------------------
+#
+# Replaces the implicit-by-tuple registration in ``_MATH_DETECTORS`` with an
+# opt-in metadata registry. Decorating a detector with ``@detector(...)``
+# records its declared task, language coverage, confidence basis, and query
+# cost so ``roam math --list-detectors / --only / --exclude`` can act on
+# the metadata without re-deriving it elsewhere.
+#
+# This is additive: detectors that haven't been decorated still run via
+# ``_MATH_DETECTORS``. Future PRs migrate the long tail; this wave seeds
+# the substrate with the highest-leverage detectors.
+
+# Allowed metadata vocabularies. Restricted enums catch typos at import
+# time rather than letting bogus strings leak into JSON envelopes.
+#
+# W911: the confidence-tier values are imported from ``roam.db.findings``
+# (the canonical source of truth) rather than re-defined here. The
+# frozenset is just a derived view that adds membership-test semantics
+# for the ``@detector`` decorator. A drift-guard test in
+# ``tests/test_w911_confidence_tier_parity.py`` asserts the set has not
+# diverged from the four canonical constants.
+_CONFIDENCE_BASES = frozenset(
+    {
+        CONFIDENCE_HEURISTIC,
+        CONFIDENCE_STRUCTURAL,
+        CONFIDENCE_STATIC_ANALYSIS,
+        CONFIDENCE_RUNTIME,
+    }
+)
+
+# W915: query-cost vocabulary lifted to module-level named constants so the
+# closed-enum shape matches ``_CONFIDENCE_BASES`` (W911). Same drift-guard
+# rationale: a typo in a decorator's ``query_cost=`` argument should fail
+# at import time against a named constant rather than against a bare
+# literal that anyone can re-introduce elsewhere.
+QUERY_COST_LOW = "low"
+QUERY_COST_MEDIUM = "medium"
+QUERY_COST_HIGH = "high"
+_QUERY_COSTS = frozenset({QUERY_COST_LOW, QUERY_COST_MEDIUM, QUERY_COST_HIGH})
+
+_DETECTOR_REGISTRY: dict[str, dict[str, Any]] = {}
+
+
+def detector(
+    *,
+    task_id: str,
+    languages: tuple[str, ...] = (),
+    confidence_basis: str = "heuristic",
+    query_cost: str = QUERY_COST_LOW,
+    version: str = "1.0.0",
+) -> Callable[[Callable[..., list[dict]]], Callable[..., list[dict]]]:
+    """Register a detector with metadata.
+
+    Parameters
+    ----------
+    task_id : str
+        Algorithm catalog task this detector targets (see ``catalog/tasks.py``).
+    languages : tuple of str
+        Language names this detector applies to. Empty tuple means
+        language-agnostic.
+    confidence_basis : str
+        One of ``heuristic``, ``structural``, ``static_analysis``, ``runtime``.
+    query_cost : str
+        One of ``low``, ``medium``, ``high`` — rough indicator of DB load.
+    version : str
+        Detector version string (bump on behavior changes).
+    """
+    if confidence_basis not in _CONFIDENCE_BASES:
+        raise ValueError(
+            f"confidence_basis must be one of {sorted(_CONFIDENCE_BASES)}, got {confidence_basis!r}"
+        )
+    if query_cost not in _QUERY_COSTS:
+        raise ValueError(f"query_cost must be one of {sorted(_QUERY_COSTS)}, got {query_cost!r}")
+
+    def wrap(fn: Callable[..., list[dict]]) -> Callable[..., list[dict]]:
+        _DETECTOR_REGISTRY[fn.__name__] = {
+            "name": fn.__name__,
+            "task_id": task_id,
+            "languages": tuple(languages),
+            "confidence_basis": confidence_basis,
+            "query_cost": query_cost,
+            "version": version,
+            "function": fn,
+        }
+        return fn
+
+    return wrap
+
+
+def list_registered_detectors() -> list[dict[str, Any]]:
+    """Return registry entries (excluding the callable) for inspection."""
+    return [
+        {k: v for k, v in entry.items() if k != "function"} for entry in _DETECTOR_REGISTRY.values()
+    ]
+
+
 def _is_test_path(path: str) -> bool:
     # when --include-tests was set on the CLI, force
     # this to return False so every detector stops filtering test paths.
     if _INCLUDE_TESTS_OVERRIDE:
         return False
-    p = path.replace("\\", "/").lower()
-    base = os.path.basename(p)
-    if base.startswith("test_") or base.endswith("_test.py"):
-        return True
-    if "tests/" in p or "test/" in p or "__tests__/" in p or "spec/" in p:
-        return True
-    return False
-
-
-def _loc(path: str, line) -> str:
-    if line is not None:
-        return f"{path}:{line}"
-    return path
+    # W873: delegate to the canonical catalog-layer detector. The shared
+    # helper is strictly a superset of the prior in-file rules (adds
+    # ``__tests__/``, ``spec/``, ``testing/``, ``conftest.py``, plus
+    # Go/Rust/PHP/JS/TS test-suffix coverage).
+    return _shared_is_test_path(path)
 
 
 def _finding(
-    task_id,
-    detected_way,
-    sym,
-    reason,
-    confidence="medium",
+    task_id: str,
+    detected_way: str,
+    sym: sqlite3.Row,
+    reason: str,
+    confidence: str = "medium",
     *,
-    evidence=None,
-    fix=None,
-    match_line=None,
-    snippet=None,
-    matched_patterns=None,
-):
+    evidence: Mapping[str, Any] | Any | None = None,
+    fix: str | Mapping[str, Any] | None = None,
+    match_line: int | None = None,
+    snippet: str | None = None,
+    matched_patterns: Iterable[str] | None = None,
+) -> dict:
     """Build a finding dict.
+
+    W875: NOT consolidated with ``roam.catalog.smells._finding`` —
+    the two share only 3 of ~14 union field names
+    (``symbol_name``, ``kind``, ``location``). This helper produces
+    the algorithm-catalog shape (task_id/detected_way/suggested_way/
+    symbol_id/symbol_line/confidence/reason + optional evidence/fix)
+    from a sqlite3.Row ``sym`` and integrates with
+    ``tasks.best_way()``. ``smells._finding`` produces a fixed 8-key
+    structural-smell envelope from plain strings + numbers. Hoisting
+    a shared base would replace ~20 lines of clear domain-specific
+    helpers with ~30 lines of base + wrappers + union-typed kwargs —
+    net negative. See the matching comment in ``smells.py``.
+
 
     when ``match_line`` is supplied, the finding's
     ``location`` field points at the exact AST node where the pattern
@@ -99,6 +274,20 @@ def _finding(
         "confidence": confidence,
         "reason": reason,
     }
+    # W924: stamp the per-task_id detector_version from
+    # ``roam.catalog.versions.detector_version`` (the canonical lookup —
+    # falls back to DEFAULT_VERSION="1.0.0" when the task_id is not in
+    # ``DETECTOR_VERSION_OVERRIDES``). Sibling helpers
+    # (``clones_cross_layer._make_finding``, ``parallel_hierarchy._finding``,
+    # ``smells.make_smell_finding``) already stamp ``detector_version``;
+    # this closes the asymmetry for the 30+ algorithm-catalog detectors
+    # routed through ``_finding``. The lookup never returns ``None``, so
+    # the key is always present — but kept inside the explicit assignment
+    # (rather than baked into the literal above) so a future caller can
+    # override via post-mutation without confusion.
+    dv = _detector_version_for_task(task_id)
+    if dv is not None:
+        finding["detector_version"] = dv
     # D1 — context lines (cheap to compute, optional based on snippet availability)
     context_lines: list[dict] = []
     if snippet is not None and match_line is not None:
@@ -518,6 +707,12 @@ def _guard_hints_from_source(language: str | None, snippet: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+@detector(
+    task_id="sorting",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_manual_sort(conn: sqlite3.Connection) -> list[dict]:
     """Symbols named *sort* with nested loops, comparisons, and subscript
     access (swap pattern).  No call to built-in sort."""
@@ -555,6 +750,12 @@ def detect_manual_sort(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="search-sorted",
+    languages=(),
+    confidence_basis="heuristic",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
     """Functions explicitly named *sorted*/*search_sorted* that loop with
     comparisons but don't call bisect/binarySearch.
@@ -568,10 +769,10 @@ def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "JOIN math_signals ms ON ms.symbol_id = s.id "
-        "WHERE (s.name LIKE '%search_sorted%' OR s.name LIKE '%searchSorted%' "
-        "  OR s.name LIKE '%find_sorted%' OR s.name LIKE '%findSorted%' "
-        "  OR s.name LIKE '%find_in_sorted%' OR s.name LIKE '%in_sorted%' "
-        "  OR s.name LIKE '%linear_search%' OR s.name LIKE '%linearSearch%') "
+        "WHERE (s.name LIKE '%search\\_sorted%' ESCAPE '\\' OR s.name LIKE '%searchSorted%' "
+        "  OR s.name LIKE '%find\\_sorted%' ESCAPE '\\' OR s.name LIKE '%findSorted%' "
+        "  OR s.name LIKE '%find\\_in\\_sorted%' ESCAPE '\\' OR s.name LIKE '%in\\_sorted%' ESCAPE '\\' "
+        "  OR s.name LIKE '%linear\\_search%' ESCAPE '\\' OR s.name LIKE '%linearSearch%') "
         "AND s.kind IN ('function', 'method') "
         "AND ms.loop_depth >= 1 "
         "AND ms.loop_with_compare = 1"
@@ -607,6 +808,12 @@ def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="membership",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
     """Nested loops with equality comparisons β€” structural pattern for
     O(n^2) membership testing regardless of function name.
@@ -652,6 +859,12 @@ def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="string-concat",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
     """Loops with accumulation patterns and string-related call hints.
 
@@ -710,6 +923,12 @@ def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="unique",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_manual_dedup(conn: sqlite3.Connection) -> list[dict]:
     """Nested loops in dedup/unique-named functions without set usage."""
     rows = conn.execute(
@@ -721,7 +940,7 @@ def detect_manual_dedup(conn: sqlite3.Connection) -> list[dict]:
         "WHERE (s.name LIKE '%dedup%' OR s.name LIKE '%unique%' "
         "  OR s.name LIKE '%Dedup%' OR s.name LIKE '%Unique%' "
         "  OR s.name LIKE '%distinct%' OR s.name LIKE '%Distinct%' "
-        "  OR s.name LIKE '%remove_dup%' OR s.name LIKE '%removeDup%') "
+        "  OR s.name LIKE '%remove\\_dup%' ESCAPE '\\' OR s.name LIKE '%removeDup%') "
         "AND s.kind IN ('function', 'method') "
         "AND ms.has_nested_loops = 1 "
         "AND ms.loop_with_compare = 1"
@@ -747,6 +966,12 @@ def detect_manual_dedup(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="max-min",
+    languages=(),
+    confidence_basis="heuristic",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
     """Loops with comparisons in max/min-named functions.
 
@@ -760,11 +985,11 @@ def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "JOIN math_signals ms ON ms.symbol_id = s.id "
-        "WHERE (s.name LIKE '%find_max%' OR s.name LIKE '%find_min%' "
+        "WHERE (s.name LIKE '%find\\_max%' ESCAPE '\\' OR s.name LIKE '%find\\_min%' ESCAPE '\\' "
         "  OR s.name LIKE '%findMax%' OR s.name LIKE '%findMin%' "
-        "  OR s.name LIKE '%get_max%' OR s.name LIKE '%get_min%' "
+        "  OR s.name LIKE '%get\\_max%' ESCAPE '\\' OR s.name LIKE '%get\\_min%' ESCAPE '\\' "
         "  OR s.name LIKE '%getMax%' OR s.name LIKE '%getMin%' "
-        "  OR s.name LIKE '%find_largest%' OR s.name LIKE '%find_smallest%' "
+        "  OR s.name LIKE '%find\\_largest%' ESCAPE '\\' OR s.name LIKE '%find\\_smallest%' ESCAPE '\\' "
         "  OR s.name LIKE '%findLargest%' OR s.name LIKE '%findSmallest%') "
         "AND s.kind IN ('function', 'method') "
         "AND ms.loop_depth >= 1 "
@@ -790,6 +1015,12 @@ def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="accumulation",
+    languages=(),
+    confidence_basis="heuristic",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_manual_accumulation(conn: sqlite3.Connection) -> list[dict]:
     """Loops with accumulator in sum/total-named functions.
 
@@ -801,7 +1032,7 @@ def detect_manual_accumulation(conn: sqlite3.Connection) -> list[dict]:
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "JOIN math_signals ms ON ms.symbol_id = s.id "
-        "WHERE (s.name LIKE '%_sum%' OR s.name LIKE '%_total%' "
+        "WHERE (s.name LIKE '%\\_sum%' ESCAPE '\\' OR s.name LIKE '%\\_total%' ESCAPE '\\' "
         "  OR s.name LIKE '%Sum%' OR s.name LIKE '%Total%' "
         "  OR s.name LIKE '%accumulate%' OR s.name LIKE '%Accumulate%') "
         "AND s.kind IN ('function', 'method') "
@@ -828,6 +1059,12 @@ def detect_manual_accumulation(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="manual-power",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_manual_power(conn: sqlite3.Connection) -> list[dict]:
     """Loop-based exponentiation in power/exponent-named functions."""
     try:
@@ -881,6 +1118,12 @@ def detect_manual_power(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="manual-gcd",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_manual_gcd(conn: sqlite3.Connection) -> list[dict]:
     """Manual GCD loops where built-in/standard helpers are available."""
     try:
@@ -932,6 +1175,12 @@ def detect_manual_gcd(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="string-reverse",
+    languages=(),
+    confidence_basis="heuristic",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_string_reverse(conn: sqlite3.Connection) -> list[dict]:
     """Manual reversal loops in reverse-named functions."""
     try:
@@ -978,6 +1227,12 @@ def detect_string_reverse(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="matrix-mult",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_matrix_mult(conn: sqlite3.Connection) -> list[dict]:
     """Naive triple-loop matrix multiplication patterns."""
     try:
@@ -990,7 +1245,7 @@ def detect_matrix_mult(conn: sqlite3.Connection) -> list[dict]:
             "JOIN files f ON s.file_id = f.id "
             "JOIN math_signals ms ON ms.symbol_id = s.id "
             "WHERE (s.name LIKE '%matrix%' OR s.name LIKE '%matmul%' "
-            "  OR s.name LIKE '%multiply_matrix%' OR s.name LIKE '%dot%') "
+            "  OR s.name LIKE '%multiply\\_matrix%' ESCAPE '\\' OR s.name LIKE '%dot%') "
             "AND s.kind IN ('function', 'method') "
             "AND ms.loop_depth >= 3 "
             "AND ms.subscript_in_loops = 1"
@@ -1005,7 +1260,7 @@ def detect_matrix_mult(conn: sqlite3.Connection) -> list[dict]:
             "JOIN files f ON s.file_id = f.id "
             "JOIN math_signals ms ON ms.symbol_id = s.id "
             "WHERE (s.name LIKE '%matrix%' OR s.name LIKE '%matmul%' "
-            "  OR s.name LIKE '%multiply_matrix%' OR s.name LIKE '%dot%') "
+            "  OR s.name LIKE '%multiply\\_matrix%' ESCAPE '\\' OR s.name LIKE '%dot%') "
             "AND s.kind IN ('function', 'method') "
             "AND ms.loop_depth >= 3 "
             "AND ms.subscript_in_loops = 1"
@@ -1035,6 +1290,12 @@ def detect_matrix_mult(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="fibonacci",
+    languages=(),
+    confidence_basis="heuristic",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_naive_fibonacci(conn: sqlite3.Connection) -> list[dict]:
     """Recursive functions named *fib* without memoization.
 
@@ -1079,6 +1340,12 @@ def detect_naive_fibonacci(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="nested-lookup",
+    languages=("python", "javascript", "typescript", "php", "ruby", "go", "java"),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
     """Nested loops that match the hash-joinable lookup fingerprint.
 
@@ -1207,6 +1474,12 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="groupby",
+    languages=(),
+    confidence_basis="heuristic",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_manual_groupby(conn: sqlite3.Connection) -> list[dict]:
     """Loops in group/categorize-named functions without defaultdict/groupby.
 
@@ -1223,8 +1496,8 @@ def detect_manual_groupby(conn: sqlite3.Connection) -> list[dict]:
         "  OR s.name LIKE '%partition%' OR s.name LIKE '%Partition%' "
         "  OR s.name LIKE '%categorize%' OR s.name LIKE '%Categorize%' "
         "  OR s.name LIKE '%classify%' OR s.name LIKE '%Classify%' "
-        "  OR s.name LIKE '%bin_by%' OR s.name LIKE '%key_by%' "
-        "  OR s.name LIKE '%index_by%') "
+        "  OR s.name LIKE '%bin\\_by%' ESCAPE '\\' OR s.name LIKE '%key\\_by%' ESCAPE '\\' "
+        "  OR s.name LIKE '%index\\_by%' ESCAPE '\\') "
         "AND s.kind IN ('function', 'method') "
         "AND ms.loop_depth >= 1"
     ).fetchall()
@@ -1248,6 +1521,12 @@ def detect_manual_groupby(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="busy-wait",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
     """Loops that call sleep β€” polling / busy-wait pattern.
 
@@ -1351,6 +1630,12 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+@detector(
+    task_id="regex-in-loop",
+    languages=("python", "javascript", "typescript", "ruby"),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_regex_in_loop(conn: sqlite3.Connection) -> list[dict]:
     """Regex compilation inside a loop β€” recompiles on every iteration.
 
@@ -2189,6 +2474,12 @@ def _io_emit_finding(
     return finding
 
 
+@detector(
+    task_id="io-in-loop",
+    languages=("python", "javascript", "typescript", "php", "ruby", "go", "java", "csharp"),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_HIGH,
+)
 def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
     """Database query, HTTP request, or file I/O inside a loop β€” N+1 pattern.
 
@@ -2303,6 +2594,12 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="list-prepend",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
     """insert(0, x), unshift(), or pop(0) inside a loop β€” O(n) per op
     due to array shifting, O(n^2) total."""
@@ -2368,6 +2665,12 @@ def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="sort-to-select",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_HIGH,
+)
 def detect_sort_to_select(conn: sqlite3.Connection) -> list[dict]:
     """Calling sort on a collection and then only using the first/last element.
 
@@ -2468,6 +2771,12 @@ _RE_FOR_OF = re.compile(
 _RE_AWAIT_IN_BODY = re.compile(r"\bawait\s+[\w$.]+\s*\(")
 
 
+@detector(
+    task_id="serial-await-loop",
+    languages=("javascript", "typescript"),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_serial_await_loop(conn: sqlite3.Connection) -> list[dict]:
     """`for (... of ...) { await x() }` — serial-await N+1 (Promise.all opportunity).
 
@@ -2530,6 +2839,12 @@ def detect_serial_await_loop(conn: sqlite3.Connection) -> list[dict]:
 # blocks the event loop. The async cousin is `asyncio.sleep` (or trio.sleep).
 # This is one of the most common asyncio bugs and dramatically degrades
 # request throughput in async web servers (FastAPI, aiohttp, Sanic).
+@detector(
+    task_id="async-blocking-sleep",
+    languages=("python", "javascript", "typescript"),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_async_blocking_sleep(conn: sqlite3.Connection) -> list[dict]:
     """`time.sleep()` (or other blocking calls) inside an async function.
 
@@ -2627,6 +2942,12 @@ _RE_STORED_TASK = re.compile(
 )
 
 
+@detector(
+    task_id="async-fire-and-forget-task",
+    languages=("python",),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_async_fire_and_forget(conn: sqlite3.Connection) -> list[dict]:
     """``asyncio.create_task(...)`` whose return value is discarded.
 
@@ -2691,6 +3012,12 @@ _RE_NESTED_ASYNCIO_RUN = re.compile(
 )
 
 
+@detector(
+    task_id="async-nested-run",
+    languages=("python",),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_async_nested_run(conn: sqlite3.Connection) -> list[dict]:
     """``asyncio.run()`` invoked inside another async function.
 
@@ -2754,6 +3081,12 @@ _RE_BROAD_EXCEPT = re.compile(
 _RE_RERAISE = re.compile(r"^\s*raise(?:\s|$)", re.MULTILINE)
 
 
+@detector(
+    task_id="broad-except-swallow",
+    languages=("python",),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_broad_except_swallow(conn: sqlite3.Connection) -> list[dict]:
     """Python: `except Exception:` block that silently swallows the error.
 
@@ -2846,6 +3179,12 @@ _RE_REDUCE_SPREAD_OBJ = re.compile(
 )
 
 
+@detector(
+    task_id="spread-accumulator",
+    languages=JS_FAMILY_LANGUAGES,
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_spread_accumulator(conn: sqlite3.Connection) -> list[dict]:
     """JS/TS: `acc = [...acc, x]` or `.reduce((acc, x) => [...acc, x])` is O(n²)."""
     try:
@@ -2913,6 +3252,12 @@ _RE_DEFER_IN_LOOP_BODY = re.compile(
 )
 
 
+@detector(
+    task_id="defer-in-loop",
+    languages=("go",),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_defer_in_loop(conn: sqlite3.Connection) -> list[dict]:
     """Go: `defer` inside a `for`/`range` loop accumulates instead of firing per-iteration."""
     try:
@@ -2974,6 +3319,12 @@ _RE_MAP_FIND = re.compile(
 )
 
 
+@detector(
+    task_id="chained-collection-walk",
+    languages=JS_FAMILY_LANGUAGES,
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
     """JS/TS: `.filter().find()` and friends are 2-pass; one-pass equivalents exist."""
     try:
@@ -3041,6 +3392,12 @@ _RE_USEEFFECT_WITH_DEPS = re.compile(
 )
 
 
+@detector(
+    task_id="useeffect-missing-deps",
+    languages=("javascript", "typescript"),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_useeffect_missing_deps(conn: sqlite3.Connection) -> list[dict]:
     """React: `useEffect(() => {...})` without a dependency array."""
     try:
@@ -3101,6 +3458,12 @@ _RE_EVAL_CALLS = re.compile(
 )
 
 
+@detector(
+    task_id="dangerous-eval",
+    languages=("python", "javascript", "typescript", "php", "ruby"),
+    confidence_basis="static_analysis",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_dangerous_eval(conn: sqlite3.Connection) -> list[dict]:
     """Detect `eval`, `exec`, `new Function(...)`, `setTimeout(string)` — code-injection sinks."""
     try:
@@ -3165,6 +3528,12 @@ _RE_LIFECYCLE = re.compile(
 )
 
 
+@detector(
+    task_id="unremoved-event-listener",
+    languages=JS_FAMILY_LANGUAGES,
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_unremoved_event_listener(conn: sqlite3.Connection) -> list[dict]:
     """JS/TS: `addEventListener` in a lifecycle without paired `removeEventListener`."""
     try:
@@ -3219,6 +3588,12 @@ def detect_unremoved_event_listener(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="loop-lookup",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
     """.index(), .indexOf(), .contains(), .includes() called inside a loop.
 
@@ -3295,6 +3670,12 @@ def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+@detector(
+    task_id="branching-recursion",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     """Functions with 2+ self-call sites and no memoization.
 
@@ -3458,6 +3839,12 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="quadratic-string",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_LOW,
+)
 def detect_quadratic_string(conn: sqlite3.Connection) -> list[dict]:
     """String concatenation via += inside a loop β€” O(n^2) due to
     immutable string reallocation in Python/Java/Go.
@@ -3491,6 +3878,12 @@ def detect_quadratic_string(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+@detector(
+    task_id="loop-invariant-call",
+    languages=(),
+    confidence_basis="structural",
+    query_cost=QUERY_COST_MEDIUM,
+)
 def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
     """Calls inside loops whose arguments don't reference the loop variable.
 
@@ -3699,6 +4092,24 @@ _DETECTOR_METADATA = {
     "branching-recursion": {"precision": "high", "impact": "high", "tags": ["recursion", "dp"]},
     "quadratic-string": {"precision": "high", "impact": "high", "tags": ["string", "quadratic"]},
     "loop-invariant-call": {"precision": "medium", "impact": "medium", "tags": ["hoisting"]},
+    # W913 backfill: 11 rows for previously-silent fallback detectors.
+    # Async / event-loop:
+    "async-blocking-sleep": {"precision": "high", "impact": "high", "tags": ["async", "blocking"]},
+    "async-fire-and-forget-task": {"precision": "high", "impact": "medium", "tags": ["async", "task-management"]},
+    "async-nested-run": {"precision": "high", "impact": "high", "tags": ["async", "deadlock"]},
+    "serial-await-loop": {"precision": "high", "impact": "medium", "tags": ["async", "performance"]},
+    # Error handling:
+    "broad-except-swallow": {"precision": "high", "impact": "high", "tags": ["error-handling", "anti-pattern"]},
+    # Collections / idioms:
+    "chained-collection-walk": {"precision": "medium", "impact": "low", "tags": ["collections", "idiom"]},
+    "spread-accumulator": {"precision": "medium", "impact": "medium", "tags": ["javascript", "quadratic"]},
+    # Language-specific footguns:
+    "defer-in-loop": {"precision": "high", "impact": "medium", "tags": ["go", "memory"]},
+    # Security:
+    "dangerous-eval": {"precision": "high", "impact": "high", "tags": ["security", "code-injection"]},
+    # React / DOM:
+    "unremoved-event-listener": {"precision": "high", "impact": "medium", "tags": ["javascript", "memory-leak"]},
+    "useeffect-missing-deps": {"precision": "high", "impact": "high", "tags": ["react", "hooks", "stale-closure"]},
 }
 
 
@@ -3835,14 +4246,18 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
             if complexity_std > 0:
                 ctx["complexity_zscore"] = (cc - complexity_mean) / complexity_std
 
-    # Caller counts
+    # Caller counts. W512: edge-kind vocabulary lives in
+    # roam.db.edge_kinds — pure call edges only here, callers
+    # of a function in the algorithm-context catalog.
+    _detectors_call_kind_ph = ", ".join("?" for _ in CALL_EDGE_KINDS)
     for chunk in _chunked(symbol_ids):
         ph = ",".join("?" for _ in chunk)
         rows = conn.execute(
             f"SELECT target_id, COUNT(*) AS cnt "
-            f"FROM edges WHERE kind = 'call' AND target_id IN ({ph}) "
+            f"FROM edges WHERE kind IN ({_detectors_call_kind_ph}) "
+            f"AND target_id IN ({ph}) "
             f"GROUP BY target_id",
-            chunk,
+            (*CALL_EDGE_KINDS, *chunk),
         ).fetchall()
         for r in rows:
             sid = r["target_id"]
@@ -3874,7 +4289,23 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
                 context[sid]["runtime_otel_db_system"] = r["db_system"]
                 context[sid]["runtime_otel_db_operation"] = r["db_operation"]
                 context[sid]["runtime_otel_db_statement_type"] = r["db_statement_type"]
-    except Exception:
+    except (sqlite3.Error, KeyError, TypeError):
+        # W679: narrowed from `except Exception` per the W662 allowlist plan
+        # ("re-audit to narrow to (sqlite3.Error, KeyError) once the runtime
+        # schema stabilises"). The handler covers three legitimate-skip
+        # classes for the optional OTel runtime-enrichment merge:
+        #   * sqlite3.Error — `runtime_stats` is an optional table on legacy
+        #     DBs (see surrounding comment "optional table for legacy DB
+        #     compatibility"); OperationalError on a missing table /
+        #     missing OTel column is the expected absence signal.
+        #   * KeyError — Row mapping access (`r["db_system"]` etc.) raises
+        #     KeyError if a query selects fewer columns than expected (e.g.
+        #     a partial-migration DB without the otel_* columns).
+        #   * TypeError — the int(...) / float(...) coercions on
+        #     total_calls / max_err raise TypeError if the column carries a
+        #     non-numeric blob (legacy ingest variants).
+        # Programmer-class errors (NameError / ImportError / AttributeError)
+        # propagate per W531 fail-loud + W653 incident.
         pass
 
     return context
@@ -4216,7 +4647,7 @@ def _iter_registered_detectors():
 
         for det in PYTHON_IDIOM_DETECTORS:
             yield det
-    except Exception:
+    except ImportError:
         pass
 
     try:
@@ -4239,6 +4670,8 @@ def run_detectors(
     return_meta=False,
     framework=None,
     include_tests=False,
+    only=None,
+    exclude=None,
 ):
     """Run all detectors and return combined findings.
 
@@ -4260,6 +4693,15 @@ def run_detectors(
         top of the defaults for the duration of this call. Unknown names
         are tolerated (defaults apply, and ``meta['framework_unknown']``
         flags the miss).
+    only : iterable of str or None
+        A3 — restrict to these decorated-detector names (matches
+        ``_DETECTOR_REGISTRY`` keys). Non-registered detectors are always
+        skipped under ``--only``. Use ``roam math --list-detectors`` to
+        see candidates.
+    exclude : iterable of str or None
+        A3 — drop these decorated-detector names. Non-registered detectors
+        are unaffected. ``only`` wins over ``exclude`` when both name the
+        same detector.
 
     Returns list of finding dicts, or ``(findings, meta)`` when
     ``return_meta=True``.
@@ -4284,6 +4726,8 @@ def run_detectors(
             set_active_framework_profile(None)
         else:
             framework_active = framework.lower()
+    only_set = {n for n in (only or ()) if n}
+    exclude_set = {n for n in (exclude or ()) if n} - only_set
     try:
         findings = []
         failed_detectors = []
@@ -4292,11 +4736,60 @@ def run_detectors(
         for task_id, _way_id, detect_fn in _iter_registered_detectors():
             if task_filter and task_id != task_filter:
                 continue
+            # A3 — --only / --exclude filter on decorator-registered detectors.
+            # Detectors not in the registry are out-of-scope for these flags:
+            # `only` excludes them; `exclude` ignores them.
+            fn_name = getattr(detect_fn, "__name__", "")
+            is_registered = fn_name in _DETECTOR_REGISTRY
+            if only_set:
+                if not is_registered or fn_name not in only_set:
+                    continue
+            elif is_registered and fn_name in exclude_set:
+                continue
             executed += 1
             executed_tasks.append(task_id)
             try:
                 hits = detect_fn(conn)
+            except (NameError, ImportError, AttributeError, TypeError) as err:
+                # W661: programmer-class bug (missing import, wrong attribute,
+                # signature drift) — fail-loud per W531 + CLAUDE.md Pattern-2
+                # discipline. Mirrors W653 in smells.run_all_detectors(). The
+                # W639 smoke test catches these at test time, but the production
+                # loop must also surface the bug class to operators rather than
+                # silently dropping the detector into the `failed_detectors`
+                # bucket where it gets buried in `meta`.
+                raise RuntimeError(
+                    f"algo detector {detect_fn.__name__} "
+                    f"(task_id={task_id}) crashed with programmer error: "
+                    f"{type(err).__name__}: {err}"
+                ) from err
+            except sqlite3.Error as exc:
+                # W661: per-detector DB error (missing table, bad query against
+                # the live schema) is a data-class issue — log + continue so
+                # the remaining detectors still produce findings the operator
+                # can act on. Preserves the existing `failed_detectors` meta
+                # contract for sqlite-class failures.
+                log.warning(
+                    "algo detector %s (task_id=%s) failed with sqlite error: %s",
+                    detect_fn.__name__,
+                    task_id,
+                    exc,
+                )
+                failed_detectors.append(
+                    {
+                        "task_id": task_id,
+                        "detector": detect_fn.__name__,
+                        "error": str(exc),
+                    }
+                )
+                continue
             except Exception as exc:
+                # W661: anything else (OS errors, third-party plugin
+                # bugs we don't want to crash the run on) keeps the
+                # legacy behaviour — record in `failed_detectors`,
+                # continue. Narrower programmer-class + data-class
+                # branches above already handle the bug classes we
+                # know how to triage.
                 failed_detectors.append(
                     {
                         "task_id": task_id,

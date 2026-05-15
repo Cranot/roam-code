@@ -292,17 +292,21 @@ def test_list_filter_by_agent(lease_project):
 # ---------------------------------------------------------------------------
 
 
-def test_lease_id_format_is_stable(lease_project):
+def test_lease_id_format_is_stable(lease_project, monkeypatch):
+    # Freeze the lease module's UTC clock so the date prefix is deterministic
+    # regardless of midnight-UTC race conditions on the host clock.
+    frozen = datetime(2026, 5, 13, 14, 30, 0, tzinfo=timezone.utc)
+    frozen_iso = frozen.isoformat().replace("+00:00", "Z")
+    monkeypatch.setattr("roam.leases.store._utc_now", lambda: frozen)
+    monkeypatch.setattr("roam.leases.store._utc_now_iso", lambda: frozen_iso)
+
     claimed, _ = claim_lease(lease_project, agent="agent-a", subject=["src/foo.py"])
     assert claimed is not None
     # Format: lease_YYYYMMDD_<hex>
     assert re.match(r"^lease_\d{8}_[0-9a-f]{6,}$", claimed.lease_id)
-    # Date part mirrors today (UTC) — flaky on date boundary, so accept ±1d.
-    today = datetime.now(timezone.utc).strftime("%Y%m%d")
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y%m%d")
-    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y%m%d")
+    # Date part is pinned via monkeypatch above — exact match instead of ±1d.
     date_part = claimed.lease_id.split("_")[1]
-    assert date_part in {today, yesterday, tomorrow}
+    assert date_part == "20260513"
 
 
 # ---------------------------------------------------------------------------
@@ -466,3 +470,84 @@ def test_claim_does_not_block_unrelated_commands(lease_project, cli_runner):
     # surface should still work cleanly with an active lease in place.
     r2 = invoke_cli(cli_runner, ["surface"], cwd=lease_project, json_mode=True)
     assert r2.exit_code == 0, f"unrelated command broken by lease presence: {r2.output[:300]}"
+
+
+# ---------------------------------------------------------------------------
+# W448 — read_lease threads warnings_out for malformed lease files
+# ---------------------------------------------------------------------------
+
+
+def test_w448_read_lease_malformed_json_surfaces_in_warnings_out(lease_project):
+    """W448: a malformed lease JSON file surfaces in ``warnings_out``.
+
+    Mirrors W425's ``list_leases(warnings_out=...)`` contract so a caller
+    that asks for one lease by id gets the same shape of feedback as one
+    that iterates the whole directory. The default ``warnings_out=None``
+    preserves the pre-W448 silent-drop behaviour (asserted by the
+    existing ``read_lease`` callers in this suite).
+    """
+    leases_dir = leases_root(lease_project)
+    leases_dir.mkdir(parents=True, exist_ok=True)
+    # File 1: truncated JSON (parse error).
+    (leases_dir / "lease_20260514_bad001.json").write_text(
+        "{not valid json", encoding="utf-8"
+    )
+    # File 2: top-level value is a list, not a dict.
+    (leases_dir / "lease_20260514_bad002.json").write_text(
+        "[1, 2, 3]", encoding="utf-8"
+    )
+    # File 3: dict missing the required ``agent`` field (schema-invalid).
+    (leases_dir / "lease_20260514_bad003.json").write_text(
+        json.dumps({
+            "lease_id": "lease_20260514_bad003",
+            # NOTE: ``agent`` deliberately missing
+            "subject_kind": "files",
+            "subject": ["src/foo.py"],
+            "ttl_seconds": 3600,
+            "acquired_at": "2026-05-14T00:00:00Z",
+            "expires_at": "2030-01-01T00:00:00Z",
+            "state": "active",
+        }),
+        encoding="utf-8",
+    )
+
+    # (a) Default warnings_out=None preserves silent-drop.
+    assert read_lease(lease_project, "lease_20260514_bad001") is None
+    assert read_lease(lease_project, "lease_20260514_bad002") is None
+    assert read_lease(lease_project, "lease_20260514_bad003") is None
+
+    # (b) Threading warnings_out captures the closed-form reason per drop.
+    warnings: list[str] = []
+    assert read_lease(
+        lease_project, "lease_20260514_bad001", warnings_out=warnings
+    ) is None
+    assert read_lease(
+        lease_project, "lease_20260514_bad002", warnings_out=warnings
+    ) is None
+    assert read_lease(
+        lease_project, "lease_20260514_bad003", warnings_out=warnings
+    ) is None
+    assert len(warnings) == 3, (
+        f"expected 3 warnings (one per malformed lease file); got "
+        f"{len(warnings)}: {warnings!r}"
+    )
+    joined = "\n".join(warnings)
+    assert "lease_20260514_bad001.json" in joined, joined
+    assert "lease_20260514_bad002.json" in joined, joined
+    assert "lease_20260514_bad003.json" in joined, joined
+    assert "malformed JSON" in joined, joined
+    assert "not a JSON object" in joined, joined
+    assert "schema validation" in joined, joined
+
+    # (c) Missing-file path is NOT a warning (caller asked for a specific
+    # id that simply isn't on disk).
+    missing_warnings: list[str] = []
+    assert read_lease(
+        lease_project,
+        "lease_20260514_nope",
+        warnings_out=missing_warnings,
+    ) is None
+    assert missing_warnings == [], (
+        f"missing-file path should not emit a warning; got "
+        f"{missing_warnings!r}"
+    )

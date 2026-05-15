@@ -15,7 +15,7 @@ everything you need to get started.
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.10+
 - Git
 
 ### Installation
@@ -25,6 +25,9 @@ git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"      # core + pytest, pytest-xdist, ruff
 pip install -e ".[mcp,dev]"  # also includes fastmcp for MCP server work
+
+# Enable the commit-msg hook (rejects Co-Authored-By trailers + AI attribution)
+git config core.hooksPath .githooks
 ```
 
 ### Running Tests
@@ -49,6 +52,17 @@ pytest tests/test_comprehensive.py::TestHealth -x -v -n 0
 pytest tests/ -n 0
 ```
 
+#### Running tests on Windows
+
+The dev `pytest` isn't always on PATH outside the venv. Use the venv
+binary directly:
+
+```powershell
+.venv\Scripts\pytest.exe tests\test_yourfile.py -x -v -n 0
+```
+
+On macOS / Linux the equivalent is `.venv/bin/pytest tests/...`.
+
 All tests must pass before submitting a PR.
 
 ### Linting
@@ -57,7 +71,7 @@ All tests must pass before submitting a PR.
 ruff check src/ tests/
 ```
 
-The project uses ruff with `target-version = "py39"` and `line-length = 120`.
+The project uses ruff with `target-version = "py310"` and `line-length = 120`.
 Selected rule sets: E, F, W, I, T20 (pyflakes, pycodestyle, isort, print statements).
 
 ### Code Style
@@ -65,7 +79,7 @@ Selected rule sets: E, F, W, I, T20 (pyflakes, pycodestyle, isort, print stateme
 - **Functions and methods:** `snake_case`
 - **Classes:** `PascalCase`
 - **Imports:** Absolute imports for cross-directory references
-- **Future annotations:** Every source file must start with `from __future__ import annotations` (required for Python 3.9 compatibility)
+- **Future annotations:** Every source file must start with `from __future__ import annotations` so type hints stay strings at runtime (cheaper import, safer forward references, avoids PEP 604 union evaluation costs). The project requires Python 3.10+ (`pyproject.toml`); this is a code-quality convention, not a back-compat shim.
 - **Output format:** Plain ASCII only -- no emojis, no colors, no box-drawing characters. This keeps output token-efficient for LLM consumption.
 - **Output abbreviations:** `fn` (function), `cls` (class), `meth` (method) -- via `abbrev_kind()`
 
@@ -82,7 +96,7 @@ Add the following to your project's `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Cranot/roam-code
-    rev: v11.1.2          # pin to a release tag
+    rev: v13.1            # pin to a release tag
     hooks:
       - id: roam-secrets        # secret scanning -- no index required
       - id: roam-syntax-check   # tree-sitter syntax validation -- no index required
@@ -314,8 +328,8 @@ roam-code is organized into these key areas:
 | `src/roam/graph/` | NetworkX graph algorithms (PageRank, SCC, clustering, layers) |
 | `src/roam/bridges/` | Cross-language symbol resolution |
 | `src/roam/output/` | Formatting, JSON envelopes, SARIF output |
-| `src/roam/mcp_server.py` | MCP server with 101 tools |
-| `tests/` | Test suite (186 test files) |
+| `src/roam/mcp_server.py` | MCP server with 224 tools (57 in the default `core` preset) |
+| `tests/` | Test suite (408 test files) |
 
 For full architectural details, see the [Architecture Guide](https://roam-code.com/docs/architecture).
 

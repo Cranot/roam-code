@@ -17,6 +17,8 @@ from conftest import (
     parse_json_output,
 )
 
+from tests._helpers.repo_root import repo_root as _repo_root
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -228,7 +230,7 @@ def test_agents_md_smoke_on_roam_code(cli_runner):
     fixture-only test can pass while the real repo crashes. Asserts
     only structural facts so it survives normal codebase churn.
     """
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = _repo_root()
     # Skip if the index isn't built (e.g. a fresh CI worker that
     # hasn't run `roam index`); we don't want CI to fail on missing
     # index, only on a regression in the generator itself.

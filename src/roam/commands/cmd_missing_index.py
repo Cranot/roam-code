@@ -28,7 +28,10 @@ Confidence levels:
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import re
+import sqlite3
 from collections import defaultdict
 
 import click
@@ -38,10 +41,21 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.confidence import (
     confidence_distribution,
+    confidence_level_rank,
     verdict_with_high_count,
     wrap_findings,
 )
 from roam.output.formatter import json_envelope, loc, to_json
+
+
+# W111 — missing-index is the fourth detector migrating onto the central
+# findings registry (after `clones` (W95), `dead` (W99), and `complexity`
+# (W102)). The shape mirrors those — a stable detector version stamp and
+# a deterministic ``finding_id_str`` so re-runs upsert instead of
+# duplicating rows. Bump this when the confidence tier mapping or the
+# pattern_type set changes meaningfully — those are what the registry
+# row's confidence / claim are derived from.
+MISSING_INDEX_DETECTOR_VERSION: str = "1.0.0"
 
 # ---------------------------------------------------------------------------
 # Regex patterns for PHP migration and query parsing
@@ -1117,8 +1131,8 @@ def _build_findings(
             if f:
                 findings.append(f)
 
-    _order = {"high": 0, "medium": 1, "low": 2}
-    findings.sort(key=lambda f: _order.get(f["confidence"], 9))
+    # W596: canonical confidence-LEVEL rank — negate for high-first sort.
+    findings.sort(key=lambda f: -confidence_level_rank(f["confidence"], fallback=-1))
     return findings
 
 
@@ -1160,6 +1174,186 @@ def _missing_index_classify(finding: dict) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# W111 — emit missing-index findings into the central findings registry.
+#
+# Confidence tier mapping (mirrors the dead-detector W99 pattern of
+# mapping per-kind verdicts onto W90 registry tiers):
+#
+#   detector confidence "high"   → CONFIDENCE_STATIC_ANALYSIS
+#       Paginated query on an unindexed column with an unconditional
+#       equality predicate. The detector cross-references the migration
+#       file's index map against a regex-classified WHERE/whereIn that is
+#       ALWAYS applied — strongest signal it can produce.
+#
+#   detector confidence "medium" → CONFIDENCE_STRUCTURAL
+#       Recognised pattern (orderBy on non-indexed column, or paginated
+#       WHERE without an unconditional predicate). The structural shape
+#       is intact but the indexing claim is less certain.
+#
+#   detector confidence "low"    → CONFIDENCE_HEURISTIC
+#       Column has SOME index but not the optimal composite (orderby_composite
+#       path). Purely a "you could do better" heuristic — no proof of
+#       a missing seek-key.
+#
+# This mapping is deterministic on the detector's pre-computed
+# ``confidence`` field, so the emitter doesn't re-derive — it just
+# translates the vocabulary.
+# ---------------------------------------------------------------------------
+
+
+def _missing_index_confidence_tier(detector_confidence: str) -> str:
+    """Map the detector's high/medium/low to a W90 registry confidence tier."""
+    from roam.db.findings import (
+        CONFIDENCE_HEURISTIC,
+        CONFIDENCE_STATIC_ANALYSIS,
+        CONFIDENCE_STRUCTURAL,
+    )
+
+    conf = (detector_confidence or "medium").lower()
+    if conf == "high":
+        return CONFIDENCE_STATIC_ANALYSIS
+    if conf == "medium":
+        return CONFIDENCE_STRUCTURAL
+    # "low" or unknown → pure heuristic ("col has an index, just not the optimal one").
+    return CONFIDENCE_HEURISTIC
+
+
+def _missing_index_finding_id(
+    table: str | None,
+    columns: tuple[str, ...],
+    pattern_type: str,
+    file_path: str,
+    line_no: int,
+) -> str:
+    """Stable, deterministic finding id for one missing-index finding.
+
+    Re-identification key:
+      (table, sorted-columns, pattern_type, file_path, line_no)
+
+    ``line_no`` is included so the same query-shape appearing on two
+    different lines in the same file is two findings, not one. Columns
+    are sorted so a regex order-jitter doesn't mint a fresh id (the
+    column_ordering rationale is on the evidence_json, not the id).
+
+    Re-running ``roam missing-index --persist`` on the same input
+    upserts the existing row rather than duplicating.
+    """
+    cols_part = ",".join(sorted(columns or ()))
+    raw = f"{table or ''}:{cols_part}:{pattern_type}:{file_path}:{line_no}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"missing-index:query:{digest}"
+
+
+def _parse_query_location(query_location: str) -> tuple[str, int]:
+    """Split a ``file:line`` location string into (path, line_no).
+
+    The ``loc()`` formatter renders ``path:line`` (or ``path`` when there's
+    no line); fall back to (raw, 0) when no colon is found. The line
+    number is used in the finding_id and only needs to be deterministic —
+    we don't require it to be authoritative.
+    """
+    if not query_location:
+        return "", 0
+    # Use rsplit so Windows ``C:\foo:42`` still gives us the trailing line.
+    parts = query_location.rsplit(":", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0], int(parts[1])
+    return query_location, 0
+
+
+def _emit_missing_index_findings(
+    conn,
+    findings_unfiltered: list[dict],
+) -> None:
+    """Mirror each missing-index finding into the central findings registry.
+
+    ``findings_unfiltered`` is the full ``_build_findings`` result BEFORE
+    confidence/table filters are applied — re-running with a narrower
+    --confidence filter must not truncate what lands in the registry,
+    same discipline as W102 complexity persist.
+
+    ``subject_kind`` is ``"file"`` (resolved to a ``files.id`` when the
+    query location maps to an indexed file). The detector emits at
+    query-pattern granularity, so there's no natural ``symbols.id`` to
+    point at — file-level grounding is the strongest subject anchor
+    available without a real PHP AST.
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (without the ``findings`` table) silently no-ops rather than
+    crashing the standard missing-index command.
+    """
+    # Local import to keep the cost out of the readonly path — callers
+    # without --persist never reach here, so the import only runs when
+    # we're actually writing.
+    from roam.db.findings import FindingRecord, emit_finding
+
+    for f in findings_unfiltered:
+        detector_conf = f.get("confidence") or "medium"
+        table = f.get("table")
+        columns = tuple(f.get("columns") or ())
+        pattern_type = f.get("pattern_type") or "unknown"
+        query_location = f.get("query_location") or ""
+        file_path, line_no = _parse_query_location(query_location)
+
+        # Resolve subject_id to a files.id when the path matches an indexed
+        # file. Not every finding has a resolvable file (e.g. when the
+        # path normalisation differs from what the indexer recorded), so
+        # the lookup is best-effort.
+        subject_id: int | None = None
+        if file_path:
+            row = conn.execute(
+                "SELECT id FROM files WHERE path = ?", (file_path,)
+            ).fetchone()
+            if row is not None:
+                subject_id = int(row[0])
+
+        finding_id = _missing_index_finding_id(
+            table, columns, pattern_type, file_path, line_no
+        )
+
+        # Keep the evidence payload small (< 4 KB per the W90 contract).
+        # Drop verbose nested rationale dicts if present — the consumer
+        # can re-derive them by re-running the detector.
+        evidence = {
+            "table": table,
+            "columns": list(columns),
+            "issue": f.get("issue"),
+            "query_location": query_location,
+            "query_kind": f.get("query_kind"),
+            "has_paginate": bool(f.get("has_paginate")),
+            "pattern_type": pattern_type,
+            "suggestion": f.get("suggestion"),
+            "missing_individual": f.get("missing_individual") or [],
+            "detector_confidence": detector_conf,
+        }
+        # Per-column ordering rationale is only present on composite findings;
+        # keep it for composite kinds since it's the actionable "WHY this column
+        # order" payload that the W36.3 wave added.
+        if f.get("column_ordering"):
+            evidence["column_ordering"] = f["column_ordering"]
+
+        cols_part = " + ".join(columns) if columns else "?"
+        claim = (
+            f"Missing index ({pattern_type}) on "
+            f"{(table or '?')}.{cols_part} at {query_location} — "
+            f"{f.get('suggestion') or 'no suggestion'}"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="file",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=_missing_index_confidence_tier(detector_conf),
+                source_detector="missing-index",
+                source_version=MISSING_INDEX_DETECTOR_VERSION,
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -1193,8 +1387,22 @@ def _missing_index_classify(finding: dict) -> tuple[str, str]:
     default=None,
     help="Limit results to a specific table name",
 )
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror missing-index findings into the central findings registry — "
+        "visible via ``roam findings list --detector missing-index``. The "
+        "detector-specific output (text / JSON) is unchanged; the registry "
+        "rows are the denormalised cross-detector surface. Persisted rows "
+        "ignore --limit / --confidence / --table display filters so re-running "
+        "with a narrower view doesn't truncate the registry."
+    ),
+)
 @click.pass_context
-def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
+def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
     """Detect queries that filter or sort on columns without indexes.
 
     Reads migration files to learn which columns are indexed, then scans
@@ -1223,7 +1431,7 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
 
     root = find_project_root()
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         # Fetch all PHP file paths from the index
         all_php = conn.execute("SELECT path FROM files WHERE language = 'php'").fetchall()
         all_php_paths = [r["path"] for r in all_php]
@@ -1249,6 +1457,19 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
 
         # Step 4: Cross-reference
         findings = _build_findings(query_patterns, table_indexes)
+
+        # W111 — mirror findings into the central registry BEFORE applying
+        # display filters. Re-running with --confidence high must not
+        # truncate the persisted set — the registry documents what the
+        # detector actually found, not what the current invocation chose
+        # to render. Matches the W102 complexity --persist discipline.
+        if persist:
+            try:
+                _emit_missing_index_findings(conn, findings)
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
         # Apply filters
         if confidence_filter:

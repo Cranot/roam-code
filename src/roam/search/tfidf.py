@@ -122,8 +122,13 @@ _SUFFIXES = (
 )
 
 
-def tokenize(text: str) -> list[str]:
-    """Split text into tokens: lowercase, split on non-alnum, filter stopwords, stem."""
+def tokenize(text: str | None) -> list[str]:
+    """Split text into tokens: lowercase, split on non-alnum, filter stopwords, stem.
+
+    W1029: ``text`` accepts ``None`` so callers can pass raw SQL row values
+    (e.g. ``row["signature"]``) without the cargo-cult ``or ""`` defensive
+    wrapper. Returns an empty list on ``None``/empty.
+    """
     if not text:
         return []
     # Split on non-alphanumeric first (preserve case for camelCase detection)
@@ -177,12 +182,12 @@ def build_corpus(conn) -> dict[int, dict[str, float]]:
         sid = row["id"]
         # Weight: name 3x, qualified_name 2x, signature 1x, kind 1x
         tokens: list[str] = []
-        name_tokens = tokenize(row["name"] or "")
+        name_tokens = tokenize(row["name"])
         tokens.extend(name_tokens * 3)
-        qn_tokens = tokenize(row["qualified_name"] or "")
+        qn_tokens = tokenize(row["qualified_name"])
         tokens.extend(qn_tokens * 2)
-        tokens.extend(tokenize(row["signature"] or ""))
-        tokens.extend(tokenize(row["kind"] or ""))
+        tokens.extend(tokenize(row["signature"]))
+        tokens.extend(tokenize(row["kind"]))
 
         if not tokens:
             continue

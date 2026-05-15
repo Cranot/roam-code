@@ -5,7 +5,7 @@
 
 > Prepared by **{AUDITOR_NAME}**, {AUDIT_DATE}.
 > Methodology: roam-code v{ROAM_VERSION}. Local SQLite + tree-sitter graph + git history.
-> 100% local analysis. No code or content sent to any LLM unless ROAM_AI_ENABLED=1.
+> Evidence stays on your machine and hash-verifies offline. No code or content sent to any LLM unless ROAM_AI_ENABLED=1.
 
 ---
 

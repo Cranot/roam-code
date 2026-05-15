@@ -30,6 +30,7 @@ from roam.cli import cli
 from roam.output.confidence import (
     CONFIDENCE_LEVELS,
     confidence_distribution,
+    confidence_level_rank,
     triple,
     verdict_with_high_count,
     wrap_findings,
@@ -130,6 +131,78 @@ class TestHelpers:
     def test_confidence_levels_is_closed_enumeration(self):
         # Lock down the public contract.
         assert CONFIDENCE_LEVELS == ("high", "medium", "low")
+
+
+class TestConfidenceLevelRankW634:
+    """W634 — confidence_level_rank() fail-loud vs explicit-fallback contract.
+
+    Pre-W634 the helper silently returned ``-1`` for unknown labels and
+    ``None``. That was Pattern 1 variant D — callers couldn't tell
+    "this is a heuristic" from "I sent garbage and got bucketed". W634
+    flips the default to fail-loud; callers that genuinely want the
+    silent-bucket polarity opt in via ``fallback=-1``.
+    """
+
+    # --- Known labels: unchanged on both branches ---
+
+    def test_known_labels_rank_without_fallback(self):
+        assert confidence_level_rank("high") == 3
+        assert confidence_level_rank("medium") == 2
+        assert confidence_level_rank("low") == 1
+        assert confidence_level_rank("unknown") == 0
+
+    def test_known_labels_rank_with_fallback_ignores_fallback(self):
+        # Fallback is only consulted on UNKNOWN input — known labels
+        # always return their canonical rank.
+        assert confidence_level_rank("high", fallback=-99) == 3
+        assert confidence_level_rank("low", fallback=-99) == 1
+
+    def test_case_insensitive_normalization_still_works(self):
+        assert confidence_level_rank("HIGH") == 3
+        assert confidence_level_rank("  Medium ") == 2
+
+    # --- Unknown labels: fail-loud by default ---
+
+    def test_unknown_label_raises_without_fallback(self):
+        with pytest.raises(ValueError, match="unknown confidence level"):
+            confidence_level_rank("bogus")
+
+    def test_typo_raises_without_fallback(self):
+        # The exact programmer-error case W634 targets — a typo in a
+        # tier name must NOT silently bucket.
+        with pytest.raises(ValueError, match="hihg"):
+            confidence_level_rank("hihg")
+
+    def test_none_raises_without_fallback(self):
+        with pytest.raises(ValueError):
+            confidence_level_rank(None)
+
+    def test_empty_string_raises_without_fallback(self):
+        with pytest.raises(ValueError):
+            confidence_level_rank("")
+
+    # --- Unknown labels: silent bucketing via explicit fallback ---
+
+    def test_unknown_label_returns_fallback_when_provided(self):
+        assert confidence_level_rank("bogus", fallback=-1) == -1
+
+    def test_none_returns_fallback_when_provided(self):
+        assert confidence_level_rank(None, fallback=-1) == -1
+
+    def test_empty_string_returns_fallback_when_provided(self):
+        assert confidence_level_rank("", fallback=-1) == -1
+
+    def test_fallback_can_be_any_int(self):
+        # Fallback polarity is the caller's choice — most pre-W634
+        # sites used -1, but a sort key that wants "unknown at the
+        # bottom of an ascending sort" might pass a very large int.
+        assert confidence_level_rank("bogus", fallback=99) == 99
+        assert confidence_level_rank("bogus", fallback=0) == 0
+
+    def test_fallback_zero_is_distinct_from_none_default(self):
+        # ``fallback=0`` is a real opt-in (returns 0, not raises).
+        # Catches accidental ``if fallback:`` falsy-check bugs.
+        assert confidence_level_rank("bogus", fallback=0) == 0
 
 
 # ---------------------------------------------------------------------------

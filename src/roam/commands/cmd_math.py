@@ -11,6 +11,7 @@ from roam.catalog.fixes import get_fix
 from roam.catalog.tasks import get_task, get_tip
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 
@@ -106,6 +107,36 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     help="Print bundled framework profiles and exit.",
 )
 @click.option(
+    "--list-detectors",
+    "list_detectors",
+    is_flag=True,
+    default=False,
+    help=(
+        "A3 — print decorated detectors with metadata "
+        "(task, languages, confidence-basis, query-cost, version) and exit."
+    ),
+)
+@click.option(
+    "--only",
+    "only_detectors",
+    multiple=True,
+    default=(),
+    help=(
+        "A3 — restrict the scan to these decorated detectors (repeatable). "
+        "Names match `roam math --list-detectors` output."
+    ),
+)
+@click.option(
+    "--exclude",
+    "exclude_detectors",
+    multiple=True,
+    default=(),
+    help=(
+        "A3 — skip these decorated detectors (repeatable). "
+        "Ignored if `--only` is set with the same name."
+    ),
+)
+@click.option(
     "--since",
     "since_baseline",
     type=click.Path(exists=True, dir_okay=False),
@@ -137,6 +168,9 @@ def math_cmd(
     max_per_task,
     framework,
     list_frameworks,
+    list_detectors,
+    only_detectors,
+    exclude_detectors,
     since_baseline,
     include_tests,
 ):
@@ -171,6 +205,40 @@ def math_cmd(
 
         for name in list_framework_profiles():
             click.echo(name)
+        return
+
+    if list_detectors:
+        # A3 — enumerate the decorator-registered detectors. Emit JSON when
+        # --json was set so CI / agents can consume the metadata without
+        # parsing the text columns.
+        from roam.catalog.detectors import list_registered_detectors
+
+        entries = sorted(list_registered_detectors(), key=lambda e: (e["task_id"], e["name"]))
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "algo",
+                        summary={
+                            "verdict": f"{len(entries)} decorated detectors",
+                            "detector_count": len(entries),
+                        },
+                        detectors=entries,
+                    )
+                )
+            )
+            return
+        click.echo(f"VERDICT: {len(entries)} decorated detectors")
+        if not entries:
+            return
+        click.echo()
+        click.echo(f"  {'name':<38s} {'task':<28s} {'confidence':<16s} {'cost':<8s} {'version':<8s} languages")
+        for e in entries:
+            langs = ",".join(e["languages"]) or "any"
+            click.echo(
+                f"  {e['name']:<38s} {e['task_id']:<28s} {e['confidence_basis']:<16s} "
+                f"{e['query_cost']:<8s} {e['version']:<8s} {langs}"
+            )
         return
 
     # validate --task against the catalog; on typo, show
@@ -214,6 +282,8 @@ def math_cmd(
             return_meta=True,
             framework=framework,
             include_tests=include_tests,
+            only=only_detectors,
+            exclude=exclude_detectors,
         )
 
         if detector_meta.get("framework_unknown"):
@@ -280,16 +350,27 @@ def math_cmd(
         # globs, inline `roam: ignore-math[task-id]` annotations.
         from roam.commands.finding_suppress import annotate_with_suppression, filter_suppressed
 
-        findings, suppressed_count = annotate_with_suppression(findings, command="math")
+        # W706 (Pattern 2 — silent fallback): collect malformed-suppression-file
+        # warnings while annotating findings. Empty list on the happy path;
+        # non-empty means `.roamignore-findings` is unreadable / has a bad
+        # shape / has malformed entries — surface via summary.warnings_out +
+        # flip partial_success so the agent sees WHY suppressions are not
+        # firing. Mirrors the cmd_alerts / cmd_pr_risk discipline.
+        _suppression_warnings: list[str] = []
+        findings, suppressed_count = annotate_with_suppression(
+            findings,
+            command="math",
+            warnings_out=_suppression_warnings,
+        )
         # Default: hide suppressed findings from text output, keep in JSON.
         # JSON consumers (CI, dashboards) need them visible to detect over-suppression.
 
         # Sort by impact score first, then confidence.
-        _conf_order = {"high": 0, "medium": 1, "low": 2}
+        # W596: canonical confidence-LEVEL rank — negate for high-first sort.
         findings.sort(
             key=lambda f: (
                 -float(f.get("impact_score", 0.0) or 0.0),
-                _conf_order.get(f["confidence"], 9),
+                -confidence_level_rank(f["confidence"], fallback=-1),
             )
         )
 
@@ -365,47 +446,65 @@ def math_cmd(
 
         # --- JSON output ---
         if json_mode:
+            # W706 (Pattern 2): build summary first so we can fold suppression-
+            # loader warnings into partial_success / warnings_count before
+            # emitting. Empty accumulator = byte-identical pre-W706 envelope.
+            _math_summary: dict = {
+                "verdict": verdict,
+                "total": total,
+                "unsuppressed_total": unsuppressed_total,
+                "suppressed_count": suppressed_count,
+                "by_category": dict((k, len(v)) for k, v in by_category.items()),
+                "by_confidence": dict(by_confidence),
+                "truncated": truncated,
+                "detectors_executed": detector_meta.get("detectors_executed", 0),
+                "detectors_failed": detector_meta.get("detectors_failed", 0),
+                "failed_detectors": detector_meta.get("failed_detectors", []),
+                "detector_metadata": detector_meta.get("detector_metadata", {}),
+                "profile": detector_meta.get("profile", profile),
+                "profile_filtered": detector_meta.get("profile_filtered", 0),
+                # surface T7 auto-detection in JSON summary
+                # so CI / dashboards can record which framework profile was
+                # active without having to re-derive it from the verdict text.
+                "framework": detector_meta.get("framework"),
+                "framework_autodetected": framework_autodetected,
+                "framework_unknown": detector_meta.get("framework_unknown"),
+                "max_per_task": effective_cap,
+                "deferred_by_task_cap": deferred_by_cap,
+                "max_impact_score": max(
+                    [float(f.get("impact_score", 0.0) or 0.0) for f in findings],
+                    default=0.0,
+                ),
+                # top_tasks_by_count helps CI
+                # dashboards / agents prioritise without iterating
+                # every finding. Format: [{task_id, count}, ...].
+                "top_tasks_by_count": [
+                    {"task_id": tid, "count": n}
+                    for tid, n in __import__("collections")
+                    .Counter(f.get("task_id", "?") for f in findings)
+                    .most_common(3)
+                ],
+            }
+            # W706 (Pattern 2): surface suppression-loader silent-fallback
+            # warnings. partial_success flips True iff any warning fired —
+            # mirrors the cmd_alerts / cmd_pr_risk warnings_out discipline.
+            if _suppression_warnings:
+                _math_summary["partial_success"] = True
+                _math_summary["warnings_count"] = len(_suppression_warnings)
+            _envelope_extras: dict = {"findings": findings}
+            if _suppression_warnings:
+                # Carry the actionable warning strings on the envelope so the
+                # agent can see WHY suppressions did not load (malformed YAML,
+                # missing `rules:` key, non-dict entries, etc.). Empty list
+                # on the happy path; non-empty means the user's
+                # `.roamignore-findings` needs attention.
+                _envelope_extras["warnings_out"] = list(_suppression_warnings)
             click.echo(
                 to_json(
                     json_envelope(
                         "algo",
-                        summary={
-                            "verdict": verdict,
-                            "total": total,
-                            "unsuppressed_total": unsuppressed_total,
-                            "suppressed_count": suppressed_count,
-                            "by_category": dict((k, len(v)) for k, v in by_category.items()),
-                            "by_confidence": dict(by_confidence),
-                            "truncated": truncated,
-                            "detectors_executed": detector_meta.get("detectors_executed", 0),
-                            "detectors_failed": detector_meta.get("detectors_failed", 0),
-                            "failed_detectors": detector_meta.get("failed_detectors", []),
-                            "detector_metadata": detector_meta.get("detector_metadata", {}),
-                            "profile": detector_meta.get("profile", profile),
-                            "profile_filtered": detector_meta.get("profile_filtered", 0),
-                            # surface T7 auto-detection in JSON summary
-                            # so CI / dashboards can record which framework profile was
-                            # active without having to re-derive it from the verdict text.
-                            "framework": detector_meta.get("framework"),
-                            "framework_autodetected": framework_autodetected,
-                            "framework_unknown": detector_meta.get("framework_unknown"),
-                            "max_per_task": effective_cap,
-                            "deferred_by_task_cap": deferred_by_cap,
-                            "max_impact_score": max(
-                                [float(f.get("impact_score", 0.0) or 0.0) for f in findings],
-                                default=0.0,
-                            ),
-                            # top_tasks_by_count helps CI
-                            # dashboards / agents prioritise without iterating
-                            # every finding. Format: [{task_id, count}, ...].
-                            "top_tasks_by_count": [
-                                {"task_id": tid, "count": n}
-                                for tid, n in __import__("collections")
-                                .Counter(f.get("task_id", "?") for f in findings)
-                                .most_common(3)
-                            ],
-                        },
-                        findings=findings,
+                        summary=_math_summary,
+                        **_envelope_extras,
                     )
                 )
             )

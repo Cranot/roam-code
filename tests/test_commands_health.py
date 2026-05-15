@@ -75,13 +75,18 @@ class TestHealth:
             assert key in data, f"Missing '{key}' in JSON output: {list(data.keys())}"
 
     def test_health_severity_counts(self, cli_runner, indexed_project, monkeypatch):
-        """roam --json health severity field should have expected levels."""
+        """roam --json health severity field should have expected levels.
+
+        W718: severity bucket keys are canonical lowercase
+        (``critical``/``warning``/``info``) per the W547 roam severity
+        vocabulary. Pre-W718 the keys were UPPER-cased.
+        """
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["health"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "health")
         severity = data["summary"]["severity"]
         assert isinstance(severity, dict)
-        for level in ["CRITICAL", "WARNING", "INFO"]:
+        for level in ["critical", "warning", "info"]:
             assert level in severity, f"Missing '{level}' in severity: {severity}"
 
     def test_health_text_has_sections(self, cli_runner, indexed_project, monkeypatch):

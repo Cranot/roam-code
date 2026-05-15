@@ -44,7 +44,10 @@ def _top_neighbour(conn, sym_id: int, *, direction: str) -> dict | None:
         JOIN symbols s ON {edge_clause}
         JOIN files f ON s.file_id = f.id
         LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id
-        WHERE e.kind IN ('call', 'inherits', 'imports')
+        -- W524-fix: 'imports' is a phantom for the symbol-level `edges` table
+        -- (canonical writer is 'import' singular; 'imports' is the file_edges value).
+        -- Union both forms + plural 'calls' for plugin variants (W79 / W499 pattern).
+        WHERE e.kind IN ('call', 'calls', 'inherits', 'import', 'imports')
         ORDER BY pr DESC
         LIMIT 1
         """,

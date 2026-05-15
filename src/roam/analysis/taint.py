@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Union
 
+from roam.db.edge_kinds import CALL_EDGE_KINDS
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
@@ -392,8 +394,17 @@ def compute_all_summaries(
     *,
     sources: tuple[str, ...] | None = None,
     sinks: tuple[str, ...] | None = None,
+    source_cache=None,
 ) -> dict[int, TaintSummary]:
-    """Compute intra-procedural taint summaries for all functions/methods."""
+    """Compute intra-procedural taint summaries for all functions/methods.
+
+    Args:
+        source_cache: Optional ``{rel_path: (source_bytes, tree)}`` mapping
+            populated upstream during Phase 2 (parse_extract). When the file
+            is present in the cache, the cached bytes are reused instead of
+            re-opening the file from disk (W440). Defaults to ``None``
+            (backwards-compatible).
+    """
     src = sources or _DEFAULT_SOURCES
     snk = sinks or _DEFAULT_SINKS
 
@@ -426,13 +437,23 @@ def compute_all_summaries(
         # Read file (cached)
         all_lines = file_cache.get(rel_path)
         if all_lines is None:
-            full_path = root / rel_path
-            try:
-                text = full_path.read_text(encoding="utf-8", errors="replace")
-            except Exception:
-                all_lines = []
+            # W440: prefer the upstream (source_bytes, tree) cache from
+            # Phase 2 before falling back to a fresh disk read.
+            cached = source_cache.get(rel_path) if source_cache else None
+            if cached is not None:
+                src_bytes = cached[0]
+                try:
+                    all_lines = src_bytes.decode("utf-8", errors="replace").splitlines()
+                except Exception:
+                    all_lines = []
             else:
-                all_lines = text.splitlines()
+                full_path = root / rel_path
+                try:
+                    text = full_path.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    all_lines = []
+                else:
+                    all_lines = text.splitlines()
             file_cache[rel_path] = all_lines
 
         # Body lines (after declaration line)
@@ -466,10 +487,22 @@ def compute_all_summaries(
 
 
 def _build_call_adjacency(conn) -> dict[int, list[int]]:
-    """Build a source_id → list[target_id] adjacency for ``kind='calls'``
-    edges. One round-trip to the DB."""
+    """Build a source_id → list[target_id] adjacency for call edges.
+    One round-trip to the DB.
+
+    W512: edge-kind vocabulary lives in :mod:`roam.db.edge_kinds`. The
+    canonical writer value is the singular ``'call'`` (see
+    ``src/roam/index/relations.py`` and every language extractor under
+    ``src/roam/languages/*_lang.py``); plural ``'calls'`` is included
+    defensively for plugin extractors. Pre-W493 the plural-only filter
+    returned zero rows and silently made the inter-procedural DFS a no-op.
+    """
     call_edges: dict[int, list[int]] = {}
-    rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'calls'").fetchall()
+    kind_ph = ", ".join("?" for _ in CALL_EDGE_KINDS)
+    rows = conn.execute(
+        f"SELECT source_id, target_id FROM edges WHERE kind IN ({kind_ph})",
+        CALL_EDGE_KINDS,
+    ).fetchall()
     for row in rows:
         call_edges.setdefault(row["source_id"], []).append(row["target_id"])
     return call_edges
@@ -713,12 +746,18 @@ def store_taint_data(
 # ---------------------------------------------------------------------------
 
 
-def compute_and_store_taint(conn, root: Path, G=None) -> None:
+def compute_and_store_taint(conn, root: Path, G=None, *, source_cache=None) -> None:
     """Full taint pipeline: intra-summaries, propagation, storage.
 
     Called from the indexer after graph construction.
+
+    Args:
+        source_cache: Optional ``{rel_path: (source_bytes, tree)}`` mapping
+            populated upstream during Phase 2 (parse_extract). Forwarded to
+            ``compute_all_summaries`` to eliminate Phase 5's redundant file
+            I/O (W440). Defaults to ``None`` (backwards-compatible).
     """
-    summaries = compute_all_summaries(conn, root)
+    summaries = compute_all_summaries(conn, root, source_cache=source_cache)
     if not summaries:
         return
 

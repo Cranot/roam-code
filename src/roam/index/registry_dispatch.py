@@ -37,6 +37,7 @@ doesn't succeed.
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 
 
 def _build_symbol_lookups(conn) -> tuple[dict[str, list[int]], dict[tuple[str, str], list[int]]]:
@@ -66,48 +67,143 @@ def _build_symbol_lookups(conn) -> tuple[dict[str, list[int]], dict[tuple[str, s
     return by_qualified, by_module_dotted
 
 
-def _build_file_first_symbol(conn) -> dict[int, int]:
-    """For each file, the id of its first-by-id symbol — used as the
-    synthetic source-of-edge for dispatch records."""
-    out: dict[int, int] = {}
-    for row in conn.execute("SELECT file_id, MIN(id) AS first_id FROM symbols GROUP BY file_id").fetchall():
-        if row["first_id"] is not None:
-            out[row["file_id"]] = row["first_id"]
+def _build_file_symbol_ranges(conn) -> dict[int, list[tuple[int, int, int]]]:
+    """For each file, the (line_start, line_end, symbol_id) triples for
+    module-scope symbols sorted by line_start. Used to look up which
+    symbol's lexical extent covers a given assignment line.
+
+    W749: Replaces the prior ``MIN(id)`` synthetic-source approach which
+    attributed every dispatch edge in a file to whichever symbol happened
+    to be defined first (typically a small top-of-file ``log = ...`` or
+    ``_DEPRECATED_COMMANDS = {...}`` constant). That produced phantom
+    edge counts (e.g. ``_DEPRECATED_COMMANDS`` absorbed 231 dispatch
+    edges from the ``_COMMANDS`` registry 90 lines below). Looking up
+    the symbol whose extent contains the assignment line attributes
+    each dispatch table to the constant that actually holds it.
+    """
+    out: dict[int, list[tuple[int, int, int]]] = {}
+    for row in conn.execute(
+        """
+        SELECT file_id, id, line_start, line_end
+        FROM symbols
+        WHERE line_start IS NOT NULL AND line_end IS NOT NULL
+        """
+    ).fetchall():
+        fid = row["file_id"]
+        ls = row["line_start"] or 0
+        le = row["line_end"] or ls
+        out.setdefault(fid, []).append((ls, le, row["id"]))
+    for fid in out:
+        out[fid].sort(key=lambda t: t[0])
     return out
 
 
+def _symbol_for_assignment(
+    file_id: int,
+    line: int,
+    file_symbol_ranges: dict[int, list[tuple[int, int, int]]],
+) -> int | None:
+    """Return the symbol id of the registry constant/variable that the
+    assignment on ``line`` defines, or None when the assignment doesn't
+    map to a named symbol.
+
+    Resolution rule (W749):
+
+    1. Prefer the symbol whose ``line_start == line`` — the symbol whose
+       definition begins exactly at the assignment. This is the registry
+       constant itself (e.g. ``_COMMANDS = {...}`` at line 125 maps to
+       the symbol ``_COMMANDS`` with ``line_start=125``).
+    2. Fall back to the outermost containing symbol whose extent covers
+       ``line`` — handles assignments inside an enclosing class/function
+       body where the dict literal is a class attribute.
+    3. Return None for assignments at true module scope that map to no
+       indexed symbol — the caller drops the edge rather than
+       mis-attributing to an unrelated first-in-file symbol (the prior
+       ``MIN(id)`` behaviour that landed all 287 dispatch edges on
+       whichever ``log = ...`` or constant happened to be first).
+    """
+    ranges = file_symbol_ranges.get(file_id)
+    if not ranges:
+        return None
+    # Pass 1: exact line_start match (the assignment IS the symbol's
+    # definition site).
+    for ls, _le, sym_id in ranges:
+        if ls == line:
+            return sym_id
+        if ls > line:
+            break
+    # Pass 2: outermost containing symbol (assignment inside an
+    # enclosing class/function — the registry is a class attribute or a
+    # closure-bound table).
+    for ls, le, sym_id in ranges:
+        if ls <= line <= le:
+            return sym_id
+        if ls > line:
+            break
+    return None
+
+
 def _process_assign_node(
-    value,
+    node,
     package_prefix: str,
     file_id: int,
-    source_sym_id: int,
+    file_symbol_ranges: dict[int, list[tuple[int, int, int]]],
     by_module_dotted: dict[tuple[str, str], list[int]],
     by_qualified: dict[str, list[int]],
     conn,
     seen: set[tuple[int, int]],
     edges_to_insert: list[tuple[int, int]],
 ) -> None:
-    """Inspect one assignment value for known dispatch-table shapes and
-    record an edge per resolvable element."""
-    if isinstance(value, ast.Dict):
+    """Inspect one assignment for known dispatch-table shapes and record
+    an edge per resolvable element.
+
+    W749: source symbol is resolved per-assignment via lexical containment
+    (the symbol whose extent covers ``node.lineno``) instead of a single
+    file-wide synthetic source. Assignments at true module scope with no
+    enclosing symbol are skipped rather than mis-attributed.
+    """
+    value = node.value
+    source_sym_id = _symbol_for_assignment(file_id, node.lineno, file_symbol_ranges)
+    if source_sym_id is None:
+        return
+
+    # W866: dispatch by ``type(value)`` against a closed AST-node-set
+    # table instead of an isinstance chain. Each table entry is a tuple
+    # of (members-attribute, per-element-resolver) closure so the two
+    # shapes -- ``Dict`` (iterates ``.values``) and ``List``/``Tuple``
+    # (iterates ``.elts``) -- share one driver loop. Adding a new shape
+    # is a one-line table edit (Open/Closed). Zeros out the W852
+    # type-switch finding while preserving the exact original semantics.
+    def _resolve_dict_value(v: ast.AST) -> int | None:
         # Shape A: ``_NAME = {"key": ("module.path", "fn_name"), ...}``.
-        for v in value.values:
-            target_id = _resolve_string_pair_tuple(v, package_prefix, by_module_dotted, by_qualified)
-            if target_id is not None:
-                _record_edge(target_id, source_sym_id, seen, edges_to_insert)
-    elif isinstance(value, (ast.List, ast.Tuple)):
+        return _resolve_string_pair_tuple(
+            v, package_prefix, by_module_dotted, by_qualified
+        )
+
+    def _resolve_list_or_tuple_value(v: ast.AST) -> int | None:
         # Shape B: ``_NAME = [(..., fn_ref), ...]`` — same-file Name reference.
-        for v in value.elts:
-            target_id = _resolve_function_ref_in_tuple(v, file_id, by_qualified, conn)
-            if target_id is not None:
-                _record_edge(target_id, source_sym_id, seen, edges_to_insert)
+        return _resolve_function_ref_in_tuple(v, file_id, by_qualified, conn)
+
+    shape_table: dict[type, tuple[str, Callable[[ast.AST], int | None]]] = {
+        ast.Dict: ("values", _resolve_dict_value),
+        ast.List: ("elts", _resolve_list_or_tuple_value),
+        ast.Tuple: ("elts", _resolve_list_or_tuple_value),
+    }
+    handler = shape_table.get(type(value))
+    if handler is None:
+        return
+    members_attr, resolver = handler
+    for v in getattr(value, members_attr):
+        target_id = resolver(v)
+        if target_id is not None:
+            _record_edge(target_id, source_sym_id, seen, edges_to_insert)
 
 
 def _scan_file_for_dispatch(
     path: str,
     file_id: int,
     package_prefix: str,
-    file_first_symbol: dict[int, int],
+    file_symbol_ranges: dict[int, list[tuple[int, int, int]]],
     by_module_dotted: dict[tuple[str, str], list[int]],
     by_qualified: dict[str, list[int]],
     conn,
@@ -131,16 +227,15 @@ def _scan_file_for_dispatch(
         tree = ast.parse(source, filename=path)
     except SyntaxError:
         return
-    source_sym_id = file_first_symbol.get(file_id)
-    if source_sym_id is None:
+    if file_id not in file_symbol_ranges:
         return
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             _process_assign_node(
-                node.value,
+                node,
                 package_prefix,
                 file_id,
-                source_sym_id,
+                file_symbol_ranges,
                 by_module_dotted,
                 by_qualified,
                 conn,
@@ -168,7 +263,7 @@ def resolve_registry_dispatch(conn, package_prefix: str = "roam.") -> int:
         return 0
 
     by_qualified, by_module_dotted = _build_symbol_lookups(conn)
-    file_first_symbol = _build_file_first_symbol(conn)
+    file_symbol_ranges = _build_file_symbol_ranges(conn)
 
     edges_to_insert: list[tuple[int, int]] = []
     seen: set[tuple[int, int]] = set()
@@ -177,7 +272,7 @@ def resolve_registry_dispatch(conn, package_prefix: str = "roam.") -> int:
             r["file_path"],
             r["file_id"],
             package_prefix,
-            file_first_symbol,
+            file_symbol_ranges,
             by_module_dotted,
             by_qualified,
             conn,

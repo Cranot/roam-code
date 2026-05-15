@@ -1,7 +1,8 @@
 id: js-api-error-leak
-description: Raw backend error.message returned to the client leaks stack traces, ORM details, and SQL fragments (CWE-209 Information Exposure Through an Error Message). Use a sanitised error wrapper.
+description: Raw backend error.message returned to the client leaks stack traces, ORM details, and SQL fragments (CWE-209 Information Exposure Through an Error Message). Use a sanitised error wrapper. Maps to CWE-209 / OWASP A04:2021 Insecure Design (OWASP 2021 lists CWE-209 verbose error exposure under A04 — a design-time choice to return raw internals).
 severity: warning
 cwe: CWE-209
+owasp_top10: A04:2021_Insecure_Design
 languages:
   - javascript
   - typescript

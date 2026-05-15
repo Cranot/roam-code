@@ -426,8 +426,8 @@ def test_budget_gap_known_subset_of_reads_only() -> None:
     # gap status, just not the "forwards" status.
     forwards_overlap = classified_elsewhere & forwards
     assert not forwards_overlap, (
-        f"These commands are now forwarding budget — promote them out of "
-        f"``_BUDGET_GAP_KNOWN`` and lower ``_REAL_GAP_THRESHOLD``:\n  "
+        "These commands are now forwarding budget — promote them out of "
+        "``_BUDGET_GAP_KNOWN`` and lower ``_REAL_GAP_THRESHOLD``:\n  "
         + "\n  ".join(sorted(forwards_overlap))
     )
 

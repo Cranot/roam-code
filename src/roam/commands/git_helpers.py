@@ -100,6 +100,6 @@ def utc_timestamp() -> str:
 
     Centralised so audit-trail records stay byte-stable across Python
     versions — ``datetime.isoformat()`` formatting of timezone offsets
-    has shifted between 3.9 / 3.10 / 3.11 / 3.12.
+    has shifted between 3.10 / 3.11 / 3.12.
     """
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")

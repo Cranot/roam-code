@@ -1,7 +1,8 @@
 id: js-insecure-jwt-decode
-description: JWT decoded without signature verification (CWE-347). atob(token.split('.')[1]) reads the payload but does NOT validate the signature; use a verifying library (jsonwebtoken.verify, jose.jwtVerify) instead.
+description: JWT decoded without signature verification (CWE-347). atob(token.split('.')[1]) reads the payload but does NOT validate the signature; use a verifying library (jsonwebtoken.verify, jose.jwtVerify) instead. Maps to CWE-347 / OWASP A02:2021 Cryptographic Failures (the OWASP 2021 catalog lists CWE-347 under A02 — missing signature verification is a cryptographic failure).
 severity: error
 cwe: CWE-347
+owasp_top10: A02:2021_Cryptographic_Failures
 languages:
   - javascript
   - typescript

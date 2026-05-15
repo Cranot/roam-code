@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import os
 import re
+import sqlite3
 
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import format_table, json_envelope, loc, to_json
+
+# W116 — auth-gaps is the fourth detector migrating onto the central
+# findings registry (after `clones` in W95, `dead` in W99, and
+# `complexity` in W102). The shape mirrors those — a stable detector
+# version stamp + deterministic ``finding_id_str`` so re-runs upsert
+# instead of duplicating rows. Bump when the route/controller analysis
+# semantics or the kind→confidence-tier mapping changes meaningfully.
+AUTH_GAPS_DETECTOR_VERSION: str = "1.0.0"
 
 # ---------------------------------------------------------------------------
 # Skip patterns — controllers / routes that are intentionally public
@@ -1033,6 +1045,249 @@ def _analyze_service_provider(file_path: str, source: str) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# Findings-registry emit (W116 — fourth detector migrating onto the
+# central A4 findings registry, after clones / dead / complexity).
+# ---------------------------------------------------------------------------
+
+
+def _auth_gap_finding_kind(f: dict) -> str:
+    """Classify an auth-gap into one of three semantic ``kind`` buckets.
+
+    The detector emits two output ``type`` values (``route`` /
+    ``controller``); the kind below carries the additional information
+    the confidence-tier mapping needs:
+
+      - ``direct-unauthenticated-handler``: a route that sits outside
+        every auth middleware group AND has no inline auth middleware.
+        Deterministic from the route file's brace-depth analysis →
+        ``static_analysis`` tier.
+      - ``helper-indirection``: a controller method without a literal
+        ``$this->authorize`` call, where same-class or ancestor-class
+        helper descent was attempted but did NOT clear the gap. The
+        detector ran a graph traversal (class_source_map +
+        ``_collect_ancestor_methods``) to land here → ``structural``.
+      - ``name-based``: weaker signals — route low-confidence findings
+        gated on ``_NON_AUTH_GUARD_RE`` (throttle / signed / verified
+        naming) and controller read methods (action name heuristic) /
+        tenant-scope demotions. Pattern-on-name only → ``heuristic``.
+    """
+    ftype = f.get("type")
+    confidence = f.get("confidence")
+    if ftype == "route":
+        # Routes inside the middleware brace tree are excluded earlier;
+        # findings that survive are by construction "no auth middleware
+        # on this route". The low-confidence variant is the
+        # non_auth_guard_present pattern — a naming-based heuristic.
+        if f.get("non_auth_guard_present"):
+            return "name-based"
+        return "direct-unauthenticated-handler"
+    # type == "controller"
+    if confidence == "high":
+        # CRUD method, no constructor middleware (including ancestor
+        # walk), no route-level protection, no inline / descent-resolved
+        # authorize. Helper descent already ran and returned False.
+        return "helper-indirection"
+    if confidence == "medium":
+        # Route or constructor middleware exists; missing object-level
+        # authorization. Still a graph-walked decision (the ancestor
+        # walker resolved the constructor auth), but the gap itself is
+        # at the object level rather than the handler level.
+        return "helper-indirection"
+    # confidence == "low" — read methods or tenant-scope demotions.
+    return "name-based"
+
+
+def _auth_gap_confidence_tier(kind: str) -> str:
+    """Map an auth-gap ``kind`` to a registry confidence tier.
+
+    See the dataclass-level docstring on ``FindingRecord`` for the four
+    accepted tiers. The mapping below is deliberately conservative —
+    name-based signals stay at the heuristic floor so an agent
+    consuming ``roam findings list`` doesn't over-trust them.
+    """
+    from roam.db.findings import (
+        CONFIDENCE_HEURISTIC,
+        CONFIDENCE_STATIC_ANALYSIS,
+        CONFIDENCE_STRUCTURAL,
+    )
+
+    if kind == "direct-unauthenticated-handler":
+        return CONFIDENCE_STATIC_ANALYSIS
+    if kind == "helper-indirection":
+        return CONFIDENCE_STRUCTURAL
+    # name-based / unknown — pattern-on-name only.
+    return CONFIDENCE_HEURISTIC
+
+
+def _auth_gap_finding_id(file_path: str, kind: str, subject: str, line: int) -> str:
+    """Stable, deterministic finding id for one auth-gap.
+
+    The (kind, file, subject, line) tuple re-identifies the same gap
+    across runs — kind keeps the namespace clean when a single file
+    grows both a route-level and a controller-level finding, and the
+    subject (route path for routes, ``Controller::method`` for
+    controllers) folds in the route verb / method name. Re-running
+    ``roam auth-gaps --persist`` upserts via the SHA-1 prefix.
+    """
+    raw = f"{kind}:{file_path}:{subject}:{line}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"auth-gaps:{kind}:{digest}"
+
+
+def _to_db_relative(file_path: str, project_root) -> str:
+    """Best-effort conversion of an absolute path back to the DB-relative
+    form stored in ``files.path``. Mirrors how ``_resolve_path`` builds
+    the absolute path so the inverse is a simple relpath against the
+    project root. Falls back to ``file_path`` unchanged on failure.
+    """
+    try:
+        rel = os.path.relpath(file_path, str(project_root))
+        # Normalise Windows back-slashes — the indexer stores forward
+        # slashes regardless of platform.
+        return rel.replace(os.sep, "/")
+    except ValueError:
+        return file_path
+
+
+def _resolve_controller_symbol_id(
+    conn: sqlite3.Connection,
+    file_path: str,
+    method_name: str,
+    line: int,
+    project_root,
+) -> int | None:
+    """Look up ``symbols.id`` for a (file, method, line) triple.
+
+    Used by the findings-registry emit path so controller findings can
+    JOIN back to ``symbols``. Returns ``None`` when the symbol can't be
+    resolved (anonymous method, mismatched indexer state, pre-W89
+    schema). Mirrors the resolution strategy in
+    :func:`roam.graph.clone_detect._resolve_symbol_id`.
+    """
+    db_path = _to_db_relative(file_path, project_root)
+    try:
+        row = conn.execute(
+            "SELECT s.id FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE f.path = ? AND s.name = ? AND s.line_start = ? "
+            "LIMIT 1",
+            (db_path, method_name, line),
+        ).fetchone()
+        if row is not None:
+            return int(row[0])
+        # Indexer's reported line_start can drift a few rows past the
+        # `public function X(` declaration our regex anchors on. Fall
+        # back to name-only on the same file, picking the closest line.
+        row = conn.execute(
+            "SELECT s.id FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE f.path = ? AND s.name = ? "
+            "ORDER BY ABS(COALESCE(s.line_start, 0) - ?) "
+            "LIMIT 1",
+            (db_path, method_name, line),
+        ).fetchone()
+        return int(row[0]) if row is not None else None
+    except sqlite3.OperationalError:
+        # Pre-W89 schema or symbols table absent — caller's defensive
+        # try/except will keep the standard auth-gaps output flowing.
+        return None
+
+
+def _emit_auth_gaps_findings(
+    conn: sqlite3.Connection,
+    findings: list[dict],
+    source_version: str,
+    project_root=None,
+) -> None:
+    """Mirror each auth-gap into the central findings registry.
+
+    ``findings`` is the combined ``route_findings + controller_findings``
+    list the detector builds for the JSON envelope (same shape — the
+    dict keys are the contract). The detector-specific text/JSON output
+    is unchanged; the registry rows are the denormalised cross-detector
+    surface that ``roam findings list --detector auth-gaps`` reads.
+
+    Wrapped at the call site in try/except so a pre-W89 DB (no
+    ``findings`` table) silently no-ops rather than crashing the
+    standard read path.
+    """
+    # Local import to keep the cost out of the read-only fast path —
+    # callers without --persist never reach here.
+    from roam.db.findings import FindingRecord, emit_finding
+
+    for f in findings:
+        ftype = f.get("type") or ""
+        file_path = f.get("file") or ""
+        line = int(f.get("line") or 0)
+        kind = _auth_gap_finding_kind(f)
+        tier = _auth_gap_confidence_tier(kind)
+
+        if ftype == "route":
+            verb = f.get("verb") or ""
+            path = f.get("path") or ""
+            subject = f"{verb} {path}".strip()
+            subject_id: int | None = None
+            claim = (
+                f"Auth gap: route {verb} {path} ({file_path}:{line}) — "
+                f"kind={kind}, confidence={f.get('confidence')}"
+            )
+            evidence = {
+                "type": "route",
+                "kind": kind,
+                "verb": verb,
+                "path": path,
+                "file": file_path,
+                "line": line,
+                "confidence": f.get("confidence"),
+                "fix": f.get("fix"),
+                "non_auth_guard_present": bool(f.get("non_auth_guard_present", False)),
+            }
+        else:
+            # type == "controller"
+            controller = f.get("controller") or ""
+            method = f.get("method") or ""
+            subject = f"{controller}::{method}"
+            if project_root is not None and method and file_path:
+                subject_id = _resolve_controller_symbol_id(
+                    conn, file_path, method, line, project_root
+                )
+            else:
+                subject_id = None
+            claim = (
+                f"Auth gap: controller {controller}::{method} "
+                f"({file_path}:{line}) — kind={kind}, "
+                f"confidence={f.get('confidence')}"
+            )
+            evidence = {
+                "type": "controller",
+                "kind": kind,
+                "controller": controller,
+                "method": method,
+                "file": file_path,
+                "line": line,
+                "confidence": f.get("confidence"),
+                "reason": f.get("reason"),
+                "fix": f.get("fix"),
+                "matched_patterns": list(f.get("matched_patterns") or []),
+            }
+
+        finding_id_str = _auth_gap_finding_id(file_path, kind, subject, line)
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id_str,
+                subject_kind="symbol" if subject_id is not None else "endpoint",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=tier,
+                source_detector="auth-gaps",
+                source_version=source_version,
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
@@ -1073,8 +1328,20 @@ def _analyze_service_provider(file_path: str, source: str) -> set[str]:
     show_default=True,
     help="Minimum confidence level to report",
 )
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror each auth-gap into the central findings registry "
+        "(``roam findings list --detector auth-gaps``). Detector-specific "
+        "output is unchanged; the registry rows are the denormalised "
+        "cross-detector surface."
+    ),
+)
 @click.pass_context
-def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
+def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, persist):
     """Find endpoints missing authentication or authorization checks.
 
     Analyses PHP controller files and route definitions to detect:
@@ -1097,13 +1364,17 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
-    _CONF_ORDER = {"high": 0, "medium": 1, "low": 2}
-    min_conf_rank = _CONF_ORDER[min_confidence.lower()]
+    # W596: canonical confidence-LEVEL rank — higher = more confident.
+    # Local polarity is inverted (lower = better) to keep the
+    # ``<= min_conf_rank`` filter shape; ``min_confidence="medium"`` keeps
+    # high+medium, drops low — same semantic as the pre-W596 ``{"high": 0,
+    # "medium": 1, "low": 2}`` table.
+    min_conf_rank = -confidence_level_rank(min_confidence)
 
     project_root = find_project_root()
     all_findings: list[dict] = []
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         # --- Route file analysis ---
         # Also collects controller names inside auth-protected groups so we
         # can suppress false-positive controller findings later.
@@ -1152,13 +1423,41 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
                 )
                 all_findings.extend(findings)
 
-    # Apply confidence filter
-    all_findings = [f for f in all_findings if _CONF_ORDER.get(f["confidence"], 99) <= min_conf_rank]
+        # --- W116: mirror auth-gaps into the central findings registry.
+        # Runs ONLY with --persist. The persisted set is the unfiltered
+        # union of route + controller findings — the registry mirrors
+        # the full detector output regardless of the --min-confidence
+        # display filter, so consumers reading
+        # ``roam findings list --detector auth-gaps`` see every gap
+        # the detector actually found.
+        if persist:
+            try:
+                _emit_auth_gaps_findings(
+                    conn,
+                    all_findings,
+                    source_version=AUTH_GAPS_DETECTOR_VERSION,
+                    project_root=project_root,
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade
+                # gracefully so the standard auth-gaps output still ships.
+                pass
+
+    # Apply confidence filter. Unknown labels sort below ``low`` (rank
+    # -1 -> negated 1) — they're dropped at any min_confidence except
+    # the explicit "low" case, where they're also dropped because their
+    # negated rank (1) is greater than low's negated rank (-1). Same
+    # behaviour as the pre-W596 ``.get(..., 99)`` fallback.
+    all_findings = [
+        f for f in all_findings
+        if -confidence_level_rank(f["confidence"], fallback=-1) <= min_conf_rank
+    ]
 
     # Sort: high first, then medium, then low; within tier by file
     all_findings.sort(
         key=lambda f: (
-            _CONF_ORDER.get(f["confidence"], 99),
+            -confidence_level_rank(f["confidence"], fallback=-1),
             f["file"],
             f.get("line", 0),
         )

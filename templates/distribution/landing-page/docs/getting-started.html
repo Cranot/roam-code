@@ -87,7 +87,7 @@
           <h3>Step 1: Install</h3>
 <pre><code>pip install roam-code
 pip install "roam-code[mcp]"  # optional MCP support</code></pre>
-          <p>Requires Python 3.9+. Also works with <code>pipx install roam-code</code> and <code>uv tool install roam-code</code>.</p>
+          <p>Requires Python 3.10+. Also works with <code>pipx install roam-code</code> and <code>uv tool install roam-code</code>.</p>
         </article>
 
         <article class="step">
@@ -178,6 +178,9 @@ roam health --gate</code></pre>
 <pre><code>roam mcp-setup claude-code
 roam mcp --list-tools
 ROAM_MCP_PRESET=core roam mcp</code></pre>
+      <p>
+        Once the MCP server is wired up, see <a href="/docs/mcp-usage">Using Roam via MCP</a> for the cold-start envelope, the canonical agent flow, and the slow-tool patterns.
+      </p>
     </section>
 
     <section>
@@ -215,6 +218,11 @@ roam --json test-gaps --changed</code></pre>
             <td>Verifies server + current preset/tool exposure</td>
           </tr>
           <tr>
+            <td>Tool hangs from MCP client</td>
+            <td><code>roam init</code></td>
+            <td>See <a href="/docs/mcp-usage#the-cold-start-envelope">Using Roam via MCP</a> — likely missing initial index; run <code>roam init</code> first</td>
+          </tr>
+          <tr>
             <td>Rule results too noisy</td>
             <td><code>roam check-rules --profile ai-code-review</code></td>
             <td>Applies tuned thresholds and severities</td>
@@ -239,7 +247,7 @@ roam --json test-gaps --changed</code></pre>
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local structural intelligence layer for coding agents.</span>
+        <span>The local codebase intelligence layer for developers and AI agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

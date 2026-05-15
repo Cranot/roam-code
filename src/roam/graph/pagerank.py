@@ -115,7 +115,7 @@ def personalized_pagerank(
         # normalised so the result still satisfies the "scores sum to 1"
         # contract that callers (and tests) rely on. Without the
         # normalisation the raw values summed to ~7 on networkx 3.2.1
-        # (Python 3.9 install path).
+        # (minimal-install path with no scipy).
         raw = {n: G.degree(n) + (5.0 if n in normalised else 0.0) for n in G}
         total = sum(raw.values()) or 1.0
         return {n: v / total for n, v in raw.items()}

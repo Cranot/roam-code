@@ -18,6 +18,7 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+from tests._helpers.repo_root import repo_root
 from roam.security.taint_engine import (
     OPENVEX_JUSTIFICATIONS,
     OPENVEX_STATUSES,
@@ -148,7 +149,7 @@ class TestYamlSubsetParser:
 
 class TestLoadRules:
     def test_load_default_pack(self):
-        pack_dir = Path(__file__).resolve().parents[1] / "src" / "roam" / "security" / "taint_rules"
+        pack_dir = repo_root() / "src" / "roam" / "security" / "taint_rules"
         rules = load_rules(pack_dir)
         # 5 starter rules ship in v12.0 — bump this floor when more land.
         assert len(rules) >= 5
@@ -243,6 +244,345 @@ class TestRunTaint:
         # Conservative: we only want findings when sources actually appear.
         # Either zero or a path that *doesn't* synthesise a fake link.
         assert findings == [] or all(f.rule_id == "unrelated" for f in findings)
+
+    def test_qualified_only_false_matches_bare_user_wrapper(self, tmp_path):
+        """W454: with qualified_only=false (default), a bare-name sink
+        matches a user-defined wrapper of the same name. This is the
+        FP-producing behavior the flag exists to suppress."""
+        from roam.db.connection import open_db
+
+        proj = _make_project(
+            tmp_path,
+            {
+                # A user-defined wrapper named `executeQuery` — NOT
+                # java.sql.Statement.executeQuery. With permissive
+                # matching, this gets flagged.
+                "Vuln.py": """
+                    def get_input():
+                        return 'tainted'
+
+                    def executeQuery(q):
+                        # User-defined wrapper, NOT java.sql.Statement.
+                        return q
+
+                    def handler():
+                        q = get_input()
+                        executeQuery(q)
+                """,
+            },
+        )
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            assert CliRunner().invoke(cli, ["index"]).exit_code == 0
+            rule = TaintRule(
+                rule_id="bare-name-fp",
+                description="bare-name sink that hits user-defined wrapper",
+                languages=("python",),
+                sources=("get_input",),
+                sinks=("executeQuery",),
+                qualified_only=False,
+            )
+            with open_db(readonly=True) as conn:
+                findings = run_taint(conn, [rule])
+            # Default permissive matcher flags the user wrapper.
+            assert any(f.rule_id == "bare-name-fp" for f in findings), (
+                "Default qualified_only=False must still match bare names "
+                "(backwards-compat with pre-W454 behaviour)."
+            )
+        finally:
+            os.chdir(old_cwd)
+
+    def test_qualified_only_true_skips_bare_name_user_wrapper(self, tmp_path):
+        """W454: with qualified_only=true, the bare-name branch is
+        suppressed. A user-defined function whose ONLY identity is a
+        bare name (no dotted qualifier that matches the rule) no longer
+        hits the sink. Locks in the FP reduction promised by the flag.
+        """
+        from roam.db.connection import open_db
+
+        proj = _make_project(
+            tmp_path,
+            {
+                "Vuln.py": """
+                    def get_input():
+                        return 'tainted'
+
+                    def execute_user_only(q):
+                        # No matching qualified suffix — bare-name only.
+                        return q
+
+                    def handler():
+                        q = get_input()
+                        execute_user_only(q)
+                """,
+            },
+        )
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            assert CliRunner().invoke(cli, ["index"]).exit_code == 0
+            rule_strict = TaintRule(
+                rule_id="qual-only-strict",
+                description="qualified_only=true suppresses bare-name match",
+                languages=("python",),
+                sources=("get_input",),
+                # Sink name that ONLY exists as a bare top-level def —
+                # no class/module-qualified `Something.execute_user_only`
+                # would exist in any third-party API surface.
+                sinks=("execute_user_only",),
+                qualified_only=True,
+            )
+            with open_db(readonly=True) as conn:
+                strict_findings = [
+                    f for f in run_taint(conn, [rule_strict])
+                    if f.rule_id == "qual-only-strict"
+                ]
+
+            rule_permissive = TaintRule(
+                rule_id="qual-only-permissive",
+                description="qualified_only=false lets bare-name match through",
+                languages=("python",),
+                sources=("get_input",),
+                sinks=("execute_user_only",),
+                qualified_only=False,
+            )
+            with open_db(readonly=True) as conn:
+                permissive_findings = [
+                    f for f in run_taint(conn, [rule_permissive])
+                    if f.rule_id == "qual-only-permissive"
+                ]
+
+            # The locking assertion: with qualified_only=true the user
+            # wrapper is NOT flagged; with false it IS. If they're
+            # equal, the flag isn't doing its job.
+            assert len(strict_findings) < len(permissive_findings) or (
+                strict_findings == [] and permissive_findings == []
+            ), (
+                f"qualified_only=true should suppress at least one FP "
+                f"the permissive matcher flags. "
+                f"strict={len(strict_findings)} "
+                f"permissive={len(permissive_findings)}"
+            )
+            # The strict variant must NOT flag the user-defined wrapper.
+            assert strict_findings == [], (
+                f"qualified_only=true must NOT flag bare-name user "
+                f"wrappers — saw {strict_findings}"
+            )
+        finally:
+            os.chdir(old_cwd)
+
+    def test_qualified_only_loads_from_yaml(self, tmp_path):
+        """W454: ``qualified_only: true`` on a YAML rule round-trips
+        through ``load_rules`` as the bool ``True``. Coercion accepts
+        the usual truthy spellings."""
+        # NB(W479): index-prefix the subdir name because Windows NTFS is
+        # case-insensitive — bare ``tmp_path/"true"`` and ``tmp_path/"True"``
+        # otherwise collide on ``mkdir``. Sink uses a dotted name so the
+        # W479 ``qualified_only`` lint doesn't fire here (this test is
+        # only about coercion, not bare-entry hygiene).
+        for idx, spelling in enumerate(("true", "True", "yes", "on", "1")):
+            yaml_dir = tmp_path / f"s{idx}_{spelling}"
+            yaml_dir.mkdir()
+            (yaml_dir / "rule.yaml").write_text(
+                f"id: q\nqualified_only: {spelling}\nsinks:\n  - a.x\n",
+                encoding="utf-8",
+            )
+            rules = load_rules(yaml_dir)
+            assert len(rules) == 1
+            assert rules[0].qualified_only is True, (
+                f"qualified_only spelling {spelling!r} should coerce to True"
+            )
+
+        # Default (missing key) stays False — backwards-compat.
+        default_dir = tmp_path / "default"
+        default_dir.mkdir()
+        (default_dir / "rule.yaml").write_text(
+            "id: q\nsinks:\n  - x\n", encoding="utf-8"
+        )
+        rules = load_rules(default_dir)
+        assert rules[0].qualified_only is False
+
+    def test_w467_qualified_only_skips_user_dao_wrapper(self, tmp_path):
+        """W467: qualified_only=true MUST suppress the FP where a
+        user class ``MyDao.executeQuery`` matches a bare-name sink
+        ``executeQuery`` via the ``%.executeQuery`` LIKE-suffix.
+        The pre-W467 implementation matched both via
+        ``s.qualified_name = ?`` (top-level def) AND
+        ``s.qualified_name LIKE '%.executeQuery'`` (DAO wrapper),
+        defeating the flag's purpose.
+        """
+        from roam.db.connection import open_db
+
+        proj = _make_project(
+            tmp_path,
+            {
+                # User DAO class with .executeQuery — the exact FP shape.
+                "Vuln.py": """
+                    class MyDao:
+                        def executeQuery(self, sql):
+                            return sql
+
+                    def get_input():
+                        return 'tainted'
+
+                    def handler():
+                        sql = get_input()
+                        dao = MyDao()
+                        dao.executeQuery(sql)
+                """,
+            },
+        )
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            assert CliRunner().invoke(cli, ["index"]).exit_code == 0
+            rule = TaintRule(
+                rule_id="w467-bare-sink-strict",
+                description="bare 'executeQuery' under qualified_only=true",
+                languages=("python",),
+                sources=("get_input",),
+                sinks=("executeQuery",),
+                qualified_only=True,
+            )
+            with open_db(readonly=True) as conn:
+                findings = [
+                    f for f in run_taint(conn, [rule])
+                    if f.rule_id == "w467-bare-sink-strict"
+                ]
+            assert findings == [], (
+                f"W467 regression: qualified_only=true with a bare-name sink "
+                f"must NO-OP, not match user DAO .executeQuery via "
+                f"'%.executeQuery' suffix. Got: {findings}"
+            )
+        finally:
+            os.chdir(old_cwd)
+
+    def test_w467_qualified_only_still_matches_dotted_sink(self, tmp_path):
+        """W467: the tightened matcher must keep matching dotted sinks
+        via both exact qualified_name AND %.<dotted> suffix. This is
+        the path real java.sql.Statement.executeQuery uses through
+        the import-qualified resolver.
+        """
+        from roam.db.connection import open_db
+
+        proj = _make_project(
+            tmp_path,
+            {
+                # Two methods with the same bare name; only one is in
+                # the right qualified class. The dotted sink must
+                # match Statement.executeQuery (via %.suffix) but
+                # NOT MyDao.executeQuery.
+                "Vuln.py": """
+                    class Statement:
+                        def executeQuery(self, sql):
+                            return sql
+
+                    class MyDao:
+                        def executeQuery(self, sql):
+                            return sql
+
+                    def get_input():
+                        return 'tainted'
+
+                    def via_jdbc():
+                        sql = get_input()
+                        s = Statement()
+                        s.executeQuery(sql)
+
+                    def via_user_dao():
+                        sql = get_input()
+                        d = MyDao()
+                        d.executeQuery(sql)
+                """,
+            },
+        )
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            assert CliRunner().invoke(cli, ["index"]).exit_code == 0
+            rule = TaintRule(
+                rule_id="w467-dotted",
+                description="dotted Statement.executeQuery under qualified_only",
+                languages=("python",),
+                sources=("get_input",),
+                sinks=("Statement.executeQuery",),
+                qualified_only=True,
+            )
+            with open_db(readonly=True) as conn:
+                findings = [
+                    f for f in run_taint(conn, [rule])
+                    if f.rule_id == "w467-dotted"
+                ]
+            # The dotted sink must resolve to Statement.executeQuery —
+            # the assertion is that ONLY the Statement-qualified hit
+            # fires (not MyDao). MyDao.executeQuery has qualified
+            # 'MyDao.executeQuery' which does NOT end in
+            # '.Statement.executeQuery'.
+            for f in findings:
+                qn = f.sink_symbol.get("qualified_name", "")
+                assert "Statement.executeQuery" in qn, (
+                    f"W467 regression: dotted sink leaked onto a "
+                    f"non-matching qualified symbol: {f.sink_symbol}"
+                )
+                assert "MyDao" not in qn, (
+                    f"W467 regression: dotted Statement.executeQuery "
+                    f"matched MyDao.executeQuery: {f.sink_symbol}"
+                )
+        finally:
+            os.chdir(old_cwd)
+
+    def test_w467_permissive_still_flags_both(self, tmp_path):
+        """W467 sanity: with qualified_only=false (default), the
+        permissive matcher MUST still match a bare-name top-level
+        user wrapper — that's the pre-W454 behaviour the flag opts
+        out of. Mirrors ``test_qualified_only_false_matches_bare_user_wrapper``
+        but framed as a regression guard inside the W467 cluster.
+        """
+        from roam.db.connection import open_db
+
+        proj = _make_project(
+            tmp_path,
+            {
+                "Vuln.py": """
+                    def get_input():
+                        return 'tainted'
+
+                    def executeQuery(q):
+                        # Top-level user wrapper of the same name.
+                        return q
+
+                    def handler():
+                        q = get_input()
+                        executeQuery(q)
+                """,
+            },
+        )
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            assert CliRunner().invoke(cli, ["index"]).exit_code == 0
+            rule = TaintRule(
+                rule_id="w467-permissive",
+                description="bare 'executeQuery' permissive",
+                languages=("python",),
+                sources=("get_input",),
+                sinks=("executeQuery",),
+                qualified_only=False,
+            )
+            with open_db(readonly=True) as conn:
+                findings = [
+                    f for f in run_taint(conn, [rule])
+                    if f.rule_id == "w467-permissive"
+                ]
+            # Permissive: the user wrapper hit SHOULD still fire.
+            assert len(findings) >= 1, (
+                f"W467 permissive regression: qualified_only=false "
+                f"should still flag a top-level bare-name user wrapper. "
+                f"Got 0 findings."
+            )
+        finally:
+            os.chdir(old_cwd)
 
     def test_source_as_sanitizer_does_not_false_clean(self, taint_project):
         """Regression: when a rule lists the same name as both source and
@@ -340,6 +680,7 @@ class TestTaintCLI:
             "sqli",
             "xss",
             "ssrf",
+            "ssti",
             "path-traversal",
             "command-injection",
             "deserialization",
@@ -370,6 +711,7 @@ class TestTaintCLI:
             "sqli",
             "xss",
             "ssrf",
+            "ssti",
             "path-traversal",
             "command-injection",
             "deserialization",

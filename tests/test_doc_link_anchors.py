@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from tests._helpers.repo_root import repo_root
+
+PROJECT_ROOT = repo_root()
 TROUBLESHOOTING_HTML = (
     PROJECT_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "troubleshooting.html"
 )

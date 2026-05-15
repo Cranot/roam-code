@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import os
+import re
 import sqlite3
 import subprocess
 from collections import defaultdict
@@ -12,6 +14,102 @@ from itertools import combinations
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Shallow-history default (W405)
+# ---------------------------------------------------------------------------
+#
+# On FIRST index, roam pulls full git history (up to ``max_commits=5000``).
+# For most agent-use cases — last-30-days churn, recent blame, co-change
+# weighting — a ~365-day window carries the signal at a fraction of the
+# wallclock cost. ``parse_git_log`` now accepts an optional ``since=``
+# parameter; ``collect_git_stats`` resolves the default window from
+# ``ROAM_GIT_SINCE`` + the "is this the first index?" check before
+# delegating.
+#
+# Opt-out paths (in order of precedence; first non-empty wins):
+#   1. Explicit ``since=`` arg to ``parse_git_log`` — wins over env.
+#   2. ``ROAM_GIT_SINCE`` env var:
+#        - ``"0"`` / ``"off"`` / ``"none"`` / ``"full"`` / empty   → full history
+#        - ``"365d"`` / ``"12m"`` / ``"2y"`` / ``"2025-01-01"``     → that window
+#   3. First-index default → ``"365d"`` (12-month shallow).
+#   4. Warm index (manifest exists with prior git_head) → full history
+#      already cached; the heavy pass is already skipped by the B5
+#      ``_head_unchanged_since_last_run`` check above, so this rule is
+#      only reached when HEAD moved.  In that case we still want the
+#      since-window default so a long-lived index doesn't keep paying
+#      the full-history tax on every HEAD bump.
+#
+# Migration safety: ``store_commits`` uses ``INSERT OR IGNORE``, so
+# existing commits in the DB are preserved across re-runs with a tighter
+# window. Switching the default tomorrow can only ADD commits (when
+# users opt back in to full history); it never deletes recorded history.
+
+_DEFAULT_SINCE = "365d"
+
+# Sentinels that mean "do not pass --since": user wants the full history.
+_FULL_HISTORY_SENTINELS = frozenset({"", "0", "off", "none", "false", "no", "full"})
+
+# Tokens we accept in ``ROAM_GIT_SINCE``. Anything that doesn't match
+# this regex is forwarded verbatim to git (which accepts ISO dates,
+# relative phrases like ``"2 weeks ago"``, etc.).
+_SHORTHAND_RE = re.compile(r"^(\d+)([dwmy])$", re.IGNORECASE)
+
+
+def _normalize_since(raw: str | None) -> str | None:
+    """Normalize a shorthand window into something ``git log --since=`` accepts.
+
+    Returns ``None`` when *raw* is a full-history sentinel (caller should
+    skip the ``--since`` flag entirely).  Otherwise returns the git-ready
+    argument value.
+    """
+    if raw is None:
+        return None
+    token = raw.strip().lower()
+    if token in _FULL_HISTORY_SENTINELS:
+        return None
+    m = _SHORTHAND_RE.match(token)
+    if not m:
+        # Forward verbatim — git accepts ISO dates + relative English.
+        return raw.strip()
+    n, unit = m.group(1), m.group(2).lower()
+    unit_word = {"d": "days", "w": "weeks", "m": "months", "y": "years"}[unit]
+    return f"{n} {unit_word} ago"
+
+
+def _first_index(conn: sqlite3.Connection) -> bool:
+    """Return True when the ``git_commits`` table is empty.
+
+    Used to decide whether the shallow-history default applies.
+    Existing indexes that already captured deeper history keep that
+    history on subsequent runs (we never delete commits — see migration
+    safety note above), so the shallow default only fires when there's
+    nothing to preserve.
+    """
+    try:
+        row = conn.execute("SELECT 1 FROM git_commits LIMIT 1").fetchone()
+    except sqlite3.Error:
+        # Table missing or other read error — treat as first run.
+        return True
+    return row is None
+
+
+def _resolve_default_since(conn: sqlite3.Connection) -> str | None:
+    """Resolve the effective ``--since`` window from env + state.
+
+    Returns ``None`` when the caller should fetch full history.
+    """
+    raw = os.environ.get("ROAM_GIT_SINCE")
+    if raw is not None:
+        # Explicit env-var wins, even when empty (= full history).
+        return _normalize_since(raw)
+    if _first_index(conn):
+        return _normalize_since(_DEFAULT_SINCE)
+    # Warm index with HEAD that moved: keep paying the shallow tax
+    # rather than re-fetching all 5000 commits.  Users who want the
+    # full backfill set ``ROAM_GIT_SINCE=0`` once.
+    return _normalize_since(_DEFAULT_SINCE)
+
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -27,6 +125,11 @@ def collect_git_stats(conn: sqlite3.Connection, project_root: Path):
     / complexity tables are already current — re-running parse_git_log
     + the four downstream passes is wasted work. Saves 1-10s per warm
     ``roam index`` run on big-history repos.
+
+    Shallow-history default (W405): on the first index we restrict
+    ``git log`` to a ~365-day window unless ``ROAM_GIT_SINCE`` says
+    otherwise. Existing commits in the DB are preserved across runs
+    (``INSERT OR IGNORE``), so this is a purely additive optimisation.
     """
     project_root = Path(project_root).resolve()
 
@@ -38,12 +141,16 @@ def collect_git_stats(conn: sqlite3.Connection, project_root: Path):
         log.info("git HEAD unchanged since last index — skipping git stats pass")
         return
 
-    commits = parse_git_log(project_root)
+    since = _resolve_default_since(conn)
+    commits = parse_git_log(project_root, since=since)
     if not commits:
         log.info("No git commits found")
         return
 
-    log.info("Parsed %d commits from git log", len(commits))
+    if since:
+        log.info("Parsed %d commits from git log (since=%s)", len(commits), since)
+    else:
+        log.info("Parsed %d commits from git log (full history)", len(commits))
 
     store_commits(conn, commits)
     compute_cochange(conn)
@@ -106,7 +213,11 @@ def _head_unchanged_since_last_run(conn: sqlite3.Connection, project_root: Path)
 _COMMIT_SEP = "COMMIT:"
 
 
-def parse_git_log(project_root: Path, max_commits: int = 5000) -> list[dict]:
+def parse_git_log(
+    project_root: Path,
+    max_commits: int = 5000,
+    since: str | None = None,
+) -> list[dict]:
     """Parse ``git log --numstat`` into a list of commit dicts.
 
     Each dict contains::
@@ -118,17 +229,31 @@ def parse_git_log(project_root: Path, max_commits: int = 5000) -> list[dict]:
             "message": str,
             "files": [{"path": str, "lines_added": int, "lines_removed": int}, ...]
         }
+
+    Args:
+        project_root: Repo root to run ``git log`` in.
+        max_commits: Hard cap on commit count (default 5000).
+        since: Optional ``--since=`` window (e.g. ``"365 days ago"``,
+            ``"2025-01-01"``).  When ``None`` (or empty after stripping)
+            the full history up to ``max_commits`` is fetched.  Callers
+            inside the indexer pass the result of ``_resolve_default_since``;
+            other callers (tests, dev scripts) can pass ``None`` for the
+            legacy full-history behaviour or any git-compatible date
+            phrase to opt in to a shallow fetch.
     """
+    git_cmd = [
+        "git",
+        "log",
+        "--numstat",
+        "--pretty=format:COMMIT:%H|%an|%at|%s",
+        "--no-merges",
+        "-n",
+        str(max_commits),
+    ]
+    if since and since.strip():
+        git_cmd.append(f"--since={since}")
     result = _run_git(
-        [
-            "git",
-            "log",
-            "--numstat",
-            "--pretty=format:COMMIT:%H|%an|%at|%s",
-            "--no-merges",
-            "-n",
-            str(max_commits),
-        ],
+        git_cmd,
         cwd=project_root,
     )
     if result is None:

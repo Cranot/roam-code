@@ -3880,24 +3880,46 @@ class TestRepoConfig:
         assert "sort_by" in new_text
 
     def test_attest_path_with_unwritable_parent_falls_through(self, cli_runner, dangling_project):
-        """2B: ``--attest`` should not crash the entire scan when the
-        target directory cannot be created. Currently this raises — we
-        document the contract and the test pins it.
+        """W126: ``--attest`` must not crash the scan when the target
+        directory cannot be created (parent is a file / no perms / etc.).
 
-        If we want to make this more lenient in a future round, the
-        test will be the canary.
+        The scan still completed successfully — only the side-channel
+        attestation write failed. The fix surfaces the failure as
+        structured state (``summary.attest_status == "failed"`` plus
+        ``summary.attest_error``) and lets the scan fall through cleanly
+        per this test's name.
+
+        History: prior to W126 this test pinned the crash (asserted
+        ``exit_code != 0``); the docstring admitted the test was
+        documenting the bug, not the contract. W126 inverts the
+        assertion to match the test's name.
         """
         # Pass an attestation path whose parent contains an existing
-        # FILE (not a directory), so mkdir(parents=True) raises.
+        # FILE (not a directory), so mkdir(parents=True) would raise.
         bad = dangling_project / "blocker"
         bad.write_text("i am a file not a directory\n")
         result = invoke_cli(
             cli_runner,
             ["stale-refs", "--attest", str(bad / "child" / "out.json")],
             cwd=dangling_project,
+            json_mode=True,
         )
-        # Today: raises. The pin: exit code is non-zero so CI sees it.
-        assert result.exit_code != 0
+        # Fall-through: scan completes. Exit 0 (no --gate so no
+        # promotion to EXIT_PARTIAL).
+        assert result.exit_code == 0, (
+            f"expected fall-through, got exit {result.exit_code}:\n{result.output}"
+        )
+        # Structured error surfaced in the JSON envelope.
+        data = parse_json_output(result)
+        summary = data["summary"]
+        assert summary.get("attest_status") == "failed", summary
+        assert "attest_error" in summary, summary
+        assert "could not create" in summary["attest_error"].lower()
+        # The scan itself completed: a real verdict, not the attest error.
+        assert isinstance(summary.get("verdict"), str) and summary["verdict"]
+        # And we still have the scan-level fields.
+        assert "stale_refs" in summary
+        assert "files_scanned" in summary
 
     def test_config_loaded_through_root_override(self, cli_runner, tmp_path):
         """2A: --root + .roam/stale-refs.toml is read from the OVERRIDDEN

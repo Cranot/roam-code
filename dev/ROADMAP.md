@@ -4,6 +4,14 @@ Master index of ~155 items synthesised from 8 deep-audit lenses run
 2026-05-10. **What to build / research / test next.** Items get pulled
 from here into `dev/BACKLOG.md` when they're queued up.
 
+Current build order lives in `dev/BUILD-PRIORITIES-2026-05-13.md`.
+Treat this roadmap as the full demand index, not the authoritative
+next-sprint sequence. Some top-tier entries are retained for provenance even
+after shipping.
+
+Current architecture evidence-compiler memo lives in
+`dev/ARCHITECTURE-EVIDENCE-COMPILER-2026-05-13.md`.
+
 Each item carries an audit-angle tag in square brackets — `[01]` =
 positioning, `[02]` = GTM, `[03]` = architecture, `[04]` = agent / MCP
 DX, `[05]` = security, `[06]` = developer experience, `[07]` = site /
@@ -120,20 +128,19 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   `[POSTGRES_PROVIDER]` / `[OBJECT_STORAGE]` placeholders with concrete
   vendor names. Counsel pass before binding.
 
-### S7. Rename "structural intelligence layer" → "code-graph engine for coding agents" [01 A1]
+### S7. Rename "structural intelligence layer" → "local codebase intelligence layer" [01 A1]
 - **Where:** Every public surface — hero, llms.txt, press kit, README,
   JSON-LD description, OG/Twitter descriptions.
 - **Effort:** Copy edits across ~20 files
 - **Why now:** Buyers search "code graph" / "context engine" / "graph
-  for AI coding." They do not search "structural intelligence." Atlan,
-  Packmind, Tessl, Augment Code are sitting on Roam's actual market
-  with worse capability and better SEO. Roam is selling a real product
-  into a real category in a private dialect. Per-Anthropic 2026 founder
-  consensus: positioning that needs a 10-minute explanation is too weak.
-- **Move:** Pick one externally-legible category noun. Top candidates:
-  (a) "code-graph engine for agents", (b) "context engine for agents",
-  (c) "structural review for AI PRs". Keep the senses table; drop the
-  word "senses" from H1s. Test in /v2 A/B (D1) if signal needed.
+  for AI coding." They do not search "structural intelligence." Roam is
+  also broader than evidence or AI PR review: `roam math`, smells,
+  cycles, dark-matter, hotspots, retrieval, gates, and PR Replay are all
+  projections of the same local repository model.
+- **Move:** Use one externally-legible category noun: **local codebase
+  intelligence for developers and AI agents**. Support it with the
+  concrete triad "maps, gates, evidence." Keep agentic assurance as the
+  strongest paid wedge, not the whole product identity.
 
 ### S8. Lead with "100% local" in the hero [01 A3, 07 cross-ref]
 - **Where:** `templates/distribution/landing-page/index.html` hero
@@ -673,6 +680,79 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
   cost-control add-on, not a primary wedge.
 - **Move:** Keep as a lower-priority add-on for self-hosted/local-first
   teams that want shared encrypted index artifacts and faster PR gates.
+
+#### C19. Codebase Due Diligence / Investor Technical Audit [02 C17]
+- **Where:** New sample report under `templates/audit-report/`; use
+  `dev/MONETIZATION-SYNERGY-MAP-2026-05-13.md` as positioning source.
+- **Effort:** 2-4 days for a public-repo sample and repeatable command
+  recipe.
+- **Why now:** Web research shows a live market for local/AI-assisted
+  technical due diligence: code health, security posture, technical debt,
+  bus factor, remediation cost, and evidence trails. Roam already has the
+  local graph, bus-factor, health/debt, supply-chain, security, PR replay,
+  and architecture-drift primitives.
+- **Move:** Offer fixed-price "Codebase Due Diligence" reports for
+  investors, boards, acquisition targets, and founders preparing for
+  diligence. Price initial snapshots around $3.5k-$7.5k; deep dives
+  $10k-$25k.
+
+#### C20. AI Adoption Readiness Audit [02 C18]
+- **Where:** New report template; later a `/ai-readiness` or governance
+  page section.
+- **Effort:** 1-2 days for report template.
+- **Why now:** Cursor/Claude/Copilot adoption creates a new management
+  question: "where can agents safely work in this repo?" Roam can answer
+  with health, tests, complexity, bus factor, mode restrictions,
+  proof-bundle gaps, and dangerous zones.
+- **Move:** Sell as a short paid assessment before Review/Governance:
+  "which code areas are safe for agents, which need human-only mode, and
+  what gates must exist before autonomous PRs."
+
+#### C21. Migration / Refactor Assurance [02 C19]
+- **Where:** `migration-plan`, `graph-diff`, `architecture-drift`,
+  `simulate`, `mutate`, `stale-refs`, `api-drift`, `test-impact`.
+- **Effort:** 2-3 days for a packaged recipe and report skeleton.
+- **Why now:** Large framework upgrades, service splits, dependency
+  migrations, and architecture cleanups have budget. Roam's graph can
+  prove what system shape changed, what tests cover it, and which hidden
+  couplings were preserved or broken.
+- **Move:** Offer project-scoped assurance reports: before/after graph,
+  migration plan, risk gates, test reachability, and sign-off evidence.
+
+#### C22. Agent Observability Bridge [02 C20, 04 cross-ref]
+- **Where:** New export/integration design; potentially OpenTelemetry-ish
+  metadata from `runs`, `pr-bundle`, `replay`, and `agent-score`.
+- **Effort:** 1 day design note; implementation only with customer pull.
+- **Why now:** LangSmith/Langfuse/Helicone validate paid agent
+  observability. Roam should not clone them; it should export code-graph
+  evidence into their traces: run id, agent id, touched symbols, context
+  read, risk verdict, policy exceptions, tests required/run, bundle
+  validation.
+- **Move:** Position as an integration add-on for teams already tracing
+  agents but missing code-level evidence.
+
+#### C23. Governance Evidence Exporters [02 C21, 05 cross-ref]
+- **Where:** `audit-trail-export`, future connectors to CSV/JSON/Markdown
+  control matrices; legal/procurement docs.
+- **Effort:** 1-2 days for the first control-mapping export.
+- **Why now:** AI governance platforms and GRC buyers speak in controls,
+  records, and evidence. Roam should export evidence into those systems
+  rather than trying to be a complete AI governance platform.
+- **Move:** Map Roam evidence to EU AI Act Article 12, ISO 42001, NIST AI
+  RMF, SOC 2 CC8.1, and internal AI-change policies. Position this as
+  evidence/control mapping, not compliance certification. Sell as part of
+  Governance Evidence Pack and Self-Hosted.
+
+#### C24. Post-Incident Replay Service [02 C22]
+- **Where:** `postmortem`, `why`, `why-fail`, `graph-diff`,
+  `test-impact`, `audit-trail-*`, report templates.
+- **Effort:** 1-2 days for packaged recipe.
+- **Why now:** After incidents, teams need to know what changed, why tests
+  missed it, whether agent-written code contributed, and which rule would
+  prevent recurrence. Roam already has the historical and structural
+  primitives.
+- **Move:** Sell one-shot post-incident structural reports, then convert
+  findings into rules/policies and upsell Review/Governance.
 
 ### D. Site / brand / copy heavy hitters
 
@@ -2003,6 +2083,11 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 ---
 
 ## Sequencing recommendation
+
+Superseded for current scheduling by `dev/BUILD-PRIORITIES-2026-05-13.md`.
+The sequence below is retained as the 2026-05-10 audit read and still useful
+for provenance, but it includes items that have since shipped or been
+reprioritized by the 2026-05-13 monetization and handover passes.
 
 A pragmatic order, given the brief is "everything that adds value despite
 complexity," but the user is the one who decides what to actually pick up.

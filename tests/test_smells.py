@@ -14,7 +14,9 @@ from click.testing import CliRunner
 from roam.catalog.smells import (
     ALL_DETECTORS,
     _parse_param_count,
+    detect_boolean_parameter,
     detect_brain_method,
+    detect_comment_density,
     detect_data_clumps,
     detect_dead_params,
     detect_deep_nesting,
@@ -25,10 +27,13 @@ from roam.catalog.smells import (
     detect_large_class,
     detect_long_params,
     detect_low_cohesion,
+    detect_magic_numbers,
     detect_message_chain,
     detect_primitive_obsession,
     detect_refused_bequest,
     detect_shotgun_surgery,
+    detect_switch_statement,
+    detect_temporal_coupling,
     file_health_scores,
     run_all_detectors,
 )
@@ -91,6 +96,12 @@ def _make_db(tmp_path: Path) -> sqlite3.Connection:
             distinct_authors INTEGER DEFAULT 0,
             complexity REAL DEFAULT 0,
             health_score REAL DEFAULT NULL
+        );
+        CREATE TABLE IF NOT EXISTS git_cochange (
+            file_id_a INTEGER NOT NULL,
+            file_id_b INTEGER NOT NULL,
+            cochange_count INTEGER DEFAULT 0,
+            PRIMARY KEY (file_id_a, file_id_b)
         );
     """)
     conn.commit()
@@ -450,9 +461,242 @@ class TestDeadParams:
 
 
 class TestEmptyCatch:
-    def test_placeholder_returns_empty(self, tmp_path):
+    """W370: empty-catch detector reads source files to find trivial
+    exception-handler bodies.
+
+    Each test writes source into a tmp_path-rooted file tree, registers
+    it in the ``files`` table, and chdirs into tmp_path so the
+    detector's ``find_project_root()`` lookup resolves to the right
+    directory. Reuses the ``_make_db`` fixture so the DB shape matches
+    the other detector tests.
+    """
+
+    def _wire_file(
+        self,
+        tmp_path: Path,
+        conn: sqlite3.Connection,
+        rel_path: str,
+        source: str,
+        language: str,
+        *,
+        symbol_name: str = "outer",
+        symbol_kind: str = "function",
+        line_start: int = 1,
+        line_end: int = 100,
+    ) -> None:
+        """Write *source* to ``tmp_path / rel_path`` and register a
+        ``files`` + enclosing ``symbols`` row."""
+        full = tmp_path / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(source, encoding="utf-8")
+        # Reset rows so multiple test methods on the same fixture stay
+        # isolated even if the schema persists.
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (1, ?, ?)",
+            (rel_path, language),
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (1, 1, ?, ?, ?, ?)",
+            (symbol_name, symbol_kind, line_start, line_end),
+        )
+        conn.commit()
+        # Mark tmp_path as a git root so find_project_root() returns it.
+        (tmp_path / ".git").mkdir(exist_ok=True)
+
+    def _run(self, tmp_path: Path, conn: sqlite3.Connection) -> list[dict]:
+        """Invoke detect_empty_catch with cwd pinned to tmp_path so
+        ``find_project_root()`` resolves correctly."""
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            return detect_empty_catch(conn)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_returns_empty_when_no_files(self, tmp_path):
         conn = _make_db(tmp_path)
-        results = detect_empty_catch(conn)
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_python_pass(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer():\n"
+            "    try:\n"
+            "        do_work()\n"
+            "    except Exception:\n"
+            "        pass\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "empty-catch"
+        assert f["severity"] == "warning"
+        assert f["symbol_name"] == "outer"
+        assert "src/mod.py" in f["location"].replace("\\", "/")
+        conn.close()
+
+    def test_python_ellipsis(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer():\n"
+            "    try:\n"
+            "        do_work()\n"
+            "    except Exception:\n"
+            "        ...\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "empty-catch"
+        conn.close()
+
+    def test_python_comment_only(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer():\n"
+            "    try:\n"
+            "        do_work()\n"
+            "    except Exception:\n"
+            "        # ignore -- silently fail\n"
+            "        pass\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        # Comment + pass collapses to a single 'pass' line after
+        # comment stripping -> empty-catch.
+        assert len(results) == 1
+        conn.close()
+
+    def test_python_single_log_only(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer():\n"
+            "    try:\n"
+            "        do_work()\n"
+            "    except Exception as e:\n"
+            "        logger.error(e)\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "empty-catch"
+        conn.close()
+
+    def test_does_not_flag_reraise(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer():\n"
+            "    try:\n"
+            "        do_work()\n"
+            "    except Exception as e:\n"
+            "        logger.error(e)\n"
+            "        raise\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_does_not_flag_recovery(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer():\n"
+            "    try:\n"
+            "        do_work()\n"
+            "    except Exception:\n"
+            "        return fallback()\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        # ``return fallback()`` is recovery code, not trivial.
+        assert results == []
+        conn.close()
+
+    def test_does_not_flag_multi_statement(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer():\n"
+            "    try:\n"
+            "        do_work()\n"
+            "    except Exception as e:\n"
+            "        logger.error(e)\n"
+            "        cleanup()\n"
+            "        return default\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_javascript_empty_block(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "function outer() {\n"
+            "  try {\n"
+            "    doWork();\n"
+            "  } catch (e) { }\n"
+            "}\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "empty-catch"
+        assert "src/mod.js" in results[0]["location"].replace("\\", "/")
+        conn.close()
+
+    def test_javascript_console_log_only(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "function outer() {\n"
+            "  try {\n"
+            "    doWork();\n"
+            "  } catch (e) {\n"
+            "    console.log(e);\n"
+            "  }\n"
+            "}\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        conn.close()
+
+    def test_javascript_throw_not_flagged(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "function outer() {\n"
+            "  try {\n"
+            "    doWork();\n"
+            "  } catch (e) {\n"
+            "    console.error(e);\n"
+            "    throw e;\n"
+            "  }\n"
+            "}\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_promise_catch_not_flagged(self, tmp_path):
+        """Promise-chain ``.catch(...)`` MUST NOT be flagged -- it's
+        method chaining on a promise, not exception handling."""
+        conn = _make_db(tmp_path)
+        src = (
+            "function outer() {\n"
+            "  return fetch(url).then(r => r.json()).catch(() => ({}));\n"
+            "}\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
+        results = self._run(tmp_path, conn)
+        # The catch here is a Promise method, not a try-catch keyword.
+        # Our regex uses ``(?<![A-Za-z0-9_.])`` to exclude it.
         assert results == []
         conn.close()
 
@@ -479,20 +723,1752 @@ class TestMessageChain:
         conn.close()
 
 
-class TestPlaceholders:
-    def test_refused_bequest_empty(self, tmp_path):
+class TestRefusedBequest:
+    """W370c: refused-bequest detector flags subclasses that override >= 2
+    parent methods with trivial bodies (``pass`` / ``return None`` /
+    ``raise NotImplementedError``).
+
+    Mirrors the source-on-disk shape of TestDuplicateConditionals -- the
+    detector reads method bodies from the workspace, so each test writes
+    fixture source into ``tmp_path`` and pins cwd before calling.
+    """
+
+    def _wire_inheritance(
+        self,
+        tmp_path: Path,
+        conn: sqlite3.Connection,
+        rel_path: str,
+        source: str,
+        language: str,
+        *,
+        child_class: str,
+        child_line_start: int,
+        child_line_end: int,
+        parent_class: str,
+        parent_method_names: list[str],
+        child_methods: list[tuple[str, int, int]],
+    ) -> None:
+        """Write source + register files/symbols/edges for a parent+child
+        class pair. ``child_methods`` is a list of (name, line_start,
+        line_end) triples."""
+        full = tmp_path / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(source, encoding="utf-8")
+        conn.execute("DELETE FROM edges")
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (1, ?, ?)",
+            (rel_path, language),
+        )
+        # Parent class lives in a "different file" (file_id 2) so the
+        # child-method search by line range stays scoped to the child.
+        # The actual file row is fine to keep minimal.
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (2, ?, ?)",
+            (rel_path + ".parent", language),
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (1, 1, ?, 'class', ?, ?)",
+            (child_class, child_line_start, child_line_end),
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (2, 2, ?, 'class', 1, 100)",
+            (parent_class,),
+        )
+        # Parent method rows (parent_id = 2 so we can look them up by parent).
+        next_id = 100
+        for pname in parent_method_names:
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, parent_id) "
+                "VALUES (?, 2, ?, 'method', 1, 10, 2)",
+                (next_id, pname),
+            )
+            next_id += 1
+        # Child method rows (line ranges land inside the child class).
+        for mname, mls, mle in child_methods:
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, parent_id) "
+                "VALUES (?, 1, ?, 'method', ?, ?, 1)",
+                (next_id, mname, mls, mle),
+            )
+            next_id += 1
+        # Inherits edge: child -> parent
+        conn.execute(
+            "INSERT INTO edges (source_id, target_id, kind) VALUES (1, 2, 'inherits')"
+        )
+        conn.commit()
+        (tmp_path / ".git").mkdir(exist_ok=True)
+
+    def _run(self, tmp_path: Path, conn: sqlite3.Connection) -> list[dict]:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            return detect_refused_bequest(conn)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_empty_db_no_inherits(self, tmp_path):
+        """Negative: empty DB / no inherits edges -> no findings."""
         conn = _make_db(tmp_path)
         assert detect_refused_bequest(conn) == []
         conn.close()
 
-    def test_primitive_obsession_empty(self, tmp_path):
+    def test_two_trivial_overrides_flagged(self, tmp_path):
+        """Positive: child overrides 2 parent methods with ``pass`` bodies."""
+        conn = _make_db(tmp_path)
+        src = (
+            "class Child(Base):\n"
+            "    def foo(self):\n"
+            "        pass\n"
+            "    def bar(self):\n"
+            "        pass\n"
+        )
+        self._wire_inheritance(
+            tmp_path, conn, "src/refuse.py", src, "python",
+            child_class="Child", child_line_start=1, child_line_end=5,
+            parent_class="Base", parent_method_names=["foo", "bar"],
+            child_methods=[("foo", 2, 3), ("bar", 4, 5)],
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "refused-bequest"
+        assert f["severity"] == "warning"
+        assert f["symbol_name"] == "Child"
+        assert f["metric_value"] == 2
+        assert "Child" in f["description"]
+        assert "Base" in f["description"]
+        conn.close()
+
+    def test_one_trivial_override_not_flagged(self, tmp_path):
+        """Threshold is 2 -- a single trivial override is below threshold."""
+        conn = _make_db(tmp_path)
+        src = (
+            "class Child(Base):\n"
+            "    def foo(self):\n"
+            "        pass\n"
+            "    def bar(self):\n"
+            "        return self.x + 1\n"
+        )
+        self._wire_inheritance(
+            tmp_path, conn, "src/refuse.py", src, "python",
+            child_class="Child", child_line_start=1, child_line_end=5,
+            parent_class="Base", parent_method_names=["foo", "bar"],
+            child_methods=[("foo", 2, 3), ("bar", 4, 5)],
+        )
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_not_implemented_error_counts_as_refusal(self, tmp_path):
+        """``raise NotImplementedError`` is the canonical refusal shape."""
+        conn = _make_db(tmp_path)
+        src = (
+            "class Child(Base):\n"
+            "    def foo(self):\n"
+            "        raise NotImplementedError\n"
+            "    def bar(self):\n"
+            "        raise NotImplementedError('not yet')\n"
+        )
+        self._wire_inheritance(
+            tmp_path, conn, "src/refuse.py", src, "python",
+            child_class="Child", child_line_start=1, child_line_end=5,
+            parent_class="Base", parent_method_names=["foo", "bar"],
+            child_methods=[("foo", 2, 3), ("bar", 4, 5)],
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["metric_value"] == 2
+        conn.close()
+
+    def test_real_overrides_not_flagged(self, tmp_path):
+        """Non-trivial bodies (actual work) are NOT a refused bequest."""
+        conn = _make_db(tmp_path)
+        src = (
+            "class Child(Base):\n"
+            "    def foo(self):\n"
+            "        self.cache = {}\n"
+            "        return self._build()\n"
+            "    def bar(self, x):\n"
+            "        for item in x:\n"
+            "            self.process(item)\n"
+        )
+        self._wire_inheritance(
+            tmp_path, conn, "src/refuse.py", src, "python",
+            child_class="Child", child_line_start=1, child_line_end=7,
+            parent_class="Base", parent_method_names=["foo", "bar"],
+            child_methods=[("foo", 2, 4), ("bar", 5, 7)],
+        )
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+
+class TestPrimitiveObsession:
+    """W370c: primitive-obsession detector flags functions/methods where
+    >= 4 annotated params and >= 75% of those are bare primitives.
+
+    These tests bypass the workspace-source pathway -- the detector reads
+    ``symbols.signature`` from the DB directly, so we only need to populate
+    that column.
+    """
+
+    def test_empty_db_no_findings(self, tmp_path):
+        """Negative: no symbols -> no findings."""
         conn = _make_db(tmp_path)
         assert detect_primitive_obsession(conn) == []
         conn.close()
 
-    def test_duplicate_conditionals_empty(self, tmp_path):
+    def test_four_primitives_flagged(self, tmp_path):
+        """Positive: 4 bare-primitive params (100% ratio)."""
         conn = _make_db(tmp_path)
-        assert detect_duplicate_conditionals(conn) == []
+        conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/api.py')")
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
+            "VALUES (1, 1, 'connect', 'function', 1, 10, "
+            "'def connect(host: str, port: int, timeout: float, retries: int)')"
+        )
+        conn.commit()
+        results = detect_primitive_obsession(conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "primitive-obsession"
+        assert f["severity"] == "info"
+        assert f["symbol_name"] == "connect"
+        assert f["metric_value"] == 4
+        assert "100%" in f["description"]
+        conn.close()
+
+    def test_three_primitives_not_flagged(self, tmp_path):
+        """Threshold is >= 4 annotated total."""
+        conn = _make_db(tmp_path)
+        conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/api.py')")
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
+            "VALUES (1, 1, 'small', 'function', 1, 5, "
+            "'def small(a: int, b: int, c: int)')"
+        )
+        conn.commit()
+        assert detect_primitive_obsession(conn) == []
+        conn.close()
+
+    def test_compound_types_not_flagged(self, tmp_path):
+        """Functions taking dict / list / custom types are NOT obsessed."""
+        conn = _make_db(tmp_path)
+        conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/api.py')")
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
+            "VALUES (1, 1, 'process', 'function', 1, 5, "
+            "'def process(config: Config, payload: dict[str, int], items: list[Item], result: Result)')"
+        )
+        conn.commit()
+        # 0/4 primitives -> below the 75% threshold.
+        assert detect_primitive_obsession(conn) == []
+        conn.close()
+
+    def test_optional_primitive_counts(self, tmp_path):
+        """Optional[str] / str | None still count as primitive obsession."""
+        conn = _make_db(tmp_path)
+        conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/api.py')")
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
+            "VALUES (1, 1, 'fancy', 'function', 1, 5, "
+            "'def fancy(host: Optional[str], port: int | None, timeout: float, retries: int)')"
+        )
+        conn.commit()
+        results = detect_primitive_obsession(conn)
+        assert len(results) == 1
+        assert results[0]["metric_value"] == 4
+        conn.close()
+
+    def test_init_exempt(self, tmp_path):
+        """``__init__`` is exempt -- constructors legitimately take primitives."""
+        conn = _make_db(tmp_path)
+        conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/api.py')")
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
+            "VALUES (1, 1, '__init__', 'method', 1, 5, "
+            "'def __init__(self, host: str, port: int, timeout: float, retries: int)')"
+        )
+        conn.commit()
+        assert detect_primitive_obsession(conn) == []
+        conn.close()
+
+
+class TestDuplicateConditionals:
+    """W370b: duplicate-conditionals detector flags functions where the
+    SAME ``if`` predicate repeats >= 3 times in independent statements
+    (NOT chained via ``elif`` / ``else if``).
+
+    Each test writes source into a tmp_path-rooted file tree, registers
+    it in the ``files`` table, and chdirs into tmp_path so the
+    detector's ``find_project_root()`` lookup resolves to the right
+    directory.
+    """
+
+    def _wire_file(
+        self,
+        tmp_path: Path,
+        conn: sqlite3.Connection,
+        rel_path: str,
+        source: str,
+        language: str,
+        *,
+        symbol_name: str = "outer",
+        symbol_kind: str = "function",
+        line_start: int = 1,
+        line_end: int = 200,
+    ) -> None:
+        """Write *source* to ``tmp_path / rel_path`` and register a
+        ``files`` + enclosing ``symbols`` row."""
+        full = tmp_path / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(source, encoding="utf-8")
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (1, ?, ?)",
+            (rel_path, language),
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (1, 1, ?, ?, ?, ?)",
+            (symbol_name, symbol_kind, line_start, line_end),
+        )
+        conn.commit()
+        (tmp_path / ".git").mkdir(exist_ok=True)
+
+    def _run(self, tmp_path: Path, conn: sqlite3.Connection) -> list[dict]:
+        """Invoke detect_duplicate_conditionals with cwd pinned to
+        tmp_path so ``find_project_root()`` resolves correctly."""
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            return detect_duplicate_conditionals(conn)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_three_ifs_same_predicate_python_flagged(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer(x):\n"
+            "    if x:\n"
+            "        a()\n"
+            "    if x:\n"
+            "        b()\n"
+            "    if x:\n"
+            "        c()\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "duplicate-conditionals"
+        assert f["severity"] == "warning"
+        assert f["symbol_name"] == "outer"
+        assert f["metric_value"] == 3
+        conn.close()
+
+    def test_two_ifs_same_predicate_not_flagged(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer(x):\n"
+            "    if x:\n"
+            "        a()\n"
+            "    if x:\n"
+            "        b()\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        # Threshold is 3, not 2.
+        assert results == []
+        conn.close()
+
+    def test_elif_chain_not_flagged(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer(x):\n"
+            "    if x == 'a':\n"
+            "        a()\n"
+            "    elif x == 'b':\n"
+            "        b()\n"
+            "    elif x == 'c':\n"
+            "        c()\n"
+            "    elif x == 'd':\n"
+            "        d()\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        # Polyadic dispatch -- different predicates, intentional shape.
+        assert results == []
+        conn.close()
+
+    def test_brace_lang_duplicate_if_flagged(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "function outer(x) {\n"
+            "  if (x) {\n"
+            "    a();\n"
+            "  }\n"
+            "  if (x) {\n"
+            "    b();\n"
+            "  }\n"
+            "  if (x) {\n"
+            "    c();\n"
+            "  }\n"
+            "}\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "duplicate-conditionals"
+        assert results[0]["metric_value"] == 3
+        conn.close()
+
+    def test_brace_else_if_not_flagged(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "function outer(x) {\n"
+            "  if (x == 'a') {\n"
+            "    a();\n"
+            "  } else if (x == 'b') {\n"
+            "    b();\n"
+            "  } else if (x == 'c') {\n"
+            "    c();\n"
+            "  } else if (x == 'd') {\n"
+            "    d();\n"
+            "  }\n"
+            "}\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
+        results = self._run(tmp_path, conn)
+        # ``else if`` ladder -- polyadic dispatch, not duplicate-cond.
+        assert results == []
+        conn.close()
+
+    def test_different_predicates_not_flagged(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer(x, y, z):\n"
+            "    if x:\n"
+            "        a()\n"
+            "    if y:\n"
+            "        b()\n"
+            "    if z:\n"
+            "        c()\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        # Three distinct predicates -- independent guards, not duplicates.
+        assert results == []
+        conn.close()
+
+    def test_whitespace_normalized_in_hash(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer(x):\n"
+            "    if x==1:\n"
+            "        a()\n"
+            "    if x == 1:\n"
+            "        b()\n"
+            "    if  x  ==  1 :\n"
+            "        c()\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "duplicate-conditionals"
+        assert results[0]["metric_value"] == 3
+        conn.close()
+
+    def test_outer_parens_stripped_in_hash(self, tmp_path):
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer(x):\n"
+            "    if x == 1:\n"
+            "        a()\n"
+            "    if (x == 1):\n"
+            "        b()\n"
+            "    if ((x == 1)):\n"
+            "        c()\n"
+        )
+        self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["metric_value"] == 3
+        conn.close()
+
+    def test_separate_functions_not_pooled(self, tmp_path):
+        """Same predicate in three DIFFERENT functions must NOT flag --
+        the duplicate-conditionals smell is scope-local."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def fn_a(x):\n"
+            "    if x:\n"
+            "        a()\n"
+            "\n"
+            "def fn_b(x):\n"
+            "    if x:\n"
+            "        b()\n"
+            "\n"
+            "def fn_c(x):\n"
+            "    if x:\n"
+            "        c()\n"
+        )
+        # Wire three separate function rows so _scope_for_line lands
+        # each ``if`` in a different bucket.
+        full = tmp_path / "src/mod.py"
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(src, encoding="utf-8")
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (1, ?, ?)",
+            ("src/mod.py", "python"),
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (1, 1, 'fn_a', 'function', 1, 3)"
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (2, 1, 'fn_b', 'function', 5, 7)"
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (3, 1, 'fn_c', 'function', 9, 11)"
+        )
+        conn.commit()
+        (tmp_path / ".git").mkdir(exist_ok=True)
+        results = self._run(tmp_path, conn)
+        # 1 predicate per function -- below threshold in EACH scope.
+        assert results == []
+        conn.close()
+
+    def test_duplicate_conditionals_in_registry(self):
+        """Smoke: detector is wired into ALL_DETECTORS and callable."""
+        ids = {smell_id for smell_id, _ in ALL_DETECTORS}
+        assert "duplicate-conditionals" in ids
+
+
+# ---------------------------------------------------------------------------
+# W603 — magic-numbers detector
+# ---------------------------------------------------------------------------
+
+
+class TestMagicNumbers:
+    """W603: magic-numbers detector flags non-exempt numeric literals
+    (NOT in {-1, 0, 1, 2}) that appear >= 3 times in one function body.
+
+    Each test writes Python source into ``tmp_path``, registers a row in
+    ``files`` (language='python'), and pins cwd so the detector's
+    ``find_project_root()`` resolves to the fixture root.
+    """
+
+    def _wire_python_file(
+        self,
+        tmp_path: Path,
+        conn: sqlite3.Connection,
+        rel_path: str,
+        source: str,
+    ) -> None:
+        full = tmp_path / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(source, encoding="utf-8")
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (1, ?, 'python')",
+            (rel_path,),
+        )
+        conn.commit()
+        (tmp_path / ".git").mkdir(exist_ok=True)
+
+    def _run(self, tmp_path: Path, conn: sqlite3.Connection) -> list[dict]:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            return detect_magic_numbers(conn)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_empty_db_no_findings(self, tmp_path):
+        """Negative: no files -> no findings."""
+        conn = _make_db(tmp_path)
+        assert detect_magic_numbers(conn) == []
+        conn.close()
+
+    def test_three_repeats_of_same_literal_flagged(self, tmp_path):
+        """Positive: non-exempt literal 7 repeats 3 times -> flag."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def schedule(items):\n"
+            "    a = items[7]\n"
+            "    b = items[7] + 1\n"
+            "    return a + b * 7\n"
+        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src)
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "magic-numbers"
+        assert f["severity"] == "info"
+        assert f["symbol_name"] == "schedule"
+        assert f["metric_value"] == 3
+        assert "7" in f["description"]
+        assert "literals" in f["description"]
+        conn.close()
+
+    def test_exempt_literals_not_flagged(self, tmp_path):
+        """The {-1, 0, 1, 2} idiom set never triggers regardless of count."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def idiomatic(items):\n"
+            "    a = items[0]\n"
+            "    b = items[1]\n"
+            "    c = items[2]\n"
+            "    d = items[-1]\n"
+            "    e = items[0] + items[1] + items[-1]\n"
+            "    return a + b + c + d + e\n"
+        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src)
+        results = self._run(tmp_path, conn)
+        # 0/1/2/-1 are all exempt -- no findings.
+        assert results == []
+        conn.close()
+
+    def test_two_repeats_below_threshold(self, tmp_path):
+        """Threshold is 3 -- two occurrences are not flagged."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def small(x):\n"
+            "    a = x + 99\n"
+            "    b = x - 99\n"
+            "    return a + b\n"
+        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src)
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_negative_literal_folded(self, tmp_path):
+        """``-N`` arrives as UnaryOp(USub, Constant(N)); folded into one literal.
+
+        ``-1`` is exempt; ``-7`` repeated 3x must still flag.
+        """
+        conn = _make_db(tmp_path)
+        src = (
+            "def negs(items):\n"
+            "    a = items[-7]\n"
+            "    b = items[-7]\n"
+            "    c = items[-7]\n"
+            "    return a + b + c\n"
+        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src)
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        # The folded value is the negative int -7.
+        assert "-7" in results[0]["description"]
+        conn.close()
+
+    def test_booleans_not_counted_as_int(self, tmp_path):
+        """``True`` / ``False`` must NOT collide with ``1`` / ``0`` even
+        though Python's ``bool`` is an ``int`` subclass. The
+        ``type() is int`` guard handles this."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def bool_heavy(x):\n"
+            "    if x is True: a = 1\n"
+            "    elif x is True: a = 2\n"
+            "    elif x is True: a = 3\n"
+            "    return a\n"
+        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src)
+        # 1, 2, 3 each appear once; True three times but True is excluded.
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_nested_function_separate_scope(self, tmp_path):
+        """A repeated literal in an inner function is its OWN scope.
+
+        Outer function has 7 once; inner function has 7 three times -> only
+        the inner function is flagged.
+        """
+        conn = _make_db(tmp_path)
+        src = (
+            "def outer(x):\n"
+            "    y = x + 7\n"
+            "    def inner(z):\n"
+            "        a = z + 7\n"
+            "        b = z * 7\n"
+            "        c = z - 7\n"
+            "        return a + b + c\n"
+            "    return y + inner(x)\n"
+        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src)
+        results = self._run(tmp_path, conn)
+        # Only inner has >= 3 occurrences -> one finding total.
+        assert len(results) == 1
+        assert results[0]["symbol_name"] == "inner"
+        assert results[0]["metric_value"] == 3
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# W604 — boolean-parameter detector
+# ---------------------------------------------------------------------------
+
+
+class TestBooleanParameter:
+    """W604: boolean-parameter detector flags call sites with >= 2 positional
+    boolean literal arguments. Keyword bool args are NOT flagged.
+    """
+
+    def _wire_python_file(
+        self,
+        tmp_path: Path,
+        conn: sqlite3.Connection,
+        rel_path: str,
+        source: str,
+        *,
+        enclosing: tuple[str, int, int] | None = None,
+    ) -> None:
+        """Write source; register file row; optionally register an
+        enclosing function/method so scope attribution works."""
+        full = tmp_path / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(source, encoding="utf-8")
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (1, ?, 'python')",
+            (rel_path,),
+        )
+        if enclosing is not None:
+            name, ls, le = enclosing
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+                "VALUES (1, 1, ?, 'function', ?, ?)",
+                (name, ls, le),
+            )
+        conn.commit()
+        (tmp_path / ".git").mkdir(exist_ok=True)
+
+    def _run(self, tmp_path: Path, conn: sqlite3.Connection) -> list[dict]:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            return detect_boolean_parameter(conn)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_empty_db_no_findings(self, tmp_path):
+        """Negative: empty -> no findings."""
+        conn = _make_db(tmp_path)
+        assert detect_boolean_parameter(conn) == []
+        conn.close()
+
+    def test_two_positional_bools_flagged(self, tmp_path):
+        """Positive: ``f(True, False)`` is the canonical smell shape."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def caller():\n"
+            "    do_thing(True, False)\n"
+            "    return None\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src,
+            enclosing=("caller", 1, 3),
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "boolean-parameter"
+        assert f["severity"] == "info"
+        assert f["symbol_name"] == "caller"
+        assert f["metric_value"] == 2
+        assert "do_thing" in f["description"]
+        conn.close()
+
+    def test_single_positional_bool_not_flagged(self, tmp_path):
+        """Threshold is >= 2; a single bool arg is fine."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def caller():\n"
+            "    do_thing(True, 42, 'x')\n"
+            "    return None\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src,
+            enclosing=("caller", 1, 3),
+        )
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_keyword_bools_not_flagged(self, tmp_path):
+        """Keyword bool args are the FIX, not the smell -- must NOT flag."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def caller():\n"
+            "    do_thing(verbose=True, strict=False)\n"
+            "    return None\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src,
+            enclosing=("caller", 1, 3),
+        )
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_mixed_positional_bools_and_others_flagged(self, tmp_path):
+        """``f(True, x, False)`` -- the two positional bools count even
+        when mixed with non-bool positional args."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def caller(x):\n"
+            "    do_thing(True, x, False)\n"
+            "    return None\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src,
+            enclosing=("caller", 1, 3),
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["metric_value"] == 2
+        conn.close()
+
+    def test_attribute_call_name_rendered(self, tmp_path):
+        """``self.f(...)`` and ``a.b.c(...)`` render readable names."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def caller(self):\n"
+            "    self.helper(True, False)\n"
+            "    a.b.c(True, False)\n"
+            "    return None\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src,
+            enclosing=("caller", 1, 4),
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 2
+        descs = " ".join(r["description"] for r in results)
+        assert "self.helper" in descs
+        assert "a.b.c" in descs
+        conn.close()
+
+    def test_int_args_not_counted_as_bool(self, tmp_path):
+        """``f(1, 0)`` is NOT ``f(True, False)`` even though Python's
+        ``bool`` is an ``int`` subclass. The ``type() is bool`` guard
+        keeps the two cases separate."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def caller():\n"
+            "    do_thing(1, 0)\n"
+            "    return None\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src,
+            enclosing=("caller", 1, 3),
+        )
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+
+class TestSwitchStatement:
+    """W601: switch-statement detector flags ``match`` and ``if``/``elif``
+    chains with >= 8 arms that all discriminate on the same single variable.
+
+    Threshold is 8. Below that, polyadic dispatch is normal and not flagged.
+    """
+
+    def _wire_python_file(
+        self,
+        tmp_path: Path,
+        conn: sqlite3.Connection,
+        rel_path: str,
+        source: str,
+        *,
+        enclosing: tuple[str, int, int] | None = None,
+    ) -> None:
+        full = tmp_path / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(source, encoding="utf-8")
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (1, ?, 'python')",
+            (rel_path,),
+        )
+        if enclosing is not None:
+            name, ls, le = enclosing
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+                "VALUES (1, 1, ?, 'function', ?, ?)",
+                (name, ls, le),
+            )
+        conn.commit()
+        (tmp_path / ".git").mkdir(exist_ok=True)
+
+    def _run(self, tmp_path: Path, conn: sqlite3.Connection) -> list[dict]:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            return detect_switch_statement(conn)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_empty_db_no_findings(self, tmp_path):
+        conn = _make_db(tmp_path)
+        assert detect_switch_statement(conn) == []
+        conn.close()
+
+    def test_eight_arm_if_elif_chain_flagged(self, tmp_path):
+        """Positive: 8-arm if/elif chain on single var ``cmd`` -> 1 finding."""
+        conn = _make_db(tmp_path)
+        # 8 arms (1 if + 7 elif), all comparing ``cmd`` to a string literal.
+        src = (
+            "def dispatch(cmd):\n"
+            "    if cmd == 'a':\n"
+            "        return 1\n"
+            "    elif cmd == 'b':\n"
+            "        return 2\n"
+            "    elif cmd == 'c':\n"
+            "        return 3\n"
+            "    elif cmd == 'd':\n"
+            "        return 4\n"
+            "    elif cmd == 'e':\n"
+            "        return 5\n"
+            "    elif cmd == 'f':\n"
+            "        return 6\n"
+            "    elif cmd == 'g':\n"
+            "        return 7\n"
+            "    elif cmd == 'h':\n"
+            "        return 8\n"
+            "    return 0\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20)
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "switch-statement"
+        assert f["severity"] == "info"
+        assert f["symbol_name"] == "dispatch"
+        assert f["metric_value"] == 8
+        assert f["threshold"] == 8
+        assert "cmd" in f["description"]
+        conn.close()
+
+    def test_seven_arm_chain_not_flagged(self, tmp_path):
+        """Threshold is 8: a 7-arm chain stays under the bar."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def dispatch(cmd):\n"
+            "    if cmd == 'a':\n"
+            "        return 1\n"
+            "    elif cmd == 'b':\n"
+            "        return 2\n"
+            "    elif cmd == 'c':\n"
+            "        return 3\n"
+            "    elif cmd == 'd':\n"
+            "        return 4\n"
+            "    elif cmd == 'e':\n"
+            "        return 5\n"
+            "    elif cmd == 'f':\n"
+            "        return 6\n"
+            "    elif cmd == 'g':\n"
+            "        return 7\n"
+            "    return 0\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 18)
+        )
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_match_statement_with_eight_cases_flagged(self, tmp_path):
+        """Positive: ``match cmd`` with 8 ``case`` arms -> 1 finding."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def dispatch(cmd):\n"
+            "    match cmd:\n"
+            "        case 'a': return 1\n"
+            "        case 'b': return 2\n"
+            "        case 'c': return 3\n"
+            "        case 'd': return 4\n"
+            "        case 'e': return 5\n"
+            "        case 'f': return 6\n"
+            "        case 'g': return 7\n"
+            "        case 'h': return 8\n"
+            "    return 0\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 12)
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "switch-statement"
+        assert f["metric_value"] == 8
+        assert "cmd" in f["description"]
+        conn.close()
+
+    def test_mixed_discriminators_not_flagged(self, tmp_path):
+        """Negative: 8-arm chain mixing two discriminator variables is
+        NOT a switch-statement (the predicate-on-single-var requirement
+        is violated)."""
+        conn = _make_db(tmp_path)
+        # 8 arms but every other arm switches between ``x`` and ``y``.
+        src = (
+            "def dispatch(x, y):\n"
+            "    if x == 1:\n"
+            "        return 1\n"
+            "    elif y == 2:\n"
+            "        return 2\n"
+            "    elif x == 3:\n"
+            "        return 3\n"
+            "    elif y == 4:\n"
+            "        return 4\n"
+            "    elif x == 5:\n"
+            "        return 5\n"
+            "    elif y == 6:\n"
+            "        return 6\n"
+            "    elif x == 7:\n"
+            "        return 7\n"
+            "    elif y == 8:\n"
+            "        return 8\n"
+            "    return 0\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20)
+        )
+        results = self._run(tmp_path, conn)
+        assert results == []
+        conn.close()
+
+    def test_compound_predicate_not_flagged(self, tmp_path):
+        """Negative: arms with compound expressions (``x and y``,
+        ``x.method() == 1``) don't count -- only single-Name
+        discriminators do."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def dispatch(x):\n"
+            "    if x.foo() == 'a':\n"
+            "        return 1\n"
+            "    elif x.foo() == 'b':\n"
+            "        return 2\n"
+            "    elif x.foo() == 'c':\n"
+            "        return 3\n"
+            "    elif x.foo() == 'd':\n"
+            "        return 4\n"
+            "    elif x.foo() == 'e':\n"
+            "        return 5\n"
+            "    elif x.foo() == 'f':\n"
+            "        return 6\n"
+            "    elif x.foo() == 'g':\n"
+            "        return 7\n"
+            "    elif x.foo() == 'h':\n"
+            "        return 8\n"
+            "    return 0\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20)
+        )
+        results = self._run(tmp_path, conn)
+        # Compound LHS -- not a single-Name discriminator.
+        assert results == []
+        conn.close()
+
+    def test_isinstance_chain_flagged(self, tmp_path):
+        """Positive: ``isinstance(x, T)`` chain on the same ``x`` is the
+        canonical type-dispatch switch -- 8 arms still flags."""
+        conn = _make_db(tmp_path)
+        src = (
+            "def dispatch(x):\n"
+            "    if isinstance(x, A):\n"
+            "        return 1\n"
+            "    elif isinstance(x, B):\n"
+            "        return 2\n"
+            "    elif isinstance(x, C):\n"
+            "        return 3\n"
+            "    elif isinstance(x, D):\n"
+            "        return 4\n"
+            "    elif isinstance(x, E):\n"
+            "        return 5\n"
+            "    elif isinstance(x, F):\n"
+            "        return 6\n"
+            "    elif isinstance(x, G):\n"
+            "        return 7\n"
+            "    elif isinstance(x, H):\n"
+            "        return 8\n"
+            "    return 0\n"
+        )
+        self._wire_python_file(
+            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20)
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "switch-statement"
+        assert results[0]["metric_value"] == 8
+        conn.close()
+
+
+class TestTemporalCoupling:
+    """W602: temporal-coupling detector flags symbol pairs that co-change
+    >= 10 times AND share a call-graph edge in either direction.
+    """
+
+    def _wire_pair(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        cochange_count: int,
+        edge_direction: str = "a_to_b",
+    ) -> None:
+        """Insert two files, two functions (one per file), an edges row in
+        the requested direction, and one git_cochange row.
+        ``edge_direction`` is one of ``a_to_b``, ``b_to_a``, ``both``,
+        ``none``.
+        """
+        conn.execute("DELETE FROM edges")
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute("DELETE FROM git_cochange")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES "
+            "(1, 'src/a.py', 'python'), (2, 'src/b.py', 'python')"
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (1, 1, 'fn_a', 'function', 10, 20), "
+            "       (2, 2, 'fn_b', 'function', 30, 40)"
+        )
+        if edge_direction in ("a_to_b", "both"):
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, kind) "
+                "VALUES (1, 2, 'call')"
+            )
+        if edge_direction in ("b_to_a", "both"):
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, kind) "
+                "VALUES (2, 1, 'call')"
+            )
+        conn.execute(
+            "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) "
+            "VALUES (1, 2, ?)",
+            (cochange_count,),
+        )
+        conn.commit()
+
+    def test_empty_db_no_findings(self, tmp_path):
+        conn = _make_db(tmp_path)
+        assert detect_temporal_coupling(conn) == []
+        conn.close()
+
+    def test_cochange_above_threshold_with_edge_flagged(self, tmp_path):
+        """Positive: cochange=10, A -> B edge -> 1 finding."""
+        conn = _make_db(tmp_path)
+        self._wire_pair(conn, cochange_count=10, edge_direction="a_to_b")
+        results = detect_temporal_coupling(conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "temporal-coupling"
+        assert f["severity"] == "warning"
+        assert f["metric_value"] == 10
+        assert f["threshold"] == 10
+        # The finding names both endpoints in the description.
+        assert "fn_a" in f["description"]
+        assert "fn_b" in f["description"]
+        conn.close()
+
+    def test_cochange_below_threshold_not_flagged(self, tmp_path):
+        """Negative: cochange=9, edge present -> 0 findings (threshold 10)."""
+        conn = _make_db(tmp_path)
+        self._wire_pair(conn, cochange_count=9, edge_direction="a_to_b")
+        assert detect_temporal_coupling(conn) == []
+        conn.close()
+
+    def test_cochange_above_threshold_without_edge_not_flagged(self, tmp_path):
+        """Negative: cochange=20, NO edges -> 0 findings (edge required)."""
+        conn = _make_db(tmp_path)
+        self._wire_pair(conn, cochange_count=20, edge_direction="none")
+        assert detect_temporal_coupling(conn) == []
+        conn.close()
+
+    def test_bidirectional_edge_deduped_to_single_finding(self, tmp_path):
+        """A pair with edges in BOTH directions still emits exactly one
+        finding (the JOIN surfaces the pair twice; the dedupe collapses)."""
+        conn = _make_db(tmp_path)
+        self._wire_pair(conn, cochange_count=15, edge_direction="both")
+        results = detect_temporal_coupling(conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "temporal-coupling"
+        conn.close()
+
+    def test_b_to_a_edge_still_flagged(self, tmp_path):
+        """Edge direction is irrelevant -- B->A counts the same as A->B."""
+        conn = _make_db(tmp_path)
+        self._wire_pair(conn, cochange_count=12, edge_direction="b_to_a")
+        results = detect_temporal_coupling(conn)
+        assert len(results) == 1
+        assert results[0]["metric_value"] == 12
+        conn.close()
+
+
+class TestTemporalCouplingCluster:
+    """W647: symbol-centric rollup. When one symbol appears in >= 2
+    distinct pair findings, emit one ADDITIONAL ``temporal-coupling-
+    cluster`` finding alongside the pairs. Pair findings stay -- the
+    rollup is additive, operators want both views.
+    """
+
+    def _wire_hub(
+        self,
+        conn: sqlite3.Connection,
+        partners: int,
+        cochange_count: int = 12,
+    ) -> None:
+        """Insert a 'hub' symbol in file 1 and ``partners`` other symbols
+        each in their own file, with a call-graph edge AND a >=10-cochange
+        row between the hub and each partner. The hub is the symbol that
+        should roll up into a cluster finding.
+        """
+        conn.execute("DELETE FROM edges")
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute("DELETE FROM git_cochange")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (1, 'src/hub.py', 'python')"
+        )
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (1, 1, 'hub_fn', 'function', 10, 20)"
+        )
+        for i in range(partners):
+            file_id = 100 + i
+            sym_id = 100 + i
+            partner_path = f"src/p{i}.py"
+            partner_name = f"partner_{i}"
+            conn.execute(
+                "INSERT INTO files (id, path, language) VALUES (?, ?, 'python')",
+                (file_id, partner_path),
+            )
+            conn.execute(
+                "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+                "VALUES (?, ?, ?, 'function', 5, 15)",
+                (sym_id, file_id, partner_name),
+            )
+            conn.execute(
+                "INSERT INTO edges (source_id, target_id, kind) VALUES (1, ?, 'call')",
+                (sym_id,),
+            )
+            conn.execute(
+                "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) "
+                "VALUES (1, ?, ?)",
+                (file_id, cochange_count),
+            )
+        conn.commit()
+
+    def test_two_partners_emits_one_cluster_finding(self, tmp_path):
+        """Hub with 2 partners -> 2 pair findings + 1 cluster finding."""
+        conn = _make_db(tmp_path)
+        self._wire_hub(conn, partners=2)
+        results = detect_temporal_coupling(conn)
+        pairs = [r for r in results if r["smell_id"] == "temporal-coupling"]
+        clusters = [
+            r for r in results if r["smell_id"] == "temporal-coupling-cluster"
+        ]
+        # 2 pair findings -- one per (hub, partner_i) pair.
+        assert len(pairs) == 2
+        # 1 cluster finding -- the hub appears in >= 2 pair findings.
+        # Partner_0 and partner_1 each appear in only ONE pair so they
+        # don't roll up.
+        assert len(clusters) == 1
+        c = clusters[0]
+        assert c["symbol_name"] == "hub_fn"
+        assert c["severity"] == "warning"
+        # metric_value is the partner count.
+        assert c["metric_value"] == 2
+        assert c["threshold"] == 2
+        assert "partner_0" in c["description"]
+        assert "partner_1" in c["description"]
+        # The cluster claim names the cluster shape, not a single pair.
+        assert "cluster" in c["description"].lower()
+        conn.close()
+
+    def test_single_partner_does_not_cluster(self, tmp_path):
+        """Hub with 1 partner -> 1 pair finding + 0 cluster findings.
+        A single pair is NOT a cluster (threshold = 2 partners)."""
+        conn = _make_db(tmp_path)
+        self._wire_hub(conn, partners=1)
+        results = detect_temporal_coupling(conn)
+        pairs = [r for r in results if r["smell_id"] == "temporal-coupling"]
+        clusters = [
+            r for r in results if r["smell_id"] == "temporal-coupling-cluster"
+        ]
+        assert len(pairs) == 1
+        assert clusters == []
+        conn.close()
+
+    def test_three_partners_cluster_lists_all_three(self, tmp_path):
+        """Hub with 3 partners -> 3 pair findings + 1 cluster finding
+        naming all 3 partners. The cluster's metric_value is the partner
+        count (3) and the description lists every partner."""
+        conn = _make_db(tmp_path)
+        self._wire_hub(conn, partners=3, cochange_count=15)
+        results = detect_temporal_coupling(conn)
+        clusters = [
+            r for r in results if r["smell_id"] == "temporal-coupling-cluster"
+        ]
+        assert len(clusters) == 1
+        c = clusters[0]
+        assert c["metric_value"] == 3
+        for i in range(3):
+            assert f"partner_{i}" in c["description"], (
+                f"partner_{i} missing from cluster description: "
+                f"{c['description']}"
+            )
+        # max cc surfaces in the description so the operator sees the
+        # cluster's history strength.
+        assert "15 commits" in c["description"]
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# W605 -- comment-density detector
+# ---------------------------------------------------------------------------
+
+
+class TestCommentDensity:
+    """W605: comment-density detector flags files where TODO/FIXME/XXX/HACK
+    marker lines hit BOTH the absolute count gate (>= 3) AND the per-line
+    rate gate (>= 5%).
+    """
+
+    def _wire_file(
+        self,
+        tmp_path: Path,
+        conn: sqlite3.Connection,
+        rel_path: str,
+        source: str,
+        language: str = "python",
+    ) -> None:
+        full = tmp_path / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(source, encoding="utf-8")
+        conn.execute("DELETE FROM symbols")
+        conn.execute("DELETE FROM files")
+        conn.execute(
+            "INSERT INTO files (id, path, language) VALUES (1, ?, ?)",
+            (rel_path, language),
+        )
+        conn.commit()
+        (tmp_path / ".git").mkdir(exist_ok=True)
+
+    def _run(self, tmp_path: Path, conn: sqlite3.Connection) -> list[dict]:
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            return detect_comment_density(conn)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_empty_db_no_findings(self, tmp_path):
+        """Negative: empty registry -> no findings."""
+        conn = _make_db(tmp_path)
+        assert detect_comment_density(conn) == []
+        conn.close()
+
+    def test_above_both_thresholds_flagged_python(self, tmp_path):
+        """Positive: 3 marker lines in a 20-line Python file (15% rate)."""
+        conn = _make_db(tmp_path)
+        # 3 marker lines + 17 plain lines = 20 lines total, 15% rate.
+        body_lines = ["x = 1"] * 17
+        src = "\n".join(
+            [
+                "# TODO: implement caching",
+                "# FIXME: race condition",
+                "# HACK: hard-coded retry count",
+                *body_lines,
+            ]
+        ) + "\n"
+        self._wire_file(tmp_path, conn, "src/m.py", src)
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "comment-density"
+        assert f["severity"] == "info"
+        assert f["kind"] == "file"
+        assert f["symbol_name"] == "src/m.py"
+        assert f["metric_value"] == 3
+        assert f["threshold"] == 3
+        assert "TODO/FIXME/XXX/HACK" in f["description"]
+        assert "markers" in f["description"]
+        conn.close()
+
+    def test_above_both_thresholds_flagged_javascript(self, tmp_path):
+        """Positive: ``//``-comment language path also fires."""
+        conn = _make_db(tmp_path)
+        body_lines = ["let x = 1;"] * 17
+        src = "\n".join(
+            [
+                "// TODO: rewrite this loop",
+                "// XXX: revisit after migration",
+                "// HACK: workaround for IE11",
+                *body_lines,
+            ]
+        ) + "\n"
+        self._wire_file(
+            tmp_path, conn, "src/m.js", src, language="javascript"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "comment-density"
+        assert results[0]["metric_value"] == 3
+        conn.close()
+
+    def test_below_absolute_count_not_flagged(self, tmp_path):
+        """Negative: 2 markers fails the >= 3 absolute floor regardless of rate."""
+        conn = _make_db(tmp_path)
+        # 2 markers in 5 lines = 40% rate (well above rate gate) but absolute
+        # count fails -> no finding.
+        src = (
+            "# TODO: do the thing\n"
+            "# FIXME: also this\n"
+            "x = 1\n"
+            "y = 2\n"
+            "z = 3\n"
+        )
+        self._wire_file(tmp_path, conn, "src/m.py", src)
+        assert self._run(tmp_path, conn) == []
+        conn.close()
+
+    def test_below_rate_threshold_not_flagged(self, tmp_path):
+        """Negative: 3 markers in 200 lines = 1.5% rate -> below 5% gate."""
+        conn = _make_db(tmp_path)
+        body_lines = ["x = 1"] * 197
+        src = "\n".join(
+            [
+                "# TODO: A",
+                "# TODO: B",
+                "# TODO: C",
+                *body_lines,
+            ]
+        ) + "\n"
+        self._wire_file(tmp_path, conn, "src/m.py", src)
+        assert self._run(tmp_path, conn) == []
+        conn.close()
+
+    def test_empty_file_no_findings(self, tmp_path):
+        """Edge: empty file -> no division-by-zero, no finding."""
+        conn = _make_db(tmp_path)
+        self._wire_file(tmp_path, conn, "src/m.py", "")
+        assert self._run(tmp_path, conn) == []
+        conn.close()
+
+    def test_exact_threshold_flagged(self, tmp_path):
+        """Edge: exactly at both thresholds (>= comparisons) fires."""
+        conn = _make_db(tmp_path)
+        # 3 marker lines + 57 plain lines = 60 lines, 5.0% rate -- the
+        # exact boundary. >= 3 AND >= 0.05 both pass.
+        body_lines = ["x = 1"] * 57
+        src = "\n".join(
+            [
+                "# TODO: one",
+                "# TODO: two",
+                "# TODO: three",
+                *body_lines,
+            ]
+        ) + "\n"
+        self._wire_file(tmp_path, conn, "src/m.py", src)
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["metric_value"] == 3
+        conn.close()
+
+    def test_marker_words_outside_comments_not_counted(self, tmp_path):
+        """Marker keywords in code (string literals, identifier names) must
+        not count -- only ``#``-prefixed lines do."""
+        conn = _make_db(tmp_path)
+        # 1 actual marker comment + many code lines containing TODO as a
+        # string. Absolute count = 1 -> below threshold -> no finding.
+        src = (
+            "# TODO: real marker\n"
+            "msg1 = 'TODO refactor'\n"
+            "msg2 = 'FIXME later'\n"
+            "msg3 = 'XXX inline'\n"
+            "msg4 = 'HACK here'\n"
+        )
+        self._wire_file(tmp_path, conn, "src/m.py", src)
+        assert self._run(tmp_path, conn) == []
+        conn.close()
+
+    def test_unsupported_language_skipped(self, tmp_path):
+        """Languages outside ``_COMMENT_SYNTAX_BY_LANG`` are silently skipped.
+
+        W705 widened the supported set to 21 languages (was 14). ``foxpro``
+        is a regex-only tier-2 language that still has no entry in the
+        comment-syntax map, so it stays the canonical "unsupported" probe.
+        """
+        conn = _make_db(tmp_path)
+        src = (
+            "# TODO: A\n"
+            "# TODO: B\n"
+            "# TODO: C\n"
+            "x = 1\n"
+        )
+        # ``foxpro`` is NOT in ``_COMMENT_SYNTAX_BY_LANG`` (FoxPro uses
+        # ``*`` and ``&&`` markers, which the detector does not model).
+        self._wire_file(tmp_path, conn, "legacy.prg", src, language="foxpro")
+        assert self._run(tmp_path, conn) == []
+        conn.close()
+
+    # ---- W650: block-comment extension --------------------------------
+
+    def test_block_comments_jsdoc_flagged(self, tmp_path):
+        """W650 positive: a JSDoc-style ``/** ... */`` block carrying 3
+        TODO/FIXME/HACK markers across multiple physical lines flags the
+        file.
+
+        The block spans many physical lines but the markers inside it
+        are counted by ``findall`` occurrences -- one marker = one
+        increment, regardless of how the block wraps.
+        """
+        conn = _make_db(tmp_path)
+        # 3 markers inside one block + 17 plain lines = 20 lines, 15% rate.
+        body_lines = ["let x = 1;"] * 17
+        src = "\n".join(
+            [
+                "/**",
+                " * Module entry point.",
+                " * TODO: rewrite this loop",
+                " * FIXME: race on init",
+                " * HACK: hard-coded retry count",
+                " */",
+                *body_lines,
+            ]
+        ) + "\n"
+        # File is 23 physical lines (6 block + 17 body); the file has 3
+        # markers / 23 lines = ~13% which is above both gates.
+        self._wire_file(
+            tmp_path, conn, "src/m.js", src, language="javascript"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "comment-density"
+        assert f["metric_value"] == 3
+        assert f["kind"] == "file"
+        conn.close()
+
+    def test_line_only_no_block_still_works(self, tmp_path):
+        """W650 negative regression: a file with only ``//`` line
+        comments and no ``/* */`` blocks still flags on the W605 line
+        path. The new block scanner must be additive, not a regression.
+        """
+        conn = _make_db(tmp_path)
+        body_lines = ["let x = 1;"] * 17
+        src = "\n".join(
+            [
+                "// TODO: rewrite",
+                "// FIXME: race",
+                "// HACK: workaround",
+                *body_lines,
+            ]
+        ) + "\n"
+        self._wire_file(
+            tmp_path, conn, "src/m.ts", src, language="typescript"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["metric_value"] == 3
+        assert results[0]["smell_id"] == "comment-density"
+        conn.close()
+
+    def test_mixed_line_and_block_combined(self, tmp_path):
+        """W650 positive: a Java file with 1 ``//`` marker and 2 markers
+        inside one ``/* */`` block combines to 3 markers. Verifies the
+        two pass results are additive on the same file.
+        """
+        conn = _make_db(tmp_path)
+        # 1 line marker + 1 block carrying 2 markers + 17 body lines.
+        body_lines = ["int x = 1;"] * 17
+        src = "\n".join(
+            [
+                "// TODO: review",
+                "/* FIXME: A",
+                "   XXX: B */",
+                *body_lines,
+            ]
+        ) + "\n"
+        # 1 (line) + 2 (block) = 3 markers, 20 physical lines = 15%.
+        self._wire_file(
+            tmp_path, conn, "src/M.java", src, language="java"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "comment-density"
+        assert f["metric_value"] == 3
+        conn.close()
+
+    # ---- W705: extended language coverage -----------------------------
+
+    def test_html_block_comments_flagged(self, tmp_path):
+        """W705 positive: HTML ``<!-- ... -->`` block-comment markers
+        flag the file. HTML has no line-comment syntax, so this exercises
+        the block-only branch of ``_CommentSyntax``."""
+        conn = _make_db(tmp_path)
+        # 3 markers inside one HTML comment block + 17 plain body lines.
+        body_lines = ["<p>x</p>"] * 17
+        src = "\n".join(
+            [
+                "<!--",
+                "  TODO: rewrite hero",
+                "  FIXME: missing alt text",
+                "  HACK: inline styles",
+                "-->",
+                *body_lines,
+            ]
+        ) + "\n"
+        self._wire_file(
+            tmp_path, conn, "src/index.html", src, language="html"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "comment-density"
+        assert f["metric_value"] == 3
+        assert f["kind"] == "file"
+        conn.close()
+
+    def test_sql_line_and_block_markers_flagged(self, tmp_path):
+        """W705 positive: SQL ``--`` line + ``/* */`` block markers
+        combine on one file."""
+        conn = _make_db(tmp_path)
+        body_lines = ["SELECT 1;"] * 17
+        src = "\n".join(
+            [
+                "-- TODO: index this column",
+                "/* FIXME: slow scan",
+                "   XXX: review plan */",
+                *body_lines,
+            ]
+        ) + "\n"
+        # 1 (line) + 2 (block) = 3 markers, 20 physical lines = 15%.
+        self._wire_file(
+            tmp_path, conn, "src/schema.sql", src, language="sql"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "comment-density"
+        assert results[0]["metric_value"] == 3
+        conn.close()
+
+    def test_shell_hash_markers_flagged(self, tmp_path):
+        """W705 positive: shell scripts (indexer language ``bash``)
+        with ``#``-prefixed marker comments flag like Python."""
+        conn = _make_db(tmp_path)
+        body_lines = ["echo hi"] * 17
+        src = "\n".join(
+            [
+                "# TODO: split this script",
+                "# FIXME: handle SIGTERM",
+                "# HACK: workaround for set -e",
+                *body_lines,
+            ]
+        ) + "\n"
+        self._wire_file(
+            tmp_path, conn, "scripts/build.sh", src, language="bash"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["smell_id"] == "comment-density"
+        assert results[0]["metric_value"] == 3
+        conn.close()
+
+    def test_php_hash_line_prefix_flagged(self, tmp_path):
+        """W705 positive: PHP honours both ``//`` and ``#`` line
+        comments. The ``#``-only marker lines should count too."""
+        conn = _make_db(tmp_path)
+        body_lines = ["$x = 1;"] * 17
+        src = "\n".join(
+            [
+                "# TODO: switch to typed properties",
+                "// FIXME: race in worker",
+                "# HACK: legacy global",
+                *body_lines,
+            ]
+        ) + "\n"
+        self._wire_file(
+            tmp_path, conn, "src/legacy.php", src, language="php"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        assert results[0]["metric_value"] == 3
+        conn.close()
+
+    # ---- W720: hcl + apex extension -----------------------------------
+
+    def test_hcl_mixed_hash_slash_and_block_flagged(self, tmp_path):
+        """W720 positive: HCL/Terraform honours ``#``, ``//`` line and
+        ``/* */`` block comments. A mix of all three marker styles on
+        one file combines to clear both gates."""
+        conn = _make_db(tmp_path)
+        body_lines = ['  name = "x"'] * 17
+        src = "\n".join(
+            [
+                "# TODO: lock module version",
+                "// FIXME: hard-coded region",
+                "/* HACK: temp variable override */",
+                *body_lines,
+            ]
+        ) + "\n"
+        self._wire_file(
+            tmp_path, conn, "infra/main.tf", src, language="hcl"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "comment-density"
+        assert f["metric_value"] == 3
+        assert f["kind"] == "file"
+        conn.close()
+
+    def test_apex_line_and_block_markers_flagged(self, tmp_path):
+        """W720 positive: Apex uses ``//`` line + ``/* */`` block. One
+        line marker + one block carrying two markers combines to three."""
+        conn = _make_db(tmp_path)
+        body_lines = ["Integer x = 1;"] * 17
+        src = "\n".join(
+            [
+                "// TODO: bulkify this",
+                "/* FIXME: SOQL in loop",
+                "   XXX: governor limit risk */",
+                *body_lines,
+            ]
+        ) + "\n"
+        # 1 (line) + 2 (block) = 3 markers, 20 physical lines = 15%.
+        self._wire_file(
+            tmp_path, conn, "src/AcctSvc.cls", src, language="apex"
+        )
+        results = self._run(tmp_path, conn)
+        assert len(results) == 1
+        f = results[0]
+        assert f["smell_id"] == "comment-density"
+        assert f["metric_value"] == 3
+        assert f["kind"] == "file"
         conn.close()
 
 
@@ -502,8 +2478,13 @@ class TestPlaceholders:
 
 
 class TestAllDetectors:
-    def test_has_15_entries(self):
-        assert len(ALL_DETECTORS) == 15
+    def test_has_24_entries(self):
+        # W603 added ``magic-numbers``; W604 added ``boolean-parameter``;
+        # W601 added ``switch-statement``; W602 added ``temporal-coupling``;
+        # W605 added ``comment-density``; W853 added
+        # ``speculative-generality``; W857 added ``parallel-hierarchy``;
+        # W856 added ``cross-layer-clone``; W852 added ``type-switch``.
+        assert len(ALL_DETECTORS) == 24
 
     def test_all_ids_unique(self):
         ids = [smell_id for smell_id, _ in ALL_DETECTORS]
@@ -807,3 +2788,465 @@ class TestSmellsCLI:
         assert result.exit_code == 0
         assert "brain-method" in result.output
         assert "Threshold" in result.output or "Location" in result.output
+
+
+# ---------------------------------------------------------------------------
+# W653: run_all_detectors() must fail-loud on programmer bugs (NameError,
+# ImportError, AttributeError) rather than swallow them. W601/W602 dropped a
+# Counter import that the prior bare ``except Exception: continue`` would have
+# masked at runtime — W639's smoke test catches it at test time, but the
+# production loop must also surface the same bug class to operators.
+# ---------------------------------------------------------------------------
+
+
+class TestW653DetectorFailLoud:
+    """W653: programmer-error exceptions in detectors propagate out of
+    run_all_detectors(). sqlite errors still continue."""
+
+    def test_name_error_propagates(self, tmp_path, monkeypatch):
+        """A detector that raises NameError (e.g. missing import) must NOT
+        be swallowed by run_all_detectors. The W601/W602 Counter-import
+        regression is exactly this bug class."""
+        from roam.catalog import smells as smells_mod
+
+        def _bad_detector(conn):
+            raise NameError("name 'Counter' is not defined")
+
+        # Replace registry with one synthetic detector so the test is hermetic.
+        monkeypatch.setattr(
+            smells_mod, "ALL_DETECTORS", [("bad-detector", _bad_detector)]
+        )
+        conn = _make_db(tmp_path)
+        try:
+            with pytest.raises(RuntimeError, match="bad-detector|_bad_detector"):
+                smells_mod.run_all_detectors(conn)
+        finally:
+            conn.close()
+
+    def test_import_error_propagates(self, tmp_path, monkeypatch):
+        """ImportError from a detector must also fail-loud."""
+        from roam.catalog import smells as smells_mod
+
+        def _bad_detector(conn):
+            raise ImportError("cannot import name 'missing_helper'")
+
+        monkeypatch.setattr(
+            smells_mod, "ALL_DETECTORS", [("bad-detector", _bad_detector)]
+        )
+        conn = _make_db(tmp_path)
+        try:
+            with pytest.raises(RuntimeError, match="ImportError"):
+                smells_mod.run_all_detectors(conn)
+        finally:
+            conn.close()
+
+    def test_attribute_error_propagates(self, tmp_path, monkeypatch):
+        """AttributeError (typical for signature drift / missing attr) must
+        fail-loud."""
+        from roam.catalog import smells as smells_mod
+
+        def _bad_detector(conn):
+            raise AttributeError("'NoneType' object has no attribute 'execute'")
+
+        monkeypatch.setattr(
+            smells_mod, "ALL_DETECTORS", [("bad-detector", _bad_detector)]
+        )
+        conn = _make_db(tmp_path)
+        try:
+            with pytest.raises(RuntimeError, match="AttributeError"):
+                smells_mod.run_all_detectors(conn)
+        finally:
+            conn.close()
+
+    def test_sqlite_error_continues(self, tmp_path, monkeypatch, caplog):
+        """A per-detector sqlite3 error is a data/query issue, not a programmer
+        bug — it should be logged and other detectors should still run."""
+        import logging
+
+        from roam.catalog import smells as smells_mod
+
+        def _bad_detector(conn):
+            raise sqlite3.OperationalError("no such table: ghost_table")
+
+        def _good_detector(conn):
+            return [{"smell_id": "ok", "severity": "info"}]
+
+        monkeypatch.setattr(
+            smells_mod,
+            "ALL_DETECTORS",
+            [("bad-detector", _bad_detector), ("good-detector", _good_detector)],
+        )
+        conn = _make_db(tmp_path)
+        try:
+            with caplog.at_level(logging.WARNING, logger="roam.catalog.smells"):
+                results = smells_mod.run_all_detectors(conn)
+        finally:
+            conn.close()
+
+        # Good detector still ran.
+        assert {"smell_id": "ok", "severity": "info"} in results
+        # Warning was logged for the bad detector.
+        assert any(
+            "sqlite error" in rec.message and "_bad_detector" in rec.message
+            for rec in caplog.records
+        ), f"expected sqlite-warning log; got: {[r.message for r in caplog.records]}"
+
+    def test_clean_run_unchanged(self, tmp_path):
+        """Sanity: empty corpus still returns []. The fail-loud refactor must
+        not regress the W639 empty-corpus contract."""
+        conn = _make_db(tmp_path)
+        try:
+            assert run_all_detectors(conn) == []
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# W658: .roam/smells.suppress.yml allowlist substrate
+# ---------------------------------------------------------------------------
+
+
+class TestSmellsSuppress:
+    """Unit tests for the smells_suppress substrate (parser, matcher, applier)."""
+
+    def _write_suppress(self, tmp_path: Path, body: str) -> None:
+        roam_dir = tmp_path / ".roam"
+        roam_dir.mkdir(parents=True, exist_ok=True)
+        (roam_dir / "smells.suppress.yml").write_text(body, encoding="utf-8")
+
+    def test_load_missing_file_returns_empty(self, tmp_path):
+        from roam.commands.smells_suppress import load_smells_suppressions
+
+        assert load_smells_suppressions(tmp_path) == []
+
+    def test_load_parses_basic_yaml(self, tmp_path):
+        from roam.commands.smells_suppress import load_smells_suppressions
+
+        self._write_suppress(
+            tmp_path,
+            """\
+suppressions:
+  - kind: shotgun-surgery
+    symbol: get_language_for_file
+    reason: "Public API hub"
+""",
+        )
+        entries = load_smells_suppressions(tmp_path)
+        assert len(entries) == 1
+        assert entries[0]["kind"] == "shotgun-surgery"
+        assert entries[0]["symbol"] == "get_language_for_file"
+        assert entries[0]["reason"] == "Public API hub"
+
+    def test_load_skips_malformed_entries(self, tmp_path):
+        from roam.commands.smells_suppress import load_smells_suppressions
+
+        self._write_suppress(
+            tmp_path,
+            """\
+suppressions:
+  - kind: shotgun-surgery
+    # missing symbol -- dropped
+  - kind: god-class
+    symbol: GodManager
+""",
+        )
+        entries = load_smells_suppressions(tmp_path)
+        assert [e["symbol"] for e in entries] == ["GodManager"]
+
+    def test_is_suppressed_matches_kind_and_symbol(self):
+        from roam.commands.smells_suppress import is_suppressed
+
+        entries = [{"kind": "shotgun-surgery", "symbol": "get_language_for_file"}]
+        finding = {
+            "smell_id": "shotgun-surgery",
+            "symbol_name": "get_language_for_file",
+            "location": "src/roam/languages/registry.py:42",
+        }
+        assert is_suppressed(entries, finding) is entries[0]
+
+    def test_is_suppressed_skips_other_kinds(self):
+        from roam.commands.smells_suppress import is_suppressed
+
+        entries = [{"kind": "shotgun-surgery", "symbol": "get_language_for_file"}]
+        # Same symbol, different kind -- must NOT suppress.
+        finding = {
+            "smell_id": "god-class",
+            "symbol_name": "get_language_for_file",
+            "location": "src/roam/languages/registry.py:42",
+        }
+        assert is_suppressed(entries, finding) is None
+
+    def test_is_suppressed_skips_other_symbols(self):
+        from roam.commands.smells_suppress import is_suppressed
+
+        entries = [{"kind": "shotgun-surgery", "symbol": "get_language_for_file"}]
+        finding = {
+            "smell_id": "shotgun-surgery",
+            "symbol_name": "some_other_symbol",
+            "location": "src/foo.py:1",
+        }
+        assert is_suppressed(entries, finding) is None
+
+    def test_qualified_symbol_matches_bare_finding(self):
+        """Suppress entry uses dotted path; smells emit bare names."""
+        from roam.commands.smells_suppress import is_suppressed
+
+        entries = [
+            {"kind": "shotgun-surgery", "symbol": "roam.languages.registry.get_extractor"}
+        ]
+        finding = {
+            "smell_id": "shotgun-surgery",
+            "symbol_name": "get_extractor",
+            "location": "src/roam/languages/registry.py:142",
+        }
+        assert is_suppressed(entries, finding) is entries[0]
+
+    def test_file_field_disambiguates_same_name_in_different_files(self):
+        """`file` suffix-match scopes a kind+symbol suppression to one file."""
+        from roam.commands.smells_suppress import is_suppressed
+
+        entries = [
+            {
+                "kind": "shotgun-surgery",
+                "symbol": "handle",
+                "file": "src/roam/languages/registry.py",
+            }
+        ]
+        # Match: same name, same file suffix.
+        match = {
+            "smell_id": "shotgun-surgery",
+            "symbol_name": "handle",
+            "location": "src/roam/languages/registry.py:10",
+        }
+        # No match: same name, different file.
+        miss = {
+            "smell_id": "shotgun-surgery",
+            "symbol_name": "handle",
+            "location": "src/roam/cli.py:10",
+        }
+        assert is_suppressed(entries, match) is entries[0]
+        assert is_suppressed(entries, miss) is None
+
+    def test_expired_suppression_skipped(self):
+        """An `expires` date in the past treats the entry as absent."""
+        from datetime import date
+
+        from roam.commands.smells_suppress import is_suppressed
+
+        entries = [
+            {
+                "kind": "shotgun-surgery",
+                "symbol": "get_language_for_file",
+                "expires": "2020-01-01",
+            }
+        ]
+        finding = {
+            "smell_id": "shotgun-surgery",
+            "symbol_name": "get_language_for_file",
+            "location": "src/foo.py:1",
+        }
+        assert is_suppressed(entries, finding, today=date(2026, 5, 14)) is None
+
+    def test_future_expiry_still_suppressed(self):
+        from datetime import date
+
+        from roam.commands.smells_suppress import is_suppressed
+
+        entries = [
+            {
+                "kind": "shotgun-surgery",
+                "symbol": "get_language_for_file",
+                "expires": "2099-01-01",
+            }
+        ]
+        finding = {
+            "smell_id": "shotgun-surgery",
+            "symbol_name": "get_language_for_file",
+            "location": "src/foo.py:1",
+        }
+        assert is_suppressed(entries, finding, today=date(2026, 5, 14)) is entries[0]
+
+    def test_apply_suppressions_partitions(self):
+        from roam.commands.smells_suppress import apply_suppressions
+
+        entries = [{"kind": "shotgun-surgery", "symbol": "hub"}]
+        findings = [
+            {"smell_id": "shotgun-surgery", "symbol_name": "hub", "location": "a.py:1"},
+            {"smell_id": "shotgun-surgery", "symbol_name": "other", "location": "b.py:1"},
+            {"smell_id": "god-class", "symbol_name": "hub", "location": "c.py:1"},
+        ]
+        kept, suppressed = apply_suppressions(findings, entries)
+        assert len(kept) == 2
+        assert len(suppressed) == 1
+        assert suppressed[0]["symbol_name"] == "hub"
+        assert suppressed[0]["_suppressed_by"]["kind"] == "shotgun-surgery"
+
+    def test_apply_with_empty_suppressions_passthrough(self):
+        from roam.commands.smells_suppress import apply_suppressions
+
+        findings = [{"smell_id": "x", "symbol_name": "y", "location": "z:1"}]
+        kept, suppressed = apply_suppressions(findings, [])
+        assert kept == findings
+        assert suppressed == []
+
+
+class TestSmellsSuppressCLI:
+    """End-to-end CLI tests: --no-suppress, envelope shape, persist integration."""
+
+    def _write_suppress(self, project_dir: Path, body: str) -> None:
+        roam_dir = project_dir / ".roam"
+        roam_dir.mkdir(parents=True, exist_ok=True)
+        (roam_dir / "smells.suppress.yml").write_text(body, encoding="utf-8")
+
+    def _make_shotgun_project(self, tmp_path: Path, symbol_name: str = "hub_fn") -> Path:
+        """Create a project with one shotgun-surgery finding for *symbol_name*."""
+        _git_init(tmp_path)
+        conn = _make_db(tmp_path)
+        conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/utils.py')")
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+            "VALUES (1, 1, ?, 'function', 1, 10)",
+            (symbol_name,),
+        )
+        conn.execute(
+            "INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (1, 12, 2)"
+        )
+        conn.commit()
+        conn.close()
+        return tmp_path
+
+    def test_cli_suppression_filters_finding(self, tmp_path):
+        """A shotgun-surgery suppression entry removes the finding from output."""
+        project = self._make_shotgun_project(tmp_path, "hub_fn")
+        self._write_suppress(
+            project,
+            """\
+suppressions:
+  - kind: shotgun-surgery
+    symbol: hub_fn
+    reason: "Public API hub by design"
+""",
+        )
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(project))
+            result = runner.invoke(cli, ["--json", "smells"])
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["total_smells"] == 0
+        assert data["summary"]["suppressed_count"] == 1
+
+    def test_cli_other_kinds_not_filtered(self, tmp_path):
+        """A suppression for kind=A must NOT remove a finding of kind=B."""
+        _git_init(tmp_path)
+        conn = _make_db(tmp_path)
+        # god-class finding (35 methods, 1200 LOC).
+        _populate_god_class(conn)
+        conn.commit()
+        conn.close()
+        # Suppress shotgun-surgery (which the project doesn't trigger anyway,
+        # but the assert is: god-class survives).
+        self._write_suppress(
+            tmp_path,
+            """\
+suppressions:
+  - kind: shotgun-surgery
+    symbol: GodManager
+    reason: "Wrong kind -- god-class must still surface"
+""",
+        )
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            result = runner.invoke(cli, ["--json", "--detail", "smells"])
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["total_smells"] >= 1
+        assert data["summary"]["suppressed_count"] == 0
+        # Verify the god-class finding is there.
+        kinds = {f["value"]["smell_id"] for f in data["smells"]}
+        assert "god-class" in kinds
+
+    def test_cli_no_suppress_flag_bypasses_allowlist(self, tmp_path):
+        """--no-suppress ignores the file entirely and surfaces the finding."""
+        project = self._make_shotgun_project(tmp_path, "hub_fn")
+        self._write_suppress(
+            project,
+            """\
+suppressions:
+  - kind: shotgun-surgery
+    symbol: hub_fn
+    reason: "Should be ignored by --no-suppress"
+""",
+        )
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(project))
+            result = runner.invoke(cli, ["--json", "--detail", "smells", "--no-suppress"])
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["total_smells"] >= 1
+        assert data["summary"]["suppressed_count"] == 0
+        kinds = {f["value"]["smell_id"] for f in data["smells"]}
+        assert "shotgun-surgery" in kinds
+
+    def test_cli_text_output_discloses_suppression_count(self, tmp_path):
+        """Text mode mentions suppressed count so audits aren't blind."""
+        project = self._make_shotgun_project(tmp_path, "hub_fn")
+        self._write_suppress(
+            project,
+            """\
+suppressions:
+  - kind: shotgun-surgery
+    symbol: hub_fn
+    reason: "Public API hub by design"
+""",
+        )
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(project))
+            result = runner.invoke(cli, ["smells"])
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0, result.output
+        # The verdict reports zero smells (suppression worked) and the
+        # tail disclosure mentions the suppression file.
+        assert "Clean" in result.output or "0 " in result.output or "no code" in result.output
+
+    def test_cli_detail_mode_emits_suppressed_smells_list(self, tmp_path):
+        """--detail surfaces the dropped findings (audit trail)."""
+        project = self._make_shotgun_project(tmp_path, "hub_fn")
+        self._write_suppress(
+            project,
+            """\
+suppressions:
+  - kind: shotgun-surgery
+    symbol: hub_fn
+    reason: "Public API hub by design"
+""",
+        )
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(project))
+            result = runner.invoke(cli, ["--json", "--detail", "smells"])
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["suppressed_count"] == 1
+        assert isinstance(data.get("suppressed_smells"), list)
+        assert len(data["suppressed_smells"]) == 1
+        sup = data["suppressed_smells"][0]
+        assert sup["smell_id"] == "shotgun-surgery"
+        assert sup["_suppressed_by"]["reason"] == "Public API hub by design"

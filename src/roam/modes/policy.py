@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from roam.commands._command_utils import bare_command_name as _bare_command_name
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -86,6 +88,14 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "ask",
         "mode",
         "intent-check",
+        # W107 — demoted from safe_edit. Both are pure DB queries with no
+        # edit semantics: `findings` is a read-side surface over the central
+        # findings registry (all subcommands open the DB with readonly=True
+        # and never mutate); `x-lang` lists cross-language bridges by
+        # reading `files`/`symbols`. Same risk profile as `search` /
+        # `describe` / `fan` — belongs at read_only, not safe_edit.
+        "findings",
+        "x-lang",
     },
     "safe_edit": {
         "diff",
@@ -106,6 +116,24 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "stats",
         "audit-trail-conformance-check",
         "rules-validate",
+        # W248 — `ws` is a Click GROUP with 7 subcommands. Classified at
+        # the group level (most-conservative tier across subcommands):
+        #   read-only:  ws status, ws understand, ws health, ws context,
+        #               ws trace          (all open the workspace DB with
+        #                                  readonly=True)
+        #   writes:     ws init           (creates .roam-workspace.json +
+        #                                  workspace DB, calls upsert_repo)
+        #               ws resolve        (clear_cross_edges +
+        #                                  build_cross_repo_edges +
+        #                                  upsert_repo)
+        # Group-level safe_edit because writes are confined to a NEW
+        # workspace artifact (.roam-workspace.json + workspace DB) — they
+        # never touch a repo's main `.roam/index.db` schema, so migration
+        # is the wrong tier. Per-subcommand split (read-only for
+        # status/understand/health/context/trace; safe_edit for
+        # init/resolve) is possible if/when the mode policy gains
+        # subcommand-path granularity — left as a future refinement.
+        "ws",
     },
     "migration": {
         "migration-plan",
@@ -189,33 +217,12 @@ class ModePolicy:
     source: str = "default"  # "default" | "constitution" | "env" | "file"
 
     def allows(self, command: str) -> bool:
-        return _normalise_command(command) in self.allowed_commands
+        return _bare_command_name(command) in self.allowed_commands
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _normalise_command(command: str) -> str:
-    """Canonicalise a command string to its bare verb.
-
-    ``roam preflight foo`` -> ``preflight``
-    ``critique --strict`` -> ``critique``
-    ``mode`` -> ``mode``
-    """
-    if not command:
-        return ""
-    s = command.strip()
-    if s.startswith("roam "):
-        s = s[5:].lstrip()
-    tokens = [t for t in s.split() if t and not t.startswith("-")]
-    return tokens[0] if tokens else s
-
-
-def _bare_command_name(verdict_cmd: str) -> str:
-    """Mirror of constitution loader's ``_bare_command_name``."""
-    return _normalise_command(verdict_cmd)
 
 
 def _materialise_from_constitution(
@@ -388,7 +395,7 @@ def check_command_allowed(
     """
     if mode is None:
         mode = resolve_mode(repo_root)
-    bare = _normalise_command(command_name)
+    bare = _bare_command_name(command_name)
     if not bare:
         return False, "empty command name"
     if bare in mode.allowed_commands:

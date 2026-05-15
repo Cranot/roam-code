@@ -27,11 +27,8 @@ from conftest import invoke_cli
 
 @pytest.fixture
 def cli_runner():
-    """Provide a Click CliRunner compatible with Click 8.2+."""
-    try:
-        return CliRunner(mix_stderr=False)
-    except TypeError:
-        return CliRunner()
+    """Provide a Click CliRunner (W840: Click 8.3+ dropped mix_stderr kwarg)."""
+    return CliRunner()
 
 
 # ---------------------------------------------------------------------------
@@ -2207,3 +2204,79 @@ class TestCSharpReferenceExtraction:
         type_refs = [r for r in refs if r["kind"] == "type_ref"]
         type_ref_names = {r["target_name"] for r in type_refs}
         assert "MyType" in type_ref_names
+
+
+# ===========================================================================
+# W646 -- drift guard: _LANGUAGE_EXTRACTORS vs _SUPPORTED_LANGUAGES
+# ===========================================================================
+
+
+class TestExtractorRegistryDriftGuard:
+    """Adding a language to one source-of-truth without the other must fail.
+
+    Before W646, `_create_extractor` was a 23-arm if/elif chain on the
+    `language` argument (caught by the W601 switch-statement smell detector).
+    The dispatch table `_LANGUAGE_EXTRACTORS` replaces the chain; this test
+    pins the invariant that the dispatch table and the declared supported
+    language set stay aligned, so adding a language to one without the other
+    breaks the build.
+    """
+
+    def test_dispatch_table_subset_of_supported_languages(self):
+        from roam.languages.registry import (
+            _LANGUAGE_EXTRACTORS,
+            _SUPPORTED_LANGUAGES,
+        )
+
+        extra = set(_LANGUAGE_EXTRACTORS) - set(_SUPPORTED_LANGUAGES)
+        assert not extra, (
+            f"_LANGUAGE_EXTRACTORS has keys not declared in "
+            f"_SUPPORTED_LANGUAGES: {sorted(extra)}. Add them to "
+            f"_SUPPORTED_LANGUAGES in src/roam/languages/registry.py."
+        )
+
+    def test_supported_languages_have_extractor_or_generic_alias(self):
+        """Every supported language either has a dispatch-table entry or
+        aliases via GRAMMAR_ALIASES to a non-dedicated target (so it
+        falls through to GenericExtractor). No supported language can be
+        silently extractor-less.
+        """
+        from roam.index.parser import GRAMMAR_ALIASES, REGEX_ONLY_LANGUAGES
+        from roam.languages.registry import (
+            _DEDICATED_EXTRACTORS,
+            _LANGUAGE_EXTRACTORS,
+            _SUPPORTED_LANGUAGES,
+        )
+
+        missing = []
+        for lang in _SUPPORTED_LANGUAGES:
+            if lang in _LANGUAGE_EXTRACTORS:
+                continue
+            # Aliased to a non-dedicated grammar -> GenericExtractor fallback
+            # is the intentional path (e.g. jsonc -> json, mdx -> markdown).
+            alias_target = GRAMMAR_ALIASES.get(lang)
+            if alias_target and alias_target not in _DEDICATED_EXTRACTORS:
+                continue
+            # Regex-only with a dedicated extractor would already be in the
+            # dispatch table; if it isn't, it's missing.
+            if lang in REGEX_ONLY_LANGUAGES:
+                missing.append(lang)
+                continue
+            missing.append(lang)
+        assert not missing, (
+            f"Supported languages with no extractor route: {sorted(missing)}. "
+            f"Add a thunk to _LANGUAGE_EXTRACTORS in "
+            f"src/roam/languages/registry.py OR alias via GRAMMAR_ALIASES."
+        )
+
+    def test_dispatch_table_factories_resolve(self):
+        """Each thunk must import and instantiate without error."""
+        from roam.languages.base import LanguageExtractor
+        from roam.languages.registry import _LANGUAGE_EXTRACTORS
+
+        for lang, factory in _LANGUAGE_EXTRACTORS.items():
+            inst = factory()
+            assert isinstance(inst, LanguageExtractor), (
+                f"_LANGUAGE_EXTRACTORS[{lang!r}] returned non-LanguageExtractor: "
+                f"{type(inst).__name__}"
+            )

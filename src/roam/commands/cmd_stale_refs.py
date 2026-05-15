@@ -1994,7 +1994,7 @@ def _load_repo_config(project_root: Path) -> dict:
     individual flags can be made config-aware by checking ``ctx.obj``.
 
     Uses Python 3.11+ stdlib ``tomllib`` when available; falls back to
-    a minimal parser for ≤3.10 (currently roam supports 3.9+).
+    a minimal parser on 3.10 (the project's current floor).
     """
     config_path = project_root / ".roam" / _CONFIG_FILENAME
     if not config_path.exists():
@@ -3417,6 +3417,12 @@ def stale_refs(
     # ---- --attest writes an in-toto v1 statement before any other output
     # mode. Must run BEFORE sarif/json/text branches so a CI run that
     # uses ``--sarif --attest`` together still produces both artifacts.
+    #
+    # W126: never crash the scan because the attest target is unwritable
+    # (parent is a file, perms denied, etc.). The scan already completed;
+    # we surface the failure as structured state and keep going.
+    attest_error: str | None = None
+    attest_written: bool = False
     if attest_path:
         attest_summary = {
             "verdict": verdict,
@@ -3448,10 +3454,25 @@ def stale_refs(
                 click.echo(rendered, err=True)
             else:
                 click.echo(rendered)
+            attest_written = True
         else:
             atomic_path = Path(attest_path)
-            atomic_path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(atomic_path, rendered + "\n")
+            try:
+                atomic_path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_text(atomic_path, rendered + "\n")
+                attest_written = True
+            except OSError as exc:
+                # FileExistsError / NotADirectoryError / PermissionError /
+                # IsADirectoryError all subclass OSError. The scan itself
+                # is complete and useful; treat attestation as a non-fatal
+                # side-channel failure.
+                attest_error = (
+                    f"could not create attestation path {attest_path}: {exc}"
+                )
+                # Surface to stderr so text-mode and JSON-mode consumers
+                # both see the warning regardless of which output path is
+                # taken below.
+                click.echo(f"Warning: {attest_error}", err=True)
 
     # ---- --github-summary writes a markdown table for GitHub Actions ---
     # Runs alongside SARIF / JSON / text just like ``--attest``.
@@ -3474,12 +3495,24 @@ def stale_refs(
             # Best-effort: a write failure here shouldn't fail CI.
             pass
 
+    # W126: helper for the post-output exit policy. Gate-failure (5) wins
+    # if there are findings; otherwise an attestation failure under --gate
+    # promotes to EXIT_PARTIAL (6) so CI can distinguish a clean-but-warned
+    # run from a healthy run. Without --gate, attestation errors are
+    # informational only (exit 0) — they're already in the envelope.
+    def _exit_with_policy() -> None:
+        if gate and target_count > 0:
+            ctx.exit(5)
+        if gate and attest_error:
+            from roam.exit_codes import EXIT_PARTIAL
+
+            ctx.exit(EXIT_PARTIAL)
+
     if sarif_mode:
         from roam.output.sarif import stale_refs_to_sarif, write_sarif
 
         click.echo(write_sarif(stale_refs_to_sarif(full_targets_with_hints)))
-        if gate and target_count > 0:
-            ctx.exit(5)
+        _exit_with_policy()
         return
 
     if json_mode:
@@ -3500,6 +3533,11 @@ def stale_refs(
         }
         if attest_path:
             summary["attestation_path"] = "stdout" if attest_path == "-" else str(Path(attest_path))
+            # W126: surface attestation success/failure as structured state
+            # so an agent doesn't have to parse stderr or guess.
+            summary["attest_status"] = "ok" if attest_written else "failed"
+        if attest_error:
+            summary["attest_error"] = attest_error
         if diff_info:
             summary["diff_base"] = diff_info["base_sha"]
             summary["diff_base_ref"] = diff_info["base_ref"]
@@ -3533,8 +3571,7 @@ def stale_refs(
                 )
             )
         )
-        if gate and target_count > 0:
-            ctx.exit(5)
+        _exit_with_policy()
         return
 
     # --- Text output ---
@@ -3546,6 +3583,7 @@ def stale_refs(
         if next_steps:
             click.echo()
             click.echo(format_next_steps_text(next_steps))
+        _exit_with_policy()
         return
 
     if by_file:
@@ -3575,8 +3613,7 @@ def stale_refs(
         if next_steps:
             click.echo()
             click.echo(format_next_steps_text(next_steps))
-        if gate and target_count > 0:
-            ctx.exit(5)
+        _exit_with_policy()
         return
 
     click.echo(f"Stale references (top {len(displayed)} of {target_count} missing targets, sorted by {sort_by}):\n")
@@ -3604,5 +3641,4 @@ def stale_refs(
         click.echo()
         click.echo(format_next_steps_text(next_steps))
 
-    if gate and target_count > 0:
-        ctx.exit(5)
+    _exit_with_policy()

@@ -99,7 +99,7 @@ jobs:
         run: ruff check src/ tests/
 
   # -- Doc hygiene: anti-drift gates ---------------------------------------
-  # Three scripts that catch the most common doc-rot patterns:
+  # Gates that catch the most common doc-rot patterns:
   #   - test_no_internal_language.py — fail if any tracked file matches a
   #     forbidden internal-session pattern (Pass NN, Phase X of v2, dogfood
   #     notes YYYY-MM-DD, personal Windows paths, day-job customer names).
@@ -141,6 +141,60 @@ jobs:
 
       - name: Binary metadata gate
         run: python scripts/strip_metadata.py
+
+  # -- Wheel-built smoke: drift-guards under a real pip install -------------
+  # W577: the wheel-drift suite (tests/test_package_data_wheel_drift.py) is a
+  # NO-OP under editable installs (`pip install -e .`) because
+  # ``importlib.resources.files(...)`` falls back to a filesystem walk that
+  # resolves anything physically on disk in src/, whether or not
+  # ``[tool.setuptools.package-data]`` in pyproject.toml ships it. W554 was
+  # exactly that bug — templates/audit-report/control-mapping.yaml resolved
+  # in dev but was missing from every pip-install user's wheel.
+  #
+  # This lane builds the wheel with ``python -m build``, installs it into a
+  # FRESH venv (no editable resolution), and runs the drift tests from a
+  # working directory OUTSIDE the source checkout so the wheel install is
+  # the only resolution path. If any package-data glob regresses, this lane
+  # fails before merge — not after the bad wheel ships to PyPI.
+  wheel-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install wheel into a fresh venv (no source checkout)
+        run: |
+          python -m venv /tmp/wheel-test
+          /tmp/wheel-test/bin/pip install --upgrade pip
+          /tmp/wheel-test/bin/pip install dist/roam_code-*.whl
+          /tmp/wheel-test/bin/pip install pytest
+
+      - name: Run wheel-drift tests against the installed wheel
+        # cwd OUTSIDE the source tree so importlib.resources resolves
+        # ONLY through the installed wheel — never through the src/
+        # filesystem fallback that editable installs use.
+        run: |
+          cp tests/test_package_data_wheel_drift.py /tmp/test_wheel_drift.py
+          cd /tmp
+          /tmp/wheel-test/bin/pytest /tmp/test_wheel_drift.py -x -v
+
+      - name: Smoke-run roam evidence-oscal from the wheel
+        # Sanity: the wheel-bundled control-mapping.yaml resolves AND
+        # produces non-empty OSCAL JSON with control entries. Belt-and-
+        # suspenders for the drift-guard above: even if the test file
+        # were ever skipped, an actual end-user invocation must work.
+        run: |
+          cd /tmp
+          /tmp/wheel-test/bin/roam evidence-oscal --kind control-mapping > /tmp/oscal.json
+          python -c "import json,sys; d=json.load(open('/tmp/oscal.json')); assert 'control-mapping' in d or 'controls' in d or 'components' in d or len(d)>0, 'OSCAL JSON empty'; print(f'OSCAL JSON OK: {len(d)} top-level keys')"
 
   # -- Self-analysis: roam eats its own dog food on PRs ----------------------
   # Runs the local composite action (uses: ./) to analyse this repo on every

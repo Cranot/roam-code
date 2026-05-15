@@ -39,6 +39,8 @@ def _make_db(tmp_path):
             param_count INTEGER DEFAULT 0,
             line_count INTEGER DEFAULT 0
         );
+        -- W501: schema DEFAULT 'calls' never applies (all callers pass kind explicitly);
+        -- unrelated to W512 CALL_OR_REF_KINDS canonicalisation.
         CREATE TABLE edges (
             id INTEGER PRIMARY KEY,
             source_id INTEGER NOT NULL,

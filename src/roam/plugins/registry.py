@@ -31,7 +31,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 if TYPE_CHECKING:
     from roam.bridges.base import LanguageBridge
@@ -63,6 +64,55 @@ class RoamPlugin:
     capabilities: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class FrameworkProfile:
+    """Bundles framework-specific knowledge for a plugin to register in one call.
+
+    Wave28.3 (W123) — a richer alternative to
+    :meth:`RoamPluginContext.register_framework_detector` that lets a
+    plugin declare not just the detector but also the file patterns
+    that characterise the framework, the roam commands that produce
+    the highest signal on it, and the convention-name mapping that
+    downstream surfaces (``roam brief``, ``roam describe``, the
+    framework-aware MCP tools) can consult.
+
+    The legacy single-detector API (``register_framework_detector``)
+    keeps working unchanged — plugins that only want the detector hook
+    do not need to migrate. ``register_framework_profile`` is the
+    additive richer surface; it also calls
+    ``register_framework_detector`` internally so a profile-registered
+    framework is detected by the same downstream consumer
+    (``autodetect_framework_profile`` in ``roam.catalog.detectors``).
+
+    Args:
+        name: Framework identifier (e.g. ``"nextjs"``, ``"laravel"``,
+            ``"django"``). Used as the dictionary key in the profile
+            registry and as the slug ``detect_fn`` should return.
+        detect_fn: ``Callable[[pathlib.Path], Optional[str]]`` returning
+            the framework name when the directory matches this framework,
+            otherwise ``None``. Same contract as
+            ``register_framework_detector`` — must be cheap (<10 ms) and
+            type-hinted with ``pathlib.Path`` per W56.
+        file_patterns: Glob patterns characterising this framework
+            (e.g. ``("pages/**", "app/**", "next.config.*")`` for
+            Next.js). Informational — surfaced by ``roam describe`` /
+            ``roam brief`` so agents can prioritise reads.
+        recommended_commands: Roam commands that produce the highest
+            signal on this framework (e.g. ``("n1", "vulns",
+            "over-fetch")`` for Laravel). Informational — consumed by
+            ``roam brief``-style command surfaces.
+        conventions: Mapping of role -> file pattern (e.g.
+            ``{"controller": "app/Http/Controllers/*"}``). Informational
+            — feeds conventions-aware surfaces.
+    """
+
+    name: str
+    detect_fn: Callable[[Path], "str | None"]
+    file_patterns: tuple[str, ...] = ()
+    recommended_commands: tuple[str, ...] = ()
+    conventions: Mapping[str, str] = field(default_factory=dict)
+
+
 @dataclass
 class _RegistryState:
     """Process-wide state populated as plugins call back into the context.
@@ -76,6 +126,7 @@ class _RegistryState:
     commands: dict[str, tuple[str, str]] = field(default_factory=dict)
     detectors: list[DetectorSpec] = field(default_factory=list)
     framework_detectors: list[Callable[[Path], "str | None"]] = field(default_factory=list)
+    framework_profiles: dict[str, FrameworkProfile] = field(default_factory=dict)
     bridges: list["LanguageBridge"] = field(default_factory=list)
     language_extractors: dict[str, Callable[[], "LanguageExtractor"]] = field(default_factory=dict)
     language_extensions: dict[str, str] = field(default_factory=dict)
@@ -94,6 +145,7 @@ class _RegistryState:
         self.commands.clear()
         self.detectors.clear()
         self.framework_detectors.clear()
+        self.framework_profiles.clear()
         self.bridges.clear()
         self.language_extractors.clear()
         self.language_extensions.clear()
@@ -292,12 +344,71 @@ class RoamPluginContext:
         ``project_root`` matches your plugin's framework, otherwise
         ``None``. Detectors must be cheap (<10 ms) — they run on every
         ``roam framework-detect`` invocation.
+
+        Contract (W56): the argument is always a ``pathlib.Path``, never
+        a ``str``. Roam's internal dispatcher coerces ``cwd`` to
+        ``Path`` before calling, and plugin authors who invoke their
+        own detector in unit tests should do the same. Type-hint
+        ``project_root: Path`` so IDEs and ``mypy`` warn callers who
+        pass a ``str`` (which crashes at ``project_root / "Gemfile"``).
         """
         if not callable(detect_fn):
             raise TypeError("detect_fn must be callable")
         state = _registry_state()
         state.framework_detectors.append(detect_fn)
         self._note_capability("framework_detection")
+
+    # ---- framework profile registration ---------------------------------
+
+    def register_framework_profile(self, profile: FrameworkProfile) -> None:
+        """Register a richer framework profile (W123 / Wave28.3).
+
+        Bundles the framework detector together with the
+        framework-specific knowledge a plugin wants to declare:
+        characteristic file patterns, the roam commands that produce
+        the highest signal on this framework, and the conventions
+        mapping.
+
+        Internally calls :meth:`register_framework_detector` with
+        ``profile.detect_fn`` so the profile-registered detector flows
+        through the same downstream consumer
+        (``autodetect_framework_profile`` in
+        ``roam.catalog.detectors``). Plugin authors get a single call
+        that wires both surfaces; legacy plugins using
+        ``register_framework_detector`` directly are unaffected.
+
+        Args:
+            profile: A :class:`FrameworkProfile` instance. The dataclass
+                is frozen so mis-mutating callers fail loudly.
+
+        Raises:
+            TypeError: ``profile`` is not a :class:`FrameworkProfile`.
+            ValueError: ``profile.name`` is empty or already registered
+                by another plugin (first-write-wins, matching command
+                registration semantics).
+        """
+        if not isinstance(profile, FrameworkProfile):
+            raise TypeError(
+                "profile must be a FrameworkProfile (got "
+                f"{type(profile).__name__})"
+            )
+        name = (profile.name or "").strip()
+        if not name:
+            raise ValueError("FrameworkProfile.name must be non-empty")
+
+        state = _registry_state()
+        if name in state.framework_profiles:
+            raise ValueError(f"duplicate framework profile: {name}")
+        state.framework_profiles[name] = profile
+
+        # Also wire the detector so legacy consumers
+        # (autodetect_framework_profile) see the profile-registered
+        # framework. _note_capability is called inside
+        # register_framework_detector — we additionally tag
+        # "framework_profile" to make the richer registration visible
+        # in ``roam plugins info``.
+        self.register_framework_detector(profile.detect_fn)
+        self._note_capability("framework_profile")
 
     # ---- bridge registration --------------------------------------------
 
@@ -355,3 +466,31 @@ class RoamPluginContext:
         plugin = state.plugins[-1]
         if capability not in plugin.capabilities:
             plugin.capabilities.append(capability)
+
+
+# ---------------------------------------------------------------------------
+# Module-level query helpers (framework profile registry — W123)
+# ---------------------------------------------------------------------------
+
+
+def get_framework_profile(name: str) -> "FrameworkProfile | None":
+    """Return the registered :class:`FrameworkProfile` for ``name``, else ``None``.
+
+    Consumers that need the richer profile (file_patterns,
+    recommended_commands, conventions) look it up by framework slug.
+    Falls back to ``None`` when no plugin has registered a profile for
+    that framework — the legacy
+    :meth:`RoamPluginContext.register_framework_detector` path leaves
+    no profile behind, so a detector-only framework returns ``None``
+    here.
+    """
+    if not name:
+        return None
+    state = _registry_state()
+    return state.framework_profiles.get(name)
+
+
+def get_framework_profiles() -> Mapping[str, FrameworkProfile]:
+    """Return a read-only view of every registered framework profile."""
+    state = _registry_state()
+    return MappingProxyType(state.framework_profiles)

@@ -351,6 +351,18 @@ def mode_cmd(
     json_mode = ctx.obj.get("json") if ctx.obj else False
     repo_root = find_project_root()
 
+    # W294 - capture the pre-switch active mode BEFORE _build_envelope
+    # calls set_active_mode so we can emit the ``mode_from`` event field
+    # to the run ledger. Best-effort: any failure here just leaves
+    # ``mode_from`` unset (the W292 harvester needs only ``mode_to`` to
+    # corroborate the matching AuthorityRef).
+    mode_from_value: Optional[str] = None
+    if mode_name:
+        try:
+            mode_from_value = resolve_mode(repo_root).name
+        except Exception:
+            mode_from_value = None
+
     envelope, exit_code = _build_envelope(
         repo_root=repo_root,
         mode_arg=mode_name,
@@ -363,7 +375,39 @@ def mode_cmd(
     try:
         action = "mode-switch" if mode_name else ("mode-check" if check_cmd else "mode-show")
         target = mode_name or check_cmd or ""
-        auto_log(envelope, action=action, target=target, repo_root=repo_root)
+        # W294 - stamp authority-shaped ``mode_to``/``mode_from`` event
+        # fields on a successful mode switch so the W292 collector
+        # harvester corroborates the matching mode ``AuthorityRef`` and
+        # promotes it to ``provenance="run_ledger"``. We only emit on
+        # the SWITCH path (not --check / default show) and only when the
+        # envelope reports state="ok" (the switch actually happened).
+        # The ``auto_log`` whitelist drops any non-whitelisted keys
+        # silently, so the kwarg is safe by construction.
+        extra_event_fields: dict | None = None
+        if mode_name:
+            summary = envelope.get("summary") or {}
+            if isinstance(summary, dict) and summary.get("state") == "ok":
+                new_mode = summary.get("active_mode")
+                if (
+                    isinstance(new_mode, str)
+                    and new_mode
+                    # Skip when the "switch" was a no-op (caller passed the
+                    # currently-active mode). No corroboration value, and
+                    # the verdict already records the same mode on both
+                    # axes.
+                    and new_mode != mode_from_value
+                ):
+                    fields: dict = {"mode_to": new_mode}
+                    if isinstance(mode_from_value, str) and mode_from_value:
+                        fields["mode_from"] = mode_from_value
+                    extra_event_fields = fields
+        auto_log(
+            envelope,
+            action=action,
+            target=target,
+            repo_root=repo_root,
+            extra_event_fields=extra_event_fields,
+        )
     except Exception:
         pass
 
@@ -395,6 +439,6 @@ def mode_cmd(
         click.echo(f"  allowed count:   {summary.get('allowed_count')}")
         click.echo(f"  policy source:   {summary.get('policy_source')}")
         if mode_name:
-            click.echo(f"  persisted to:    .roam/active_mode")
+            click.echo("  persisted to:    .roam/active_mode")
 
     ctx.exit(exit_code)

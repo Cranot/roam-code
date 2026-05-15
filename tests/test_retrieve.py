@@ -827,7 +827,17 @@ class TestHubNeighbourFilter:
         from roam.retrieve.pipeline import _expand_via_file_neighbors
 
         with open_db(readonly=False) as conn:
-            files = conn.execute("SELECT id, path FROM files ORDER BY id").fetchall()
+            # Pick files that actually contain symbols — id-ordering alone
+            # is unreliable because the fixture also commits a .gitignore
+            # row with zero symbols at id=1.
+            files = conn.execute(
+                """
+                SELECT f.id, f.path
+                FROM files f
+                WHERE EXISTS (SELECT 1 FROM symbols s WHERE s.file_id = f.id)
+                ORDER BY f.id
+                """
+            ).fetchall()
             assert len(files) >= 2
             seed_file = files[0]
             hub_file = files[1]
@@ -887,7 +897,16 @@ class TestHubNeighbourFilter:
         from roam.retrieve.pipeline import _expand_via_file_neighbors
 
         with open_db(readonly=False) as conn:
-            files = conn.execute("SELECT id, path FROM files ORDER BY id").fetchall()
+            # See sibling test — restrict to files that contain symbols
+            # so we don't pick up the fixture's .gitignore row.
+            files = conn.execute(
+                """
+                SELECT f.id, f.path
+                FROM files f
+                WHERE EXISTS (SELECT 1 FROM symbols s WHERE s.file_id = f.id)
+                ORDER BY f.id
+                """
+            ).fetchall()
             if len(files) < 2:
                 pytest.skip("fixture too small")
             seed_file, neighbor_file = files[0], files[1]

@@ -46,8 +46,11 @@ Supported frameworks: Laravel/Eloquent (PHP).
 
 from __future__ import annotations
 
+import hashlib
+import json as _json
 import os
 import re
+import sqlite3
 from collections import defaultdict
 
 import click
@@ -55,7 +58,292 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import json_envelope, loc, to_json
+
+
+# W114 (W93 follow-up): over-fetch is the seventh detector migrating onto
+# the central findings registry (after ``clones`` in W95, ``dead`` in
+# W99, ``complexity`` in W102, ``smells`` in W109, ``n1`` in W110, and
+# ``missing-index`` in W111). The shape mirrors those — a stable
+# detector version stamp and a deterministic ``finding_id_str`` so
+# re-runs upsert instead of duplicating rows. Bump this when the
+# model-level confidence ladder, the 3-state endpoint classification,
+# or the body-shaping skip rules change meaningfully (the registry's
+# ``claim`` and confidence tier are derived from those).
+OVER_FETCH_DETECTOR_VERSION: str = "1.0.0"
+
+
+# W114 — per-state confidence-tier mapping for the 3-state endpoint
+# classification.
+#
+# The endpoint detector relies on regex pattern matching scoped to PHP
+# method bodies (via ``_extract_method_bodies_with_lines``) plus a
+# graph-backed file query for the controller set. That places it in the
+# "structural" tier of the registry's vocabulary: graph evidence backs
+# the scoping, but the leak verdict itself is pattern-based.
+#
+#  - ``BARE``               -> ``structural``: confirmed leak — a load
+#       call (paginate/get/all) without ``->select()`` or Resource
+#       wrapping. Structural evidence: method body parsed for the chain.
+#  - ``UNGUARDED_RELATION`` -> ``structural``: confirmed leak — eager
+#       ``with('rel')`` without column selection. Same evidence class as
+#       BARE (regex on structured method bodies).
+#  - ``GUARDED_RELATION``   -> ``heuristic``: advisory — partial fix
+#       already applied via ``with('rel:cols')``. The leak is mostly
+#       closed; the row is surfaced so reviewers can decide whether to
+#       harden the relation further. Lowest tier keeps the signal-to-
+#       noise ratio for cross-detector consumers reasonable.
+_ENDPOINT_STATE_TO_CONFIDENCE: dict[str, str] = {
+    "BARE": "structural",
+    "UNGUARDED_RELATION": "structural",
+    "GUARDED_RELATION": "heuristic",
+}
+
+
+# W114 — per-confidence-bucket tier mapping for the model-level findings.
+#
+# These mirror the discipline used by W99 ``dead``: graph-backed signals
+# land at ``structural``, threshold-only signals at ``heuristic``. We
+# intentionally don't promote anything here to ``static_analysis``
+# because over-fetch is regex+threshold driven — there is no taint or
+# dataflow proof that a given column actually reaches the wire.
+#
+#  - ``high``   -> ``structural``: graph-backed (the controller scan
+#       confirmed at least one direct-return site for this model) on top
+#       of the 30+ fillable threshold and absent Resource wrapper.
+#  - ``medium`` -> ``heuristic``: threshold-only (20+ fillable, < 3
+#       hidden) without a confirmed controller-side leak.
+#  - ``low``    -> ``heuristic``: threshold-only (15+ fillable, missing
+#       ``->select()``) — the weakest of the three signals.
+_MODEL_CONFIDENCE_TO_TIER: dict[str, str] = {
+    "high": "structural",
+    "medium": "heuristic",
+    "low": "heuristic",
+}
+
+
+def _over_fetch_model_finding_id(model_name: str, file_path: str) -> str:
+    """Stable, deterministic finding id for one model-level over-fetch hit.
+
+    The (model_name, file_path) pair re-identifies the same model across
+    runs. We fold both fields into the digest so two models with the
+    same class name in different namespaces (a common Laravel pattern)
+    get distinct ids.
+    """
+    raw = f"{model_name}:{file_path}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"over-fetch:model:{digest}"
+
+
+def _over_fetch_endpoint_finding_id(
+    controller: str, method: str, file_path: str, state: str
+) -> str:
+    """Stable, deterministic finding id for one endpoint-level hit.
+
+    The (controller, method, file_path, state) tuple keys the finding —
+    folding ``state`` in means a method that flips from GUARDED to
+    UNGUARDED across runs upserts as a fresh row rather than colliding
+    on the old advisory entry. The old row stays in place until the
+    next persist sweep clears it (via upsert miss); that's the same
+    contract every other detector uses for state transitions.
+    """
+    raw = f"{controller}:{method}:{file_path}:{state}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return f"over-fetch:endpoint:{digest}"
+
+
+def _resolve_over_fetch_subject_id(
+    conn: sqlite3.Connection,
+    file_path: str,
+    symbol_name: str,
+    line_start: int | None,
+) -> int | None:
+    """Best-effort lookup of ``symbols.id`` for a (file, name, line) triple.
+
+    Mirrors ``cmd_smells._resolve_smell_subject_id`` and
+    ``clone_detect._resolve_symbol_id`` — same fallback ladder
+    (exact match by line_start, then nearest-line by name). Returns
+    ``None`` when nothing matches; the findings registry permits NULL
+    subject_id by design (file/edge/commit findings).
+    """
+    try:
+        row = conn.execute(
+            "SELECT s.id FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE f.path = ? AND s.name = ? AND s.line_start = ? "
+            "LIMIT 1",
+            (file_path, symbol_name, line_start),
+        ).fetchone()
+        if row is not None:
+            return int(row[0])
+        row = conn.execute(
+            "SELECT s.id FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE f.path = ? AND s.name = ? "
+            "ORDER BY ABS(COALESCE(s.line_start, 0) - ?) "
+            "LIMIT 1",
+            (file_path, symbol_name, line_start or 0),
+        ).fetchone()
+        return int(row[0]) if row is not None else None
+    except sqlite3.OperationalError:
+        # Pre-W89 schema or symbols table absent — fall back to NULL.
+        return None
+
+
+def _emit_over_fetch_findings(
+    conn: sqlite3.Connection,
+    findings_data: list[dict],
+    endpoint_findings_data: list[dict],
+    source_version: str,
+) -> int:
+    """Mirror over-fetch results into the central findings registry.
+
+    Emits TWO kinds of finding rows:
+
+    * One row per model-level finding (``findings`` list) — keyed by
+      ``over-fetch:model:<digest>``. ``subject_kind="symbol"`` when the
+      model class resolves in ``symbols``; ``"file"`` otherwise.
+    * One row per endpoint-level finding (``endpoint_findings`` list,
+      3-state classification) — keyed by
+      ``over-fetch:endpoint:<digest>``. ``subject_kind="symbol"`` when
+      the controller method resolves; ``"file"`` otherwise.
+
+    Returns the total count of finding rows written. Caller is
+    responsible for opening ``conn`` writable; emit_finding does not
+    commit (the caller commits once at the end of the persist branch).
+
+    Wrapped by the caller in a defensive try/except so a pre-W89 DB
+    (without the ``findings`` table) silently no-ops rather than
+    crashing the standard over-fetch command path.
+    """
+    # Local import keeps the cost out of the read-only path — callers
+    # without --persist never reach here.
+    from roam.db.findings import FindingRecord, emit_finding
+
+    written = 0
+
+    # ---- Model-level findings ------------------------------------------
+    for f in findings_data:
+        model_name = f.get("model_name") or ""
+        file_path = f.get("model_path") or ""
+        if not model_name or not file_path:
+            continue
+        # Model classes are stored as ``class`` symbols by the PHP
+        # extractor — best-effort lookup so the registry row can JOIN
+        # back to ``symbols``.
+        line_hint: int | None = None
+        model_location = f.get("model_location") or ""
+        if model_location and ":" in model_location:
+            try:
+                line_hint = int(model_location.rsplit(":", 1)[1])
+            except (ValueError, IndexError):
+                line_hint = None
+        subject_id = _resolve_over_fetch_subject_id(
+            conn, file_path, model_name, line_hint
+        )
+        finding_id = _over_fetch_model_finding_id(model_name, file_path)
+        confidence_bucket = f.get("confidence") or "low"
+        tier = _MODEL_CONFIDENCE_TO_TIER.get(
+            confidence_bucket, "heuristic"
+        )
+        evidence = {
+            "kind": "model",
+            "model_name": model_name,
+            "model_path": file_path,
+            "model_location": model_location,
+            "fillable_count": f.get("fillable_count"),
+            "hidden_count": f.get("hidden_count"),
+            "exposed_count": f.get("exposed_count"),
+            "has_visible": f.get("has_visible"),
+            "has_resource": f.get("has_resource"),
+            "resource_path": f.get("resource_path"),
+            "confidence_bucket": confidence_bucket,
+            "reasons": f.get("reasons") or [],
+            "matched_patterns": f.get("matched_patterns") or [],
+            "direct_return_count": len(f.get("direct_returns") or []),
+            "missing_select_count": len(f.get("missing_selects") or []),
+        }
+        fillable = f.get("fillable_count")
+        hidden = f.get("hidden_count")
+        claim = (
+            f"Over-fetch ({confidence_bucket}): {model_name} "
+            f"({file_path}) — {fillable} fillable, {hidden} hidden"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol" if subject_id is not None else "file",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=tier,
+                source_detector="over-fetch",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+
+    # ---- Endpoint-level findings (3-state classification) --------------
+    for ep in endpoint_findings_data:
+        controller = ep.get("controller") or ""
+        method_name = ep.get("method") or ""
+        file_path = ep.get("file") or ""
+        state = ep.get("state") or ""
+        if not (controller and method_name and file_path and state):
+            continue
+        line_start = ep.get("line")
+        subject_id = _resolve_over_fetch_subject_id(
+            conn, file_path, method_name, line_start
+        )
+        finding_id = _over_fetch_endpoint_finding_id(
+            controller, method_name, file_path, state
+        )
+        tier = _ENDPOINT_STATE_TO_CONFIDENCE.get(state, "heuristic")
+        # Strip the nested ``details.guarded`` / ``details.unguarded``
+        # dict-of-dicts down to flat counts so the evidence payload
+        # stays small (< 4KB per the registry contract).
+        details = ep.get("details") or {}
+        guarded_list = details.get("guarded") or []
+        unguarded_list = details.get("unguarded") or []
+        evidence = {
+            "kind": "endpoint",
+            "endpoint": ep.get("endpoint"),
+            "controller": controller,
+            "method": method_name,
+            "file": file_path,
+            "line": line_start,
+            "location": ep.get("location"),
+            "state": state,
+            "severity": ep.get("severity"),
+            "evidence_text": ep.get("evidence"),
+            "recommendation": ep.get("recommendation"),
+            "guarded_relation_count": len(guarded_list),
+            "unguarded_relation_count": len(unguarded_list),
+            "has_select": bool(details.get("has_select")),
+            "bare_main_model": bool(details.get("bare_main_model")),
+        }
+        claim = (
+            f"Over-fetch endpoint: {ep.get('endpoint') or controller + '@' + method_name} "
+            f"({file_path}:{line_start}) — state={state} (severity {ep.get('severity')})"
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str=finding_id,
+                subject_kind="symbol" if subject_id is not None else "file",
+                subject_id=subject_id,
+                claim=claim,
+                evidence_json=_json.dumps(evidence, sort_keys=True),
+                confidence=tier,
+                source_detector="over-fetch",
+                source_version=source_version,
+            ),
+        )
+        written += 1
+
+    return written
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -157,14 +445,17 @@ _MODEL_STATIC_RE = re.compile(r"\b(?P<model>[A-Z][A-Za-z0-9_]+)\s*::\s*(?:query|
 # ---------------------------------------------------------------------------
 
 
-def _is_test_path(path: str) -> bool:
-    p = path.replace("\\", "/").lower()
-    base = os.path.basename(p)
-    if base.startswith("test_") or base.endswith("_test.php"):
-        return True
-    if "/tests/" in p or "/test/" in p or "/testing/" in p:
-        return True
-    return False
+# W886: delegate test-path detection to the canonical commands-layer
+# helper (W873 audit). The local PHP-flavoured variant only recognised
+# ``test_*`` / ``*_test.php`` basenames + ``tests/`` / ``test/`` /
+# ``testing/`` directory components — the canonical helper covers all
+# of those plus PHP camelCase ``*Test.php`` (per
+# ``test_conventions.DEFAULT_TEST_PATTERNS``), ``__tests__/``,
+# ``spec/``, and ~16 other cross-language conventions. Behaviour
+# strictly widens; the 5 call-sites only ever SKIP test paths, so
+# matching MORE conventions can only improve precision (fewer test
+# files leaking into over-fetch findings), never regress.
+from roam.commands.changed_files import is_test_file as _is_test_path
 
 
 def _read_file_lines(abs_path) -> list[str]:
@@ -895,9 +1186,9 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
             }
         )
 
-    # Sort: high → medium → low, then by exposed_count descending
-    _conf_order = {"high": 0, "medium": 1, "low": 2}
-    findings.sort(key=lambda f: (_conf_order.get(f["confidence"], 9), -f["exposed_count"]))
+    # Sort: high → medium → low, then by exposed_count descending.
+    # W596: canonical confidence-LEVEL rank — negate for high-first sort.
+    findings.sort(key=lambda f: (-confidence_level_rank(f["confidence"], fallback=-1), -f["exposed_count"]))
 
     return findings[:limit]
 
@@ -946,8 +1237,24 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
         "implies --leaks-only; pass --no-leaks-only to override."
     ),
 )
+@click.option(
+    "--persist",
+    "persist",
+    is_flag=True,
+    default=False,
+    help=(
+        "Mirror each over-fetch hit (model-level + 3-state endpoint) "
+        "into the central findings registry (``roam findings list "
+        "--detector over-fetch``). Detector-specific output is "
+        "unchanged; the registry rows are the denormalised cross-detector "
+        "surface. Persisted set ignores --leaks-only display filtering — "
+        "every classification (including GUARDED_RELATION advisories) is "
+        "written so re-running with --leaks-only doesn't truncate the "
+        "registry."
+    ),
+)
 @click.pass_context
-def over_fetch_cmd(ctx, threshold, limit, leaks_only):
+def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
     """Detect models that serialize more fields than necessary in API responses.
 
     Finds large models ($fillable) without $hidden/$visible field filtering,
@@ -982,9 +1289,29 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only):
         leaks_only = bool(ci_mode)
     ensure_index()
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         findings = analyze_over_fetch(conn, threshold=threshold, limit=limit)
         endpoint_findings = analyze_endpoint_states(conn, find_project_root())
+
+        # --- W114: mirror into the central findings registry ---
+        # Runs ONLY with --persist. The persisted set is independent of
+        # the --leaks-only display filter — we emit every classification
+        # (including GUARDED_RELATION advisories) so the registry stays
+        # comprehensive regardless of how a particular invocation slices
+        # the view. Matches the W109 smells / W111 missing-index persist
+        # discipline.
+        if persist:
+            try:
+                _emit_over_fetch_findings(
+                    conn,
+                    findings,
+                    endpoint_findings,
+                    OVER_FETCH_DETECTOR_VERSION,
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                # findings table missing (pre-W89 schema) — degrade gracefully.
+                pass
 
     # -------------------------------------------------------------------
     # Tally by confidence (model-level) and by state (endpoint-level)

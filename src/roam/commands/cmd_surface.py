@@ -59,13 +59,30 @@ def _build_surface() -> dict:
         target_to_names.setdefault(target, []).append(name)
 
     # MCP-exposed tools (read from mcp_server registry).
+    # ``_TOOL_METADATA`` is populated unconditionally by every ``@_tool(...)``
+    # decorator (the decorator writes metadata BEFORE the fastmcp-presence
+    # check), so the count of *defined* tools is env-independent and equals
+    # the AST-derived ground truth in ``roam.surface_counts``. Distinguish
+    # that from ``mcp_introspection_available``, which now means "the
+    # FastMCP transport is importable and could actually serve these tools
+    # at runtime" — two different signals on two different axes.
     mcp_tools: list[str] = []
+    mcp_introspection_available = False
+    preset_counts: dict[str, int] = {}
     try:
-        from roam.mcp_server import _REGISTERED_TOOLS
+        from roam.mcp_server import FastMCP as _FastMCP
+        from roam.mcp_server import _PRESETS, _TOOL_METADATA
 
-        mcp_tools = list(_REGISTERED_TOOLS)
+        mcp_introspection_available = _FastMCP is not None
+        mcp_tools = list(_TOOL_METADATA.keys())
+        total = len(_TOOL_METADATA)
+        # "full" preset is the empty-set sentinel meaning "no filter / all tools".
+        # Resolve it to the actual total so consumers don't see a misleading 0.
+        for preset_name, members in _PRESETS.items():
+            preset_counts[preset_name] = len(members) if members else total
     except Exception:
-        # FastMCP not installed — surface still works without MCP introspection.
+        # MCP server module failed to import entirely — leave both signals as the
+        # "unavailable / empty" baseline set above.
         pass
 
     from roam.cli import _deprecation_record
@@ -94,16 +111,27 @@ def _build_surface() -> dict:
     for c in commands:
         by_maturity[c["maturity"]] = by_maturity.get(c["maturity"], 0) + 1
 
-    return {
+    result = {
         "command_count": len(_COMMANDS),
         "canonical_count": len({tuple(t) for t in _COMMANDS.values()}),
         "category_count": len(_CATEGORIES),
         "mcp_tool_count": len(mcp_tools),
+        "mcp_tool_count_by_preset": preset_counts,
+        "mcp_introspection_available": mcp_introspection_available,
         "by_maturity": by_maturity,
         "categories": list(_CATEGORIES.keys()),
         "commands": commands,
         "mcp_tools": sorted(mcp_tools),
     }
+    # Distinct from the count itself: the count is the number of *defined*
+    # tools (env-independent); the note flags that the transport layer is
+    # absent and these tools can't actually be served until ``fastmcp`` is
+    # installed.
+    if not mcp_introspection_available:
+        result["mcp_tools_note"] = (
+            "fastmcp not installed; install with: pip install 'roam-code[mcp]'"
+        )
+    return result
 
 
 @roam_capability(
@@ -157,18 +185,23 @@ def surface(ctx, filter_by: str, category: str | None):
         data["commands"] = [c for c in data["commands"] if c["category"] == category]
 
     if json_mode:
+        summary = {
+            "verdict": "OK",
+            "command_count": data["command_count"],
+            "canonical_count": data["canonical_count"],
+            "category_count": data["category_count"],
+            "mcp_tool_count": data["mcp_tool_count"],
+            "mcp_tool_count_by_preset": data["mcp_tool_count_by_preset"],
+            "mcp_introspection_available": data["mcp_introspection_available"],
+            "by_maturity": data["by_maturity"],
+        }
+        if "mcp_tools_note" in data:
+            summary["mcp_tools_note"] = data["mcp_tools_note"]
         click.echo(
             to_json(
                 json_envelope(
                     "surface",
-                    summary={
-                        "verdict": "OK",
-                        "command_count": data["command_count"],
-                        "canonical_count": data["canonical_count"],
-                        "category_count": data["category_count"],
-                        "mcp_tool_count": data["mcp_tool_count"],
-                        "by_maturity": data["by_maturity"],
-                    },
+                    summary=summary,
                     categories=data["categories"],
                     commands=data["commands"],
                     mcp_tools=data["mcp_tools"],
@@ -182,7 +215,10 @@ def surface(ctx, filter_by: str, category: str | None):
     click.echo(f"  canonical commands: {data['canonical_count']}")
     click.echo(f"  aliases:            {data['command_count'] - data['canonical_count']}")
     click.echo(f"  categories:         {data['category_count']}")
-    click.echo(f"  mcp tools:          {data['mcp_tool_count']}")
+    if data["mcp_introspection_available"]:
+        click.echo(f"  mcp tools:          {data['mcp_tool_count']}")
+    else:
+        click.echo(f"  mcp tools:          {data['mcp_tool_count']} (introspection unavailable; install 'roam-code[mcp]')")
     click.echo("")
     click.echo("  by maturity:")
     for level in ("stable", "experimental", "internal", "deprecated"):

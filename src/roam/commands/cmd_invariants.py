@@ -10,6 +10,11 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.metric_definitions import (
+    BREAKING_RISK_DEFINITION,
+    CALLER_METRIC_RAW,
+    INVARIANTS_DEFINITION,
+)
 
 
 def _discover_invariants(conn, sym_id, sym_info):
@@ -293,6 +298,21 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                             "symbols_analyzed": len(results),
                             "total_invariants": total_invariants,
                             "high_risk_count": high_risk,
+                            # W331: name what an "invariant" actually is
+                            # here (NOT a verified property; a usage-
+                            # derived heuristic contract) and how the
+                            # breaking_risk score is computed.
+                            "invariants_definition": INVARIANTS_DEFINITION,
+                            "breaking_risk_definition": BREAKING_RISK_DEFINITION,
+                            # W335: per-symbol payload carries
+                            # caller_count = len(callers) — same
+                            # raw_edge_rows shape as cmd_uses /
+                            # cmd_context. Label it so downstream
+                            # consumers know it counts per-file edge
+                            # rows (with multiplicity), not distinct
+                            # upstream symbols (which would be
+                            # direct_in_degree).
+                            "caller_metric_definition": CALLER_METRIC_RAW,
                         },
                         symbols=results,
                     )

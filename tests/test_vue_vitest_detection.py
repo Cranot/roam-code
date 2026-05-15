@@ -274,3 +274,168 @@ def test_test_pyramid_counts_vitest_specs(_vitest_project):
     assert summary["total"] >= 3, (
         f"expected total >= 3, got {summary['total']}: {summary}"
     )
+
+
+# ---------------------------------------------------------------------------
+# roam n1 — regression sentinel: must not crash on a Vue/Vitest project,
+# and must not pull Vitest spec files into its N+1 scan. The detection
+# algorithm itself is ORM-specific (Laravel $appends / Django @property /
+# Rails associations / SQLAlchemy hybrid_property / JPA @Transient) and
+# Vue SFCs don't carry ORM models, so the contract here is "scan runs to
+# clean exit with no spurious findings."
+# ---------------------------------------------------------------------------
+
+
+def test_n1_skips_vitest_specs_on_vue_project(_vitest_project):
+    """``roam --json n1`` on a Vue/Vitest fixture must:
+    1. exit cleanly (no JSON-parse-on-empty-input regressions);
+    2. report 0 findings (no ORM models in a pure Vue/Vitest app);
+    3. NOT raise on .test.vue / .spec.ts paths — proves the canonical
+       ``_is_canonical_test_file`` shim (W6.2 consolidation) recognises
+       Vitest specs and excludes them before the model-class scan.
+    """
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--json", "n1"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    summary = payload["summary"]
+    assert summary["total"] == 0, (
+        f"expected 0 N+1 findings on a Vue/Vitest project, got {summary['total']}: {summary}"
+    )
+    # The verdict must still be a non-empty string (Pattern 1 in CLAUDE.md
+    # — no JSON-parse-on-empty-input).
+    assert isinstance(summary["verdict"], str) and summary["verdict"]
+
+
+# ---------------------------------------------------------------------------
+# roam endpoints — Vue Router detection
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _vue_router_project(tmp_path, monkeypatch):
+    """Vue 3 + Vue Router project with a router config in TS and an
+    inline router declaration inside a .vue SFC. Should surface both
+    paths via ``roam endpoints``.
+    """
+    (tmp_path / "src" / "router").mkdir(parents=True)
+    (tmp_path / "src" / "router" / "index.ts").write_text(
+        "import { createRouter, createWebHistory } from 'vue-router';\n"
+        "import Home from '../views/Home.vue';\n"
+        "\n"
+        "const routes = [\n"
+        "  { path: '/', component: Home, name: 'home' },\n"
+        "  { path: '/users', component: () => import('../views/Users.vue') },\n"
+        "  { path: '/users/:id', component: () => import('../views/UserDetail.vue') },\n"
+        "];\n"
+        "\n"
+        "export const router = createRouter({\n"
+        "  history: createWebHistory(),\n"
+        "  routes,\n"
+        "});\n"
+    )
+    # SFC with inline router config — rarer, but real
+    (tmp_path / "src" / "views").mkdir(parents=True)
+    (tmp_path / "src" / "views" / "Home.vue").write_text(
+        "<template><div>Home</div></template>\n"
+        "<script setup lang=\"ts\">\n"
+        "// no routes here — pure component\n"
+        "</script>\n"
+    )
+    (tmp_path / "src" / "App.vue").write_text(
+        "<template><router-view /></template>\n"
+        "<script setup lang=\"ts\">\n"
+        "import { createRouter } from 'vue-router';\n"
+        "const inlineRoutes = [\n"
+        "  { path: '/about', component: () => import('./views/About.vue') },\n"
+        "];\n"
+        "createRouter({ routes: inlineRoutes });\n"
+        "</script>\n"
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "-m", "init"],
+        cwd=tmp_path,
+        check=True,
+    )
+    monkeypatch.chdir(tmp_path)
+    from roam.index.indexer import Indexer
+
+    Indexer().run(quiet=True)
+    return tmp_path
+
+
+def test_endpoints_detects_vue_router_routes(_vue_router_project):
+    """``roam --json endpoints`` must surface Vue Router declarations.
+
+    Pre-fix the extension map registered scanners for .js/.ts/.jsx/.tsx
+    only, and the JS/TS scanner only knew Express. Vue Router routes
+    (``createRouter({ routes: [...] })``) were therefore invisible.
+    """
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--json", "endpoints"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    summary = payload["summary"]
+    endpoints = payload.get("endpoints", [])
+
+    # At minimum: the 3 routes in router/index.ts must surface.
+    vue_router_eps = [e for e in endpoints if e.get("framework") == "vue-router"]
+    assert len(vue_router_eps) >= 3, (
+        f"expected >= 3 vue-router endpoints, got {len(vue_router_eps)}: {endpoints}"
+    )
+
+    paths = {e["path"] for e in vue_router_eps}
+    assert "/" in paths, f"missing '/' route: {paths}"
+    assert "/users" in paths, f"missing '/users' route: {paths}"
+    assert any(p.startswith("/users/") for p in paths), (
+        f"missing '/users/:id' route: {paths}"
+    )
+
+    # Vue Router routes are method-agnostic — every entry must report
+    # method == 'ROUTE' (not 'GET'/'POST'/...).
+    assert all(e["method"] == "ROUTE" for e in vue_router_eps), (
+        f"vue-router endpoints must use method 'ROUTE': "
+        f"{[e['method'] for e in vue_router_eps]}"
+    )
+
+    # Framework count and verdict must reflect the new framework.
+    assert "vue-router" in summary["frameworks"], summary
+
+
+def test_endpoints_skips_vue_files_without_router(tmp_path, monkeypatch):
+    """A .vue file with no ``createRouter``/``vue-router`` mention must
+    not be misclassified as a router declaration (no false positives).
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "Plain.vue").write_text(
+        "<template><div>Plain</div></template>\n"
+        "<script setup lang=\"ts\">\n"
+        "const items = [{ path: '/looks-like-a-route' }];\n"
+        "// no router import here — must NOT be detected.\n"
+        "</script>\n"
+    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "-m", "init"],
+        cwd=tmp_path,
+        check=True,
+    )
+    monkeypatch.chdir(tmp_path)
+    from roam.index.indexer import Indexer
+
+    Indexer().run(quiet=True)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--json", "endpoints"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    vue_router_eps = [e for e in payload.get("endpoints", []) if e.get("framework") == "vue-router"]
+    assert vue_router_eps == [], (
+        f"expected no vue-router endpoints on a project without createRouter, "
+        f"got {vue_router_eps}"
+    )

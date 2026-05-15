@@ -456,3 +456,53 @@ class TestCLI:
         )
         assert result.exit_code == 0
         assert "natural language query" in result.output.lower() or "--top" in result.output
+
+
+# ---------------------------------------------------------------------------
+# W1029: None-guard tests for tokenize / _camel_split
+#
+# tokenize and _camel_split both accept str | None and return their empty
+# value on None / empty input. These tests pin the contract so the
+# cargo-cult ``or ""`` wrappers stay removed at the SQL-row caller sites
+# (tfidf.build_corpus and index_embeddings.build_fts_index).
+# ---------------------------------------------------------------------------
+
+
+class TestNoneGuardW1029:
+    def test_tokenize_accepts_none(self):
+        from roam.search.tfidf import tokenize
+
+        assert tokenize(None) == []
+
+    def test_tokenize_accepts_empty_string(self):
+        from roam.search.tfidf import tokenize
+
+        assert tokenize("") == []
+
+    def test_tokenize_normal_input_preserved(self):
+        """Tokenize behaviour on real text is unchanged by the W1029 widening."""
+        from roam.search.tfidf import tokenize
+
+        tokens = tokenize("OpenDatabase connection")
+        # Stemmer drops "connection" -> "connec" (suffix tion stripped)
+        # so we assert structural shape rather than exact token list.
+        assert len(tokens) >= 2
+        assert any("open" in t.lower() for t in tokens)
+        assert any("database" in t.lower() for t in tokens)
+
+    def test_camel_split_accepts_none(self):
+        from roam.search.index_embeddings import _camel_split
+
+        assert _camel_split(None) == ""
+
+    def test_camel_split_accepts_empty_string(self):
+        from roam.search.index_embeddings import _camel_split
+
+        assert _camel_split("") == ""
+
+    def test_camel_split_normal_input_preserved(self):
+        """_camel_split behaviour on PascalCase is unchanged by the W1029 widening."""
+        from roam.search.index_embeddings import _camel_split
+
+        assert _camel_split("OpenDatabase") == "Open Database"
+        assert _camel_split("XMLParser") == "XML Parser"
