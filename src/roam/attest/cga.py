@@ -194,10 +194,26 @@ def _symbol_fingerprints(conn) -> tuple[str, int]:
 def _edge_bundle_digest(conn) -> tuple[str, int]:
     """Hash the call/import/inherits/template edge set.
 
-    Sorted by ``(source_id, target_id, kind)`` so re-running on the same
-    DB produces the same digest.
+    Sorted by ``(source_id, target_id, kind, id)`` so re-running on the
+    same DB produces the same digest. The trailing ``id`` is the
+    SQLite rowid alias (``edges.id INTEGER PRIMARY KEY AUTOINCREMENT``)
+    and acts as the canonical tiebreaker for the W1285 sort-stability
+    fix: the ``edges`` table has no UNIQUE constraint on
+    ``(source_id, target_id, kind)``, so the indexer legitimately
+    writes duplicate triples (e.g. two ``calls`` edges from the same
+    caller to the same callee on different lines). Without the
+    tiebreaker, two fresh sqlite3 connections could return tied rows
+    in different orders depending on planner choice + ``sqlite_stat1``
+    state, breaking the CGA emit→verify round-trip with an
+    ``edge_bundle_digest mismatch``. Adding ``id`` is purely additive
+    on dup-free DBs (tiebreaker never consulted) and canonical on
+    dup-bearing DBs. Mirrors ``_symbol_fingerprints``' ``ORDER BY s.id``
+    discipline above.
     """
-    rows = conn.execute("SELECT source_id, target_id, kind FROM edges ORDER BY source_id, target_id, kind").fetchall()
+    rows = conn.execute(
+        "SELECT source_id, target_id, kind FROM edges "
+        "ORDER BY source_id, target_id, kind, id"
+    ).fetchall()
     chunks: list[bytes] = []
     for r in rows:
         chunks.append(f"{r[0]}->{r[1]}:{r[2] or ''}".encode("utf-8"))
