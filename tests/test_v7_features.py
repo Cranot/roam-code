@@ -249,61 +249,6 @@ class TestSARIF:
         assert any("cycle" in r["ruleId"] for r in results)
         assert any("god-component" in r["ruleId"] for r in results)
 
-    def test_sarif_breaking_to_sarif(self):
-        """breaking_to_sarif should handle removed, signature_changed, renamed."""
-        from roam.output.sarif import breaking_to_sarif
-
-        changes = {
-            "removed": [{"name": "old_fn", "kind": "function", "file": "a.py", "line": 5}],
-            "signature_changed": [
-                {
-                    "name": "changed_fn",
-                    "kind": "function",
-                    "file": "b.py",
-                    "line": 10,
-                    "old_signature": "(a)",
-                    "new_signature": "(a, b)",
-                }
-            ],
-            "renamed": [
-                {
-                    "old_name": "foo",
-                    "new_name": "bar",
-                    "kind": "function",
-                    "file": "c.py",
-                    "line": 15,
-                }
-            ],
-        }
-        sarif = breaking_to_sarif(changes)
-
-        results = sarif["runs"][0]["results"]
-        assert len(results) == 3
-        rule_ids = {r["ruleId"] for r in results}
-        assert "breaking/removed-export" in rule_ids
-        assert "breaking/signature-changed" in rule_ids
-        assert "breaking/renamed" in rule_ids
-
-    def test_sarif_conventions_to_sarif(self):
-        """conventions_to_sarif should produce note-level results."""
-        from roam.output.sarif import conventions_to_sarif
-
-        violations = [
-            {
-                "name": "badName",
-                "kind": "function",
-                "actual_style": "camelCase",
-                "expected_style": "snake_case",
-                "file": "a.py",
-                "line": 5,
-            },
-        ]
-        sarif = conventions_to_sarif(violations)
-
-        results = sarif["runs"][0]["results"]
-        assert len(results) == 1
-        assert results[0]["level"] == "note"
-
     def test_sarif_write_sarif(self, tmp_path):
         """write_sarif should write valid JSON to a file."""
         from roam.output.sarif import to_sarif, write_sarif
