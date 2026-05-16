@@ -30,7 +30,10 @@ from tests._helpers.repo_root import repo_root
 # v13.1 (2026-05-15): bumped after version bump 13.0 → 13.1 (card body
 # only changed the ``"version"`` field; W554 audit-report YAML bundle
 # unchanged; all other card content stable).
-_EXPECTED_CARD_SHA256 = "533990df9f2d35fab41b609f60f917237f6fa90726b849ccb506f2ee13c29251"
+# v13.2 (2026-05-16, W1307): bumped after version bump 13.1 → 13.2.
+# Card body changed only in the "version" field; auto-derived counts
+# (238 commands / 224 MCP tools / 57 core preset) unchanged.
+_EXPECTED_CARD_SHA256 = "b9e39c86536c5dba86695d4692d0000216b5d1fefaf4f90d03d6a91704f76300"
 
 
 def _card_path() -> Path:
