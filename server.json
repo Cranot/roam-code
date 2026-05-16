@@ -1,7 +1,7 @@
 {
     "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
     "name": "io.github.cranot/roam-code",
-    "description": "Architectural sight for AI agents before they edit. Local graph, 28 languages, no API keys.",
+    "description": "Local codebase intelligence MCP server for AI coding agents: SQLite graph, 28 languages, change-safety gates, audit evidence, zero API keys.",
     "version": "13.2",
     "packages": [
         {
@@ -15,7 +15,7 @@
             "environmentVariables": [
                 {
                     "name": "ROAM_MCP_PRESET",
-                    "description": "Tool preset: core (default, 33), compliance (14), review, refactor, debug, architecture, full (120)",
+                    "description": "Tool preset: core (default, 57), compliance (13), review (70), refactor (70), debug (69), architecture (71), full (224)",
                     "isRequired": false,
                     "default": "core"
                 }

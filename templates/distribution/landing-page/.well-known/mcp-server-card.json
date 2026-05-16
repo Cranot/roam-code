@@ -46,7 +46,7 @@
   "install": {
     "pypi": "roam-code",
     "command": "pip install \"roam-code[mcp]\"",
-    "min_python": "3.9",
+    "min_python": "3.10",
     "post_install": "roam init"
   },
   "capabilities": {
@@ -54,10 +54,10 @@
       "total": 224,
       "presets": {
         "core": 57,
-        "review": 62,
-        "refactor": 62,
-        "debug": 61,
-        "architecture": 63,
+        "review": 70,
+        "refactor": 70,
+        "debug": 69,
+        "architecture": 71,
         "compliance": 13,
         "full": 224
       },
@@ -85,10 +85,10 @@
     }
   },
   "languages_supported": [
-    "python", "javascript", "typescript", "java", "go", "rust", "c",
-    "csharp", "php", "ruby", "kotlin", "swift", "scala", "sql", "foxpro",
-    "apex", "aura", "visualforce", "sfxml", "hcl", "yaml", "vue", "tsx",
-    "jsx", "html", "css", "objective-c"
+    "python", "javascript", "typescript", "tsx", "go", "rust", "java",
+    "c", "cpp", "csharp", "php", "ruby", "kotlin", "swift", "scala",
+    "sql", "dart", "vue", "svelte", "apex", "aura", "visualforce",
+    "sfxml", "foxpro", "yaml", "hcl", "jsonc", "mdx"
   ],
   "compliance_artifacts": {
     "in_toto_v1_predicate": "https://roam-code.dev/CodeGraph/v1",

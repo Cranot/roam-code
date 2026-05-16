@@ -3981,7 +3981,7 @@ def batch_get(symbols: list, root: str = ".") -> dict:
 @_tool(
     name="roam_expand_toolset",
     description="List available tool presets or show contents of a preset. "
-    "Presets: core (16), review (27), refactor (26), debug (27), architecture (29), full (all).",
+    "Presets: core (57), review (70), refactor (70), debug (69), architecture (71), compliance (13), full (224).",
 )
 def expand_toolset(preset: str = "") -> dict:
     """List available presets and their tools. Call to discover tools beyond the active preset.
@@ -10147,7 +10147,7 @@ def roam_alerts(root: str = ".") -> dict:
         "Local-only telemetry: per-tool invocation counts grouped by "
         "outcome (success / rate_limited / error). Helps answer "
         '"which tools are agents actually using?" and "are 90 of '
-        'the 137 tools dead weight?". Never phones home — counters '
+        'the 224 tools dead weight?". Never phones home — counters '
         "live in the MCP server process and reset on restart."
     ),
 )
