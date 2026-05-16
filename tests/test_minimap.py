@@ -327,7 +327,11 @@ class TestMinimapCLI:
 
         data = json.loads(result.output)
         assert data["command"] == "minimap"
-        assert data["summary"]["verdict"] == "ok"
+        # W17.3 (LAW 4): the stdout-mode verdict names the rendered block
+        # + size cue + the follow-up command, not bare "ok".
+        verdict = data["summary"]["verdict"]
+        assert "minimap rendered" in verdict
+        assert "--update-claude" in verdict
         assert "content" in data
 
     def test_json_mode_update(self, tmp_path):
