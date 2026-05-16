@@ -1713,6 +1713,17 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         if sarif_mode:
             from roam.output.sarif import health_to_sarif, write_sarif
 
+            # W1084 — mirror of W1060 cmd_complexity: collect any
+            # silent-fallback warnings from the gate-config loader so
+            # malformed `.roam-gates.yml` shape disclosure rides on the
+            # SARIF emit too. Gate config governs CI health thresholds;
+            # SARIF is consumed by CI; both surfaces must expose the
+            # same loader malformations (Pattern 2 silent fallback).
+            # Default-False to keep pre-W1084 SARIF bytes when
+            # `.roam-gates.yml` is well-formed or absent.
+            _gate_warnings: list[str] = []
+            _load_gate_config(warnings_out=_gate_warnings)
+
             # W718: lowercase canonical severity (W547). The SARIF
             # projection in ``health_to_sarif`` calls ``_to_level`` with
             # ``severity.upper()`` so either case feeds the projection
@@ -1759,7 +1770,11 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     for v in violations
                 ],
             }
-            sarif = health_to_sarif(issues)
+            sarif = health_to_sarif(
+                issues,
+                emit_runtime_notifications=bool(_gate_warnings),
+                warnings_out=_gate_warnings,
+            )
             click.echo(write_sarif(sarif))
             return
 

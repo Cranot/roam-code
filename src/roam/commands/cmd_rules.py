@@ -310,7 +310,18 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
     if sarif_mode:
         from roam.output.sarif import rules_to_sarif, write_sarif
 
-        sarif = rules_to_sarif(results)
+        # W1114: project loader warnings onto the SARIF
+        # run.invocations[].toolExecutionNotifications[] array so a CI
+        # consumer doesn't see a green SARIF that silently dropped half
+        # its rules (matches the W1036 envelope plumbing on the JSON
+        # path above; mirrors W1060 complexity SARIF). Hash invariant:
+        # empty/missing warnings keep the SARIF output byte-identical to
+        # pre-W1114 because emit_runtime_notifications stays False.
+        sarif = rules_to_sarif(
+            results,
+            emit_runtime_notifications=bool(_rules_warnings),
+            warnings_out=list(_rules_warnings),
+        )
         click.echo(write_sarif(sarif))
         if ci_mode and failed_errors > 0:
             from roam.exit_codes import EXIT_GATE_FAILURE
