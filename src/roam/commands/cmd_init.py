@@ -97,9 +97,10 @@ _ROAMIGNORE_TEMPLATE = """\
 """
 
 _WELCOME = """\
-Roam is ready: {files} files, {symbols} symbols, {edges} edges. Health: {health}/100.
+Roam is ready: {files} files, {symbols} symbols, {edges} edges.
 
-Try one:    roam understand                    (briefing)
+Try one:    roam health                        (score this codebase 0-100)
+            roam understand                    (briefing)
 Next:       git diff | roam critique           (the killer demo)
 Help:       roam ask "<question>"              roam --help
 Wire MCP:   roam mcp-setup <claude|cursor|codex|gemini|amp>"""
@@ -261,7 +262,11 @@ def init(ctx, root, yes, with_ci, since, full_history):
     if not had_index:
         if not json_mode:
             click.echo("No index found. Building...")
-    ensure_index(quiet=json_mode)
+    # W1291: suppress the "Run `roam init` to create one" cold-start advisory
+    # since the user just ran exactly that. cmd_init IS the init path; the
+    # advisory belongs on commands that consume an index, not the one
+    # building it.
+    ensure_index(quiet=json_mode, suppress_cold_start_advisory=True)
 
     # 3. Generate .roam/fitness.yaml
     fitness_path = roam_dir / "fitness.yaml"
@@ -354,11 +359,16 @@ def init(ctx, root, yes, with_ci, since, full_history):
     # was 20+ lines of agent-contract teaching at a moment when the
     # user just wants to see "did it work?" The contract belongs in
     # docs and SKILL.md, not on every init.
+    # W1288: drop the "Health: N/100" line. metrics_history's quick post-index
+    # score diverged from cmd_health's canonical compute_health_score (different
+    # cycle filtering — actionable vs raw — and missing the coverage factor),
+    # so the welcome banner contradicted `roam health` run seconds later in the
+    # same shell. Point the user at `roam health` for the canonical number;
+    # keep the snapshots/baseline pipeline's metric alone so history is stable.
     welcome = _WELCOME.format(
         files=health_summary.get("files", 0),
         symbols=health_summary.get("symbols", 0),
         edges=health_summary.get("edges", 0),
-        health=health_summary.get("health_score", "?"),
     )
     click.echo(f"VERDICT: {_verdict}\n")
 
