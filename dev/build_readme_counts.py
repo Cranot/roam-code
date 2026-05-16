@@ -242,14 +242,12 @@ def _mcp_core_preset_inline(c: Counts) -> str:
 
 def _readme_blocks(c: Counts) -> dict[str, str]:
     return {
-        # Line 43: "exposes the graph through N commands and M MCP tools across 28 languages."
-        "readme-headline-prose": (
-            f"Mechanically: Roam parses your repo once, stores structural facts "
-            f"in a local SQLite graph (symbols, dependencies, call graphs, "
-            f"architecture layers, git history, runtime traces), and exposes "
-            f"the graph through {c.command_names} commands and {c.mcp_full} "
-            f"MCP tools across 28 languages."
-        ),
+        # ``readme-headline-prose`` was dropped in v13.2 per the
+        # 2026-05-16 ecosystem refresh — README hero now leads with the
+        # positioning core (credential-free + zero-egress + tamper-evident
+        # evidence) rather than the count headline. Authoritative counts
+        # still flow through ``readme-canonical-mention`` and the table /
+        # preset blocks below.
         # Line 325: "the canonical surface is N commands (X canonical + Y aliases) organised into Z categories"
         "readme-canonical-mention": (
             f"**Lead with the 5 verbs.** The [5 core commands](#core-commands) "

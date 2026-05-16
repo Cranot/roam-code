@@ -73,78 +73,68 @@
     <p class="eyebrow">Tutorial</p>
     <h1>Getting Started with Roam</h1>
     <p class="subtitle">
-      Ten minutes from <code>pip install</code> to an AI agent that asks the right structural questions before it edits, deletes, refactors, or merges.
+      Ten minutes from <code>pip install</code> to a verdict on whether your next edit is safe.
     </p>
     <div class="callout">
-      This tutorial walks through the <a href="/docs/agent-contract">agent contract</a> in practice: <strong>context</strong> before edit, <strong>impact</strong> before delete, <strong>critique</strong> before merge, <strong>simulate</strong> before refactor, <strong>math</strong> before optimise. Local CLI + MCP + CI gates. Non-goal: cloud hosting or SaaS deployment.
+      Roam is the local codebase intelligence layer that lets AI coding agents earn the right to change code — and prove they did. Credential-free, zero network egress, tamper-evident <code>ChangeEvidence</code> packets. Cursor and Cody log the session; Roam gates the change and emits proof.
     </div>
 
     <section>
-      <h2>Quick Path (10 minutes)</h2>
+      <h2>Why Roam is different</h2>
+      <p>
+        Cursor, Cody, Aider, and Windsurf are <strong>human-first IDE surfaces</strong> that log a session. Roam is an <strong>agent-first CLI surface</strong> that gates the change and emits proof. The moat is three properties no competitor combines today:
+      </p>
+      <ul>
+        <li><strong>Credential-free.</strong> No account, no API key, no cloud login. <code>pip install</code> and run.</li>
+        <li><strong>Zero network egress.</strong> Your source code never leaves the machine. Air-gapped repos work the same as cloud repos.</li>
+        <li><strong>Tamper-evident <code>ChangeEvidence</code> packets.</strong> Every AI-assisted change compiles into one portable evidence packet (HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle) that answers the eight evidence questions: <em>who acted, what authority existed, what context was read, what changed, what could break, what policy applied, what verified it, who accepted risk</em>.</li>
+      </ul>
+      <p>
+        Underneath sits a SQLite-backed graph of symbols, calls, imports, architecture layers, git history, smells, clones, and algorithmic patterns across 28 languages. Agents and developers query the same local facts before a change, during review, and after the patch lands.
+      </p>
+    </section>
+
+    <section>
+      <h2>Install + first three commands</h2>
       <div class="step-grid">
 
         <article class="step">
           <h3>Step 1: Install</h3>
-<pre><code>pip install roam-code
-pip install "roam-code[mcp]"  # optional MCP support</code></pre>
-          <p>Requires Python 3.10+. Also works with <code>pipx install roam-code</code> and <code>uv tool install roam-code</code>.</p>
+<pre><code>pip install "roam-code[mcp]"</code></pre>
+          <p>Requires Python 3.10+. <code>pipx install roam-code</code> and <code>uv tool install roam-code</code> work too. Drop <code>[mcp]</code> if you only want the CLI.</p>
         </article>
 
         <article class="step">
-          <h3>Step 2: Initialize in your repo</h3>
-<pre><code>cd /path/to/repo
+          <h3>Step 2: Index the repo</h3>
+<pre><code>cd /path/to/your/repo
 roam init</code></pre>
-          <p>Creates <code>.roam/index.db</code>, fitness rules, and a CI workflow.</p>
+          <p>One-time, ~30 seconds on most repos. Creates <code>.roam/index.db</code>, fitness rules, and a CI workflow.</p>
         </article>
 
         <article class="step">
-          <h3>Step 3: Ask your first structural question</h3>
-<pre><code>roam context UserService
-roam impact UserService
-roam retrieve "where does login validate sessions"</code></pre>
-          <p>Get ranked reading order and blast radius before changing code. <code>roam retrieve</code> returns budget-bounded spans ranked by personalised PageRank, clone signal, and lexical match.</p>
+          <h3>Step 3: Check repo health</h3>
+<pre><code>roam health</code></pre>
+          <p>Composite 0-100 score across complexity, cycles, dark-matter coupling, dead code, and architecture drift. Add <code>--sarif</code> for GitHub Code Scanning, <code>--gate</code> to fail CI below a threshold.</p>
         </article>
 
         <article class="step">
-          <h3>Step 4: Run a pre-change check</h3>
-<pre><code>roam preflight UserService
-roam health</code></pre>
-          <p>Checks complexity, coupling, test impact, and architecture risk.</p>
-        </article>
-
-        <article class="step">
-          <h3>Step 5: Verify the patch</h3>
-<pre><code>git diff | roam critique
-# clones-not-edited check + blast-radius caller count
-# Exit 5 on high-severity findings — gate-able in CI.</code></pre>
-          <p>For the killer clones-not-edited check, run <code>roam clones --persist</code> once to populate the clone tables.</p>
-        </article>
-
-        <article class="step">
-          <h3>Step 6: Plan parallel agent work</h3>
-<pre><code>roam fleet plan "split the auth refactor across 4 agents" \
-  --n-agents 4 --adapter composio \
-  --output .roam-fleet.json</code></pre>
-          <p>Graph-aware partition (Louvain + co-change + PageRank anchors) emits a <code>.roam-fleet.json</code> envelope consumable by Composio Agent Orchestrator, Codex CLI, or any raw fleet runtime.</p>
-        </article>
-
-        <article class="step">
-          <h3>Step 7: Sign a Code Graph Attestation</h3>
-<pre><code>roam taint
-roam cga emit --include-taint --sign --key cosign.key
-roam cga verify .roam/attestations/&lt;sha&gt;.intoto.json</code></pre>
-          <p>Emits an in-toto v1 statement with the <code>roam-code.dev/CodeGraph/v1</code> predicate type — Merkle root over symbol fingerprints, edge bundle digest, and (with <code>--include-taint</code>) OpenVEX-shaped reachability claims. Cosign signing optional; skips gracefully when the binary is missing.</p>
-        </article>
-
-        <article class="step">
-          <h3>Step 8: One-phrase intent for everything else</h3>
-<pre><code>roam ask "is it safe to delete UserSession"
-roam ask "where does login validate sessions"
-roam ask --list</code></pre>
-          <p><code>roam ask</code> classifies a free-form question and dispatches the right composition of preflight/retrieve/critique/fleet/understand. No need to memorise the full surface — the agent learns it from MCP.</p>
+          <h3>Step 4: Gate the next change</h3>
+<pre><code>roam preflight &lt;symbol&gt;</code></pre>
+          <p>Blast radius + affected tests + complexity + architecture rules before you edit. The single highest-leverage call agents make before touching code.</p>
         </article>
 
       </div>
+    </section>
+
+    <section>
+      <h2>What's next</h2>
+      <p>Pick the path that matches your role:</p>
+      <ul>
+        <li><strong>Agent integration:</strong> <code>roam mcp-setup claude-code</code> (or <code>cursor</code>, <code>continue</code>) — then see <a href="/docs/mcp-usage">Using Roam via MCP</a> for the cold-start envelope and canonical agent loop.</li>
+        <li><strong>Full surface reference:</strong> <a href="/docs/command-reference">Command Reference</a> — every command, every flag, every JSON envelope.</li>
+        <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> — how the graph, findings registry, run ledger, and evidence compiler fit together.</li>
+        <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> — context before edit, impact before delete, critique before merge, simulate before refactor, math before optimise.</li>
+      </ul>
     </section>
 
     <section>
