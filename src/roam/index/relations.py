@@ -896,16 +896,38 @@ def _closest_symbol(
     effects propagator, inheriting transitive filesystem/db/cache
     effects it never uses). Imports at module scope should not attribute
     to any symbol; the caller skips the edge when this returns ``None``.
+
+    W1284 (G3): The W742 suppression has one well-defined exception —
+    a Vue/Svelte SFC's synthetic component symbol (``kind='component'``
+    at ``line_start=1``, created by ``TypeScriptExtractor.extract_symbols``
+    for ``.vue`` / ``.svelte`` files). That synthetic IS the file's
+    exported identity: there is no other top-level symbol to mis-attribute
+    to, and attributing module-scope ``<script setup>`` imports to it
+    matches how the component is consumed from outside (`roam why
+    MyComponent` resolves here). The carve-out applies only when the
+    first-line symbol is the synthetic component; non-component
+    line-1 symbols still take the W742 path.
     """
     syms = file_symbols.get(source_file)
     if not syms:
         return None
+
+    # W1284 helper: the Vue/Svelte synthetic component anchor — first
+    # symbol in the file, ``kind='component'`` at ``line_start=1``.
+    def _sfc_synthetic_anchor() -> dict | None:
+        first = syms[0]
+        if first.get("kind") == "component" and (first.get("line_start") or 0) == 1:
+            return first
+        return None
+
     if ref_line is None:
         # W742: imports without a line cannot be safely attributed
         # to syms[0] (module-scope imports). Other kinds keep the
         # legacy file-level placeholder behaviour.
         if kind == "import":
-            return None
+            # W1284 (G3): an SFC synthetic component IS the file-level
+            # identity; attributing the import to it is correct.
+            return _sfc_synthetic_anchor()
         return syms[0]
 
     # Prefer symbol that CONTAINS the reference line (most nested wins)
@@ -923,7 +945,8 @@ def _closest_symbol(
     # imports otherwise mis-attribute to whichever symbol happens to be
     # first in the file (see docstring). The caller drops the edge.
     if kind == "import":
-        return None
+        # W1284 (G3): SFC synthetic-component exception — see docstring.
+        return _sfc_synthetic_anchor()
     # Return first symbol in file as a "file-level" source.
     return syms[0]
 
