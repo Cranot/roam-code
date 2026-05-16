@@ -347,7 +347,11 @@ class TestMinimapCLI:
         import json
 
         data = json.loads(result.output)
-        assert data["summary"]["verdict"] == "ok"
+        # W17.3 (LAW 4): the --update verdict names the action and the target
+        # file ("minimap created/updated in <path>"), not bare "ok".
+        verdict = data["summary"]["verdict"]
+        assert verdict.startswith("minimap ")
+        assert "CLAUDE.md" in verdict
         assert "file" in data
 
     def test_project_notes_included(self, tmp_path):
