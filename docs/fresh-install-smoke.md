@@ -80,19 +80,19 @@ also exposes `commands[]`, `categories[]`, and `mcp_tools[]` arrays):
       "command count 238",
       "canonical count 231",
       "category count 7",
-      "mcp tool count 0"
+      "mcp tool count 224"
     ],
     ...
   }
 }
 ```
 
-The README claim of **238 commands, 7 categories** matches. The
-`mcp tool count 0` line on `surface --json` is a known launch-readiness gap:
-the MCP wrappers register only when the FastMCP server boots, not at CLI
-import time, so `surface --json` undercounts. Use `roam mcp-status` (or
-boot the MCP server) to see the actual 224-tool roster. See "Smoke findings"
-below.
+The README claim of **238 commands, 224 MCP tools, 7 categories** matches.
+The `summary.mcp_tool_count_by_preset` field on the same envelope breaks
+the 224 down per preset (`core`: 57, `review`: 70, `refactor`: 70,
+`debug`: 69, `architecture`: 71, `compliance`: 13, `full`: 224). These
+counts are AST-derived from `src/roam/mcp_server.py`, so they hold
+whether or not the `[mcp]` extras are installed at runtime.
 
 ---
 
@@ -250,10 +250,14 @@ scale.
 The smoke is most valuable when it finds rough edges. Three observations:
 
 1. **`roam surface --json` reports `mcp tool count 0` even with `[mcp]`
-   extras installed.** MCP wrappers register lazily when the FastMCP server
-   boots; the CLI-side surface doesn't see them. Either populate the count
-   at surface time, or document the lazy-registration semantics where the
-   number is consumed.
+   extras installed.** *RESOLVED (W1290).* The CLI-side surface now reads
+   the MCP tool count from an AST scan of `src/roam/mcp_server.py`
+   (`roam.surface_counts.mcp_tool_names`) rather than a runtime import of
+   the FastMCP server, so the count is env-independent and survives a
+   transitive import error on the optional `[mcp]` extras. Fresh installs
+   now report `mcp tool count 224` and a `summary.mcp_tool_count_by_preset`
+   map (`core`: 57, `review`: 70, `refactor`: 70, `debug`: 69,
+   `architecture`: 71, `compliance`: 13, `full`: 224).
 2. **`roam mcp-status` raises `KeyError: 'symbol'` on a fresh install with
    no built index.** Cold-start guard should produce a structured "index
    not built" envelope (Pattern 1 variant A) instead of a bare verdict
