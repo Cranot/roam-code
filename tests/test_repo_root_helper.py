@@ -21,14 +21,19 @@ from tests._helpers.repo_root import repo_root
 
 
 def test_repo_root_has_marker_files():
-    """Both ``CLAUDE.md`` and ``pyproject.toml`` live at the resolved root."""
+    """``pyproject.toml`` lives at the resolved root.
+
+    ``CLAUDE.md`` was historically a co-marker but is now intentionally
+    untracked on public clones (removed from the public repo in commit
+    89a338d9). Only assert it when present; ``pyproject.toml`` is the
+    canonical marker that always exists.
+    """
     root = repo_root()
-    assert (root / "CLAUDE.md").is_file(), (
-        f"repo_root() returned {root!r} but it has no CLAUDE.md -- "
-        "either the helper resolved into an empty worktree shell or the "
-        "project marker has moved"
-    )
     assert (root / "pyproject.toml").is_file(), f"repo_root() returned {root!r} but it has no pyproject.toml"
+    if (root / "CLAUDE.md").exists():
+        assert (root / "CLAUDE.md").is_file(), (
+            f"repo_root() returned {root!r} but CLAUDE.md is present as a non-file"
+        )
 
 
 def test_repo_root_has_git_marker():
