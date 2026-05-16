@@ -1495,9 +1495,20 @@ class TestErrorHandling:
         assert rc != 0
 
     def test_nonexistent_symbol(self, err_project):
-        """roam symbol with unknown name should fail gracefully."""
+        """roam symbol with unknown name must communicate failure gracefully.
+
+        Pre-Pattern-2c (pre-W1272) this returned a non-zero exit code. The
+        Pattern-2c unresolved-path convention now returns exit code 0 with
+        a "not found" message in stdout (and ``partial_success: true`` on
+        the JSON envelope). Either shape is acceptable — the test asserts
+        the command produces a discoverable not-found signal rather than
+        silently succeeding.
+        """
         out, rc = roam("symbol", "DoesNotExist", cwd=err_project)
-        assert rc != 0
+        assert rc != 0 or "not found" in out.lower(), (
+            f"roam symbol on unknown name should communicate the miss "
+            f"(non-zero exit OR 'not found' in output); got rc={rc}, out={out!r}"
+        )
 
     def test_empty_search(self, err_project):
         """roam search with no matches should succeed with message."""
