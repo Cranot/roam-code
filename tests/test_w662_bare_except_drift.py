@@ -85,6 +85,7 @@ from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
 
+
 SRC_ROOT = repo_root() / "src" / "roam"
 
 
@@ -125,13 +126,21 @@ _GUARDED_DIRS: tuple[str, ...] = (
 # ``test_pre_w662_pending_entries_still_have_pattern`` assertion below
 # will catch entries that have already been migrated.
 _PRE_W662_PENDING: dict[str, str] = {
-    # W1238 migrated the framework-detector plugin loop in
-    # `catalog/detectors.py` (previously at lines 2044/2048, drifted to
-    # 2153/2157) from bare ``except Exception: continue|pass`` to
-    # ``log.warning(...) + continue``. The plugin-isolation perimeter
-    # rationale is preserved in the inline comments at the call site;
-    # the swallow is now visible per W531 fail-loud discipline, so the
-    # entries no longer need to be grandfathered here.
+    # Plugin-isolation perimeter — a third-party plugin detector can
+    # legitimately raise any class of exception and the host loop must
+    # survive. Narrow to ``except Exception`` (already done) keeps the
+    # host running while one plugin is broken; the surrounding comment
+    # explicitly documents this as the intent. Re-audit if the plugin
+    # protocol grows a structured error envelope (then we could narrow
+    # to that envelope's exception class).
+    "catalog/detectors.py:2044": (
+        "plugin-isolation perimeter: framework-detector plugin loop, "
+        "one bad plugin must not break host detection"
+    ),
+    "catalog/detectors.py:2048": (
+        "plugin-isolation perimeter: outer wrap of plugin discovery, "
+        "same plugin-isolation rationale as the inner loop"
+    ),
     # W679 narrowed `catalog/detectors.py:4165` to
     # ``(sqlite3.Error, KeyError, TypeError)`` — the OTel
     # runtime-enrichment merge legitimately tolerates missing
@@ -250,7 +259,11 @@ def _iter_guarded_files() -> list[Path]:
         root = SRC_ROOT / guarded
         if not root.exists():
             continue
-        files.extend(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
+        files.extend(
+            p
+            for p in root.rglob("*.py")
+            if "__pycache__" not in p.parts
+        )
     return files
 
 
@@ -303,7 +316,9 @@ def test_pre_w662_pending_entries_actually_exist() -> None:
         rel, _, _line = entry.partition(":")
         if not (SRC_ROOT / rel).exists():
             missing.append(entry)
-    assert not missing, f"W662: _PRE_W662_PENDING references missing files: {missing}"
+    assert not missing, (
+        f"W662: _PRE_W662_PENDING references missing files: {missing}"
+    )
 
 
 def test_pre_w662_pending_entries_still_have_pattern() -> None:
@@ -326,7 +341,8 @@ def test_pre_w662_pending_entries_still_have_pattern() -> None:
             stale.append(entry)
     assert not stale, (
         "W662: _PRE_W662_PENDING entries no longer contain a bare-swallow "
-        "handler (the site was migrated) — drop these entries:\n  " + "\n  ".join(stale)
+        "handler (the site was migrated) — drop these entries:\n  "
+        + "\n  ".join(stale)
     )
 
 
@@ -345,20 +361,38 @@ def test_detector_catches_synthetic_continue_offender(tmp_path: Path) -> None:
     offender = tmp_path / "synthetic_continue.py"
     offender.write_text(src, encoding="utf-8")
     tree = ast.parse(offender.read_text(encoding="utf-8"))
-    hits = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)]
-    assert hits == [5], f"W662 detector must flag the bare-swallow handler on line 5; got {hits}"
+    hits = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)
+    ]
+    assert hits == [5], (
+        f"W662 detector must flag the bare-swallow handler on line 5; got {hits}"
+    )
 
 
 def test_detector_catches_synthetic_pass_offender(tmp_path: Path) -> None:
     """The AST detector flags ``except Exception: pass`` — same pattern,
     different terminal statement.
     """
-    src = "def f():\n    try:\n        do()\n    except Exception:\n        pass\n"
+    src = (
+        "def f():\n"
+        "    try:\n"
+        "        do()\n"
+        "    except Exception:\n"
+        "        pass\n"
+    )
     offender = tmp_path / "synthetic_pass.py"
     offender.write_text(src, encoding="utf-8")
     tree = ast.parse(offender.read_text(encoding="utf-8"))
-    hits = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)]
-    assert hits == [4], f"W662 detector must flag the bare-swallow handler on line 4; got {hits}"
+    hits = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)
+    ]
+    assert hits == [4], (
+        f"W662 detector must flag the bare-swallow handler on line 4; got {hits}"
+    )
 
 
 def test_detector_catches_bare_colon_offender(tmp_path: Path) -> None:
@@ -366,12 +400,25 @@ def test_detector_catches_bare_colon_offender(tmp_path: Path) -> None:
     even wider than ``except Exception:`` since it catches
     ``KeyboardInterrupt`` / ``SystemExit``.
     """
-    src = "def f():\n    try:\n        do()\n    except:\n        pass\n"
+    src = (
+        "def f():\n"
+        "    try:\n"
+        "        do()\n"
+        "    except:\n"
+        "        pass\n"
+    )
     offender = tmp_path / "synthetic_bare.py"
     offender.write_text(src, encoding="utf-8")
     tree = ast.parse(offender.read_text(encoding="utf-8"))
-    hits = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)]
-    assert hits == [4], f"W662 detector must flag the bare ``except:`` handler on line 4; got {hits}"
+    hits = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)
+    ]
+    assert hits == [4], (
+        f"W662 detector must flag the bare ``except:`` handler on line 4; "
+        f"got {hits}"
+    )
 
 
 def test_detector_ignores_narrow_handler(tmp_path: Path) -> None:
@@ -395,8 +442,14 @@ def test_detector_ignores_narrow_handler(tmp_path: Path) -> None:
     offender = tmp_path / "synthetic_narrow.py"
     offender.write_text(src, encoding="utf-8")
     tree = ast.parse(offender.read_text(encoding="utf-8"))
-    hits = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)]
-    assert hits == [], f"W662 detector must NOT flag narrow exception classes; got {hits}"
+    hits = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)
+    ]
+    assert hits == [], (
+        f"W662 detector must NOT flag narrow exception classes; got {hits}"
+    )
 
 
 def test_detector_ignores_visible_handler_body(tmp_path: Path) -> None:
@@ -424,8 +477,14 @@ def test_detector_ignores_visible_handler_body(tmp_path: Path) -> None:
     offender = tmp_path / "synthetic_visible.py"
     offender.write_text(src, encoding="utf-8")
     tree = ast.parse(offender.read_text(encoding="utf-8"))
-    hits = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)]
-    assert hits == [], f"W662 detector must NOT flag handlers with visible bodies; got {hits}"
+    hits = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)
+    ]
+    assert hits == [], (
+        f"W662 detector must NOT flag handlers with visible bodies; got {hits}"
+    )
 
 
 def test_detector_ignores_string_literal_mentions(tmp_path: Path) -> None:
@@ -439,8 +498,14 @@ def test_detector_ignores_string_literal_mentions(tmp_path: Path) -> None:
     offender = tmp_path / "synthetic_doc.py"
     offender.write_text(src, encoding="utf-8")
     tree = ast.parse(offender.read_text(encoding="utf-8"))
-    hits = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)]
-    assert hits == [], f"W662 detector must ignore string-literal mentions; got {hits}"
+    hits = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ExceptHandler) and _is_bare_swallow(node)
+    ]
+    assert hits == [], (
+        f"W662 detector must ignore string-literal mentions; got {hits}"
+    )
 
 
 def test_w653_canonical_fix_site_is_clean() -> None:

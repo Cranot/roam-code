@@ -75,31 +75,19 @@ _RANK_ALLOWLIST: dict[str, str] = {
 # Severity-vocabulary tokens. A dict whose KEYS draw from this set AND
 # whose VALUES draw from {error, warning, note} with at least two distinct
 # (key, value) pairs is treated as a SARIF severity table.
-_SEVERITY_KEYS = frozenset(
-    {
-        "critical",
-        "error",
-        "high",
-        "warning",
-        "medium",
-        "low",
-        "info",
-        "note",
-        "CRITICAL",
-        "ERROR",
-        "HIGH",
-        "WARNING",
-        "MEDIUM",
-        "LOW",
-        "INFO",
-        "NOTE",
-    }
-)
+_SEVERITY_KEYS = frozenset({
+    "critical", "error", "high", "warning", "medium", "low", "info", "note",
+    "CRITICAL", "ERROR", "HIGH", "WARNING", "MEDIUM", "LOW", "INFO", "NOTE",
+})
 _SARIF_LEVELS = frozenset({"error", "warning", "note"})
 
 
 def _iter_source_files() -> list[Path]:
-    return [p for p in SRC_ROOT.rglob("*.py") if "__pycache__" not in p.parts]
+    return [
+        p
+        for p in SRC_ROOT.rglob("*.py")
+        if "__pycache__" not in p.parts
+    ]
 
 
 def _is_severity_table(dict_node: ast.Dict) -> bool:
@@ -192,7 +180,9 @@ def test_canonical_module_surface_stable() -> None:
     """The canonical module exports the expected closed-enum vocabulary."""
     from roam.output import _severity
 
-    assert _severity.SEVERITY_LEVELS == frozenset({"critical", "error", "warning", "info"})
+    assert _severity.SEVERITY_LEVELS == frozenset(
+        {"critical", "error", "warning", "info"}
+    )
     # Aliases resolve into the canonical set
     assert _severity.SEVERITY_ALIASES["high"] == "warning"
     assert _severity.SEVERITY_ALIASES["medium"] == "info"
@@ -257,28 +247,12 @@ def test_allowlist_entries_actually_exist() -> None:
 # at least two distinct (key, value) pairs. That shape only appears in
 # code that's rolling its own rank table.
 
-_RANK_KEYS = frozenset(
-    {
-        "critical",
-        "error",
-        "high",
-        "warning",
-        "medium",
-        "low",
-        "info",
-        "note",
-        "unknown",
-        "CRITICAL",
-        "ERROR",
-        "HIGH",
-        "WARNING",
-        "MEDIUM",
-        "LOW",
-        "INFO",
-        "NOTE",
-        "UNKNOWN",
-    }
-)
+_RANK_KEYS = frozenset({
+    "critical", "error", "high", "warning", "medium", "low", "info",
+    "note", "unknown",
+    "CRITICAL", "ERROR", "HIGH", "WARNING", "MEDIUM", "LOW", "INFO",
+    "NOTE", "UNKNOWN",
+})
 
 
 def _is_rank_table(dict_node: ast.Dict) -> bool:
@@ -403,7 +377,9 @@ def test_no_inline_severity_rank_tables() -> None:
 def test_w564_rank_allowlist_entries_actually_exist() -> None:
     """Every W564 rank-allowlist entry must point at a real file."""
     missing = [rel for rel in _RANK_ALLOWLIST if not (SRC_ROOT / rel).exists()]
-    assert not missing, f"W564 rank-allowlist references missing files: {missing}"
+    assert not missing, (
+        f"W564 rank-allowlist references missing files: {missing}"
+    )
 
 
 def test_w564_severity_rank_round_trip() -> None:
@@ -416,7 +392,9 @@ def test_w564_severity_rank_round_trip() -> None:
 
     # Every canonical level has a non-negative rank.
     for level in SEVERITY_LEVELS:
-        assert severity_rank(level) >= 0, f"canonical level {level!r} should have rank >= 0"
+        assert severity_rank(level) >= 0, (
+            f"canonical level {level!r} should have rank >= 0"
+        )
 
     # Every alias resolves to a finite rank. ``unknown`` is a special
     # case: it is a legitimate label (npm-audit / osv emit it when
@@ -424,9 +402,13 @@ def test_w564_severity_rank_round_trip() -> None:
     # vuln with no CVSS never climbs above a defined ``info`` finding.
     for alias in SEVERITY_ALIASES:
         if alias == "unknown":
-            assert severity_rank(alias) == -1, "alias 'unknown' ranks below info (W531 CI-safety lesson)"
+            assert severity_rank(alias) == -1, (
+                "alias 'unknown' ranks below info (W531 CI-safety lesson)"
+            )
         else:
-            assert severity_rank(alias) >= 0, f"alias {alias!r} should have rank >= 0"
+            assert severity_rank(alias) >= 0, (
+                f"alias {alias!r} should have rank >= 0"
+            )
 
     # Polarity: higher = worse.
     assert severity_rank("critical") > severity_rank("error")
@@ -451,12 +433,18 @@ def test_w564_severity_rank_round_trip() -> None:
         ("security/taint_engine.py", "validate_severity"),
     ],
 )
-def test_migrated_sites_import_canonical_module(rel: str, expected_marker: str) -> None:
+def test_migrated_sites_import_canonical_module(
+    rel: str, expected_marker: str
+) -> None:
     """Known migration targets each import from roam.output._severity."""
     path = SRC_ROOT / rel
     text = path.read_text(encoding="utf-8")
-    assert "roam.output._severity" in text, f"W547: {rel} should import from roam.output._severity"
-    assert expected_marker in text, f"W547: {rel} should reference {expected_marker}"
+    assert "roam.output._severity" in text, (
+        f"W547: {rel} should import from roam.output._severity"
+    )
+    assert expected_marker in text, (
+        f"W547: {rel} should reference {expected_marker}"
+    )
 
 
 def test_w548_taint_engine_validates_severity() -> None:
@@ -476,7 +464,12 @@ def test_w548_taint_engine_validates_severity() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         rule_file = Path(tmp) / "bad.yaml"
         rule_file.write_text(
-            "id: bad-rule\nseverity: moderate\nsources:\n  - foo\nsinks:\n  - bar\n",
+            "id: bad-rule\n"
+            "severity: moderate\n"
+            "sources:\n"
+            "  - foo\n"
+            "sinks:\n"
+            "  - bar\n",
             encoding="utf-8",
         )
         with warnings.catch_warnings(record=True) as caught:
@@ -487,7 +480,8 @@ def test_w548_taint_engine_validates_severity() -> None:
             warnings.simplefilter("always")
             rules = load_rules(tmp)
         assert any("moderate" in str(w.message) for w in caught), (
-            f"W548: load_rules should warn on unknown severity, caught={[str(w.message) for w in caught]}"
+            f"W548: load_rules should warn on unknown severity, "
+            f"caught={[str(w.message) for w in caught]}"
         )
         # Rule is still loaded — degraded to canonical 'info' fallback
         assert len(rules) == 1
@@ -504,14 +498,21 @@ def test_w548_taint_engine_accepts_canonical_severity() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         rule_file = Path(tmp) / "good.yaml"
         rule_file.write_text(
-            "id: good-rule\nseverity: error\nsources:\n  - foo\nsinks:\n  - bar\n",
+            "id: good-rule\n"
+            "severity: error\n"
+            "sources:\n"
+            "  - foo\n"
+            "sinks:\n"
+            "  - bar\n",
             encoding="utf-8",
         )
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             rules = load_rules(tmp)
         sev_warnings = [w for w in caught if "severity" in str(w.message).lower()]
-        assert not sev_warnings, f"W548: canonical severity should NOT warn, got {sev_warnings}"
+        assert not sev_warnings, (
+            f"W548: canonical severity should NOT warn, got {sev_warnings}"
+        )
         assert len(rules) == 1
         assert rules[0].severity == "error"
 
@@ -726,18 +727,10 @@ def test_w566_breakdown_reproduces_critique_contract() -> None:
 # at least two distinct (key, value) pairs, assigned to a target whose
 # name signals "confidence" / "conf".
 
-_CONFIDENCE_LEVEL_KEYS = frozenset(
-    {
-        "high",
-        "medium",
-        "low",
-        "unknown",
-        "HIGH",
-        "MEDIUM",
-        "LOW",
-        "UNKNOWN",
-    }
-)
+_CONFIDENCE_LEVEL_KEYS = frozenset({
+    "high", "medium", "low", "unknown",
+    "HIGH", "MEDIUM", "LOW", "UNKNOWN",
+})
 
 
 # W596 sites permitted to keep a local confidence-LEVEL rank table.
@@ -853,14 +846,20 @@ def test_no_inline_confidence_level_rank_tables() -> None:
         violations.extend(_find_inline_confidence_rank_tables(path))
     assert not violations, (
         "W596: inline confidence-LEVEL rank table — import "
-        "confidence_level_rank from roam.output.confidence instead:\n  " + "\n  ".join(violations)
+        "confidence_level_rank from roam.output.confidence instead:\n  "
+        + "\n  ".join(violations)
     )
 
 
 def test_w596_allowlist_entries_actually_exist() -> None:
     """Every W596 confidence-allowlist entry must point at a real file."""
-    missing = [rel for rel in _W596_CONFIDENCE_ALLOWLIST if not (SRC_ROOT / rel).exists()]
-    assert not missing, f"W596 confidence-allowlist references missing files: {missing}"
+    missing = [
+        rel for rel in _W596_CONFIDENCE_ALLOWLIST
+        if not (SRC_ROOT / rel).exists()
+    ]
+    assert not missing, (
+        f"W596 confidence-allowlist references missing files: {missing}"
+    )
 
 
 def test_w596_confidence_level_rank_round_trip() -> None:
@@ -875,16 +874,17 @@ def test_w596_confidence_level_rank_round_trip() -> None:
     assert confidence_level_rank("medium") > confidence_level_rank("low")
     # ``unknown`` is a known label (cmd_pr_bundle) but ranks BELOW low.
     assert confidence_level_rank("unknown") < confidence_level_rank("low")
-    # W634 (post-W596): fail-loud on typos / None by default. Silent
-    # bucketing requires explicit ``fallback=-1`` opt-in.
-    assert confidence_level_rank("bogus", fallback=-1) < confidence_level_rank("unknown")
-    assert confidence_level_rank(None, fallback=-1) < confidence_level_rank("unknown")
+    # Typos / None collapse below ``unknown`` (W531 CI-safety lesson).
+    assert confidence_level_rank("bogus") < confidence_level_rank("unknown")
+    assert confidence_level_rank(None) < confidence_level_rank("unknown")
     # Case-insensitive.
     assert confidence_level_rank("HIGH") == confidence_level_rank("high")
     assert confidence_level_rank("High") == confidence_level_rank("high")
     # Every canonical level resolves to a finite rank.
     for level in CONFIDENCE_LEVELS:
-        assert confidence_level_rank(level) >= 0, f"canonical level {level!r} must have rank >= 0"
+        assert confidence_level_rank(level) >= 0, (
+            f"canonical level {level!r} must have rank >= 0"
+        )
 
 
 def test_w596_confidence_level_rank_reproduces_legacy_polarity() -> None:
@@ -929,8 +929,12 @@ def test_w596_migrated_sites_import_canonical_helper(rel: str) -> None:
     """
     path = SRC_ROOT / rel
     text = path.read_text(encoding="utf-8")
-    assert "confidence_level_rank" in text, f"W596: {rel} should reference confidence_level_rank"
-    assert "roam.output.confidence" in text, f"W596: {rel} should import from roam.output.confidence"
+    assert "confidence_level_rank" in text, (
+        f"W596: {rel} should reference confidence_level_rank"
+    )
+    assert "roam.output.confidence" in text, (
+        f"W596: {rel} should import from roam.output.confidence"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -950,20 +954,10 @@ def test_w596_migrated_sites_import_canonical_helper(rel: str) -> None:
 # :func:`roam.output.risk.risk_rank` is the single source of truth;
 # polarity is "higher = worse" (matching severity_rank).
 
-_RISK_LEVEL_KEYS = frozenset(
-    {
-        "critical",
-        "high",
-        "medium",
-        "low",
-        "moderate",
-        "CRITICAL",
-        "HIGH",
-        "MEDIUM",
-        "LOW",
-        "MODERATE",
-    }
-)
+_RISK_LEVEL_KEYS = frozenset({
+    "critical", "high", "medium", "low", "moderate",
+    "CRITICAL", "HIGH", "MEDIUM", "LOW", "MODERATE",
+})
 
 
 # W631 sites permitted to keep a local risk-LEVEL rank table.
@@ -1081,8 +1075,13 @@ def test_no_inline_risk_level_rank_tables() -> None:
 
 def test_w631_allowlist_entries_actually_exist() -> None:
     """Every W631 risk-allowlist entry must point at a real file."""
-    missing = [rel for rel in _W631_RISK_ALLOWLIST if not (SRC_ROOT / rel).exists()]
-    assert not missing, f"W631 risk-allowlist references missing files: {missing}"
+    missing = [
+        rel for rel in _W631_RISK_ALLOWLIST
+        if not (SRC_ROOT / rel).exists()
+    ]
+    assert not missing, (
+        f"W631 risk-allowlist references missing files: {missing}"
+    )
 
 
 def test_w631_risk_rank_round_trip() -> None:
@@ -1104,7 +1103,9 @@ def test_w631_risk_rank_round_trip() -> None:
     assert risk_rank("High") == risk_rank("high")
     # Every canonical level resolves to a finite rank >= 0.
     for level in RISK_LEVELS:
-        assert risk_rank(level) >= 0, f"canonical level {level!r} must have rank >= 0"
+        assert risk_rank(level) >= 0, (
+            f"canonical level {level!r} must have rank >= 0"
+        )
 
 
 def test_w631_risk_rank_legacy_polarity_preserved() -> None:
@@ -1120,7 +1121,9 @@ def test_w631_risk_rank_legacy_polarity_preserved() -> None:
     # cmd_path_coverage: CRITICAL > HIGH > MEDIUM > LOW > unknown.
     samples = ["LOW", "CRITICAL", "MEDIUM", "bogus", "HIGH"]
     samples.sort(key=lambda r: -risk_rank(r))
-    assert samples == ["CRITICAL", "HIGH", "MEDIUM", "LOW", "bogus"], f"W631: path_coverage polarity drift: {samples}"
+    assert samples == ["CRITICAL", "HIGH", "MEDIUM", "LOW", "bogus"], (
+        f"W631: path_coverage polarity drift: {samples}"
+    )
 
     # cmd_migration_plan: low > medium > high > unknown (lower risk
     # first; unknown last). Uses the order_key trick to push unknowns
@@ -1131,7 +1134,9 @@ def test_w631_risk_rank_legacy_polarity_preserved() -> None:
 
     samples2 = ["high", "low", "medium", "bogus"]
     samples2.sort(key=_order_key)
-    assert samples2 == ["low", "medium", "high", "bogus"], f"W631: migration_plan polarity drift: {samples2}"
+    assert samples2 == ["low", "medium", "high", "bogus"], (
+        f"W631: migration_plan polarity drift: {samples2}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1145,5 +1150,9 @@ def test_w631_migrated_sites_import_canonical_helper(rel: str) -> None:
     """Each W631 migration target imports risk_rank from roam.output.risk."""
     path = SRC_ROOT / rel
     text = path.read_text(encoding="utf-8")
-    assert "risk_rank" in text, f"W631: {rel} should reference risk_rank"
-    assert "roam.output.risk" in text, f"W631: {rel} should import from roam.output.risk"
+    assert "risk_rank" in text, (
+        f"W631: {rel} should reference risk_rank"
+    )
+    assert "roam.output.risk" in text, (
+        f"W631: {rel} should import from roam.output.risk"
+    )
