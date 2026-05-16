@@ -299,17 +299,62 @@ class _FuncInfo:
     hash_bag: Counter
 
 
+# W1286: closed-set language allowlist for clone candidate files. Markup /
+# config / data languages (yaml, html, css, markdown, json, toml, xml, ini,
+# sfxml) carry no function-shape signal — they have no callable bodies for
+# the AST subtree-hash / characteristic-vector detectors to compare. Dropping
+# them at the SQL boundary cuts the parse pass by ~2/3 on roam-code without
+# changing detection output. Language identifiers match files.language as
+# produced by ``roam.index.parser.EXTENSION_MAP`` (note: ``c_sharp`` not
+# ``csharp``; ``cpp`` not ``c++``). Both clone detectors (W95 subtree-hash +
+# W855 rename-invariant) consume this set so their candidate populations
+# stay aligned per the cross-module parity contract.
+_CLONE_ELIGIBLE_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "tsx",
+        "jsx",
+        "go",
+        "rust",
+        "java",
+        "c",
+        "cpp",
+        "c_sharp",
+        "php",
+        "ruby",
+        "kotlin",
+        "swift",
+        "scala",
+        "sql",
+        "dart",
+        "vue",
+        "svelte",
+        "apex",
+        "aura",
+        "visualforce",
+        "objective-c",
+    }
+)
+
+
 def _fetch_candidate_files(conn, scope: str | None):
     """Pull candidate file rows from the DB, optionally narrowed to a path
-    prefix."""
+    prefix. Restricted to languages that carry function-shape signal
+    (``_CLONE_ELIGIBLE_LANGUAGES``)."""
+    placeholders = ",".join("?" * len(_CLONE_ELIGIBLE_LANGUAGES))
+    # Param order must mirror SQL placeholder order: IN-list values first,
+    # then the optional scope LIKE value.
+    params: list = sorted(_CLONE_ELIGIBLE_LANGUAGES)
     scope_clause = ""
-    params: list = []
     if scope:
         scope_norm = scope.replace("\\", "/")
         scope_clause = " AND f.path LIKE ?"
         params.append(f"{scope_norm}%")
     return conn.execute(
-        "SELECT f.id, f.path, f.language FROM files f WHERE f.language IS NOT NULL" + scope_clause,
+        f"SELECT f.id, f.path, f.language FROM files f "
+        f"WHERE f.language IN ({placeholders}){scope_clause}",
         params,
     ).fetchall()
 
