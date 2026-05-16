@@ -71,8 +71,32 @@ def test_concrete_bridge_inherits_or_overrides_version():
     a non-string / non-SemVer value — the manifest writer ``str()``s it,
     but a non-string sentinel like None would silently lose drift signal.
     """
+    # W1295: test_bridges.py + test_bridges_extended.py have autouse
+    # fixtures that call _BRIDGES.clear() for isolation. When they run
+    # before this test (CI runs are parallel via pytest-xdist), the
+    # registry stays empty because _auto_discover() short-circuits when
+    # _BRIDGES is non-empty AND vice-versa — once cleared, the bridge
+    # imports already happened so re-import is a no-op. Force-clear then
+    # re-import every built-in to guarantee a populated registry.
+    from roam.bridges import registry as bridge_registry
     from roam.bridges.registry import _auto_discover, get_bridges
 
+    bridge_registry._BRIDGES.clear()
+    import importlib
+
+    for mod_name in (
+        "roam.bridges.bridge_salesforce",
+        "roam.bridges.bridge_protobuf",
+        "roam.bridges.bridge_rest_api",
+        "roam.bridges.bridge_template",
+        "roam.bridges.bridge_config",
+        "roam.bridges.bridge_django",
+    ):
+        try:
+            mod = importlib.import_module(mod_name)
+            importlib.reload(mod)  # re-trigger register_bridge() side-effect
+        except ImportError:
+            pass
     _auto_discover()
     bridges = get_bridges()
     # At least one built-in bridge ships; if the registry is empty
