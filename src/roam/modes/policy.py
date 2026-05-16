@@ -96,6 +96,14 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # `describe` / `fan` — belongs at read_only, not safe_edit.
         "findings",
         "x-lang",
+        # W1288 — all three are read-only:
+        #   `why-fail` / `why-slow` open the DB with readonly=True for
+        #   diagnostic narration of test failures / slow tests.
+        #   `workflow` enumerates ask-workflow recipes (pure metadata,
+        #   no DB touch — composes other commands without executing them).
+        "why-fail",
+        "why-slow",
+        "workflow",
     },
     "safe_edit": {
         "diff",
