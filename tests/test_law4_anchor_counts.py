@@ -89,7 +89,16 @@ def test_claude_md_cites_correct_anchor_counts() -> None:
     overlap = len(_formatter_terminals() & set(_lint_anchors()))
     additions = lint_count - overlap
 
-    claude_md = (Path(__file__).parent.parent / "CLAUDE.md").read_text(encoding="utf-8")
+    claude_md_path = Path(__file__).parent.parent / "CLAUDE.md"
+    if not claude_md_path.exists():
+        import pytest
+
+        pytest.skip(
+            "CLAUDE.md is intentionally untracked on public clones / CI "
+            "(removed in commit 89a338d9). The doc-drift assertions below "
+            "are defence-in-depth on local dev only."
+        )
+    claude_md = claude_md_path.read_text(encoding="utf-8")
 
     # The doc has TWO sentences citing these counts (line ~57 source-of-truth
     # block, line ~65 contributor instructions). Both must agree with source.

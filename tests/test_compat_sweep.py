@@ -43,8 +43,14 @@ def _readme_text() -> str:
     return (ROOT / "README.md").read_text(encoding="utf-8")
 
 
-def _claude_md_text() -> str:
-    return (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+def _claude_md_text() -> str | None:
+    # CLAUDE.md is intentionally untracked (removed from the public repo in
+    # commit 89a338d9). Returning None lets callers skip CLAUDE.md-specific
+    # assertions on CI / fresh clones without faking a hit.
+    path = ROOT / "CLAUDE.md"
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -75,24 +81,28 @@ def test_surface_command_count_matches_actual():
     )
 
     # CLAUDE.md headline + the ``Authoritative counts:`` line.
+    # CLAUDE.md is intentionally untracked on public clones / CI — skip the
+    # CLAUDE.md-specific assertions when absent. The README check above is
+    # the primary defence; CLAUDE.md is defence-in-depth on local dev only.
     claude = _claude_md_text()
-    m_claude = re.search(r"\*\*(\d+)\s+commands", claude)
-    assert m_claude, "CLAUDE.md missing '**N commands' headline phrase"
-    n_claude = int(m_claude.group(1))
-    assert n_claude in valid, (
-        f"CLAUDE.md headline says '{n_claude} commands' but live counts are "
-        f"command_names={counts['command_names']} canonical_commands="
-        f"{counts['canonical_commands']}"
-    )
+    if claude is not None:
+        m_claude = re.search(r"\*\*(\d+)\s+commands", claude)
+        assert m_claude, "CLAUDE.md missing '**N commands' headline phrase"
+        n_claude = int(m_claude.group(1))
+        assert n_claude in valid, (
+            f"CLAUDE.md headline says '{n_claude} commands' but live counts are "
+            f"command_names={counts['command_names']} canonical_commands="
+            f"{counts['canonical_commands']}"
+        )
 
-    m_auth = re.search(r"command_count:\s*(\d+)", claude)
-    assert m_auth, "CLAUDE.md missing 'command_count: N' authoritative-counts line"
-    n_auth = int(m_auth.group(1))
-    assert n_auth in valid, (
-        f"CLAUDE.md authoritative-counts line says 'command_count: {n_auth}' "
-        f"but live counts are command_names={counts['command_names']} "
-        f"canonical_commands={counts['canonical_commands']}"
-    )
+        m_auth = re.search(r"command_count:\s*(\d+)", claude)
+        assert m_auth, "CLAUDE.md missing 'command_count: N' authoritative-counts line"
+        n_auth = int(m_auth.group(1))
+        assert n_auth in valid, (
+            f"CLAUDE.md authoritative-counts line says 'command_count: {n_auth}' "
+            f"but live counts are command_names={counts['command_names']} "
+            f"canonical_commands={counts['canonical_commands']}"
+        )
 
 
 def test_mcp_tool_count_matches_actual():
