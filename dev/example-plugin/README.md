@@ -85,14 +85,58 @@ ROAM_PLUGIN_MODULES=roam_plugin_example roam plugins
 
 ## What this example does
 
+`dev/example-plugin/` ships three sibling packages so plugin authors
+have a copy-fork template for **every** hook on `RoamPluginContext`:
+
+| Package                          | Demonstrates                                       | How to load                                 |
+| -------------------------------- | -------------------------------------------------- | ------------------------------------------- |
+| `roam_plugin_example/`           | `declare`, `register_framework_detector`, `register_framework_profile`, `register_detector` | entry point (`example`) |
+| `roam_plugin_example_extras/`    | `register_command`, `register_bridge`, `register_language_extractor` | env channel (W1292)        |
+| `roam_plugin_rails/`             | Dogfood validation of `register_framework_detector` against the real Rails detection rule (W28.2) | env channel             |
+
+Together the three packages cover **all 7 hooks** the typed
+`RoamPluginContext` exposes. A real `roam-plugin-nextjs` /
+`roam-plugin-laravel` package will pick the subset it needs.
+
+### `roam_plugin_example/` (base)
+
 `roam_plugin_example/__init__.py` registers:
 
 - A no-op framework detector that returns `None` (always defers).
 - A tiny detector that returns one synthetic finding when invoked.
+- A `FrameworkProfile` bundling the detector with `file_patterns`,
+  `recommended_commands`, and `conventions`.
 - A `declare()` call so the plugin appears with name + version in
   `roam plugins list`.
 
-The example deliberately ships zero CLI commands and zero language
-extractors — those are heavier to demonstrate well and would expand
-the example into territory the real `roam-plugin-nextjs` /
-`roam-plugin-laravel` packages will cover.
+### `roam_plugin_example_extras/` (W1292)
+
+`roam_plugin_example_extras/` registers:
+
+- A Click subcommand `roam example-greet --name <name>` via
+  `register_command`. Lives in `cli.py` so roam's lazy-import path
+  (`module_path` + `attr_name`) works exactly as it does for core's
+  `LazyGroup` commands.
+- A synthetic `ExampleBridge(LanguageBridge)` via `register_bridge`
+  that maps `.example` -> `.example_target` files. Shows the
+  `name` / `source_extensions` / `target_extensions` / `detect` /
+  `resolve` surface a production bridge fills in.
+- An `ExampleExtractor(LanguageExtractor)` via
+  `register_language_extractor` keyed on the `.example` extension.
+  Demonstrates the `language_name` / `file_extensions` /
+  `extract_symbols` / `extract_references` lifecycle plus the
+  `_make_symbol(...)` helper on the base class.
+
+Load it via the env channel — it's not declared as an entry point so
+consumers (and tests) opt in explicitly:
+
+```bash
+PYTHONPATH=dev/example-plugin \
+ROAM_PLUGIN_MODULES=roam_plugin_example_extras \
+roam plugins list
+# Then exercise the new command:
+PYTHONPATH=dev/example-plugin \
+ROAM_PLUGIN_MODULES=roam_plugin_example_extras \
+roam example-greet --name agent
+# -> VERDICT: greeted agent
+```
