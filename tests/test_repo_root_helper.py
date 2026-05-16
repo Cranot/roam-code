@@ -31,9 +31,7 @@ def test_repo_root_has_marker_files():
     root = repo_root()
     assert (root / "pyproject.toml").is_file(), f"repo_root() returned {root!r} but it has no pyproject.toml"
     if (root / "CLAUDE.md").exists():
-        assert (root / "CLAUDE.md").is_file(), (
-            f"repo_root() returned {root!r} but CLAUDE.md is present as a non-file"
-        )
+        assert (root / "CLAUDE.md").is_file(), f"repo_root() returned {root!r} but CLAUDE.md is present as a non-file"
 
 
 def test_repo_root_has_git_marker():

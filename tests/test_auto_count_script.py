@@ -177,10 +177,13 @@ def test_apply_preserves_non_marker_content():
         )
         return pat.sub("__BLOCK__", text)
 
-    before = {p: _strip_blocks(p.read_text(encoding="utf-8")) for p in (README, CLAUDE, LLMS)}
+    # CLAUDE.md is intentionally untracked on public clones (89a338d9); skip
+    # when absent. README + LLMS are always present.
+    targets = tuple(p for p in (README, CLAUDE, LLMS) if p.exists())
+    before = {p: _strip_blocks(p.read_text(encoding="utf-8")) for p in targets}
     proc = _run(["--apply"])
     assert proc.returncode == 0
-    after = {p: _strip_blocks(p.read_text(encoding="utf-8")) for p in (README, CLAUDE, LLMS)}
+    after = {p: _strip_blocks(p.read_text(encoding="utf-8")) for p in targets}
     for p in before:
         assert before[p] == after[p], (
             f"non-marker content of {p.name} changed across --apply — script is touching bytes it shouldn't"
