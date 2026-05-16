@@ -518,17 +518,32 @@ def flag_dead(ctx, config_path, include_tests):
     # Analyze flags for staleness
     flag_summaries = analyze_flags(findings, known_stale=known_stale)
 
-    # --- SARIF output (W1226 / W1232) -----------------------------------
+    # --- SARIF output (W1226 / W1232 / W1113) ---------------------------
     # SARIF surfaces the closed-enum staleness rule catalogue
     # (flag-staleness / flag-single-reference / flag-suspect)
     # even on a clean / no-flags scan so CI consumers see the rule
     # vocabulary regardless of whether any flag fired. The ``ok``
     # bucket is filtered upstream by ``flag_dead_to_sarif`` (not
     # actionable).
+    #
+    # W1113: plumb the ``_known_stale_warnings`` accumulator onto the
+    # SARIF ``run.invocations[].toolExecutionNotifications[]`` array
+    # via :func:`flag_dead_to_sarif`'s W1060-style opt-in. Hash-stable
+    # when the accumulator is empty (``emit_runtime_notifications=
+    # bool([]) is False`` prevents :func:`to_sarif` from adding the
+    # ``invocations`` key) — mirrors cmd_complexity (W1060).
     if sarif_mode:
         from roam.output.sarif import flag_dead_to_sarif, write_sarif
 
-        click.echo(write_sarif(flag_dead_to_sarif(flag_summaries)))
+        click.echo(
+            write_sarif(
+                flag_dead_to_sarif(
+                    flag_summaries,
+                    emit_runtime_notifications=bool(_known_stale_warnings),
+                    warnings_out=_known_stale_warnings,
+                )
+            )
+        )
         return
 
     # Compute summary stats

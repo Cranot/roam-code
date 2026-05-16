@@ -310,8 +310,22 @@ def _calculate_verdict(results: list[dict]) -> tuple[str, int]:
 # ---------------------------------------------------------------------------
 
 
-def _results_to_sarif(results: list[dict]) -> dict:
-    """Convert check-rules results to SARIF 2.1.0 format."""
+def _results_to_sarif(
+    results: list[dict],
+    *,
+    warnings_out: list[str] | None = None,
+) -> dict:
+    """Convert check-rules results to SARIF 2.1.0 format.
+
+    W1114: ``warnings_out`` plumbs caller-supplied silent-fallback warnings
+    (malformed ``.roam-rules.yml`` / ``.roam/rules/*.yml`` files that were
+    skipped by the YAML loaders) through to
+    :func:`roam.output.sarif.rules_to_sarif`, which projects them onto the
+    SARIF ``run.invocations[].toolExecutionNotifications[]`` array via the
+    W1046 opt-in. Hash invariant: when ``warnings_out`` is ``None``/empty
+    the SARIF bytes are identical to pre-W1114 callers (the opt-in flag
+    stays ``False``).
+    """
     from roam.output.sarif import rules_to_sarif
 
     # Transform results to the format rules_to_sarif expects
@@ -325,7 +339,11 @@ def _results_to_sarif(results: list[dict]) -> dict:
                 "violations": r.get("violations", []),
             }
         )
-    return rules_to_sarif(sarif_results)
+    return rules_to_sarif(
+        sarif_results,
+        emit_runtime_notifications=bool(warnings_out),
+        warnings_out=list(warnings_out) if warnings_out else None,
+    )
 
 
 def _evaluate_custom_rules(
@@ -629,7 +647,13 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     if sarif_mode:
         from roam.output.sarif import write_sarif
 
-        sarif = _results_to_sarif(results)
+        # W1114: pass accumulated loader warnings onto the SARIF
+        # toolExecutionNotifications[] array so a CI consumer sees the
+        # silent-fallback disclosure that the JSON/text paths already
+        # carry via ``summary.warnings_out`` / the text Warnings block.
+        # Hash invariant: empty/missing warnings keep the SARIF output
+        # byte-identical to pre-W1114.
+        sarif = _results_to_sarif(results, warnings_out=list(deduped_warnings))
         click.echo(write_sarif(sarif))
         if exit_code != 0:
             ctx.exit(exit_code)

@@ -1216,7 +1216,12 @@ def breaking_to_sarif(changes: dict) -> dict:
 # ── Health issues ────────────────────────────────────────────────────
 
 
-def health_to_sarif(issues: dict) -> dict:
+def health_to_sarif(
+    issues: dict,
+    *,
+    emit_runtime_notifications: bool = False,
+    warnings_out: list[str] | None = None,
+) -> dict:
     """Convert health-check results to SARIF.
 
     *issues* is expected to carry:
@@ -1229,6 +1234,21 @@ def health_to_sarif(issues: dict) -> dict:
       ``betweenness``, ``file``, ``severity``
     - ``layer_violations`` (list[dict], optional): each with ``source``,
       ``source_layer``, ``target``, ``target_layer``, ``severity``
+
+    *emit_runtime_notifications* / *warnings_out* (W1084 — mirrors the W1060
+    plumb in :func:`complexity_to_sarif`): caller-supplied producer-side
+    advisory warnings (Pattern 1B / Pattern 2 silent-fallback disclosures
+    from ``cmd_health``'s ``_gate_warnings`` accumulator — malformed
+    ``.roam-gates.yml`` shape, missing ``health`` key, ...). When
+    ``emit_runtime_notifications=True`` AND ``warnings_out`` is non-empty,
+    each string is projected onto
+    ``run.invocations[].toolExecutionNotifications[]`` via
+    :func:`to_sarif`'s W1046 surface with
+    ``descriptor.id: "producer.advisory-warning"``. Hash invariant:
+    omitting the kwargs (or passing ``warnings_out=None`` /
+    ``warnings_out=[]``) produces SARIF output byte-identical to pre-W1084
+    because :func:`to_sarif` only adds the ``invocations`` key when the
+    opt-in flag is True.
     """
     rules = [
         _rule_entry(
@@ -1334,13 +1354,25 @@ def health_to_sarif(issues: dict) -> dict:
             )
         )
 
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        rules,
+        results,
+        emit_runtime_notifications=emit_runtime_notifications or bool(warnings_out),
+        warnings_out=warnings_out or [],
+    )
 
 
 # ── Rules violations ─────────────────────────────────────────────────
 
 
-def rules_to_sarif(rule_results: list[dict]) -> dict:
+def rules_to_sarif(
+    rule_results: list[dict],
+    *,
+    emit_runtime_notifications: bool = False,
+    warnings_out: list[str] | None = None,
+) -> dict:
     """Convert custom governance rule results to SARIF.
 
     Each *rule_result* dict is expected to carry:
@@ -1350,6 +1382,19 @@ def rules_to_sarif(rule_results: list[dict]) -> dict:
     - ``severity`` (str): ``"error"`` / ``"warning"`` / ``"info"``
     - ``violations`` (list[dict], optional): each with ``symbol``, ``file``,
       ``line``, ``reason``
+
+    *emit_runtime_notifications* / *warnings_out* (W1114): producer-side
+    advisory warnings (Pattern 1B / Pattern 2 silent-fallback disclosures
+    from ``cmd_rules`` / ``cmd_check_rules`` YAML-loader accumulators —
+    malformed ``.roam-rules.yml`` / ``.roam/rules/*.yml`` files that were
+    skipped). When non-empty AND ``emit_runtime_notifications=True``, each
+    string is projected onto the SARIF
+    ``run.invocations[].toolExecutionNotifications[]`` array via
+    :func:`to_sarif`'s W1046 opt-in. Hash invariant: when both kwargs are
+    omitted (or ``warnings_out`` is ``None``/empty and the flag stays
+    ``False``), the SARIF output is byte-identical to pre-W1114 callers
+    because :func:`to_sarif` then suppresses the ``invocations`` key
+    entirely.
     """
     seen_rules: dict[str, dict] = {}
     results: list[dict] = []
@@ -1399,6 +1444,8 @@ def rules_to_sarif(rule_results: list[dict]) -> dict:
         _get_version(),
         list(seen_rules.values()),
         results,
+        emit_runtime_notifications=emit_runtime_notifications,
+        warnings_out=warnings_out,
     )
 
 
@@ -5185,7 +5232,12 @@ def _flag_dead_staleness_level(staleness: str) -> str:
 _FLAG_DEAD_MAX_SECONDARY_LOCS = 10
 
 
-def flag_dead_to_sarif(findings: list[dict]) -> dict:
+def flag_dead_to_sarif(
+    findings: list[dict],
+    *,
+    emit_runtime_notifications: bool = False,
+    warnings_out: list[str] | None = None,
+) -> dict:
     """Convert ``roam flag-dead`` per-flag staleness findings to SARIF.
 
     cmd_flag_dead scans source files for feature flag API calls
@@ -5195,6 +5247,19 @@ def flag_dead_to_sarif(findings: list[dict]) -> dict:
     ``likely_stale`` / ``suspect`` / ``ok``), a ``reasons`` list naming
     the indicators that drove the classification, and a ``locations``
     list of file/line anchor pairs (one per call site).
+
+    *emit_runtime_notifications* / *warnings_out* (W1113): producer-side
+    advisory warnings (Pattern 1B / Pattern 2 silent-fallback
+    disclosures from ``cmd_flag_dead``'s ``_known_stale_warnings``
+    accumulator — known-stale config file unreadable, decode failure,
+    etc.). When ``emit_runtime_notifications=True`` AND ``warnings_out``
+    is non-empty, the warnings are projected onto the SARIF
+    ``run.invocations[].toolExecutionNotifications[]`` array via
+    :func:`to_sarif`'s W1046 opt-in. Hash invariant: when both kwargs
+    are at their defaults (``False`` / ``None``), the SARIF output is
+    byte-identical to pre-W1113 because :func:`to_sarif` only adds the
+    ``invocations`` key when ``emit_runtime_notifications=True``.
+    Mirrors the W1060 ``complexity_to_sarif`` plumbing.
 
     Three closed-enum rule ids project the three actionable
     classifications:
@@ -5359,7 +5424,14 @@ def flag_dead_to_sarif(findings: list[dict]) -> dict:
             )
         )
 
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        rules,
+        results,
+        emit_runtime_notifications=emit_runtime_notifications,
+        warnings_out=warnings_out,
+    )
 
 
 # ── Orphan-routes (dead Laravel API endpoint detector — W1227) ───────
