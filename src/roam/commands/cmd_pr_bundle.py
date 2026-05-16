@@ -90,6 +90,9 @@ from roam.runs.helpers import auto_log
 # thin re-export aliases for any pre-W364 test or call site that
 # reaches in by attribute name.
 from roam.security.redact import (
+    SECRET_PATTERNS as _SECRET_PATTERNS,  # W1293 backcompat alias (test_security_redact)
+)
+from roam.security.redact import (
     redact_secrets as _redact_secrets,
 )
 from roam.security.redact import (
