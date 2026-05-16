@@ -875,9 +875,10 @@ def test_w596_confidence_level_rank_round_trip() -> None:
     assert confidence_level_rank("medium") > confidence_level_rank("low")
     # ``unknown`` is a known label (cmd_pr_bundle) but ranks BELOW low.
     assert confidence_level_rank("unknown") < confidence_level_rank("low")
-    # Typos / None collapse below ``unknown`` (W531 CI-safety lesson).
-    assert confidence_level_rank("bogus") < confidence_level_rank("unknown")
-    assert confidence_level_rank(None) < confidence_level_rank("unknown")
+    # W634 (post-W596): fail-loud on typos / None by default. Silent
+    # bucketing requires explicit ``fallback=-1`` opt-in.
+    assert confidence_level_rank("bogus", fallback=-1) < confidence_level_rank("unknown")
+    assert confidence_level_rank(None, fallback=-1) < confidence_level_rank("unknown")
     # Case-insensitive.
     assert confidence_level_rank("HIGH") == confidence_level_rank("high")
     assert confidence_level_rank("High") == confidence_level_rank("high")
