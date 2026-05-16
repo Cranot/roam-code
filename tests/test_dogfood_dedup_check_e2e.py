@@ -27,9 +27,17 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 # Make dev/ importable for these tests (mirrors tests/test_dogfood_dedup_check.py)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "dev"))
+
+_DOGFOOD_DIR_PRESENT = (_REPO_ROOT / "internal" / "dogfood").is_dir()
+pytestmark = pytest.mark.skipif(
+    not _DOGFOOD_DIR_PRESENT,
+    reason="internal/dogfood/ is gitignored — not available on CI / public clones",
+)
 
 
 # Dogfood-v2 commands grouped by current expected state.
