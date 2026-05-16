@@ -171,8 +171,16 @@ def mine_laws(
 
 def _law_sort_key(law: Law) -> tuple[int, float, int]:
     """Stable sort key: higher confidence first, then higher conformance,
-    then bigger sample."""
-    conf_rank = {"high": 3, "medium": 2, "low": 1}.get(law.confidence, 0)
+    then bigger sample.
+
+    W1299: source confidence rank from the canonical helper at
+    :func:`roam.output.confidence.confidence_level_rank` rather than an
+    inline dict (W596 migration target). Polarity is preserved
+    (high=3 / medium=2 / low=1, unknown=0).
+    """
+    from roam.output.confidence import confidence_level_rank
+
+    conf_rank = confidence_level_rank(law.confidence, fallback=0)
     conformance = float(law.evidence.get("conformance_pct", 0))
     sample = int(law.evidence.get("sample_size", 0))
     return (conf_rank, conformance, sample)

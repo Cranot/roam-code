@@ -111,6 +111,25 @@ _PRE_W594_PENDING: dict[str, str] = {
     "test_sarif_consumer_list.py": "W594 backlog",
     "test_staged_rollout_readiness.py": "W594 backlog",
     "test_user_version_discipline.py": "W594 backlog",
+    # W1301 — 15 additional offenders surfaced after the session-wave
+    # test additions (W1111, W1121 family, W1136, W792 et al.) used the
+    # historical Path(__file__).resolve() pattern. Same migration target
+    # as W594 backlog; tracked together to drop in a future hygiene wave.
+    "conftest.py": "W1301 backlog",
+    "test_cli_deprecated_commands_schema.py": "W1301 backlog",
+    "test_sarif_consumers_schema.py": "W1301 backlog",
+    "test_sarif_disclosure_coverage.py": "W1301 backlog",
+    "test_sql_like_escape_discipline.py": "W1301 backlog",
+    "test_w1111_click_argument_name_lint.py": "W1301 backlog",
+    "test_w1121_click_argument_file_lint.py": "W1301 backlog",
+    "test_w1121_click_argument_input_path_lint.py": "W1301 backlog",
+    "test_w1121_click_argument_pattern_lint.py": "W1301 backlog",
+    "test_w1121_click_argument_target_lint.py": "W1301 backlog",
+    "test_w1136_click_option_input_path_dest_lint.py": "W1301 backlog",
+    "test_w444_mcp_tool_names_no_dedupe.py": "W1301 backlog",
+    "test_w681_taint_engine_positive_smoke.py": "W1301 backlog",
+    "test_w703_comment_syntax_coverage.py": "W1301 backlog",
+    "test_w792_well_known_card_mirrors.py": "W1301 backlog",
 }
 
 
