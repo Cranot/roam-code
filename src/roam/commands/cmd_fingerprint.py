@@ -1,4 +1,12 @@
-"""Graph-Isomorphism Transfer: topology fingerprint for cross-repo comparison."""
+"""Graph-Isomorphism Transfer: topology fingerprint for cross-repo comparison.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because fingerprint outputs are topology fingerprint export
+documents — not per-location violations. SARIF is reserved for
+findings with file:line coordinates; fingerprint's primary deliverable
+is the topology fingerprint document. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket C propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -184,10 +192,7 @@ def _emit_fingerprint_findings(
         else:
             # Defensive — only monolith/leaky are in _BAD_CLUSTER_PATTERNS.
             metric_clause = f"pattern {pattern}"
-        claim = (
-            f"arch.bad_cluster_pattern: cluster {label!r} flagged as "
-            f"{pattern} ({metric_clause})"
-        )
+        claim = f"arch.bad_cluster_pattern: cluster {label!r} flagged as {pattern} ({metric_clause})"
         emit_finding(
             conn,
             FindingRecord(
@@ -196,9 +201,7 @@ def _emit_fingerprint_findings(
                 subject_id=None,
                 claim=claim,
                 evidence_json=_json.dumps(evidence, sort_keys=True),
-                confidence=_FINGERPRINT_KIND_TO_CONFIDENCE[
-                    "arch.bad_cluster_pattern"
-                ],
+                confidence=_FINGERPRINT_KIND_TO_CONFIDENCE["arch.bad_cluster_pattern"],
                 source_detector="fingerprint",
                 source_version=source_version,
             ),
@@ -242,9 +245,7 @@ def _emit_fingerprint_findings(
                 subject_id=None,
                 claim=claim,
                 evidence_json=_json.dumps(evidence, sort_keys=True),
-                confidence=_FINGERPRINT_KIND_TO_CONFIDENCE[
-                    "arch.cyclic_cluster"
-                ],
+                confidence=_FINGERPRINT_KIND_TO_CONFIDENCE["arch.cyclic_cluster"],
                 source_detector="fingerprint",
                 source_version=source_version,
             ),
@@ -289,8 +290,7 @@ def _gather_cyclic_sccs(
 
             rows = batched_in(
                 conn,
-                "SELECT s.id, s.name, f.path FROM symbols s "
-                "JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+                "SELECT s.id, s.name, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
                 list(touched_ids),
             )
             for r in rows:
@@ -321,9 +321,7 @@ def _gather_cyclic_sccs(
             # Can't form a stable id without at least one resolved name.
             continue
         cluster_id_list = sorted({int(cid) for cid in scc_cluster_ids if cid is not None})
-        cluster_label_list = [
-            cluster_labels.get(cid, f"cluster-{cid}") for cid in cluster_id_list
-        ]
+        cluster_label_list = [cluster_labels.get(cid, f"cluster-{cid}") for cid in cluster_id_list]
         files = sorted({id_to_file.get(nid, "") for nid in member_ids if id_to_file.get(nid)})
         out.append(
             {
@@ -462,8 +460,10 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
         # `god_objects` (legacy alias, retained for back-compat).
         try:
             from roam.quality.god_components import (
-                god_components as _gc,
                 definition as _gc_def,
+            )
+            from roam.quality.god_components import (
+                god_components as _gc,
             )
 
             _gsum = _gc(conn)
@@ -471,9 +471,7 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
             fp["antipatterns"]["god_components"] = _gsum.total
             fp["antipatterns"]["god_components_critical"] = _gsum.critical
             fp["antipatterns"]["god_components_actionable"] = _gsum.actionable
-            fp["antipatterns"]["god_components_legacy_god_objects"] = (
-                fp["antipatterns"].get("god_objects", 0)
-            )
+            fp["antipatterns"]["god_components_legacy_god_objects"] = fp["antipatterns"].get("god_objects", 0)
             fp["antipatterns"]["god_components_definition"] = _gc_def()
         except Exception:
             pass
@@ -502,9 +500,7 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
 
                 _cluster_map = detect_clusters(G)
                 _cluster_labels = label_clusters(_cluster_map, conn)
-                _cyclic_sccs = _gather_cyclic_sccs(
-                    conn, G, _cluster_map, _cluster_labels
-                )
+                _cyclic_sccs = _gather_cyclic_sccs(conn, G, _cluster_map, _cluster_labels)
                 _emit_fingerprint_findings(
                     conn,
                     fp.get("clusters", []) or [],

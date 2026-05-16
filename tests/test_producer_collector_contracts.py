@@ -33,7 +33,6 @@ mismatch — these tests pin the agreed-upon field names).
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -46,21 +45,29 @@ from conftest import git_init, parse_json_output  # noqa: E402
 
 from roam.evidence import collect_change_evidence  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 _CI_ENV_VARS_TO_SCRUB = (
-    "GITHUB_ACTIONS", "GITHUB_RUN_ID", "GITHUB_ACTIONS_RUN_ID",
-    "GITLAB_CI", "CI_JOB_ID",
-    "BUILDKITE", "BUILDKITE_BUILD_ID",
-    "CIRCLECI", "CIRCLE_BUILD_NUM",
-    "JENKINS_URL", "BUILD_TAG",
-    "TF_BUILD", "BUILD_BUILDID",
+    "GITHUB_ACTIONS",
+    "GITHUB_RUN_ID",
+    "GITHUB_ACTIONS_RUN_ID",
+    "GITLAB_CI",
+    "CI_JOB_ID",
+    "BUILDKITE",
+    "BUILDKITE_BUILD_ID",
+    "CIRCLECI",
+    "CIRCLE_BUILD_NUM",
+    "JENKINS_URL",
+    "BUILD_TAG",
+    "TF_BUILD",
+    "BUILD_BUILDID",
     "CI",
-    "ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR", "ROAM_MCP_CLIENT_ID",
+    "ROAM_AGENT_ID",
+    "ROAM_HUMAN_ACTOR",
+    "ROAM_MCP_CLIENT_ID",
     "ROAM_CI_RUNNER_ID",
 )
 
@@ -97,7 +104,8 @@ def bundle_project(tmp_path, monkeypatch):
     git_init(proj)
     subprocess.run(
         ["git", "checkout", "-B", "w219-contract"],
-        cwd=proj, capture_output=True,
+        cwd=proj,
+        capture_output=True,
     )
     monkeypatch.chdir(proj)
     return proj
@@ -115,7 +123,9 @@ def _invoke(runner: CliRunner, args, **kw):
 
 
 def test_pr_bundle_actor_agent_id_contract(
-    cli_runner, bundle_project, monkeypatch,
+    cli_runner,
+    bundle_project,
+    monkeypatch,
 ):
     """W219 contract: pr-bundle producer emits actor.agent_id; collector
     materialises an ActorRef(actor_kind="agent")."""
@@ -135,14 +145,15 @@ def test_pr_bundle_actor_agent_id_contract(
 
     # Step 3: collector-side assertion.
     packet, _ = collect_change_evidence(pr_bundle_envelope=envelope)
-    assert any(
-        r.actor_kind == "agent" and r.actor_id == "agent:test-w219"
-        for r in packet.actor_refs
-    ), f"collector did not produce agent ActorRef from envelope; got {packet.actor_refs}"
+    assert any(r.actor_kind == "agent" and r.actor_id == "agent:test-w219" for r in packet.actor_refs), (
+        f"collector did not produce agent ActorRef from envelope; got {packet.actor_refs}"
+    )
 
 
 def test_pr_bundle_actor_human_actor_contract(
-    cli_runner, bundle_project, monkeypatch,
+    cli_runner,
+    bundle_project,
+    monkeypatch,
 ):
     """W219 contract: pr-bundle producer emits actor.human_actor; collector
     materialises an ActorRef(actor_kind="human")."""
@@ -157,14 +168,15 @@ def test_pr_bundle_actor_human_actor_contract(
     assert envelope["actor"].get("human_actor") == "alice@example.com"
 
     packet, _ = collect_change_evidence(pr_bundle_envelope=envelope)
-    assert any(
-        r.actor_kind == "human" and r.actor_id == "alice@example.com"
-        for r in packet.actor_refs
-    ), f"collector did not produce human ActorRef; got {packet.actor_refs}"
+    assert any(r.actor_kind == "human" and r.actor_id == "alice@example.com" for r in packet.actor_refs), (
+        f"collector did not produce human ActorRef; got {packet.actor_refs}"
+    )
 
 
 def test_pr_bundle_actor_mcp_client_id_contract(
-    cli_runner, bundle_project, monkeypatch,
+    cli_runner,
+    bundle_project,
+    monkeypatch,
 ):
     """W219 contract: ROAM_MCP_CLIENT_ID flows into actor.mcp_client_id;
     collector materialises an ActorRef(actor_kind="mcp_client")."""
@@ -179,14 +191,13 @@ def test_pr_bundle_actor_mcp_client_id_contract(
     assert envelope["actor"].get("mcp_client_id") == "mcp:cursor-1.42"
 
     packet, _ = collect_change_evidence(pr_bundle_envelope=envelope)
-    assert any(
-        r.actor_kind == "mcp_client" and r.actor_id == "mcp:cursor-1.42"
-        for r in packet.actor_refs
-    )
+    assert any(r.actor_kind == "mcp_client" and r.actor_id == "mcp:cursor-1.42" for r in packet.actor_refs)
 
 
 def test_pr_bundle_actor_ci_runner_id_contract(
-    cli_runner, bundle_project, monkeypatch,
+    cli_runner,
+    bundle_project,
+    monkeypatch,
 ):
     """W219 contract: ROAM_CI_RUNNER_ID flows into actor.ci_runner_id;
     collector materialises an ActorRef(actor_kind="ci_runner")."""
@@ -201,14 +212,13 @@ def test_pr_bundle_actor_ci_runner_id_contract(
     assert envelope["actor"].get("ci_runner_id") == "gh:actions/runs/9999"
 
     packet, _ = collect_change_evidence(pr_bundle_envelope=envelope)
-    assert any(
-        r.actor_kind == "ci_runner" and r.actor_id == "gh:actions/runs/9999"
-        for r in packet.actor_refs
-    )
+    assert any(r.actor_kind == "ci_runner" and r.actor_id == "gh:actions/runs/9999" for r in packet.actor_refs)
 
 
 def test_pr_bundle_actor_kind_contract(
-    cli_runner, bundle_project, monkeypatch,
+    cli_runner,
+    bundle_project,
+    monkeypatch,
 ):
     """W219 contract: actor.actor_kind is derived from which actor field
     is populated. The collector reads actor_kind through the actor block's
@@ -223,18 +233,13 @@ def test_pr_bundle_actor_kind_contract(
 
     # W189: when agent_id is set, actor_kind is "agent" per
     # _resolve_actor_kind precedence (agent > ci_runner > mcp_client > ...).
-    assert envelope["actor"].get("actor_kind") == "agent", (
-        f"actor.actor_kind = {envelope['actor'].get('actor_kind')!r}"
-    )
+    assert envelope["actor"].get("actor_kind") == "agent", f"actor.actor_kind = {envelope['actor'].get('actor_kind')!r}"
 
     # And the resulting ActorRef carries actor_kind="agent" on the row
     # that holds the agent_id — the most direct collector-side mirror of
     # the producer-side actor_kind contract.
     packet, _ = collect_change_evidence(pr_bundle_envelope=envelope)
-    matching = [
-        r for r in packet.actor_refs
-        if r.actor_id == "agent:kind-test"
-    ]
+    matching = [r for r in packet.actor_refs if r.actor_id == "agent:kind-test"]
     assert len(matching) == 1, f"expected one ref for agent_id; got {matching}"
     assert matching[0].actor_kind == "agent"
 
@@ -270,27 +275,24 @@ def test_pr_bundle_approvals_contract(cli_runner, bundle_project):
     # Step 3 (a): with the real (empty) producer envelope, collector sees
     # an empty approvals tuple — no policy_decisions are injected.
     packet, _ = collect_change_evidence(pr_bundle_envelope=envelope)
-    assert packet.approvals == (), (
-        f"expected empty approvals tuple from a bare bundle; got {packet.approvals}"
-    )
+    assert packet.approvals == (), f"expected empty approvals tuple from a bare bundle; got {packet.approvals}"
 
     # Step 3 (b): mutate the envelope to carry an approval row (this is
     # the shape the collector promises to consume) and confirm it flows
     # through. This is the load-bearing contract; the CLI-affordance gap
     # is the follow-up wave, not this test's concern.
     envelope_with = dict(envelope)
-    envelope_with["approvals"] = [{
-        "approval_id": "pr_w219_1",
-        "approver": "alice@example.com",
-    }]
+    envelope_with["approvals"] = [
+        {
+            "approval_id": "pr_w219_1",
+            "approver": "alice@example.com",
+        }
+    ]
     packet2, _ = collect_change_evidence(pr_bundle_envelope=envelope_with)
     assert len(packet2.approvals) == 1
     assert packet2.approvals[0]["approval_id"] == "pr_w219_1"
     # And the approval surfaces as an AuthorityRef(authority_kind="approval").
-    assert any(
-        a.authority_kind == "approval" and a.authority_id == "pr_w219_1"
-        for a in packet2.authority_refs
-    )
+    assert any(a.authority_kind == "approval" and a.authority_id == "pr_w219_1" for a in packet2.authority_refs)
 
 
 def test_pr_bundle_accepted_risks_contract(cli_runner, bundle_project):
@@ -318,8 +320,7 @@ def test_pr_bundle_accepted_risks_contract(cli_runner, bundle_project):
 
     envelope_with = dict(envelope)
     envelope_with["accepted_risks"] = [
-        {"risk_id": "R-001", "rationale": "blast radius minimal",
-         "accepted_by": "alice@example.com"},
+        {"risk_id": "R-001", "rationale": "blast radius minimal", "accepted_by": "alice@example.com"},
     ]
     packet2, _ = collect_change_evidence(pr_bundle_envelope=envelope_with)
     assert len(packet2.accepted_risks) == 1
@@ -366,13 +367,10 @@ def test_pr_bundle_mode_contract(cli_runner, bundle_project, monkeypatch):
 
     # Step 2 (producer-side): post-W224c, ``mode`` MUST be present
     # top-level and mirrored in ``summary.active_mode``.
-    assert "mode" in envelope, (
-        "pr-bundle envelope missing top-level 'mode' key (W224c regression)"
-    )
+    assert "mode" in envelope, "pr-bundle envelope missing top-level 'mode' key (W224c regression)"
     allowed_modes = set(VALID_MODES) | {"unmoded"}
     assert envelope["mode"] in allowed_modes, (
-        f"envelope['mode'] = {envelope['mode']!r}; "
-        f"expected one of {sorted(allowed_modes)}"
+        f"envelope['mode'] = {envelope['mode']!r}; expected one of {sorted(allowed_modes)}"
     )
     assert "summary" in envelope and "active_mode" in envelope["summary"], (
         "pr-bundle envelope missing summary.active_mode (W224c regression)"
@@ -391,13 +389,10 @@ def test_pr_bundle_mode_contract(cli_runner, bundle_project, monkeypatch):
     envelope_with_mode["mode"] = "safe_edit"
 
     packet, _ = collect_change_evidence(pr_bundle_envelope=envelope_with_mode)
-    assert packet.mode == "safe_edit", (
-        f"collector did not pick up mode; packet.mode={packet.mode!r}"
+    assert packet.mode == "safe_edit", f"collector did not pick up mode; packet.mode={packet.mode!r}"
+    assert any(a.authority_kind == "mode" and a.authority_id == "safe_edit" for a in packet.authority_refs), (
+        f"collector did not emit mode AuthorityRef; got {packet.authority_refs}"
     )
-    assert any(
-        a.authority_kind == "mode" and a.authority_id == "safe_edit"
-        for a in packet.authority_refs
-    ), f"collector did not emit mode AuthorityRef; got {packet.authority_refs}"
 
 
 # ---------------------------------------------------------------------------
@@ -412,13 +407,11 @@ def test_pr_bundle_affected_symbols_contract(cli_runner, bundle_project):
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "affected contract"])
     _invoke(
         cli_runner,
-        ["pr-bundle", "add", "affected", "useRetry",
-         "--kind", "function", "--blast-radius", "5"],
+        ["pr-bundle", "add", "affected", "useRetry", "--kind", "function", "--blast-radius", "5"],
     )
     _invoke(
         cli_runner,
-        ["pr-bundle", "add", "affected", "uploadFile",
-         "--kind", "function", "--blast-radius", "12"],
+        ["pr-bundle", "add", "affected", "uploadFile", "--kind", "function", "--blast-radius", "12"],
     )
     result = _invoke(
         cli_runner,
@@ -449,8 +442,7 @@ def test_pr_bundle_tests_required_contract(cli_runner, bundle_project):
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "tests_required contract"])
     _invoke(
         cli_runner,
-        ["pr-bundle", "add", "test-required", "tests/test_retry.py",
-         "--reason", "covers retry path"],
+        ["pr-bundle", "add", "test-required", "tests/test_retry.py", "--reason", "covers retry path"],
     )
     result = _invoke(
         cli_runner,
@@ -471,8 +463,7 @@ def test_pr_bundle_tests_run_contract(cli_runner, bundle_project):
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "tests_run contract"])
     _invoke(
         cli_runner,
-        ["pr-bundle", "add", "test-run", "tests/test_retry.py",
-         "--passed", "--duration-ms", "42"],
+        ["pr-bundle", "add", "test-run", "tests/test_retry.py", "--passed", "--duration-ms", "42"],
     )
     result = _invoke(
         cli_runner,
@@ -484,10 +475,7 @@ def test_pr_bundle_tests_run_contract(cli_runner, bundle_project):
     assert any(r.get("test_file") == "tests/test_retry.py" for r in runs)
 
     packet, _ = collect_change_evidence(pr_bundle_envelope=envelope)
-    assert any(
-        r.get("test_file") == "tests/test_retry.py"
-        for r in packet.tests_run
-    )
+    assert any(r.get("test_file") == "tests/test_retry.py" for r in packet.tests_run)
 
 
 # ---------------------------------------------------------------------------
@@ -519,9 +507,7 @@ def test_pr_bundle_context_files_contract():
             "src/retry.py",  # plain string form is also accepted
         ],
     }
-    packet, warnings = collect_change_evidence(
-        pr_bundle_envelope=synthetic_envelope
-    )
+    packet, warnings = collect_change_evidence(pr_bundle_envelope=synthetic_envelope)
     assert warnings == [], f"unexpected warnings: {warnings}"
     assert len(packet.context_refs) == 2
     paths_or_inline = []
@@ -535,7 +521,8 @@ def test_pr_bundle_context_files_contract():
 
 
 def test_pr_bundle_real_envelope_promotes_context_files_to_top_level(
-    cli_runner, bundle_project,
+    cli_runner,
+    bundle_project,
 ):
     """W219 contract (W224a): the real pr-bundle emit envelope NOW
     promotes ``context_read.files_inspected`` to a top-level
@@ -559,26 +546,18 @@ def test_pr_bundle_real_envelope_promotes_context_files_to_top_level(
     envelope = parse_json_output(result, command="pr-bundle")
 
     # W224a: producer now emits context_files[] at the top level.
-    assert "context_files" in envelope, (
-        "context_files MUST be present at the envelope top level (W224a)"
-    )
+    assert "context_files" in envelope, "context_files MUST be present at the envelope top level (W224a)"
     paths = [entry.get("path") for entry in envelope["context_files"]]
-    assert "src/upload.py" in paths, (
-        f"src/upload.py missing from context_files; got {paths}"
-    )
+    assert "src/upload.py" in paths, f"src/upload.py missing from context_files; got {paths}"
     # The legacy nested path is preserved for backward compatibility.
     inspected = envelope.get("context_read", {}).get("files_inspected", [])
     assert "src/upload.py" in inspected
 
     # And the collector now sees a context_ref for the inspected file.
     packet, _ = collect_change_evidence(pr_bundle_envelope=envelope)
-    refs = [
-        (art.path or art.content_inline or "")
-        for art in packet.context_refs
-    ]
+    refs = [(art.path or art.content_inline or "") for art in packet.context_refs]
     assert any("src/upload.py" in r for r in refs), (
-        f"collector did not materialise a context_ref for src/upload.py; "
-        f"got {refs}"
+        f"collector did not materialise a context_ref for src/upload.py; got {refs}"
     )
 
 
@@ -626,9 +605,7 @@ def test_critique_findings_contract():
     # subject_kind=diff_region is in SUBJECT_KINDS, so no warning expected.
     assert warnings == [], f"unexpected warnings: {warnings}"
 
-    critique_findings = [
-        f for f in packet.findings if f.get("source_detector") == "critique"
-    ]
+    critique_findings = [f for f in packet.findings if f.get("source_detector") == "critique"]
     assert len(critique_findings) == 1
     assert critique_findings[0]["check"] == "clones_not_edited"
     assert critique_findings[0]["severity"] == "high"
@@ -690,32 +667,30 @@ def test_pr_risk_envelope_has_findings_key():
         "hotspot_score": 0.3,
         "test_coverage_pct": 78.0,
         "per_file": [
-            {"path": "src/upload.py", "symbols": 5, "blast": 12,
-             "is_test": False, "lines_added": 10, "lines_removed": 2},
+            {
+                "path": "src/upload.py",
+                "symbols": 5,
+                "blast": 12,
+                "is_test": False,
+                "lines_added": 10,
+                "lines_removed": 2,
+            },
         ],
         "suggested_reviewers": [
-            {"author": "alice@example.com",
-             "actor": "alice@example.com", "lines": 42},
+            {"author": "alice@example.com", "actor": "alice@example.com", "lines": 42},
         ],
     }
     # The collector flattens the top-level findings[] array onto
     # ChangeEvidence.findings without emitting the legacy
     # "no 'findings' array" warning.
     packet, warnings = collect_change_evidence(pr_risk_envelope=pr_risk_env)
-    pr_risk_rows = [
-        f for f in packet.findings
-        if f.get("source_detector") == "pr-risk"
-    ]
-    assert len(pr_risk_rows) == 1, (
-        f"pr-risk envelope should flow exactly one finding row; "
-        f"got {pr_risk_rows}"
-    )
+    pr_risk_rows = [f for f in packet.findings if f.get("source_detector") == "pr-risk"]
+    assert len(pr_risk_rows) == 1, f"pr-risk envelope should flow exactly one finding row; got {pr_risk_rows}"
     assert pr_risk_rows[0]["kind"] == "pr-risk:composite-risk-score"
     # The legacy "no 'findings' array" warning is gone for pr-risk.
-    assert not any(
-        "pr_risk_envelope" in w and "no 'findings' array" in w
-        for w in warnings
-    ), f"unexpected no-findings-array warning: {warnings}"
+    assert not any("pr_risk_envelope" in w and "no 'findings' array" in w for w in warnings), (
+        f"unexpected no-findings-array warning: {warnings}"
+    )
 
 
 def test_pr_risk_synthetic_envelope_with_findings_flows():
@@ -746,18 +721,11 @@ def test_pr_risk_synthetic_envelope_with_findings_flows():
             },
         ],
     }
-    packet, _ = collect_change_evidence(
-        pr_risk_envelope=pr_risk_env_with_findings
-    )
-    pr_risk_rows = [
-        f for f in packet.findings
-        if f.get("source_detector") == "pr-risk"
-    ]
+    packet, _ = collect_change_evidence(pr_risk_envelope=pr_risk_env_with_findings)
+    pr_risk_rows = [f for f in packet.findings if f.get("source_detector") == "pr-risk"]
     assert len(pr_risk_rows) == 1
     # The W241 allowlist keeps the canonical id / kind / severity keys.
-    assert pr_risk_rows[0]["finding_id_str"] == (
-        "pr-risk:composite-risk-score:diff_abc"
-    )
+    assert pr_risk_rows[0]["finding_id_str"] == ("pr-risk:composite-risk-score:diff_abc")
     assert pr_risk_rows[0]["kind"] == "pr-risk:composite-risk-score"
     assert pr_risk_rows[0]["severity"] == "medium"
 
@@ -772,12 +740,20 @@ def test_run_event_agent_contract(monkeypatch):
     ActorRef(actor_kind="agent")."""
     _scrub_env(monkeypatch)
     events = [
-        {"ts": "2026-05-13T10:05:00Z", "seq": 1,
-         "run_id": "run_w219", "agent": "agent:run-event-test",
-         "action": "preflight"},
-        {"ts": "2026-05-13T10:10:00Z", "seq": 2,
-         "run_id": "run_w219", "agent": "agent:run-event-test",
-         "action": "impact"},
+        {
+            "ts": "2026-05-13T10:05:00Z",
+            "seq": 1,
+            "run_id": "run_w219",
+            "agent": "agent:run-event-test",
+            "action": "preflight",
+        },
+        {
+            "ts": "2026-05-13T10:10:00Z",
+            "seq": 2,
+            "run_id": "run_w219",
+            "agent": "agent:run-event-test",
+            "action": "impact",
+        },
     ]
     # Producer-side assertion: the run-event shape we feed the collector
     # matches what ``roam.runs.ledger.log_event`` writes to events.jsonl.
@@ -789,9 +765,7 @@ def test_run_event_agent_contract(monkeypatch):
 
     packet, _ = collect_change_evidence(run_events=events)
     agent_refs = [r for r in packet.actor_refs if r.actor_kind == "agent"]
-    assert len(agent_refs) == 1, (
-        f"expected one deduped agent ActorRef; got {agent_refs}"
-    )
+    assert len(agent_refs) == 1, f"expected one deduped agent ActorRef; got {agent_refs}"
     assert agent_refs[0].actor_id == "agent:run-event-test"
 
 
@@ -800,12 +774,9 @@ def test_run_event_timestamps_contract(monkeypatch):
     latest -> packet.completed_at."""
     _scrub_env(monkeypatch)
     events = [
-        {"ts": "2026-05-13T10:15:00Z", "seq": 3,
-         "run_id": "run_w219_ts", "action": "critique"},
-        {"ts": "2026-05-13T10:00:00Z", "seq": 1,
-         "run_id": "run_w219_ts", "action": "preflight"},
-        {"ts": "2026-05-13T10:10:00Z", "seq": 2,
-         "run_id": "run_w219_ts", "action": "impact"},
+        {"ts": "2026-05-13T10:15:00Z", "seq": 3, "run_id": "run_w219_ts", "action": "critique"},
+        {"ts": "2026-05-13T10:00:00Z", "seq": 1, "run_id": "run_w219_ts", "action": "preflight"},
+        {"ts": "2026-05-13T10:10:00Z", "seq": 2, "run_id": "run_w219_ts", "action": "impact"},
     ]
     packet, _ = collect_change_evidence(run_events=events)
     assert packet.started_at == "2026-05-13T10:00:00Z"
@@ -852,10 +823,7 @@ def test_audit_trail_envelope_contract():
     assert manifests[0].artifact_id == "audit-trail:run_w219_audit"
 
     # Chain-integrity policy_decisions row (pass when chain_valid=True).
-    chain_decisions = [
-        d for d in packet.policy_decisions
-        if d.get("rule_id") == "audit_trail_chain_integrity"
-    ]
+    chain_decisions = [d for d in packet.policy_decisions if d.get("rule_id") == "audit_trail_chain_integrity"]
     assert len(chain_decisions) == 1
     assert chain_decisions[0]["decision"] == "pass"
 
@@ -896,9 +864,7 @@ def test_vuln_reach_envelope_contract():
     packet, warnings = collect_change_evidence(vuln_reach_envelopes=[vuln_env])
     assert warnings == [], f"unexpected warnings: {warnings}"
 
-    vuln_findings = [
-        f for f in packet.findings if f.get("source_detector") == "vuln-reach"
-    ]
+    vuln_findings = [f for f in packet.findings if f.get("source_detector") == "vuln-reach"]
     assert len(vuln_findings) == 1
     assert vuln_findings[0]["cve"] == "CVE-2026-0001"
     assert vuln_findings[0]["severity"] == "high"
@@ -968,8 +934,7 @@ def test_cga_envelope_contract():
         "statement": {
             "_type": "https://in-toto.io/Statement/v1",
             "predicateType": "https://roam-code.com/cga/v1",
-            "subject": [{"name": "repo:roam",
-                         "digest": {"sha256": "d" * 64}}],
+            "subject": [{"name": "repo:roam", "digest": {"sha256": "d" * 64}}],
             "predicate": {
                 "merkle_root": merkle,
                 "edge_bundle_digest": "e" * 64,
@@ -1096,10 +1061,7 @@ def test_mcp_receipts_dir_contract(tmp_path, monkeypatch):
     assert warnings == [], f"unexpected warnings: {warnings}"
 
     # Two artifacts.
-    receipt_arts = [
-        a for a in packet.artifacts
-        if a.kind == "other" and a.extra.get("receipt_kind") == "mcp_receipt"
-    ]
+    receipt_arts = [a for a in packet.artifacts if a.kind == "other" and a.extra.get("receipt_kind") == "mcp_receipt"]
     assert len(receipt_arts) == 2
     art_ids = {a.artifact_id for a in receipt_arts}
     assert "mcp_receipt:tc_w219_a" in art_ids

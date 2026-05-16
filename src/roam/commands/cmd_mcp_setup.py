@@ -1,4 +1,13 @@
-"""Generate MCP server configuration for AI coding platforms."""
+"""Generate MCP server configuration for AI coding platforms.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam mcp-setup`` is a setup/bootstrap command — its
+output is human-facing setup status (MCP client config JSON written
+for the detected platform), not analysis findings with file:line
+coordinates. SARIF is reserved for scanning results. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1148 audit memo.
+"""
 
 from __future__ import annotations
 

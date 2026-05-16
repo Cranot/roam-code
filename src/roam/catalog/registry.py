@@ -92,10 +92,7 @@ def _check_tier(tier: str, *, context: str) -> None:
     ``"detector('foo')"`` vs ``"register_rollup_kind('foo', 'foo-cluster')"``.
     """
     if tier not in _CANONICAL_TIERS:
-        raise ValueError(
-            f"{context}: unknown confidence tier {tier!r}; "
-            f"must be one of {sorted(_CANONICAL_TIERS)}"
-        )
+        raise ValueError(f"{context}: unknown confidence tier {tier!r}; must be one of {sorted(_CANONICAL_TIERS)}")
 
 
 def detector(

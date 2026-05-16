@@ -100,7 +100,9 @@ class TestImportTargetPreference:
             },
         ]
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
+            refs,
+            symbols_by_name,
+            files_by_path,
             project_root=str(project),
         )
         import_edges = [e for e in edges if e["kind"] == "import"]
@@ -119,8 +121,7 @@ class TestImportTargetPreference:
         symbols = [
             _sym(1, "use_yaml", file_path="src/foo.py", line_start=3, line_end=4),
             # ONLY a local variable, no module symbol — the W181 case.
-            _sym(2, "yaml", file_path="tests/test_runtime.py", kind="variable",
-                 line_start=340, line_end=340),
+            _sym(2, "yaml", file_path="tests/test_runtime.py", kind="variable", line_start=340, line_end=340),
         ]
         symbols_by_name, files_by_path = _build_inputs(symbols)
         refs = [
@@ -135,8 +136,11 @@ class TestImportTargetPreference:
         ]
         drop_stats: dict = {}
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
-            project_root=str(project), drop_stats=drop_stats,
+            refs,
+            symbols_by_name,
+            files_by_path,
+            project_root=str(project),
+            drop_stats=drop_stats,
         )
         # No edge at all — not dropped by W167 text-check, not emitted
         # in the first place. The W167 counter should therefore be 0.
@@ -151,19 +155,20 @@ class TestImportTargetPreference:
         project = _build_project(
             tmp_path,
             {
-                "src/cga.py": (
-                    "from datetime import timezone\n"
-                    "\n"
-                    "PREDICATE_TYPE = timezone.utc\n"
-                ),
+                "src/cga.py": ("from datetime import timezone\n\nPREDICATE_TYPE = timezone.utc\n"),
             },
         )
         symbols = [
-            _sym(1, "PREDICATE_TYPE", file_path="src/cga.py",
-                 line_start=3, line_end=3, kind="constant"),
-            _sym(2, "timezone", file_path="tests/test_cli_responses_write.py",
-                 qn="_FrozenDatetime.timezone", kind="property",
-                 line_start=27, line_end=27),
+            _sym(1, "PREDICATE_TYPE", file_path="src/cga.py", line_start=3, line_end=3, kind="constant"),
+            _sym(
+                2,
+                "timezone",
+                file_path="tests/test_cli_responses_write.py",
+                qn="_FrozenDatetime.timezone",
+                kind="property",
+                line_start=27,
+                line_end=27,
+            ),
         ]
         symbols_by_name, files_by_path = _build_inputs(symbols)
         refs = [
@@ -177,7 +182,9 @@ class TestImportTargetPreference:
             },
         ]
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
+            refs,
+            symbols_by_name,
+            files_by_path,
             project_root=str(project),
         )
         assert not any(e["kind"] == "import" for e in edges), edges
@@ -196,10 +203,8 @@ class TestImportTargetPreference:
         )
         symbols = [
             _sym(1, "use", file_path="src/x.py", line_start=3, line_end=4),
-            _sym(2, "bar", file_path="src/roam/foo.py",
-                 qn="roam.foo.bar", kind="function", line_start=1, line_end=2),
-            _sym(3, "bar", file_path="tests/test_x.py",
-                 kind="variable", line_start=10, line_end=10),
+            _sym(2, "bar", file_path="src/roam/foo.py", qn="roam.foo.bar", kind="function", line_start=1, line_end=2),
+            _sym(3, "bar", file_path="tests/test_x.py", kind="variable", line_start=10, line_end=10),
         ]
         symbols_by_name, files_by_path = _build_inputs(symbols)
         refs = [
@@ -213,7 +218,9 @@ class TestImportTargetPreference:
             },
         ]
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
+            refs,
+            symbols_by_name,
+            files_by_path,
             project_root=str(project),
         )
         import_edges = [e for e in edges if e["kind"] == "import"]
@@ -234,14 +241,19 @@ class TestImportTargetPreference:
             },
         )
         symbols = [
-            _sym(1, "TZ", file_path="src/foo.py", line_start=3,
-                 line_end=3, kind="constant"),
+            _sym(1, "TZ", file_path="src/foo.py", line_start=3, line_end=3, kind="constant"),
             # The "real" datetime.timezone surrogate — function-kind,
             # qualified as ``datetime.timezone``. This represents a
             # well-indexed third-party / stdlib module symbol.
-            _sym(2, "timezone", file_path="stdlib/datetime.py",
-                 qn="datetime.timezone", kind="class",
-                 line_start=100, line_end=200),
+            _sym(
+                2,
+                "timezone",
+                file_path="stdlib/datetime.py",
+                qn="datetime.timezone",
+                kind="class",
+                line_start=100,
+                line_end=200,
+            ),
         ]
         symbols_by_name, files_by_path = _build_inputs(symbols)
         refs = [
@@ -255,7 +267,9 @@ class TestImportTargetPreference:
             },
         ]
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
+            refs,
+            symbols_by_name,
+            files_by_path,
             project_root=str(project),
         )
         import_edges = [e for e in edges if e["kind"] == "import"]
@@ -280,12 +294,10 @@ class TestImportTargetPreference:
             },
         )
         symbols = [
-            _sym(1, "seed", file_path="src/seeds.py",
-                 line_start=3, line_end=4),
+            _sym(1, "seed", file_path="src/seeds.py", line_start=3, line_end=4),
             # The original W158 smoking-gun: yaml only exists as a
             # local variable inside a test file.
-            _sym(2, "yaml", file_path="tests/test_runtime_score.py",
-                 kind="variable", line_start=340, line_end=340),
+            _sym(2, "yaml", file_path="tests/test_runtime_score.py", kind="variable", line_start=340, line_end=340),
         ]
         symbols_by_name, files_by_path = _build_inputs(symbols)
         refs = [
@@ -298,6 +310,7 @@ class TestImportTargetPreference:
                 "import_path": "yaml",
             },
         ]
+
         # Sanity-check the bypass: even if W158/W167 were absent, W181
         # alone produces zero import edges for this fixture. We can't
         # easily "monkey-patch off" W158 from within this module
@@ -316,7 +329,9 @@ class TestImportTargetPreference:
         monkeypatch.setattr(relations_mod, "_verify_import_edges", _accept_all)
 
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
+            refs,
+            symbols_by_name,
+            files_by_path,
             project_root=str(project),
         )
         # W181 alone is sufficient.

@@ -25,16 +25,14 @@ safety filter - non-whitelisted keys must be silently dropped.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, invoke_cli  # noqa: E402
-
 from click.testing import CliRunner  # noqa: E402
+from conftest import git_init, invoke_cli  # noqa: E402
 
 from roam.evidence.collector import (  # noqa: E402
     _build_authority_refs,
@@ -45,7 +43,6 @@ from roam.runs.ledger import (  # noqa: E402
     read_run_events,
     start_run,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -92,9 +89,7 @@ def test_mode_switch_emits_mode_to_in_run_ledger(runs_project, monkeypatch):
     switch_events = [e for e in events if e.get("action") == "mode-switch"]
     assert switch_events, f"no mode-switch event in {events!r}"
     ev = switch_events[-1]
-    assert ev.get("mode_to") == "read_only", (
-        f"expected mode_to=read_only on event, got {ev!r}"
-    )
+    assert ev.get("mode_to") == "read_only", f"expected mode_to=read_only on event, got {ev!r}"
     # mode_from is best-effort; when populated it must be a string.
     # In this scenario the pre-switch mode resolved to ``safe_edit`` (the
     # built-in default).
@@ -129,9 +124,7 @@ def test_mode_switch_noop_does_not_emit_mode_to(runs_project, monkeypatch):
     # no-op path (the W294 emission is gated on a real change).
     assert switch_events, "expected a mode-switch event even for no-op"
     ev = switch_events[-1]
-    assert "mode_to" not in ev, (
-        f"no-op mode-switch unexpectedly stamped mode_to: {ev!r}"
-    )
+    assert "mode_to" not in ev, f"no-op mode-switch unexpectedly stamped mode_to: {ev!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +149,7 @@ def test_lease_claim_emits_lease_id_in_run_ledger(runs_project, monkeypatch):
     claim_events = [e for e in events if e.get("action") == "lease-claim"]
     assert claim_events, f"no lease-claim event in {events!r}"
     ev = claim_events[-1]
-    assert isinstance(ev.get("lease_id"), str) and ev["lease_id"], (
-        f"expected lease_id on event, got {ev!r}"
-    )
+    assert isinstance(ev.get("lease_id"), str) and ev["lease_id"], f"expected lease_id on event, got {ev!r}"
     # Sanity: target string is the same lease id (set on auto_log call).
     assert ev.get("target") == ev["lease_id"]
 
@@ -185,11 +176,16 @@ def test_add_approval_emits_approval_id_in_run_ledger(runs_project, monkeypatch)
     result = invoke_cli(
         runner,
         [
-            "pr-bundle", "add-approval",
-            "--approver", "human:alice@example.com",
-            "--scope", "pr-42",
-            "--reason", "looks good",
-            "--id", "appr_test_001",
+            "pr-bundle",
+            "add-approval",
+            "--approver",
+            "human:alice@example.com",
+            "--scope",
+            "pr-42",
+            "--reason",
+            "looks good",
+            "--id",
+            "appr_test_001",
         ],
         cwd=runs_project,
     )
@@ -200,9 +196,7 @@ def test_add_approval_emits_approval_id_in_run_ledger(runs_project, monkeypatch)
     appr_events = [e for e in events if e.get("approval_id")]
     assert appr_events, f"no event carrying approval_id in {events!r}"
     ev = appr_events[-1]
-    assert ev["approval_id"] == "appr_test_001", (
-        f"expected approval_id=appr_test_001, got {ev!r}"
-    )
+    assert ev["approval_id"] == "appr_test_001", f"expected approval_id=appr_test_001, got {ev!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +204,7 @@ def test_add_approval_emits_approval_id_in_run_ledger(runs_project, monkeypatch)
 # ---------------------------------------------------------------------------
 
 
-def test_corroboration_promotes_authority_refs_to_run_ledger_provenance(
-    runs_project, monkeypatch
-):
+def test_corroboration_promotes_authority_refs_to_run_ledger_provenance(runs_project, monkeypatch):
     """End-to-end: writer-side mode_to emission -> harvester picks it up
     -> AuthorityRef provenance promoted to ``run_ledger``.
 
@@ -241,13 +233,10 @@ def test_corroboration_promotes_authority_refs_to_run_ledger_provenance(
     end_run(runs_project, meta.run_id, status="completed")
 
     warnings: list[str] = []
-    corroborated = _collect_corroborated_authorities_from_runs(
-        runs_project, warnings
-    )
+    corroborated = _collect_corroborated_authorities_from_runs(runs_project, warnings)
     # The mode_to value (read_only) MUST appear in the corroborated set.
     assert ("mode", "read_only") in corroborated, (
-        f"expected ('mode', 'read_only') in corroborated set, got "
-        f"{corroborated!r} (warnings={warnings!r})"
+        f"expected ('mode', 'read_only') in corroborated set, got {corroborated!r} (warnings={warnings!r})"
     )
 
     # Build refs with the SAME mode on the envelope AND the corroboration
@@ -259,8 +248,7 @@ def test_corroboration_promotes_authority_refs_to_run_ledger_provenance(
     )
     target = next(r for r in refs if r.authority_kind == "mode")
     assert target.extra.get("provenance") == "run_ledger", (
-        f"expected provenance=run_ledger after writer-side corroboration, "
-        f"got {target.extra!r}"
+        f"expected provenance=run_ledger after writer-side corroboration, got {target.extra!r}"
     )
     # W294 source axis stays distinct and category-correct.
     assert target.source == "mode"
@@ -319,9 +307,7 @@ def test_auto_log_rejects_unknown_event_fields(runs_project, monkeypatch):
     assert "mode_to" not in ev
 
 
-def test_auto_log_extra_event_fields_default_is_backward_compat(
-    runs_project, monkeypatch
-):
+def test_auto_log_extra_event_fields_default_is_backward_compat(runs_project, monkeypatch):
     """Existing callers (no ``extra_event_fields`` kwarg) work unchanged.
 
     Pins the W294 contract that the kwarg is purely additive: an

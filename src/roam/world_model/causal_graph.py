@@ -63,7 +63,6 @@ from roam.output.confidence import confidence_level_rank
 from roam.world_model.side_effects import (
     KNOWN_SIDE_EFFECTING_PREFIXES,
     SideEffectClassification,
-    classify_side_effects,
 )
 
 # ---------------------------------------------------------------------------
@@ -89,10 +88,10 @@ MAX_EDGES_PER_SYMBOL = 50
 class CausalEdge:
     """One directional data-dependency edge inside a function body."""
 
-    source: str                          # "param:path", "global:CONFIG", "env:HOME"
-    sink: str                            # "io_write:open", "return", "raise:ValueError"
-    kind: str                            # one of CAUSAL_KINDS
-    confidence: str = "medium"           # "high" | "medium" | "low"
+    source: str  # "param:path", "global:CONFIG", "env:HOME"
+    sink: str  # "io_write:open", "return", "raise:ValueError"
+    kind: str  # one of CAUSAL_KINDS
+    confidence: str = "medium"  # "high" | "medium" | "low"
     evidence: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -112,8 +111,8 @@ class CausalGraph:
     symbol: str
     file: str
     edges: list[CausalEdge] = field(default_factory=list)
-    inputs: list[str] = field(default_factory=list)   # param names + global reads + env reads
-    sinks: list[str] = field(default_factory=list)    # side-effect labels + "return" + "raise"
+    inputs: list[str] = field(default_factory=list)  # param names + global reads + env reads
+    sinks: list[str] = field(default_factory=list)  # side-effect labels + "return" + "raise"
     truncated: bool = False
     confidence: str = "medium"
     symbol_id: int = 0
@@ -191,8 +190,8 @@ def _extract_params_from_body(body_text: str) -> list[str]:
     return []
 
 
-_TYPE_ANN_TRIM_RE = re.compile(r":[^=,]+")   # strip ": int", ": Optional[str]"
-_DEFAULT_TRIM_RE = re.compile(r"=.*$")        # strip default value
+_TYPE_ANN_TRIM_RE = re.compile(r":[^=,]+")  # strip ": int", ": Optional[str]"
+_DEFAULT_TRIM_RE = re.compile(r"=.*$")  # strip default value
 
 
 def _split_param_list(args_blob: str) -> list[str]:
@@ -385,12 +384,8 @@ def _scan_one(
 
     # Pre-compile per-param regexes for cheap "token appears on this line"
     # tests.  We anchor with \b to avoid false positives on substrings.
-    param_pats: dict[str, re.Pattern] = {
-        p: re.compile(r"\b" + re.escape(p) + r"\b") for p in param_set
-    }
-    global_pats: dict[str, re.Pattern] = {
-        g: re.compile(r"\b" + re.escape(g) + r"\b") for g in file_globals
-    }
+    param_pats: dict[str, re.Pattern] = {p: re.compile(r"\b" + re.escape(p) + r"\b") for p in param_set}
+    global_pats: dict[str, re.Pattern] = {g: re.compile(r"\b" + re.escape(g) + r"\b") for g in file_globals}
 
     def _emit(edge: CausalEdge) -> bool:
         """Append edge if under cap; return False once truncated."""
@@ -566,7 +561,7 @@ def _scan_one(
             # D. env_to_effect — link any env read seen earlier in the
             # body to this sink call.  Confidence ``medium`` because the
             # flow is line-distant.
-            for (env_li, env_key) in env_keys_in_body:
+            for env_li, env_key in env_keys_in_body:
                 if env_li > li:
                     continue
                 if not _emit(

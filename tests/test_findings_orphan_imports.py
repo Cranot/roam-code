@@ -31,7 +31,6 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_orphan_imports import (
     _ORPHAN_KIND_TO_CONFIDENCE,
     ORPHAN_IMPORTS_DETECTOR_VERSION,
@@ -39,8 +38,8 @@ from roam.commands.cmd_orphan_imports import (
     _orphan_finding_id,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -113,9 +112,7 @@ def test_orphan_imports_emits_to_findings_registry(tmp_path):
                 "       subject_kind, confidence "
                 "FROM findings WHERE source_detector = 'orphan-imports'"
             ).fetchall()
-        assert len(rows) >= 1, (
-            "expected at least one orphan-imports-emitted finding row"
-        )
+        assert len(rows) >= 1, "expected at least one orphan-imports-emitted finding row"
         for r in rows:
             assert r["source_detector"] == "orphan-imports"
             assert r["source_version"] == ORPHAN_IMPORTS_DETECTOR_VERSION
@@ -139,9 +136,7 @@ def test_orphan_finding_id_is_deterministic():
     assert a == b
     assert a.startswith("orphan-imports:python:")
     # Different language → different id.
-    assert (
-        _orphan_finding_id("javascript", "src/a.py", "pkg.missing", 10) != a
-    )
+    assert _orphan_finding_id("javascript", "src/a.py", "pkg.missing", 10) != a
     # Different file → different id.
     assert _orphan_finding_id("python", "src/b.py", "pkg.missing", 10) != a
     # Different module → different id.
@@ -162,17 +157,13 @@ def test_orphan_imports_rerun_upserts_not_duplicates(tmp_path):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'orphan-imports'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'orphan-imports'"
                 ).fetchall()
             }
             first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'orphan-imports'"
+                "SELECT COUNT(*) FROM findings WHERE source_detector = 'orphan-imports'"
             ).fetchone()[0]
-        assert first_count == len(first_ids), (
-            "duplicate finding_id_str rows on first run"
-        )
+        assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same detector predicates → same ids.
         runner = CliRunner()
@@ -183,13 +174,11 @@ def test_orphan_imports_rerun_upserts_not_duplicates(tmp_path):
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'orphan-imports'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'orphan-imports'"
                 ).fetchall()
             }
             second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'orphan-imports'"
+                "SELECT COUNT(*) FROM findings WHERE source_detector = 'orphan-imports'"
             ).fetchone()[0]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
@@ -305,20 +294,16 @@ def test_orphan_kind_tier_mapping_static_analysis(tmp_path):
                 "hint": "Go import path not in indexed packages",
             },
         ]
-        written = _emit_orphan_imports_findings(
-            conn, orphans, ORPHAN_IMPORTS_DETECTOR_VERSION
-        )
+        written = _emit_orphan_imports_findings(conn, orphans, ORPHAN_IMPORTS_DETECTOR_VERSION)
         assert written == len(orphans)
         rows = conn.execute(
-            "SELECT evidence_json, confidence FROM findings "
-            "WHERE source_detector = 'orphan-imports'"
+            "SELECT evidence_json, confidence FROM findings WHERE source_detector = 'orphan-imports'"
         ).fetchall()
         assert len(rows) == len(orphans)
         for r in rows:
             ev = json.loads(r["evidence_json"])
             assert r["confidence"] == "static_analysis", (
-                f"kind {ev['kind']!r} expected static_analysis, "
-                f"got {r['confidence']!r}"
+                f"kind {ev['kind']!r} expected static_analysis, got {r['confidence']!r}"
             )
 
 
@@ -346,10 +331,7 @@ def test_orphan_kind_tier_fallback_is_heuristic(tmp_path):
             ORPHAN_IMPORTS_DETECTOR_VERSION,
         )
         assert written == 1
-        row = conn.execute(
-            "SELECT confidence FROM findings "
-            "WHERE source_detector = 'orphan-imports'"
-        ).fetchone()
+        row = conn.execute("SELECT confidence FROM findings WHERE source_detector = 'orphan-imports'").fetchone()
         assert row["confidence"] == "heuristic"
 
 
@@ -389,19 +371,14 @@ def test_orphan_imports_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_orphan_imports(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "orphan-imports"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "orphan-imports"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "orphan-imports" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "orphan-imports"
-            for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "orphan-imports" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -441,8 +418,7 @@ def test_no_persist_does_not_emit_findings(tmp_path):
         with open_db(readonly=True) as conn:
             try:
                 count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'orphan-imports'"
+                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'orphan-imports'"
                 ).fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0

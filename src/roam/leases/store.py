@@ -20,6 +20,16 @@ Lease lifecycle states::
                 :func:`gc_expired_leases` (or implicitly observed by a
                 conflict check, which then *also* GCs)
 
+Expiry-filtering design (W1067, asymmetric to permits):
+Leases DO filter expired entries at read time. ``find_conflict`` skips
+expired leases. ``list_leases`` defaults to ``include_expired=False``.
+``gc_expired_leases`` marks them as stale. The semantic is live
+conflict resolution: an expired lease no longer holds a subject so it
+shouldn't block a new claim. Compare with :mod:`roam.permits.store`
+which does NOT filter (audit-completeness — expired permits flow
+through with ``extra["expired"]=True`` marker). See
+``(internal memo)``.
+
 Conflict detection
 ==================
 
@@ -54,6 +64,7 @@ from pathlib import Path
 from typing import Optional
 
 from roam.atomic_io import atomic_write_json
+from roam.output.formatter import WarningsOut
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -190,7 +201,7 @@ def read_lease(
     repo_root: Path,
     lease_id: str,
     *,
-    warnings_out: Optional[list[str]] = None,
+    warnings_out: WarningsOut = None,
 ) -> Optional[Lease]:
     """Load a lease by id, or ``None`` if missing / unparseable.
 
@@ -204,6 +215,7 @@ def read_lease(
     id that simply isn't on disk); ``None`` (default) preserves the
     pre-W448 silent-drop behaviour.
     """
+
     def _emit_warning(message: str) -> None:
         if warnings_out is not None:
             warnings_out.append(message)
@@ -214,25 +226,17 @@ def read_lease(
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError) as exc:
-        _emit_warning(
-            f"lease file {path.name!s} skipped: malformed JSON "
-            f"({type(exc).__name__}: {exc})"
-        )
+        _emit_warning(f"lease file {path.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})")
         return None
     if not isinstance(raw, dict):
         _emit_warning(
-            f"lease file {path.name!s} skipped: top-level value "
-            f"is not a JSON object (got {type(raw).__name__})"
+            f"lease file {path.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})"
         )
         return None
     lease = _lease_from_dict(raw, repo_root)
     if lease is None:
         raw_lid = raw.get("lease_id")
-        id_phrase = (
-            f"lease_id={raw_lid!r}"
-            if isinstance(raw_lid, str) and raw_lid
-            else "lease_id=<missing>"
-        )
+        id_phrase = f"lease_id={raw_lid!r}" if isinstance(raw_lid, str) and raw_lid else "lease_id=<missing>"
         _emit_warning(
             f"lease file {path.name!s} skipped: schema validation "
             f"failed ({id_phrase}); fields missing or invalid per "
@@ -279,7 +283,7 @@ def _iter_lease_files(repo_root: Path):
 def _iter_leases(
     repo_root: Path,
     *,
-    warnings_out: Optional[list[str]] = None,
+    warnings_out: WarningsOut = None,
 ):
     """Yield every parseable :class:`Lease` under the repo.
 
@@ -289,6 +293,7 @@ def _iter_leases(
     reason. ``None`` (default) silently drops, preserving the pre-W425
     behavior for callers that don't care.
     """
+
     def _emit_warning(message: str) -> None:
         if warnings_out is not None:
             warnings_out.append(message)
@@ -297,25 +302,17 @@ def _iter_leases(
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, ValueError) as exc:
-            _emit_warning(
-                f"lease file {path.name!s} skipped: malformed JSON "
-                f"({type(exc).__name__}: {exc})"
-            )
+            _emit_warning(f"lease file {path.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})")
             continue
         if not isinstance(raw, dict):
             _emit_warning(
-                f"lease file {path.name!s} skipped: top-level value "
-                f"is not a JSON object (got {type(raw).__name__})"
+                f"lease file {path.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})"
             )
             continue
         lease = _lease_from_dict(raw, repo_root)
         if lease is None:
             raw_lid = raw.get("lease_id")
-            id_phrase = (
-                f"lease_id={raw_lid!r}"
-                if isinstance(raw_lid, str) and raw_lid
-                else "lease_id=<missing>"
-            )
+            id_phrase = f"lease_id={raw_lid!r}" if isinstance(raw_lid, str) and raw_lid else "lease_id=<missing>"
             _emit_warning(
                 f"lease file {path.name!s} skipped: schema validation "
                 f"failed ({id_phrase}); fields missing or invalid per "
@@ -464,7 +461,7 @@ def list_leases(
     agent: Optional[str] = None,
     include_expired: bool = False,
     include_released: bool = True,
-    warnings_out: Optional[list[str]] = None,
+    warnings_out: WarningsOut = None,
 ) -> list[Lease]:
     """List leases for this repo, newest first.
 

@@ -37,14 +37,13 @@ from roam.cli import cli
 from roam.commands.cmd_fingerprint import (
     _BAD_CLUSTER_PATTERNS,
     _FINGERPRINT_KIND_TO_CONFIDENCE,
+    FINGERPRINT_DETECTOR_VERSION,
     _emit_fingerprint_findings,
     _fingerprint_bad_cluster_finding_id,
     _fingerprint_cyclic_cluster_finding_id,
-    FINGERPRINT_DETECTOR_VERSION,
 )
 from roam.db.connection import open_db
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -145,9 +144,7 @@ def test_cyclic_cluster_finding_id_is_deterministic_and_order_independent():
     assert a == b
     assert a.startswith("fingerprint:arch.cyclic_cluster:")
     # Adding a member -> different id (structurally different SCC).
-    assert (
-        _fingerprint_cyclic_cluster_finding_id(["foo", "bar", "baz", "qux"]) != a
-    )
+    assert _fingerprint_cyclic_cluster_finding_id(["foo", "bar", "baz", "qux"]) != a
     # Removing a member -> different id.
     assert _fingerprint_cyclic_cluster_finding_id(["foo", "bar"]) != a
 
@@ -163,9 +160,7 @@ def test_emit_bad_cluster_monolith_emits_structural_tier(tmp_path):
         clusters = [
             _synth_cluster("graph/Builder", "monolith", size_pct=55.0, conductance=0.2),
         ]
-        written = _emit_fingerprint_findings(
-            conn, clusters, [], FINGERPRINT_DETECTOR_VERSION
-        )
+        written = _emit_fingerprint_findings(conn, clusters, [], FINGERPRINT_DETECTOR_VERSION)
         assert written == 1
         row = conn.execute(
             "SELECT subject_kind, subject_id, confidence, evidence_json, "
@@ -181,9 +176,7 @@ def test_emit_bad_cluster_monolith_emits_structural_tier(tmp_path):
         # subjects don't map to a single symbols.id row).
         assert row["subject_id"] is None
         assert row["source_version"] == FINGERPRINT_DETECTOR_VERSION
-        assert row["finding_id_str"].startswith(
-            "fingerprint:arch.bad_cluster_pattern:"
-        )
+        assert row["finding_id_str"].startswith("fingerprint:arch.bad_cluster_pattern:")
         ev = json.loads(row["evidence_json"])
         assert ev["kind"] == "arch.bad_cluster_pattern"
         assert ev["label"] == "graph/Builder"
@@ -199,17 +192,12 @@ def test_emit_bad_cluster_leaky_emits_structural_tier(tmp_path):
     """arch.bad_cluster_pattern findings on a leaky cluster land at structural tier."""
     with _seed_for_emit_helper(tmp_path) as conn:
         clusters = [
-            _synth_cluster(
-                "commands/cli", "leaky", size_pct=12.0, conductance=0.65
-            ),
+            _synth_cluster("commands/cli", "leaky", size_pct=12.0, conductance=0.65),
         ]
-        written = _emit_fingerprint_findings(
-            conn, clusters, [], FINGERPRINT_DETECTOR_VERSION
-        )
+        written = _emit_fingerprint_findings(conn, clusters, [], FINGERPRINT_DETECTOR_VERSION)
         assert written == 1
         row = conn.execute(
-            "SELECT confidence, evidence_json, claim "
-            "FROM findings WHERE source_detector = 'fingerprint'"
+            "SELECT confidence, evidence_json, claim FROM findings WHERE source_detector = 'fingerprint'"
         ).fetchone()
         assert row["confidence"] == "structural"
         ev = json.loads(row["evidence_json"])
@@ -233,14 +221,10 @@ def test_emit_skips_island_and_module_patterns(tmp_path):
             _synth_cluster("b", "module", conductance=0.3),
             _synth_cluster("c", "monolith", size_pct=60.0),
         ]
-        written = _emit_fingerprint_findings(
-            conn, clusters, [], FINGERPRINT_DETECTOR_VERSION
-        )
+        written = _emit_fingerprint_findings(conn, clusters, [], FINGERPRINT_DETECTOR_VERSION)
         # Only the monolith fires.
         assert written == 1
-        rows = conn.execute(
-            "SELECT evidence_json FROM findings WHERE source_detector = 'fingerprint'"
-        ).fetchall()
+        rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'fingerprint'").fetchall()
         assert len(rows) == 1
         ev = json.loads(rows[0]["evidence_json"])
         assert ev["pattern"] == "monolith"
@@ -255,9 +239,7 @@ def test_emit_cyclic_cluster_emits_static_analysis_tier(tmp_path):
             cluster_labels=["graph/Builder", "commands/cli"],
             files=["src/a.py", "src/b.py"],
         )
-        written = _emit_fingerprint_findings(
-            conn, [], [scc], FINGERPRINT_DETECTOR_VERSION
-        )
+        written = _emit_fingerprint_findings(conn, [], [scc], FINGERPRINT_DETECTOR_VERSION)
         assert written == 1
         row = conn.execute(
             "SELECT subject_kind, subject_id, confidence, evidence_json, "
@@ -293,15 +275,12 @@ def test_emit_writes_both_kinds_in_one_pass(tmp_path):
         sccs = [
             _synth_cyclic_scc(["foo", "bar"], cluster_ids=(0, 1)),
         ]
-        written = _emit_fingerprint_findings(
-            conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION
-        )
+        written = _emit_fingerprint_findings(conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION)
         assert written == 3
         kinds = {
             row["finding_id_str"].split(":")[1]
             for row in conn.execute(
-                "SELECT finding_id_str FROM findings "
-                "WHERE source_detector = 'fingerprint'"
+                "SELECT finding_id_str FROM findings WHERE source_detector = 'fingerprint'"
             ).fetchall()
         }
         assert kinds == {"arch.bad_cluster_pattern", "arch.cyclic_cluster"}
@@ -343,30 +322,22 @@ def test_emit_rerun_upserts_not_duplicates(tmp_path):
     with _seed_for_emit_helper(tmp_path) as conn:
         clusters = [_synth_cluster("big", "monolith", size_pct=55.0)]
         sccs = [_synth_cyclic_scc(["a", "b"], cluster_ids=(0, 1))]
-        first = _emit_fingerprint_findings(
-            conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION
-        )
+        first = _emit_fingerprint_findings(conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION)
         first_ids = {
             r[0]
             for r in conn.execute(
-                "SELECT finding_id_str FROM findings "
-                "WHERE source_detector = 'fingerprint'"
+                "SELECT finding_id_str FROM findings WHERE source_detector = 'fingerprint'"
             ).fetchall()
         }
         # Second emit on identical inputs.
-        second = _emit_fingerprint_findings(
-            conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION
-        )
+        second = _emit_fingerprint_findings(conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION)
         second_ids = {
             r[0]
             for r in conn.execute(
-                "SELECT finding_id_str FROM findings "
-                "WHERE source_detector = 'fingerprint'"
+                "SELECT finding_id_str FROM findings WHERE source_detector = 'fingerprint'"
             ).fetchall()
         }
-        total = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'fingerprint'"
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'fingerprint'").fetchone()[0]
         assert first == 2
         assert second == 2
         assert total == 2, "rerun should upsert, not duplicate"
@@ -397,12 +368,9 @@ def test_fingerprint_does_not_emit_god_component_rows(tmp_path):
             _synth_cluster("loose", "leaky", conductance=0.65),
         ]
         sccs = [_synth_cyclic_scc(["a", "b"], cluster_ids=(0, 1))]
-        _emit_fingerprint_findings(
-            conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION
-        )
+        _emit_fingerprint_findings(conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION)
         rows = conn.execute(
-            "SELECT finding_id_str, evidence_json, claim FROM findings "
-            "WHERE source_detector = 'fingerprint'"
+            "SELECT finding_id_str, evidence_json, claim FROM findings WHERE source_detector = 'fingerprint'"
         ).fetchall()
         for r in rows:
             fid = r["finding_id_str"] or ""
@@ -438,10 +406,7 @@ def test_fingerprint_persist_smoke_no_crash(tmp_path):
         # Whether or not findings were emitted is fixture-dependent,
         # but the table must exist and be queryable.
         with open_db(readonly=True) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'fingerprint'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'fingerprint'").fetchone()[0]
             assert count >= 0
     finally:
         os.chdir(old_cwd)
@@ -465,10 +430,9 @@ def test_fingerprint_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'fingerprint'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'fingerprint'").fetchone()[
+                    0
+                ]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, "non-persist fingerprint still wrote to findings"
@@ -525,27 +489,21 @@ def test_fingerprint_findings_visible_via_cmd_findings_list_when_populated(tmp_p
     with open_db(readonly=False, project_root=proj) as conn:
         clusters = [_synth_cluster("big", "monolith", size_pct=55.0)]
         sccs = [_synth_cyclic_scc(["a", "b"], cluster_ids=(0, 1))]
-        _emit_fingerprint_findings(
-            conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION
-        )
+        _emit_fingerprint_findings(conn, clusters, sccs, FINGERPRINT_DETECTOR_VERSION)
         conn.commit()
 
     old_cwd = os.getcwd()
     try:
         os.chdir(str(proj))
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "fingerprint"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "fingerprint"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 2
         assert "fingerprint" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "fingerprint" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "fingerprint" for r in envelope["findings"])
 
         result = runner.invoke(cli, ["--json", "findings", "count"])
         assert result.exit_code == 0, result.output

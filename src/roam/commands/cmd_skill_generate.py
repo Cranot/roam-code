@@ -9,6 +9,14 @@ repo's stats. Each emitter targets a specific agent runtime:
   - cursor  — .cursor/rules/roam.mdc (Cursor rule format)
   - continue— ~/.continue/config.json snippet
   - aider   — .aiderrc snippet
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because skill-generate outputs are agent skill manifest
+definitions — not per-location violations. SARIF is reserved for
+findings with file:line coordinates; skill-generate's primary
+deliverable is the agent skill manifest. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket C propagation plan +
+W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -19,8 +27,7 @@ from typing import Iterable
 
 import click
 
-from roam.capability import roam_capability
-from roam.capability import REGISTRY
+from roam.capability import REGISTRY, roam_capability
 
 
 @roam_capability(

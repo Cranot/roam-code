@@ -30,7 +30,6 @@ import os
 from pathlib import Path
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Priority chain (first hit wins per field, LAW 11 - user intent over
 # inference):
@@ -192,9 +191,7 @@ def resolve_actor_block(
         from roam.evidence.provenance import provenance_label
 
         for field, (source, detail) in provenance.items():
-            actor[f"provenance_{field}"] = provenance_label(
-                source, detail=detail
-            )
+            actor[f"provenance_{field}"] = provenance_label(source, detail=detail)
 
     return actor
 

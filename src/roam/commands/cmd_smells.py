@@ -33,7 +33,6 @@ from roam.output.formatter import (
     to_json,
 )
 
-
 # W109 (W93 follow-up): smells is the fourth detector migrating onto the
 # central findings registry (after ``clones`` in W95, ``dead`` in W99,
 # ``complexity`` in W102). The shape mirrors those three — a stable
@@ -75,6 +74,24 @@ TEMPORAL_COUPLING_DETECTOR_VERSION: str = "1.1.0"
 COMMENT_DENSITY_DETECTOR_VERSION: str = "1.0.0"
 
 
+# W1269 (sibling of W1256): lookup table consumed by
+# ``_emit_smells_findings`` so each finding row stamps its smell kind's own
+# version. Unknown kinds (e.g. brain-method, deep-nesting, long-params —
+# the detectors without a per-id constant declared above) fall back to the
+# composite ``SMELLS_DETECTOR_VERSION`` passed in by the caller. The
+# fallback path keeps the W870 parity-lint contract: every registered
+# ``smell_id`` always has *some* version source.
+_SMELL_KIND_TO_VERSION: dict[str, str] = {
+    "refused-bequest": REFUSED_BEQUEST_DETECTOR_VERSION,
+    "primitive-obsession": PRIMITIVE_OBSESSION_DETECTOR_VERSION,
+    "magic-numbers": MAGIC_NUMBERS_DETECTOR_VERSION,
+    "boolean-parameter": BOOLEAN_PARAMETER_DETECTOR_VERSION,
+    "switch-statement": SWITCH_STATEMENT_DETECTOR_VERSION,
+    "temporal-coupling": TEMPORAL_COUPLING_DETECTOR_VERSION,
+    "comment-density": COMMENT_DENSITY_DETECTOR_VERSION,
+}
+
+
 # W109 — per-smell-kind confidence tier mapping.
 #
 # W941 + W948 -- derived view: the single source of truth is the @detector
@@ -102,9 +119,7 @@ def _smell_finding_id(smell_id: str, file_path: str, symbol_name: str, line_star
     """
     from roam.db.findings import make_finding_id
 
-    return make_finding_id(
-        "smells", smell_id, smell_id, file_path, symbol_name, int(line_start or 0)
-    )
+    return make_finding_id("smells", smell_id, smell_id, file_path, symbol_name, int(line_start or 0))
 
 
 def _resolve_smell_subject_id(
@@ -162,6 +177,13 @@ def _emit_smells_findings(
     Wrapped by the caller in a defensive try/except so a pre-W89 DB
     (without the ``findings`` table) silently no-ops rather than
     crashing the standard smells command path.
+
+    W1269 (sibling of W1256): each finding row stamps the per-kind
+    detector version (``_SMELL_KIND_TO_VERSION[smell_id]``) rather than
+    the composite. The ``source_version`` parameter is retained as the
+    fallback for kinds without a per-id constant (brain-method,
+    deep-nesting, long-params, etc.) so future detectors land here
+    cleanly without a parallel edit to the lookup table.
     """
     # Local import keeps the cost out of the read-only path —
     # callers without --persist never reach here.
@@ -198,11 +220,12 @@ def _emit_smells_findings(
             "threshold": f.get("threshold"),
             "description": f.get("description"),
         }
-        claim = (
-            f"{smell_id}: {symbol_name} ({location}) — "
-            f"{f.get('description') or smell_id}"
-        )
+        claim = f"{smell_id}: {symbol_name} ({location}) — {f.get('description') or smell_id}"
         confidence = _SMELL_KIND_TO_CONFIDENCE.get(smell_id, _SMELL_DEFAULT_CONFIDENCE)
+        # W1269: per-kind version stamp; falls back to the composite
+        # ``source_version`` for any kind not yet in _SMELL_KIND_TO_VERSION
+        # (defensive forward-compat — same shape as cmd_vibe_check W1256).
+        kind_version = _SMELL_KIND_TO_VERSION.get(smell_id, source_version)
         emit_finding(
             conn,
             FindingRecord(
@@ -213,7 +236,7 @@ def _emit_smells_findings(
                 evidence_json=_json.dumps(evidence, sort_keys=True),
                 confidence=confidence,
                 source_detector="smells",
-                source_version=source_version,
+                source_version=kind_version,
             ),
         )
         written += 1
@@ -252,6 +275,7 @@ def _smell_classify(finding: dict) -> tuple[str, str]:
     else:
         reason = f"{smell_id}: {sev} severity"
     return conf, reason
+
 
 # W564: severity ordering sourced from roam.output._severity.severity_rank
 # (canonical, higher = worse). Local ``_VALID_SEVERITIES`` enumeration is
@@ -408,11 +432,12 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
 
     Unlike ``vibe-check`` (which detects AI-generated code anti-patterns via
     source-file regex) and ``health`` (which gives an aggregate codebase
-    score), this command runs 17 deterministic DB-query-based structural smell
+    score), this command runs 24 deterministic DB-query-based structural smell
     detectors: brain methods, god classes, deep nesting, shotgun surgery,
     excessive parameters, switch statements, temporal coupling, and more.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     detail = ctx.obj.get("detail", False) if ctx.obj else False
     ensure_index()
@@ -452,30 +477,43 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
     smells_suppressions = (
         []
         if no_suppress or project_root is None
-        else load_smells_suppressions_typed(
-            project_root, warnings_out=warnings_list
-        )
+        else load_smells_suppressions_typed(project_root, warnings_out=warnings_list)
     )
 
     # W987 (Pattern 2 — closed-set vocabulary): validate --kind against
     # the registered smell-detector set. Unknown ids surface as an
     # actionable warning AND are dropped from the filter set rather than
-    # raising. A filter that survives sanitisation to empty is treated
-    # as "no filter" (backward compat with the pre-W987 no-filter shape)
-    # — the warning makes the silent state explicit.
+    # raising. If every requested kind is invalid, the filter resolves to
+    # zero findings rather than widening to "all smells" — a typo must not
+    # explode the result set.
     known_kinds = _registered_smell_kinds()
     sanitised_kinds: set[str] = set()
+    kind_filter_requested = any(bool(k) for k in kind_filter or ())
     if kind_filter:
+        # W1066 (sibling of W1064 + W987): append difflib closest-match
+        # suggestion when a registered kind is within cutoff 0.6 of the
+        # user-typed name. Mirrors the cmd_math --only/--exclude precedent
+        # and the cmd_findings --detector treatment. The suggestion is
+        # additive — when no kind has any close match the warning string
+        # is byte-identical to the pre-W1066 message.
+        import difflib
+
+        known_kinds_sorted = sorted(known_kinds)
         for k in kind_filter:
             if not k:
                 continue
             if k in known_kinds:
                 sanitised_kinds.add(k)
             else:
-                warnings_list.append(
+                base_msg = (
                     f"Drop --kind {k!r}: unknown smell id matches 0 detectors; "
                     f"pick one of the {len(known_kinds)} registered kinds"
                 )
+                close_matches = difflib.get_close_matches(k, known_kinds_sorted, n=2, cutoff=0.6)
+                if close_matches:
+                    quoted = " or ".join(f"'{m}'" for m in close_matches)
+                    base_msg = f"{base_msg}. Did you mean: {quoted}?"
+                warnings_list.append(base_msg)
 
     with open_db(readonly=not persist) as conn:
         findings = run_all_detectors(conn)
@@ -488,9 +526,7 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
         # signal silently.
         suppressed_smells: list[dict] = []
         if smells_suppressions:
-            findings, suppressed_smells = apply_suppressions_typed(
-                findings, smells_suppressions
-            )
+            findings, suppressed_smells = apply_suppressions_typed(findings, smells_suppressions)
 
         # --- W109: mirror into the central findings registry ---
         # Runs ONLY with --persist. The persisted set is independent of the
@@ -540,12 +576,14 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
             norm = file_path.replace("\\", "/")
             findings = [f for f in findings if norm in f.get("location", "").replace("\\", "/")]
 
-        # W987 — filter by smell kind (closed-set validated above). An
-        # empty ``sanitised_kinds`` after sanitisation skips the filter,
-        # so a fat-fingered --kind value (already warned about) does not
-        # silently drop every finding to zero.
+        # W987/W1035 — filter by smell kind (closed-set validated above).
+        # Known ids narrow the result set. Unknown-only filters resolve to
+        # zero findings with a warning, instead of silently widening to all
+        # findings.
         if sanitised_kinds:
             findings = [f for f in findings if f.get("smell_id") in sanitised_kinds]
+        elif kind_filter_requested:
+            findings = []
 
         # Filter by minimum severity (W564: canonical higher = worse).
         if min_severity:
@@ -584,6 +622,19 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
                 f"{'s' if total_smells != 1 else ''} "
                 f"in {files_affected} file{'s' if files_affected != 1 else ''}"
             )
+
+        # SARIF output (W1171): projection for CI / GitHub Code Scanning.
+        # Branches BEFORE json/text so the pre-existing paths stay
+        # byte-identical to pre-W1171. The rules catalogue is derived
+        # from roam.catalog.registry — closed-by-construction over the
+        # registered smell-kind vocabulary; per-finding severity drives
+        # the SARIF level (critical -> error, warning -> warning,
+        # info -> note).
+        if sarif_mode:
+            from roam.output.sarif import smells_to_sarif, write_sarif
+
+            click.echo(write_sarif(smells_to_sarif(findings)))
+            return
 
         if json_mode:
             # R22: wrap each smell in {value, confidence, reason} so

@@ -9,7 +9,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # A. param_to_effect — `def write_log(path): open(path, 'w').write('x')`
 # ---------------------------------------------------------------------------
@@ -19,11 +18,7 @@ def test_param_to_effect_high_confidence(project_factory, monkeypatch):
     """Param appearing in side-effect call args → high-confidence param_to_effect."""
     proj = project_factory(
         {
-            "src/writer.py": (
-                "def write_log(path):\n"
-                "    with open(path, 'w') as f:\n"
-                "        f.write('x')\n"
-            ),
+            "src/writer.py": ("def write_log(path):\n    with open(path, 'w') as f:\n        f.write('x')\n"),
         }
     )
     monkeypatch.chdir(proj)
@@ -56,10 +51,7 @@ def test_param_to_return(project_factory, monkeypatch):
     """Param appearing in return expression → param_to_return."""
     proj = project_factory(
         {
-            "src/echo.py": (
-                "def echo(x):\n"
-                "    return x\n"
-            ),
+            "src/echo.py": ("def echo(x):\n    return x\n"),
         }
     )
     monkeypatch.chdir(proj)
@@ -88,10 +80,7 @@ def test_global_to_effect(project_factory, monkeypatch):
     proj = project_factory(
         {
             "src/logger.py": (
-                "import subprocess\n"
-                "LOG = open('out.log', 'w')\n"
-                "def log_event():\n"
-                "    subprocess.run(['echo', LOG])\n"
+                "import subprocess\nLOG = open('out.log', 'w')\ndef log_event():\n    subprocess.run(['echo', LOG])\n"
             ),
         }
     )
@@ -105,13 +94,8 @@ def test_global_to_effect(project_factory, monkeypatch):
     assert results
     g = results[0]
     g2e = [e for e in g.edges if e.kind == "global_to_effect"]
-    assert g2e, (
-        f"Expected global_to_effect edges, got {[e.kind for e in g.edges]}, "
-        f"inputs={g.inputs}"
-    )
-    assert any(e.source == "global:LOG" for e in g2e), (
-        f"Sources: {[e.source for e in g2e]}"
-    )
+    assert g2e, f"Expected global_to_effect edges, got {[e.kind for e in g.edges]}, inputs={g.inputs}"
+    assert any(e.source == "global:LOG" for e in g2e), f"Sources: {[e.source for e in g2e]}"
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +108,7 @@ def test_env_to_effect(project_factory, monkeypatch):
     proj = project_factory(
         {
             "src/runner.py": (
-                "import os\n"
-                "import subprocess\n"
-                "def run():\n"
-                "    cmd = os.environ.get('CMD')\n"
-                "    subprocess.run([cmd])\n"
+                "import os\nimport subprocess\ndef run():\n    cmd = os.environ.get('CMD')\n    subprocess.run([cmd])\n"
             ),
         }
     )
@@ -157,9 +137,7 @@ def test_truncation_caps_edges_at_50(project_factory, monkeypatch):
     from roam.world_model.causal_graph import MAX_EDGES_PER_SYMBOL
 
     # Build a function with 80 io_write lines, all reading param `p`.
-    body_lines = ["def overflow(p):"] + [
-        f"    open(p, 'w').write(str({i}))" for i in range(80)
-    ]
+    body_lines = ["def overflow(p):"] + [f"    open(p, 'w').write(str({i}))" for i in range(80)]
     proj = project_factory(
         {
             "src/over.py": "\n".join(body_lines) + "\n",
@@ -175,9 +153,7 @@ def test_truncation_caps_edges_at_50(project_factory, monkeypatch):
     assert results
     g = results[0]
     assert g.truncated is True, "Expected truncated=True with 80 generating lines"
-    assert len(g.edges) <= MAX_EDGES_PER_SYMBOL, (
-        f"Edges {len(g.edges)} should be <= cap {MAX_EDGES_PER_SYMBOL}"
-    )
+    assert len(g.edges) <= MAX_EDGES_PER_SYMBOL, f"Edges {len(g.edges)} should be <= cap {MAX_EDGES_PER_SYMBOL}"
 
 
 # ---------------------------------------------------------------------------
@@ -189,10 +165,7 @@ def test_pure_function_has_no_side_effect_causal_edges(project_factory, monkeypa
     """`def add(a, b): return a + b` → only param_to_return edges."""
     proj = project_factory(
         {
-            "src/pure.py": (
-                "def add(a, b):\n"
-                "    return a + b\n"
-            ),
+            "src/pure.py": ("def add(a, b):\n    return a + b\n"),
         }
     )
     monkeypatch.chdir(proj)
@@ -205,8 +178,7 @@ def test_pure_function_has_no_side_effect_causal_edges(project_factory, monkeypa
     assert results
     g = results[0]
     # No side-effect / env / mutation / raise edges.
-    forbidden = {"param_to_effect", "global_to_effect", "env_to_effect",
-                 "global_to_mutation", "param_to_raise"}
+    forbidden = {"param_to_effect", "global_to_effect", "env_to_effect", "global_to_mutation", "param_to_raise"}
     bad = [e for e in g.edges if e.kind in forbidden]
     assert not bad, f"Pure function should not have side-effect causal edges, got {[(e.source, e.sink) for e in bad]}"
     # Both params should appear in return expression.
@@ -274,9 +246,7 @@ def test_envelope_includes_by_kind_distribution(project_factory, monkeypatch, cl
     assert all(isinstance(f, str) for f in ac["facts"])
     # First fact should mention a concrete symbol when edges exist.
     facts_blob = "\n".join(ac["facts"])
-    assert "causes" in facts_blob or "edges" in facts_blob, (
-        f"Expected concrete fact, got {ac['facts']}"
-    )
+    assert "causes" in facts_blob or "edges" in facts_blob, f"Expected concrete fact, got {ac['facts']}"
     # next_commands must be imperative roam strings
     assert all(nc.startswith("roam ") for nc in ac["next_commands"])
 

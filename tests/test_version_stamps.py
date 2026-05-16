@@ -81,10 +81,7 @@ def test_concrete_bridge_inherits_or_overrides_version():
     for bridge in bridges:
         version = getattr(type(bridge), "VERSION", None)
         assert version is not None, f"{type(bridge).__name__} has no VERSION"
-        assert isinstance(version, str), (
-            f"{type(bridge).__name__}.VERSION is {type(version).__name__}, "
-            "expected str"
-        )
+        assert isinstance(version, str), f"{type(bridge).__name__}.VERSION is {type(version).__name__}, expected str"
         assert version  # non-empty
 
 
@@ -162,17 +159,13 @@ def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
 def test_edges_table_has_bridge_version_column(fresh_conn):
     """Migration 53 adds ``edges.bridge_version`` for drift stamping."""
     cols = _column_names(fresh_conn, "edges")
-    assert "bridge_version" in cols, (
-        "edges.bridge_version column missing — A6 migration 53 didn't apply"
-    )
+    assert "bridge_version" in cols, "edges.bridge_version column missing — A6 migration 53 didn't apply"
 
 
 def test_symbols_table_has_extractor_version_column(fresh_conn):
     """Migration 54 adds ``symbols.extractor_version`` for drift stamping."""
     cols = _column_names(fresh_conn, "symbols")
-    assert "extractor_version" in cols, (
-        "symbols.extractor_version column missing — A6 migration 54 didn't apply"
-    )
+    assert "extractor_version" in cols, "symbols.extractor_version column missing — A6 migration 54 didn't apply"
 
 
 def test_index_manifest_has_component_versions_column(fresh_conn):
@@ -186,9 +179,7 @@ def test_index_manifest_has_component_versions_column(fresh_conn):
 def test_user_version_bumped(fresh_conn):
     """A6 bumps USER_VERSION beyond W82's 14."""
     row = fresh_conn.execute("PRAGMA user_version").fetchone()
-    assert int(row[0]) >= 15, (
-        f"PRAGMA user_version is {row[0]}, expected >= 15 (A6 bump)"
-    )
+    assert int(row[0]) >= 15, f"PRAGMA user_version is {row[0]}, expected >= 15 (A6 bump)"
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +254,4 @@ def test_manifest_diff_surfaces_component_version_changes():
     bumped["component_versions"]["detectors"]["nested-lookup"] = "1.1.0"
 
     diff = manifest_diff(base, bumped)
-    assert "component_versions" in diff, (
-        "component_versions bump must surface in manifest_diff (drift signal)"
-    )
+    assert "component_versions" in diff, "component_versions bump must surface in manifest_diff (drift signal)"

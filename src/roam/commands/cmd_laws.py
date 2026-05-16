@@ -29,7 +29,6 @@ from roam.exit_codes import EXIT_GATE_FAILURE
 from roam.laws.checker import check_laws, get_diff_text, parse_added
 from roam.laws.miner import Law, mine_laws
 from roam.laws.serializer import (
-    DEFAULT_LOCATIONS,
     dump_laws_yaml,
     find_laws_file,
     load_laws_yaml,
@@ -38,7 +37,6 @@ from roam.laws.serializer import (
 from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import json_envelope, to_json
 from roam.runs.helpers import auto_log
-
 
 # W119 (W93 follow-up): laws is the fifth detector migrating onto the
 # central findings registry (after ``clones`` in W95, ``dead`` in W99,
@@ -255,10 +253,7 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
             # which would keep everything — clamp to 1 to preserve the
             # pre-W596 strict-floor semantic.
             min_rank = max(confidence_level_rank(min_confidence), 1)
-            laws = [
-                law for law in laws
-                if confidence_level_rank(law.confidence, fallback=-1) >= min_rank
-            ]
+            laws = [law for law in laws if confidence_level_rank(law.confidence, fallback=-1) >= min_rank]
 
         # --- W119: mirror into the central findings registry ---
         # Runs ONLY with --persist. The persisted set respects the same
@@ -308,7 +303,8 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
         summary=summary,
         laws=[law.to_dict() for law in laws],
         agent_contract={
-            "facts": [verdict] + [
+            "facts": [verdict]
+            + [
                 f"{law.id}: {law.description} (confidence={law.confidence}, n={law.evidence.get('sample_size', 0)})"
                 for law in laws[:5]
             ],
@@ -337,10 +333,7 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
     if out_path:
         # Still summarise on stdout when --out is used; the YAML is on disk.
         for law in laws:
-            click.echo(
-                f"  {law.id}  [{law.kind}/{law.confidence}]"
-                f"  {law.description}"
-            )
+            click.echo(f"  {law.id}  [{law.kind}/{law.confidence}]  {law.description}")
     else:
         click.echo(yaml_text)
 
@@ -378,6 +371,7 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
 def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
     """Run mined laws against a diff and report violations."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     root = find_project_root()
@@ -385,10 +379,7 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
     # Load laws.
     laws_path = find_laws_file(root, laws_file)
     if not laws_path:
-        verdict = (
-            "no roam-laws.yml found — run `roam laws mine --out roam-laws.yml`"
-            " to create one"
-        )
+        verdict = "no roam-laws.yml found — run `roam laws mine --out roam-laws.yml` to create one"
         envelope = json_envelope(
             "laws-check",
             budget=token_budget,
@@ -404,6 +395,15 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
                 "next_commands": ["roam laws mine --out roam-laws.yml"],
             },
         )
+        if sarif_mode:
+            # W1216: emit an empty-but-valid SARIF doc (closed-enum
+            # rule catalogue is always present) so a CI consumer
+            # reading SARIF on an unconfigured repo gets a well-formed
+            # zero-results document rather than a no-such-tool error.
+            from roam.output.sarif import laws_to_sarif, write_sarif
+
+            click.echo(write_sarif(laws_to_sarif([])))
+            return
         if json_mode:
             click.echo(to_json(envelope))
         else:
@@ -424,6 +424,11 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
             },
             violations=[],
         )
+        if sarif_mode:
+            from roam.output.sarif import laws_to_sarif, write_sarif
+
+            click.echo(write_sarif(laws_to_sarif([])))
+            return
         if json_mode:
             click.echo(to_json(envelope))
         else:
@@ -454,6 +459,11 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
             violations=[],
         )
         auto_log(envelope, action="laws-check", target=str(laws_path))
+        if sarif_mode:
+            from roam.output.sarif import laws_to_sarif, write_sarif
+
+            click.echo(write_sarif(laws_to_sarif([])))
+            return
         if json_mode:
             click.echo(to_json(envelope))
         else:
@@ -466,10 +476,7 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
     blockers = sum(1 for v in violations if v.severity == "blocker")
     warnings = sum(1 for v in violations if v.severity == "warning")
     advisories = sum(1 for v in violations if v.severity == "advisory")
-    verdict = (
-        f"{len(violations)} violations"
-        f" ({blockers} blockers, {warnings} warnings, {advisories} advisories)"
-    )
+    verdict = f"{len(violations)} violations ({blockers} blockers, {warnings} warnings, {advisories} advisories)"
 
     envelope = json_envelope(
         "laws-check",
@@ -487,10 +494,7 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
         violations=[v.to_dict() for v in violations],
         laws_file=str(laws_path),
         agent_contract={
-            "facts": [verdict] + [
-                f"{v.law_id}: {v.message} ({v.file}:{v.line})"
-                for v in violations[:5]
-            ],
+            "facts": [verdict] + [f"{v.law_id}: {v.message} ({v.file}:{v.line})" for v in violations[:5]],
             "next_commands": [
                 "roam laws list",
                 f"roam laws explain {violations[0].law_id}" if violations else "roam laws mine",
@@ -500,7 +504,15 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
 
     auto_log(envelope, action="laws-check", target=str(laws_path))
 
-    if json_mode:
+    if sarif_mode:
+        # W1216: emit per-violation SARIF results anchored on file:line.
+        # The strict-mode CI gate still fires on blockers below — SARIF
+        # output is a projection, not a replacement, for the exit code
+        # contract.
+        from roam.output.sarif import laws_to_sarif, write_sarif
+
+        click.echo(write_sarif(laws_to_sarif([v.to_dict() for v in violations])))
+    elif json_mode:
         click.echo(to_json(envelope))
     else:
         click.echo(f"VERDICT: {verdict}")
@@ -574,9 +586,7 @@ def laws_list(ctx, laws_file):
         click.echo("(empty)")
         return
     for law in laws:
-        click.echo(
-            f"  {law.id}  [{law.kind}/{law.confidence}]  {law.description}"
-        )
+        click.echo(f"  {law.id}  [{law.kind}/{law.confidence}]  {law.description}")
 
 
 # ---------------------------------------------------------------------------

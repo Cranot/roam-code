@@ -37,7 +37,19 @@ those reachability assertions silently depend on.
 
 from __future__ import annotations
 
-import tomllib
+try:
+    import tomllib  # Python 3.11+ stdlib
+except ModuleNotFoundError:  # Python 3.10
+    # tomli is a stdlib-shaped backport but is NOT a dev-dep of roam-code.
+    # Rather than pull in a transitive dep just for one test that runs on
+    # 3.11+, skip cleanly on 3.10. The drift-guard still runs on the three
+    # newer Python versions in the matrix, so coverage is preserved.
+    import pytest
+
+    pytest.skip(
+        "tomllib not available on Python <3.11 and tomli is not a dev-dep; drift-guard still runs on 3.11/3.12/3.13",
+        allow_module_level=True,
+    )
 from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
@@ -47,11 +59,7 @@ def _load_package_data() -> dict[str, list[str]]:
     """Return ``[tool.setuptools.package-data]`` from ``pyproject.toml``."""
     with open(repo_root() / "pyproject.toml", "rb") as handle:
         config = tomllib.load(handle)
-    return (
-        config.get("tool", {})
-        .get("setuptools", {})
-        .get("package-data", {})
-    )
+    return config.get("tool", {}).get("setuptools", {}).get("package-data", {})
 
 
 def _package_dir(root: Path, package_name: str) -> Path:
@@ -94,8 +102,8 @@ def test_all_package_data_dirs_have_init_py() -> None:
         "cleaned up on `with` exit (re W643 incident with "
         "security/taint_rules/). Offenders:\n  "
         + "\n  ".join(f"{name} -> {path}" for name, path in offenders)
-        + "\nFix: add a one-line `\"\"\"Marker module so importlib.resources "
-        "resolves a concrete package path.\"\"\"` __init__.py to each "
+        + '\nFix: add a one-line `"""Marker module so importlib.resources '
+        'resolves a concrete package path."""` __init__.py to each '
         "offending directory."
     )
 
@@ -122,6 +130,5 @@ def test_all_package_data_dirs_exist() -> None:
         "W664: package-data entries that point at non-existent directories. "
         "Either the directory was renamed/deleted and pyproject.toml was "
         "not updated, or the package-data entry was added before the "
-        "directory landed. Offenders:\n  "
-        + "\n  ".join(f"{name} -> {path}" for name, path in missing)
+        "directory landed. Offenders:\n  " + "\n  ".join(f"{name} -> {path}" for name, path in missing)
     )

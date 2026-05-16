@@ -28,7 +28,6 @@ from roam.security.sbom_reachability import (
     parse_composer_json,
 )
 
-
 # ---------------------------------------------------------------------------
 # Per-category unit tests (pure functions, no DB needed)
 # ---------------------------------------------------------------------------
@@ -55,8 +54,7 @@ def _make_vue_vite_skeleton(root: Path) -> None:
 def test_css_import_makes_dep_reachable(tmp_path: Path) -> None:
     _make_vue_vite_skeleton(tmp_path)
     (tmp_path / "src" / "main.css").write_text(
-        '@import "primeicons/primeicons.css";\n'
-        "body { margin: 0; }\n",
+        '@import "primeicons/primeicons.css";\nbody { margin: 0; }\n',
         encoding="utf-8",
     )
     result = compute_filesystem_reachability(tmp_path, ["primeicons", "vue"])
@@ -68,8 +66,7 @@ def test_css_import_makes_dep_reachable(tmp_path: Path) -> None:
 def test_vue_style_block_import(tmp_path: Path) -> None:
     _make_vue_vite_skeleton(tmp_path)
     (tmp_path / "src" / "App.vue").write_text(
-        "<template><div>Hi</div></template>\n"
-        '<style scoped>@import "primeicons/primeicons.css";</style>\n',
+        '<template><div>Hi</div></template>\n<style scoped>@import "primeicons/primeicons.css";</style>\n',
         encoding="utf-8",
     )
     result = compute_filesystem_reachability(tmp_path, ["primeicons"])
@@ -101,9 +98,7 @@ def test_dynamic_import_string_literal_traced(tmp_path: Path) -> None:
         "}\n",
         encoding="utf-8",
     )
-    result = compute_filesystem_reachability(
-        tmp_path, ["microsoft-cognitiveservices-speech-sdk"]
-    )
+    result = compute_filesystem_reachability(tmp_path, ["microsoft-cognitiveservices-speech-sdk"])
     info = result["microsoft-cognitiveservices-speech-sdk"]
     assert info["reachable"] is True
     assert info["confidence"] == "dynamic_import"
@@ -135,9 +130,7 @@ def test_vite_config_plugin_traced(tmp_path: Path) -> None:
         "})\n",
         encoding="utf-8",
     )
-    result = compute_filesystem_reachability(
-        tmp_path, ["@vitejs/plugin-vue", "vite-plugin-compression2", "vite"]
-    )
+    result = compute_filesystem_reachability(tmp_path, ["@vitejs/plugin-vue", "vite-plugin-compression2", "vite"])
     assert result["@vitejs/plugin-vue"]["reachable"] is True
     assert result["@vitejs/plugin-vue"]["confidence"] == "config_import"
     assert result["vite-plugin-compression2"]["reachable"] is True
@@ -155,9 +148,7 @@ def test_tsconfig_extends_traced(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    result = compute_filesystem_reachability(
-        tmp_path, ["@vue/tsconfig", "@types/node", "vitest"]
-    )
+    result = compute_filesystem_reachability(tmp_path, ["@vue/tsconfig", "@types/node", "vitest"])
     assert result["@vue/tsconfig"]["reachable"] is True
     assert result["@vue/tsconfig"]["confidence"] == "config_import"
     # `types: ["node"]` should map to `@types/node`
@@ -172,9 +163,7 @@ def test_eslint_config_ts_plugin_traced(tmp_path: Path) -> None:
         "export default [vue.configs.recommended, ts.configs.recommended]\n",
         encoding="utf-8",
     )
-    result = compute_filesystem_reachability(
-        tmp_path, ["eslint-plugin-vue", "@typescript-eslint/eslint-plugin"]
-    )
+    result = compute_filesystem_reachability(tmp_path, ["eslint-plugin-vue", "@typescript-eslint/eslint-plugin"])
     assert result["eslint-plugin-vue"]["reachable"] is True
     assert result["@typescript-eslint/eslint-plugin"]["reachable"] is True
 
@@ -204,9 +193,7 @@ def test_package_json_script_consumer(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    result = compute_filesystem_reachability(
-        tmp_path, ["rimraf", "vitest", "vue-tsc"]
-    )
+    result = compute_filesystem_reachability(tmp_path, ["rimraf", "vitest", "vue-tsc"])
     assert result["rimraf"]["reachable"] is True
     assert result["rimraf"]["confidence"] == "script_consumer"
     assert result["vitest"]["reachable"] is True
@@ -257,9 +244,7 @@ def test_husky_script_consumer(tmp_path: Path) -> None:
 
 def test_jiti_recognized_as_eslint_loader(tmp_path: Path) -> None:
     _make_vue_vite_skeleton(tmp_path)
-    (tmp_path / "eslint.config.ts").write_text(
-        "export default []\n", encoding="utf-8"
-    )
+    (tmp_path / "eslint.config.ts").write_text("export default []\n", encoding="utf-8")
     # Confirm presence of jiti in our loader set
     assert "jiti" in _KNOWN_TS_LOADERS
     result = compute_filesystem_reachability(tmp_path, ["jiti"])
@@ -269,12 +254,8 @@ def test_jiti_recognized_as_eslint_loader(tmp_path: Path) -> None:
 
 def test_types_packages_always_reachable(tmp_path: Path) -> None:
     _make_vue_vite_skeleton(tmp_path)
-    (tmp_path / "tsconfig.json").write_text(
-        json.dumps({"compilerOptions": {}}), encoding="utf-8"
-    )
-    result = compute_filesystem_reachability(
-        tmp_path, ["@types/node", "@types/lodash"]
-    )
+    (tmp_path / "tsconfig.json").write_text(json.dumps({"compilerOptions": {}}), encoding="utf-8")
+    result = compute_filesystem_reachability(tmp_path, ["@types/node", "@types/lodash"])
     assert result["@types/node"]["reachable"] is True
     assert result["@types/lodash"]["reachable"] is True
     assert result["@types/node"]["confidence"] == "loader"
@@ -381,13 +362,11 @@ def test_phantom_count_drops_dramatically_on_vue_vite_like_fixture(tmp_path: Pat
 
     # --- Source files exercising each category ---
     (tmp_path / "src" / "main.css").write_text(
-        '@import "primeicons/primeicons.css";\n'
-        '@import "tailwindcss/tailwind.css";\n',
+        '@import "primeicons/primeicons.css";\n@import "tailwindcss/tailwind.css";\n',
         encoding="utf-8",
     )
     (tmp_path / "src" / "App.vue").write_text(
-        "<template><div/></template>\n"
-        '<style>@import "primeicons/primeicons.css";</style>\n',
+        '<template><div/></template>\n<style>@import "primeicons/primeicons.css";</style>\n',
         encoding="utf-8",
     )
     (tmp_path / "src" / "speech.ts").write_text(
@@ -414,8 +393,7 @@ def test_phantom_count_drops_dramatically_on_vue_vite_like_fixture(tmp_path: Pat
         encoding="utf-8",
     )
     (tmp_path / "eslint.config.ts").write_text(
-        "import vue from 'eslint-plugin-vue'\n"
-        "export default [vue.configs.recommended]\n",
+        "import vue from 'eslint-plugin-vue'\nexport default [vue.configs.recommended]\n",
         encoding="utf-8",
     )
     (tmp_path / "postcss.config.js").write_text(
@@ -423,13 +401,11 @@ def test_phantom_count_drops_dramatically_on_vue_vite_like_fixture(tmp_path: Pat
         encoding="utf-8",
     )
     (tmp_path / "tailwind.config.ts").write_text(
-        "import typography from '@tailwindcss/typography'\n"
-        "export default { plugins: [typography] }\n",
+        "import typography from '@tailwindcss/typography'\nexport default { plugins: [typography] }\n",
         encoding="utf-8",
     )
     (tmp_path / "cypress.config.ts").write_text(
-        "import { defineConfig } from 'cypress'\n"
-        "export default defineConfig({})\n",
+        "import { defineConfig } from 'cypress'\nexport default defineConfig({})\n",
         encoding="utf-8",
     )
 
@@ -598,15 +574,12 @@ def _invoke_sbom_json(root: Path) -> dict:
         os.chdir(root)
         init_result = runner.invoke(cli, ["init"])
         assert init_result.exit_code == 0, (
-            f"roam init failed: exit={init_result.exit_code} "
-            f"output={init_result.output!r}"
+            f"roam init failed: exit={init_result.exit_code} output={init_result.output!r}"
         )
         result = runner.invoke(cli, ["--json", "sbom"])
     finally:
         os.chdir(cwd)
-    assert result.exit_code == 0, (
-        f"roam sbom failed: exit={result.exit_code} output={result.output!r}"
-    )
+    assert result.exit_code == 0, f"roam sbom failed: exit={result.exit_code} output={result.output!r}"
     return json.loads(result.output)
 
 
@@ -623,11 +596,9 @@ def test_summary_includes_reachable_direct_and_heuristic_counts(tmp_path: Path) 
     assert isinstance(summary["reachable_direct_count"], int), summary
     assert isinstance(summary["reachable_heuristic_count"], int), summary
     # Their sum must equal the total reachable count (no double-counting).
-    assert (
-        summary["reachable_direct_count"]
-        + summary["reachable_heuristic_count"]
-        == summary["reachable_count"]
-    ), summary
+    assert summary["reachable_direct_count"] + summary["reachable_heuristic_count"] == summary["reachable_count"], (
+        summary
+    )
 
 
 def test_verdict_buckets_direct_vs_heuristic(tmp_path: Path) -> None:

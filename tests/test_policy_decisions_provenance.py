@@ -39,10 +39,20 @@ Constraints pinned here:
 from __future__ import annotations
 
 import json as _json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+# W1059: relative-to-now to avoid future-date staleness (mirrors W1012).
+# Today the permit/lease gatherers do not filter on expiry (lease passes
+# include_expired=True, permit reader evaluates expiry at read time only),
+# but the fixtures' semantic is "permit/lease is currently valid". A
+# hardcoded "2030-01-01" would silently flip these tests if a future
+# hardening adds an expiry filter at gather time. Anchoring to now+365d
+# keeps the fixtures "definitely current" for every CI run.
+_FUTURE_EXPIRES_AT = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat().replace("+00:00", "Z")
 
 from roam.evidence import PROVENANCE_SOURCES
 from roam.evidence.collector import (
@@ -52,7 +62,6 @@ from roam.evidence.collector import (
 )
 from roam.evidence.github_reviews import parse_github_reviews
 from roam.evidence.policy import PolicyDecision
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -86,9 +95,7 @@ def test_constitution_gatherer_stamps_producer_envelope_constitution(
     roam_dir = tmp_path / ".roam"
     roam_dir.mkdir()
     (roam_dir / "constitution.yml").write_text(
-        "required_checks:\n"
-        "  before_edit: [\"roam preflight\"]\n"
-        "  before_merge: [\"roam impact\"]\n",
+        'required_checks:\n  before_edit: ["roam preflight"]\n  before_merge: ["roam impact"]\n',
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -96,9 +103,7 @@ def test_constitution_gatherer_stamps_producer_envelope_constitution(
 
     warnings: list[str] = []
     rows = _gather_constitution_policy_decisions(warnings)
-    assert rows, (
-        f"constitution gatherer produced zero rows; warnings={warnings!r}"
-    )
+    assert rows, f"constitution gatherer produced zero rows; warnings={warnings!r}"
 
     for row in rows:
         pd = PolicyDecision.from_dict(row)
@@ -107,9 +112,7 @@ def test_constitution_gatherer_stamps_producer_envelope_constitution(
         )
 
 
-def test_permit_gatherer_stamps_producer_envelope_permit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_permit_gatherer_stamps_producer_envelope_permit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """W267 permit gatherer rows carry
     ``provenance="producer_envelope(permit)"``.
     """
@@ -122,14 +125,16 @@ def test_permit_gatherer_stamps_producer_envelope_permit(
     # produces on disk).
     pid = "permit_20260514_aaaaaa"
     (permits_dir / f"{pid}.json").write_text(
-        _json.dumps({
-            "permit_id": pid,
-            "scope": "test_scope",
-            "expires_at": "2030-01-01T00:00:00Z",
-            "issued_to": "agent:test",
-            "issued_at": "2026-05-14T10:00:00Z",
-            "issued_by": "human:operator",
-        }),
+        _json.dumps(
+            {
+                "permit_id": pid,
+                "scope": "test_scope",
+                "expires_at": _FUTURE_EXPIRES_AT,
+                "issued_to": "agent:test",
+                "issued_at": "2026-05-14T10:00:00Z",
+                "issued_by": "human:operator",
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -146,24 +151,24 @@ def test_permit_gatherer_stamps_producer_envelope_permit(
         )
 
 
-def test_lease_gatherer_stamps_producer_envelope_lease(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_lease_gatherer_stamps_producer_envelope_lease(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """W267 lease gatherer rows carry ``provenance="producer_envelope(lease)"``."""
     (tmp_path / ".git").mkdir()
     leases_dir = tmp_path / ".roam" / "leases"
     leases_dir.mkdir(parents=True)
     (leases_dir / "lease_xyz.json").write_text(
-        _json.dumps({
-            "lease_id": "lease_xyz",
-            "agent": "agent_a",
-            "subject_kind": "file",
-            "subject": ["src/foo.py"],
-            "ttl_seconds": 3600,
-            "acquired_at": "2026-05-14T00:00:00Z",
-            "expires_at": "2030-01-01T00:00:00Z",
-            "state": "active",
-        }),
+        _json.dumps(
+            {
+                "lease_id": "lease_xyz",
+                "agent": "agent_a",
+                "subject_kind": "file",
+                "subject": ["src/foo.py"],
+                "ttl_seconds": 3600,
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "expires_at": _FUTURE_EXPIRES_AT,
+                "state": "active",
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -171,9 +176,7 @@ def test_lease_gatherer_stamps_producer_envelope_lease(
 
     warnings: list[str] = []
     rows = _gather_lease_policy_decisions(warnings)
-    assert rows, (
-        f"lease gatherer produced zero rows; warnings={warnings!r}"
-    )
+    assert rows, f"lease gatherer produced zero rows; warnings={warnings!r}"
 
     for row in rows:
         pd = PolicyDecision.from_dict(row)
@@ -200,14 +203,14 @@ def test_audit_trail_chain_integrity_stamps_audit_trail() -> None:
     }
     warnings: list[str] = []
     _, decisions = _audit_trail_to_artifact_and_decisions(
-        envelope, warnings, source_label="audit_trail_envelope",
+        envelope,
+        warnings,
+        source_label="audit_trail_envelope",
     )
     assert decisions, "expected at least one chain-integrity decision row"
     for row in decisions:
         pd = PolicyDecision.from_dict(row)
-        assert pd.extra.get("provenance") == "audit_trail", (
-            f"row {row!r} missing audit_trail provenance"
-        )
+        assert pd.extra.get("provenance") == "audit_trail", f"row {row!r} missing audit_trail provenance"
 
 
 def test_audit_trail_failure_rows_also_stamp_audit_trail() -> None:
@@ -230,7 +233,9 @@ def test_audit_trail_failure_rows_also_stamp_audit_trail() -> None:
     }
     warnings: list[str] = []
     _, decisions = _audit_trail_to_artifact_and_decisions(
-        envelope, warnings, source_label="audit_trail_envelope",
+        envelope,
+        warnings,
+        source_label="audit_trail_envelope",
     )
     # First row is the summary "fail"; second is the per-issue row.
     assert len(decisions) >= 2
@@ -249,13 +254,14 @@ def test_rules_envelope_rows_stamp_producer_envelope_rule() -> None:
     envelope: dict[str, Any] = {
         "results": [
             {"rule_id": "no-print", "passed": True, "severity": "warning"},
-            {"rule_id": "no-tabs", "passed": False, "severity": "error",
-             "reason": "tab detected"},
+            {"rule_id": "no-tabs", "passed": False, "severity": "error", "reason": "tab detected"},
         ],
     }
     warnings: list[str] = []
     rows = _flatten_rules_envelope_to_policy_decisions(
-        envelope, warnings, source_label="rules_envelopes[0]",
+        envelope,
+        warnings,
+        source_label="rules_envelopes[0]",
     )
     assert len(rows) == 2
     for row in rows:
@@ -313,15 +319,10 @@ def test_legacy_dict_row_gets_unknown_provenance_at_collector() -> None:
         repo_id="github.com/example/repo",
         commit_sha="0" * 40,
     )
-    matching = [
-        r for r in packet.policy_decisions
-        if r.get("rule_id") == "legacy:foo"
-    ]
+    matching = [r for r in packet.policy_decisions if r.get("rule_id") == "legacy:foo"]
     assert matching, "legacy row missing from packet"
     row = matching[0]
-    assert row.get("provenance") == "unknown", (
-        f"legacy row should land at unknown provenance; got {row!r}"
-    )
+    assert row.get("provenance") == "unknown", f"legacy row should land at unknown provenance; got {row!r}"
 
 
 def test_existing_provenance_preserved_at_collector() -> None:
@@ -338,15 +339,10 @@ def test_existing_provenance_preserved_at_collector() -> None:
         repo_id="github.com/example/repo",
         commit_sha="1" * 40,
     )
-    matching = [
-        r for r in packet.policy_decisions
-        if r.get("rule_id") == "future:bar"
-    ]
+    matching = [r for r in packet.policy_decisions if r.get("rule_id") == "future:bar"]
     assert matching, "custom row missing from packet"
     row = matching[0]
-    assert row.get("provenance") == "cli_flag", (
-        f"existing provenance was overwritten; got {row!r}"
-    )
+    assert row.get("provenance") == "cli_flag", f"existing provenance was overwritten; got {row!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +362,7 @@ def test_policy_decision_provenance_uses_only_PROVENANCE_SOURCES_values(
     roam_dir = tmp_path / ".roam"
     roam_dir.mkdir()
     (roam_dir / "constitution.yml").write_text(
-        "required_checks:\n  before_edit: [\"roam preflight\"]\n",
+        'required_checks:\n  before_edit: ["roam preflight"]\n',
         encoding="utf-8",
     )
     (roam_dir / "permits").mkdir()
@@ -374,28 +370,32 @@ def test_policy_decision_provenance_uses_only_PROVENANCE_SOURCES_values(
     # ``PermitRecord`` field set. Mirrors what the W198 writer produces.
     _perm_a_id = "permit_20260514_aaaaaa"
     (roam_dir / "permits" / f"{_perm_a_id}.json").write_text(
-        _json.dumps({
-            "permit_id": _perm_a_id,
-            "scope": "test_scope",
-            "expires_at": "2030-01-01T00:00:00Z",
-            "issued_to": "agent:test",
-            "issued_at": "2026-05-14T00:00:00Z",
-            "issued_by": "human:operator",
-        }),
+        _json.dumps(
+            {
+                "permit_id": _perm_a_id,
+                "scope": "test_scope",
+                "expires_at": _FUTURE_EXPIRES_AT,
+                "issued_to": "agent:test",
+                "issued_at": "2026-05-14T00:00:00Z",
+                "issued_by": "human:operator",
+            }
+        ),
         encoding="utf-8",
     )
     (roam_dir / "leases").mkdir()
     (roam_dir / "leases" / "lease_a.json").write_text(
-        _json.dumps({
-            "lease_id": "lease_a",
-            "agent": "ag",
-            "subject_kind": "file",
-            "subject": ["src/x.py"],
-            "ttl_seconds": 3600,
-            "acquired_at": "2026-05-14T00:00:00Z",
-            "expires_at": "2030-01-01T00:00:00Z",
-            "state": "active",
-        }),
+        _json.dumps(
+            {
+                "lease_id": "lease_a",
+                "agent": "ag",
+                "subject_kind": "file",
+                "subject": ["src/x.py"],
+                "ttl_seconds": 3600,
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "expires_at": _FUTURE_EXPIRES_AT,
+                "state": "active",
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -415,21 +415,27 @@ def test_policy_decision_provenance_uses_only_PROVENANCE_SOURCES_values(
     # Also include audit-trail + rules + github-review paths.
     _, at_rows = _audit_trail_to_artifact_and_decisions(
         {"summary": {"chain_valid": True}, "issues": []},
-        warnings, source_label="audit_trail_envelope",
+        warnings,
+        source_label="audit_trail_envelope",
     )
     all_rows.extend(at_rows)
     rules_rows = _flatten_rules_envelope_to_policy_decisions(
         {"results": [{"rule_id": "r1", "passed": True}]},
-        warnings, source_label="rules_envelopes[0]",
+        warnings,
+        source_label="rules_envelopes[0]",
     )
     all_rows.extend(rules_rows)
 
     _, gh_pd, _ = parse_github_reviews(
-        reviews=[{
-            "id": 99, "state": "CHANGES_REQUESTED",
-            "user": {"login": "rev"}, "submitted_at": "2026-05-14T00:00:00Z",
-            "commit_id": "a" * 40,
-        }],
+        reviews=[
+            {
+                "id": 99,
+                "state": "CHANGES_REQUESTED",
+                "user": {"login": "rev"},
+                "submitted_at": "2026-05-14T00:00:00Z",
+                "commit_id": "a" * 40,
+            }
+        ],
         head_commit_sha="b" * 40,
         pr_number=7,
     )
@@ -439,14 +445,9 @@ def test_policy_decision_provenance_uses_only_PROVENANCE_SOURCES_values(
 
     for row in all_rows:
         prov = row.get("provenance")
-        assert isinstance(prov, str) and prov, (
-            f"row missing provenance: {row!r}"
-        )
+        assert isinstance(prov, str) and prov, f"row missing provenance: {row!r}"
         base = _provenance_base(prov)
-        assert base in PROVENANCE_SOURCES, (
-            f"row provenance base {base!r} (from {prov!r}) not in "
-            f"PROVENANCE_SOURCES"
-        )
+        assert base in PROVENANCE_SOURCES, f"row provenance base {base!r} (from {prov!r}) not in PROVENANCE_SOURCES"
 
 
 # ---------------------------------------------------------------------------
@@ -454,9 +455,7 @@ def test_policy_decision_provenance_uses_only_PROVENANCE_SOURCES_values(
 # ---------------------------------------------------------------------------
 
 
-def test_w425_malformed_lease_surfaces_in_producer_warnings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_w425_malformed_lease_surfaces_in_producer_warnings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """W425: a malformed lease file produces a warning naming the file
     and the closed-form reason (malformed JSON / non-dict top-level /
     schema-invalid dict). The lease gatherer threads its ``warnings``
@@ -468,25 +467,23 @@ def test_w425_malformed_lease_surfaces_in_producer_warnings(
     leases_dir = tmp_path / ".roam" / "leases"
     leases_dir.mkdir(parents=True)
     # File 1: a malformed JSON file (truncated brace).
-    (leases_dir / "lease_bad_json.json").write_text(
-        "{not valid json", encoding="utf-8"
-    )
+    (leases_dir / "lease_bad_json.json").write_text("{not valid json", encoding="utf-8")
     # File 2: top-level is a JSON list instead of a dict.
-    (leases_dir / "lease_wrong_type.json").write_text(
-        "[1, 2, 3]", encoding="utf-8"
-    )
+    (leases_dir / "lease_wrong_type.json").write_text("[1, 2, 3]", encoding="utf-8")
     # File 3: schema-invalid dict (missing required ``agent`` field).
     (leases_dir / "lease_schema_invalid.json").write_text(
-        _json.dumps({
-            "lease_id": "lease_20260514_aaaaaa",
-            # NOTE: ``agent`` deliberately missing
-            "subject_kind": "files",
-            "subject": ["src/foo.py"],
-            "ttl_seconds": 3600,
-            "acquired_at": "2026-05-14T00:00:00Z",
-            "expires_at": "2030-01-01T00:00:00Z",
-            "state": "active",
-        }),
+        _json.dumps(
+            {
+                "lease_id": "lease_20260514_aaaaaa",
+                # NOTE: ``agent`` deliberately missing
+                "subject_kind": "files",
+                "subject": ["src/foo.py"],
+                "ttl_seconds": 3600,
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "expires_at": "2030-01-01T00:00:00Z",
+                "state": "active",
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -498,8 +495,7 @@ def test_w425_malformed_lease_surfaces_in_producer_warnings(
     assert rows == [], f"expected zero rows; got {rows!r}"
     # All three malformed files produced one warning each.
     assert len(warnings) == 3, (
-        f"expected 3 producer warnings (one per malformed lease file); "
-        f"got {len(warnings)}: {warnings!r}"
+        f"expected 3 producer warnings (one per malformed lease file); got {len(warnings)}: {warnings!r}"
     )
     joined = "\n".join(warnings)
     assert "lease_bad_json.json" in joined, joined
@@ -538,9 +534,7 @@ def test_w426_unparseable_constitution_surfaces_in_producer_warnings(
     warnings: list[str] = []
     rows = _gather_constitution_policy_decisions(warnings)
     assert rows == [], f"expected zero rows; got {rows!r}"
-    assert len(warnings) == 1, (
-        f"expected one constitution-unparseable warning; got {warnings!r}"
-    )
+    assert len(warnings) == 1, f"expected one constitution-unparseable warning; got {warnings!r}"
     msg = warnings[0]
     assert "constitution" in msg, msg
     assert "malformed" in msg, msg

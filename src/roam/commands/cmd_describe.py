@@ -16,6 +16,12 @@ Naming-conventions detection lives in
 ``roam.commands.conventions_helper`` (the canonical detector shared by
 describe, understand, minimap, preflight, and the standalone
 ``conventions`` command). Do not re-implement it here.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because describe outputs are invocation-scoped symbol metadata
+records — not per-location violations. Editor consumers should use the
+JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -159,9 +165,7 @@ def _section_architecture(conn):
 
         max_layer = max(layers.values()) if layers else 0
         lines.append(f"- **Dependency layers:** {max_layer + 1}")
-        lines.append(
-            f"- **Cycles (SCCs):** {csum.total} total, {csum.actionable} actionable"
-        )
+        lines.append(f"- **Cycles (SCCs):** {csum.total} total, {csum.actionable} actionable")
 
         if layers:
             layer_counts = Counter(layers.values())
@@ -517,10 +521,7 @@ def _section_conventions(conn):
         if not info:
             continue
         if info["pct"] >= 80:
-            lines.append(
-                f"- **{label}:** Use `{info['style']}` "
-                f"({info['pct']}% of {info['total']} {info['label']})"
-            )
+            lines.append(f"- **{label}:** Use `{info['style']}` ({info['pct']}% of {info['total']} {info['label']})")
 
     # Import style
     try:
@@ -745,7 +746,8 @@ def _agent_prompt_data(conn):
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import find_cycles, format_cycles, mark_actionable_cycles
-        from roam.quality.cycles import cycles_summary, definition as _cyc_def
+        from roam.quality.cycles import cycles_summary
+        from roam.quality.cycles import definition as _cyc_def
 
         G = build_symbol_graph(conn)
         total_syms = len(G)
@@ -985,6 +987,8 @@ def describe(ctx, write, force, agent_prompt, out_file):
         # what "cycles" means even when only the markdown blob is read.
         from roam.quality.cycles import (
             cycles_summary as _cs,
+        )
+        from roam.quality.cycles import (
             definition as _cyc_def,
         )
 

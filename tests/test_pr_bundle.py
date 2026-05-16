@@ -412,13 +412,11 @@ def test_auto_collect_lives_under_summary(cli_runner, bundle_project):
     data = parse_json_output(result, command="pr-bundle")
     # Lives under summary.
     assert "auto_collect" in data["summary"], (
-        f"summary.auto_collect missing — W15.2 envelope reshape broken; "
-        f"summary keys={list(data['summary'].keys())}"
+        f"summary.auto_collect missing — W15.2 envelope reshape broken; summary keys={list(data['summary'].keys())}"
     )
     # Does NOT live at the top level (Pattern 3 split-brain regression guard).
     assert "auto_collect" not in data or data.get("auto_collect") is None, (
-        f"top-level auto_collect found — Pattern 3 split-brain regressed; "
-        f"top-level={data.get('auto_collect')!r}"
+        f"top-level auto_collect found — Pattern 3 split-brain regressed; top-level={data.get('auto_collect')!r}"
     )
     # The block's contract is still intact.
     auto = data["summary"]["auto_collect"]
@@ -479,8 +477,10 @@ def test_add_non_goal_records_text(cli_runner, bundle_project):
 def test_add_without_init_returns_not_initialized(cli_runner, bundle_project):
     result = _invoke(cli_runner, ["--json", "pr-bundle", "add", "affected", "useFoo"])
     assert result.exit_code == 2, result.output
-    data = parse_json_output(result, command="pr-bundle") if result.exit_code == 0 else json.loads(
-        getattr(result, "stdout", None) or result.output
+    data = (
+        parse_json_output(result, command="pr-bundle")
+        if result.exit_code == 0
+        else json.loads(getattr(result, "stdout", None) or result.output)
     )
     assert data["summary"]["state"] == "not_initialized"
     assert "roam pr-bundle init" in data["summary"]["verdict"]
@@ -525,18 +525,14 @@ def test_validate_strict_exits_5_on_incomplete(cli_runner, bundle_project):
     # Init with empty intent so the bundle is missing intent + affected + context.
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", ""])
     result = _invoke(cli_runner, ["--json", "pr-bundle", "validate", "--strict"])
-    assert result.exit_code == 5, (
-        f"expected exit 5 on incomplete bundle, got {result.exit_code}: {result.output}"
-    )
+    assert result.exit_code == 5, f"expected exit 5 on incomplete bundle, got {result.exit_code}: {result.output}"
 
 
 def test_validate_strict_exits_0_on_complete(cli_runner, bundle_project):
     """validate --strict on a fully populated bundle exits 0."""
     _populate_complete_bundle(cli_runner)
     result = _invoke(cli_runner, ["--json", "pr-bundle", "validate", "--strict"])
-    assert result.exit_code == 0, (
-        f"expected exit 0 on complete bundle, got {result.exit_code}: {result.output}"
-    )
+    assert result.exit_code == 0, f"expected exit 0 on complete bundle, got {result.exit_code}: {result.output}"
     data = parse_json_output(result, command="pr-bundle-validate")
     assert data["summary"]["state"] == "complete"
 
@@ -549,9 +545,7 @@ def test_emit_strict_exits_5_on_incomplete(cli_runner, bundle_project):
         cli_runner,
         ["--json", "pr-bundle", "emit", "--no-auto-collect", "--strict"],
     )
-    assert result.exit_code == 5, (
-        f"expected exit 5 on incomplete emit, got {result.exit_code}: {result.output}"
-    )
+    assert result.exit_code == 5, f"expected exit 5 on incomplete emit, got {result.exit_code}: {result.output}"
     # Envelope MUST still be echoed before the non-zero exit, so reviewers
     # see which proofs are missing. Parse manually -- parse_json_output
     # asserts exit_code == 0 which is wrong for the strict-gate case.
@@ -568,17 +562,13 @@ def test_emit_strict_exits_0_on_complete(cli_runner, bundle_project):
         cli_runner,
         ["--json", "pr-bundle", "emit", "--no-auto-collect", "--strict"],
     )
-    assert result.exit_code == 0, (
-        f"expected exit 0 on complete emit, got {result.exit_code}: {result.output}"
-    )
+    assert result.exit_code == 0, f"expected exit 0 on complete emit, got {result.exit_code}: {result.output}"
     data = parse_json_output(result, command="pr-bundle")
     assert data["summary"]["state"] == "complete"
     assert data["summary"]["partial_success"] is False
 
 
-def test_emit_without_strict_returns_partial_success_envelope_for_incomplete(
-    cli_runner, bundle_project
-):
+def test_emit_without_strict_returns_partial_success_envelope_for_incomplete(cli_runner, bundle_project):
     """Default behaviour (no --strict): incomplete bundle still exits 0."""
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "Add retry"])
     result = _invoke(
@@ -651,9 +641,7 @@ def _populate_complete_resolved_bundle(cli_runner) -> None:
     )
 
 
-def test_emit_strict_resolved_exits_5_on_ghost_symbols(
-    project_factory, cli_runner, monkeypatch
-):
+def test_emit_strict_resolved_exits_5_on_ghost_symbols(project_factory, cli_runner, monkeypatch):
     """A bundle is structurally complete but contains a ghost symbol;
     ``--strict --strict-resolved`` MUST exit 5 (CI block).
 
@@ -699,9 +687,7 @@ def test_emit_strict_resolved_exits_5_on_ghost_symbols(
     assert any("unresolved_affected_symbols" in m for m in missing), missing
 
 
-def test_emit_strict_resolved_exits_0_on_all_resolved(
-    project_factory, cli_runner, monkeypatch
-):
+def test_emit_strict_resolved_exits_0_on_all_resolved(project_factory, cli_runner, monkeypatch):
     """A structurally-complete bundle whose every affected_symbol
     resolves cleanly MUST exit 0 under ``--strict --strict-resolved``.
 
@@ -739,9 +725,7 @@ def test_emit_strict_resolved_exits_0_on_all_resolved(
     assert data["summary"]["strict_resolved"] is True
 
 
-def test_emit_strict_without_strict_resolved_ignores_ghosts(
-    project_factory, cli_runner, monkeypatch
-):
+def test_emit_strict_without_strict_resolved_ignores_ghosts(project_factory, cli_runner, monkeypatch):
     """Preserves W21.3: ``--strict`` alone exits 0 on a structurally
     complete bundle, even when it contains ghost symbols.
 
@@ -801,9 +785,7 @@ def test_emit_strict_without_strict_resolved_ignores_ghosts(
 # unmissable (one assert pair per test).
 
 
-def test_emit_strict_resolved_flips_exit_code_on_complete_bundle(
-    project_factory, cli_runner, monkeypatch
-):
+def test_emit_strict_resolved_flips_exit_code_on_complete_bundle(project_factory, cli_runner, monkeypatch):
     """Same complete bundle + 1 ghost, ``emit --strict``:
        - ``--no-strict-resolved`` -> exit 0
        - ``--strict-resolved``    -> exit 5
@@ -873,9 +855,7 @@ def test_emit_strict_resolved_flips_exit_code_on_complete_bundle(
     assert any("unresolved_affected_symbols" in m for m in missing), missing
 
 
-def test_validate_strict_resolved_flips_exit_code_on_complete_bundle(
-    project_factory, cli_runner, monkeypatch
-):
+def test_validate_strict_resolved_flips_exit_code_on_complete_bundle(project_factory, cli_runner, monkeypatch):
     """Same complete bundle + 1 ghost, ``validate --strict``:
        - ``--no-strict-resolved`` -> exit 0
        - ``--strict-resolved``    -> exit 5
@@ -986,9 +966,7 @@ def _populate_minimal_emit_bundle(cli_runner) -> None:
     )
 
 
-def test_pr_bundle_envelope_includes_actor_block(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_envelope_includes_actor_block(cli_runner, bundle_project, monkeypatch):
     """Basic ``pr-bundle emit`` invocation has the ``actor`` key with all
     six documented fields, plus empty ``approvals`` / ``accepted_risks``
     arrays at the top level.
@@ -1008,9 +986,7 @@ def test_pr_bundle_envelope_includes_actor_block(
     ):
         monkeypatch.delenv(var, raising=False)
     _populate_minimal_emit_bundle(cli_runner)
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
 
@@ -1030,8 +1006,7 @@ def test_pr_bundle_envelope_includes_actor_block(
         "actor_kind",
     }
     assert expected_fields <= set(actor.keys()), (
-        f"actor block missing documented fields: "
-        f"{expected_fields - set(actor.keys())}"
+        f"actor block missing documented fields: {expected_fields - set(actor.keys())}"
     )
     extra_keys = set(actor.keys()) - expected_fields
     assert all(k.startswith("provenance_") for k in extra_keys), (
@@ -1042,14 +1017,10 @@ def test_pr_bundle_envelope_includes_actor_block(
 
     # 2. approvals / accepted_risks present as empty lists.
     assert data.get("approvals") == [], "approvals must be empty list, not absent"
-    assert data.get("accepted_risks") == [], (
-        "accepted_risks must be empty list, not absent"
-    )
+    assert data.get("accepted_risks") == [], "accepted_risks must be empty list, not absent"
 
 
-def test_pr_bundle_agent_id_flag_wins_over_env(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_agent_id_flag_wins_over_env(cli_runner, bundle_project, monkeypatch):
     """``--agent-id X`` MUST win over ``ROAM_AGENT_ID=Y`` (LAW 11)."""
     monkeypatch.setenv("ROAM_AGENT_ID", "env-agent-loses")
     # Clear unrelated env so actor_kind resolution is deterministic.
@@ -1070,14 +1041,10 @@ def test_pr_bundle_agent_id_flag_wins_over_env(
     )
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
-    assert data["actor"]["agent_id"] == "flag-agent-wins", (
-        f"expected --agent-id to win, got {data['actor']!r}"
-    )
+    assert data["actor"]["agent_id"] == "flag-agent-wins", f"expected --agent-id to win, got {data['actor']!r}"
 
 
-def test_pr_bundle_env_fallback_to_git_config(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_env_fallback_to_git_config(cli_runner, bundle_project, monkeypatch):
     """No flag + no env -> ``human_actor`` populated from
     ``git config user.email`` (the fixture's ``git_init`` sets this)."""
     for var in (
@@ -1096,9 +1063,7 @@ def test_pr_bundle_env_fallback_to_git_config(
     )
 
     _populate_minimal_emit_bundle(cli_runner)
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
     assert data["actor"]["human_actor"] == "alice@example.com", (
@@ -1109,9 +1074,7 @@ def test_pr_bundle_env_fallback_to_git_config(
     assert data["actor"]["actor_kind"] == "human"
 
 
-def test_pr_bundle_actor_kind_resolved_from_fields(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_actor_kind_resolved_from_fields(cli_runner, bundle_project, monkeypatch):
     """``actor_kind`` derives from the dominant populated field:
     agent_id -> 'agent'; human_actor only -> 'human'; nothing -> 'external'.
 
@@ -1184,9 +1147,7 @@ def test_pr_bundle_actor_kind_resolved_from_fields(
     assert data_b["actor"]["human_actor"] == "carol@example.com"
 
     # Case C: nothing set -> kind="external" (escape hatch).
-    result_c = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result_c = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result_c.exit_code == 0, result_c.output
     data_c = parse_json_output(result_c, command="pr-bundle")
     assert data_c["actor"]["actor_kind"] == "external", data_c["actor"]
@@ -1194,17 +1155,13 @@ def test_pr_bundle_actor_kind_resolved_from_fields(
     assert data_c["actor"]["human_actor"] is None
 
 
-def test_pr_bundle_emits_empty_approvals_and_accepted_risks(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_emits_empty_approvals_and_accepted_risks(cli_runner, bundle_project, monkeypatch):
     """Both top-level arrays are present with empty lists, not absent
     (Pattern 2 — explicit absence beats silent absence)."""
     for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR"):
         monkeypatch.delenv(var, raising=False)
     _populate_minimal_emit_bundle(cli_runner)
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
     assert "approvals" in data, "approvals must be a top-level key"
@@ -1218,9 +1175,7 @@ def test_pr_bundle_emits_empty_approvals_and_accepted_risks(
 # ---------------------------------------------------------------------------
 
 
-def test_pr_bundle_redacts_github_pat_in_human_actor(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_redacts_github_pat_in_human_actor(cli_runner, bundle_project, monkeypatch):
     """ROAM_HUMAN_ACTOR containing a GitHub PAT MUST be scrubbed to
     ``[REDACTED]`` on the envelope's actor block, and ``redactions``
     must contain ``"secret"`` (W236a / W232).
@@ -1234,23 +1189,15 @@ def test_pr_bundle_redacts_github_pat_in_human_actor(
         "alice+ghp_abc1234567890abc1234567890abc12345678@example.com",
     )
     _populate_minimal_emit_bundle(cli_runner)
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
-    assert "ghp_abc1234567890abc1234567890abc12345678" not in data["actor"][
-        "human_actor"
-    ], data["actor"]["human_actor"]
+    assert "ghp_abc1234567890abc1234567890abc12345678" not in data["actor"]["human_actor"], data["actor"]["human_actor"]
     assert "[REDACTED]" in data["actor"]["human_actor"]
-    assert "secret" in (data.get("redactions") or []), (
-        f"expected 'secret' in redactions; got {data.get('redactions')}"
-    )
+    assert "secret" in (data.get("redactions") or []), f"expected 'secret' in redactions; got {data.get('redactions')}"
 
 
-def test_pr_bundle_redacts_openai_key_in_verdict(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_redacts_openai_key_in_verdict(cli_runner, bundle_project, monkeypatch):
     """An OpenAI-key-shaped substring in any verdict-rendered field MUST
     be scrubbed before the envelope leaves the producer.
 
@@ -1274,13 +1221,9 @@ def test_pr_bundle_redacts_openai_key_in_verdict(
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle-init")
     verdict = data["summary"]["verdict"]
-    assert leaked_key not in verdict, (
-        f"OpenAI key leaked into verdict: {verdict!r}"
-    )
+    assert leaked_key not in verdict, f"OpenAI key leaked into verdict: {verdict!r}"
     assert "[REDACTED]" in verdict
-    assert "secret" in (data.get("redactions") or []), (
-        f"expected 'secret' in redactions; got {data.get('redactions')}"
-    )
+    assert "secret" in (data.get("redactions") or []), f"expected 'secret' in redactions; got {data.get('redactions')}"
 
 
 # ---------------------------------------------------------------------------
@@ -1288,9 +1231,7 @@ def test_pr_bundle_redacts_openai_key_in_verdict(
 # ---------------------------------------------------------------------------
 
 
-def test_pr_bundle_context_files_promoted_to_top_level(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_context_files_promoted_to_top_level(cli_runner, bundle_project, monkeypatch):
     """``pr-bundle add context-file <path>`` now surfaces ``<path>`` on the
     envelope's top-level ``context_files[]`` array of ``{path,
     content_hash}`` dicts (W224a / W219).
@@ -1304,9 +1245,7 @@ def test_pr_bundle_context_files_promoted_to_top_level(
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "context files top-level"])
     _invoke(cli_runner, ["pr-bundle", "add", "context-file", "src/upload.py"])
     _invoke(cli_runner, ["pr-bundle", "add", "context-file", "src/retry.py"])
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
     assert "context_files" in data, "envelope missing top-level context_files"
@@ -1318,17 +1257,13 @@ def test_pr_bundle_context_files_promoted_to_top_level(
         assert "content_hash" in entry, entry
 
 
-def test_pr_bundle_emits_empty_context_files_array(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_emits_empty_context_files_array(cli_runner, bundle_project, monkeypatch):
     """When no context files were added, ``context_files`` is still
     present as an empty array (Pattern 2 — explicit absence)."""
     for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR"):
         monkeypatch.delenv(var, raising=False)
     _populate_minimal_emit_bundle(cli_runner)
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
     assert "context_files" in data
@@ -1340,9 +1275,7 @@ def test_pr_bundle_emits_empty_context_files_array(
 # ---------------------------------------------------------------------------
 
 
-def test_pr_bundle_add_approval_appends_to_envelope(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_add_approval_appends_to_envelope(cli_runner, bundle_project, monkeypatch):
     """``roam pr-bundle add-approval --approver X --scope Y`` appends a
     row that survives into the emit envelope's top-level
     ``approvals[]`` array (W224b).
@@ -1364,9 +1297,7 @@ def test_pr_bundle_add_approval_appends_to_envelope(
         ],
     )
     assert res_add.exit_code == 0, res_add.output
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
     approvals = data.get("approvals", [])
@@ -1378,9 +1309,7 @@ def test_pr_bundle_add_approval_appends_to_envelope(
     assert "approval_id" in row
 
 
-def test_pr_bundle_add_accepted_risk_appends_to_envelope(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_add_accepted_risk_appends_to_envelope(cli_runner, bundle_project, monkeypatch):
     """``roam pr-bundle add-accepted-risk --reviewer X --scope Y``
     appends a row that survives into the emit envelope's
     ``accepted_risks[]`` array (W224b).
@@ -1402,9 +1331,7 @@ def test_pr_bundle_add_accepted_risk_appends_to_envelope(
         ],
     )
     assert res_add.exit_code == 0, res_add.output
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
     accepted = data.get("accepted_risks", [])
@@ -1424,9 +1351,7 @@ def test_pr_bundle_add_accepted_risk_appends_to_envelope(
 # ---------------------------------------------------------------------------
 
 
-def test_pr_bundle_emit_always_carries_mode(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_emit_always_carries_mode(cli_runner, bundle_project, monkeypatch):
     """A normal (non-blocked) emit MUST include both ``mode`` at the
     top level AND ``summary.active_mode`` so the evidence collector's
     mode probe always picks up a value (W224c / W219).
@@ -1435,9 +1360,7 @@ def test_pr_bundle_emit_always_carries_mode(
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("ROAM_AGENT_MODE", "safe_edit")
     _populate_minimal_emit_bundle(cli_runner)
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
     assert "mode" in data, "envelope missing top-level 'mode' key"
@@ -1445,9 +1368,7 @@ def test_pr_bundle_emit_always_carries_mode(
     assert data["summary"].get("active_mode") == "safe_edit", data["summary"]
 
 
-def test_pr_bundle_emit_mode_unmoded_when_none_active(
-    cli_runner, bundle_project, monkeypatch
-):
+def test_pr_bundle_emit_mode_unmoded_when_none_active(cli_runner, bundle_project, monkeypatch):
     """When no mode resolver fires, the envelope carries
     ``mode="unmoded"`` rather than omitting the key (Pattern 2 —
     explicit absence). W224c.
@@ -1462,14 +1383,10 @@ def test_pr_bundle_emit_mode_unmoded_when_none_active(
     def _fake_mode_blocks_emit(_root):
         return (False, "", None)
 
-    monkeypatch.setattr(
-        pr_bundle_mod, "_mode_blocks_emit", _fake_mode_blocks_emit
-    )
+    monkeypatch.setattr(pr_bundle_mod, "_mode_blocks_emit", _fake_mode_blocks_emit)
 
     _populate_minimal_emit_bundle(cli_runner)
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
     assert data.get("mode") == "unmoded", data.get("mode")
@@ -1482,7 +1399,9 @@ def test_pr_bundle_emit_mode_unmoded_when_none_active(
 
 
 def test_pr_bundle_envelope_carries_environment_refs(
-    cli_runner, bundle_project, monkeypatch,
+    cli_runner,
+    bundle_project,
+    monkeypatch,
 ):
     """W266: pr-bundle emit envelope MUST include environment_refs[].
 
@@ -1496,12 +1415,18 @@ def test_pr_bundle_envelope_carries_environment_refs(
     # Scrub CI env so the local_run path is deterministic.
     for var in (
         "CI",
-        "GITHUB_ACTIONS", "GITHUB_RUN_ID",
-        "GITLAB_CI", "CI_JOB_ID",
-        "BUILDKITE", "BUILDKITE_BUILD_ID",
-        "CIRCLECI", "CIRCLE_BUILD_NUM",
-        "JENKINS_URL", "BUILD_TAG",
-        "TF_BUILD", "BUILD_BUILDID",
+        "GITHUB_ACTIONS",
+        "GITHUB_RUN_ID",
+        "GITLAB_CI",
+        "CI_JOB_ID",
+        "BUILDKITE",
+        "BUILDKITE_BUILD_ID",
+        "CIRCLECI",
+        "CIRCLE_BUILD_NUM",
+        "JENKINS_URL",
+        "BUILD_TAG",
+        "TF_BUILD",
+        "BUILD_BUILDID",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -1512,26 +1437,18 @@ def test_pr_bundle_envelope_carries_environment_refs(
     )
     _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
 
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
 
     env_refs = data.get("environment_refs")
-    assert isinstance(env_refs, list), (
-        f"environment_refs must be a list, got {type(env_refs).__name__}"
-    )
+    assert isinstance(env_refs, list), f"environment_refs must be a list, got {type(env_refs).__name__}"
     assert env_refs, "environment_refs must be non-empty on a real emit"
 
     kinds = {r["env_kind"] for r in env_refs}
     # workspace is always present; local_run when no CI was detected.
-    assert "workspace" in kinds, (
-        f"expected workspace env_kind; got {kinds}"
-    )
-    assert "local_run" in kinds, (
-        f"expected local_run env_kind in no-CI run; got {kinds}"
-    )
+    assert "workspace" in kinds, f"expected workspace env_kind; got {kinds}"
+    assert "local_run" in kinds, f"expected local_run env_kind in no-CI run; got {kinds}"
     # branch_range is present when the bundle has a head_sha (git_init
     # in the fixture creates a commit, so it will).
     # The exact assertion is best-effort: skip when the fixture didn't
@@ -1543,18 +1460,26 @@ def test_pr_bundle_envelope_carries_environment_refs(
 
 
 def test_pr_bundle_envelope_carries_ci_job_in_ci(
-    cli_runner, bundle_project, monkeypatch,
+    cli_runner,
+    bundle_project,
+    monkeypatch,
 ):
     """In a CI context, pr-bundle envelope's environment_refs include ci_job."""
     # Pin a synthetic CI provider.
     for var in (
         "CI",
-        "GITHUB_ACTIONS", "GITHUB_RUN_ID",
-        "GITLAB_CI", "CI_JOB_ID",
-        "BUILDKITE", "BUILDKITE_BUILD_ID",
-        "CIRCLECI", "CIRCLE_BUILD_NUM",
-        "JENKINS_URL", "BUILD_TAG",
-        "TF_BUILD", "BUILD_BUILDID",
+        "GITHUB_ACTIONS",
+        "GITHUB_RUN_ID",
+        "GITLAB_CI",
+        "CI_JOB_ID",
+        "BUILDKITE",
+        "BUILDKITE_BUILD_ID",
+        "CIRCLECI",
+        "CIRCLE_BUILD_NUM",
+        "JENKINS_URL",
+        "BUILD_TAG",
+        "TF_BUILD",
+        "BUILD_BUILDID",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
@@ -1567,24 +1492,16 @@ def test_pr_bundle_envelope_carries_ci_job_in_ci(
     )
     _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight bar"])
 
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
 
     env_refs = data.get("environment_refs") or []
     kinds = {r["env_kind"] for r in env_refs}
-    assert "ci_job" in kinds, (
-        f"expected ci_job env_kind in CI run; got {kinds}"
-    )
+    assert "ci_job" in kinds, f"expected ci_job env_kind in CI run; got {kinds}"
     ci = next(r for r in env_refs if r["env_kind"] == "ci_job")
-    assert ci["env_id"] == "pr-bundle-test-42", (
-        f"ci_job env_id should match GITHUB_RUN_ID; got {ci['env_id']!r}"
-    )
-    assert "local_run" not in kinds, (
-        f"local_run must NOT appear in a CI run; got {kinds}"
-    )
+    assert ci["env_id"] == "pr-bundle-test-42", f"ci_job env_id should match GITHUB_RUN_ID; got {ci['env_id']!r}"
+    assert "local_run" not in kinds, f"local_run must NOT appear in a CI run; got {kinds}"
 
 
 # ---------------------------------------------------------------------------
@@ -1593,7 +1510,8 @@ def test_pr_bundle_envelope_carries_ci_job_in_ci(
 
 
 def test_pr_bundle_envelope_always_emits_permits_empty(
-    cli_runner, bundle_project,
+    cli_runner,
+    bundle_project,
 ):
     """W268: pr-bundle emit ALWAYS emits ``permits[]`` (empty in a fresh repo).
 
@@ -1608,25 +1526,20 @@ def test_pr_bundle_envelope_always_emits_permits_empty(
     )
     _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
 
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
 
     permits = data.get("permits")
-    assert isinstance(permits, list), (
-        f"permits must be a list, got {type(permits).__name__}"
-    )
+    assert isinstance(permits, list), f"permits must be a list, got {type(permits).__name__}"
     # Fresh repo - .roam/permits/ does not exist; the always-emit
     # contract requires an empty list (NOT a missing key).
-    assert permits == [], (
-        f"permits must be [] when .roam/permits/ is missing; got {permits!r}"
-    )
+    assert permits == [], f"permits must be [] when .roam/permits/ is missing; got {permits!r}"
 
 
 def test_pr_bundle_envelope_always_emits_leases_empty(
-    cli_runner, bundle_project,
+    cli_runner,
+    bundle_project,
 ):
     """W268: pr-bundle emit ALWAYS emits ``leases[]`` (empty in a fresh repo)."""
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "Add leases test"])
@@ -1636,23 +1549,18 @@ def test_pr_bundle_envelope_always_emits_leases_empty(
     )
     _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
 
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
 
     leases = data.get("leases")
-    assert isinstance(leases, list), (
-        f"leases must be a list, got {type(leases).__name__}"
-    )
-    assert leases == [], (
-        f"leases must be [] when .roam/leases/ is empty; got {leases!r}"
-    )
+    assert isinstance(leases, list), f"leases must be a list, got {type(leases).__name__}"
+    assert leases == [], f"leases must be [] when .roam/leases/ is empty; got {leases!r}"
 
 
 def test_pr_bundle_envelope_lifts_permits_from_disk(
-    cli_runner, bundle_project,
+    cli_runner,
+    bundle_project,
 ):
     """W268: a ``.roam/permits/<id>.json`` row flows onto envelope.permits[].
 
@@ -1672,9 +1580,7 @@ def test_pr_bundle_envelope_lifts_permits_from_disk(
         "issued_at": "2026-05-14T10:00:00Z",
         "issued_by": "human:w268-operator",
     }
-    (permits_dir / "permit_20260514_268a00.json").write_text(
-        json.dumps(permit_row), encoding="utf-8"
-    )
+    (permits_dir / "permit_20260514_268a00.json").write_text(json.dumps(permit_row), encoding="utf-8")
 
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "Add permit lift test"])
     _invoke(
@@ -1683,9 +1589,7 @@ def test_pr_bundle_envelope_lifts_permits_from_disk(
     )
     _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
 
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
 
@@ -1700,7 +1604,8 @@ def test_pr_bundle_envelope_lifts_permits_from_disk(
 
 
 def test_pr_bundle_envelope_lifts_leases_from_disk(
-    cli_runner, bundle_project,
+    cli_runner,
+    bundle_project,
 ):
     """W268: a ``.roam/leases/<id>.json`` row flows onto envelope.leases[]."""
     leases_dir = bundle_project / ".roam" / "leases"
@@ -1715,9 +1620,7 @@ def test_pr_bundle_envelope_lifts_leases_from_disk(
         "expires_at": "2099-05-14T09:30:00.000000Z",
         "state": "active",
     }
-    (leases_dir / "lease_20260514_w268a.json").write_text(
-        json.dumps(lease_row), encoding="utf-8"
-    )
+    (leases_dir / "lease_20260514_w268a.json").write_text(json.dumps(lease_row), encoding="utf-8")
 
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "Add lease lift test"])
     _invoke(
@@ -1726,9 +1629,7 @@ def test_pr_bundle_envelope_lifts_leases_from_disk(
     )
     _invoke(cli_runner, ["pr-bundle", "add", "context-cmd", "roam preflight foo"])
 
-    result = _invoke(
-        cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"]
-    )
+    result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
 

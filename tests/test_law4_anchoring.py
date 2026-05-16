@@ -27,17 +27,12 @@ Scope: only the 6 commands fixed during the W12 polish wave —
 
 from __future__ import annotations
 
-import json
-import os
 import re
 import sys
-from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
 
 from tests._helpers.repo_root import repo_root
-
 
 REPO_ROOT = repo_root()
 SRC_COMMANDS = REPO_ROOT / "src" / "roam" / "commands"
@@ -66,7 +61,9 @@ if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
 # raw file source after stripping comments / docstrings.
 KNOWN_BAD_FACT_PATTERNS = [
     (
-        re.compile(r'facts\.append\(\s*f?["\']\{[^"\']*\}\s+(?:non_idempotent|idempotent|unknown-idempotency)\s+symbols["\']'),
+        re.compile(
+            r'facts\.append\(\s*f?["\']\{[^"\']*\}\s+(?:non_idempotent|idempotent|unknown-idempotency)\s+symbols["\']'
+        ),
         "bare numeric prefix + classification noun (no analytical verb)",
     ),
     (
@@ -123,10 +120,7 @@ def test_no_known_bad_law4_patterns(filename: str) -> None:
     src = _strip_python_comments(path.read_text(encoding="utf-8"))
     for pattern, reason in KNOWN_BAD_FACT_PATTERNS:
         m = pattern.search(src)
-        assert m is None, (
-            f"{filename}: re-introduced LAW 4 violation ({reason}): "
-            f"matched fragment = {m.group(0)!r}"
-        )
+        assert m is None, f"{filename}: re-introduced LAW 4 violation ({reason}): matched fragment = {m.group(0)!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -167,9 +161,7 @@ def test_graph_diff_facts_anchor_on_graph_delta() -> None:
     # Anchor: every fact must lead with the concrete subject + scope.
     assert facts, "graph-diff produced no facts"
     for f in facts:
-        assert "graph delta vs snap-2026-05-12" in f, (
-            f"graph-diff fact missing 'graph delta vs <label>' anchor: {f!r}"
-        )
+        assert "graph delta vs snap-2026-05-12" in f, f"graph-diff fact missing 'graph delta vs <label>' anchor: {f!r}"
     # Verbs: ensure explicit analytical verbs are present.
     joined = " ".join(facts).lower()
     assert "added" in joined
@@ -255,9 +247,7 @@ def test_helpers_docstring_names_intentional_exclusions() -> None:
     future maintainer can see 'health is intentionally not auto-logged'
     instead of having to deduce it from absence (LAW 7 — positive
     vocabulary)."""
-    src = (REPO_ROOT / "src" / "roam" / "runs" / "helpers.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "runs" / "helpers.py").read_text(encoding="utf-8")
     # Must mention the policy section by name.
     assert "Auto-log allowlist policy" in src
     # Must enumerate the four allowlist tiers.

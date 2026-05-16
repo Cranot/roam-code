@@ -37,7 +37,6 @@ from roam.security.taint_engine import (
     run_taint,
 )
 
-
 # ---------------------------------------------------------------------------
 # In-memory schema helpers (mirror tests/test_taint_intraprocedural.py +
 # tests/test_taint_analysis.py — narrowest schema the engine reads from).
@@ -95,8 +94,7 @@ def _add_symbol(
     line_start: int = 1,
 ) -> int:
     conn.execute(
-        "INSERT INTO symbols (file_id, name, qualified_name, line_start) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO symbols (file_id, name, qualified_name, line_start) VALUES (?, ?, ?, ?)",
         (file_id, name, qualified_name or name, line_start),
     )
     return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
@@ -182,12 +180,10 @@ class TestTaintEnginePositiveSmoke:
         # Pick the first matching finding and assert source/sink identity.
         finding = next(f for f in findings if f.rule_id == "w681-python-ssti")
         assert finding.source_symbol["id"] == src_id, (
-            f"source_symbol id mismatch: got {finding.source_symbol}, "
-            f"expected id={src_id}"
+            f"source_symbol id mismatch: got {finding.source_symbol}, expected id={src_id}"
         )
         assert finding.sink_symbol["id"] == sink_id, (
-            f"sink_symbol id mismatch: got {finding.sink_symbol}, "
-            f"expected id={sink_id}"
+            f"sink_symbol id mismatch: got {finding.sink_symbol}, expected id={sink_id}"
         )
         # The co-call pass emits a 3-hop path: [source, enclosing, sink].
         path_ids = [p.get("id") for p in finding.path_symbols]
@@ -202,15 +198,9 @@ class TestTaintEnginePositiveSmoke:
         """Cross-procedural forward BFS pass: source -> middle -> sink."""
         conn = _make_conn()
         fid = _add_file(conn, "app/pipeline.py", language="python")
-        src_id = _add_symbol(
-            conn, fid, "get", qualified_name="flask.request.args.get", line_start=3
-        )
-        middle_id = _add_symbol(
-            conn, fid, "build_query", qualified_name="app.build_query", line_start=10
-        )
-        sink_id = _add_symbol(
-            conn, fid, "execute", qualified_name="cursor.execute", line_start=20
-        )
+        src_id = _add_symbol(conn, fid, "get", qualified_name="flask.request.args.get", line_start=3)
+        middle_id = _add_symbol(conn, fid, "build_query", qualified_name="app.build_query", line_start=10)
+        sink_id = _add_symbol(conn, fid, "execute", qualified_name="cursor.execute", line_start=20)
         # Forward chain: source -> middle -> sink (no co-caller).
         _add_edge(conn, src_id, middle_id, "calls")
         _add_edge(conn, middle_id, sink_id, "calls")
@@ -228,15 +218,11 @@ class TestTaintEnginePositiveSmoke:
         findings = run_taint(conn, [rule])
         assert findings, "forward BFS should flag source->middle->sink taint flows"
         bfs_finds = [f for f in findings if f.rule_id == "w681-python-sqli"]
-        assert bfs_finds, (
-            f"expected w681-python-sqli forward-BFS finding; got {[f.rule_id for f in findings]}"
-        )
+        assert bfs_finds, f"expected w681-python-sqli forward-BFS finding; got {[f.rule_id for f in findings]}"
         # BFS path must include the middle hop — proves the forward pass fired,
         # not the co-call pass (no shared enclosing exists in this fixture).
         path_ids = [p.get("id") for p in bfs_finds[0].path_symbols]
-        assert middle_id in path_ids, (
-            f"BFS taint path should traverse middle hop {middle_id}; got {path_ids}"
-        )
+        assert middle_id in path_ids, f"BFS taint path should traverse middle hop {middle_id}; got {path_ids}"
 
     def test_shipped_yaml_pack_loads_and_runs(self):
         """Resilience: when the shipped YAML pack is present, load + run it.
@@ -245,13 +231,7 @@ class TestTaintEnginePositiveSmoke:
         and ``run_taint`` consumes pack rules without raising. Findings
         depend on which pack rules ship in the worktree.
         """
-        pack_dir = (
-            Path(__file__).resolve().parents[1]
-            / "src"
-            / "roam"
-            / "security"
-            / "taint_rules"
-        )
+        pack_dir = Path(__file__).resolve().parents[1] / "src" / "roam" / "security" / "taint_rules"
         if not pack_dir.is_dir():
             pytest.skip("no shipped taint_rules/ directory in this worktree")
         rules = load_rules(pack_dir)
@@ -260,15 +240,9 @@ class TestTaintEnginePositiveSmoke:
 
         conn = _make_conn()
         fid = _add_file(conn, "app/cmd.py", language="python")
-        src_id = _add_symbol(
-            conn, fid, "args", qualified_name="flask.request.args", line_start=2
-        )
-        sink_id = _add_symbol(
-            conn, fid, "system", qualified_name="os.system", line_start=6
-        )
-        handler_id = _add_symbol(
-            conn, fid, "handle", qualified_name="app.cmd.handle", line_start=1
-        )
+        src_id = _add_symbol(conn, fid, "args", qualified_name="flask.request.args", line_start=2)
+        sink_id = _add_symbol(conn, fid, "system", qualified_name="os.system", line_start=6)
+        handler_id = _add_symbol(conn, fid, "handle", qualified_name="app.cmd.handle", line_start=1)
         _add_edge(conn, handler_id, src_id, "calls")
         _add_edge(conn, handler_id, sink_id, "calls")
 

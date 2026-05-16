@@ -12,6 +12,12 @@ Subcommands::
     roam plugins list         # list discovered plugins + contributions
     roam plugins info <name>  # detail on a single plugin
     roam plugins doctor       # check for failed loads (CI-friendly exit)
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because plugins outputs are invocation-scoped plugin-substrate
+metadata — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -169,8 +175,7 @@ def _emit_list(ctx: click.Context) -> None:
     state = _collect_state()
     total = sum(state["counts"][k] for k in ("commands", "detectors", "languages"))
     verdict = (
-        f"{state['counts']['plugins']} plugin(s) discovered with "
-        f"{total} contribution(s)"
+        f"{state['counts']['plugins']} plugin(s) discovered with {total} contribution(s)"
         if state["plugins"] or total
         else "no plugins discovered"
     )
@@ -210,6 +215,9 @@ def plugins_list(ctx: click.Context) -> None:
 
 
 @plugins_cmd.command("info")
+# W1120 — legitimate non-symbol "name" concept: plugin name.
+# Resolves against plugin registry via p.name lookup, not symbols
+# in the codebase graph. Permanent grandfather per W1111 audit.
 @click.argument("name")
 @click.pass_context
 def plugins_info(ctx: click.Context, name: str) -> None:
@@ -238,9 +246,9 @@ def plugins_info(ctx: click.Context, name: str) -> None:
 
     # Filter contributions attributed to this plugin's source label.
     src = target.source
-    matched_commands = sorted(
-        cmd for cmd, (_mod, _attr) in state["commands"].items()
-    ) if src else []  # Per-plugin attribution lives in capabilities[]
+    matched_commands = (
+        sorted(cmd for cmd, (_mod, _attr) in state["commands"].items()) if src else []
+    )  # Per-plugin attribution lives in capabilities[]
 
     verdict = f"plugin '{target.name}' v{target.version}"
     envelope = json_envelope(
@@ -275,11 +283,7 @@ def plugins_doctor(ctx: click.Context) -> None:
     state = _collect_state()
     errors = state["errors"]
     ok = not errors
-    verdict = (
-        "all plugins loaded cleanly"
-        if ok
-        else f"{len(errors)} plugin load failure(s) detected"
-    )
+    verdict = "all plugins loaded cleanly" if ok else f"{len(errors)} plugin load failure(s) detected"
 
     if json_mode:
         click.echo(

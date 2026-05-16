@@ -22,7 +22,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (  # noqa: E402
-    git_commit,
     git_init,
     index_in_process,
     invoke_cli,
@@ -31,7 +30,6 @@ from conftest import (  # noqa: E402
 from roam.commands.cmd_pr_analyze import (  # noqa: E402
     _inspect_prep_subcommand_failures,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pure-helper tests (no CLI / no DB)
@@ -131,7 +129,7 @@ def test_pr_analyze_no_changes_does_not_fabricate_safe(clean_indexed_project, cl
 
     With Fix A in place, the inner ``diff`` step returns a structured
     ``no_changes`` envelope. With Fix B in place, pr-analyze sees that
-    and propagates it to the top-level verdict (NO_CHANGES) instead of
+    and propagates it to the top-level verdict (NOCHANGES) instead of
     falling through to the default SAFE.
     """
     result = invoke_cli(cli_runner, ["pr-analyze"], json_mode=True)

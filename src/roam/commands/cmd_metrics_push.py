@@ -11,6 +11,15 @@ the user configures); the dashboard at ``roam.cloud`` reads from the
 same store. ``--dry-run`` prints the payload without posting so users
 and CI pipelines can inspect what would leave their machine before
 opting in.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because metrics-push is an external-service report transmitter
+— it ships an aggregate-metrics payload over HTTP to a Cloud Lite
+endpoint with no per-location violations to surface to a SARIF
+consumer. The transport semantics (POST status, anonymization mode,
+dry-run preview) are environment-scoped, not source-coordinate data.
+See ``cmd_doctor`` for the parallel environment-scoped disclosure
+pattern (W1085 / W1144) + W1221-audit memo.
 """
 
 from __future__ import annotations

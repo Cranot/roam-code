@@ -51,6 +51,16 @@ Example .roam/fitness.yaml:
       metric: avg_complexity
       max_increase: 2.0
       window: 3
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because fitness outputs are invocation-scoped architectural
+rule-evaluation aggregates (per-rule PASS / FAIL verdicts derived from
+``.roam/fitness.yaml`` against the indexed graph) — not per-location
+code violations. The detector-namespace siblings (``smells``, ``debt``,
+``complexity``) DO ship SARIF for their per-location findings; fitness
+sits a layer above as the policy-aggregate. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -69,7 +79,7 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.output.formatter import json_envelope, loc, to_json
+from roam.output.formatter import WarningsOut, json_envelope, loc, to_json
 
 
 # R22 — confidence classifier for fitness violations.
@@ -109,8 +119,29 @@ def _fitness_classify(violation: dict) -> tuple[str, str]:
     return "medium", "unknown rule type; defaulting to medium"
 
 
-def _load_rules(project_root: Path) -> list[dict]:
-    """Load fitness rules from .roam/fitness.yaml."""
+def _load_rules(
+    project_root: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
+    """Load fitness rules from .roam/fitness.yaml.
+
+    Walks ``.roam/fitness.yaml`` then ``.roam/fitness.yml`` and delegates
+    file-read + parse + root-type check to
+    :func:`roam.commands._yaml_loader.load_yaml_with_warnings` (W1051,
+    Phase 2 of the YAML-loader consolidation).
+
+    W1051 (Pattern 2 — silent fallback, mirror of W706's
+    ``_load_ignore_findings_file``): when *warnings_out* is supplied as
+    a ``list[str]``, every silent-fallback path (file unreadable,
+    malformed YAML, non-mapping root, missing ``rules`` key, non-list
+    ``rules``, non-dict entries) appends an actionable warning naming
+    the path, the failure shape, and the resolution. Pre-W1051 callers
+    that don't supply ``warnings_out`` retain byte-identical
+    silent-empty behaviour so the existing happy-path
+    ``cmd_fitness.fitness`` envelope stays unchanged when
+    ``.roam/fitness.yaml`` is well-formed.
+    """
     config_path = project_root / ".roam" / "fitness.yaml"
     if not config_path.exists():
         # Try .yml extension
@@ -118,58 +149,70 @@ def _load_rules(project_root: Path) -> list[dict]:
     if not config_path.exists():
         return []
 
-    try:
-        import yaml
-    except ImportError:
-        # Fall back to basic YAML-like parsing for simple configs
-        return _parse_simple_yaml(config_path)
+    from roam.commands._yaml_loader import load_yaml_with_warnings
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-
-    if not data or "rules" not in data:
+    path_str = str(config_path)
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data = load_yaml_with_warnings(
+        config_path,
+        tiny_parser=_parse_simple_yaml_dict,
+        config_label="fitness",
+        warnings_out=warnings_out,
+    )
+    if data is None:
+        # Missing file — default state, no warning emitted by the helper.
         return []
-    return data["rules"]
-
-
-def _parse_simple_yaml(path: Path) -> list[dict]:
-    """Minimal YAML parser for fitness rules (no PyYAML dependency)."""
-    text = path.read_text(encoding="utf-8")
-    rules = []
-    current_rule = None
-
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper already explained the failure (read error / malformed
+        # YAML / wrong root type / tiny-parser fallback). Propagate the
+        # empty result without piling on a second "no `rules:` key"
+        # warning that would just confuse the caller.
+        return []
+    assert isinstance(data, dict)
+    if "rules" not in data:
+        if warnings_out is not None:
+            warnings_out.append(
+                f"fitness: {path_str!r} has no `rules:` key. "
+                f"Expected shape: `rules:` followed by a list of "
+                f"`{{name, type, ...}}` entries."
+            )
+        return []
+    rules = data.get("rules")
+    if not isinstance(rules, list):
+        if warnings_out is not None:
+            warnings_out.append(
+                f"fitness: {path_str!r} `rules` is {type(rules).__name__!r}, expected a list. Treating as empty rules."
+            )
+        return []
+    out: list[dict] = []
+    for idx, r in enumerate(rules):
+        if not isinstance(r, dict):
+            if warnings_out is not None:
+                warnings_out.append(
+                    f"fitness: {path_str!r} rules[{idx}] is "
+                    f"{type(r).__name__!r}, expected a mapping with "
+                    f"`name` / `type` / ... keys. Skipping entry."
+                )
             continue
+        out.append(r)
+    return out
 
-        if stripped.startswith("- name:"):
-            if current_rule:
-                rules.append(current_rule)
-            current_rule = {"name": stripped.split(":", 1)[1].strip().strip('"').strip("'")}
-        elif current_rule and ":" in stripped:
-            key, val = stripped.split(":", 1)
-            key = key.strip()
-            val = val.strip().strip('"').strip("'")
-            # Type conversions
-            if val.lower() == "true":
-                val = True
-            elif val.lower() == "false":
-                val = False
-            else:
-                try:
-                    val = int(val)
-                except ValueError:
-                    try:
-                        val = float(val)
-                    except ValueError:
-                        pass
-            current_rule[key] = val
 
-    if current_rule:
-        rules.append(current_rule)
+def _parse_simple_yaml_dict(text: str) -> dict:
+    """Minimal YAML parser for fitness rules (no PyYAML dependency).
 
-    return rules
+    Returns a ``{"rules": [...]}`` dict so the helper's root-type check
+    + ``rules`` extraction in :func:`_load_rules` works on a uniform
+    shape regardless of whether PyYAML parsed the file or this fallback
+    did.
+
+    W1058: rule-list parsing is now shared with ``cmd_budget`` via
+    :func:`roam.commands._yaml_loader.parse_rule_list`.
+    """
+    from roam.commands._yaml_loader import parse_rule_list
+
+    rules = parse_rule_list(text)
+    return {"rules": rules} if rules else {}
 
 
 # ── Rule checkers ────────────────────────────────────────────────────
@@ -633,19 +676,23 @@ def _rules_for_baseline_mode(rules: list[dict]) -> list[dict]:
     return out
 
 
-def _emit_no_rules(json_mode: bool) -> None:
+def _emit_no_rules(json_mode: bool, *, warnings_out: list[str] | None = None) -> None:
     if json_mode:
+        summary_payload: dict = {
+            "rules_checked": 0,
+            "passed": 0,
+            "failed": 0,
+            "total_violations": 0,
+            "verdict": "no rules configured",
+        }
+        if warnings_out:
+            summary_payload["warnings_out"] = list(warnings_out)
+            summary_payload["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "fitness",
-                    summary={
-                        "rules_checked": 0,
-                        "passed": 0,
-                        "failed": 0,
-                        "total_violations": 0,
-                        "verdict": "no rules configured",
-                    },
+                    summary=summary_payload,
                     rules=[],
                     violations=[],
                 )
@@ -653,6 +700,10 @@ def _emit_no_rules(json_mode: bool) -> None:
         )
         return
     click.echo("No fitness rules found. Create .roam/fitness.yaml or run:\n  roam fitness --init")
+    if warnings_out:
+        click.echo()
+        for w in warnings_out:
+            click.echo(f"WARNING: {w}")
 
 
 def _filter_rules(rules: list[dict], rule_filter: str | None) -> list[dict]:
@@ -816,7 +867,16 @@ def _emit_baseline_delta_text(baseline_info: dict | None, new_violations: list[d
 
 
 def _emit_fitness_text(
-    rule_results, all_violations, baseline_info, new_violations, written_baseline_path, passed, failed, explain
+    rule_results,
+    all_violations,
+    baseline_info,
+    new_violations,
+    written_baseline_path,
+    passed,
+    failed,
+    explain,
+    *,
+    warnings_out: list[str] | None = None,
 ) -> None:
     # v12.12.6 — verdict-first output. Without this line a user
     # scanning the top of the output saw "Fitness check: 3 rules"
@@ -839,6 +899,10 @@ def _emit_fitness_text(
     if written_baseline_path:
         click.echo(f"\nBaseline written: {written_baseline_path}")
     click.echo(f"\n{passed} passed, {failed} failed")
+    if warnings_out:
+        click.echo()
+        for w in warnings_out:
+            click.echo(f"WARNING: {w}")
 
 
 def _finish_fitness(write_baseline: bool, baseline_info: dict | None, failed: int) -> None:
@@ -906,10 +970,11 @@ def fitness(ctx, do_init, rule_filter, explain, baseline_path, write_baseline):
         return
 
     ensure_index()
-    rules = _load_rules(root)
+    _fitness_warnings: list[str] = []
+    rules = _load_rules(root, warnings_out=_fitness_warnings)
 
     if not rules:
-        _emit_no_rules(json_mode)
+        _emit_no_rules(json_mode, warnings_out=_fitness_warnings)
         return
 
     rules = _filter_rules(rules, rule_filter)
@@ -926,6 +991,12 @@ def fitness(ctx, do_init, rule_filter, explain, baseline_path, write_baseline):
     baseline_info, new_violations = _baseline_compare(all_violations, baseline_path)
     written_baseline_path = _maybe_write_baseline(root, write_baseline, rule_results, all_violations)
     summary = _fitness_summary(rule_results, passed, failed, all_violations, baseline_info, written_baseline_path)
+    if _fitness_warnings:
+        # W1051: surface loader warnings (malformed rules entries that
+        # were skipped) so the agent doesn't see a green verdict that
+        # silently dropped half its rules.
+        summary["warnings_out"] = list(_fitness_warnings)
+        summary["partial_success"] = True
 
     if json_mode:
         _emit_fitness_json(summary, rule_results, all_violations, new_violations)
@@ -939,6 +1010,7 @@ def fitness(ctx, do_init, rule_filter, explain, baseline_path, write_baseline):
             passed,
             failed,
             explain,
+            warnings_out=_fitness_warnings,
         )
 
     _finish_fitness(write_baseline, baseline_info, failed)

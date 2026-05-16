@@ -28,6 +28,14 @@ Pipeline
    REVIEW / BLOCK with explicit reasons.
 6. **Output** — text for humans, JSON for the GitHub App worker.
    ``--gate`` exits 5 (gate failure) when the verdict is BLOCK.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_pr_analyze is a recipe-composer (chains preflight +
+critique + complexity + churn into a single risk verdict). The composed
+subcommands emit their own --sarif when applicable; cmd_pr_analyze rolls
+them up into an invocation-scoped PR risk aggregate — not per-location
+violations. See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH
+Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -1257,7 +1265,7 @@ def _inspect_prep_subcommand_failures(prep_payload: dict) -> tuple[list[str], st
                 ]
             else:
                 other_reason = other_reason or (
-                    f"{step_name}: " f"{step_summary.get('verdict') or step_summary.get('state')}"
+                    f"{step_name}: {step_summary.get('verdict') or step_summary.get('state')}"
                 )
 
     if diff_failed:
@@ -2092,7 +2100,7 @@ def pr_analyze(
     # let the [intentional] marker bypass an empty diff — analysing
     # nothing should never report SAFE.
     if prep_state == "no_changes":
-        verdict = "NO_CHANGES"
+        verdict = "NOCHANGES"
         reasons = [prep_state_reason or "no changes to analyze"]
     elif prep_state == "diff_failed":
         # Promote to at least REVIEW so the failure surfaces to humans.
@@ -2137,7 +2145,7 @@ def pr_analyze(
         bundle_summary["state"] = prep_state
         # partial_success is True when ANY subcommand failed or no-changes:
         # the analysis is structurally incomplete in either case.
-        bundle_summary["partial_success"] = prep_state != "no_changes" or verdict == "NO_CHANGES"
+        bundle_summary["partial_success"] = prep_state != "no_changes" or verdict == "NOCHANGES"
     if failed_subcommands:
         bundle_summary["failed_subcommands"] = list(failed_subcommands)
 

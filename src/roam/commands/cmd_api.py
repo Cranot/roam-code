@@ -8,6 +8,12 @@ A symbol is "public" when:
   * its kind is one of {function, method, class, interface, enum}
 
 Output is sorted by file then line so it's stable across runs.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because api outputs are invocation-scoped public API surface
+listings — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -102,6 +108,8 @@ def api(ctx, limit, scope) -> None:
         # semantic (export-marker) subset is what `docs-coverage` reports.
         from roam.quality.public_symbols import (
             CRITERION_NO_UNDERSCORE,
+        )
+        from roam.quality.public_symbols import (
             definition as _ps_def,
         )
 

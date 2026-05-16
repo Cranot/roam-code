@@ -73,7 +73,6 @@ from roam.db.connection import find_project_root, open_db
 from roam.output._severity import severity_rank as _severity_rank
 from roam.output.formatter import format_table, json_envelope, to_json
 
-
 # W415 / W415b — detector version stamp. Bump per the W81 / ROADMAP A6
 # rules when the pattern set, confidence-tier mapping, or evidence-shape
 # changes meaningfully. Consumers can ``import LLM_SMELLS_DETECTOR_VERSION``
@@ -223,9 +222,7 @@ _UNPINNED_MODEL_RE = re.compile(
 )
 
 # Kwarg presence checks — applied to the call-block window.
-_MAX_TOKENS_KWARG_RE = re.compile(
-    r"\bmax_(?:tokens|output_tokens|new_tokens)\s*=", re.MULTILINE
-)
+_MAX_TOKENS_KWARG_RE = re.compile(r"\bmax_(?:tokens|output_tokens|new_tokens)\s*=", re.MULTILINE)
 _TEMPERATURE_KWARG_RE = re.compile(r"\btemperature\s*=", re.MULTILINE)
 
 # json.loads / JSON.parse without surrounding try.
@@ -242,9 +239,7 @@ _USER_INPUT_NAME_RE = re.compile(
 )
 # Prompt-shaped concatenation: an f-string or "+" join near a string that
 # names a prompt role.
-_PROMPT_KEYWORD_RE = re.compile(
-    r"(?i)\b(?:system|you\s+are|prompt|instructions?|assistant)\b"
-)
+_PROMPT_KEYWORD_RE = re.compile(r"(?i)\b(?:system|you\s+are|prompt|instructions?|assistant)\b")
 _FSTRING_OR_CONCAT_RE = re.compile(
     r"""(?:f["'][^"'\n]{0,200}\{[^}]+\}[^"'\n]{0,200}["']|["']\s*\+\s*\w+|\w+\s*\+\s*["'])"""
 )
@@ -272,9 +267,7 @@ _MAX_RETRIES_KWARG_RE = re.compile(r"\bmax_retries\s*=", re.MULTILINE)
 # ``"role": "system"`` (or single-quoted variant) anywhere in the window.
 # False positive surface: a system message may be assembled dynamically
 # in a helper and spread into messages; documented in module docstring.
-_SYSTEM_ROLE_RE = re.compile(
-    r"""["']role["']\s*:\s*["']system["']""", re.MULTILINE
-)
+_SYSTEM_ROLE_RE = re.compile(r"""["']role["']\s*:\s*["']system["']""", re.MULTILINE)
 # Only the chat/messages completion calls take a `messages=` array;
 # generate_content / responses.create do not. Anchor on the narrower set.
 _CHAT_COMPLETION_CALL_RE = re.compile(
@@ -305,9 +298,7 @@ _LOOP_HEADER_RE = re.compile(
 # Explicit bounds that suppress the cl1 finding (best-effort guards
 # against the most-common FP patterns: ``range(...)``, ``items[:N]``
 # slicing, ``MAX_*`` constants, an explicit ``break``).
-_EXPLICIT_BOUND_RE = re.compile(
-    r"\brange\s*\(|\[\s*:\s*\d+\s*\]|\bMAX_[A-Z_]+\b|\bbreak\b|\bif\b[^:\n]{0,40}:\s*break"
-)
+_EXPLICIT_BOUND_RE = re.compile(r"\brange\s*\(|\[\s*:\s*\d+\s*\]|\bMAX_[A-Z_]+\b|\bbreak\b|\bif\b[^:\n]{0,40}:\s*break")
 
 
 # ---------------------------------------------------------------------------
@@ -719,9 +710,7 @@ def _detect_no_retry_backoff(file_path: str, text: str) -> list[dict]:
             "kind": _PATTERN_KIND_NO_RETRY_BACKOFF,
             "file_path": file_path,
             "line": line,
-            "snippet": text[call_match.start() : call_match.start() + 120].replace(
-                "\n", " "
-            ),
+            "snippet": text[call_match.start() : call_match.start() + 120].replace("\n", " "),
             "evidence": {
                 "pattern": _PATTERN_KIND_NO_RETRY_BACKOFF,
                 "scope": "file",
@@ -765,11 +754,7 @@ def _detect_call_in_loop(file_path: str, text: str) -> list[dict]:
         # smaller. We don't try to parse indentation strictly — a 30-
         # line window covers the typical call-in-loop bug surface.
         end_line_idx = min(loop_line - 1 + 30, len(lines))
-        end_offset = (
-            line_offsets[end_line_idx]
-            if end_line_idx < len(lines)
-            else len(text)
-        )
+        end_offset = line_offsets[end_line_idx] if end_line_idx < len(lines) else len(text)
         window = text[loop_start:end_offset]
         if _EXPLICIT_BOUND_RE.search(window):
             continue
@@ -784,9 +769,7 @@ def _detect_call_in_loop(file_path: str, text: str) -> list[dict]:
                     "kind": _PATTERN_KIND_CALL_IN_LOOP,
                     "file_path": file_path,
                     "line": call_line,
-                    "snippet": text[absolute_offset : absolute_offset + 120].replace(
-                        "\n", " "
-                    ),
+                    "snippet": text[absolute_offset : absolute_offset + 120].replace("\n", " "),
                     "evidence": {
                         "pattern": _PATTERN_KIND_CALL_IN_LOOP,
                         "loop_line": loop_line,
@@ -859,9 +842,7 @@ def _emit_llm_smells_findings(
         finding_id = _llm_smells_finding_id(kind, file_path, line, snippet_hash)
         label = _PATTERN_LABELS.get(kind, kind)
         severity = _PATTERN_SEVERITY.get(kind, "warning")
-        claim = (
-            f"LLM-API smell ({label}): {file_path}:{line} -- {snippet[:80]}"
-        )
+        claim = f"LLM-API smell ({label}): {file_path}:{line} -- {snippet[:80]}"
         evidence = dict(rec.get("evidence", {}))
         evidence.setdefault("pattern", kind)
         evidence["severity"] = severity
@@ -895,9 +876,7 @@ def _iter_indexed_files(conn, project_root: Path) -> list[tuple[str, Path]]:
 
     Skips files whose disk read fails (deleted between index and scan).
     """
-    rows = conn.execute(
-        "SELECT path FROM files WHERE language IS NOT NULL ORDER BY path"
-    ).fetchall()
+    rows = conn.execute("SELECT path FROM files WHERE language IS NOT NULL ORDER BY path").fetchall()
     out: list[tuple[str, Path]] = []
     for r in rows:
         rel = r["path"] if isinstance(r, sqlite3.Row) else r[0]
@@ -977,6 +956,7 @@ def llm_smells(ctx, min_severity, persist):
     multi-provider LLM-API linter.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -1007,9 +987,7 @@ def llm_smells(ctx, min_severity, persist):
 
         # Severity filter.
         filtered_records = [
-            r
-            for r in all_records
-            if _severity_rank(_PATTERN_SEVERITY.get(r["kind"], "warning")) >= floor
+            r for r in all_records if _severity_rank(_PATTERN_SEVERITY.get(r["kind"], "warning")) >= floor
         ]
 
         if persist and filtered_records:
@@ -1029,11 +1007,7 @@ def llm_smells(ctx, min_severity, persist):
         for rec in filtered_records:
             counts_by_kind[rec["kind"]] = counts_by_kind.get(rec["kind"], 0) + 1
         total_findings = sum(counts_by_kind.values())
-        critical_findings = sum(
-            1
-            for r in filtered_records
-            if _PATTERN_SEVERITY.get(r["kind"]) == "critical"
-        )
+        critical_findings = sum(1 for r in filtered_records if _PATTERN_SEVERITY.get(r["kind"]) == "critical")
 
         # LAW 6 — verdict line works without any other field. LAW 4 —
         # terminal token is ``findings`` (anchor noun) or ``files`` (also
@@ -1041,11 +1015,34 @@ def llm_smells(ctx, min_severity, persist):
         if total_findings == 0:
             verdict = f"0 LLM-API findings in {len(llm_files)} scanned files"
         else:
-            verdict = (
-                f"{total_findings} LLM-API findings "
-                f"({critical_findings} critical) "
-                f"in {len(llm_files)} files"
-            )
+            verdict = f"{total_findings} LLM-API findings ({critical_findings} critical) in {len(llm_files)} files"
+
+        # SARIF output (W1207): projection for CI / GitHub Code Scanning.
+        # Branches BEFORE json/text so the pre-existing paths stay
+        # byte-identical to pre-W1207. The rules catalogue is the closed
+        # enumeration of 10 LLM-API anti-pattern kinds (W415 + W415b);
+        # per-finding severity drives the SARIF level (critical -> error,
+        # warning -> warning, info -> note) via the canonical _to_level
+        # mapping. The findings list shape matches the envelope's
+        # ``findings`` projection — ``file`` (not ``file_path``), ``kind``,
+        # ``line``, ``severity``, ``snippet`` — so the projection stays
+        # consistent with the JSON consumer.
+        if sarif_mode:
+            from roam.output.sarif import llm_smells_to_sarif, write_sarif
+
+            sarif_findings = [
+                {
+                    "kind": rec["kind"],
+                    "file": rec["file_path"],
+                    "line": rec["line"],
+                    "severity": _PATTERN_SEVERITY.get(rec["kind"], "warning"),
+                    "confidence": _llm_smell_tier(rec["kind"]),
+                    "snippet": rec.get("snippet", ""),
+                }
+                for rec in filtered_records
+            ]
+            click.echo(write_sarif(llm_smells_to_sarif(sarif_findings)))
+            return
 
         # JSON output
         if json_mode:
@@ -1119,10 +1116,7 @@ def llm_smells(ctx, min_severity, persist):
         ]
         click.echo(format_table(headers, rows))
         click.echo()
-        click.echo(
-            f"  {total_findings} findings in {len(llm_files)} LLM files "
-            f"(scanned {files_scanned} files total)"
-        )
+        click.echo(f"  {total_findings} findings in {len(llm_files)} LLM files (scanned {files_scanned} files total)")
 
         if filtered_records:
             click.echo()
@@ -1130,12 +1124,9 @@ def llm_smells(ctx, min_severity, persist):
             for rec in filtered_records[:20]:
                 sev = _PATTERN_SEVERITY.get(rec["kind"], "warning")
                 click.echo(
-                    f"    [{sev}] {rec['file_path']}:{rec['line']} -- "
-                    f"{_PATTERN_LABELS.get(rec['kind'], rec['kind'])}"
+                    f"    [{sev}] {rec['file_path']}:{rec['line']} -- {_PATTERN_LABELS.get(rec['kind'], rec['kind'])}"
                 )
             if len(filtered_records) > 20:
                 click.echo(f"    ... and {len(filtered_records) - 20} more")
             click.echo()
-            click.echo(
-                "  Next: roam findings list --detector llm-smells"
-            )
+            click.echo("  Next: roam findings list --detector llm-smells")

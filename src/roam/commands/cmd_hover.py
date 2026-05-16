@@ -6,6 +6,12 @@ context`` returns a full briefing (signature, callers, related files,
 tests, model fields, etc.), ``roam hover`` returns the minimum useful
 gloss: kind, qualified name, location, blast-radius bucket, top
 caller, top callee. Pairs with a hover-on-symbol IDE plugin.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because hover outputs are invocation-scoped hover summaries —
+not per-location violations. Editor consumers should use the JSON
+envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -15,7 +21,13 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 
 
 def _blast_bucket(in_degree: int) -> str:
@@ -95,8 +107,31 @@ def hover(ctx, symbol: str):
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, symbol)
         if sym is None:
-            click.echo(symbol_not_found(conn, symbol, json_mode=json_mode))
-            raise SystemExit(1)
+            # W1272 — Pattern-2c Convention (c): unresolved exits 0 with a
+            # resolution=unresolved + partial_success disclosure. A
+            # hover summary on a missing symbol is "I tried and there's
+            # nothing to summarise" (a valid no-op success), not a tool
+            # failure. Keep the FTS suggestion list in text mode.
+            unresolved_block = resolution_disclosure("unresolved", target=symbol or "")
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "hover",
+                            summary={
+                                "verdict": f"Symbol '{symbol}' not found",
+                                "partial_success": True,
+                                "state": "not_found",
+                                **unresolved_block,
+                            },
+                            symbol=symbol or "",
+                            **unresolved_block,
+                        )
+                    )
+                )
+            else:
+                click.echo(symbol_not_found(conn, symbol, json_mode=False))
+            return
         sym_id = sym["id"]
 
         metrics = conn.execute(
@@ -115,13 +150,22 @@ def hover(ctx, symbol: str):
     file_loc = loc(sym["file_path"], sym["line_start"])
     kind_short = abbrev_kind(sym["kind"])
 
+    # W1245 Pattern-2 variant-D: disclose which resolver tier matched so
+    # IDE consumers reading the hover envelope can distinguish an exact
+    # match from a fuzzy-LIKE-fallback that landed on a different symbol.
+    resolution_tier = sym.get("_resolution_tier", "symbol")
+    resolution_block = resolution_disclosure(resolution_tier, target=qn)
+    fuzzy_suffix = " [fuzzy resolution]" if resolution_tier != "symbol" else ""
+
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "hover",
                     summary={
-                        "verdict": (f"{kind_short} {qn} — {bucket} blast radius ({in_d} in, {out_d} out)"),
+                        "verdict": (
+                            f"{kind_short} {qn} — {bucket} blast radius ({in_d} in, {out_d} out){fuzzy_suffix}"
+                        ),
                         "kind": sym["kind"],
                         "qualified_name": qn,
                         "file_path": sym["file_path"],
@@ -130,9 +174,12 @@ def hover(ctx, symbol: str):
                         "out_degree": out_d,
                         "pagerank": round(pr, 6),
                         "blast_bucket": bucket,
+                        # W1245 Pattern-2 variant-D resolution disclosure.
+                        **resolution_block,
                     },
                     top_caller=top_caller,
                     top_callee=top_callee,
+                    **resolution_block,
                 )
             )
         )

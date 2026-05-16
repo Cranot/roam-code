@@ -22,7 +22,6 @@ from roam.evidence import (
     collect_change_evidence,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures (inline - tiny dicts, no need for conftest)
 # ---------------------------------------------------------------------------
@@ -179,12 +178,8 @@ def test_unknown_field_emits_warning() -> None:
     assert isinstance(packet, ChangeEvidence)
     # And both unknown fields are surfaced as warnings.
     joined = " | ".join(warnings)
-    assert "experimental_signature" in joined, (
-        f"expected experimental_signature in warnings, got: {warnings}"
-    )
-    assert "unknown_xyz" in joined, (
-        f"expected unknown_xyz in warnings, got: {warnings}"
-    )
+    assert "experimental_signature" in joined, f"expected experimental_signature in warnings, got: {warnings}"
+    assert "unknown_xyz" in joined, f"expected unknown_xyz in warnings, got: {warnings}"
 
 
 # ---------------------------------------------------------------------------
@@ -196,9 +191,7 @@ def test_redactions_merge_and_validate() -> None:
     """packet.redactions contains the union of all input redactions."""
     bundle = _minimal_pr_bundle()
     bundle["redactions"] = ["secret", "pii"]
-    findings_env = _findings_envelope(
-        {"finding_id_str": "x:1", "source_detector": "x", "claim": "y"}
-    )
+    findings_env = _findings_envelope({"finding_id_str": "x:1", "source_detector": "x", "claim": "y"})
     findings_env["redactions"] = ["pii", "policy"]  # 'pii' is duplicate
     packet, warnings = collect_change_evidence(
         pr_bundle_envelope=bundle,
@@ -210,6 +203,7 @@ def test_redactions_merge_and_validate() -> None:
     assert set(packet.redactions) == {"secret", "pii", "policy"}
     # And every reason is in the closed enumeration
     from roam.evidence import REDACTION_REASONS
+
     assert all(r in REDACTION_REASONS for r in packet.redactions)
 
 
@@ -372,12 +366,9 @@ def test_changed_subjects_built_from_affected_symbols() -> None:
 def test_run_events_fill_started_completed_when_pr_bundle_lacks_them() -> None:
     """run_events provide started_at / completed_at and run_ids on a bare packet."""
     events = [
-        {"ts": "2026-05-13T10:05:00Z", "seq": 1, "run_id": "run_20260513_b",
-         "action": "preflight"},
-        {"ts": "2026-05-13T10:00:00Z", "seq": 2, "run_id": "run_20260513_b",
-         "action": "impact"},
-        {"ts": "2026-05-13T10:15:00Z", "seq": 3, "run_id": "run_20260513_b",
-         "action": "critique"},
+        {"ts": "2026-05-13T10:05:00Z", "seq": 1, "run_id": "run_20260513_b", "action": "preflight"},
+        {"ts": "2026-05-13T10:00:00Z", "seq": 2, "run_id": "run_20260513_b", "action": "impact"},
+        {"ts": "2026-05-13T10:15:00Z", "seq": 3, "run_id": "run_20260513_b", "action": "critique"},
     ]
     packet, _ = collect_change_evidence(run_events=events)
     assert packet.started_at == "2026-05-13T10:00:00Z"
@@ -397,15 +388,12 @@ def test_audit_trail_envelope_promotes_to_artifact_w195() -> None:
     """
     audit = {
         "command": "audit-trail",
-        "summary": {"verdict": "5 events in chain", "chain_valid": True,
-                    "total_records": 5},
+        "summary": {"verdict": "5 events in chain", "chain_valid": True, "total_records": 5},
         "events": [{"seq": 1}, {"seq": 2}],
     }
     packet, warnings = collect_change_evidence(audit_trail_envelope=audit)
     # No synthetic finding row from the W176 stop-gap.
-    assert not any(
-        f.get("source_detector") == "audit-trail" for f in packet.findings
-    )
+    assert not any(f.get("source_detector") == "audit-trail" for f in packet.findings)
     # No "folded" warning - that was the W176-era contract.
     assert not any("folded" in w for w in warnings)
     # The envelope DOES still produce an artifact (W195 promotion).
@@ -525,12 +513,24 @@ def test_collector_reads_actor_block() -> None:
 
 
 _CI_ENV_VARS_TO_SCRUB: tuple[str, ...] = (
-    "GITHUB_ACTIONS", "GITHUB_RUN_ID", "GITHUB_ACTOR",
-    "GITLAB_CI", "CI_JOB_ID", "GITLAB_USER_LOGIN",
-    "BUILDKITE", "BUILDKITE_BUILD_ID", "BUILDKITE_BUILD_AUTHOR_EMAIL",
-    "CIRCLECI", "CIRCLE_BUILD_NUM", "CIRCLE_USERNAME",
-    "JENKINS_URL", "BUILD_TAG", "BUILD_USER_ID",
-    "TF_BUILD", "BUILD_BUILDID", "BUILD_REQUESTEDFOREMAIL",
+    "GITHUB_ACTIONS",
+    "GITHUB_RUN_ID",
+    "GITHUB_ACTOR",
+    "GITLAB_CI",
+    "CI_JOB_ID",
+    "GITLAB_USER_LOGIN",
+    "BUILDKITE",
+    "BUILDKITE_BUILD_ID",
+    "BUILDKITE_BUILD_AUTHOR_EMAIL",
+    "CIRCLECI",
+    "CIRCLE_BUILD_NUM",
+    "CIRCLE_USERNAME",
+    "JENKINS_URL",
+    "BUILD_TAG",
+    "BUILD_USER_ID",
+    "TF_BUILD",
+    "BUILD_BUILDID",
+    "BUILD_REQUESTEDFOREMAIL",
     "CI",
 )
 
@@ -570,8 +570,7 @@ def test_collector_emits_actor_ref_from_pr_bundle_actor_block(monkeypatch) -> No
     assert ("human", "alice@example.com") in pairs
     assert ("mcp_client", "mcp:cursor-1.42") in pairs
     assert ("tool", "roam_preflight") in pairs
-    assert ("ci_runner",
-            "github.com/owner/repo/actions/runs/123") in pairs
+    assert ("ci_runner", "github.com/owner/repo/actions/runs/123") in pairs
 
 
 def test_collector_dedupes_actor_refs_by_kind_and_id(monkeypatch) -> None:
@@ -586,19 +585,15 @@ def test_collector_dedupes_actor_refs_by_kind_and_id(monkeypatch) -> None:
         "agent_id": same,  # legacy top-level fallback
     }
     run_events = [
-        {"ts": "2026-05-13T10:00:00Z", "seq": 1, "agent": same,
-         "action": "preflight"},
-        {"ts": "2026-05-13T10:05:00Z", "seq": 2, "agent": same,
-         "action": "impact"},
+        {"ts": "2026-05-13T10:00:00Z", "seq": 1, "agent": same, "action": "preflight"},
+        {"ts": "2026-05-13T10:05:00Z", "seq": 2, "agent": same, "action": "impact"},
     ]
     packet, _ = collect_change_evidence(
         pr_bundle_envelope=bundle,
         run_events=run_events,
     )
     agent_refs = [r for r in packet.actor_refs if r.actor_kind == "agent"]
-    assert len(agent_refs) == 1, (
-        f"expected exactly one agent ActorRef after dedup, got {agent_refs}"
-    )
+    assert len(agent_refs) == 1, f"expected exactly one agent ActorRef after dedup, got {agent_refs}"
     assert agent_refs[0].actor_id == same
 
 
@@ -636,6 +631,7 @@ def test_pr_bundle_actor_ref_trust_tier_self_reported_in_local_dev(
     # Point git-config probing at /dev/null so the host machine's git
     # email doesn't accidentally satisfy the git_author tier.
     import os as _os
+
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", _os.devnull)
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", _os.devnull)
     bundle = {
@@ -652,24 +648,26 @@ def test_pr_bundle_actor_ref_trust_tier_self_reported_in_local_dev(
     )
 
 
-def test_pr_bundle_actor_ref_trust_tier_git_author_when_email_matches(
-    monkeypatch, tmp_path
-) -> None:
+def test_pr_bundle_actor_ref_trust_tier_git_author_when_email_matches(monkeypatch, tmp_path) -> None:
     """``actor.human_actor`` matches git_email -> git_author."""
     _scrub_ci_env(monkeypatch)
     # Pin git config to a known email by running ``git init`` in a
     # tmp dir and configuring it. ``git config`` is read at classify
     # time via the local resolver.
     import subprocess
+
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run(
         ["git", "config", "user.email", "alice@example.com"],
-        cwd=repo, check=True,
+        cwd=repo,
+        check=True,
     )
     subprocess.run(
-        ["git", "config", "user.name", "Alice"], cwd=repo, check=True,
+        ["git", "config", "user.name", "Alice"],
+        cwd=repo,
+        check=True,
     )
     monkeypatch.chdir(repo)
 
@@ -682,9 +680,7 @@ def test_pr_bundle_actor_ref_trust_tier_git_author_when_email_matches(
     human_refs = [r for r in packet.actor_refs if r.actor_kind == "human"]
     assert len(human_refs) == 1
     assert human_refs[0].actor_id == "alice@example.com"
-    assert human_refs[0].trust_tier == "git_author", (
-        f"expected git_author tier, got {human_refs[0].trust_tier!r}"
-    )
+    assert human_refs[0].trust_tier == "git_author", f"expected git_author tier, got {human_refs[0].trust_tier!r}"
 
 
 def test_pr_bundle_actor_ref_trust_tier_verified_ci_on_github_actions(
@@ -703,9 +699,7 @@ def test_pr_bundle_actor_ref_trust_tier_verified_ci_on_github_actions(
     packet, _ = collect_change_evidence(pr_bundle_envelope=bundle)
     human_refs = [r for r in packet.actor_refs if r.actor_kind == "human"]
     assert len(human_refs) == 1
-    assert human_refs[0].trust_tier == "verified_ci", (
-        f"expected verified_ci tier, got {human_refs[0].trust_tier!r}"
-    )
+    assert human_refs[0].trust_tier == "verified_ci", f"expected verified_ci tier, got {human_refs[0].trust_tier!r}"
 
 
 def test_pr_bundle_actor_ref_trust_tier_unknown_for_uncorroborated_human(
@@ -714,6 +708,7 @@ def test_pr_bundle_actor_ref_trust_tier_unknown_for_uncorroborated_human(
     """Human actor with no CI + no git match -> unknown (NOT self_reported)."""
     _scrub_ci_env(monkeypatch)
     import os as _os
+
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", _os.devnull)
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", _os.devnull)
     bundle = {
@@ -745,13 +740,15 @@ def _scrub_w285_signals(monkeypatch) -> None:
     """Scrub CI env + git config so the only corroboration sources are
     the .roam/runs/ + .roam/mcp_receipts/ artefacts the test creates."""
     import os as _os
+
     _scrub_ci_env(monkeypatch)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", _os.devnull)
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", _os.devnull)
 
 
 def test_collector_promotes_tool_actor_to_local_env_when_run_ledger_corroborates(
-    monkeypatch, tmp_path,
+    monkeypatch,
+    tmp_path,
 ) -> None:
     """A real HMAC-verified TOOL_USED event promotes roam_init to local_env.
 
@@ -782,13 +779,13 @@ def test_collector_promotes_tool_actor_to_local_env_when_run_ledger_corroborates
     assert len(tool_refs) == 1
     assert tool_refs[0].actor_id == "roam_init"
     assert tool_refs[0].trust_tier == "local_env", (
-        f"expected local_env after HMAC-verified ledger corroboration; "
-        f"got {tool_refs[0].trust_tier!r}"
+        f"expected local_env after HMAC-verified ledger corroboration; got {tool_refs[0].trust_tier!r}"
     )
 
 
 def test_collector_keeps_tool_actor_unknown_without_corroboration(
-    monkeypatch, tmp_path,
+    monkeypatch,
+    tmp_path,
 ) -> None:
     """No .roam/runs/ + no MCP receipts -> tool actor stays unknown.
 
@@ -819,7 +816,8 @@ def test_collector_keeps_tool_actor_unknown_without_corroboration(
 
 
 def test_collector_promotes_actor_via_mcp_receipt_corroboration(
-    monkeypatch, tmp_path,
+    monkeypatch,
+    tmp_path,
 ) -> None:
     """A parseable MCP receipt promotes its tool/actor refs to local_env.
 
@@ -839,13 +837,18 @@ def test_collector_promotes_actor_via_mcp_receipt_corroboration(
     receipts_dir = repo_root / ".roam" / "mcp_receipts" / "run_x"
     receipts_dir.mkdir(parents=True)
     receipt_path = receipts_dir / "001.json"
-    receipt_path.write_text(_json.dumps({
-        "tool_call": "call_001",
-        "client_id": "mcp:cursor-1.42",
-        "tool_name": "roam_pr_replay",
-        "actor_ref_id": "agent:foo",
-        "policy_decision": "allow",
-    }), encoding="utf-8")
+    receipt_path.write_text(
+        _json.dumps(
+            {
+                "tool_call": "call_001",
+                "client_id": "mcp:cursor-1.42",
+                "tool_name": "roam_pr_replay",
+                "actor_ref_id": "agent:foo",
+                "policy_decision": "allow",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     # The collector accepts the receipts dir explicitly; no pr-bundle
     # actor block is needed - the receipts ARE the actor source.
@@ -864,8 +867,7 @@ def test_collector_promotes_actor_via_mcp_receipt_corroboration(
     )
     assert ("mcp_client", "mcp:cursor-1.42") in by_kind
     assert by_kind[("mcp_client", "mcp:cursor-1.42")] == "local_env", (
-        f"expected mcp_client ref local_env; "
-        f"got {by_kind[('mcp_client', 'mcp:cursor-1.42')]!r}"
+        f"expected mcp_client ref local_env; got {by_kind[('mcp_client', 'mcp:cursor-1.42')]!r}"
     )
 
 
@@ -955,8 +957,7 @@ def test_collector_emits_authority_refs_for_permits_leases_rules(monkeypatch) ->
         "permits": [{"permit_id": "perm_20260513_a3f9c2"}],
         "leases": ["lease_42"],
         "rules_passed": [{"rule_id": "no-secret-in-diff"}],
-        "approvals": [{"approval_id": "pr_42_review_1",
-                       "approver": "bob@example.com"}],
+        "approvals": [{"approval_id": "pr_42_review_1", "approver": "bob@example.com"}],
     }
     packet, warnings = collect_change_evidence(pr_bundle_envelope=bundle)
     assert warnings == [], f"unexpected warnings: {warnings}"
@@ -969,9 +970,7 @@ def test_collector_emits_authority_refs_for_permits_leases_rules(monkeypatch) ->
     assert ("approval", "pr_42_review_1") in pairs
 
     # The approval ref preserves granted_by.
-    approval_ref = next(
-        r for r in packet.authority_refs if r.authority_kind == "approval"
-    )
+    approval_ref = next(r for r in packet.authority_refs if r.authority_kind == "approval")
     assert approval_ref.granted_by == "bob@example.com"
 
 
@@ -1002,9 +1001,7 @@ def test_collector_builds_permit_authority_refs_from_envelope(
     packet, warnings = collect_change_evidence(pr_bundle_envelope=bundle)
     assert warnings == [], f"unexpected warnings: {warnings}"
 
-    permit_refs = [
-        r for r in packet.authority_refs if r.authority_kind == "permit"
-    ]
+    permit_refs = [r for r in packet.authority_refs if r.authority_kind == "permit"]
     permit_ids = {r.authority_id for r in permit_refs}
     assert "perm_20260514_w268a" in permit_ids
     assert "perm_20260514_w268b" in permit_ids
@@ -1040,9 +1037,7 @@ def test_collector_builds_lease_authority_refs_from_envelope(
     packet, warnings = collect_change_evidence(pr_bundle_envelope=bundle)
     assert warnings == [], f"unexpected warnings: {warnings}"
 
-    lease_refs = [
-        r for r in packet.authority_refs if r.authority_kind == "lease"
-    ]
+    lease_refs = [r for r in packet.authority_refs if r.authority_kind == "lease"]
     lease_ids = {r.authority_id for r in lease_refs}
     assert "lease_20260514_w268a" in lease_ids
     assert "lease_20260514_w268b" in lease_ids
@@ -1071,8 +1066,7 @@ def test_collector_local_run_fallback_when_no_ci(monkeypatch) -> None:
     packet, _ = collect_change_evidence(
         commit_sha="abc1234",
     )
-    local_refs = [r for r in packet.environment_refs
-                  if r.env_kind == "local_run"]
+    local_refs = [r for r in packet.environment_refs if r.env_kind == "local_run"]
     assert len(local_refs) == 1
     # env_id is a non-empty string (the hostname, or the "local" fallback).
     assert isinstance(local_refs[0].env_id, str)
@@ -1143,9 +1137,7 @@ def test_collector_warns_on_unknown_rules_envelope_field() -> None:
     }
     packet, warnings = collect_change_evidence(rules_envelopes=[rules_env])
     joined = " | ".join(warnings)
-    assert "future_field_we_dont_know_yet" in joined, (
-        f"expected drift warning, got: {warnings}"
-    )
+    assert "future_field_we_dont_know_yet" in joined, f"expected drift warning, got: {warnings}"
     # Row still ingested despite the warning - collector stays forgiving.
     rule_ids = {d["rule_id"] for d in packet.policy_decisions}
     assert "rogue-rule" in rule_ids
@@ -1182,9 +1174,7 @@ def test_collector_flattens_vuln_reach_envelope_to_findings_and_artifact() -> No
     }
     packet, warnings = collect_change_evidence(vuln_reach_envelopes=[vuln_env])
     assert warnings == [], f"unexpected warnings: {warnings}"
-    vuln_findings = [
-        f for f in packet.findings if f.get("source_detector") == "vuln-reach"
-    ]
+    vuln_findings = [f for f in packet.findings if f.get("source_detector") == "vuln-reach"]
     assert len(vuln_findings) == 2
     cves = {f["cve"] for f in vuln_findings}
     assert cves == {"CVE-2025-0001", "CVE-2025-0002"}
@@ -1202,8 +1192,7 @@ def test_collector_flattens_test_impact_envelope_to_tests_required_and_tests_run
     """test-impact tests[] -> tests_required; tests_run[] -> tests_run."""
     ti_env = {
         "command": "test-impact",
-        "summary": {"verdict": "3 test file(s) reachable from 2 changed file(s)",
-                    "count": 3},
+        "summary": {"verdict": "3 test file(s) reachable from 2 changed file(s)", "count": 3},
         "changed_files": ["src/upload.py", "src/retry.py"],
         "tests": [
             {"file": "tests/test_upload.py", "reach_count": 4},
@@ -1315,9 +1304,7 @@ def test_collector_promotes_audit_trail_to_artifact_not_synthetic_finding() -> N
     }
     packet, warnings = collect_change_evidence(audit_trail_envelope=audit_env)
     # No synthetic "audit-trail" finding row anymore.
-    assert not any(
-        f.get("source_detector") == "audit-trail" for f in packet.findings
-    )
+    assert not any(f.get("source_detector") == "audit-trail" for f in packet.findings)
     # No legacy "folded" warning - the W176 path is gone.
     assert not any("folded" in w for w in warnings)
     # The new path emits a manifest artifact with the run_id encoded.
@@ -1357,19 +1344,13 @@ def test_collector_extracts_audit_trail_chain_status_to_policy_decisions() -> No
     }
     packet, warnings = collect_change_evidence(audit_trail_envelope=audit_env)
     assert not any("folded" in w for w in warnings)
-    chain_decisions = [
-        d for d in packet.policy_decisions
-        if d.get("rule_id") == "audit_trail_chain_integrity"
-    ]
+    chain_decisions = [d for d in packet.policy_decisions if d.get("rule_id") == "audit_trail_chain_integrity"]
     # Expect: 1 overall "fail" verdict + 2 per-entry fails = 3 decisions.
     assert len(chain_decisions) == 3
     fail_decisions = [d for d in chain_decisions if d.get("decision") == "fail"]
     assert len(fail_decisions) == 3  # overall + 2 per-entry
     # The per-entry rows carry entry_index from the source `line` field.
-    entry_indices = {
-        d.get("entry_index") for d in fail_decisions
-        if "entry_index" in d
-    }
+    entry_indices = {d.get("entry_index") for d in fail_decisions if "entry_index" in d}
     assert entry_indices == {3, 4}
 
 
@@ -1379,6 +1360,7 @@ def test_collector_extracts_audit_trail_chain_status_to_policy_decisions() -> No
 def _write_receipt(path, **fields) -> None:
     """Helper - serialise an McpDecisionReceipt-shaped dict to disk."""
     import json as _json
+
     defaults = {
         "tool_call": "tc_001",
         "client_id": "mcp:cursor-1.42",
@@ -1415,10 +1397,7 @@ def test_collector_reads_mcp_receipts_dir_and_appends_artifacts(tmp_path) -> Non
     packet, warnings = collect_change_evidence(mcp_receipts_dir=receipts_dir)
     assert warnings == [], f"unexpected warnings: {warnings}"
     # Two artifacts, both kind="other" with receipt_kind in extra.
-    receipt_arts = [
-        a for a in packet.artifacts
-        if a.kind == "other" and a.extra.get("receipt_kind") == "mcp_receipt"
-    ]
+    receipt_arts = [a for a in packet.artifacts if a.kind == "other" and a.extra.get("receipt_kind") == "mcp_receipt"]
     assert len(receipt_arts) == 2
     ids = {a.artifact_id for a in receipt_arts}
     assert ids == {"mcp_receipt:tc_001", "mcp_receipt:tc_002"}
@@ -1443,7 +1422,7 @@ def test_collector_dedupes_mcp_client_and_tool_actor_refs_from_receipts(tmp_path
         receipts_dir / "tc_002.json",
         tool_call="tc_002",
         client_id="mcp:cursor-1.42",  # same client
-        tool_name="roam_preflight",   # same tool
+        tool_name="roam_preflight",  # same tool
     )
     packet, warnings = collect_change_evidence(mcp_receipts_dir=receipts_dir)
     assert warnings == [], f"unexpected warnings: {warnings}"
@@ -1464,9 +1443,7 @@ def test_collector_skips_malformed_receipt_json_with_warning(tmp_path) -> None:
         tool_name="roam_impact",
     )
     # Bad receipt - not valid JSON.
-    (receipts_dir / "tc_bad.json").write_text(
-        "{not valid json", encoding="utf-8"
-    )
+    (receipts_dir / "tc_bad.json").write_text("{not valid json", encoding="utf-8")
     packet, warnings = collect_change_evidence(mcp_receipts_dir=receipts_dir)
     joined = " | ".join(warnings)
     assert "tc_bad.json" in joined, f"expected malformed-JSON warning: {warnings}"
@@ -1481,9 +1458,7 @@ def test_collector_returns_empty_artifacts_when_mcp_receipts_dir_missing(tmp_pat
     missing = tmp_path / "does" / "not" / "exist"
     packet, warnings = collect_change_evidence(mcp_receipts_dir=missing)
     assert warnings == [], f"unexpected warnings: {warnings}"
-    assert not any(
-        a.extra.get("receipt_kind") == "mcp_receipt" for a in packet.artifacts
-    )
+    assert not any(a.extra.get("receipt_kind") == "mcp_receipt" for a in packet.artifacts)
 
 
 # ---------------------------------------------------------------------------
@@ -1535,9 +1510,7 @@ def test_findings_envelope_drops_unsafe_keys() -> None:
     packet, _warnings = collect_change_evidence(critique_envelope=critique)
     canonical = packet.to_canonical_json()
     # The credential substring should NEVER appear in canonical JSON.
-    assert "p@ssw0rd!" not in canonical, (
-        f"finding row's snippet leaked into canonical JSON: {canonical!r}"
-    )
+    assert "p@ssw0rd!" not in canonical, f"finding row's snippet leaked into canonical JSON: {canonical!r}"
     # And the free-form keys themselves dropped from every row.
     for row in packet.findings:
         assert "snippet" not in row, f"snippet survived in row: {row}"
@@ -1565,21 +1538,13 @@ def test_findings_claim_scrubs_secrets() -> None:
     }
     packet, _warnings = collect_change_evidence(findings_envelopes=[findings_env])
     canonical = packet.to_canonical_json()
-    assert pat not in canonical, (
-        "GitHub PAT survived in finding.claim - layer-2 scrubber failed"
-    )
+    assert pat not in canonical, "GitHub PAT survived in finding.claim - layer-2 scrubber failed"
     assert len(packet.findings) == 1
     row = packet.findings[0]
-    assert "[REDACTED]" in row["claim"], (
-        f"claim was not redacted: {row['claim']!r}"
-    )
+    assert "[REDACTED]" in row["claim"], f"claim was not redacted: {row['claim']!r}"
     redactions = row.get("redactions")
-    assert isinstance(redactions, (list, tuple)), (
-        f"row should carry redactions trail: {row}"
-    )
-    assert "secret" in redactions, (
-        f"row redactions missing 'secret' stamp: {redactions}"
-    )
+    assert isinstance(redactions, (list, tuple)), f"row should carry redactions trail: {row}"
+    assert "secret" in redactions, f"row redactions missing 'secret' stamp: {redactions}"
 
 
 def test_vuln_reach_whitelist_drops_description() -> None:
@@ -1609,19 +1574,16 @@ def test_vuln_reach_whitelist_drops_description() -> None:
     }
     packet, _warnings = collect_change_evidence(vuln_reach_envelopes=[vuln_env])
     canonical = packet.to_canonical_json()
-    assert prompt not in canonical, (
-        f"prompt leaked through vuln-reach raw_envelope inline: {canonical!r}"
-    )
+    assert prompt not in canonical, f"prompt leaked through vuln-reach raw_envelope inline: {canonical!r}"
     # Find the raw_envelope artifact and check its body parses to JSON
     # without the description / message / snippet keys on the row.
     raw_arts = [a for a in packet.artifacts if a.kind == "raw_envelope"]
     assert raw_arts, "expected at least one raw_envelope artifact"
     import json as _json
+
     body = _json.loads(raw_arts[0].content_inline)
     for row in body.get("vulnerabilities", []):
-        assert "description" not in row, (
-            f"description survived in inlined vuln row: {row}"
-        )
+        assert "description" not in row, f"description survived in inlined vuln row: {row}"
         assert "message" not in row, f"message survived: {row}"
         assert "snippet" not in row, f"snippet survived: {row}"
 
@@ -1641,8 +1603,7 @@ def test_vuln_reach_artifact_has_schema_strict_redaction() -> None:
     raw_arts = [a for a in packet.artifacts if a.kind == "raw_envelope"]
     assert raw_arts, "expected one raw_envelope artifact"
     assert "schema_strict" in raw_arts[0].redactions, (
-        f"raw_envelope artifact missing schema_strict in redactions: "
-        f"{raw_arts[0].redactions}"
+        f"raw_envelope artifact missing schema_strict in redactions: {raw_arts[0].redactions}"
     )
 
 
@@ -1679,12 +1640,9 @@ def test_cga_envelope_rejects_home_user_path() -> None:
     cga_arts = [a for a in packet.artifacts if a.kind == "cga_predicate"]
     assert len(cga_arts) == 1
     art = cga_arts[0]
-    assert art.path is None, (
-        f"suspicious path should have been redacted: {art.path!r}"
-    )
+    assert art.path is None, f"suspicious path should have been redacted: {art.path!r}"
     assert "machine_local_path" in art.redactions, (
-        f"artifact should carry machine_local_path redaction: "
-        f"{art.redactions}"
+        f"artifact should carry machine_local_path redaction: {art.redactions}"
     )
 
 
@@ -1726,9 +1684,7 @@ def test_cga_envelope_accepts_repo_relative_path(monkeypatch) -> None:
     assert len(cga_arts) == 1
     art = cga_arts[0]
     # Path preserved because it's not in the suspicious prefix set.
-    assert art.path == benign_path, (
-        f"benign path should be preserved on the artifact: {art.path!r}"
-    )
+    assert art.path == benign_path, f"benign path should be preserved on the artifact: {art.path!r}"
     assert "machine_local_path" not in art.redactions, (
         f"benign path should NOT carry machine_local_path: {art.redactions}"
     )
@@ -1763,21 +1719,14 @@ def test_pr_bundle_verdict_with_pat_scrubbed_at_collector() -> None:
     packet, _warnings = collect_change_evidence(pr_bundle_envelope=bundle)
     canonical = packet.to_canonical_json()
 
-    assert pat not in canonical, (
-        f"GitHub PAT survived collector-side scrub of pr-bundle verdict: "
-        f"{canonical!r}"
-    )
+    assert pat not in canonical, f"GitHub PAT survived collector-side scrub of pr-bundle verdict: {canonical!r}"
     assert packet.verdict is not None
-    assert "[REDACTED]" in packet.verdict, (
-        f"verdict was not redacted at collector: {packet.verdict!r}"
-    )
+    assert "[REDACTED]" in packet.verdict, f"verdict was not redacted at collector: {packet.verdict!r}"
     assert "leaked " in packet.verdict, (
-        f"verdict context should survive, only the PAT should be masked: "
-        f"{packet.verdict!r}"
+        f"verdict context should survive, only the PAT should be masked: {packet.verdict!r}"
     )
     assert "secret" in packet.redactions, (
-        f"packet.redactions should record the layer-2 scrub firing: "
-        f"{packet.redactions}"
+        f"packet.redactions should record the layer-2 scrub firing: {packet.redactions}"
     )
 
 
@@ -1792,11 +1741,7 @@ def test_pr_bundle_actor_human_actor_with_jwt_scrubbed() -> None:
     verbatim) and the ``_build_actor_refs`` helper re-scrubs at the
     ActorRef boundary as a defense-in-depth layer.
     """
-    jwt = (
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-        ".eyJzdWIiOiIxMjM0NTY3ODkwIn0"
-        ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
-    )
+    jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
     bundle = {
         "command": "pr-bundle",
         "schema": "roam-envelope-v1",
@@ -1813,32 +1758,17 @@ def test_pr_bundle_actor_human_actor_with_jwt_scrubbed() -> None:
     packet, _warnings = collect_change_evidence(pr_bundle_envelope=bundle)
     canonical = packet.to_canonical_json()
 
-    assert jwt not in canonical, (
-        f"JWT survived collector-side scrub of pr-bundle actor.human_actor: "
-        f"{canonical!r}"
-    )
+    assert jwt not in canonical, f"JWT survived collector-side scrub of pr-bundle actor.human_actor: {canonical!r}"
     assert packet.human_actor is not None
-    assert "[REDACTED]" in packet.human_actor, (
-        f"human_actor was not redacted at collector: "
-        f"{packet.human_actor!r}"
-    )
+    assert "[REDACTED]" in packet.human_actor, f"human_actor was not redacted at collector: {packet.human_actor!r}"
     # ActorRef built by _build_actor_refs should likewise be scrubbed.
-    human_refs = [
-        r for r in packet.actor_refs if r.actor_kind == "human"
-    ]
-    assert human_refs, (
-        "expected at least one human ActorRef built from actor.human_actor"
-    )
+    human_refs = [r for r in packet.actor_refs if r.actor_kind == "human"]
+    assert human_refs, "expected at least one human ActorRef built from actor.human_actor"
     for ref in human_refs:
-        assert jwt not in ref.actor_id, (
-            f"ActorRef.actor_id leaked JWT: {ref.actor_id!r}"
-        )
-        assert "[REDACTED]" in ref.actor_id, (
-            f"ActorRef.actor_id was not redacted: {ref.actor_id!r}"
-        )
+        assert jwt not in ref.actor_id, f"ActorRef.actor_id leaked JWT: {ref.actor_id!r}"
+        assert "[REDACTED]" in ref.actor_id, f"ActorRef.actor_id was not redacted: {ref.actor_id!r}"
     assert "secret" in packet.redactions, (
-        f"packet.redactions should record the layer-2 scrub firing: "
-        f"{packet.redactions}"
+        f"packet.redactions should record the layer-2 scrub firing: {packet.redactions}"
     )
 
 

@@ -96,7 +96,6 @@ from typing import Any, Optional
 
 from roam.runs.ledger import latest_in_progress_run, log_event
 
-
 # W294 - closed-allowlist of authority-shaped event fields that callers
 # may stamp onto a run-ledger event via :func:`auto_log` 's
 # ``extra_event_fields`` kwarg. The set mirrors
@@ -112,16 +111,18 @@ from roam.runs.ledger import latest_in_progress_run, log_event
 # must never raise from a gate-command path); extending the whitelist
 # is a deliberate source-code edit, not a runtime hack. Keep this set
 # in sync with ``_RUN_LEDGER_AUTHORITY_FIELDS`` in the collector.
-_AUTHORITY_EVENT_FIELDS: frozenset[str] = frozenset({
-    "mode",
-    "active_mode",
-    "mode_to",
-    "mode_from",
-    "permit_id",
-    "lease_id",
-    "approval_id",
-    "rule_id",
-})
+_AUTHORITY_EVENT_FIELDS: frozenset[str] = frozenset(
+    {
+        "mode",
+        "active_mode",
+        "mode_to",
+        "mode_from",
+        "permit_id",
+        "lease_id",
+        "approval_id",
+        "rule_id",
+    }
+)
 
 
 def get_active_run_id(repo_root: Path) -> Optional[str]:

@@ -37,7 +37,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Shared empty-corpus fixture
 # ---------------------------------------------------------------------------
@@ -71,9 +70,7 @@ def _assert_empty_envelope(data, command):
           fact disclosing the empty corpus
     """
     assert isinstance(data, dict), f"Expected dict envelope, got {type(data)}"
-    assert data.get("command") == command, (
-        f"Expected command={command}, got {data.get('command')}"
-    )
+    assert data.get("command") == command, f"Expected command={command}, got {data.get('command')}"
 
     summary = data.get("summary")
     assert isinstance(summary, dict), f"Missing summary dict; got {summary}"
@@ -86,23 +83,20 @@ def _assert_empty_envelope(data, command):
     verdict_lc = verdict.lower()
     empty_markers = ("empty", "no symbol", "no function", "0 ", "found no", "pure or opaque")
     assert any(marker in verdict_lc for marker in empty_markers), (
-        f"{command} verdict failed Pattern-2 empty-state disclosure: "
-        f"{verdict!r} (expected one of {empty_markers})"
+        f"{command} verdict failed Pattern-2 empty-state disclosure: {verdict!r} (expected one of {empty_markers})"
     )
 
     # partial_success must signal degraded result so agents don't treat
     # "no findings" as "all clear".
     assert summary.get("partial_success") is True, (
-        f"{command} must set summary.partial_success=True on empty corpus; "
-        f"got {summary.get('partial_success')!r}"
+        f"{command} must set summary.partial_success=True on empty corpus; got {summary.get('partial_success')!r}"
     )
 
     # Agent contract: at least one fact must disclose the empty state.
     contract = data.get("agent_contract") or {}
     facts = contract.get("facts") or []
     assert isinstance(facts, list) and len(facts) >= 1, (
-        f"{command} agent_contract.facts must be a non-empty list on empty corpus; "
-        f"got {facts!r}"
+        f"{command} agent_contract.facts must be a non-empty list on empty corpus; got {facts!r}"
     )
     # At least one fact must speak to the empty state (a generic "scan
     # found no symbols/findings" line is fine; LAW 4 anchor terminals like
@@ -110,20 +104,15 @@ def _assert_empty_envelope(data, command):
     joined = " ".join(facts).lower()
     fact_markers = ("no symbol", "no function", "found no", "empty", "0 ", "no inputs")
     assert any(marker in joined for marker in fact_markers), (
-        f"{command} agent_contract.facts must disclose the empty state; "
-        f"got {facts!r}"
+        f"{command} agent_contract.facts must disclose the empty state; got {facts!r}"
     )
 
 
 def test_side_effects_empty_corpus(cli_runner, empty_corpus_project):
     """``roam side-effects --json`` on a zero-symbols corpus emits the
     Pattern-2 "no symbols" envelope, exit 0, partial_success=True."""
-    result = invoke_cli(
-        cli_runner, ["side-effects"], cwd=empty_corpus_project, json_mode=True
-    )
-    assert result.exit_code == 0, (
-        f"side-effects exit code != 0 on empty corpus: {result.exit_code}\n{result.output}"
-    )
+    result = invoke_cli(cli_runner, ["side-effects"], cwd=empty_corpus_project, json_mode=True)
+    assert result.exit_code == 0, f"side-effects exit code != 0 on empty corpus: {result.exit_code}\n{result.output}"
     data = parse_json_output(result, command="side-effects")
     _assert_empty_envelope(data, command="side-effects")
 
@@ -131,12 +120,8 @@ def test_side_effects_empty_corpus(cli_runner, empty_corpus_project):
 def test_idempotency_empty_corpus(cli_runner, empty_corpus_project):
     """``roam idempotency --json`` on a zero-symbols corpus emits the
     Pattern-2 "no symbols" envelope, exit 0, partial_success=True."""
-    result = invoke_cli(
-        cli_runner, ["idempotency"], cwd=empty_corpus_project, json_mode=True
-    )
-    assert result.exit_code == 0, (
-        f"idempotency exit code != 0 on empty corpus: {result.exit_code}\n{result.output}"
-    )
+    result = invoke_cli(cli_runner, ["idempotency"], cwd=empty_corpus_project, json_mode=True)
+    assert result.exit_code == 0, f"idempotency exit code != 0 on empty corpus: {result.exit_code}\n{result.output}"
     data = parse_json_output(result, command="idempotency")
     _assert_empty_envelope(data, command="idempotency")
 
@@ -144,12 +129,8 @@ def test_idempotency_empty_corpus(cli_runner, empty_corpus_project):
 def test_causal_graph_empty_corpus(cli_runner, empty_corpus_project):
     """``roam causal-graph --json`` on a zero-symbols corpus emits the
     Pattern-2 "no symbols" envelope, exit 0, partial_success=True."""
-    result = invoke_cli(
-        cli_runner, ["causal-graph"], cwd=empty_corpus_project, json_mode=True
-    )
-    assert result.exit_code == 0, (
-        f"causal-graph exit code != 0 on empty corpus: {result.exit_code}\n{result.output}"
-    )
+    result = invoke_cli(cli_runner, ["causal-graph"], cwd=empty_corpus_project, json_mode=True)
+    assert result.exit_code == 0, f"causal-graph exit code != 0 on empty corpus: {result.exit_code}\n{result.output}"
     data = parse_json_output(result, command="causal-graph")
     _assert_empty_envelope(data, command="causal-graph")
 
@@ -157,11 +138,7 @@ def test_causal_graph_empty_corpus(cli_runner, empty_corpus_project):
 def test_tx_boundaries_empty_corpus(cli_runner, empty_corpus_project):
     """``roam tx-boundaries --json`` on a zero-symbols corpus emits the
     Pattern-2 "no symbols" envelope, exit 0, partial_success=True."""
-    result = invoke_cli(
-        cli_runner, ["tx-boundaries"], cwd=empty_corpus_project, json_mode=True
-    )
-    assert result.exit_code == 0, (
-        f"tx-boundaries exit code != 0 on empty corpus: {result.exit_code}\n{result.output}"
-    )
+    result = invoke_cli(cli_runner, ["tx-boundaries"], cwd=empty_corpus_project, json_mode=True)
+    assert result.exit_code == 0, f"tx-boundaries exit code != 0 on empty corpus: {result.exit_code}\n{result.output}"
     data = parse_json_output(result, command="tx-boundaries")
     _assert_empty_envelope(data, command="tx-boundaries")

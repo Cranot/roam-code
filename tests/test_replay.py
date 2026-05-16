@@ -25,7 +25,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, invoke_cli, parse_json_output  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

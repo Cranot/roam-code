@@ -15,8 +15,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -31,7 +29,6 @@ from conftest import (  # noqa: E402
 )
 
 from roam.constitution.loader import (  # noqa: E402
-    VALID_GATES,
     Constitution,
     apply_constitution,
     check_constitution,
@@ -39,7 +36,6 @@ from roam.constitution.loader import (  # noqa: E402
     init_constitution,
     load_constitution,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -65,14 +61,10 @@ def rich_repo(tmp_path):
     (proj / ".gitignore").write_text(".roam/\n")
     (proj / "app.py").write_text("def main():\n    return 0\n")
     (proj / "AGENTS.md").write_text("# Agents\n\nBe helpful.\n")
-    (proj / "roam-laws.yml").write_text(
-        "version: 1\ngenerated_by: roam laws mine\nlaws: []\n"
-    )
+    (proj / "roam-laws.yml").write_text("version: 1\ngenerated_by: roam laws mine\nlaws: []\n")
     roam_dir = proj / ".roam"
     roam_dir.mkdir()
-    (roam_dir / "memory.jsonl").write_text(
-        '{"id":"x","kind":"fact","subject":"app","summary":"main returns 0"}\n'
-    )
+    (roam_dir / "memory.jsonl").write_text('{"id":"x","kind":"fact","subject":"app","summary":"main returns 0"}\n')
     rules_dir = roam_dir / "rules"
     rules_dir.mkdir()
     (rules_dir / "house.yml").write_text("version: 1\nrules: []\n")
@@ -141,9 +133,7 @@ def test_init_detects_existing_laws_yml(rich_repo):
     assert constitution.sources["laws"].endswith("roam-laws.yml")
     # Rules directory glob is also resolved.
     assert "rules" in constitution.sources
-    assert constitution.sources["rules"].endswith("/*.yml") or constitution.sources[
-        "rules"
-    ].endswith(".yml")
+    assert constitution.sources["rules"].endswith("/*.yml") or constitution.sources["rules"].endswith(".yml")
     # Memory file is detected.
     assert "memory" in constitution.sources
     assert constitution.sources["memory"].endswith("memory.jsonl")
@@ -176,8 +166,7 @@ def test_check_clean_constitution_returns_ok(rich_repo):
     report = check_constitution(rich_repo, constitution)
     # Every default required-check should be a known roam command.
     assert all(c.resolved for c in report.commands), (
-        f"unresolved required-checks: "
-        f"{[c.command for c in report.commands if not c.resolved]}"
+        f"unresolved required-checks: {[c.command for c in report.commands if not c.resolved]}"
     )
     # Every detected source should exist (we just wrote them).
     for s in report.sources:
@@ -314,9 +303,7 @@ def test_apply_strict_exits_5_on_failure(empty_repo, cli_runner):
         json_mode=True,
     )
     # The CLI should exit 5 due to --strict.
-    assert result.exit_code == 5, (
-        f"expected exit 5 from --strict; got {result.exit_code}\nOutput:\n{result.output}"
-    )
+    assert result.exit_code == 5, f"expected exit 5 from --strict; got {result.exit_code}\nOutput:\n{result.output}"
 
 
 def test_apply_strict_exits_5_with_injected_runner(empty_repo, monkeypatch, cli_runner):
@@ -364,8 +351,7 @@ def test_apply_strict_exits_5_with_injected_runner(empty_repo, monkeypatch, cli_
         json_mode=True,
     )
     assert result.exit_code == 5, (
-        f"expected exit 5 with injected failing runner; got {result.exit_code}\n"
-        f"Output:\n{result.output}"
+        f"expected exit 5 with injected failing runner; got {result.exit_code}\nOutput:\n{result.output}"
     )
 
 

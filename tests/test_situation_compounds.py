@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip(
-    "fastmcp", reason="MCP tool tests require fastmcp; mcp_server module won't import without it."
-)
+pytest.importorskip("fastmcp", reason="MCP tool tests require fastmcp; mcp_server module won't import without it.")
 
 from roam.mcp_server import (
     for_bug_fix,

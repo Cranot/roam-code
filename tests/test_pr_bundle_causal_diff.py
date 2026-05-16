@@ -82,9 +82,7 @@ def _rewrite_and_reindex(proj: Path, rel_path: str, new_content: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_add_affected_stores_causal_snapshot(
-    project_factory, cli_runner, monkeypatch
-):
+def test_add_affected_stores_causal_snapshot(project_factory, cli_runner, monkeypatch):
     """``add affected <writer>`` records a non-empty causal snapshot.
 
     The fixture is a single function with a clear param->io_write edge so
@@ -94,10 +92,7 @@ def test_add_affected_stores_causal_snapshot(
     proj = project_factory(
         {
             "src/writer.py": (
-                "from pathlib import Path\n"
-                "\n"
-                "def dump_state(path, content):\n"
-                "    Path(path).write_text(content)\n"
+                "from pathlib import Path\n\ndef dump_state(path, content):\n    Path(path).write_text(content)\n"
             ),
         }
     )
@@ -117,12 +112,7 @@ def test_add_affected_stores_causal_snapshot(
     edges = snap.get("edges") or []
     assert isinstance(edges, list)
     # At least one param->effect edge for dump_state's params.
-    p2e = [
-        e
-        for e in edges
-        if e.get("kind") == "param_to_effect"
-        and e.get("source", "").startswith("param:")
-    ]
+    p2e = [e for e in edges if e.get("kind") == "param_to_effect" and e.get("source", "").startswith("param:")]
     assert p2e, f"expected at least one param_to_effect edge in snapshot, got {edges}"
 
 
@@ -131,9 +121,7 @@ def test_add_affected_stores_causal_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def test_emit_detects_new_causal_edges(
-    project_factory, cli_runner, monkeypatch
-):
+def test_emit_detects_new_causal_edges(project_factory, cli_runner, monkeypatch):
     """When code grows a new io_write edge between add-time and emit-time,
     emit reports it in ``causal_diff_added`` and adds a risk.
 
@@ -145,12 +133,7 @@ def test_emit_detects_new_causal_edges(
     """
     proj = project_factory(
         {
-            "src/grow.py": (
-                "from pathlib import Path\n"
-                "\n"
-                "def maybe_save(path):\n"
-                "    return path\n"
-            ),
+            "src/grow.py": ("from pathlib import Path\n\ndef maybe_save(path):\n    return path\n"),
         }
     )
     _pin_branch(proj)
@@ -163,19 +146,15 @@ def test_emit_detects_new_causal_edges(
     rec = next(s for s in bundle["affected_symbols"] if s["name"] == "maybe_save")
     snap_edges = rec.get("causal_snapshot", {}).get("edges") or []
     # Sanity: the pure return-only fixture has no io_write edges yet.
-    assert not any(
-        "io_write" in (e.get("sink") or "") for e in snap_edges
-    ), f"unexpected io_write in initial snapshot: {snap_edges}"
+    assert not any("io_write" in (e.get("sink") or "") for e in snap_edges), (
+        f"unexpected io_write in initial snapshot: {snap_edges}"
+    )
 
     # Now rewrite the file to INTRODUCE an io_write path.
     _rewrite_and_reindex(
         proj,
         "src/grow.py",
-        "from pathlib import Path\n"
-        "\n"
-        "def maybe_save(path):\n"
-        "    Path(path).write_text('payload')\n"
-        "    return path\n",
+        "from pathlib import Path\n\ndef maybe_save(path):\n    Path(path).write_text('payload')\n    return path\n",
     )
 
     r = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
@@ -188,26 +167,16 @@ def test_emit_detects_new_causal_edges(
 
     # The bundle record stamps causal_diff_added on maybe_save.
     bundle2 = _read_bundle_file(proj)
-    rec2 = next(
-        s for s in bundle2["affected_symbols"] if s["name"] == "maybe_save"
-    )
+    rec2 = next(s for s in bundle2["affected_symbols"] if s["name"] == "maybe_save")
     added = rec2.get("causal_diff_added") or []
-    assert any(
-        "io_write" in (e.get("sink") or "")
-        for e in added
-    ), f"expected an added io_write edge, got {added}"
+    assert any("io_write" in (e.get("sink") or "") for e in added), f"expected an added io_write edge, got {added}"
     assert rec2.get("causal_diff_state") == "computed", rec2
 
     # A risk was appended with the auto:causal-diff source.
-    auto_risks = [
-        r for r in bundle2["risks"]
-        if r.get("source_command") == "auto:causal-diff"
-    ]
+    auto_risks = [r for r in bundle2["risks"] if r.get("source_command") == "auto:causal-diff"]
     assert auto_risks, f"expected an auto:causal-diff risk, got {bundle2['risks']}"
     assert any(
-        "maybe_save" in (r.get("description") or "")
-        and "io_write" in (r.get("description") or "")
-        for r in auto_risks
+        "maybe_save" in (r.get("description") or "") and "io_write" in (r.get("description") or "") for r in auto_risks
     ), auto_risks
 
 
@@ -216,9 +185,7 @@ def test_emit_detects_new_causal_edges(
 # ---------------------------------------------------------------------------
 
 
-def test_emit_detects_removed_causal_edges(
-    project_factory, cli_runner, monkeypatch
-):
+def test_emit_detects_removed_causal_edges(project_factory, cli_runner, monkeypatch):
     """Inverse of (2): an io_write that existed at add-time is gone at
     emit-time. The diff records it on ``causal_diff_removed`` and adds a
     risk with REMOVED in the description.
@@ -244,18 +211,15 @@ def test_emit_detects_removed_causal_edges(
     rec = next(s for s in bundle["affected_symbols"] if s["name"] == "maybe_save")
     snap_edges = rec.get("causal_snapshot", {}).get("edges") or []
     # Sanity: at least one io_write edge present at add-time.
-    assert any(
-        "io_write" in (e.get("sink") or "") for e in snap_edges
-    ), f"expected initial io_write edge, got {snap_edges}"
+    assert any("io_write" in (e.get("sink") or "") for e in snap_edges), (
+        f"expected initial io_write edge, got {snap_edges}"
+    )
 
     # Now strip the write away — keep the function but make it a no-op.
     _rewrite_and_reindex(
         proj,
         "src/shrink.py",
-        "from pathlib import Path\n"
-        "\n"
-        "def maybe_save(path):\n"
-        "    return path\n",
+        "from pathlib import Path\n\ndef maybe_save(path):\n    return path\n",
     )
 
     r = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
@@ -264,22 +228,13 @@ def test_emit_detects_removed_causal_edges(
     assert cd_dist["removed_total"] >= 1, cd_dist
 
     bundle2 = _read_bundle_file(proj)
-    rec2 = next(
-        s for s in bundle2["affected_symbols"] if s["name"] == "maybe_save"
-    )
+    rec2 = next(s for s in bundle2["affected_symbols"] if s["name"] == "maybe_save")
     removed = rec2.get("causal_diff_removed") or []
-    assert any(
-        "io_write" in (e.get("sink") or "") for e in removed
-    ), f"expected a removed io_write edge, got {removed}"
+    assert any("io_write" in (e.get("sink") or "") for e in removed), f"expected a removed io_write edge, got {removed}"
 
     # The auto-risk description contains REMOVED.
-    auto_risks = [
-        r for r in bundle2["risks"]
-        if r.get("source_command") == "auto:causal-diff"
-    ]
-    assert any(
-        "REMOVED" in (r.get("description") or "") for r in auto_risks
-    ), auto_risks
+    auto_risks = [r for r in bundle2["risks"] if r.get("source_command") == "auto:causal-diff"]
+    assert any("REMOVED" in (r.get("description") or "") for r in auto_risks), auto_risks
 
 
 # ---------------------------------------------------------------------------
@@ -287,9 +242,7 @@ def test_emit_detects_removed_causal_edges(
 # ---------------------------------------------------------------------------
 
 
-def test_dedup_prevents_causal_diff_double_risk(
-    project_factory, cli_runner, monkeypatch
-):
+def test_dedup_prevents_causal_diff_double_risk(project_factory, cli_runner, monkeypatch):
     """When a ``side_effect_<sym>`` risk is already present, causal-diff
     must NOT append a redundant ``causal_diff_added_<sym>_...`` risk for
     the same symbol.
@@ -302,12 +255,7 @@ def test_dedup_prevents_causal_diff_double_risk(
     """
     proj = project_factory(
         {
-            "src/dup.py": (
-                "from pathlib import Path\n"
-                "\n"
-                "def writer(path):\n"
-                "    Path(path).write_text('a')\n"
-            ),
+            "src/dup.py": ("from pathlib import Path\n\ndef writer(path):\n    Path(path).write_text('a')\n"),
         }
     )
     _pin_branch(proj)
@@ -316,9 +264,7 @@ def test_dedup_prevents_causal_diff_double_risk(
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "dedup test"])
     _invoke(cli_runner, ["pr-bundle", "add", "affected", "writer"])
     bundle = _read_bundle_file(proj)
-    se_risks = [
-        r for r in bundle["risks"] if r.get("id") == "side_effect_writer"
-    ]
+    se_risks = [r for r in bundle["risks"] if r.get("id") == "side_effect_writer"]
     assert len(se_risks) == 1, bundle["risks"]
 
     # Introduce an additional io_write path.
@@ -341,18 +287,13 @@ def test_dedup_prevents_causal_diff_double_risk(
     assert rec2.get("causal_diff_state") == "computed", rec2
     # But NO causal_diff_added risk was appended for writer.
     cd_risks = [
-        r for r in bundle2["risks"]
-        if r.get("source_command") == "auto:causal-diff"
-        and "writer" in (r.get("description") or "")
+        r
+        for r in bundle2["risks"]
+        if r.get("source_command") == "auto:causal-diff" and "writer" in (r.get("description") or "")
     ]
-    assert cd_risks == [], (
-        f"expected dedup to suppress per-edge causal-diff risks; "
-        f"got {cd_risks}"
-    )
+    assert cd_risks == [], f"expected dedup to suppress per-edge causal-diff risks; got {cd_risks}"
     # The original side_effect_writer risk is still there exactly once.
-    se_risks2 = [
-        r for r in bundle2["risks"] if r.get("id") == "side_effect_writer"
-    ]
+    se_risks2 = [r for r in bundle2["risks"] if r.get("id") == "side_effect_writer"]
     assert len(se_risks2) == 1, bundle2["risks"]
 
 
@@ -361,9 +302,7 @@ def test_dedup_prevents_causal_diff_double_risk(
 # ---------------------------------------------------------------------------
 
 
-def test_causal_diff_for_pure_function_no_risks(
-    project_factory, cli_runner, monkeypatch
-):
+def test_causal_diff_for_pure_function_no_risks(project_factory, cli_runner, monkeypatch):
     """pure-function refactors don't surface io_write risks or
     high-severity findings, and never trigger auto:causal-diff
     entries. pure-kind churn (e.g. refactoring ``return a+b`` to
@@ -371,10 +310,7 @@ def test_causal_diff_for_pure_function_no_risks(
     ``param_to_return->return`` edges) is expected and benign."""
     proj = project_factory(
         {
-            "src/pure.py": (
-                "def add(a, b):\n"
-                "    return a + b\n"
-            ),
+            "src/pure.py": ("def add(a, b):\n    return a + b\n"),
         }
     )
     _pin_branch(proj)
@@ -387,9 +323,7 @@ def test_causal_diff_for_pure_function_no_risks(
     _rewrite_and_reindex(
         proj,
         "src/pure.py",
-        "def add(a, b):\n"
-        "    total = a + b\n"
-        "    return total\n",
+        "def add(a, b):\n    total = a + b\n    return total\n",
     )
 
     r = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
@@ -405,15 +339,11 @@ def test_causal_diff_for_pure_function_no_risks(
     by_kind = cd_dist.get("by_kind", {})
     io_write_kinds = [k for k in by_kind if "io_write" in k]
     assert io_write_kinds == [], (
-        f"pure function should not produce io_write kinds in by_kind: "
-        f"{io_write_kinds!r} (full dist: {cd_dist!r})"
+        f"pure function should not produce io_write kinds in by_kind: {io_write_kinds!r} (full dist: {cd_dist!r})"
     )
     assert data["summary"]["causal_diff_high_severity_count"] == 0, data["summary"]
     bundle = _read_bundle_file(proj)
-    cd_risks = [
-        r for r in bundle["risks"]
-        if r.get("source_command") == "auto:causal-diff"
-    ]
+    cd_risks = [r for r in bundle["risks"] if r.get("source_command") == "auto:causal-diff"]
     assert cd_risks == [], cd_risks
     # And no symbol-level dedup-blocking risk either.
     auto_se = [r for r in bundle["risks"] if r.get("id") == "side_effect_add"]
@@ -425,21 +355,14 @@ def test_causal_diff_for_pure_function_no_risks(
 # ---------------------------------------------------------------------------
 
 
-def test_envelope_includes_causal_diff_distribution(
-    project_factory, cli_runner, monkeypatch
-):
+def test_envelope_includes_causal_diff_distribution(project_factory, cli_runner, monkeypatch):
     """Emit envelope's summary always carries ``causal_diff_distribution``
     and ``causal_diff_high_severity_count`` (Pattern 2: explicit absence
     means zeros, not missing keys). When at least one io_write edge
     changed, the verdict mentions it (LAW 6 — verdict is standalone)."""
     proj = project_factory(
         {
-            "src/grow2.py": (
-                "from pathlib import Path\n"
-                "\n"
-                "def writer(path):\n"
-                "    return path\n"
-            ),
+            "src/grow2.py": ("from pathlib import Path\n\ndef writer(path):\n    return path\n"),
         }
     )
     _pin_branch(proj)
@@ -452,11 +375,7 @@ def test_envelope_includes_causal_diff_distribution(
     _rewrite_and_reindex(
         proj,
         "src/grow2.py",
-        "from pathlib import Path\n"
-        "\n"
-        "def writer(path):\n"
-        "    Path(path).write_text('x')\n"
-        "    return path\n",
+        "from pathlib import Path\n\ndef writer(path):\n    Path(path).write_text('x')\n    return path\n",
     )
 
     r = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
@@ -479,9 +398,7 @@ def test_envelope_includes_causal_diff_distribution(
 # ---------------------------------------------------------------------------
 
 
-def test_resnapshot_preserves_original_baseline(
-    project_factory, cli_runner, monkeypatch
-):
+def test_resnapshot_preserves_original_baseline(project_factory, cli_runner, monkeypatch):
     """Re-adding an affected symbol keeps the ORIGINAL snapshot.
 
     If we re-snapshotted on every ``add affected``, an agent that called
@@ -491,12 +408,7 @@ def test_resnapshot_preserves_original_baseline(
     """
     proj = project_factory(
         {
-            "src/restable.py": (
-                "from pathlib import Path\n"
-                "\n"
-                "def writer(path):\n"
-                "    return path\n"
-            ),
+            "src/restable.py": ("from pathlib import Path\n\ndef writer(path):\n    return path\n"),
         }
     )
     _pin_branch(proj)
@@ -513,19 +425,11 @@ def test_resnapshot_preserves_original_baseline(
     _rewrite_and_reindex(
         proj,
         "src/restable.py",
-        "from pathlib import Path\n"
-        "\n"
-        "def writer(path):\n"
-        "    Path(path).write_text('x')\n"
-        "    return path\n",
+        "from pathlib import Path\n\ndef writer(path):\n    Path(path).write_text('x')\n    return path\n",
     )
     _invoke(cli_runner, ["pr-bundle", "add", "affected", "writer"])
 
     bundle2 = _read_bundle_file(proj)
     snap2 = bundle2["affected_symbols"][0]["causal_snapshot"]
-    assert snap2["snapshot_at"] == snap1_at, (
-        "snapshot_at must be unchanged across re-add",
-    )
-    assert snap2["edges"] == snap1["edges"], (
-        "snapshot edges must be the original baseline, not the new graph",
-    )
+    assert snap2["snapshot_at"] == snap1_at, ("snapshot_at must be unchanged across re-add",)
+    assert snap2["edges"] == snap1["edges"], ("snapshot edges must be the original baseline, not the new graph",)

@@ -59,13 +59,8 @@ from roam.graph.cycles import (
     propagation_cost,
 )
 from roam.graph.layers import detect_layers, find_violations
-from roam.quality.cycles import definition as cycles_definition
-from roam.quality.god_components import definition as god_components_definition
-from roam.output.metric_definitions import (
-    HEALTH_SCORE_DEFINITION,
-    TANGLE_RATIO_DEFINITION,
-)
 from roam.output.formatter import (
+    WarningsOut,
     abbrev_kind,
     format_table,
     json_envelope,
@@ -74,7 +69,12 @@ from roam.output.formatter import (
     to_json,
 )
 from roam.output.framework_filter import FRAMEWORK_PRIMITIVE_NAMES as _FRAMEWORK_NAMES
-
+from roam.output.metric_definitions import (
+    HEALTH_SCORE_DEFINITION,
+    TANGLE_RATIO_DEFINITION,
+)
+from roam.quality.cycles import definition as cycles_definition
+from roam.quality.god_components import definition as god_components_definition
 
 # W151 (W93 follow-up): health is the fifth detector migrating onto the
 # central findings registry (after ``clones`` in W95, ``dead`` in W99,
@@ -317,9 +317,7 @@ def _qname_for_symbol(file_path: str | None, name: str | None) -> str:
     return f"{fp}::{name or ''}"
 
 
-def _resolve_symbol_id_by_name(
-    conn: sqlite3.Connection, name: str | None, file_path: str | None
-) -> int | None:
+def _resolve_symbol_id_by_name(conn: sqlite3.Connection, name: str | None, file_path: str | None) -> int | None:
     """Best-effort lookup of ``symbols.id`` for a (name, file) pair.
 
     Returns ``None`` when nothing matches; the findings registry
@@ -330,9 +328,7 @@ def _resolve_symbol_id_by_name(
     try:
         if file_path:
             row = conn.execute(
-                "SELECT s.id FROM symbols s "
-                "JOIN files f ON s.file_id = f.id "
-                "WHERE f.path = ? AND s.name = ? LIMIT 1",
+                "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path = ? AND s.name = ? LIMIT 1",
                 (file_path, name),
             ).fetchone()
             if row is not None:
@@ -348,9 +344,7 @@ def _resolve_symbol_id_by_name(
         return None
 
 
-def _pick_cycle_anchor(
-    conn: sqlite3.Connection, member_ids: list[int]
-) -> tuple[int | None, str, str | None]:
+def _pick_cycle_anchor(conn: sqlite3.Connection, member_ids: list[int]) -> tuple[int | None, str, str | None]:
     """Pick the highest-PageRank member of an SCC as the cycle's anchor.
 
     Returns ``(symbol_id, name, file_path)``. Falls back to the first
@@ -444,10 +438,7 @@ def _emit_health_findings(
         # Fall back to deriving member ids from the formatted symbols
         # list. The caller usually passes the raw pairing, so this is a
         # safety net for direct callers / tests.
-        cycle_iter = [
-            ([s["id"] for s in cyc.get("symbols", []) if "id" in s], cyc)
-            for cyc in cycles
-        ]
+        cycle_iter = [([s["id"] for s in cyc.get("symbols", []) if "id" in s], cyc) for cyc in cycles]
 
     for scc_ids, cyc in cycle_iter:
         symbols = cyc.get("symbols", []) or []
@@ -516,10 +507,7 @@ def _emit_health_findings(
             "severity": _normalise_health_severity(g.get("severity")),
             "category": g.get("category", "actionable"),
         }
-        claim = (
-            f"arch.god_component: {name} ({g.get('kind') or '?'}) — "
-            f"degree {g.get('degree')} in {file_path or '?'}"
-        )
+        claim = f"arch.god_component: {name} ({g.get('kind') or '?'}) — degree {g.get('degree')} in {file_path or '?'}"
         emit_finding(
             conn,
             FindingRecord(
@@ -643,10 +631,7 @@ def _emit_health_findings(
             "severity": _normalise_health_severity(v.get("severity") or WARNING),
             "edge_severity_score": v.get("severity"),
         }
-        claim = (
-            f"arch.layer_violation: {src_name} (L{v.get('source_layer')}) -> "
-            f"{tgt_name} (L{v.get('target_layer')})"
-        )
+        claim = f"arch.layer_violation: {src_name} (L{v.get('source_layer')}) -> {tgt_name} (L{v.get('target_layer')})"
         emit_finding(
             conn,
             FindingRecord(
@@ -691,27 +676,78 @@ def _parse_simple_yaml(text: str) -> dict:
     return result
 
 
-def _load_gate_config() -> dict:
-    """Load quality gate thresholds from .roam-gates.yml or use defaults."""
+def _load_gate_config(
+    *,
+    warnings_out: WarningsOut = None,
+) -> dict:
+    """Load quality gate thresholds from .roam-gates.yml or use defaults.
+
+    Delegates file-read + parse + root-type check to
+    :func:`roam.commands._yaml_loader.load_yaml_with_warnings` (W1052,
+    Phase 2 of the YAML-loader consolidation).
+
+    W1052 (Pattern 2 — silent fallback, mirror of W706's
+    ``_load_ignore_findings_file``): when *warnings_out* is supplied as
+    a ``list[str]``, every silent-fallback path (file unreadable,
+    malformed YAML, non-mapping root, missing ``health`` key, non-mapping
+    ``health`` block) appends an actionable warning naming the path, the
+    failure shape, and the resolution. Pre-W1052 callers that don't
+    supply ``warnings_out`` retain byte-identical silent-defaults
+    behaviour so flagship-CI consumers (the ``health --gate`` path) keep
+    emitting byte-identical envelopes when ``.roam-gates.yml`` is
+    well-formed.
+
+    The function is intentionally narrow — health is a flagship CI-gate
+    command (W834 sealed its silent-Healthy bug on empty corpus); the
+    plumbing here exposes the loader's silent-empty fallback path the
+    same way W834 exposed the score-collapse path.
+    """
     defaults = {"health_min": 60}
-    from pathlib import Path
 
     config_path = Path(".roam-gates.yml")
     if not config_path.exists():
         return defaults
-    try:
-        text = config_path.read_text(encoding="utf-8")
-        try:
-            import yaml
 
-            data = yaml.safe_load(text)
-        except ImportError:
-            data = _parse_simple_yaml(text)
-        if data and "health" in data:
-            defaults.update(data["health"])
+    from roam.commands._yaml_loader import load_yaml_with_warnings
+
+    path_str = str(config_path)
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data = load_yaml_with_warnings(
+        config_path,
+        tiny_parser=_parse_simple_yaml,
+        config_label="health-gate",
+        warnings_out=warnings_out,
+    )
+    if data is None:
+        # Missing file — already short-circuited above; defensive.
         return defaults
-    except Exception:
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper already explained the failure (read error / malformed
+        # YAML / wrong root type / tiny-parser fallback). Propagate the
+        # defaults without piling on a second "no `health:` key" warning
+        # that would just confuse the caller.
         return defaults
+    assert isinstance(data, dict)
+    if "health" not in data:
+        if warnings_out is not None:
+            warnings_out.append(
+                f"health-gate: {path_str!r} has no `health:` key. "
+                f"Expected shape: `health:` followed by a mapping of "
+                f"`{{health_min, complexity_max, cycle_max, tangle_max}}` "
+                f"thresholds."
+            )
+        return defaults
+    health_block = data.get("health")
+    if not isinstance(health_block, dict):
+        if warnings_out is not None:
+            warnings_out.append(
+                f"health-gate: {path_str!r} `health` is "
+                f"{type(health_block).__name__!r}, expected a mapping. "
+                f"Treating as default gates."
+            )
+        return defaults
+    defaults.update(health_block)
+    return defaults
 
 
 # ---------------------------------------------------------------------------
@@ -1026,9 +1062,7 @@ def _emit_baseline_diff(
     if delta["new_findings"]:
         click.echo("\nNew findings:")
         for f in delta["new_findings"][:10]:
-            click.echo(
-                f"  [{f['severity']}] +{f['now'] - f['was']} {f['kind']} (was {f['was']}, now {f['now']})"
-            )
+            click.echo(f"  [{f['severity']}] +{f['now'] - f['was']} {f['kind']} (was {f['was']}, now {f['now']})")
         if len(delta["new_findings"]) > 10:
             click.echo(f"  (+{len(delta['new_findings']) - 10} more)")
     if delta["regressed"]:
@@ -1134,14 +1168,9 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # discloses the empty state, sets ``partial_success=True``, and
         # offers an actionable hint. Done BEFORE the expensive graph
         # build so a no-symbols repo doesn't pay for it.
-        _early_symbol_count = (
-            conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] or 0
-        )
+        _early_symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] or 0
         if _early_symbol_count == 0:
-            empty_verdict = (
-                "no symbols to analyze (corpus empty — run `roam index --force` "
-                "to populate the index)"
-            )
+            empty_verdict = "no symbols to analyze (corpus empty — run `roam index --force` to populate the index)"
             empty_facts = [
                 "0 indexed symbols",
                 "no health score computed — 0 factors with signal",
@@ -1191,9 +1220,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             if gate:
                 from roam.exit_codes import GateFailureError
 
-                raise GateFailureError(
-                    "Quality gate failed: empty corpus (0 indexed symbols)"
-                )
+                raise GateFailureError("Quality gate failed: empty corpus (0 indexed symbols)")
             return
 
         G = build_symbol_graph(conn)
@@ -1568,7 +1595,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
 
         # --- Quality Gate ---
         if gate:
-            gate_config = _load_gate_config()
+            _gate_warnings: list[str] = []
+            gate_config = _load_gate_config(warnings_out=_gate_warnings)
             gate_results = []
             all_passed = True
 
@@ -1630,17 +1658,24 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     all_passed = False
 
             if json_mode:
+                gate_summary: dict = {
+                    "verdict": verdict,
+                    "health_score": health_score,
+                    "gate_passed": all_passed,
+                    "imported_coverage_pct": coverage_import.get("coverage_pct"),
+                    # W331: gate-mode envelope also reports a score.
+                    "health_score_definition": HEALTH_SCORE_DEFINITION,
+                }
+                if _gate_warnings:
+                    # W1052: surface loader warnings (malformed gate
+                    # config) so the agent doesn't see PASS verdicts
+                    # silently produced against the defaults.
+                    gate_summary["warnings_out"] = list(_gate_warnings)
+                    gate_summary["partial_success"] = True
                 envelope = json_envelope(
                     "health",
                     budget=token_budget,
-                    summary={
-                        "verdict": verdict,
-                        "health_score": health_score,
-                        "gate_passed": all_passed,
-                        "imported_coverage_pct": coverage_import.get("coverage_pct"),
-                        # W331: gate-mode envelope also reports a score.
-                        "health_score_definition": HEALTH_SCORE_DEFINITION,
-                    },
+                    summary=gate_summary,
                     gate_results=gate_results,
                     health_score=health_score,
                     imported_coverage_pct=coverage_import.get("coverage_pct"),
@@ -1659,6 +1694,11 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             for gr in gate_results:
                 status = "PASS" if gr["passed"] else "FAIL"
                 click.echo(f"  [{status}] {gr['gate']}: {gr['actual']} (threshold: {gr['threshold']})")
+
+            if _gate_warnings:
+                click.echo()
+                for w in _gate_warnings:
+                    click.echo(f"WARNING: {w}")
 
             if all_passed:
                 click.echo("\nAll gates passed.")

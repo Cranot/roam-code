@@ -1,4 +1,12 @@
-"""Proof-carrying PR attestation — bundle all evidence into one artifact."""
+"""Proof-carrying PR attestation — bundle all evidence into one artifact.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because attest outputs are in-toto attestations — not per-location
+violations. SARIF is reserved for findings with file:line coordinates;
+attest's primary deliverable is the in-toto attestation. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket C propagation plan +
+W1148 audit memo.
+"""
 
 from __future__ import annotations
 

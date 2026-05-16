@@ -34,8 +34,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from roam.db.connection import USER_VERSION, _FTS5_SCHEMA_COLUMNS
-
+from roam.db.connection import _FTS5_SCHEMA_COLUMNS, USER_VERSION
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCHEMA_PATH = _REPO_ROOT / "src" / "roam" / "db" / "schema.py"

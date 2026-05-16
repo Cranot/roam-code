@@ -50,7 +50,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -82,9 +81,7 @@ def bug1_project(tmp_path):
 
     (proj / "docs" / "legacy" / "reports").mkdir(parents=True)
     (proj / "docs" / "legacy" / "reports" / "some-doc.md").write_text(
-        "# Report\n"
-        "\n"
-        "See [`code-map/16-X.md`](../code-map/16-X.md) for the map.\n"
+        "# Report\n\nSee [`code-map/16-X.md`](../code-map/16-X.md) for the map.\n"
     )
     git_init(proj)
     return proj
@@ -206,9 +203,7 @@ class TestUrlNotDisplayResolution:
         proj.mkdir()
         (proj / "README.md").write_text("# Root\n")
         (proj / "docs" / "a" / "b").mkdir(parents=True)
-        (proj / "docs" / "a" / "b" / "note.md").write_text(
-            "[home](../../../README.md)\n"
-        )
+        (proj / "docs" / "a" / "b" / "note.md").write_text("[home](../../../README.md)\n")
         git_init(proj)
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
@@ -222,9 +217,7 @@ class TestUrlNotDisplayResolution:
 
 
 class TestFixSafetyGuards:
-    def test_fix_apply_dry_run_does_not_corrupt_bug1(
-        self, cli_runner, bug1_project, monkeypatch
-    ):
+    def test_fix_apply_dry_run_does_not_corrupt_bug1(self, cli_runner, bug1_project, monkeypatch):
         """``stale-refs --fix preview`` on the Bug 1 fixture must propose
         ZERO rewrites — the link is already live and the only "fix" the
         broken pipeline ever proposed was corruption."""
@@ -286,9 +279,7 @@ class TestFixSafetyGuards:
         refused: list[str] = []
         edits = _build_fix_edits(targets, proj, refused_log=refused)
         # No edits should have made it through — the rewrite is unsafe.
-        assert edits == {} or all(not v for v in edits.values()), (
-            f"Unsafe rewrite slipped through: {edits}"
-        )
+        assert edits == {} or all(not v for v in edits.values()), f"Unsafe rewrite slipped through: {edits}"
         assert refused, "Expected at least one refusal line"
         # The log must clearly identify why we refused.
         joined = "\n".join(refused)
@@ -340,9 +331,7 @@ class TestFixSafetyGuards:
         assert safe is True
         assert reason == ""
 
-    def test_proposed_rewrite_preserves_link_validity(
-        self, cli_runner, tmp_path, monkeypatch
-    ):
+    def test_proposed_rewrite_preserves_link_validity(self, cli_runner, tmp_path, monkeypatch):
         """For every rewrite the fix pipeline proposes, the NEW URL must
         resolve to an existing file. This is the inverse of the corruption
         bug — we never replace a live OR dead link with a dead one."""
@@ -367,9 +356,7 @@ class TestFixSafetyGuards:
         if data["summary"].get("edits_planned", 0) > 0:
             diff = data.get("diff", "")
             # The proposed replacement must include new/notes.md.
-            assert "new/notes.md" in diff, (
-                f"Rewrite did not target the live path. Diff:\n{diff}"
-            )
+            assert "new/notes.md" in diff, f"Rewrite did not target the live path. Diff:\n{diff}"
 
 
 # ---------------------------------------------------------------------------
@@ -378,40 +365,27 @@ class TestFixSafetyGuards:
 
 
 class TestPositiveControls:
-    def test_genuine_stale_ref_still_flagged(
-        self, cli_runner, genuine_stale_project, monkeypatch
-    ):
+    def test_genuine_stale_ref_still_flagged(self, cli_runner, genuine_stale_project, monkeypatch):
         """``[gone](../missing.md)`` where missing.md doesn't exist MUST
         still be flagged. The fix narrows false-positives, it doesn't
         disable the feature."""
         monkeypatch.chdir(genuine_stale_project)
-        result = invoke_cli(
-            cli_runner, ["stale-refs"], cwd=genuine_stale_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=genuine_stale_project, json_mode=True)
         data = parse_json_output(result, "stale-refs")
         assert data["summary"]["missing_targets"] >= 1
         targets = [t["target"] for t in data["targets"]]
-        assert any("missing.md" in t for t in targets), (
-            f"Genuine stale ref was hidden. Targets: {targets}"
-        )
+        assert any("missing.md" in t for t in targets), f"Genuine stale ref was hidden. Targets: {targets}"
 
-    def test_bug2_bare_backtick_silent_by_default(
-        self, cli_runner, bug2_project, monkeypatch
-    ):
+    def test_bug2_bare_backtick_silent_by_default(self, cli_runner, bug2_project, monkeypatch):
         """Bare-backtick prose noise produces ZERO findings by default."""
         monkeypatch.chdir(bug2_project)
-        result = invoke_cli(
-            cli_runner, ["stale-refs"], cwd=bug2_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=bug2_project, json_mode=True)
         data = parse_json_output(result, "stale-refs")
         assert data["summary"]["missing_targets"] == 0, (
-            "Bare backticks in prose were treated as path claims. "
-            f"Findings: {[t['target'] for t in data['targets']]}"
+            f"Bare backticks in prose were treated as path claims. Findings: {[t['target'] for t in data['targets']]}"
         )
 
-    def test_bug2_bare_backtick_flagged_with_opt_in(
-        self, cli_runner, bug2_project, monkeypatch
-    ):
+    def test_bug2_bare_backtick_flagged_with_opt_in(self, cli_runner, bug2_project, monkeypatch):
         """When ``--scan-bare-backticks`` is set, the historical behaviour
         re-engages: bare backtick strings ARE treated as references."""
         monkeypatch.chdir(bug2_project)
@@ -424,6 +398,4 @@ class TestPositiveControls:
         data = parse_json_output(result, "stale-refs")
         # At least one bare-backtick mention (e.g. views/page.html) is
         # now picked up as a missing-path claim.
-        assert data["summary"]["missing_targets"] >= 1, (
-            "Opt-in flag did not re-enable bare-backtick detection."
-        )
+        assert data["summary"]["missing_targets"] >= 1, "Opt-in flag did not re-enable bare-backtick detection."

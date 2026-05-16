@@ -16,6 +16,17 @@ Examples
     roam tx-boundaries --classification unsafe_mutation   # filter
     roam tx-boundaries --classification unmatched_begin --top 10
     roam tx-boundaries --json
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because tx-boundaries outputs are invocation-scoped per-
+symbol transaction classification rollups (idempotent / non-
+idempotent / unsafe_mutation / unmatched_begin / unmatched_commit) —
+not per-location code violations. The classification is descriptive
+metadata about transactional safety, paralleling
+``cmd_side_effects`` + ``cmd_idempotency`` (the sibling world-model
+classifiers). See ``cmd_idempotency`` for the parallel per-symbol
+classification disclosure pattern (W1224) + action.yml
+_SUPPORTED_SARIF allowlist + W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -35,7 +46,6 @@ from roam.world_model.tx_boundaries import (
     classify_tx_boundaries,
 )
 
-
 # Ranked by severity for sorting / verdict prioritisation.
 # unmatched_* are bugs; unsafe_mutation is a latent bug; partial_* is a
 # smell; transactional / non_transactional are clean; unknown is a gap.
@@ -51,18 +61,13 @@ _SEVERITY_RANK: dict[str, int] = {
 
 # Subset that contributes to the "high_severity_count" summary scalar —
 # anything that's an outright bug OR a latent bug worth surfacing.
-_HIGH_SEVERITY_KINDS = frozenset(
-    {"unmatched_begin", "unmatched_commit", "unsafe_mutation"}
-)
+_HIGH_SEVERITY_KINDS = frozenset({"unmatched_begin", "unmatched_commit", "unsafe_mutation"})
 
 
 @roam_capability(
     name="tx-boundaries",
     category="architecture",
-    summary=(
-        "Classify functions by transactional safety "
-        "(transactional / unsafe_mutation / unmatched_begin / ...)"
-    ),
+    summary=("Classify functions by transactional safety (transactional / unsafe_mutation / unmatched_begin / ...)"),
     maturity="beta",
     mcp_expose=True,
     mcp_preset=("core", "architecture"),
@@ -125,10 +130,7 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
     mutating_or_marked = [
         c
         for c in all_results
-        if c.classification != "non_transactional"
-        or c.begin_markers
-        or c.commit_markers
-        or c.rollback_markers
+        if c.classification != "non_transactional" or c.begin_markers or c.commit_markers or c.rollback_markers
     ]
 
     filtered = mutating_or_marked
@@ -166,8 +168,7 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
                 parts.append(f"{n} {k}")
         n_mutating = len(mutating_or_marked)
         verdict = (
-            f"Classified {n_mutating} functions with mutations: "
-            + ", ".join(parts)
+            f"Classified {n_mutating} functions with mutations: " + ", ".join(parts)
             if parts
             else f"Classified {n_mutating} functions; none transactional"
         )
@@ -193,64 +194,32 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
     # individual symbol when available.
     facts: list[str] = []
     worst = sorted_filtered[0] if sorted_filtered else None
-    if (
-        worst is not None
-        and worst.classification in _HIGH_SEVERITY_KINDS
-    ):
+    if worst is not None and worst.classification in _HIGH_SEVERITY_KINDS:
         facts.append(
             f"{worst.symbol} classified {worst.classification} "
             f"(mutations_outside={worst.mutations_outside}, "
             f"confidence={worst.confidence})"
         )
     if by_classification.get("unsafe_mutation"):
-        facts.append(
-            f"{by_classification['unsafe_mutation']} functions with mutations "
-            "outside any transaction"
-        )
+        facts.append(f"{by_classification['unsafe_mutation']} functions with mutations outside any transaction")
     if by_classification.get("unmatched_begin"):
-        facts.append(
-            f"{by_classification['unmatched_begin']} functions have unmatched_begin "
-            "(transaction leak — bug)"
-        )
+        facts.append(f"{by_classification['unmatched_begin']} functions have unmatched_begin (transaction leak — bug)")
     if by_classification.get("unmatched_commit"):
-        facts.append(
-            f"{by_classification['unmatched_commit']} functions have unmatched_commit "
-            "(stray commit — bug)"
-        )
+        facts.append(f"{by_classification['unmatched_commit']} functions have unmatched_commit (stray commit — bug)")
     if by_classification.get("partial_transactional"):
-        facts.append(
-            f"{by_classification['partial_transactional']} functions mix "
-            "inside-and-outside-scope mutations"
-        )
+        facts.append(f"{by_classification['partial_transactional']} functions mix inside-and-outside-scope mutations")
     if by_classification.get("transactional"):
-        facts.append(
-            f"{by_classification['transactional']} functions are properly "
-            "transactional"
-        )
+        facts.append(f"{by_classification['transactional']} functions are properly transactional")
     if not facts:
-        facts.append(
-            "tx-boundaries scan found no functions to classify"
-        )
+        facts.append("tx-boundaries scan found no functions to classify")
 
     next_commands: list[str] = []
-    if by_classification.get("unsafe_mutation") and (
-        not classification or classification != "unsafe_mutation"
-    ):
-        next_commands.append(
-            "roam tx-boundaries --classification unsafe_mutation --top 10"
-        )
-    if by_classification.get("unmatched_begin") and (
-        not classification or classification != "unmatched_begin"
-    ):
-        next_commands.append(
-            "roam tx-boundaries --classification unmatched_begin --top 10"
-        )
-    if by_classification.get("unmatched_commit") and (
-        not classification or classification != "unmatched_commit"
-    ):
-        next_commands.append(
-            "roam tx-boundaries --classification unmatched_commit --top 10"
-        )
+    if by_classification.get("unsafe_mutation") and (not classification or classification != "unsafe_mutation"):
+        next_commands.append("roam tx-boundaries --classification unsafe_mutation --top 10")
+    if by_classification.get("unmatched_begin") and (not classification or classification != "unmatched_begin"):
+        next_commands.append("roam tx-boundaries --classification unmatched_begin --top 10")
+    if by_classification.get("unmatched_commit") and (not classification or classification != "unmatched_commit"):
+        next_commands.append("roam tx-boundaries --classification unmatched_commit --top 10")
     next_commands.append("roam side-effects --kind io_write --top 20")
 
     envelope = json_envelope(
@@ -293,13 +262,15 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
         return
     rows = []
     for c in surfaced:
-        rows.append([
-            c.symbol[:42],
-            c.classification,
-            f"{c.mutations_inside}/{c.mutations_outside}",
-            c.confidence,
-            (c.file or "")[-46:],
-        ])
+        rows.append(
+            [
+                c.symbol[:42],
+                c.classification,
+                f"{c.mutations_inside}/{c.mutations_outside}",
+                c.confidence,
+                (c.file or "")[-46:],
+            ]
+        )
     click.echo(
         format_table(
             ["Symbol", "Classification", "Mut(in/out)", "Conf", "File"],

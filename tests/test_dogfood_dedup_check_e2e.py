@@ -21,12 +21,11 @@ is INFORMATIONAL: it tells the next person either to (a) finish the
 W39.1-style backfill, or (b) consciously revise this test's expectations.
 Do NOT lower the bar to mask a missing eval doc.
 """
+
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-
-import pytest
 
 # Make dev/ importable for these tests (mirrors tests/test_dogfood_dedup_check.py)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -39,7 +38,7 @@ DOGFOOD_V2_EXPECTED = {
     # Already-fixed via W18.*
     "sbom": "fixed",
     "stale-refs": "fixed",  # ALSO has W36.1 slugger fix after W39.1
-    "dead": "fixed",        # Vue SFC + Laravel-dead after W39.1
+    "dead": "fixed",  # Vue SFC + Laravel-dead after W39.1
     "missing-index": "fixed",
     "over-fetch": "fixed",
     "ws": "fixed",
@@ -76,9 +75,7 @@ def test_dogfood_v2_corpus_state():
                 f"(latest_eval={row.get('latest')}, status={row.get('status')})"
             )
 
-    assert not failures, "Dogfood-v2 corpus state drift:\n" + "\n".join(
-        f"  - {f}" for f in failures
-    )
+    assert not failures, "Dogfood-v2 corpus state drift:\n" + "\n".join(f"  - {f}" for f in failures)
 
 
 def test_fixed_commands_count_at_least_six():
@@ -107,6 +104,4 @@ def test_no_findings_in_unknown_state():
 
     rows = check_commands(list(DOGFOOD_V2_EXPECTED.keys()))
     missing = [r for r in rows if r["verdict"] in ("unknown", "no_evals")]
-    assert not missing, (
-        f"Commands with no eval docs at all: {[r['command'] for r in missing]}"
-    )
+    assert not missing, f"Commands with no eval docs at all: {[r['command'] for r in missing]}"

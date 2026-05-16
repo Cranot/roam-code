@@ -3,6 +3,12 @@
 Exit codes:
   0  All checks passed.
   1  One or more checks failed.
+
+Output formats: text (default) and ``--json``. SARIF is deliberately NOT
+emitted because doctor checks are environment-scoped (Python version,
+dependency availability, cache age) rather than file-located code
+findings. SARIF requires locations[]; doctor has no source coordinates
+to populate. See W1085 / W1144 for the audit + design rationale.
 """
 
 from __future__ import annotations
@@ -19,7 +25,6 @@ import click
 
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
-
 
 # W156 — doctor is the first detector migrating an "environment" namespace
 # onto the central findings registry (after clones / dead / complexity).
@@ -116,6 +121,7 @@ def _emit_doctor_findings(conn, results: list[dict], source_version: str) -> Non
                 source_version=source_version,
             ),
         )
+
 
 # ---------------------------------------------------------------------------
 # Individual check functions
@@ -658,9 +664,7 @@ def _check_stale_math_signal_column() -> dict:
     try:
         with open_db(readonly=True) as conn:
             # Does math_signals exist?
-            row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='math_signals'"
-            ).fetchone()
+            row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='math_signals'").fetchone()
             if row is None:
                 return {
                     "name": "Stale math_signals column",
@@ -682,8 +686,7 @@ def _check_stale_math_signal_column() -> dict:
                 }
             # Is the table populated at all? Use COUNT + SUM in one query.
             row = conn.execute(
-                "SELECT COUNT(*), COALESCE(SUM(loop_eq_with_dependent_write), 0) "
-                "FROM math_signals"
+                "SELECT COUNT(*), COALESCE(SUM(loop_eq_with_dependent_write), 0) FROM math_signals"
             ).fetchone()
     except Exception as exc:
         return {
@@ -723,8 +726,7 @@ def _check_stale_math_signal_column() -> dict:
         "name": "Stale math_signals column",
         "passed": True,
         "detail": (
-            f"loop_eq_with_dependent_write populated ({nonzero_sum} non-zero "
-            f"value(s) across {total_rows} rows)"
+            f"loop_eq_with_dependent_write populated ({nonzero_sum} non-zero value(s) across {total_rows} rows)"
         ),
         "_state": "populated",
         "_row_count": total_rows,
@@ -944,9 +946,7 @@ def _check_index_manifest_history() -> dict:
             "name": "Index manifest history",
             "passed": True,
             "detail": (
-                "manifest seeded — no prior run to diff against"
-                if row_count == 1
-                else "no manifest rows recorded yet"
+                "manifest seeded — no prior run to diff against" if row_count == 1 else "no manifest rows recorded yet"
             ),
             "_state": "no_history",
             "_row_count": row_count,
@@ -975,10 +975,7 @@ def _check_index_manifest_history() -> dict:
     ordered = [f for f in _DRIFT_FIELDS if f in drift]
     extra = [f for f in fields_sorted if f not in ordered]
     headline_fields = ordered + extra
-    detail = (
-        f"{len(drift)} field(s) drifted between the last two index runs: "
-        f"{', '.join(headline_fields)}"
-    )
+    detail = f"{len(drift)} field(s) drifted between the last two index runs: {', '.join(headline_fields)}"
     return {
         "name": "Index manifest history",
         "passed": False,
@@ -1099,8 +1096,7 @@ def _check_index_step_failures() -> dict:
     # detail so we name what failed without a wall of text.
     head = failures[:3]
     head_text = "; ".join(
-        f"{step}: {err_class}" + (f" ({excerpt[:80]})" if excerpt else "")
-        for step, err_class, excerpt in head
+        f"{step}: {err_class}" + (f" ({excerpt[:80]})" if excerpt else "") for step, err_class, excerpt in head
     )
     remainder = f"; +{len(failures) - len(head)} more" if len(failures) > len(head) else ""
     fail_names = ", ".join(step for step, _, _ in failures)
@@ -1117,10 +1113,7 @@ def _check_index_step_failures() -> dict:
         "_steps_total": total,
         "_steps_failed": len(failures),
         "_steps_skipped": len(skipped),
-        "_failed_steps": [
-            {"step": s, "error_class": ec, "error_excerpt": ex}
-            for s, ec, ex in failures
-        ],
+        "_failed_steps": [{"step": s, "error_class": ec, "error_excerpt": ex} for s, ec, ex in failures],
     }
 
 
@@ -1213,8 +1206,14 @@ def _check_phase_timings() -> dict:
     # extra keys the indexer added in a future revision come after the
     # known set, preserving discoverability without breaking the order.
     canonical_order = (
-        "discover", "parse_extract", "resolve", "graph_metrics",
-        "git_analysis", "effects_taint", "health_load", "search_indexes",
+        "discover",
+        "parse_extract",
+        "resolve",
+        "graph_metrics",
+        "git_analysis",
+        "effects_taint",
+        "health_load",
+        "search_indexes",
     )
     ordered: list[tuple[str, float]] = []
     seen: set[str] = set()
@@ -1642,9 +1641,7 @@ def _check_ci_workflow_drift() -> dict:
             # "Required tables" / installer-level checks cover this.
             file_pairs.append((template_filename, "", live_rel))
             continue
-        file_pairs.append(
-            (template_filename, template_path.read_text(encoding="utf-8"), live_rel)
-        )
+        file_pairs.append((template_filename, template_path.read_text(encoding="utf-8"), live_rel))
 
     all_pairs = inline_pairs + file_pairs
 
@@ -1784,7 +1781,7 @@ _ADVISORY_CHECK_NAMES = frozenset(
         "Index manifest",  # drift hints — informational
         "Index manifest history",  # cross-run drift — informational
         "Index step manifest",  # per-sub-step failures — informational
-                                #   (W82/A8: names which sub-step degraded)
+        #   (W82/A8: names which sub-step degraded)
         "Installed binary",  # stale-install hint — informational
         "Stale math_signals column",  # post-migration #51 re-index hint
         "Phase timings",  # W408 — per-phase wallclock; diagnostic only

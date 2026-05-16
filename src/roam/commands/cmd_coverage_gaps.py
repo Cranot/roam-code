@@ -1,4 +1,14 @@
-"""Find unprotected entry points — symbols with no path to a required gate."""
+"""Find unprotected entry points — symbols with no path to a required gate.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_coverage_gaps is a REPORT command, not a detector —
+its ``uncovered[]`` and ``covered[]`` lists stay in the JSON envelope
+(via ``wrap_findings()``) rather than persisting to the central
+findings registry. Coverage-gaps findings are invocation-scoped to a
+specific gate + entry-point query; SARIF is reserved for registry-
+persisting detectors with structural file:line coordinates. See
+W1206-audit-unclear verdict + W1199 superseded plan.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +38,6 @@ from roam.output.metric_definitions import (
     COVERAGE_PCT_DEFINITION,
     GATE_VIOLATION_DEFINITION,
 )
-
 
 # R22 — confidence classifier for coverage-gaps findings.
 #
@@ -458,9 +467,7 @@ def coverage_gaps(
                 f"gate violations across {len(gate_violations)} findings"
             )
         elif warnings:
-            preset_verdict = (
-                f"0 blocking gate violations with {len(warnings)} advisory warnings"
-            )
+            preset_verdict = f"0 blocking gate violations with {len(warnings)} advisory warnings"
         else:
             preset_verdict = f"0 gate violations across {preset_info} preset rules"
 
@@ -648,9 +655,7 @@ def coverage_gaps(
                 # Look up symbol ids for uncovered entries by name+file+line
                 # — entries[] earlier carried the id, so reuse the entry
                 # row map keyed by (name, file, line).
-                entry_id_by_key = {
-                    (e["name"], e["file_path"], e["line_start"]): e["id"] for e in entries
-                }
+                entry_id_by_key = {(e["name"], e["file_path"], e["line_start"]): e["id"] for e in entries}
                 uncovered_ids: list[int] = []
                 for u in uncovered:
                     key = (u["name"], u["file"], u["line"])

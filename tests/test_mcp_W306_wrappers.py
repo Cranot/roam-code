@@ -136,17 +136,14 @@ class TestColdStartGuardWiring:
         )
 
     @pytest.mark.parametrize("tool_name", W306_TOOL_NAMES)
-    def test_wrapper_description_carries_cold_start_hint(
-        self, tool_name: str
-    ) -> None:
+    def test_wrapper_description_carries_cold_start_hint(self, tool_name: str) -> None:
         """W296 hint is auto-appended to every index-gated wrapper."""
         from roam.mcp_extras.preflight import INDEX_REQUIRED_HINT
         from roam.mcp_server import _TOOL_METADATA
 
         desc = _TOOL_METADATA[tool_name].get("description", "")
         assert INDEX_REQUIRED_HINT in desc, (
-            f"{tool_name} description must end with the W296 hint "
-            f"{INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
+            f"{tool_name} description must end with the W296 hint {INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
         )
 
 
@@ -239,9 +236,7 @@ class TestRoamDogfoodAggregateArgShape:
             mock.return_value = {"ok": True}
             # Defaults top=10 + limit=50 mirror the CLI per LAW 11.
             roam_dogfood_aggregate()
-            mock.assert_called_once_with(
-                ["dogfood-aggregate", "--top", "10", "--limit", "50"], "."
-            )
+            mock.assert_called_once_with(["dogfood-aggregate", "--top", "10", "--limit", "50"], ".")
 
     def test_filters(self) -> None:
         from roam.mcp_server import roam_dogfood_aggregate
@@ -426,9 +421,7 @@ class TestRoamPrPrepArgShape:
             mock.return_value = {"ok": True}
             # Default high_callers=10 mirrors the CLI per LAW 11.
             roam_pr_prep()
-            mock.assert_called_once_with(
-                ["pr-prep", "--high-callers", "10"], "."
-            )
+            mock.assert_called_once_with(["pr-prep", "--high-callers", "10"], ".")
 
     def test_commit_range(self) -> None:
         from roam.mcp_server import roam_pr_prep

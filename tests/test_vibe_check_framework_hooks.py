@@ -43,7 +43,6 @@ from roam.commands.cmd_vibe_check import _FRAMEWORK_HOOK_NAMES
 from roam.db.connection import open_db
 from tests.conftest import make_src_project as _make_project
 
-
 # ---------------------------------------------------------------------------
 # Allowlist composition (cheap, runs without indexing)
 # ---------------------------------------------------------------------------
@@ -84,9 +83,7 @@ def test_framework_hook_allowlist_covers_reflective_serialisers():
         "from_json",
     }
     missing = must_have - _FRAMEWORK_HOOK_NAMES
-    assert not missing, (
-        f"Reflective serialisation hooks missing from allowlist: {missing}"
-    )
+    assert not missing, f"Reflective serialisation hooks missing from allowlist: {missing}"
 
 
 def test_framework_hook_allowlist_is_a_frozenset():
@@ -137,12 +134,12 @@ def _hook_vs_dead_project(tmp_path):
                 """Anchors the module so it isn't pruned as test-only."""
                 return ResultEnvelope({"k": "v"})
             ''',
-            "main.py": '''
+            "main.py": """
             from .envelope import caller_main
 
             def entry():
                 return caller_main()
-            ''',
+            """,
         },
     )
 
@@ -253,17 +250,12 @@ def test_lazy_group_methods_not_in_dead_exports_on_roam_code():
         # falsely pass.
         import pytest
 
-        pytest.skip(
-            "no persisted vibe-check dead_exports findings; "
-            "run `roam vibe-check --persist` once to populate"
-        )
+        pytest.skip("no persisted vibe-check dead_exports findings; run `roam vibe-check --persist` once to populate")
 
     flagged = []
     for r in rows:
         ev = json.loads(r["evidence_json"])
-        if ev.get("file_path", "").endswith("src/roam/cli.py") or ev.get(
-            "file_path", ""
-        ).endswith("src\\roam\\cli.py"):
+        if ev.get("file_path", "").endswith("src/roam/cli.py") or ev.get("file_path", "").endswith("src\\roam\\cli.py"):
             flagged.append(ev.get("name"))
 
     forbidden = {
@@ -312,12 +304,7 @@ def test_as_envelope_dict_not_in_dead_exports_on_roam_code():
     if not rows:
         import pytest
 
-        pytest.skip(
-            "no persisted vibe-check dead_exports findings; "
-            "run `roam vibe-check --persist` once to populate"
-        )
+        pytest.skip("no persisted vibe-check dead_exports findings; run `roam vibe-check --persist` once to populate")
 
     flagged = [json.loads(r["evidence_json"]).get("name") for r in rows]
-    assert "as_envelope_dict" not in flagged, (
-        "as_envelope_dict still flagged on roam-code despite W161 allowlist"
-    )
+    assert "as_envelope_dict" not in flagged, "as_envelope_dict still flagged on roam-code despite W161 allowlist"

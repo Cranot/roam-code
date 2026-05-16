@@ -50,7 +50,6 @@ from roam.db.connection import open_db
 from roam.db.findings import CONFIDENCE_HEURISTIC
 from tests.conftest import make_src_project as _make_project
 
-
 # ---------------------------------------------------------------------------
 # Unit tests -- pure functions on synthetic source text
 # ---------------------------------------------------------------------------
@@ -100,10 +99,10 @@ def test_mp1_flags_claude_latest_alias():
 def test_tb1_flags_missing_max_tokens():
     """Completion call without max_tokens flags."""
     src = (
-        'response = client.chat.completions.create(\n'
+        "response = client.chat.completions.create(\n"
         '    model="gpt-4o-2024-11-20",\n'
         '    messages=[{"role": "user", "content": "hi"}]\n'
-        ')\n'
+        ")\n"
     )
     out = _detect_missing_max_tokens("x.py", src)
     assert len(out) == 1
@@ -112,11 +111,11 @@ def test_tb1_flags_missing_max_tokens():
 def test_tb1_passes_with_max_tokens():
     """Completion call with max_tokens passes."""
     src = (
-        'response = client.chat.completions.create(\n'
+        "response = client.chat.completions.create(\n"
         '    model="gpt-4o-2024-11-20",\n'
-        '    messages=msgs,\n'
-        '    max_tokens=1024,\n'
-        ')\n'
+        "    messages=msgs,\n"
+        "    max_tokens=1024,\n"
+        ")\n"
     )
     out = _detect_missing_max_tokens("x.py", src)
     assert out == []
@@ -125,10 +124,7 @@ def test_tb1_passes_with_max_tokens():
 def test_tb1_passes_with_max_output_tokens_variant():
     """``max_output_tokens`` (Anthropic) also satisfies the bound."""
     src = (
-        'response = client.messages.create(\n'
-        '    model="claude-3-5-sonnet-20241022",\n'
-        '    max_output_tokens=2048,\n'
-        ')\n'
+        'response = client.messages.create(\n    model="claude-3-5-sonnet-20241022",\n    max_output_tokens=2048,\n)\n'
     )
     out = _detect_missing_max_tokens("x.py", src)
     assert out == []
@@ -136,41 +132,28 @@ def test_tb1_passes_with_max_output_tokens_variant():
 
 def test_tn1_flags_missing_temperature():
     """Completion call without temperature= flags."""
-    src = (
-        'r = client.chat.completions.create(model="gpt-4o-2024-11-20", messages=m)\n'
-    )
+    src = 'r = client.chat.completions.create(model="gpt-4o-2024-11-20", messages=m)\n'
     out = _detect_temperature_not_set("x.py", src)
     assert len(out) == 1
 
 
 def test_tn1_passes_with_temperature():
     """Explicit temperature= passes."""
-    src = (
-        'r = client.chat.completions.create(\n'
-        '    model="gpt-4o-2024-11-20", messages=m, temperature=0.2)\n'
-    )
+    src = 'r = client.chat.completions.create(\n    model="gpt-4o-2024-11-20", messages=m, temperature=0.2)\n'
     out = _detect_temperature_not_set("x.py", src)
     assert out == []
 
 
 def test_so1_flags_bare_json_loads():
     """``json.loads`` without surrounding try flags."""
-    src = (
-        "content = response.choices[0].message.content\n"
-        "data = json.loads(content)\n"
-    )
+    src = "content = response.choices[0].message.content\ndata = json.loads(content)\n"
     out = _detect_no_json_validation("x.py", src)
     assert len(out) == 1
 
 
 def test_so1_passes_with_try_block():
     """``json.loads`` inside try/except does NOT flag."""
-    src = (
-        "try:\n"
-        "    data = json.loads(content)\n"
-        "except json.JSONDecodeError:\n"
-        "    data = {}\n"
-    )
+    src = "try:\n    data = json.loads(content)\nexcept json.JSONDecodeError:\n    data = {}\n"
     out = _detect_no_json_validation("x.py", src)
     assert out == []
 
@@ -219,13 +202,7 @@ def test_pi1_passes_when_user_input_isolated():
 
 def test_pi1_passes_when_no_completion_call():
     """Function without a completion call is out of scope (not an LLM-call function)."""
-    src = (
-        "import openai\n"
-        "\n"
-        "def helper(user_input):\n"
-        "    prompt = 'You are: ' + user_input\n"
-        "    return prompt\n"
-    )
+    src = "import openai\n\ndef helper(user_input):\n    prompt = 'You are: ' + user_input\n    return prompt\n"
     out = _detect_pi_concat("x.py", src)
     assert out == []
 
@@ -299,23 +276,14 @@ def test_sm1_skips_messages_variable():
     # Sanity: when messages is a variable we can't inspect its contents,
     # so we deliberately avoid false-positive noise. Otherwise tools that
     # build a system message in a helper function would always fire.
-    src = (
-        "response = client.chat.completions.create(\n"
-        '    model="gpt-4o-2024-11-20",\n'
-        "    messages=msgs,\n"
-        ")\n"
-    )
+    src = 'response = client.chat.completions.create(\n    model="gpt-4o-2024-11-20",\n    messages=msgs,\n)\n'
     out = _detect_no_system_message("x.py", src)
     assert out == []
 
 
 def test_re1_flags_llm_file_without_retry_indicator():
     """LLM file with no retry/backoff/RateLimitError marker flags once."""
-    src = (
-        "import openai\n"
-        "client = openai.OpenAI()\n"
-        'r = client.chat.completions.create(model="x", messages=[])\n'
-    )
+    src = 'import openai\nclient = openai.OpenAI()\nr = client.chat.completions.create(model="x", messages=[])\n'
     out = _detect_no_retry_backoff("x.py", src)
     assert len(out) == 1
     assert out[0]["kind"] == "llm_api_no_retry_on_rate_limit"
@@ -419,7 +387,7 @@ def _llm_project(tmp_path):
     return _make_project(
         tmp_path,
         {
-            "calls.py": '''
+            "calls.py": """
             import openai
 
             client = openai.OpenAI()
@@ -435,8 +403,8 @@ def _llm_project(tmp_path):
             def beta(content):
                 data = json.loads(content)
                 return data
-            ''',
-            "safe.py": '''
+            """,
+            "safe.py": """
             import openai
             import json
 
@@ -456,14 +424,14 @@ def _llm_project(tmp_path):
                     return json.loads(response.choices[0].message.content)
                 except json.JSONDecodeError:
                     return {}
-            ''',
-            "noisefree.py": '''
+            """,
+            "noisefree.py": """
             # No LLM import here -- should be skipped entirely.
             import os
 
             def helper(x):
                 return x * 2
-            ''',
+            """,
         },
     )
 
@@ -552,13 +520,12 @@ def test_llm_smells_finding_id_str_is_deterministic_across_runs(tmp_path):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'llm-smells'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'llm-smells'"
                 ).fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'llm-smells'"
-            ).fetchone()[0]
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'llm-smells'").fetchone()[
+                0
+            ]
         assert first_count == len(first_ids), "duplicate ids on first run"
 
         second = runner.invoke(cli, ["llm-smells", "--persist"])
@@ -567,8 +534,7 @@ def test_llm_smells_finding_id_str_is_deterministic_across_runs(tmp_path):
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'llm-smells'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'llm-smells'"
                 ).fetchall()
             }
             second_count = conn.execute(
@@ -606,9 +572,7 @@ def test_llm_smells_verdict_terminal_is_concrete_noun_anchored(tmp_path):
         envelope = json.loads(result.output)
         verdict = envelope["summary"]["verdict"]
         terminal = re.split(r"\s+", verdict.strip())[-1].rstrip(",.;:!?)").lower()
-        assert terminal in {"files", "findings"}, (
-            f"verdict terminal {terminal!r} not in anchor set: {verdict!r}"
-        )
+        assert terminal in {"files", "findings"}, f"verdict terminal {terminal!r} not in anchor set: {verdict!r}"
     finally:
         os.chdir(old_cwd)
 

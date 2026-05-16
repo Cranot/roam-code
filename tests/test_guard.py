@@ -51,7 +51,11 @@ def test_guard_json(indexed_project, cli_runner, monkeypatch):
 
 
 def test_guard_unknown_symbol(indexed_project, cli_runner, monkeypatch):
+    # W1280 — Pattern-2c Convention (c): unresolved exits 0 with a
+    # resolution=unresolved + partial_success disclosure on the JSON
+    # envelope; text mode keeps the FTS suggestion list. A typo is
+    # recoverable (the agent retries with a hint), not a tool/IO failure.
     monkeypatch.chdir(indexed_project)
     result = invoke_cli(cli_runner, ["guard", "DoesNotExist"])
-    assert result.exit_code != 0
+    assert result.exit_code == 0
     assert "not found" in result.output.lower()

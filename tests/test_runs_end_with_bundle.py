@@ -14,7 +14,6 @@ Covered here:
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -24,7 +23,6 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, parse_json_output  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -45,9 +43,7 @@ def bundle_run_project(tmp_path, monkeypatch):
     (proj / "main.py").write_text("def hello():\n    return 'hi'\n")
     git_init(proj)
     # Pin branch so the bundle path is deterministic.
-    subprocess.run(
-        ["git", "checkout", "-B", "feat-w15"], cwd=proj, capture_output=True
-    )
+    subprocess.run(["git", "checkout", "-B", "feat-w15"], cwd=proj, capture_output=True)
     monkeypatch.chdir(proj)
     monkeypatch.delenv("ROAM_RUN_ID", raising=False)
     return proj
@@ -74,9 +70,7 @@ def test_runs_end_without_flag_does_not_emit_bundle(cli_runner, bundle_run_proje
     assert r.exit_code == 0, r.output
 
     # Init a bundle so we'd notice an inadvertent emit.
-    r = _invoke(
-        cli_runner, ["--json", "pr-bundle", "init", "--intent", "should not emit"]
-    )
+    r = _invoke(cli_runner, ["--json", "pr-bundle", "init", "--intent", "should not emit"])
     assert r.exit_code == 0, r.output
 
     r = _invoke(cli_runner, ["--json", "runs", "end"])
@@ -125,9 +119,7 @@ def test_runs_end_with_pr_bundle_emit(cli_runner, bundle_run_project):
     assert data["summary"]["run_id"] == run_id
 
     # pr_bundle_emitted is in the envelope.
-    assert "pr_bundle_emitted" in data, (
-        f"pr_bundle_emitted missing from runs-end envelope: keys={list(data.keys())}"
-    )
+    assert "pr_bundle_emitted" in data, f"pr_bundle_emitted missing from runs-end envelope: keys={list(data.keys())}"
     bundle_env = data["pr_bundle_emitted"]
     # It's a real envelope shape (summary present).
     assert "summary" in bundle_env, bundle_env
@@ -179,6 +171,4 @@ def test_runs_end_help_mentions_with_pr_bundle_emit(cli_runner):
     """The flag must be discoverable via ``roam runs end --help``."""
     r = _invoke(cli_runner, ["runs", "end", "--help"])
     assert r.exit_code == 0
-    assert "--with-pr-bundle-emit" in r.output, (
-        f"--with-pr-bundle-emit not in help text:\n{r.output}"
-    )
+    assert "--with-pr-bundle-emit" in r.output, f"--with-pr-bundle-emit not in help text:\n{r.output}"

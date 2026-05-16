@@ -94,18 +94,14 @@ def test_claude_md_cites_correct_anchor_counts() -> None:
     # The doc has TWO sentences citing these counts (line ~57 source-of-truth
     # block, line ~65 contributor instructions). Both must agree with source.
     assert f"{formatter_count} entries" in claude_md, (
-        f"CLAUDE.md should cite formatter terminal count = {formatter_count} "
-        f"in the LAW 4 anchor-vocabulary section."
+        f"CLAUDE.md should cite formatter terminal count = {formatter_count} in the LAW 4 anchor-vocabulary section."
     )
     assert f"{lint_count} entries" in claude_md, (
-        f"CLAUDE.md should cite lint anchor count = {lint_count} "
-        f"in the LAW 4 anchor-vocabulary section."
+        f"CLAUDE.md should cite lint anchor count = {lint_count} in the LAW 4 anchor-vocabulary section."
     )
     assert f"{overlap} shared with the formatter" in claude_md, (
-        f"CLAUDE.md should cite overlap = {overlap} in the LAW 4 "
-        f"anchor-vocabulary section."
+        f"CLAUDE.md should cite overlap = {overlap} in the LAW 4 anchor-vocabulary section."
     )
     assert f"adds {additions} SBOM/registry-domain terminals" in claude_md, (
-        f"CLAUDE.md should cite additions = {additions} in the LAW 4 "
-        f"anchor-vocabulary section."
+        f"CLAUDE.md should cite additions = {additions} in the LAW 4 anchor-vocabulary section."
     )

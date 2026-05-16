@@ -1,4 +1,12 @@
-"""Get the minimal context needed to safely modify a symbol."""
+"""Get the minimal context needed to safely modify a symbol.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because context outputs are invocation-scoped read-order advice
+(files_to_read[] ranked, caller/callee summaries, test mappings) for
+agent orientation — not per-location code findings. Output is advisory
+ranking, not defect annotation. See action.yml _SUPPORTED_SARIF allowlist
+and W1155 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +36,14 @@ from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, file_not_found_hint, find_symbol, symbol_not_found
 from roam.db.connection import batched_in, open_db
 from roam.db.queries import FILE_BY_PATH
-from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 _TASK_CHOICES = ["refactor", "debug", "extend", "review", "understand"]
@@ -812,7 +827,18 @@ def _render_single_json(data, budget=0):
     files_to_read = data["files_to_read"]
 
     task_suffix = f" (task={task})" if task else ""
-    verdict = f"{len(files_to_read)} files, {len(non_test_callers)} callers for {sym['name']}{task_suffix}"
+    # W1245 Pattern-2 variant-D: pull the single-symbol resolution tier
+    # threaded by the CLI entry. Default to ``"symbol"`` so any caller
+    # building ``data`` independently keeps backwards compatibility.
+    resolutions = data.get("_resolutions") or []
+    res0 = resolutions[0] if resolutions else None
+    resolution_tier = (res0 or {}).get("tier", "symbol")
+    resolved_target = (res0 or {}).get("resolved_name") or (sym["qualified_name"] or sym["name"])
+    resolution_block = resolution_disclosure(resolution_tier, target=resolved_target)
+    fuzzy_suffix = " [fuzzy resolution]" if resolution_tier != "symbol" else ""
+    verdict = (
+        f"{len(files_to_read)} files, {len(non_test_callers)} callers for {sym['name']}{task_suffix}{fuzzy_suffix}"
+    )
 
     summary = {
         "verdict": verdict,
@@ -821,6 +847,8 @@ def _render_single_json(data, budget=0):
         "callees": len(callees),
         "tests": len(test_callers),
         "files_to_read": len(files_to_read),
+        # W1245 Pattern-2 variant-D resolution disclosure.
+        **resolution_block,
     }
     if task:
         summary["task"] = task
@@ -910,6 +938,11 @@ def _render_single_json(data, budget=0):
         val = data.get(key)
         if val:
             payload[key] = val
+
+    # W1245 Pattern-2 variant-D: mirror the resolution disclosure into the
+    # top-level envelope so consumers reading either ``summary`` or the
+    # top-level fields get the same signal.
+    payload.update(resolution_block)
 
     click.echo(to_json(json_envelope("context", summary=summary, budget=budget, **payload)))
 
@@ -1084,6 +1117,25 @@ def _render_batch_json(data, budget=0):
     shared_callees = data["shared_callees"]
     scored_files = data["files_to_read"]
 
+    # W1245 Pattern-2 variant-D: per-entry resolver tier so a batch with
+    # mixed exact + fuzzy + (post-resolver) "symbol" tiers discloses
+    # each entry's degradation. Top-level ``partial_success`` flips
+    # whenever ANY entry resolved non-exactly so consumers scanning only
+    # the summary still see the degradation signal. Pair by index --
+    # ``_gather_batch`` builds ``contexts`` in the same order as
+    # ``resolved``, which mirrors the input ``names`` order, so multiple
+    # inputs that converge on the same resolved symbol keep distinct
+    # tier disclosures.
+    resolutions = data.get("_resolutions") or []
+    any_degraded = any(r["tier"] != "symbol" for r in resolutions)
+
+    def _entry_resolution(idx: int, c) -> dict:
+        sym = c["sym"]
+        resolved_name = sym["qualified_name"] or sym["name"]
+        rec = resolutions[idx] if idx < len(resolutions) else None
+        tier = (rec or {}).get("tier", "symbol")
+        return resolution_disclosure(tier, target=resolved_name)
+
     click.echo(
         to_json(
             json_envelope(
@@ -1096,6 +1148,9 @@ def _render_batch_json(data, budget=0):
                     "shared_callees": len(shared_callees),
                     "files_to_read": len(scored_files),
                     "caller_metric_definition": CALLER_METRIC_RAW,
+                    # W1245 Pattern-2 variant-D: top-level partial_success
+                    # flips on ANY degraded entry across the batch.
+                    "partial_success": any_degraded,
                 },
                 mode="batch",
                 symbols=[
@@ -1120,8 +1175,11 @@ def _render_batch_json(data, budget=0):
                             for ce in c["callees"][:15]
                         ],
                         "tests": len(c["test_callers"]),
+                        # Per-entry resolution disclosure (per W324 cmd_annotate
+                        # per-finding template).
+                        **_entry_resolution(i, c),
                     }
-                    for c in contexts
+                    for i, c in enumerate(contexts)
                 ],
                 shared_callers=[
                     {
@@ -1140,6 +1198,7 @@ def _render_batch_json(data, budget=0):
                     for c in shared_callees
                 ],
                 files_to_read=scored_files,
+                partial_success=any_degraded,
             )
         )
     )
@@ -1305,12 +1364,48 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
     with open_db(readonly=True) as conn:
         # Resolve all symbols
         resolved = []
+        # W1245 Pattern-2 variant-D: record each input's resolver tier
+        # alongside the resolved row, so JSON renderers can disclose
+        # which calls landed on exact-name matches and which fell back
+        # to fuzzy-LIKE matches.
+        resolutions: list[dict] = []
         for name in names:
             sym = find_symbol(conn, name)
             if sym is None:
-                click.echo(symbol_not_found(conn, name, json_mode=json_mode))
-                raise SystemExit(1)
+                # W1272 — Pattern-2c Convention (c): unresolved exits 0
+                # with a resolution=unresolved + partial_success
+                # disclosure. Context gathering for a missing symbol is
+                # "I tried and there's nothing to gather" (a valid
+                # no-op success), not a tool failure. Keep the FTS
+                # suggestion list in text mode.
+                unresolved_block = resolution_disclosure("unresolved", target=name or "")
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "context",
+                                summary={
+                                    "verdict": f"Symbol '{name}' not found",
+                                    "partial_success": True,
+                                    "state": "not_found",
+                                    **unresolved_block,
+                                },
+                                symbol=name or "",
+                                **unresolved_block,
+                            )
+                        )
+                    )
+                else:
+                    click.echo(symbol_not_found(conn, name, json_mode=False))
+                return
             resolved.append(sym)
+            resolutions.append(
+                {
+                    "input": name,
+                    "tier": sym.get("_resolution_tier", "symbol"),
+                    "resolved_name": sym["qualified_name"] or sym["name"],
+                }
+            )
 
         # Batch mode
         if len(resolved) > 1:
@@ -1331,4 +1426,8 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
     # thread the global --budget through to renderers so
     # format_table calls in cmd_context can honor it.
     data["token_budget"] = token_budget
+    # W1245 Pattern-2 variant-D resolution disclosure threaded into
+    # ``data`` so ``_render_single_json`` / ``_render_batch_json`` can
+    # merge the per-call tier into the envelope shape uniformly.
+    data["_resolutions"] = resolutions
     _render_json(data, budget=token_budget) if json_mode else _render_text(data)

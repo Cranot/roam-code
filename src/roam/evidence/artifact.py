@@ -106,13 +106,9 @@ class EvidenceArtifact:
 
     def __post_init__(self) -> None:
         if not isinstance(self.artifact_id, str) or not self.artifact_id:
-            raise ValueError(
-                "EvidenceArtifact.artifact_id must be a non-empty string"
-            )
+            raise ValueError("EvidenceArtifact.artifact_id must be a non-empty string")
         if self.kind not in ARTIFACT_KINDS:
-            raise ValueError(
-                f"EvidenceArtifact.kind={self.kind!r} is not in ARTIFACT_KINDS"
-            )
+            raise ValueError(f"EvidenceArtifact.kind={self.kind!r} is not in ARTIFACT_KINDS")
 
         # Mutual exclusion: path + content_inline cannot both be set.
         # An artifact is either referenced by path (preferred for big
@@ -120,8 +116,7 @@ class EvidenceArtifact:
         # ambiguity about which is authoritative.
         if self.path is not None and self.content_inline is not None:
             raise ValueError(
-                "EvidenceArtifact: path and content_inline are mutually "
-                "exclusive (use one or the other, not both)"
+                "EvidenceArtifact: path and content_inline are mutually exclusive (use one or the other, not both)"
             )
 
         # When ``path`` is set, ``content_hash`` MUST be set too — the
@@ -129,22 +124,18 @@ class EvidenceArtifact:
         # can verify the on-disk bytes match what the packet claims.
         if self.path is not None and not self.content_hash:
             raise ValueError(
-                "EvidenceArtifact: path requires content_hash (sha256 hex) "
-                "so consumers can verify on-disk integrity"
+                "EvidenceArtifact: path requires content_hash (sha256 hex) so consumers can verify on-disk integrity"
             )
 
         # Redaction reasons must be drawn from the closed enumeration.
         for reason in self.redactions:
             if reason not in REDACTION_REASONS:
                 raise ValueError(
-                    f"EvidenceArtifact.redactions: unknown reason {reason!r}; "
-                    f"must be one of REDACTION_REASONS"
+                    f"EvidenceArtifact.redactions: unknown reason {reason!r}; must be one of REDACTION_REASONS"
                 )
 
         if self.content_inline is not None:
-            inline_bytes = len(
-                self.content_inline.encode("utf-8", errors="replace")
-            )
+            inline_bytes = len(self.content_inline.encode("utf-8", errors="replace"))
             if inline_bytes > INLINE_CONTENT_SOFT_LIMIT_BYTES:
                 warnings.warn(
                     "EvidenceArtifact.content_inline exceeds "

@@ -3,6 +3,17 @@
 Single source of truth for: commands, aliases, MCP tools, presets,
 categories, maturity, deprecation. Used by docs generation, contract
 tests, release notes, and the marketing/landscape surfaces.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because surface outputs are invocation-scoped capability-
+registry enumerations (the canonical list of commands / aliases /
+MCP tools / presets / categories shipping with roam-code) — not
+per-location code violations in user source. The registry describes
+roam's own surface area, which has no relationship to source
+coordinates inside the indexed workspace. See ``cmd_capabilities``
+for the parallel meta-registry disclosure pattern + action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -70,8 +81,8 @@ def _build_surface() -> dict:
     mcp_introspection_available = False
     preset_counts: dict[str, int] = {}
     try:
-        from roam.mcp_server import FastMCP as _FastMCP
         from roam.mcp_server import _PRESETS, _TOOL_METADATA
+        from roam.mcp_server import FastMCP as _FastMCP
 
         mcp_introspection_available = _FastMCP is not None
         mcp_tools = list(_TOOL_METADATA.keys())
@@ -128,9 +139,7 @@ def _build_surface() -> dict:
     # absent and these tools can't actually be served until ``fastmcp`` is
     # installed.
     if not mcp_introspection_available:
-        result["mcp_tools_note"] = (
-            "fastmcp not installed; install with: pip install 'roam-code[mcp]'"
-        )
+        result["mcp_tools_note"] = "fastmcp not installed; install with: pip install 'roam-code[mcp]'"
     return result
 
 
@@ -218,7 +227,9 @@ def surface(ctx, filter_by: str, category: str | None):
     if data["mcp_introspection_available"]:
         click.echo(f"  mcp tools:          {data['mcp_tool_count']}")
     else:
-        click.echo(f"  mcp tools:          {data['mcp_tool_count']} (introspection unavailable; install 'roam-code[mcp]')")
+        click.echo(
+            f"  mcp tools:          {data['mcp_tool_count']} (introspection unavailable; install 'roam-code[mcp]')"
+        )
     click.echo("")
     click.echo("  by maturity:")
     for level in ("stable", "experimental", "internal", "deprecated"):

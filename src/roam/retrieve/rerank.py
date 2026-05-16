@@ -1,7 +1,7 @@
 """A.1 — structural reranker for `roam retrieve`.
 
 The reranker takes a list of first-stage candidates (from FTS5) plus a
-seed map (from `seeds.infer_seeds` or caller-supplied `--seed-files`)
+seed map (from `seeds.infer_seeds` or caller-supplied `--seed-file`)
 and produces a re-scored, re-ranked list. The score is a weighted blend
 of structural signals that competitors with vector-only RAG cannot
 compute:

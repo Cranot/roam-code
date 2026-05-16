@@ -160,7 +160,9 @@ class TestRegistryDispatch:
         # source.
         _add_symbol(conn, 5, 1, "_DETECTORS", qualified_name="_DETECTORS", kind="variable", line_start=7, line_end=10)
         _add_symbol(conn, 10, 1, "detect_django_n1", qualified_name="detect_django_n1", line_start=1, line_end=2)
-        _add_symbol(conn, 11, 1, "detect_sqlalchemy_lazy", qualified_name="detect_sqlalchemy_lazy", line_start=4, line_end=5)
+        _add_symbol(
+            conn, 11, 1, "detect_sqlalchemy_lazy", qualified_name="detect_sqlalchemy_lazy", line_start=4, line_end=5
+        )
         monkeypatch.chdir(tmp_path)
         n = resolve_registry_dispatch(conn, package_prefix="myproj.")
         assert n == 2

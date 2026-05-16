@@ -23,7 +23,6 @@ import importlib
 
 import pytest
 
-
 CURATED_COMMANDS: tuple[str, ...] = (
     # Onboarding + doctoring (G2 must-haves)
     "init",
@@ -101,6 +100,7 @@ CURATED_COMMANDS: tuple[str, ...] = (
 
 def _load_command(name: str):
     from roam.cli import _COMMANDS
+
     if name not in _COMMANDS:
         pytest.fail(f"command {name!r} is not registered in roam.cli._COMMANDS")
     mod_path, fn_name = _COMMANDS[name]
@@ -153,6 +153,5 @@ def test_curated_command_has_summary_line(name):
     doc = _docstring(fn)
     first = next((ln.strip() for ln in doc.splitlines() if ln.strip()), "")
     assert first.endswith(".") or first.endswith(":"), (
-        f"{name!r} docstring's first line should end with '.' (or ':') — "
-        f"got: {first!r}"
+        f"{name!r} docstring's first line should end with '.' (or ':') — got: {first!r}"
     )

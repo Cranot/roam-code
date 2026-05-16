@@ -69,10 +69,7 @@ def empty_corpus(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         result = runner.invoke(cli, ["index"])
-        assert result.exit_code == 0, (
-            f"roam index failed on empty corpus: exit={result.exit_code}\n"
-            f"{result.output}"
-        )
+        assert result.exit_code == 0, f"roam index failed on empty corpus: exit={result.exit_code}\n{result.output}"
         yield proj
     finally:
         os.chdir(old_cwd)
@@ -91,8 +88,7 @@ def _assert_no_forbidden_fragments(text: str, ctx: str) -> None:
         # boundary or as a standalone token. The conservative test
         # is: never appear at all in the empty-input message body.
         assert frag not in haystack, (
-            f"Pattern 2 violation ({ctx}): forbidden fragment "
-            f"{frag!r} found in output\n---\n{text}\n---"
+            f"Pattern 2 violation ({ctx}): forbidden fragment {frag!r} found in output\n---\n{text}\n---"
         )
 
 
@@ -117,10 +113,7 @@ class TestW831CritiqueEmptyCorpus:
 
         # Exit non-zero — critique cannot conjure a verdict from no diff.
         # Click UsageError maps to exit 2 by convention.
-        assert result.exit_code != 0, (
-            f"critique on empty diff must not silently succeed; "
-            f"got exit=0\n{result.output}"
-        )
+        assert result.exit_code != 0, f"critique on empty diff must not silently succeed; got exit=0\n{result.output}"
 
         # Structured signal: the error message MUST carry a known
         # structured code prefix from ``roam.output.errors.ALL_CODES``.
@@ -133,16 +126,12 @@ class TestW831CritiqueEmptyCorpus:
                 code = cand
                 break
         assert code == EMPTY_INPUT, (
-            f"expected EMPTY_INPUT structured error prefix; "
-            f"got code={code!r}\noutput={output!r}"
+            f"expected EMPTY_INPUT structured error prefix; got code={code!r}\noutput={output!r}"
         )
 
         # The error message itself must mention 'empty' — the verdict
         # is explicit, not a silent SAFE fallback.
-        assert "empty" in output.lower(), (
-            f"empty-diff error must mention 'empty' in its message; "
-            f"got: {output!r}"
-        )
+        assert "empty" in output.lower(), f"empty-diff error must mention 'empty' in its message; got: {output!r}"
 
         # Pattern 2: no silent SAFE/OK/no-concerns leakage.
         _assert_no_forbidden_fragments(output, "empty diff via --input")
@@ -196,9 +185,7 @@ class TestW831CritiqueEmptyCorpus:
         result = runner.invoke(cli, ["--json", "critique", "--input", str(diff_path)])
         # Exit 0 or 5 (high-severity gate). On an empty corpus no
         # high-severity finding is possible.
-        assert result.exit_code in (0, 5), (
-            f"unexpected exit={result.exit_code}\n{result.output}"
-        )
+        assert result.exit_code in (0, 5), f"unexpected exit={result.exit_code}\n{result.output}"
 
         data = json.loads(result.output)
         assert data["command"] == "critique"
@@ -210,9 +197,7 @@ class TestW831CritiqueEmptyCorpus:
         assert data["summary"].get("high_severity", 0) == 0
         # Envelope must reach the verdict slot — non-empty string.
         verdict = data["summary"].get("verdict") or ""
-        assert isinstance(verdict, str) and verdict.strip(), (
-            f"verdict must be a non-empty string; got: {verdict!r}"
-        )
+        assert isinstance(verdict, str) and verdict.strip(), f"verdict must be a non-empty string; got: {verdict!r}"
         # NOTE: this path (valid diff against empty corpus) intentionally
         # uses the existing critique "no concerns" clean-path verdict —
         # the W831 Pattern 2 blacklist applies to the *empty-input*

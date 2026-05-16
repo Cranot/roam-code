@@ -1,9 +1,17 @@
-"""Show symbol definition, callers, and callees."""
+"""Show symbol definition, callers, and callees.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because symbol outputs are invocation-scoped definition +
+caller/callee enumerations — not per-location violations. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.db.queries import (
@@ -11,13 +19,13 @@ from roam.db.queries import (
     CALLERS_OF,
     METRICS_FOR_SYMBOL,
 )
-from roam.capability import roam_capability
 from roam.output.formatter import (
     abbrev_kind,
     format_edge_kind,
     format_signature,
     json_envelope,
     loc,
+    resolution_disclosure,
     section,
     to_json,
     truncate_lines,
@@ -52,15 +60,16 @@ def _dedup_edges(edges):
     requires_index=True,
 )
 @click.command()
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL")
 @click.option("--full", is_flag=True, help="Show all results without truncation")
 @click.pass_context
 def symbol(ctx, name, full):
-    """Show symbol definition, callers, and callees.
+    """Show definition, callers, and callees for SYMBOL.
 
-    Unlike ``search`` (which finds symbols matching a pattern), this command
-    shows detailed information about one symbol including callers, callees,
-    and graph metrics.
+    SYMBOL is a symbol identifier (bare name or qualified name). Unlike
+    ``search`` (which finds symbols matching a pattern), this command
+    shows detailed information about one symbol including callers,
+    callees, and graph metrics.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -69,19 +78,51 @@ def symbol(ctx, name, full):
         s = find_symbol(conn, name)
 
         if s is None:
-            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
-            raise SystemExit(1)
+            # W1272 — Pattern-2c Convention (c): unresolved exits 0 with a
+            # resolution=unresolved + partial_success disclosure. A
+            # symbol lookup for a missing name is "I tried and there's
+            # nothing to show" (a valid no-op success), not a tool
+            # failure. Keep the FTS suggestion list in text mode.
+            unresolved_block = resolution_disclosure("unresolved", target=name or "")
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "symbol",
+                            summary={
+                                "verdict": f"Symbol '{name}' not found",
+                                "partial_success": True,
+                                "state": "not_found",
+                                **unresolved_block,
+                            },
+                            symbol=name or "",
+                            **unresolved_block,
+                        )
+                    )
+                )
+            else:
+                click.echo(symbol_not_found(conn, name, json_mode=False))
+            return
         metrics = conn.execute(METRICS_FOR_SYMBOL, (s["id"],)).fetchone()
         callers = conn.execute(CALLERS_OF, (s["id"],)).fetchall()
         callees = conn.execute(CALLEES_OF, (s["id"],)).fetchall()
         deduped_callers = _dedup_edges(callers) if callers else []
         deduped_callees = _dedup_edges(callees) if callees else []
 
+        # W1245 Pattern-2 variant-D: disclose which resolver tier matched
+        # so MCP consumers can distinguish an exact-symbol-match success
+        # from a fuzzy-LIKE-fallback "success" that landed on a different
+        # symbol than the user requested.
+        resolution_tier = s.get("_resolution_tier", "symbol")
+        resolution_block = resolution_disclosure(resolution_tier, target=s["qualified_name"] or s["name"])
+        fuzzy_suffix = " [fuzzy resolution]" if resolution_tier != "symbol" else ""
+
         if json_mode:
             _sym_loc = loc(s["file_path"], s["line_start"])
             _verdict = (
                 f"{s['name']}: {abbrev_kind(s['kind'])} at {_sym_loc}, "
                 f"{len(deduped_callers)} callers, {len(deduped_callees)} callees"
+                f"{fuzzy_suffix}"
             )
             data = {
                 "name": s["qualified_name"] or s["name"],
@@ -121,8 +162,11 @@ def symbol(ctx, name, full):
                             "callers": len(deduped_callers),
                             "callees": len(deduped_callees),
                             "caller_metric_definition": "direct_in_degree",
+                            # W1245 Pattern-2 variant-D resolution disclosure.
+                            **resolution_block,
                         },
                         **data,
+                        **resolution_block,
                     )
                 )
             )

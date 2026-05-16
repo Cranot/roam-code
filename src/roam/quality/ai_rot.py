@@ -56,7 +56,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # Single-line label that should appear in every envelope reporting an AI
 # rot number, under the key ``ai_rot_definition``.
 DEFINITION = (

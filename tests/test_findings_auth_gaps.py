@@ -19,7 +19,6 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_auth_gaps import (
     AUTH_GAPS_DETECTOR_VERSION,
     _auth_gap_confidence_tier,
@@ -27,8 +26,8 @@ from roam.commands.cmd_auth_gaps import (
     _auth_gap_finding_kind,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import git_init, index_in_process
-
 
 # ---------------------------------------------------------------------------
 # Fixture — Laravel-style PHP project with a mix of gap types
@@ -121,9 +120,7 @@ def _run_auth_gaps_persist(proj):
 class TestFindingKindMapping:
     def test_route_finding_is_direct_unauthenticated_handler(self):
         assert (
-            _auth_gap_finding_kind(
-                {"type": "route", "confidence": "high", "verb": "POST", "path": "/x"}
-            )
+            _auth_gap_finding_kind({"type": "route", "confidence": "high", "verb": "POST", "path": "/x"})
             == "direct-unauthenticated-handler"
         )
 
@@ -144,29 +141,14 @@ class TestFindingKindMapping:
 
     def test_controller_high_is_helper_indirection(self):
         """Helper descent ran and failed (W36.7 / W36.10 path)."""
-        assert (
-            _auth_gap_finding_kind(
-                {"type": "controller", "confidence": "high"}
-            )
-            == "helper-indirection"
-        )
+        assert _auth_gap_finding_kind({"type": "controller", "confidence": "high"}) == "helper-indirection"
 
     def test_controller_medium_is_helper_indirection(self):
-        assert (
-            _auth_gap_finding_kind(
-                {"type": "controller", "confidence": "medium"}
-            )
-            == "helper-indirection"
-        )
+        assert _auth_gap_finding_kind({"type": "controller", "confidence": "medium"}) == "helper-indirection"
 
     def test_controller_low_is_name_based(self):
         """Read methods / tenant-scope demotions — purely name-based."""
-        assert (
-            _auth_gap_finding_kind(
-                {"type": "controller", "confidence": "low"}
-            )
-            == "name-based"
-        )
+        assert _auth_gap_finding_kind({"type": "controller", "confidence": "low"}) == "name-based"
 
 
 class TestConfidenceTierMapping:
@@ -253,13 +235,12 @@ def test_auth_gaps_finding_id_str_is_deterministic_e2e(tmp_path, laravel_gap_pro
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'auth-gaps'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'auth-gaps'"
                 ).fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'auth-gaps'"
-            ).fetchone()[0]
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'auth-gaps'").fetchone()[
+                0
+            ]
         assert first_count == len(first_ids), "duplicate finding_id_str on first run"
 
         # Second run — same fixture, same code, same hash inputs.
@@ -269,13 +250,12 @@ def test_auth_gaps_finding_id_str_is_deterministic_e2e(tmp_path, laravel_gap_pro
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'auth-gaps'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'auth-gaps'"
                 ).fetchall()
             }
-            second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'auth-gaps'"
-            ).fetchone()[0]
+            second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'auth-gaps'").fetchone()[
+                0
+            ]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
     finally:
@@ -291,10 +271,7 @@ def test_auth_gaps_finding_evidence_captures_kind(tmp_path, laravel_gap_project)
         _run_auth_gaps_persist(proj)
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'auth-gaps'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'auth-gaps'").fetchall()
         assert len(rows) >= 1
         kinds_seen: set[str] = set()
         for r in rows:
@@ -324,8 +301,7 @@ def test_auth_gaps_route_finding_has_no_symbol_subject(tmp_path, laravel_gap_pro
 
         with open_db(readonly=True) as conn:
             route_rows = conn.execute(
-                "SELECT subject_kind, subject_id, evidence_json FROM findings "
-                "WHERE source_detector = 'auth-gaps'"
+                "SELECT subject_kind, subject_id, evidence_json FROM findings WHERE source_detector = 'auth-gaps'"
             ).fetchall()
         # Filter to route findings via evidence type — route findings should
         # always carry subject_kind='endpoint' and subject_id=NULL.
@@ -355,18 +331,14 @@ def test_auth_gaps_findings_visible_via_cmd_findings_list(tmp_path, laravel_gap_
         _run_auth_gaps_persist(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "auth-gaps"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "auth-gaps"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "auth-gaps" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "auth-gaps" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "auth-gaps" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -429,9 +401,7 @@ def test_auth_gaps_without_persist_does_not_emit(tmp_path, laravel_gap_project):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'auth-gaps'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'auth-gaps'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, "non-persist auth-gaps still wrote to findings"
@@ -447,16 +417,12 @@ def test_auth_gaps_persist_unaffected_by_min_confidence_filter(tmp_path, laravel
     try:
         os.chdir(str(proj))
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["auth-gaps", "--persist", "--min-confidence", "high"]
-        )
+        result = runner.invoke(cli, ["auth-gaps", "--persist", "--min-confidence", "high"])
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
             tier_counts = conn.execute(
-                "SELECT confidence, COUNT(*) FROM findings "
-                "WHERE source_detector = 'auth-gaps' "
-                "GROUP BY confidence"
+                "SELECT confidence, COUNT(*) FROM findings WHERE source_detector = 'auth-gaps' GROUP BY confidence"
             ).fetchall()
         tiers = {r[0] for r in tier_counts}
         # If the filter had leaked into the persist path, we'd only see

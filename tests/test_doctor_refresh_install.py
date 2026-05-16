@@ -15,12 +15,7 @@ Covers three states:
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from roam.commands import cmd_doctor
-
 
 # ---------------------------------------------------------------------------
 # fresh — import path and on-PATH binary share a site-packages/roam dir

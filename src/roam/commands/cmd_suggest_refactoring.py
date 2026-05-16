@@ -1,4 +1,16 @@
-"""Proactive refactoring recommendations ranked by structural risk signals."""
+"""Proactive refactoring recommendations ranked by structural risk signals.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_suggest_refactoring is a recipe-composer (wraps
+``run_all_detectors`` from the smells catalog + complexity + fan-in
+into a single ranked refactoring-recommendation envelope). When the
+composed detectors expose per-finding SARIF rows, run them directly
+(``roam smells --sarif``, ``roam complexity --sarif``);
+suggest-refactoring itself returns an invocation-scoped recommendation
+ranking — not novel per-location violations. See ``cmd_plan_refactor``
+for the parallel composer disclosure pattern (W1145) + action.yml
+_SUPPORTED_SARIF allowlist + W1085 composer audit + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

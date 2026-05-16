@@ -4,6 +4,11 @@ replaces having to grep ``--help-all`` output of 200+ commands.
 The default ranking weights name matches above docstring matches so
 ``roam help-search docs`` surfaces ``docs-coverage`` first, then
 commands that mention "documentation" in their docstring.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because help-search outputs are invocation-scoped search-result
+rankings — not per-location violations. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

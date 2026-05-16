@@ -181,9 +181,7 @@ class TestCiSetupOscalW535:
         )
         assert result.exit_code == 0
         oscal_dir = ci_project / ".roam" / "oscal"
-        assert not oscal_dir.exists(), (
-            "OSCAL artifacts should NOT be materialised when --with-oscal is off (default)"
-        )
+        assert not oscal_dir.exists(), "OSCAL artifacts should NOT be materialised when --with-oscal is off (default)"
 
     def test_flag_on_creates_both_artifacts(self, cli_runner, ci_project, monkeypatch):
         monkeypatch.chdir(ci_project)
@@ -306,24 +304,16 @@ class TestCiSetupOscalW535:
         yaml_path = _resolve_control_mapping_yaml(ci_project)
         assert yaml_path is not None, "control-mapping.yaml resolver returned None"
 
-        expected_cm = build_oscal_control_mapping(
-            load_control_map(yaml_path), now=clock
-        )
+        expected_cm = build_oscal_control_mapping(load_control_map(yaml_path), now=clock)
         expected_ap = synthesize_stub_assessment_plan(
             repo_id=repo_id,
             now=clock,
             control_mapping_ref=".roam/oscal/control-mapping.json",
         )
 
-        actual_cm = json.loads(
-            (ci_project / ".roam" / "oscal" / "control-mapping.json").read_text(
-                encoding="utf-8"
-            )
-        )
+        actual_cm = json.loads((ci_project / ".roam" / "oscal" / "control-mapping.json").read_text(encoding="utf-8"))
         actual_ap = json.loads(
-            (ci_project / ".roam" / "oscal" / "stub-assessment-plan.json").read_text(
-                encoding="utf-8"
-            )
+            (ci_project / ".roam" / "oscal" / "stub-assessment-plan.json").read_text(encoding="utf-8")
         )
 
         assert actual_cm == expected_cm, "Control Mapping diverges from W464 emitter oracle"

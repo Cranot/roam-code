@@ -34,15 +34,9 @@ from roam.evidence.banner import (
     classify_evidence_coverage,
 )
 
-
 # Path to the fixture, anchored relative to this test file so the
 # test runs identically from any cwd.
-_FIXTURE_PATH = (
-    pathlib.Path(__file__).resolve().parent.parent
-    / "templates"
-    / "demos"
-    / "insufficient-evidence.json"
-)
+_FIXTURE_PATH = pathlib.Path(__file__).resolve().parent.parent / "templates" / "demos" / "insufficient-evidence.json"
 
 
 def _load_fixture_text() -> str:
@@ -83,9 +77,7 @@ def _build_packet_from_dict(payload: dict) -> ChangeEvidence:
         verdict=payload.get("verdict"),
         risk_level=payload.get("risk_level"),
         context_refs=(),
-        changed_subjects=tuple(
-            _subject(s) for s in payload.get("changed_subjects", ())
-        ),
+        changed_subjects=tuple(_subject(s) for s in payload.get("changed_subjects", ())),
         findings=tuple(payload.get("findings", ())),
         policy_decisions=tuple(payload.get("policy_decisions", ())),
         tests_required=tuple(payload.get("tests_required", ())),

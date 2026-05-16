@@ -19,14 +19,13 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_vulns import (
     VULNS_DETECTOR_VERSION,
     _vuln_finding_id,
     _vuln_reachability_tag,
 )
 from roam.db.connection import open_db
-
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -171,9 +170,7 @@ def test_vulns_generic_source_maps_to_heuristic(vuln_project, generic_report):
         _run_vulns_persist(vuln_project, generic_report)
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT confidence FROM findings WHERE source_detector = 'vulns'"
-            ).fetchall()
+            rows = conn.execute("SELECT confidence FROM findings WHERE source_detector = 'vulns'").fetchall()
         assert len(rows) >= 1
         for r in rows:
             assert r["confidence"] == "heuristic"
@@ -189,9 +186,7 @@ def test_vulns_npm_audit_source_maps_to_static_analysis(vuln_project, npm_report
         _run_vulns_persist(vuln_project, npm_report, fmt="npm-audit")
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT confidence FROM findings WHERE source_detector = 'vulns'"
-            ).fetchall()
+            rows = conn.execute("SELECT confidence FROM findings WHERE source_detector = 'vulns'").fetchall()
         assert len(rows) >= 1
         for r in rows:
             assert r["confidence"] == "static_analysis"
@@ -224,13 +219,9 @@ def test_vulns_finding_id_str_is_deterministic_e2e(vuln_project, generic_report)
         with open_db(readonly=True) as conn:
             first_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'vulns'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'vulns'").fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'vulns'"
-            ).fetchone()[0]
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'vulns'").fetchone()[0]
         assert first_count == len(first_ids), "duplicate finding_id_str on first run"
         assert first_count >= 1
 
@@ -253,9 +244,7 @@ def test_vulns_finding_id_str_is_deterministic_e2e(vuln_project, generic_report)
         with open_db(readonly=True) as conn:
             second_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'vulns'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'vulns'").fetchall()
             }
         # The vulnerabilities table grows on re-import (each row is a new
         # INSERT, not an upsert) — but the FINDINGS rows MUST upsert on
@@ -273,10 +262,7 @@ def test_vulns_finding_evidence_carries_reachability(vuln_project, generic_repor
         _run_vulns_persist(vuln_project, generic_report)
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'vulns'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'vulns'").fetchall()
         assert len(rows) >= 1
         for r in rows:
             evidence = json.loads(r["evidence_json"])
@@ -308,8 +294,7 @@ def test_vulns_subject_kind_picks_symbol_when_matched(vuln_project, generic_repo
                     "subject_id": r["subject_id"],
                 }
                 for r in conn.execute(
-                    "SELECT subject_kind, subject_id "
-                    "FROM findings WHERE source_detector = 'vulns'"
+                    "SELECT subject_kind, subject_id FROM findings WHERE source_detector = 'vulns'"
                 ).fetchall()
             ]
             matched = [r for r in rows if r["subject_kind"] == "symbol"]
@@ -318,12 +303,8 @@ def test_vulns_subject_kind_picks_symbol_when_matched(vuln_project, generic_repo
             # plus a nonexistent_pkg that should NOT match — so we
             # expect at least one symbol-subject and at least one
             # package-subject row.
-            assert len(matched) >= 1, (
-                "expected at least one symbol-resolved vuln finding"
-            )
-            assert len(unmatched) >= 1, (
-                "expected at least one package-only vuln finding"
-            )
+            assert len(matched) >= 1, "expected at least one symbol-resolved vuln finding"
+            assert len(unmatched) >= 1, "expected at least one package-only vuln finding"
             # symbol-subject rows must reference a real symbols.id.
             for r in matched:
                 assert r["subject_id"] is not None
@@ -360,18 +341,14 @@ def test_vulns_findings_visible_via_cmd_findings_list(vuln_project, generic_repo
         _run_vulns_persist(vuln_project, generic_report)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "vulns"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "vulns"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "vulns" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "vulns" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "vulns" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -426,9 +403,7 @@ def test_vulns_no_findings_table_no_crash(vuln_project, generic_report):
         # The vulnerabilities-table write path is authoritative and must
         # still have populated rows.
         with open_db(readonly=False) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM vulnerabilities"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM vulnerabilities").fetchone()[0]
         assert count >= 1, "vulnerabilities table empty despite successful import"
     finally:
         os.chdir(old_cwd)
@@ -460,9 +435,7 @@ def test_vulns_without_persist_does_not_emit_findings(vuln_project, generic_repo
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'vulns'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'vulns'").fetchone()[0]
             except sqlite3.OperationalError:
                 # findings table may not be present on every test env's
                 # schema flavour — that's still a "no findings emitted"

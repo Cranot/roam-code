@@ -24,7 +24,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helper: invoke smells directly via its Click command object
 # ---------------------------------------------------------------------------
@@ -84,9 +83,7 @@ class TestSmellsEmptyCorpus:
     def test_empty_corpus_exits_zero(self, cli_runner, empty_corpus):
         """`roam smells --json` on an empty corpus exits 0."""
         result = invoke_smells(cli_runner, cwd=empty_corpus, json_mode=True)
-        assert result.exit_code == 0, (
-            f"Expected exit 0, got {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}:\n{result.output}"
 
     def test_empty_corpus_envelope_contract(self, cli_runner, empty_corpus):
         """Envelope conforms to the canonical roam shape."""
@@ -106,18 +103,15 @@ class TestSmellsEmptyCorpus:
         # The smells command emits "Clean: no code smells detected" on an
         # empty / smell-free corpus. Accept any of the empty-signalling
         # vocabulary so the test stays robust to verdict-text tweaks.
-        assert any(
-            marker in verdict_lower
-            for marker in ("clean", "no code smells", "no smells", "0 smell")
-        ), f"verdict should signal empty/clean state, got: {verdict!r}"
+        assert any(marker in verdict_lower for marker in ("clean", "no code smells", "no smells", "0 smell")), (
+            f"verdict should signal empty/clean state, got: {verdict!r}"
+        )
         # Headline count must be zero.
         assert summary.get("total_smells", -1) == 0, (
             f"total_smells should be 0 on an empty corpus, got {summary.get('total_smells')}"
         )
 
-    def test_empty_corpus_partial_success_flag_present(
-        self, cli_runner, empty_corpus
-    ):
+    def test_empty_corpus_partial_success_flag_present(self, cli_runner, empty_corpus):
         """`summary.partial_success` is auto-injected (see CLAUDE.md
         Pattern-1 variant D) and must be present on every smells
         envelope so consumers can branch on degraded vs full success.
@@ -126,18 +120,14 @@ class TestSmellsEmptyCorpus:
         data = parse_json_output(result, command="smells")
         summary = data["summary"]
         assert "partial_success" in summary, (
-            "summary.partial_success must be present (auto-injected); "
-            f"got summary keys = {sorted(summary.keys())}"
+            f"summary.partial_success must be present (auto-injected); got summary keys = {sorted(summary.keys())}"
         )
         # Empty corpus = nothing degraded; the flag should be False.
         assert summary["partial_success"] is False, (
-            f"partial_success should be False on a clean empty corpus, "
-            f"got {summary['partial_success']!r}"
+            f"partial_success should be False on a clean empty corpus, got {summary['partial_success']!r}"
         )
 
-    def test_empty_corpus_agent_contract_facts_non_empty(
-        self, cli_runner, empty_corpus
-    ):
+    def test_empty_corpus_agent_contract_facts_non_empty(self, cli_runner, empty_corpus):
         """`agent_contract.facts` carries at least the verdict so
         tight-context agents see something concrete (LAW 4 anchor
         terminals: smells / kinds / findings / markers)."""
@@ -145,6 +135,4 @@ class TestSmellsEmptyCorpus:
         data = parse_json_output(result, command="smells")
         contract = data.get("agent_contract") or {}
         facts = contract.get("facts") or []
-        assert isinstance(facts, list) and facts, (
-            f"agent_contract.facts must be a non-empty list; got {facts!r}"
-        )
+        assert isinstance(facts, list) and facts, f"agent_contract.facts must be a non-empty list; got {facts!r}"

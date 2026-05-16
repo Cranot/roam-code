@@ -396,9 +396,7 @@ class TestUnknownSymbolEmitsStructuredEnvelope:
         from roam.cli import cli
 
         runner = CliRunner()
-        res = runner.invoke(
-            cli, ["--json", "pytest-fixtures", "fake_symbol_does_not_exist"]
-        )
+        res = runner.invoke(cli, ["--json", "pytest-fixtures", "fake_symbol_does_not_exist"])
         assert res.exit_code == 0, res.output
         payload = json.loads(res.output)
         assert payload["command"] == "pytest-fixtures"
@@ -472,12 +470,8 @@ class TestUnknownSymbolEmitsStructuredEnvelope:
         from roam.cli import cli
 
         runner = CliRunner()
-        res = runner.invoke(
-            cli, ["--json", "pytest-fixtures", "fake_symbol_does_not_exist"]
-        )
+        res = runner.invoke(cli, ["--json", "pytest-fixtures", "fake_symbol_does_not_exist"])
         assert res.exit_code == 0, res.output
         payload = json.loads(res.output)
         verdict = payload["summary"]["verdict"]
-        assert _is_concrete_anchored(verdict), (
-            f"W327 unknown-symbol verdict regressed LAW 4: {verdict!r}"
-        )
+        assert _is_concrete_anchored(verdict), f"W327 unknown-symbol verdict regressed LAW 4: {verdict!r}"

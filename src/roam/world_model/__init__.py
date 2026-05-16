@@ -38,6 +38,12 @@ Public surface:
 
 from __future__ import annotations
 
+from roam.world_model.causal_graph import (
+    CAUSAL_KINDS,
+    CausalEdge,
+    CausalGraph,
+    classify_causal_graph,
+)
 from roam.world_model.idempotency import (
     IDEMPOTENCY_KINDS,
     IdempotencyClassification,
@@ -47,12 +53,6 @@ from roam.world_model.side_effects import (
     SIDE_EFFECT_KINDS,
     SideEffectClassification,
     classify_side_effects,
-)
-from roam.world_model.causal_graph import (
-    CAUSAL_KINDS,
-    CausalEdge,
-    CausalGraph,
-    classify_causal_graph,
 )
 from roam.world_model.tx_boundaries import (
     TX_CLASSIFICATIONS,

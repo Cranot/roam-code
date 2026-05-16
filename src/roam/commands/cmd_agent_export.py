@@ -12,6 +12,13 @@ Usage:
     roam agent-export --format codex --write        # CODEX.md
     roam agent-export --profile gemini --bundle --write  # AGENTS.md + GEMINI.md
     roam agent-export -o path/OUT.md                # write to specific file
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because agent-export outputs are agent-context Markdown synthesis
+— not per-location violations. SARIF is reserved for findings with
+file:line coordinates; agent-export's primary deliverable is the
+agent-context Markdown document. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket C propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -852,14 +859,10 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
                         "cycles": health.get("cycles", 0),
                         "cycles_total": health.get("cycles_total", health.get("cycles", 0)),
                         "cycles_actionable": health.get("cycles_actionable", health.get("cycles", 0)),
-                        "cycles_definition": (
-                            __import__("roam.quality.cycles", fromlist=["definition"]).definition()
-                        ),
+                        "cycles_definition": (__import__("roam.quality.cycles", fromlist=["definition"]).definition()),
                         "god_components": health.get("god_components", 0),
                         "god_components_definition": (
-                            __import__(
-                                "roam.quality.god_components", fromlist=["definition"]
-                            ).definition()
+                            __import__("roam.quality.god_components", fromlist=["definition"]).definition()
                         ),
                         "dead_exports": health.get("dead_exports", 0),
                     }

@@ -59,14 +59,10 @@ def huge_proto_project(tmp_path, monkeypatch):
     (proj / ".gitignore").write_text(".roam/\n")
     proto_dir = proj / "proto"
     proto_dir.mkdir()
-    (proto_dir / "user.proto").write_text(
-        'syntax = "proto3";\npackage user;\nmessage U {\n  string id = 1;\n}\n'
-    )
+    (proto_dir / "user.proto").write_text('syntax = "proto3";\npackage user;\nmessage U {\n  string id = 1;\n}\n')
     src = proj / "src"
     src.mkdir()
-    (src / "user_pb2.py").write_text(
-        "# generated\nclass U:\n    id: str = ''\n"
-    )
+    (src / "user_pb2.py").write_text("# generated\nclass U:\n    id: str = ''\n")
     (src / "app.py").write_text("from src.user_pb2 import U\n\ndef use(u):\n    return u.id\n")
     git_init(proj)
     monkeypatch.chdir(proj)
@@ -82,9 +78,7 @@ def _invoke_xlang(args, cwd, json_mode=True):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(cwd))
-        return runner.invoke(
-            xlang, args, obj={"json": json_mode, "budget": 0}, catch_exceptions=False
-        )
+        return runner.invoke(xlang, args, obj={"json": json_mode, "budget": 0}, catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
 

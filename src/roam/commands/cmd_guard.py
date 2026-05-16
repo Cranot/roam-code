@@ -8,6 +8,18 @@ needed before editing:
 - covering test files
 - breaking-change risk score
 - layer-violation signals
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because guard is a setup/workflow command — its output is an
+invocation-scoped pre-edit context packet (definition + 1-hop neighbors
++ covering tests + risk score + layer signals for a single target
+symbol) bundled for downstream sub-agents, not per-location code
+violations. The underlying signals (risk score, layer warnings) are
+already surfaced by sibling SARIF-producing detectors when the agent
+wants per-finding rows; guard composes them into a single editor-
+context envelope. See ``cmd_index_bundle`` for the parallel
+setup/state disclosure pattern (W1180) + action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH propagation plan + W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -24,7 +36,14 @@ from roam.commands.context_helpers import (
 )
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import batched_in, open_db
-from roam.output.formatter import abbrev_kind, budget_truncate, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    budget_truncate,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 _DEFAULT_CALLER_CAP = 8
@@ -290,10 +309,12 @@ def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
     requires_index=True,
 )
 @click.command("guard")
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL")
 @click.pass_context
 def guard(ctx, name):
-    """Check breaking-change risk for a symbol before editing.
+    """Check breaking-change risk for SYMBOL before editing.
+
+    SYMBOL is a symbol identifier (bare name or qualified name).
 
     Returns a 0-100 risk score with component breakdown (blast radius,
     complexity, centrality, test gap, layer analysis) plus caller/callee
@@ -327,8 +348,39 @@ def guard(ctx, name):
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, name)
         if sym is None:
-            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
-            raise SystemExit(1)
+            # W1280 — Pattern-2c Convention (c): unresolved exits 0 with a
+            # resolution=unresolved + partial_success disclosure so agents
+            # can distinguish a name-typo from a tool/IO failure. Text
+            # mode keeps the FTS suggestion list (most useful next step
+            # for a human staring at a typo).
+            unresolved_block = resolution_disclosure("unresolved", target=name or "")
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "guard",
+                            summary={
+                                "verdict": f"Symbol '{name}' not found",
+                                "partial_success": True,
+                                "state": "not_found",
+                                **unresolved_block,
+                            },
+                            symbol=name or "",
+                            **unresolved_block,
+                        )
+                    )
+                )
+            else:
+                click.echo(symbol_not_found(conn, name, json_mode=False))
+            return
+
+        # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` stamps
+        # ``_resolution_tier`` so the envelope can distinguish a fully-
+        # resolved success from a degraded fuzzy-LIKE-fallback that may
+        # have landed on a different symbol. Surfaced on summary + top-
+        # level + verdict suffix per the W1244 cmd_diagnose template.
+        resolution_tier = sym.get("_resolution_tier", "symbol")
+        resolution_block = resolution_disclosure(resolution_tier, target=sym["qualified_name"] or sym["name"])
 
         context = gather_symbol_context(conn, sym, task="review", use_propagation=False)
         callers = [_to_edge_item(r) for r in context["non_test_callers"][:caller_cap]]
@@ -359,6 +411,11 @@ def guard(ctx, name):
         )
         signal_summary = [f"{k}={v:.1f}" for k, v in major_factors[:3] if v > 0]
         verdict = f"{risk_level} breaking-change risk ({risk_score}/100) for {sym['qualified_name'] or sym['name']}"
+        # W1245 Pattern-2 variant-D: suffix the verdict when the resolver
+        # succeeded through a degraded tier so LAW-6 single-line consumers
+        # still see the disclosure.
+        if resolution_tier == "fuzzy":
+            verdict = f"{verdict} [fuzzy resolution]"
 
         definition = {
             "name": sym["name"],
@@ -383,6 +440,8 @@ def guard(ctx, name):
                     "layer_violations": layers["violation_count"],
                     "move_sensitive_edges": layers["move_sensitive_count"],
                     "signals": signal_summary,
+                    # W1245 Pattern-2 variant-D resolution disclosure.
+                    **resolution_block,
                 },
                 budget=token_budget,
                 definition=definition,
@@ -406,6 +465,7 @@ def guard(ctx, name):
                     "move_sensitive_count": layers["move_sensitive_count"],
                     "move_sensitive_edges": layers["move_sensitive_edges"],
                 },
+                **resolution_block,
             )
             click.echo(to_json(payload))
             return

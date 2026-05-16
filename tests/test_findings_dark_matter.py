@@ -37,7 +37,6 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_dark_matter import (
     DARK_MATTER_DETECTOR_VERSION,
     _canonical_pair,
@@ -46,7 +45,7 @@ from roam.commands.cmd_dark_matter import (
     _emit_dark_matter_findings,
 )
 from roam.db.connection import open_db
-
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -66,25 +65,13 @@ def dark_matter_project(project_factory, monkeypatch):
     """
     billing_v1 = "def get_invoice(id):\n    return {'id': id, 'amount': 100}\n"
     reporting_v1 = "def monthly_report():\n    return {'total': 500}\n"
-    models_v1 = (
-        "from billing import get_invoice\n"
-        "\n"
-        "def load_model():\n"
-        "    inv = get_invoice(1)\n"
-        "    return inv\n"
-    )
+    models_v1 = "from billing import get_invoice\n\ndef load_model():\n    inv = get_invoice(1)\n    return inv\n"
 
     billing_v2 = "def get_invoice(id):\n    return {'id': id, 'amount': 200, 'tax': 20}\n"
     reporting_v2 = "def monthly_report():\n    return {'total': 600, 'tax_total': 60}\n"
 
-    billing_v3 = (
-        "def get_invoice(id):\n"
-        "    return {'id': id, 'amount': 300, 'tax': 30, 'discount': 10}\n"
-    )
-    reporting_v3 = (
-        "def monthly_report():\n"
-        "    return {'total': 700, 'tax_total': 70, 'discounts': 10}\n"
-    )
+    billing_v3 = "def get_invoice(id):\n    return {'id': id, 'amount': 300, 'tax': 30, 'discount': 10}\n"
+    reporting_v3 = "def monthly_report():\n    return {'total': 700, 'tax_total': 70, 'discounts': 10}\n"
 
     proj = project_factory(
         {
@@ -190,9 +177,7 @@ def test_confidence_tier_typed_categories_are_structural():
         "NAMING",
     ]
     for cat in typed:
-        assert _dark_matter_confidence_for_category(cat) == "structural", (
-            f"category {cat!r} expected structural"
-        )
+        assert _dark_matter_confidence_for_category(cat) == "structural", f"category {cat!r} expected structural"
 
 
 def test_confidence_tier_unknown_is_heuristic():
@@ -299,8 +284,7 @@ def test_emit_tier_mapping_typed_vs_unknown(tmp_path):
         assert written == 4
 
         rows = conn.execute(
-            "SELECT confidence, evidence_json FROM findings "
-            "WHERE source_detector = 'dark-matter' ORDER BY id ASC"
+            "SELECT confidence, evidence_json FROM findings WHERE source_detector = 'dark-matter' ORDER BY id ASC"
         ).fetchall()
 
     tier_by_cat: dict[str, str] = {}
@@ -347,8 +331,7 @@ def test_emit_canonical_ordering_collapses_swapped_pair(tmp_path):
         assert written_a == 1 and written_b == 1
 
         rows = conn.execute(
-            "SELECT finding_id_str, evidence_json FROM findings "
-            "WHERE source_detector = 'dark-matter'"
+            "SELECT finding_id_str, evidence_json FROM findings WHERE source_detector = 'dark-matter'"
         ).fetchall()
     assert len(rows) == 1, "swapped pair should upsert onto the canonical id"
     ev = json.loads(rows[0]["evidence_json"])
@@ -376,9 +359,7 @@ def test_emit_evidence_carries_full_metric_set(tmp_path):
         }
         _emit_dark_matter_findings(conn, [pair], DARK_MATTER_DETECTOR_VERSION)
         conn.commit()
-        row = conn.execute(
-            "SELECT evidence_json FROM findings WHERE source_detector = 'dark-matter'"
-        ).fetchone()
+        row = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'dark-matter'").fetchone()
     ev = json.loads(row["evidence_json"])
     for k in (
         "qualified_name",
@@ -421,9 +402,7 @@ def test_emit_rerun_is_deterministic_upsert(tmp_path):
                 "SELECT finding_id_str FROM findings WHERE source_detector = 'dark-matter'"
             ).fetchall()
         }
-        first_count = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'"
-        ).fetchone()[0]
+        first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'").fetchone()[0]
         assert first_count == 1 and len(first_ids) == 1
 
         # Second emit — same pair, same hash inputs → upsert, same id.
@@ -436,9 +415,7 @@ def test_emit_rerun_is_deterministic_upsert(tmp_path):
                 "SELECT finding_id_str FROM findings WHERE source_detector = 'dark-matter'"
             ).fetchall()
         }
-        second_count = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'"
-        ).fetchone()[0]
+        second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'").fetchone()[0]
     assert second_count == first_count
     assert second_ids == first_ids
 
@@ -511,9 +488,7 @@ def test_dark_matter_rerun_upserts_not_duplicates(dark_matter_project):
                 "SELECT finding_id_str FROM findings WHERE source_detector = 'dark-matter'"
             ).fetchall()
         }
-        first_count = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'"
-        ).fetchone()[0]
+        first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'").fetchone()[0]
     assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
     assert first_count >= 1
 
@@ -528,9 +503,7 @@ def test_dark_matter_rerun_upserts_not_duplicates(dark_matter_project):
                 "SELECT finding_id_str FROM findings WHERE source_detector = 'dark-matter'"
             ).fetchall()
         }
-        second_count = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'"
-        ).fetchone()[0]
+        second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'").fetchone()[0]
     assert second_count == first_count, "row count drifted across runs"
     assert second_ids == first_ids, "finding_id_str set changed across runs"
 
@@ -542,9 +515,7 @@ def test_dark_matter_evidence_carries_metrics_and_category(dark_matter_project):
 
     with open_db(readonly=True) as conn:
         row = conn.execute(
-            "SELECT evidence_json FROM findings "
-            "WHERE source_detector = 'dark-matter' "
-            "ORDER BY id ASC LIMIT 1"
+            "SELECT evidence_json FROM findings WHERE source_detector = 'dark-matter' ORDER BY id ASC LIMIT 1"
         ).fetchone()
     assert row is not None
     ev = json.loads(row["evidence_json"])
@@ -578,9 +549,7 @@ def test_dark_matter_findings_visible_via_cmd_findings_list(dark_matter_project)
     old_cwd = os.getcwd()
     try:
         os.chdir(str(dark_matter_project))
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "dark-matter"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "dark-matter"])
     finally:
         os.chdir(old_cwd)
     assert result.exit_code == 0, result.output
@@ -589,9 +558,7 @@ def test_dark_matter_findings_visible_via_cmd_findings_list(dark_matter_project)
     assert envelope["summary"]["state"] == "populated"
     assert envelope["summary"]["total_findings"] >= 1
     assert "dark-matter" in envelope["summary"]["detectors"]
-    assert all(
-        r["source_detector"] == "dark-matter" for r in envelope["findings"]
-    )
+    assert all(r["source_detector"] == "dark-matter" for r in envelope["findings"])
 
 
 def test_dark_matter_findings_visible_via_cmd_findings_count(dark_matter_project):
@@ -628,9 +595,7 @@ def test_no_persist_does_not_emit_findings(dark_matter_project):
 
     with open_db(readonly=True) as conn:
         try:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'dark-matter'").fetchone()[0]
         except sqlite3.OperationalError:
             count = 0
     assert count == 0, "non-persist dark-matter still wrote to findings"

@@ -121,17 +121,22 @@ def _subject_digest(change_evidence: ChangeEvidence) -> dict[str, str]:
         # Last-resort: hash the evidence_id so the subject is never
         # empty. A verifier seeing ``urn:...`` as the only key knows
         # the source identity was synthesised.
-        digest["sha256"] = hashlib.sha256(
-            change_evidence.evidence_id.encode("utf-8")
-        ).hexdigest()
+        digest["sha256"] = hashlib.sha256(change_evidence.evidence_id.encode("utf-8")).hexdigest()
     return digest
 
 
 def _verified_levels(change_evidence: ChangeEvidence) -> list[str]:
     """Map ``ChangeEvidence.assurance_floor()`` to SLSA level strings.
 
-    ``assurance_floor()`` returns ``{"passes": bool, "missing": (...)}``.
-    Mapping:
+    ``assurance_floor()`` returns
+    ``{"passes": bool, "missing": tuple[str, ...],
+       "stale": bool, "stale_reasons": tuple[str, ...]}``
+    (W1254 added the ``stale`` / ``stale_reasons`` keys). This mapper
+    intentionally reads ONLY ``passes`` and ``missing`` — coverage vs
+    freshness are distinct assurance axes per W1254/W1261, and the
+    sibling :func:`_verification_result` is the canonical consumer of
+    ``stale`` (it downgrades stale-but-MVA-complete packets to
+    ``FAILED``). Mapping:
 
     * ``passes=True`` (all six axes present: actor / authority /
       changed_subjects / findings / verification / policy_state) ->
@@ -184,9 +189,7 @@ def _input_attestations(change_evidence: ChangeEvidence) -> list[dict[str, Any]]
     inputs.append(
         {
             "uri": f"urn:roam:evidence:{change_evidence.evidence_id}",
-            "digest": digest or {"sha256": hashlib.sha256(
-                change_evidence.evidence_id.encode("utf-8")
-            ).hexdigest()},
+            "digest": digest or {"sha256": hashlib.sha256(change_evidence.evidence_id.encode("utf-8")).hexdigest()},
         }
     )
     # Add CGA + attestation artifacts.
@@ -221,13 +224,25 @@ def _verification_result(change_evidence: ChangeEvidence) -> str:
     """Map ChangeEvidence.verdict to the SLSA VSA verificationResult.
 
     SLSA VSA v1 documents two values: ``"PASSED"`` and ``"FAILED"``.
-    PASSED requires BOTH:
+    PASSED requires ALL of:
 
     * ``assurance_floor().passes == True`` (the MVA gate cleared), AND
+    * ``assurance_floor().stale != True`` (the evidence is fresh; W1261), AND
     * ``risk_level`` not in ``("high", "critical")``.
 
-    Pattern-2 discipline: any error / missing floor / dangerous risk
-    yields FAILED (explicit absence beats silent success).
+    Pattern-2 discipline: any error / missing floor / dangerous risk /
+    stale evidence yields FAILED (explicit absence beats silent success).
+
+    W1261 — stale-axis downgrade. The W210/W1254 staleness axis is a
+    distinct quality signal from MVA-floor coverage: a packet can be
+    MVA-complete (six axes populated) AND stale (context read predates
+    edits). Pre-W1261 the VSA silently emitted ``PASSED`` on a stale-but-
+    complete packet because ``_verification_result`` only read
+    ``passes``. That re-introduced the Pattern-2 "silent success on
+    degraded resolution" anti-pattern at the attestation boundary.
+    Mirrors the existing high-risk downgrade: stale evidence is
+    structurally analogous to high-risk evidence — both signal "do not
+    trust the verifier verdict at face value."
     """
     try:
         floor = change_evidence.assurance_floor() or {}
@@ -235,6 +250,11 @@ def _verification_result(change_evidence: ChangeEvidence) -> str:
         return "FAILED"
     risk = (change_evidence.risk_level or "").lower()
     if risk in ("high", "critical"):
+        return "FAILED"
+    # W1261 - stale evidence cannot attest PASSED even when the MVA
+    # floor passes. Checked BEFORE the ``passes`` gate so stale-but-
+    # complete packets correctly degrade to FAILED.
+    if floor.get("stale", False):
         return "FAILED"
     if floor.get("passes"):
         return "PASSED"

@@ -9,6 +9,12 @@ Uses five detection signals:
 
 Each signal produces a probability [0, 1]. A weighted average yields the
 overall AI ratio estimate.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ai-ratio outputs are invocation-scoped AI-generation
+probability estimates — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

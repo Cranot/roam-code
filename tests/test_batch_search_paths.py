@@ -31,25 +31,17 @@ def path_leak_project(tmp_path):
     composables.mkdir(parents=True)
     # File with the query string IN ITS PATH but a generic function name.
     (composables / "useProbe.py").write_text(
-        "def setup():\n"
-        '    """Fixture setup — name unrelated to Probe."""\n'
-        "    return {}\n"
+        'def setup():\n    """Fixture setup — name unrelated to Probe."""\n    return {}\n'
     )
     # File with the actual symbol — the legitimate match for "Probe".
-    (src / "probes.py").write_text(
-        "def Probe():\n"
-        '    """The real Probe function."""\n'
-        "    return True\n"
-    )
+    (src / "probes.py").write_text('def Probe():\n    """The real Probe function."""\n    return True\n')
     git_init(proj)
     index_in_process(proj)
     return proj
 
 
 class TestBatchSearchPaths:
-    def test_default_does_not_match_path_only(
-        self, cli_runner, path_leak_project, monkeypatch
-    ):
+    def test_default_does_not_match_path_only(self, cli_runner, path_leak_project, monkeypatch):
         """Default ``batch-search Probe`` must NOT return ``setup``.
 
         ``setup`` lives at ``src/composables/Probe/useProbe.py`` — its
@@ -57,9 +49,7 @@ class TestBatchSearchPaths:
         wide-match SQL returned it as a hit; post-fix it must not.
         """
         monkeypatch.chdir(path_leak_project)
-        result = invoke_cli(
-            cli_runner, ["batch-search", "Probe"], cwd=path_leak_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["batch-search", "Probe"], cwd=path_leak_project, json_mode=True)
         data = parse_json_output(result, "batch-search")
         hits = data["results"].get("Probe", [])
         names = {h["name"] for h in hits}
@@ -68,13 +58,9 @@ class TestBatchSearchPaths:
             f"connection to 'Probe' is the file path; got hits: {hits}"
         )
         # Sanity: the real Probe symbol IS found.
-        assert "Probe" in names, (
-            f"expected to find the actual Probe symbol; got hits: {hits}"
-        )
+        assert "Probe" in names, f"expected to find the actual Probe symbol; got hits: {hits}"
 
-    def test_include_paths_restores_wide_match(
-        self, cli_runner, path_leak_project, monkeypatch
-    ):
+    def test_include_paths_restores_wide_match(self, cli_runner, path_leak_project, monkeypatch):
         """``--include-paths`` opts back into the legacy behaviour.
 
         Users who genuinely want a fixture/path-shaped lookup can pass

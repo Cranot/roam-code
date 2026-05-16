@@ -1,16 +1,23 @@
-"""Show directory contents: exports, signatures, and dependencies."""
+"""Show directory contents: exports, signatures, and dependencies.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because module outputs are invocation-scoped symbol registries
+— not per-location violations. Editor consumers should use the JSON
+envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.db.queries import (
     FILES_IN_DIR,
     SYMBOLS_IN_DIR,
 )
-from roam.capability import roam_capability
 from roam.output.formatter import (
     abbrev_kind,
     format_signature,

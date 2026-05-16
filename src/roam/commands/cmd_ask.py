@@ -7,6 +7,13 @@ Examples
     roam ask "where does login validate sessions"
     roam ask "split the auth refactor across 4 agents"
     roam ask --list
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ask is a bootstrap/REPL helper — its output is a
+natural-language phrase routed to a roam recipe (not analysis
+findings). SARIF is reserved for scanning results. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket E propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -15,8 +22,8 @@ import click
 
 from roam.ask.classifier import classify
 from roam.ask.recipes import RECIPES, Recipe, by_name
-from roam.capability import roam_capability
 from roam.ask.runner import extract_symbol, fill_followups, run_recipe
+from roam.capability import roam_capability
 from roam.output.confidence import DEFAULT_CONFIDENCE_THRESHOLD, is_low_confidence
 from roam.output.formatter import json_envelope, to_json
 

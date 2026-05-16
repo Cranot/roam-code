@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import re
 import sys
-from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
 
@@ -111,6 +110,4 @@ def test_mcp_tool_count_matches_actual():
     m = re.search(r"\b(\d+)\s+MCP\s+tools\b", readme)
     assert m, "README missing 'N MCP tools' headline phrase"
     n = int(m.group(1))
-    assert n == full_total, (
-        f"README says '{n} MCP tools' but live registered_tools is {full_total}"
-    )
+    assert n == full_total, f"README says '{n} MCP tools' but live registered_tools is {full_total}"

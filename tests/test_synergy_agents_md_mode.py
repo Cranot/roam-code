@@ -19,7 +19,6 @@ from conftest import git_init, index_in_process  # noqa: E402
 
 from roam.modes import set_active_mode  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -129,6 +128,4 @@ def test_agents_md_mode_section_lists_blocked_command_examples(indexed_repo):
     # text. We don't pin a specific name (the migration tier list can
     # evolve) but at least one of the dataclass-reported examples must
     # appear verbatim.
-    assert any(f"`{cmd}`" in md for cmd in blocked), (
-        f"none of {blocked!r} appear in rendered section:\n{md}"
-    )
+    assert any(f"`{cmd}`" in md for cmd in blocked), f"none of {blocked!r} appear in rendered section:\n{md}"

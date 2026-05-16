@@ -71,16 +71,12 @@ def test_n1_empty_corpus_emits_pattern2_envelope(cli_runner, empty_corpus):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(empty_corpus))
-        result = cli_runner.invoke(
-            cli, ["--json", "n1"], catch_exceptions=False
-        )
+        result = cli_runner.invoke(cli, ["--json", "n1"], catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
 
     # Empty-corpus is a valid state — exit 0, not a failure.
-    assert result.exit_code == 0, (
-        f"empty-corpus n1 exited {result.exit_code}: {result.output!r}"
-    )
+    assert result.exit_code == 0, f"empty-corpus n1 exited {result.exit_code}: {result.output!r}"
 
     envelope = json.loads(result.output)
 
@@ -88,16 +84,13 @@ def test_n1_empty_corpus_emits_pattern2_envelope(cli_runner, empty_corpus):
     assert envelope.get("command") == "n1"
     summary = envelope.get("summary") or {}
     verdict = summary.get("verdict", "")
-    assert isinstance(verdict, str) and verdict, (
-        f"missing summary.verdict in {envelope!r}"
-    )
+    assert isinstance(verdict, str) and verdict, f"missing summary.verdict in {envelope!r}"
 
     # --- Pattern 2: explicit empty disclosure, NOT default-success ---
     verdict_lc = verdict.lower()
-    assert any(
-        token in verdict_lc
-        for token in ("no implicit n+1", "no n+1", "0 patterns", "empty")
-    ), f"verdict does not disclose empty state: {verdict!r}"
+    assert any(token in verdict_lc for token in ("no implicit n+1", "no n+1", "0 patterns", "empty")), (
+        f"verdict does not disclose empty state: {verdict!r}"
+    )
 
     # Forbid default-success markers on an empty corpus.
     forbidden_markers = ("safe", "healthy", "passing", "all good")
@@ -106,25 +99,20 @@ def test_n1_empty_corpus_emits_pattern2_envelope(cli_runner, empty_corpus):
     )
 
     # --- Total + framework + confidence-distribution axes are explicit ---
-    assert summary.get("total") == 0, (
-        f"summary.total must be 0 on empty corpus, got {summary.get('total')!r}"
-    )
+    assert summary.get("total") == 0, f"summary.total must be 0 on empty corpus, got {summary.get('total')!r}"
     # framework defaults to "generic" when no framework is detected — this
     # is the explicit empty-framework disclosure, not a false-positive.
     assert summary.get("framework") == "generic", (
-        f"summary.framework must be 'generic' on empty corpus, got "
-        f"{summary.get('framework')!r}"
+        f"summary.framework must be 'generic' on empty corpus, got {summary.get('framework')!r}"
     )
     assert summary.get("truncated") is False
     assert summary.get("by_confidence") == {}, (
-        f"summary.by_confidence must be empty {{}} on empty corpus, got "
-        f"{summary.get('by_confidence')!r}"
+        f"summary.by_confidence must be empty {{}} on empty corpus, got {summary.get('by_confidence')!r}"
     )
     # Canonical zero-distribution (W596 confidence helper).
     dist = summary.get("findings_confidence_distribution") or {}
     assert dist == {"high": 0, "medium": 0, "low": 0}, (
-        f"summary.findings_confidence_distribution must be the zero "
-        f"distribution on empty corpus, got {dist!r}"
+        f"summary.findings_confidence_distribution must be the zero distribution on empty corpus, got {dist!r}"
     )
 
     # Top-level findings array must also be empty (no synthetic rows).
@@ -133,19 +121,13 @@ def test_n1_empty_corpus_emits_pattern2_envelope(cli_runner, empty_corpus):
     # --- agent_contract.facts: non-empty, discloses empty state ---
     contract = envelope.get("agent_contract") or {}
     facts = contract.get("facts") or []
-    assert isinstance(facts, list) and len(facts) >= 1, (
-        f"agent_contract.facts must be non-empty: {contract!r}"
-    )
+    assert isinstance(facts, list) and len(facts) >= 1, f"agent_contract.facts must be non-empty: {contract!r}"
     joined = " ".join(str(f).lower() for f in facts)
     # The fact list must mention the empty state — either via "n+1" /
     # "pattern(s)" anchoring on the LAW 4 terminal, or via "0" count.
-    assert ("n+1" in joined) or ("pattern" in joined) or ("0" in joined), (
-        f"facts must surface empty state: {facts!r}"
-    )
+    assert ("n+1" in joined) or ("pattern" in joined) or ("0" in joined), f"facts must surface empty state: {facts!r}"
     # The "total 0" / "no N+1 patterns detected" disclosure is explicit.
-    assert "0" in joined, (
-        f"facts must surface the empty count: {facts!r}"
-    )
+    assert "0" in joined, f"facts must surface the empty count: {facts!r}"
 
 
 def test_n1_empty_corpus_text_mode(cli_runner, empty_corpus):
@@ -162,7 +144,6 @@ def test_n1_empty_corpus_text_mode(cli_runner, empty_corpus):
     assert result.exit_code == 0
     assert "VERDICT:" in result.output
     out_lc = result.output.lower()
-    assert any(
-        token in out_lc
-        for token in ("no implicit n+1", "no n+1", "0 patterns")
-    ), f"text-mode VERDICT does not disclose empty state: {result.output!r}"
+    assert any(token in out_lc for token in ("no implicit n+1", "no n+1", "0 patterns")), (
+        f"text-mode VERDICT does not disclose empty state: {result.output!r}"
+    )

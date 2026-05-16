@@ -241,9 +241,7 @@ def is_test_path(path: str) -> bool:
     return False
 
 
-def enclosing_symbol(
-    conn: sqlite3.Connection, file_id: int, line: int
-) -> tuple[str, str, int]:
+def enclosing_symbol(conn: sqlite3.Connection, file_id: int, line: int) -> tuple[str, str, int]:
     """Return (symbol_name, kind, line_start) for the enclosing function.
 
     Looks up the innermost ``function`` / ``method`` recorded in the

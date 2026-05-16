@@ -17,8 +17,6 @@ this file pins their contract so the helper can't regress silently:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from tests._helpers.repo_root import repo_root
 
 
@@ -30,9 +28,7 @@ def test_repo_root_has_marker_files():
         "either the helper resolved into an empty worktree shell or the "
         "project marker has moved"
     )
-    assert (root / "pyproject.toml").is_file(), (
-        f"repo_root() returned {root!r} but it has no pyproject.toml"
-    )
+    assert (root / "pyproject.toml").is_file(), f"repo_root() returned {root!r} but it has no pyproject.toml"
 
 
 def test_repo_root_has_git_marker():
@@ -40,8 +36,7 @@ def test_repo_root_has_git_marker():
     root = repo_root()
     dotgit = root / ".git"
     assert dotgit.exists(), (
-        f"repo_root() returned {root!r} but it has no .git entry -- "
-        "the helper has resolved outside the repo"
+        f"repo_root() returned {root!r} but it has no .git entry -- the helper has resolved outside the repo"
     )
 
 
@@ -63,6 +58,4 @@ def test_repo_root_resolves_canonical_src_layout():
     """
     root = repo_root()
     for child in ("src", "tests", "dev"):
-        assert (root / child).is_dir(), (
-            f"repo_root() returned {root!r}; expected child {child}/ to exist"
-        )
+        assert (root / child).is_dir(), f"repo_root() returned {root!r}; expected child {child}/ to exist"

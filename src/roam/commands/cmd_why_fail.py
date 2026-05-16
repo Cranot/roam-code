@@ -8,6 +8,13 @@ top suspects are the ones that:
   2. Have been touched by recent commits (last ``--days`` days).
 
 Sorted by recency × hop distance × PageRank.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because why-fail outputs are invocation-scoped failure
+candidate rankings — not per-location violations. Editor consumers
+should use the JSON envelope directly. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

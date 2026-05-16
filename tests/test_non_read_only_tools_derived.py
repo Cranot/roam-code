@@ -19,7 +19,6 @@ collapse has regressed.
 
 from __future__ import annotations
 
-
 # The pre-collapse hardcoded set, copied verbatim from mcp_server.py line
 # 294-301 (now replaced by the derived view at module-load finalization).
 # Treat this as the regression floor.
@@ -41,8 +40,7 @@ def test_non_read_only_tools_is_frozenset() -> None:
     from roam.mcp_server import _NON_READ_ONLY_TOOLS
 
     assert isinstance(_NON_READ_ONLY_TOOLS, frozenset), (
-        f"_NON_READ_ONLY_TOOLS must be a frozenset, got "
-        f"{type(_NON_READ_ONLY_TOOLS).__name__}"
+        f"_NON_READ_ONLY_TOOLS must be a frozenset, got {type(_NON_READ_ONLY_TOOLS).__name__}"
     )
 
 
@@ -53,9 +51,7 @@ def test_non_read_only_tools_derived_from_metadata() -> None:
     """
     from roam.mcp_server import _NON_READ_ONLY_TOOLS, _TOOL_METADATA
 
-    expected = frozenset(
-        name for name, meta in _TOOL_METADATA.items() if not meta.get("read_only", True)
-    )
+    expected = frozenset(name for name, meta in _TOOL_METADATA.items() if not meta.get("read_only", True))
     assert _NON_READ_ONLY_TOOLS == expected, (
         "_NON_READ_ONLY_TOOLS is no longer derived from _TOOL_METADATA. "
         "If you added a non-read-only tool, set read_only=False on its "
@@ -108,16 +104,15 @@ def test_default_read_only_is_true() -> None:
     default ``True``. This pins the W108 contract: the decorator default
     is "safe", and only the 6 side-effectful tools opt out.
     """
-    import roam.mcp_server as mcp
-
     # Verify the kwarg signature exposes read_only with default True.
     import inspect
+
+    import roam.mcp_server as mcp
 
     sig = inspect.signature(mcp._tool)
     param = sig.parameters.get("read_only")
     assert param is not None, (
-        "_tool decorator factory is missing the read_only kwarg. "
-        "Re-check the signature near line 832 of mcp_server.py."
+        "_tool decorator factory is missing the read_only kwarg. Re-check the signature near line 832 of mcp_server.py."
     )
     assert param.default is True, (
         f"_tool(read_only=...) default must be True (the safe default — "
@@ -134,8 +129,7 @@ def test_default_read_only_is_true() -> None:
         "so a missing entry indicates the decorator path is broken."
     )
     assert meta.get("read_only") is True, (
-        "roam_health metadata lacks read_only=True. The @_tool default "
-        "kwarg failed to propagate to _TOOL_METADATA."
+        "roam_health metadata lacks read_only=True. The @_tool default kwarg failed to propagate to _TOOL_METADATA."
     )
 
 
@@ -149,9 +143,7 @@ def test_read_only_decorator_kwarg_propagates_to_metadata() -> None:
 
     for name in PRE_COLLAPSE_NON_READ_ONLY:
         meta = mcp._TOOL_METADATA.get(name)
-        assert meta is not None, (
-            f"_TOOL_METADATA missing {name!r} — decorator did not register it."
-        )
+        assert meta is not None, f"_TOOL_METADATA missing {name!r} — decorator did not register it."
         assert meta.get("read_only") is False, (
             f"{name} metadata has read_only={meta.get('read_only')!r}, "
             f"expected False. The @_tool(read_only=False) kwarg failed to "

@@ -39,6 +39,7 @@ jobs:
   # take for air-gapped or compliance-sensitive deployments.
   offline-key:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -117,6 +118,7 @@ jobs:
   # smoke. If Sigstore has an outage, re-run the job after they recover.
   keyless-oidc:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:

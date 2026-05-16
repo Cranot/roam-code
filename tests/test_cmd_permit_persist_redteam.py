@@ -39,7 +39,6 @@ from roam.commands.cmd_pr_bundle import _load_permits_from_disk  # noqa: E402
 from roam.evidence.collector import _build_authority_refs  # noqa: E402
 from roam.permits.store import permits_root  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -72,10 +71,15 @@ def _ensure_permits_dir(project: Path) -> Path:
 
 def _valid_permit_dict(permit_id: str = "permit_20260514_aaaaaa") -> dict:
     """Return a well-formed permit dict matching the on-disk schema."""
+    # W1012: expires_at is relative-to-now to avoid future-date staleness.
+    # The fixture must read as "not expired" for several non-expiry-focused
+    # tests (e.g., line 706 / 422-426 assertions); a hardcoded "2027-01-01"
+    # would silently flip those tests to failing once that date passes.
+    future_expiry = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat().replace("+00:00", "Z")
     return {
         "permit_id": permit_id,
         "scope": "redteam-baseline",
-        "expires_at": "2027-01-01T00:00:00Z",
+        "expires_at": future_expiry,
         "issued_to": "agent:redteam",
         "issued_at": "2026-05-14T10:00:00Z",
         "issued_by": "human:redteam-operator",
@@ -104,9 +108,7 @@ def test_malformed_json_file_skipped_with_no_crash(permit_project):
     # Sibling that should still load cleanly. PERMIT_ID_RE requires the
     # suffix to be 6+ hex chars (W198), so the test fixture uses hex only.
     good = _valid_permit_dict("permit_20260514_900d01")
-    (root / "permit_20260514_900d01.json").write_text(
-        json.dumps(good), encoding="utf-8"
-    )
+    (root / "permit_20260514_900d01.json").write_text(json.dumps(good), encoding="utf-8")
 
     warnings: list[str] = []
     loaded = _load_permits_from_disk(permit_project, warnings_out=warnings)
@@ -117,10 +119,9 @@ def test_malformed_json_file_skipped_with_no_crash(permit_project):
     assert len(loaded) == 1
     # W382: warning surfaces the offending file name + parse error class
     # so a reviewer can fix the underlying permit without grepping.
-    assert any(
-        "permit_20260514_bad001.json" in w and "malformed JSON" in w
-        for w in warnings
-    ), f"expected malformed-JSON warning naming the file; got {warnings!r}"
+    assert any("permit_20260514_bad001.json" in w and "malformed JSON" in w for w in warnings), (
+        f"expected malformed-JSON warning naming the file; got {warnings!r}"
+    )
 
 
 def test_empty_json_file_skipped(permit_project):
@@ -170,9 +171,7 @@ def test_missing_permit_id_dropped_by_reader_with_warning(
     root = _ensure_permits_dir(permit_project)
     payload = _valid_permit_dict()
     payload.pop("permit_id")
-    (root / "permit_20260514_noid01.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (root / "permit_20260514_noid01.json").write_text(json.dumps(payload), encoding="utf-8")
 
     warnings: list[str] = []
     loaded = _load_permits_from_disk(permit_project, warnings_out=warnings)
@@ -181,9 +180,7 @@ def test_missing_permit_id_dropped_by_reader_with_warning(
     # Warning names the file + the schema validation failure mode +
     # the missing permit_id marker so the operator can locate the fix.
     assert any(
-        "permit_20260514_noid01.json" in w
-        and "schema validation failed" in w
-        and "permit_id=<missing>" in w
+        "permit_20260514_noid01.json" in w and "schema validation failed" in w and "permit_id=<missing>" in w
         for w in warnings
     ), f"expected schema-validation warning naming the file; got {warnings!r}"
 
@@ -211,18 +208,14 @@ def test_missing_scope_field_dropped_by_reader_with_warning(permit_project):
     # scope", not "permit_id fails PERMIT_ID_RE".
     payload = _valid_permit_dict("permit_20260514_5c0bef")
     payload.pop("scope")
-    (root / "permit_20260514_5c0bef.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (root / "permit_20260514_5c0bef.json").write_text(json.dumps(payload), encoding="utf-8")
 
     warnings: list[str] = []
     loaded = _load_permits_from_disk(permit_project, warnings_out=warnings)
     # W380: schema-invalid rows no longer pass the reader.
     assert loaded == []
     assert any(
-        "permit_20260514_5c0bef.json" in w
-        and "schema validation failed" in w
-        and "permit_20260514_5c0bef" in w
+        "permit_20260514_5c0bef.json" in w and "schema validation failed" in w and "permit_20260514_5c0bef" in w
         for w in warnings
     ), f"expected schema-validation warning; got {warnings!r}"
 
@@ -241,18 +234,14 @@ def test_wrong_type_expires_at_dropped_by_reader_with_warning(permit_project):
     # on ``expires_at`` (not the permit_id format).
     payload = _valid_permit_dict("permit_20260514_be0001")
     payload["expires_at"] = 1893456000  # epoch seconds, NOT ISO-8601
-    (root / "permit_20260514_be0001.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (root / "permit_20260514_be0001.json").write_text(json.dumps(payload), encoding="utf-8")
 
     warnings: list[str] = []
     loaded = _load_permits_from_disk(permit_project, warnings_out=warnings)
     assert loaded == []
-    assert any(
-        "permit_20260514_be0001.json" in w
-        and "schema validation failed" in w
-        for w in warnings
-    ), f"expected schema-validation warning; got {warnings!r}"
+    assert any("permit_20260514_be0001.json" in w and "schema validation failed" in w for w in warnings), (
+        f"expected schema-validation warning; got {warnings!r}"
+    )
 
 
 # ===========================================================================
@@ -277,13 +266,9 @@ def test_expired_permit_loaded_into_envelope_and_authority_ref(permit_project):
     permit_id = "permit_20260514_e10001"
     payload = _valid_permit_dict(permit_id)
     # 30 days in the past.
-    expired_at = (
-        datetime.now(timezone.utc) - timedelta(days=30)
-    ).isoformat().replace("+00:00", "Z")
+    expired_at = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace("+00:00", "Z")
     payload["expires_at"] = expired_at
-    (root / f"{permit_id}.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (root / f"{permit_id}.json").write_text(json.dumps(payload), encoding="utf-8")
 
     loaded = _load_permits_from_disk(permit_project)
     assert len(loaded) == 1
@@ -301,8 +286,7 @@ def test_expired_permit_loaded_into_envelope_and_authority_ref(permit_project):
     # W377: expiry marker now lands on extra so auditors can see the
     # status at a glance.
     assert target.extra.get("expired") is True, (
-        f"expected extra['expired']=True on an expired permit; got "
-        f"{target.extra!r}"
+        f"expected extra['expired']=True on an expired permit; got {target.extra!r}"
     )
     # W294 real-vs-facade disambiguation still fires correctly.
     assert target.extra.get("permit_id") == permit_id
@@ -353,10 +337,7 @@ def test_duplicate_permit_id_in_two_files_collapsed_by_collector(permit_project)
     # W379: warning names BOTH files + the duplicate permit_id so the
     # operator can locate the collision and delete the unwanted copy.
     assert any(
-        f"permit_id={pid!r}" in w
-        and "duplicate" in w
-        and f"{pid}_dup.json" in w
-        and f"{pid}.json" in w
+        f"permit_id={pid!r}" in w and "duplicate" in w and f"{pid}_dup.json" in w and f"{pid}.json" in w
         for w in warnings
     ), f"expected duplicate-permit_id warning naming both files; got {warnings!r}"
 
@@ -394,9 +375,7 @@ def test_stale_but_unexpired_permit_fully_loaded(permit_project):
     payload = _valid_permit_dict(permit_id)
     payload["issued_at"] = "2024-01-01T00:00:00Z"  # ~2+ years ago
     payload["expires_at"] = "2099-01-01T00:00:00Z"  # far future
-    (root / f"{permit_id}.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (root / f"{permit_id}.json").write_text(json.dumps(payload), encoding="utf-8")
 
     loaded = _load_permits_from_disk(permit_project)
     assert len(loaded) == 1
@@ -412,18 +391,10 @@ def test_stale_but_unexpired_permit_fully_loaded(permit_project):
     target = permit_refs[0]
     # W378: staleness marker present + reasonable (well over 90 days).
     days_ago = target.extra.get("issued_days_ago")
-    assert isinstance(days_ago, int), (
-        f"expected extra['issued_days_ago']: int; got {target.extra!r}"
-    )
-    assert days_ago >= 90, (
-        f"expected issued_days_ago >= 90 for a 2+yr-old permit; got "
-        f"{days_ago}"
-    )
+    assert isinstance(days_ago, int), f"expected extra['issued_days_ago']: int; got {target.extra!r}"
+    assert days_ago >= 90, f"expected issued_days_ago >= 90 for a 2+yr-old permit; got {days_ago}"
     # Sanity: NOT expired (far-future expires_at).
-    assert "expired" not in target.extra, (
-        f"unexpired permit must not carry extra['expired']; got "
-        f"{target.extra!r}"
-    )
+    assert "expired" not in target.extra, f"unexpired permit must not carry extra['expired']; got {target.extra!r}"
 
 
 # ===========================================================================
@@ -467,10 +438,14 @@ def test_atomic_write_never_exposes_torn_permit_file(permit_project, monkeypatch
     result = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "race-test-A",
-            "--expires-at", "2027-01-01T00:00:00Z",
-            "--issued-to", "agent:race-A",
+            "permit",
+            "issue",
+            "--scope",
+            "race-test-A",
+            "--expires-at",
+            "2027-01-01T00:00:00Z",
+            "--issued-to",
+            "agent:race-A",
             "--persist",
         ],
         cwd=permit_project,
@@ -479,15 +454,12 @@ def test_atomic_write_never_exposes_torn_permit_file(permit_project, monkeypatch
     # may catch + emit a structured error, or let the exception bubble).
     # Either way: no torn file on disk.
     assert result.exit_code != 0, (
-        f"expected non-zero exit on simulated mid-write, got {result.exit_code}; "
-        f"output={result.output!r}"
+        f"expected non-zero exit on simulated mid-write, got {result.exit_code}; output={result.output!r}"
     )
     # The reader sees an EMPTY permits dir (no torn file ever
     # materialised).
     loaded_after_crash = _load_permits_from_disk(permit_project)
-    assert loaded_after_crash == [], (
-        f"expected zero permits after simulated crash, got {loaded_after_crash!r}"
-    )
+    assert loaded_after_crash == [], f"expected zero permits after simulated crash, got {loaded_after_crash!r}"
     # No JSON files on disk.
     assert list(proot.glob("*.json")) == []
 
@@ -502,24 +474,24 @@ def test_atomic_write_never_exposes_torn_permit_file(permit_project, monkeypatch
     result2 = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "race-test-B",
-            "--expires-at", "2027-01-01T00:00:00Z",
-            "--issued-to", "agent:race-B",
+            "permit",
+            "issue",
+            "--scope",
+            "race-test-B",
+            "--expires-at",
+            "2027-01-01T00:00:00Z",
+            "--issued-to",
+            "agent:race-B",
             "--persist",
         ],
         cwd=permit_project,
     )
     assert result2.exit_code == 0, result2.output
     after = list(proot.glob("*.json"))
-    assert len(after) == 1, (
-        f"expected exactly one permit after recovery, got {after!r}"
-    )
+    assert len(after) == 1, f"expected exactly one permit after recovery, got {after!r}"
 
 
-def test_two_concurrent_writers_with_same_id_do_not_corrupt_target(
-    permit_project, monkeypatch
-):
+def test_two_concurrent_writers_with_same_id_do_not_corrupt_target(permit_project, monkeypatch):
     """Simulated race: two writers target the same ``permit_id``.
 
     The atomic_write_json contract guarantees the second ``os.replace``
@@ -537,10 +509,14 @@ def test_two_concurrent_writers_with_same_id_do_not_corrupt_target(
     r1 = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "writer-A",
-            "--expires-at", "2027-01-01T00:00:00Z",
-            "--issued-to", "agent:A",
+            "permit",
+            "issue",
+            "--scope",
+            "writer-A",
+            "--expires-at",
+            "2027-01-01T00:00:00Z",
+            "--issued-to",
+            "agent:A",
             "--persist",
         ],
         cwd=permit_project,
@@ -554,10 +530,14 @@ def test_two_concurrent_writers_with_same_id_do_not_corrupt_target(
     r2 = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "writer-B",
-            "--expires-at", "2027-01-01T00:00:00Z",
-            "--issued-to", "agent:B",
+            "permit",
+            "issue",
+            "--scope",
+            "writer-B",
+            "--expires-at",
+            "2027-01-01T00:00:00Z",
+            "--issued-to",
+            "agent:B",
             "--persist",
         ],
         cwd=permit_project,
@@ -574,13 +554,9 @@ def test_two_concurrent_writers_with_same_id_do_not_corrupt_target(
     # The first writer's file MUST still match writer-A's payload (not
     # silently overwritten by writer-B's content).
     a_file = proot / f"{pinned_id}.json"
-    assert a_file.exists(), (
-        f"expected first writer's file at {a_file}, got {files!r}"
-    )
+    assert a_file.exists(), f"expected first writer's file at {a_file}, got {files!r}"
     a_raw = json.loads(a_file.read_text(encoding="utf-8"))
-    assert a_raw["scope"] == "writer-A", (
-        f"first writer's file was unexpectedly overwritten: {a_raw!r}"
-    )
+    assert a_raw["scope"] == "writer-A", f"first writer's file was unexpectedly overwritten: {a_raw!r}"
 
 
 # ===========================================================================
@@ -658,7 +634,7 @@ def test_evidence_collector_handles_permit_dict_with_nondict_extra(permit_projec
     weird = {
         "permit_id": "permit_20260514_weird1",
         "scope": ["scope-as-array-not-string"],  # list -> dropped
-        "expires_at": None,                      # None -> dropped
+        "expires_at": None,  # None -> dropped
         "extra_garbage_field": {"nested": "ignored"},  # never projected
     }
     refs = _build_authority_refs(
@@ -737,10 +713,14 @@ def test_pr_bundle_emit_ignores_malformed_permit_alongside_valid_one(
         runner,
         [
             "--json",
-            "permit", "issue",
-            "--scope", "redteam-e2e",
-            "--expires-at", "2027-01-01T00:00:00Z",
-            "--issued-to", "agent:redteam-e2e",
+            "permit",
+            "issue",
+            "--scope",
+            "redteam-e2e",
+            "--expires-at",
+            "2027-01-01T00:00:00Z",
+            "--issued-to",
+            "agent:redteam-e2e",
             "--persist",
         ],
         cwd=permit_project,
@@ -772,12 +752,8 @@ def test_pr_bundle_emit_ignores_malformed_permit_alongside_valid_one(
     # W382: the pr-bundle envelope surfaces the malformed-file warning
     # so an auditor reviewing the bundle sees the dropped row + reason.
     bundle_warnings = envelope.get("bundle_warnings") or []
-    assert any(
-        "permit_20260514_bad999.json" in w and "malformed JSON" in w
-        for w in bundle_warnings
-    ), (
-        f"expected malformed-JSON warning in envelope; got "
-        f"bundle_warnings={bundle_warnings!r}"
+    assert any("permit_20260514_bad999.json" in w and "malformed JSON" in w for w in bundle_warnings), (
+        f"expected malformed-JSON warning in envelope; got bundle_warnings={bundle_warnings!r}"
     )
 
 
@@ -821,9 +797,7 @@ def test_permit_id_with_traversal_chars_in_field_still_handled(permit_project):
     # permit_id field carries the adversarial string.
     payload = _valid_permit_dict("permit_20260514_a0b0c0")
     payload["permit_id"] = "../../../etc/passwd"
-    (root / "permit_20260514_a0b0c0.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (root / "permit_20260514_a0b0c0.json").write_text(json.dumps(payload), encoding="utf-8")
 
     warnings: list[str] = []
     loaded = _load_permits_from_disk(permit_project, warnings_out=warnings)
@@ -831,14 +805,9 @@ def test_permit_id_with_traversal_chars_in_field_still_handled(permit_project):
     # validator returns None and the reader drops + warns.
     assert loaded == []
     assert any(
-        "permit_20260514_a0b0c0.json" in w
-        and "schema validation failed" in w
-        and "../../../etc/passwd" in w
+        "permit_20260514_a0b0c0.json" in w and "schema validation failed" in w and "../../../etc/passwd" in w
         for w in warnings
-    ), (
-        f"expected schema-validation warning naming the traversal "
-        f"permit_id; got {warnings!r}"
-    )
+    ), f"expected schema-validation warning naming the traversal permit_id; got {warnings!r}"
 
     # Defense-in-depth: even if the dict had reached the collector, no
     # filesystem operation is keyed on the field value (the collector
@@ -890,33 +859,31 @@ def test_atomic_write_uses_replace_not_direct_write(permit_project, monkeypatch)
         except json.JSONDecodeError:
             observed_partial_states.append(f"torn:{target.name}")
 
-    monkeypatch.setattr(
-        store_mod, "atomic_write_json", observing_atomic_write_json
-    )
+    monkeypatch.setattr(store_mod, "atomic_write_json", observing_atomic_write_json)
 
     runner = CliRunner()
     result = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "atomic-observation",
-            "--expires-at", "2027-01-01T00:00:00Z",
-            "--issued-to", "agent:obs",
+            "permit",
+            "issue",
+            "--scope",
+            "atomic-observation",
+            "--expires-at",
+            "2027-01-01T00:00:00Z",
+            "--issued-to",
+            "agent:obs",
             "--persist",
         ],
         cwd=permit_project,
     )
     assert result.exit_code == 0, result.output
     # No torn or pre-existing state observed during the write.
-    assert observed_partial_states == [], (
-        f"unexpected partial states observed: {observed_partial_states!r}"
-    )
+    assert observed_partial_states == [], f"unexpected partial states observed: {observed_partial_states!r}"
     # One coherent file on disk.
     files = list(proot.glob("permit_*.json"))
     assert len(files) == 1
-    assert json.loads(files[0].read_text(encoding="utf-8"))["scope"] == (
-        "atomic-observation"
-    )
+    assert json.loads(files[0].read_text(encoding="utf-8"))["scope"] == ("atomic-observation")
 
 
 # ===========================================================================
@@ -925,7 +892,8 @@ def test_atomic_write_uses_replace_not_direct_write(permit_project, monkeypatch)
 
 
 def test_w383_pr_bundle_and_pr_replay_drop_identical_rows(
-    permit_project, monkeypatch,
+    permit_project,
+    monkeypatch,
 ):
     """W383: ``cmd_pr_bundle._load_permits_from_disk`` and
     ``cmd_pr_replay._gather_permit_policy_decisions`` MUST drop the same
@@ -946,13 +914,9 @@ def test_w383_pr_bundle_and_pr_replay_drop_identical_rows(
     root = _ensure_permits_dir(permit_project)
     valid_id = "permit_20260514_d0d0d0"
     payload_valid = _valid_permit_dict(valid_id)
-    (root / f"{valid_id}.json").write_text(
-        json.dumps(payload_valid), encoding="utf-8"
-    )
+    (root / f"{valid_id}.json").write_text(json.dumps(payload_valid), encoding="utf-8")
     # Malformed JSON (W382 drop).
-    (root / "permit_20260514_bad001.json").write_text(
-        "{not valid json", encoding="utf-8"
-    )
+    (root / "permit_20260514_bad001.json").write_text("{not valid json", encoding="utf-8")
     # Schema-invalid (W380 drop): missing required fields.
     (root / "permit_20260514_bad002.json").write_text(
         json.dumps({"permit_id": "permit_20260514_bad002"}),
@@ -961,15 +925,11 @@ def test_w383_pr_bundle_and_pr_replay_drop_identical_rows(
     # Duplicate permit_id (W379 drop): sorts after the primary.
     payload_dup = _valid_permit_dict(valid_id)
     payload_dup["scope"] = "duplicate-collision"
-    (root / f"{valid_id}_dup.json").write_text(
-        json.dumps(payload_dup), encoding="utf-8"
-    )
+    (root / f"{valid_id}_dup.json").write_text(json.dumps(payload_dup), encoding="utf-8")
 
     # pr-bundle path.
     bundle_warnings: list[str] = []
-    bundle_permits = _load_permits_from_disk(
-        permit_project, warnings_out=bundle_warnings
-    )
+    bundle_permits = _load_permits_from_disk(permit_project, warnings_out=bundle_warnings)
     bundle_ids = sorted(p["permit_id"] for p in bundle_permits)
 
     # pr-replay path. Point find_project_root at the fixture so the
@@ -979,44 +939,30 @@ def test_w383_pr_bundle_and_pr_replay_drop_identical_rows(
         lambda *a, **k: permit_project,
     )
     from roam.commands import cmd_pr_replay  # late import (no module cycle)
+
     replay_warnings: list[str] = []
-    replay_rows = cmd_pr_replay._gather_permit_policy_decisions(
-        replay_warnings
-    )
+    replay_rows = cmd_pr_replay._gather_permit_policy_decisions(replay_warnings)
     # Each row's rule_id is ``permit:<permit_id>`` - reconstruct ids.
-    replay_ids = sorted(
-        r["rule_id"][len("permit:"):]
-        for r in replay_rows
-        if r["rule_id"].startswith("permit:")
-    )
+    replay_ids = sorted(r["rule_id"][len("permit:") :] for r in replay_rows if r["rule_id"].startswith("permit:"))
 
     # PARITY ASSERTION: both readers keep the same set of permits.
-    assert bundle_ids == [valid_id], (
-        f"pr-bundle reader kept unexpected ids: {bundle_ids!r}"
-    )
-    assert replay_ids == [valid_id], (
-        f"pr-replay reader kept unexpected ids: {replay_ids!r}"
-    )
-    assert bundle_ids == replay_ids, (
-        f"divergence: bundle={bundle_ids!r} replay={replay_ids!r}"
-    )
+    assert bundle_ids == [valid_id], f"pr-bundle reader kept unexpected ids: {bundle_ids!r}"
+    assert replay_ids == [valid_id], f"pr-replay reader kept unexpected ids: {replay_ids!r}"
+    assert bundle_ids == replay_ids, f"divergence: bundle={bundle_ids!r} replay={replay_ids!r}"
 
     # PARITY ASSERTION: both warning surfaces name the same three
     # dropped files (one malformed, one schema-invalid, one duplicate).
     expected_file_mentions = {
         "permit_20260514_bad001.json",  # malformed JSON
         "permit_20260514_bad002.json",  # schema-invalid
-        f"{valid_id}_dup.json",         # duplicate permit_id
+        f"{valid_id}_dup.json",  # duplicate permit_id
     }
     for label, ws in (
         ("bundle", bundle_warnings),
         ("replay", replay_warnings),
     ):
         for fname in expected_file_mentions:
-            assert any(fname in w for w in ws), (
-                f"{label} reader missing warning for {fname!r}; got "
-                f"{ws!r}"
-            )
+            assert any(fname in w for w in ws), f"{label} reader missing warning for {fname!r}; got {ws!r}"
 
 
 # Sanity: keep the unused-import linter happy on ``mock`` even though we

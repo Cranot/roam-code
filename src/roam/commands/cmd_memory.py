@@ -10,6 +10,13 @@ Memory is intentionally portable across agent vendors: the JSONL file
 lives at the repo root under ``.roam/`` and is the SUBSTRATE that
 higher-level agent-OS features (run ledger R20, constitution R24)
 build on top.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam memory`` operates on substrate state in ``.roam/``
+(memory.jsonl entries) — not code locations or per-location violations.
+The state is consumed by other roam commands + agent runtimes directly
+from disk; SARIF would be redundant. See action.yml _SUPPORTED_SARIF
+allowlist + W1181-audit memo.
 """
 
 from __future__ import annotations
@@ -100,10 +107,17 @@ def memory_group(ctx):
     help="Symbol relevance signal (repeatable).",
 )
 @click.option(
+    "--path",
+    "files",
+    multiple=True,
+    help="File path relevance signal (repeatable).",
+)
+@click.option(
     "--file",
     "files",
     multiple=True,
-    help="File relevance signal (repeatable).",
+    hidden=True,
+    help="Deprecated alias for --path. Retained for backward compatibility.",
 )
 @click.option(
     "--topic",
@@ -282,14 +296,21 @@ def memory_list(ctx, since, kind, top):
 @memory_group.command("relevant")
 @click.option("--query", default="", help="Free-text query.")
 @click.option("--symbol", "symbols", multiple=True, help="Symbol name to match (repeatable).")
-@click.option("--file", "files", multiple=True, help="File path to match (repeatable).")
+@click.option("--path", "files", multiple=True, help="File path to match (repeatable).")
+@click.option(
+    "--file",
+    "files",
+    multiple=True,
+    hidden=True,
+    help="Deprecated alias for --path. Retained for backward compatibility.",
+)
 @click.option("--top", default=5, type=int, show_default=True, help="Return at most N entries.")
 @click.pass_context
 def memory_relevant(ctx, query, symbols, files, top):
     """Rank stored memory entries against a query / symbol / file.
 
     Uses set-overlap scoring -- no embeddings, no network calls. Anchor
-    explicit ``--symbol`` / ``--file`` signals to skew the ranker
+    explicit ``--symbol`` / ``--path`` signals to skew the ranker
     toward the caller's intent.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -346,10 +367,7 @@ def memory_relevant(ctx, query, symbols, files, top):
         verdict = f"{total} relevant memor{'y' if total == 1 else 'ies'} (top score {ranked[0][1]:.2f})"
 
     if json_mode:
-        results = [
-            {"score": round(score, 4), "entry": entry.to_dict()}
-            for entry, score in ranked
-        ]
+        results = [{"score": round(score, 4), "entry": entry.to_dict()} for entry, score in ranked]
         click.echo(
             to_json(
                 json_envelope(

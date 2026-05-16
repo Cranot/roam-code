@@ -9,6 +9,10 @@
 #
 # See docs/ci-integration.md for the full configuration reference.
 
+# All jobs declare timeout-minutes as a teaching example —
+# GitHub's default is 6 hours, which is too long for typical
+# roam runs. Adjust based on your repository size.
+
 name: roam-code Analysis (example template)
 
 on:
@@ -26,6 +30,7 @@ permissions:
 jobs:
   analyze:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:

@@ -26,13 +26,12 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_bus_factor import (
     BUS_FACTOR_DETECTOR_VERSION,
     _bus_factor_finding_id,
 )
 from roam.db.connection import open_db
-
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -105,9 +104,7 @@ def _single_owner_project(tmp_path):
             ).strip(),
             encoding="utf-8",
         )
-        _git_commit_as(
-            proj, "Alice", "alice@example.com", f"engine: Alice revision {i}"
-        )
+        _git_commit_as(proj, "Alice", "alice@example.com", f"engine: Alice revision {i}")
 
     return proj
 
@@ -235,9 +232,7 @@ def test_bus_factor_finding_id_is_deterministic():
     assert a == b
     assert a.startswith("bus-factor:author-concentration:")
     # Different directory -> different id.
-    assert (
-        _bus_factor_finding_id("src/other/", "author-concentration") != a
-    )
+    assert _bus_factor_finding_id("src/other/", "author-concentration") != a
     # Different kind -> different id (same directory still gets two rows
     # when it surfaces under both kinds).
     assert _bus_factor_finding_id("src/core/", "stale-ownership") != a
@@ -255,16 +250,13 @@ def test_bus_factor_rerun_upserts_not_duplicates(tmp_path):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'bus-factor'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'bus-factor'"
                 ).fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'bus-factor'"
-            ).fetchone()[0]
-        assert first_count == len(first_ids), (
-            "duplicate finding_id_str rows on first run"
-        )
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'bus-factor'").fetchone()[
+                0
+            ]
+        assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
         assert first_count >= 1
 
         # Second run — same fixture, same code, same hash inputs.
@@ -276,8 +268,7 @@ def test_bus_factor_rerun_upserts_not_duplicates(tmp_path):
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'bus-factor'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'bus-factor'"
                 ).fetchall()
             }
             second_count = conn.execute(
@@ -326,9 +317,7 @@ def test_bus_factor_finding_evidence_carries_directory_and_authors(tmp_path):
         assert evidence["primary_author"] == "Alice"
         assert evidence["concentrated"] is True
         # The claim must name a recognisable bus-factor risk.
-        assert "bus-factor" in (row["claim"] or "").lower() or (
-            "stale ownership" in (row["claim"] or "").lower()
-        )
+        assert "bus-factor" in (row["claim"] or "").lower() or ("stale ownership" in (row["claim"] or "").lower())
     finally:
         os.chdir(old_cwd)
 
@@ -353,17 +342,12 @@ def test_bus_factor_stale_kind_emitted(tmp_path):
         _run_bus_factor_persist(proj)
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT finding_id_str FROM findings "
-                "WHERE source_detector = 'bus-factor'"
-            ).fetchall()
+            rows = conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'bus-factor'").fetchall()
         kinds = {row[0].split(":")[1] for row in rows}
         # The legacy directory is single-owner AND stale, so BOTH kinds
         # should fire. The author-concentration kind is the floor; the
         # interesting assertion is that stale-ownership ALSO emits.
-        assert "stale-ownership" in kinds, (
-            f"expected stale-ownership kind, got kinds={kinds}"
-        )
+        assert "stale-ownership" in kinds, f"expected stale-ownership kind, got kinds={kinds}"
     finally:
         os.chdir(old_cwd)
 
@@ -382,18 +366,14 @@ def test_bus_factor_findings_visible_via_cmd_findings_list(tmp_path):
         _run_bus_factor_persist(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "bus-factor"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "bus-factor"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "bus-factor" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "bus-factor" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "bus-factor" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -432,10 +412,7 @@ def test_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'bus-factor'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'bus-factor'").fetchone()[0]
             except sqlite3.OperationalError:
                 # findings table may not be present on every test env's
                 # schema flavour — that's still a "no findings emitted"
@@ -499,9 +476,7 @@ def _multi_directory_solo_owner_project(tmp_path):
                 f"def {d.split('/')[-1]}_one():\n    return {i}\n",
                 encoding="utf-8",
             )
-        _git_commit_as(
-            proj, "Alice", "alice@example.com", f"alice revision {i}"
-        )
+        _git_commit_as(proj, "Alice", "alice@example.com", f"alice revision {i}")
 
     return proj
 
@@ -592,22 +567,16 @@ def test_solo_author_repo_emits_one_summary_row(tmp_path):
 
         counts = _bus_factor_finding_counts(proj)
         # Exactly one summary finding — the collapse target.
-        assert counts.get("repo", 0) == 1, (
-            f"expected exactly 1 repo summary finding, got counts={counts}"
-        )
+        assert counts.get("repo", 0) == 1, f"expected exactly 1 repo summary finding, got counts={counts}"
         # No per-directory author-concentration rows on a solo repo —
         # the whole point of the collapse. Stale-ownership rows MAY
         # be present (and remain valuable on solo repos), but this
         # fixture has no stale modules so the directory count should
         # be 0 here.
-        assert counts.get("directory", 0) == 0, (
-            f"expected 0 per-directory rows on solo collapse, got counts={counts}"
-        )
+        assert counts.get("directory", 0) == 0, f"expected 0 per-directory rows on solo collapse, got counts={counts}"
         # Total across all subject kinds collapses to 1.
         with open_db(readonly=True) as conn:
-            total = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector='bus-factor'"
-            ).fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector='bus-factor'").fetchone()[0]
         assert total == 1
     finally:
         os.chdir(old_cwd)
@@ -628,16 +597,12 @@ def test_force_team_mode_overrides_solo_collapse(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        result = runner.invoke(
-            cli, ["bus-factor", "--persist", "--force-team-mode"]
-        )
+        result = runner.invoke(cli, ["bus-factor", "--persist", "--force-team-mode"])
         assert result.exit_code == 0, result.output
 
         counts = _bus_factor_finding_counts(proj)
         # No repo-level summary in force-team-mode.
-        assert counts.get("repo", 0) == 0, (
-            f"expected no summary row under --force-team-mode, got counts={counts}"
-        )
+        assert counts.get("repo", 0) == 0, f"expected no summary row under --force-team-mode, got counts={counts}"
         # Multiple per-directory rows — the fixture has 5 dirs, every
         # one owned 100% by Alice, so every one is ``concentrated``
         # and emits an author-concentration finding.
@@ -670,9 +635,7 @@ def test_team_repo_still_emits_per_directory(tmp_path):
 
         counts = _bus_factor_finding_counts(proj)
         # No summary finding — this isn't a solo repo.
-        assert counts.get("repo", 0) == 0, (
-            f"expected no repo-summary row on a team repo, got counts={counts}"
-        )
+        assert counts.get("repo", 0) == 0, f"expected no repo-summary row on a team repo, got counts={counts}"
     finally:
         os.chdir(old_cwd)
 
@@ -744,9 +707,7 @@ def test_bus_factor_persist_no_findings_table_no_crash(tmp_path):
             conn.execute("DROP TABLE IF EXISTS findings")
             conn.commit()
 
-        result = runner.invoke(
-            cli, ["bus-factor", "--persist", "--force-team-mode"]
-        )
+        result = runner.invoke(cli, ["bus-factor", "--persist", "--force-team-mode"])
         # Must succeed despite the missing findings table.
         assert result.exit_code == 0, result.output
     finally:

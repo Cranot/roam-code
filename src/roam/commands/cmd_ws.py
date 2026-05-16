@@ -1,4 +1,18 @@
-"""Workspace commands: multi-repo grouping and cross-repo analysis."""
+"""Workspace commands: multi-repo grouping and cross-repo analysis.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ws is an infrastructure command — its output is
+workspace-management status (multi-repo grouping, member listings,
+cross-repo dependency tracking metadata) and on-disk workspace state,
+not analysis findings with file:line coordinates. SARIF is reserved
+for scanning results inside a single indexed workspace. When
+SARIF-shaped findings are wanted across a workspace, run the
+underlying per-repo SARIF-emitting commands directly; ws itself
+manages the grouping, not the analysis. See ``cmd_index`` for the
+parallel setup/state disclosure pattern (W1180) + action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -448,9 +462,7 @@ def ws_resolve(ctx) -> None:
     # Agent contract facts — flat, imperative, concrete.
     facts: list[str] = []
     if total_unmatched > 0:
-        facts.append(
-            f"{total_unmatched} frontend URLs do not match any backend route"
-        )
+        facts.append(f"{total_unmatched} frontend URLs do not match any backend route")
         # Top reason breakdown (concrete noun anchor).
         reason_counts: dict[str, int] = {}
         for u in all_unmatched:
@@ -474,22 +486,14 @@ def ws_resolve(ctx) -> None:
             p, n = top_prefixes[0]
             facts.append(f"{n} unmatched URLs share the prefix `{p}/`")
         first = all_unmatched[0]
-        facts.append(
-            f"Top unmatched: `{first['url']}` ({first['method'] or '?'})"
-        )
+        facts.append(f"Top unmatched: `{first['url']}` ({first['method'] or '?'})")
     else:
-        facts.append(
-            f"All {total_fe_calls} frontend URLs match a backend route"
-        )
+        facts.append(f"All {total_fe_calls} frontend URLs match a backend route")
 
     next_commands: list[str] = []
     if total_unmatched > 0:
-        next_commands.append(
-            "roam --json ws resolve   # see the full unmatched list"
-        )
-        next_commands.append(
-            "roam endpoints --json    # inspect backend route inventory"
-        )
+        next_commands.append("roam --json ws resolve   # see the full unmatched list")
+        next_commands.append("roam endpoints --json    # inspect backend route inventory")
 
     if json_mode:
         click.echo(

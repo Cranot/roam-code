@@ -1,4 +1,11 @@
-"""Enforce architectural trajectory via per-PR delta limits."""
+"""Enforce architectural trajectory via per-PR delta limits.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because budget outputs are invocation-scoped budget gate
+verdicts — not per-code-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1197-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -153,47 +160,14 @@ def _parse_simple_yaml_dict(text: str) -> dict:
     check + ``budgets`` extraction in :func:`_load_budgets` works on a
     uniform shape regardless of whether PyYAML parsed the file or this
     fallback did.
+
+    W1058: rule-list parsing is now shared with ``cmd_fitness`` via
+    :func:`roam.commands._yaml_loader.parse_rule_list`.
     """
-    rules = _parse_simple_yaml_rules(text)
+    from roam.commands._yaml_loader import parse_rule_list
+
+    rules = parse_rule_list(text)
     return {"budgets": rules} if rules else {}
-
-
-def _parse_simple_yaml_rules(text: str) -> list[dict]:
-    """Minimal YAML parser for budget rules (no PyYAML dependency)."""
-    rules: list[dict] = []
-    current_rule: dict | None = None
-
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-
-        if stripped.startswith("- name:"):
-            if current_rule:
-                rules.append(current_rule)
-            current_rule = {"name": stripped.split(":", 1)[1].strip().strip('"').strip("'")}
-        elif current_rule and ":" in stripped:
-            key, val = stripped.split(":", 1)
-            key = key.strip()
-            val = val.strip().strip('"').strip("'")
-            if val.lower() == "true":
-                val = True
-            elif val.lower() == "false":
-                val = False
-            else:
-                try:
-                    val = int(val)
-                except ValueError:
-                    try:
-                        val = float(val)
-                    except ValueError:
-                        pass
-            current_rule[key] = val
-
-    if current_rule:
-        rules.append(current_rule)
-
-    return rules
 
 
 # ---------------------------------------------------------------------------

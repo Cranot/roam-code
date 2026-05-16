@@ -1,4 +1,12 @@
-"""Discover Architecture Decision Records (ADRs) and link them to code modules."""
+"""Discover Architecture Decision Records (ADRs) and link them to code modules.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because adrs outputs are ADR documents — not per-location
+violations. adrs's primary deliverable is the discovered ADR
+inventory plus module linkage. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket C propagation plan + W1148 audit
+memo.
+"""
 
 from __future__ import annotations
 

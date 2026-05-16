@@ -37,7 +37,6 @@ from roam.evidence.collector import (
     _read_mcp_receipts_dir,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -106,9 +105,7 @@ def test_actor_ref_from_roam_agent_id_env_has_env_var_provenance(
     assert target.extra.get("provenance") == "env_var(ROAM_AGENT_ID)"
 
 
-def test_actor_ref_from_cli_flag_has_cli_flag_provenance(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_actor_ref_from_cli_flag_has_cli_flag_provenance(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Explicit ``--agent-id`` flag wins over env -> ``cli_flag``."""
     _clean_provenance_env(monkeypatch)
     monkeypatch.setenv("ROAM_AGENT_ID", "env-agent-loses")
@@ -130,9 +127,7 @@ def test_actor_ref_from_cli_flag_has_cli_flag_provenance(
     assert target.extra.get("provenance") == "cli_flag"
 
 
-def test_actor_ref_from_git_config_has_git_config_provenance(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_actor_ref_from_git_config_has_git_config_provenance(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """No CI / no env / git config user.email set -> ``git_config(user.email)``."""
     _clean_provenance_env(monkeypatch)
 
@@ -158,19 +153,14 @@ def test_actor_ref_from_git_config_has_git_config_provenance(
     assert target.extra.get("provenance") == "git_config(user.email)"
 
 
-def test_actor_ref_from_ci_env_has_ci_env_var_provenance(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_actor_ref_from_ci_env_has_ci_env_var_provenance(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """``GITHUB_ACTIONS_RUN_ID`` set, no flag/env override -> ``ci_env_var(...)``."""
     _clean_provenance_env(monkeypatch)
     monkeypatch.setenv("GITHUB_ACTIONS_RUN_ID", "12345")
 
     actor = resolve_actor_block(repo_root=tmp_path)
     assert actor["ci_runner_id"] == "12345"
-    assert (
-        actor.get("provenance_ci_runner_id")
-        == "ci_env_var(GITHUB_ACTIONS_RUN_ID)"
-    )
+    assert actor.get("provenance_ci_runner_id") == "ci_env_var(GITHUB_ACTIONS_RUN_ID)"
 
     refs = _build_actor_refs(
         pr_bundle_envelope={"actor": actor},
@@ -224,9 +214,7 @@ def test_actor_ref_from_mcp_receipt_has_mcp_receipt_provenance(
         "redactions": [],
         "extra": {},
     }
-    (receipts_dir / "receipt_abc.json").write_text(
-        json.dumps(receipt_payload), encoding="utf-8"
-    )
+    (receipts_dir / "receipt_abc.json").write_text(json.dumps(receipt_payload), encoding="utf-8")
 
     warnings: list[str] = []
     _artifacts, refs = _read_mcp_receipts_dir(receipts_dir, warnings)
@@ -328,9 +316,7 @@ def test_actor_ref_provenance_uses_only_PROVENANCE_SOURCES_values(
 
     # Channel 2 - cli flag
     _clean_provenance_env(monkeypatch)
-    actor_cli = resolve_actor_block(
-        agent_id_override="agent:cli", repo_root=tmp_path
-    )
+    actor_cli = resolve_actor_block(agent_id_override="agent:cli", repo_root=tmp_path)
     refs_cli = _build_actor_refs(
         pr_bundle_envelope={"actor": actor_cli},
         run_events=(),
@@ -376,11 +362,8 @@ def test_actor_ref_provenance_uses_only_PROVENANCE_SOURCES_values(
 
     for r in all_refs:
         label = r.extra.get("provenance")
-        assert isinstance(label, str) and label, (
-            f"ActorRef missing extra['provenance']: {r!r}"
-        )
+        assert isinstance(label, str) and label, f"ActorRef missing extra['provenance']: {r!r}"
         base = _provenance_base(label)
         assert base in PROVENANCE_SOURCES, (
-            f"ActorRef provenance base {base!r} (from label {label!r}) "
-            f"is not in PROVENANCE_SOURCES"
+            f"ActorRef provenance base {base!r} (from label {label!r}) is not in PROVENANCE_SOURCES"
         )

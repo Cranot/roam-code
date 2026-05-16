@@ -26,7 +26,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output
 
-
 # ---------------------------------------------------------------------------
 # dashboard
 # ---------------------------------------------------------------------------
@@ -40,8 +39,7 @@ class TestDashboardUniqueSignals:
         result = invoke_cli(cli_runner, ["dashboard"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "dashboard")
         assert "unique_signals" in data, (
-            "dashboard envelope must include a unique_signals block; "
-            f"got keys: {sorted(data.keys())}"
+            f"dashboard envelope must include a unique_signals block; got keys: {sorted(data.keys())}"
         )
 
     def test_dashboard_envelope_lists_danger_score_hint(self, cli_runner, indexed_project, monkeypatch):
@@ -69,9 +67,7 @@ class TestDashboardUniqueSignals:
         assert hints["ai_readiness_score"] == "roam ai-readiness"
         assert hints["ai_rot_score"] == "roam vibe-check"
 
-    def test_dashboard_envelope_lists_module_and_forecast_hints(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_dashboard_envelope_lists_module_and_forecast_hints(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["dashboard"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "dashboard")
@@ -100,9 +96,7 @@ class TestDashboardUniqueSignals:
             assert "danger_score" in row
             assert isinstance(row["danger_score"], (int, float))
 
-    def test_dashboard_next_steps_lists_unique_signal_commands(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_dashboard_next_steps_lists_unique_signal_commands(self, cli_runner, indexed_project, monkeypatch):
         """``next_steps`` surfaces as ``agent_contract.next_commands``."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["dashboard"], cwd=indexed_project, json_mode=True)
@@ -114,14 +108,9 @@ class TestDashboardUniqueSignals:
         joined = " ".join(steps)
         unique_cmds = ["vibe-check", "ai-readiness", "ai-ratio", "algo", "forecast"]
         hits = [c for c in unique_cmds if c in joined]
-        assert len(hits) >= 2, (
-            f"expected at least 2 unique-signal commands in next_steps, found {hits}; "
-            f"steps={steps}"
-        )
+        assert len(hits) >= 2, f"expected at least 2 unique-signal commands in next_steps, found {hits}; steps={steps}"
 
-    def test_dashboard_agent_contract_includes_unique_signal_command(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_dashboard_agent_contract_includes_unique_signal_command(self, cli_runner, indexed_project, monkeypatch):
         """The derived ``agent_contract.next_commands`` must surface the hints.
 
         Verifies the LAW-11 pipeline end-to-end: dashboard emits
@@ -163,9 +152,7 @@ class TestUnderstandUniqueSignals:
         assert hints["algo_anti_patterns"] == "roam algo"
         assert hints["ai_rot_score"] == "roam vibe-check"
 
-    def test_understand_facts_mention_unique_signal_commands(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_understand_facts_mention_unique_signal_commands(self, cli_runner, indexed_project, monkeypatch):
         """At least 2 unique-signal commands must reach the agent_contract.
 
         This is the canonical agent-discovery channel — an agent that
@@ -202,17 +189,13 @@ class TestAuditUniqueSignals:
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["audit"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "audit")
-        assert "discoverable_via" in data, (
-            f"audit envelope must include discoverable_via; keys: {sorted(data.keys())}"
-        )
+        assert "discoverable_via" in data, f"audit envelope must include discoverable_via; keys: {sorted(data.keys())}"
         hints = data["discoverable_via"]
         assert hints["danger_score"] == "roam metrics-push --dry-run"
         assert hints["module_cohesion_pct"] == "roam module <module>"
         assert hints["health_30d_forecast"] == "roam forecast"
 
-    def test_audit_next_steps_includes_unique_signal_commands(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_audit_next_steps_includes_unique_signal_commands(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["audit"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "audit")
@@ -220,7 +203,4 @@ class TestAuditUniqueSignals:
         joined = " ".join(steps)
         unique_cmds = ["vibe-check", "ai-readiness", "ai-ratio", "algo", "forecast"]
         hits = [c for c in unique_cmds if c in joined]
-        assert len(hits) >= 2, (
-            f"audit next_steps should include >=2 unique-signal commands; "
-            f"hits={hits}; steps={steps}"
-        )
+        assert len(hits) >= 2, f"audit next_steps should include >=2 unique-signal commands; hits={hits}; steps={steps}"

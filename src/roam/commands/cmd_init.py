@@ -1,4 +1,13 @@
-"""Initialize a project for Roam: index + config (no unsolicited CI)."""
+"""Initialize a project for Roam: index + config (no unsolicited CI).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam init`` is a setup/bootstrap command — its output
+is human-facing setup status (index created, config written, fitness
+template stamped), not analysis findings with file:line coordinates.
+SARIF is reserved for scanning results. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -153,7 +162,7 @@ def _is_inside_git_repo(project_root) -> bool:
     help=(
         "Git history window to scan on the first index. Accepts shorthand "
         "(``365d`` / ``12m`` / ``2y``) or any git-compatible date phrase "
-        "(``2025-01-01``, ``\"2 weeks ago\"``). Sets ``ROAM_GIT_SINCE`` for "
+        '(``2025-01-01``, ``"2 weeks ago"``). Sets ``ROAM_GIT_SINCE`` for '
         "this run. Default: 365d on a brand-new index; on a warm index the "
         "skip-on-unchanged-HEAD optimisation usually means no git pull at "
         "all. Pass ``--full-history`` to disable the shallow default."

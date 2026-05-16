@@ -16,6 +16,12 @@ When the user passes git refs instead of paths, we expect them to have
 indexed each ref into a tagged DB beforehand (a future `roam snapshot
 <ref>` command will automate this; for now, document the workflow in
 the help text).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because compare outputs are invocation-scoped structural delta
+summaries — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

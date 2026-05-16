@@ -20,7 +20,6 @@ flagged.
 
 from __future__ import annotations
 
-
 # Shape of the real PHP smell named in the dogfood:
 # ``InsuranceReportController::annualFundSummary``. Per-iteration
 # equality + a write gated by that equality.
@@ -175,8 +174,7 @@ def test_equality_alone_not_flagged(project_factory, monkeypatch):
         hits = detect_nested_lookup(conn)
         flagged = [h for h in hits if _matches_name(h, "reportMatches")]
         assert not flagged, (
-            "reportMatches has equality but only side-effect output — "
-            f"not a join. Must NOT be flagged. Got: {flagged}"
+            f"reportMatches has equality but only side-effect output — not a join. Must NOT be flagged. Got: {flagged}"
         )
 
 

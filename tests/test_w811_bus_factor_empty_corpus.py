@@ -55,13 +55,8 @@ class TestBusFactorEmptyCorpus:
     def test_exits_zero(self, cli_runner, empty_corpus_project, monkeypatch):
         """`roam bus-factor` exits 0 on an empty corpus (no crash)."""
         monkeypatch.chdir(empty_corpus_project)
-        result = invoke_cli(
-            cli_runner, ["bus-factor"], cwd=empty_corpus_project
-        )
-        assert result.exit_code == 0, (
-            f"bus-factor exited {result.exit_code} on empty corpus:\n"
-            f"{result.output}"
-        )
+        result = invoke_cli(cli_runner, ["bus-factor"], cwd=empty_corpus_project)
+        assert result.exit_code == 0, f"bus-factor exited {result.exit_code} on empty corpus:\n{result.output}"
 
     def test_json_envelope_valid(self, cli_runner, empty_corpus_project, monkeypatch):
         """JSON output on empty corpus is a valid roam envelope."""
@@ -107,10 +102,7 @@ class TestBusFactorEmptyCorpus:
         # that surfaces commits / authors / modules / risk counts.
         no_data_markers = ("empty", "no ", "missing", "none", "unavailable")
         ranked_markers = ("bus factor", "high-risk", "modules", "top risk")
-        assert (
-            any(m in verdict for m in no_data_markers)
-            or any(m in verdict for m in ranked_markers)
-        ), (
+        assert any(m in verdict for m in no_data_markers) or any(m in verdict for m in ranked_markers), (
             f"Empty-corpus verdict must disclose concrete state "
             f"(no-data wording OR ranked findings). Verdict was: {verdict!r}"
         )
@@ -136,16 +128,12 @@ class TestBusFactorEmptyCorpus:
         )
         data = parse_json_output(result, "bus-factor")
         summary = data["summary"]
-        assert "directories_analyzed" in summary, (
-            f"Missing 'directories_analyzed': {list(summary.keys())}"
-        )
+        assert "directories_analyzed" in summary, f"Missing 'directories_analyzed': {list(summary.keys())}"
         assert isinstance(summary["directories_analyzed"], int), (
-            f"directories_analyzed must be int, got "
-            f"{type(summary['directories_analyzed']).__name__}"
+            f"directories_analyzed must be int, got {type(summary['directories_analyzed']).__name__}"
         )
         assert summary["directories_analyzed"] >= 0, (
-            f"directories_analyzed must be non-negative, "
-            f"got {summary['directories_analyzed']}"
+            f"directories_analyzed must be non-negative, got {summary['directories_analyzed']}"
         )
 
     def test_directories_list_present(self, cli_runner, empty_corpus_project, monkeypatch):
@@ -158,9 +146,7 @@ class TestBusFactorEmptyCorpus:
             json_mode=True,
         )
         data = parse_json_output(result, "bus-factor")
-        assert "directories" in data, (
-            f"Missing 'directories' key: {list(data.keys())}"
-        )
+        assert "directories" in data, f"Missing 'directories' key: {list(data.keys())}"
         assert isinstance(data["directories"], list), (
             f"directories must be list, got {type(data['directories']).__name__}"
         )
@@ -182,25 +168,14 @@ class TestBusFactorEmptyCorpus:
         )
         data = parse_json_output(result, "bus-factor")
         contract = data.get("agent_contract")
-        assert isinstance(contract, dict), (
-            f"Missing 'agent_contract' dict in envelope: {list(data.keys())}"
-        )
+        assert isinstance(contract, dict), f"Missing 'agent_contract' dict in envelope: {list(data.keys())}"
         facts = contract.get("facts")
-        assert isinstance(facts, list), (
-            f"agent_contract.facts must be a list, got {type(facts)}"
-        )
-        assert len(facts) > 0, (
-            f"agent_contract.facts must be non-empty on empty corpus; "
-            f"got: {facts!r}"
-        )
+        assert isinstance(facts, list), f"agent_contract.facts must be a list, got {type(facts)}"
+        assert len(facts) > 0, f"agent_contract.facts must be non-empty on empty corpus; got: {facts!r}"
         for f in facts:
-            assert isinstance(f, str) and f.strip(), (
-                f"Every fact must be a non-empty string; got: {f!r}"
-            )
+            assert isinstance(f, str) and f.strip(), f"Every fact must be a non-empty string; got: {f!r}"
 
-    def test_summary_partial_success_present_as_bool(
-        self, cli_runner, empty_corpus_project, monkeypatch
-    ):
+    def test_summary_partial_success_present_as_bool(self, cli_runner, empty_corpus_project, monkeypatch):
         """``summary.partial_success`` is a bool on the no-data path."""
         monkeypatch.chdir(empty_corpus_project)
         result = invoke_cli(
@@ -211,10 +186,7 @@ class TestBusFactorEmptyCorpus:
         )
         data = parse_json_output(result, "bus-factor")
         summary = data["summary"]
-        assert "partial_success" in summary, (
-            f"summary.partial_success missing; keys={list(summary.keys())}"
-        )
+        assert "partial_success" in summary, f"summary.partial_success missing; keys={list(summary.keys())}"
         assert isinstance(summary["partial_success"], bool), (
-            f"summary.partial_success must be bool, "
-            f"got {type(summary['partial_success']).__name__}"
+            f"summary.partial_success must be bool, got {type(summary['partial_success']).__name__}"
         )

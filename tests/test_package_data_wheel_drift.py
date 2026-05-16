@@ -48,7 +48,7 @@ class TestAuditReportPackageDataDriftW570:
             "control-mapping.yaml is not reachable via "
             "importlib.resources.files('roam.templates.audit_report'). "
             "Check pyproject.toml [tool.setuptools.package-data] still "
-            "includes \"roam.templates.audit_report\" = [\"*.yaml\", \"*.yml\"] "
+            'includes "roam.templates.audit_report" = ["*.yaml", "*.yml"] '
             "(W554)."
         )
 
@@ -94,7 +94,7 @@ class TestCiTemplatesPackageDataDriftW570:
         assert resource.is_file(), (
             "slsa-src-l3.yml is not reachable via importlib.resources — "
             "pyproject.toml [tool.setuptools.package-data] may have dropped "
-            "\"roam.templates.ci\" = [\"*\"] (W471)."
+            '"roam.templates.ci" = ["*"] (W471).'
         )
 
     def test_non_github_ci_templates_reachable(self) -> None:
@@ -112,14 +112,10 @@ class TestCiTemplatesPackageDataDriftW570:
             "Jenkinsfile",
             "agent-review.yml",
         )
-        missing = [
-            name
-            for name in expected_templates
-            if not (files("roam.templates.ci") / name).is_file()
-        ]
+        missing = [name for name in expected_templates if not (files("roam.templates.ci") / name).is_file()]
         assert not missing, (
             f"CI templates not reachable via importlib.resources: {missing}. "
-            f"Check pyproject.toml ships \"roam.templates.ci\" = [\"*\"]."
+            f'Check pyproject.toml ships "roam.templates.ci" = ["*"].'
         )
 
 
@@ -146,7 +142,7 @@ class TestTaintRulesPackageDataDriftW610:
             "python_ssti.yaml is not reachable via "
             "importlib.resources.files('roam.security.taint_rules'). "
             "Check pyproject.toml [tool.setuptools.package-data] still "
-            "includes \"roam.security.taint_rules\" = [\"*.yaml\", \"*.yml\"] "
+            'includes "roam.security.taint_rules" = ["*.yaml", "*.yml"] '
             "(v12.12.1 / W610)."
         )
 
@@ -169,15 +165,11 @@ class TestTaintRulesPackageDataDriftW610:
             "php_command_injection.yaml",
             "vue_v_html.yaml",
         )
-        missing = [
-            name
-            for name in expected_rules
-            if not (files("roam.security.taint_rules") / name).is_file()
-        ]
+        missing = [name for name in expected_rules if not (files("roam.security.taint_rules") / name).is_file()]
         assert not missing, (
             f"Taint rule YAMLs not reachable via importlib.resources: "
             f"{missing}. Check pyproject.toml ships "
-            f"\"roam.security.taint_rules\" = [\"*.yaml\", \"*.yml\"]. "
+            f'"roam.security.taint_rules" = ["*.yaml", "*.yml"]. '
             f"This is the v12.12.1 silent-empty class — pre-fix, "
             f"``roam taint`` loaded zero rules under a pip install."
         )
@@ -192,9 +184,7 @@ class TestTaintRulesPackageDataDriftW610:
         """
         resource = files("roam.security.taint_rules") / "python_ssti.yaml"
         with as_file(resource) as path:
-            assert path.exists(), (
-                f"as_file did not materialise taint rule at {path}"
-            )
+            assert path.exists(), f"as_file did not materialise taint rule at {path}"
             text = path.read_text(encoding="utf-8")
             assert "id:" in text, (
                 "python_ssti.yaml resolved but does not contain the "
@@ -221,7 +211,7 @@ class TestLanguageExtractorsPackageDataDriftW610:
             "kotlin.yaml is not reachable via "
             "importlib.resources.files('roam.languages.extractors'). "
             "Check pyproject.toml [tool.setuptools.package-data] still "
-            "includes \"roam.languages.extractors\" = [\"*.yaml\", \"*.yml\"] "
+            'includes "roam.languages.extractors" = ["*.yaml", "*.yml"] '
             "(v12.12.1 / W610)."
         )
 
@@ -247,7 +237,7 @@ class TestRootPackageDataDriftW610:
             "mcp-server-card.json is not reachable via "
             "importlib.resources.files('roam'). Check pyproject.toml "
             "[tool.setuptools.package-data] still includes "
-            "\"roam\" = [\"mcp-server-card.json\"] (v12.12.2 / W610). "
+            '"roam" = ["mcp-server-card.json"] (v12.12.2 / W610). '
             "Loader: src/roam/mcp_server.py resolves the card via "
             "importlib.resources.files('roam') / 'mcp-server-card.json' "
             "(W624) — the wheel must ship the file for that resolver "
@@ -264,11 +254,9 @@ class TestRootPackageDataDriftW610:
         """
         resource = files("roam") / "mcp-server-card.json"
         with as_file(resource) as path:
-            assert path.exists(), (
-                f"as_file did not materialise server card at {path}"
-            )
+            assert path.exists(), f"as_file did not materialise server card at {path}"
             text = path.read_text(encoding="utf-8")
-            assert "\"name\"" in text, (
+            assert '"name"' in text, (
                 "mcp-server-card.json resolved but does not contain a "
                 "top-level 'name' key — wheel may have shipped an "
                 "empty or stale copy."

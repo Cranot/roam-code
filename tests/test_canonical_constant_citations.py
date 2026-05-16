@@ -77,9 +77,7 @@ def _find_constants_with_suffix(tree: ast.AST) -> list[tuple[str, int]]:
             if not _is_iterable_literal(node.value):
                 continue
             for target in node.targets:
-                if isinstance(target, ast.Name) and any(
-                    target.id.endswith(s) for s in _SUFFIXES
-                ):
+                if isinstance(target, ast.Name) and any(target.id.endswith(s) for s in _SUFFIXES):
                     out.append((target.id, node.lineno))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             if not _is_iterable_literal(node.value):
@@ -189,6 +187,5 @@ def test_allowlist_entries_still_exist():
     assert not stale, (
         "Allowlist entries no longer correspond to real constants -- "
         "remove them from _NO_CITATION_NEEDED in "
-        "tests/test_canonical_constant_citations.py:\n"
-        + "\n".join(f"  - {s}" for s in stale)
+        "tests/test_canonical_constant_citations.py:\n" + "\n".join(f"  - {s}" for s in stale)
     )

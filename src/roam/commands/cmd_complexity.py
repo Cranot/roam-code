@@ -16,15 +16,14 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.output._severity import severity_to_confidence_level
 from roam.output.confidence import (
     confidence_distribution,
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.output._severity import severity_to_confidence_level
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
-
 
 # W93-follow-up: complexity is the third detector migrating onto the
 # central findings registry (after `clones` in W95 and `dead` in W99).
@@ -297,12 +296,24 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W1086 (Pattern 1B / Pattern 2): accumulator for silent-fallback warnings.
+    # The two consumer sites are the count-probe ``except Exception`` below
+    # (advisory: symbol_metrics unreadable, treat as empty) and the
+    # ``--persist`` ``except sqlite3.OperationalError`` further down (pre-W89
+    # findings table missing, persist silently no-ops). Per-row ``_safe_metric``
+    # KeyErrors stay silent — best-effort per cell, would spam the accumulator.
+    # Emitted on the JSON envelope as top-level ``warnings_out`` ONLY when
+    # non-empty (hash-stable: empty-case envelope is byte-identical to
+    # pre-W1086). Unblocks future W1060 SARIF runtime-notifications plumb.
+    warnings: list[str] = []
+
     with open_db(readonly=not persist) as conn:
         # Check if symbol_metrics table has data
         try:
             count = conn.execute("SELECT COUNT(*) FROM symbol_metrics").fetchone()[0]
         except Exception:
             count = -1
+            warnings.append("symbol_metrics count probe failed; treating as empty")
         if count <= 0:
             # W810 + Pattern-1B: empty symbol_metrics is a RECOVERABLE state
             # ("no data yet, re-index"), not a programmer-class failure. The
@@ -313,21 +324,28 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
             # ``next_command`` field carries the recovery instruction.
             verdict = "No complexity data — re-index with `roam index --force` to populate symbols"
             if json_mode:
+                summary_empty: dict = {
+                    "verdict": verdict,
+                    "total": 0,
+                    "state": "no_complexity_data",
+                }
+                if warnings:
+                    summary_empty["partial_success"] = True
                 click.echo(
                     to_json(
                         json_envelope(
                             "complexity",
-                            summary={
-                                "verdict": verdict,
-                                "total": 0,
-                                "state": "no_complexity_data",
-                            },
+                            summary=summary_empty,
                             results=[],
                             next_command="roam index --force",
+                            **({"warnings_out": warnings} if warnings else {}),
                         )
                     )
                 )
             else:
+                if warnings:
+                    for _w in warnings:
+                        click.echo(f"WARNING: {_w}", err=True)
                 click.echo(verdict)
             return
 
@@ -399,7 +417,11 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 )
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+                # W1086 (Pattern 2): surface the silent fallback so consumers
+                # know --persist asked for findings but produced none. The
+                # actionable next step is to rebuild the index so the
+                # W89-era findings table gets created.
+                warnings.append("findings table missing; complexity findings not persisted (pre-W89 schema)")
 
         rows = rows[:limit]
 
@@ -407,21 +429,28 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
             if sarif_mode:
                 from roam.output.sarif import complexity_to_sarif, write_sarif
 
-                sarif = complexity_to_sarif([], threshold=threshold or 0)
+                sarif = complexity_to_sarif([], threshold=threshold or 0, warnings=warnings)
                 click.echo(write_sarif(sarif))
                 return
             verdict = "No matching symbols found."
             if json_mode:
+                summary_norows: dict = {"verdict": verdict, "total": 0}
+                if warnings:
+                    summary_norows["partial_success"] = True
                 click.echo(
                     to_json(
                         json_envelope(
                             "complexity",
-                            summary={"verdict": verdict, "total": 0},
+                            summary=summary_norows,
                             results=[],
+                            **({"warnings_out": warnings} if warnings else {}),
                         )
                     )
                 )
             else:
+                if warnings:
+                    for _w in warnings:
+                        click.echo(f"WARNING: {_w}", err=True)
                 click.echo(verdict)
             return
 
@@ -439,12 +468,12 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 }
                 for r in rows
             ]
-            sarif = complexity_to_sarif(complex_symbols, threshold=threshold or 0)
+            sarif = complexity_to_sarif(complex_symbols, threshold=threshold or 0, warnings=warnings)
             click.echo(write_sarif(sarif))
             return
 
         if by_file:
-            _by_file_output(conn, rows, json_mode)
+            _by_file_output(conn, rows, json_mode, warnings=warnings)
             return
 
         # Compute distribution stats
@@ -495,31 +524,38 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
             symbol_triples = wrap_findings(symbol_values, classifier=_complexity_classify)
             distribution = confidence_distribution(symbol_triples)
             _cx_verdict = verdict_with_high_count(_cx_verdict, distribution)
+            summary_main: dict = {
+                "verdict": _cx_verdict,
+                "total_analyzed": total,
+                "average_complexity": round(avg, 1),
+                "p90_complexity": round(p90, 1),
+                "critical_count": critical_count,
+                "high_count": high_count,
+                "showing": len(rows),
+                "findings_confidence_distribution": distribution,
+                # W331: clarify which complexity metric the
+                # rankings use — cognitive (Sonar) not McCabe.
+                "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
+            }
+            if warnings:
+                summary_main["partial_success"] = True
             click.echo(
                 to_json(
                     json_envelope(
                         "complexity",
-                        summary={
-                            "verdict": _cx_verdict,
-                            "total_analyzed": total,
-                            "average_complexity": round(avg, 1),
-                            "p90_complexity": round(p90, 1),
-                            "critical_count": critical_count,
-                            "high_count": high_count,
-                            "showing": len(rows),
-                            "findings_confidence_distribution": distribution,
-                            # W331: clarify which complexity metric the
-                            # rankings use — cognitive (Sonar) not McCabe.
-                            "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
-                        },
+                        summary=summary_main,
                         budget=token_budget,
                         symbols=symbol_triples,
+                        **({"warnings_out": warnings} if warnings else {}),
                     )
                 )
             )
             return
 
         # Text output
+        if warnings:
+            for _w in warnings:
+                click.echo(f"WARNING: {_w}", err=True)
         _worst_name_txt = (rows[0]["qualified_name"] or rows[0]["name"]) if rows else "none"
         _worst_cc_txt = rows[0]["cognitive_complexity"] if rows else 0
         _cx_verdict_txt = (
@@ -608,15 +644,21 @@ def _persist_complexity_findings(
         rows = [
             r
             for r in rows
-            if r["kind"] not in {"import", "module_import"}
-            and "import" not in (r["name"] or "").lower()
+            if r["kind"] not in {"import", "module_import"} and "import" not in (r["name"] or "").lower()
         ]
     _emit_complexity_findings(conn, rows)
     conn.commit()
 
 
-def _by_file_output(conn, rows, json_mode):
-    """Group complexity results by file."""
+def _by_file_output(conn, rows, json_mode, *, warnings: list[str] | None = None):
+    """Group complexity results by file.
+
+    *warnings* (W1086): when supplied, the JSON envelope surfaces the list on
+    top-level ``warnings_out`` and stamps ``summary.partial_success`` so
+    consumers see silent-fallback state from the parent dispatch (e.g., a
+    pre-W89 ``findings`` table during ``--persist``). When ``None`` or empty,
+    the envelope is byte-identical to the pre-W1086 shape.
+    """
     from collections import defaultdict
 
     by_file = defaultdict(list)
@@ -643,16 +685,19 @@ def _by_file_output(conn, rows, json_mode):
         _bf_max = file_summaries[0]["max_complexity"] if file_summaries else 0
         _bf_file = file_summaries[0]["file"].split("/")[-1] if file_summaries else "none"
         _bf_verdict = f"{len(file_summaries)} files analyzed, worst file: {_bf_file} (max={_bf_max:.0f})"
+        summary_bf: dict = {
+            "verdict": _bf_verdict,
+            "files": len(file_summaries),
+            # W331: by-file rollups still rank by cognitive complexity.
+            "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
+        }
+        if warnings:
+            summary_bf["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "complexity",
-                    summary={
-                        "verdict": _bf_verdict,
-                        "files": len(file_summaries),
-                        # W331: by-file rollups still rank by cognitive complexity.
-                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
-                    },
+                    summary=summary_bf,
                     files=[
                         {
                             "file": fs["file"],
@@ -663,11 +708,15 @@ def _by_file_output(conn, rows, json_mode):
                         }
                         for fs in file_summaries
                     ],
+                    **({"warnings_out": list(warnings)} if warnings else {}),
                 )
             )
         )
         return
 
+    if warnings:
+        for _w in warnings:
+            click.echo(f"WARNING: {_w}", err=True)
     for fs in file_summaries:
         click.echo(
             f"  {fs['file']} — {fs['symbols']} functions, "

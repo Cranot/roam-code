@@ -1,4 +1,14 @@
-"""Counterfactual architecture simulator -- test structural changes before making them."""
+"""Counterfactual architecture simulator -- test structural changes before making them.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because simulate outputs are invocation-scoped scenario-planning
+what-if envelopes (cloned-graph deltas under proposed move / extract /
+merge transforms) — not per-location code violations on the real
+codebase. The simulation operates on a counterfactual graph that does
+not yet exist on disk, so there are no source coordinates to populate
+SARIF ``locations[]``. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH Bucket B propagation plan + W1221-audit memo.
+"""
 
 from __future__ import annotations
 

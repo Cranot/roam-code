@@ -78,12 +78,14 @@ from __future__ import annotations
 
 # Closed canonical risk-LEVEL vocabulary. Lowercase — every consumer
 # must normalise before comparing. Membership is O(1) via frozenset.
-RISK_LEVELS: frozenset[str] = frozenset({
-    "critical",
-    "high",
-    "medium",
-    "low",
-})
+RISK_LEVELS: frozenset[str] = frozenset(
+    {
+        "critical",
+        "high",
+        "medium",
+        "low",
+    }
+)
 
 
 # Historic spellings that resolve into the canonical set. UPPER-case

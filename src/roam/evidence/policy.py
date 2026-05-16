@@ -64,17 +64,18 @@ from typing import Any
 
 from roam.evidence._vocabulary import POLICY_DECISIONS
 
-
 # Top-level row keys that lift to first-class fields on the dataclass.
 # Anything else found in a producer row gets stuffed into ``extra`` so
 # the row round-trips byte-identically.
-_FIRST_CLASS_FIELDS: frozenset[str] = frozenset({
-    "rule_id",
-    "decision",
-    "subject",
-    "subject_kind",
-    "evidence_ref",
-})
+_FIRST_CLASS_FIELDS: frozenset[str] = frozenset(
+    {
+        "rule_id",
+        "decision",
+        "subject",
+        "subject_kind",
+        "evidence_ref",
+    }
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -140,36 +141,17 @@ class PolicyDecision(Mapping[str, Any]):
 
     def __post_init__(self) -> None:
         if not isinstance(self.rule_id, str) or not self.rule_id:
-            raise ValueError(
-                "PolicyDecision.rule_id must be a non-empty string"
-            )
+            raise ValueError("PolicyDecision.rule_id must be a non-empty string")
         if not isinstance(self.decision, str) or not self.decision:
-            raise ValueError(
-                "PolicyDecision.decision must be a non-empty string"
-            )
+            raise ValueError("PolicyDecision.decision must be a non-empty string")
         if self.decision not in POLICY_DECISIONS:
-            raise ValueError(
-                f"PolicyDecision.decision {self.decision!r} not in "
-                f"POLICY_DECISIONS"
-            )
+            raise ValueError(f"PolicyDecision.decision {self.decision!r} not in POLICY_DECISIONS")
         if self.subject_kind is not None:
-            if (
-                not isinstance(self.subject_kind, str)
-                or not self.subject_kind
-            ):
-                raise ValueError(
-                    "PolicyDecision.subject_kind must be None or a "
-                    "non-empty string"
-                )
+            if not isinstance(self.subject_kind, str) or not self.subject_kind:
+                raise ValueError("PolicyDecision.subject_kind must be None or a non-empty string")
         if self.evidence_ref is not None:
-            if (
-                not isinstance(self.evidence_ref, str)
-                or not self.evidence_ref
-            ):
-                raise ValueError(
-                    "PolicyDecision.evidence_ref must be None or a "
-                    "non-empty string"
-                )
+            if not isinstance(self.evidence_ref, str) or not self.evidence_ref:
+                raise ValueError("PolicyDecision.evidence_ref must be None or a non-empty string")
 
     @classmethod
     def from_dict(cls, row: Mapping[str, Any]) -> PolicyDecision:
@@ -184,16 +166,10 @@ class PolicyDecision(Mapping[str, Any]):
         rule_id = row.get("rule_id")
         decision = row.get("decision")
         if not isinstance(rule_id, str) or not rule_id:
-            raise ValueError(
-                "PolicyDecision.from_dict: row missing non-empty 'rule_id'"
-            )
+            raise ValueError("PolicyDecision.from_dict: row missing non-empty 'rule_id'")
         if not isinstance(decision, str) or not decision:
-            raise ValueError(
-                "PolicyDecision.from_dict: row missing non-empty 'decision'"
-            )
-        extra: dict[str, Any] = {
-            k: v for k, v in row.items() if k not in _FIRST_CLASS_FIELDS
-        }
+            raise ValueError("PolicyDecision.from_dict: row missing non-empty 'decision'")
+        extra: dict[str, Any] = {k: v for k, v in row.items() if k not in _FIRST_CLASS_FIELDS}
         return cls(
             rule_id=rule_id,
             decision=decision,

@@ -26,7 +26,6 @@ import importlib
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixture sources — kept inline so this file is self-contained.
 # ---------------------------------------------------------------------------
@@ -96,13 +95,7 @@ SWIFT_SRC = (
 FOXPRO_SRC = "FUNCTION MyFunc\n  LOCAL x\n  x = 1\n  RETURN x\nENDFUNC\n"
 
 GENERIC_LUA_SRC = (
-    "function greet(name)\n"
-    "    return 'hello ' .. name\n"
-    "end\n"
-    "\n"
-    "function add(a, b)\n"
-    "    return a + b\n"
-    "end\n"
+    "function greet(name)\n    return 'hello ' .. name\nend\n\nfunction add(a, b)\n    return a + b\nend\n"
 )
 
 
@@ -323,9 +316,7 @@ def test_extractor_smoke(
     tree = _parse(grammar, source)
     symbols = extractor.extract_symbols(tree, source, fixture_path)
 
-    assert isinstance(symbols, list), (
-        f"[{test_id}] extract_symbols must return a list, got {type(symbols).__name__}"
-    )
+    assert isinstance(symbols, list), f"[{test_id}] extract_symbols must return a list, got {type(symbols).__name__}"
     assert len(symbols) >= min_syms, (
         f"[{test_id}] expected >= {min_syms} symbols, got {len(symbols)}: "
         f"{[(s.get('name'), s.get('kind')) for s in symbols]}"
@@ -350,9 +341,7 @@ def test_extractor_smoke(
 
     # Canonical entity check: a symbol named ``canonical_name`` whose kind is
     # in ``canonical_kinds`` must be present.
-    matches = [
-        s for s in symbols if s.get("name") == canonical_name and s.get("kind") in canonical_kinds
-    ]
+    matches = [s for s in symbols if s.get("name") == canonical_name and s.get("kind") in canonical_kinds]
     assert matches, (
         f"[{test_id}] canonical entity {canonical_name!r} (kinds={canonical_kinds}) not found. "
         f"Got: {[(s.get('name'), s.get('kind')) for s in symbols]}"
@@ -360,9 +349,7 @@ def test_extractor_smoke(
 
     # 4. References must be a list — empty is OK, the call must just not crash.
     refs = extractor.extract_references(tree, source, fixture_path)
-    assert isinstance(refs, list), (
-        f"[{test_id}] extract_references must return a list, got {type(refs).__name__}"
-    )
+    assert isinstance(refs, list), f"[{test_id}] extract_references must return a list, got {type(refs).__name__}"
     # If non-empty, spot-check the reference contract.
     if refs:
         ref_required = {"source_name", "target_name", "kind", "line", "import_path"}

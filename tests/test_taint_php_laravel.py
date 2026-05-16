@@ -18,7 +18,6 @@ import sqlite3
 from pathlib import Path
 
 from roam.security.taint_engine import (
-    TaintRule,
     load_rules,
     run_taint,
 )
@@ -63,8 +62,7 @@ def _make_conn() -> sqlite3.Connection:
 
 def _add_symbol(conn, sid: int, name: str, qualified: str | None = None, kind: str = "function") -> None:
     conn.execute(
-        "INSERT INTO symbols (id, file_id, name, qualified_name, line_start, kind) "
-        "VALUES (?, 1, ?, ?, ?, ?)",
+        "INSERT INTO symbols (id, file_id, name, qualified_name, line_start, kind) VALUES (?, 1, ?, ?, ?, ?)",
         (sid, name, qualified or name, sid, kind),
     )
 
@@ -262,9 +260,7 @@ class TestCommandExecFires:
         rules = [r for r in load_rules(_rules_dir()) if r.rule_id == "php-command-injection"]
         findings = run_taint(conn, rules)
         assert findings
-        assert any(f.sanitizer_in_path for f in findings), (
-            "escapeshellarg on the path must mark sanitizer_in_path=True"
-        )
+        assert any(f.sanitizer_in_path for f in findings), "escapeshellarg on the path must mark sanitizer_in_path=True"
 
 
 class TestPathTraversalFires:

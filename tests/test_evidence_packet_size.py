@@ -28,20 +28,16 @@ from __future__ import annotations
 
 import dataclasses
 
-import pytest
-
 from roam.evidence import (
     PACKET_BUDGET_STATES,
     PACKET_SIZE_BUDGET_BYTES,
     ActorRef,
-    AuthorityRef,
     ChangeEvidence,
     EvidenceArtifact,
     PolicyDecision,
     classify_packet_budget,
     packet_size_bytes,
 )
-
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -61,9 +57,7 @@ def _small_packet() -> ChangeEvidence:
     )
 
 
-def _oversized_packet_with_inline_artifacts(
-    *, artifact_count: int = 50, inline_size: int = 8 * 1024
-) -> ChangeEvidence:
+def _oversized_packet_with_inline_artifacts(*, artifact_count: int = 50, inline_size: int = 8 * 1024) -> ChangeEvidence:
     """Build a packet whose ``artifacts[].content_inline`` exceeds budget.
 
     50 artifacts each carrying 8 KiB inline = ~400 KiB of inline content,
@@ -92,10 +86,7 @@ def _oversized_after_truncation_packet() -> ChangeEvidence:
     list. Each row carries 8 KiB of free text; 50 rows = ~400 KiB.
     """
     big_text = "y" * (8 * 1024)
-    approvals = tuple(
-        {"approval_id": f"approval-{i}", "rationale": big_text}
-        for i in range(50)
-    )
+    approvals = tuple({"approval_id": f"approval-{i}", "rationale": big_text} for i in range(50))
     return ChangeEvidence(
         evidence_id="evidence:incompressible-1",
         approvals=approvals,
@@ -126,10 +117,7 @@ def test_classify_packet_budget_at_boundary() -> None:
     oversized_after_truncation."""
     assert classify_packet_budget(0) == "within_budget"
     assert classify_packet_budget(PACKET_SIZE_BUDGET_BYTES) == "within_budget"
-    assert (
-        classify_packet_budget(PACKET_SIZE_BUDGET_BYTES + 1)
-        == "oversized_after_truncation"
-    )
+    assert classify_packet_budget(PACKET_SIZE_BUDGET_BYTES + 1) == "oversized_after_truncation"
 
 
 # ---------------------------------------------------------------------------
@@ -360,10 +348,7 @@ def test_truncation_drops_policy_decision_extra() -> None:
 def test_truncation_drops_finding_evidence() -> None:
     """Step 4: findings[].evidence sub-dict is cleared if present."""
     big_evidence = {"detail": "v" * (8 * 1024)}
-    findings = tuple(
-        {"id": f"finding-{i}", "evidence": dict(big_evidence)}
-        for i in range(50)
-    )
+    findings = tuple({"id": f"finding-{i}", "evidence": dict(big_evidence)} for i in range(50))
     p = ChangeEvidence(
         evidence_id="evidence:findings-oversized",
         findings=findings,

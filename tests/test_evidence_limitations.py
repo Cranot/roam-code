@@ -71,12 +71,8 @@ def test_limitations_empty_when_packet_is_strong_and_pristine():
                 env_id="ci_job:gh/owner/repo/123",
             ),
         ),
-        context_refs=(
-            EvidenceSubject(kind="file", qualified_name="src/x.py"),
-        ),
-        changed_subjects=(
-            EvidenceSubject(kind="symbol", qualified_name="x.fn"),
-        ),
+        context_refs=(EvidenceSubject(kind="file", qualified_name="src/x.py"),),
+        changed_subjects=(EvidenceSubject(kind="symbol", qualified_name="x.fn"),),
         policy_decisions=({"rule": "no_secrets", "passed": True},),
         tests_run=({"name": "t1", "outcome": "passed"},),
         approvals=({"actor": "alice", "ts": "2026-05-14T00:00:00Z"},),
@@ -115,9 +111,7 @@ def test_limitations_includes_partial_q_bullets():
     packet = _make_packet(redactions=("producer_not_available",))
     bullets = _derive_limitations(packet)
 
-    q8_partials = [
-        b for b in bullets if "Q8 (accept): PARTIAL" in b
-    ]
+    q8_partials = [b for b in bullets if "Q8 (accept): PARTIAL" in b]
     assert len(q8_partials) == 1
     # The W261 partial path mentions the redaction marker by name.
     assert "producer_not_available" in q8_partials[0]
@@ -179,9 +173,7 @@ def test_limitations_redaction_bullets_preserve_tuple_order():
 
     # Find the indices of the size_limit + secret bullets and assert
     # size_limit appears FIRST (matches the tuple order, not alphabetic).
-    redaction_lines = [
-        b for b in bullets if b.startswith("- **Redacted content: ")
-    ]
+    redaction_lines = [b for b in bullets if b.startswith("- **Redacted content: ")]
     assert len(redaction_lines) == 2
     assert "`size_limit`" in redaction_lines[0]
     assert "`secret`" in redaction_lines[1]
@@ -338,12 +330,8 @@ def test_renderer_emits_sentinel_when_no_limitations():
                 env_id="ci_job:gh/owner/repo/123",
             ),
         ),
-        context_refs=(
-            EvidenceSubject(kind="file", qualified_name="src/x.py"),
-        ),
-        changed_subjects=(
-            EvidenceSubject(kind="symbol", qualified_name="x.fn"),
-        ),
+        context_refs=(EvidenceSubject(kind="file", qualified_name="src/x.py"),),
+        changed_subjects=(EvidenceSubject(kind="symbol", qualified_name="x.fn"),),
         policy_decisions=({"rule": "no_secrets", "passed": True},),
         tests_run=({"name": "t1", "outcome": "passed"},),
         approvals=({"actor": "alice", "ts": "2026-05-14T00:00:00Z"},),

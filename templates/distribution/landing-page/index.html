@@ -45,7 +45,7 @@
     "downloadUrl": "https://pypi.org/project/roam-code/",
     "installUrl": "https://pypi.org/project/roam-code/",
     "softwareHelp": {"@type": "CreativeWork", "url": "/docs/"},
-    "softwareVersion": "13.0",
+    "softwareVersion": "13.1",
     "softwareRequirements": "Python 3.10+",
     "fileSize": "~ 8 MB wheel",
     "image": "https://roam-code.com/og.png",
@@ -64,7 +64,7 @@
     "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "sameAs": ["https://github.com/Cranot/roam-code", "https://pypi.org/project/roam-code/"],
-    "featureList": "Local code-graph engine; CLI with 200+ structural and algorithmic checks; 130+ MCP tools for coding agents; 28 languages; clones-not-edited detector; blast-radius analysis; algorithmic-risk detection; refactor simulation; in-toto v1 attestations; SARIF 2.1.0 export; tamper-evident audit trail of what was checked"
+    "featureList": "Local code-graph engine; 238 CLI commands; 224 MCP tools for coding agents; 57 tools in the default core preset; 28 languages; clones-not-edited detector; blast-radius analysis; algorithmic-risk detection; refactor simulation; in-toto v1 attestations; SARIF 2.1.0 export; tamper-evident audit trail of what was checked"
   }
   </script>
 
@@ -208,8 +208,8 @@
         audit trail — evidence stays on your machine and verifies offline.
       </p>
       <div class="numbers-grid">
-        <div class="num-cell"><strong>200+</strong><span>CLI capabilities</span></div>
-        <div class="num-cell"><strong>130+</strong><span>tools your AI agent can call (MCP)</span></div>
+        <div class="num-cell"><strong>238</strong><span>CLI commands</span></div>
+        <div class="num-cell"><strong>224</strong><span>MCP tools (57 core)</span></div>
         <div class="num-cell"><strong>28</strong><span>language families</span></div>
         <div class="num-cell"><strong>459</strong><span>GitHub stars</span></div>
         <div class="num-cell"><strong>7,731</strong><span>PyPI installs / month</span></div>
@@ -228,7 +228,7 @@
           <li><code>roam init</code> — build the local graph (a typical 100k-LOC repo finishes in seconds)</li>
           <li><code>roam understand</code> — guided architectural tour</li>
           <li><code>git diff | roam critique</code> — structural review of your current changes</li>
-          <li><code>roam mcp</code> — start the MCP server so your agent can call all 130+ tools</li>
+          <li><code>roam mcp</code> — start the MCP server so your agent can call the 57-tool core preset</li>
         </ol>
       </div>
     </div>
@@ -307,7 +307,7 @@
       <h2>How it works</h2>
       <p class="lede">
         Three steps: install once, hand the MCP server to your editor,
-        and your coding agent gains 130+ structured questions to ask
+        and your coding agent gains 57 core structured questions to ask
         about the codebase. The free CLI gives you the same engine to
         run the same checks from your terminal or CI.
       </p>
@@ -640,7 +640,7 @@
             </tr>
             <tr>
               <th scope="row">Exposes the code graph to agents via MCP</th>
-              <td class="yes">Yes (169 tools)</td>
+              <td class="yes">Yes (224 tools)</td>
               <td class="ltd">Consumes MCP<sup>***</sup></td>
               <td class="ltd">Consumes MCP<sup>***</sup></td>
               <td class="ltd">Enterprise tier<sup>***</sup></td>
@@ -674,7 +674,7 @@
         </table>
       </div>
       <p class="compare-foot">
-        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (169 tools); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and an embedded version in SonarQube Cloud in March 2026.
+        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (224 tools, 57 in the default core preset); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and an embedded version in SonarQube Cloud in March 2026.
         Roam runs <em>alongside</em> a semantic reviewer (CodeRabbit, Greptile, Qodo) — different layer, different bugs. Also pairs with Cursor / Claude Code / Codex / Gemini via MCP, and exports SARIF for GitHub / GitLab CI.
         See something wrong? <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
       </p>

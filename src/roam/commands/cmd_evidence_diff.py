@@ -49,6 +49,16 @@ NON-GOALS:
   ``roam attest`` / ``pr-bundle validate``, not the diff.)
 * No semantic merge. Conflicting verdicts surface as ``changed_verdicts``
   entries; deciding which is correct is left to the reviewer.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because evidence-diff outputs describe the delta between two
+``ChangeEvidence`` JSON PACKETS (regressions / improvements / drift in
+the 8-question completeness ladder + W182 ref-list set diffs) — not
+per-location code violations in user source. The diff describes
+evidence-packet shape, not findings against source coordinates. See
+``cmd_rules_validate`` for the parallel validator-not-detector
+disclosure pattern + action.yml _SUPPORTED_SARIF allowlist + W1192
+audit memo + W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -60,6 +70,7 @@ from typing import Any, Mapping
 import click
 
 from roam.capability import roam_capability
+from roam.evidence.completeness_compat import compute_completeness
 from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -100,10 +111,7 @@ def _load_packet(path: str | Path) -> dict[str, Any]:
     raw = p.read_text(encoding="utf-8")
     payload = json.loads(raw)
     if not isinstance(payload, dict):
-        raise click.ClickException(
-            f"evidence packet at {path!s} is not a JSON object "
-            f"(got {type(payload).__name__})"
-        )
+        raise click.ClickException(f"evidence packet at {path!s} is not a JSON object (got {type(payload).__name__})")
     return payload
 
 
@@ -205,103 +213,6 @@ def _diff_artifacts(
     return added, removed
 
 
-def _compute_completeness(packet: dict[str, Any]) -> dict[str, str]:
-    """Recompute Q1..Q8 completeness from a raw packet dict.
-
-    Mirrors ``ChangeEvidence.evidence_completeness()`` (W210 item 6) but
-    operates on the dict shape instead of the dataclass — so it works on
-    older packets that may pre-date the method. Returns a dict
-    ``{"Q1": "...", ..., "Q8": "..."}`` where each value is one of
-    ``"complete" / "partial" / "missing" / "not_applicable"``.
-
-    When a field is absent (e.g. on a pre-W182 packet), it's treated as
-    empty — that's the correct semantic: "missing data" rather than
-    crash.
-    """
-    def _truthy_list(v: Any) -> bool:
-        return isinstance(v, list) and len(v) > 0
-
-    def _truthy_str(v: Any) -> bool:
-        return isinstance(v, str) and bool(v)
-
-    actor_refs = packet.get("actor_refs") or []
-    authority_refs = packet.get("authority_refs") or []
-    context_refs = packet.get("context_refs") or []
-    changed_subjects = packet.get("changed_subjects") or []
-    findings = packet.get("findings") or []
-    policy_decisions = packet.get("policy_decisions") or []
-    tests_required = packet.get("tests_required") or []
-    tests_run = packet.get("tests_run") or []
-    artifacts = packet.get("artifacts") or []
-    approvals = packet.get("approvals") or []
-    accepted_risks = packet.get("accepted_risks") or []
-    redactions = packet.get("redactions") or []
-
-    agent_id = packet.get("agent_id")
-    human_actor = packet.get("human_actor")
-    mode = packet.get("mode")
-    risk_level = packet.get("risk_level")
-    verdict = packet.get("verdict")
-
-    result: dict[str, str] = {}
-
-    # Q1 actor
-    if _truthy_list(actor_refs):
-        result["Q1"] = "complete"
-    elif _truthy_str(agent_id) or _truthy_str(human_actor):
-        result["Q1"] = "partial"
-    else:
-        result["Q1"] = "missing"
-
-    # Q2 authority
-    if _truthy_list(authority_refs):
-        result["Q2"] = "complete"
-    elif _truthy_str(mode):
-        result["Q2"] = "partial"
-    else:
-        result["Q2"] = "missing"
-
-    # Q3 context
-    result["Q3"] = "complete" if _truthy_list(context_refs) else "missing"
-
-    # Q4 changes
-    result["Q4"] = "complete" if _truthy_list(changed_subjects) else "missing"
-
-    # Q5 risk
-    if _truthy_str(risk_level):
-        result["Q5"] = "complete"
-    elif verdict in ("SAFE", "PASS", "safe", "pass") and not _truthy_list(findings):
-        result["Q5"] = "not_applicable"
-    else:
-        result["Q5"] = "missing"
-
-    # Q6 policy
-    if _truthy_list(policy_decisions):
-        result["Q6"] = "complete"
-    elif _truthy_list(authority_refs):
-        result["Q6"] = "partial"
-    else:
-        result["Q6"] = "missing"
-
-    # Q7 verify
-    if _truthy_list(tests_run) or _truthy_list(artifacts):
-        result["Q7"] = "complete"
-    elif _truthy_list(tests_required):
-        result["Q7"] = "partial"
-    else:
-        result["Q7"] = "missing"
-
-    # Q8 accept
-    if _truthy_list(approvals) or _truthy_list(accepted_risks):
-        result["Q8"] = "complete"
-    elif _truthy_list(redactions):
-        result["Q8"] = "partial"
-    else:
-        result["Q8"] = "missing"
-
-    return result
-
-
 def _diff_completeness(
     old: dict[str, Any],
     new: dict[str, Any],
@@ -317,8 +228,11 @@ def _diff_completeness(
     ``not_applicable`` are recorded in ``changed`` but not categorised
     on either side of the ladder (the ladder simply doesn't apply).
     """
-    old_q = _compute_completeness(old)
-    new_q = _compute_completeness(new)
+    # W1266 - shared raw-dict helper. Mirrors W1254 stale-demotion: a
+    # stale-but-otherwise-complete packet's Qs show up here as PARTIAL,
+    # so a fresh -> stale re-run lands as a regression in the ladder.
+    old_q = compute_completeness(old)
+    new_q = compute_completeness(new)
 
     changed: list[dict[str, str]] = []
     regressions: list[dict[str, str]] = []
@@ -383,9 +297,7 @@ def _build_verdict(
         return f"{changed_verdicts} changed verdicts (no completeness regressions)"
     if hash_drift:
         if improvements > 0:
-            return (
-                f"content_hash changed; {improvements} evidence improvements"
-            )
+            return f"content_hash changed; {improvements} evidence improvements"
         return "content_hash changed with no completeness regressions"
     if improvements > 0:
         return f"{improvements} evidence improvements"
@@ -462,15 +374,9 @@ def evidence_diff(ctx, old_path, new_path):
         schema_drift_block = {"old": old_schema, "new": new_schema}
 
     # Refs (W182)
-    added_actor, removed_actor = _diff_refs(
-        old, new, "actor_refs", "actor_kind", "actor_id"
-    )
-    added_authority, removed_authority = _diff_refs(
-        old, new, "authority_refs", "authority_kind", "authority_id"
-    )
-    added_env, removed_env = _diff_refs(
-        old, new, "environment_refs", "env_kind", "env_id"
-    )
+    added_actor, removed_actor = _diff_refs(old, new, "actor_refs", "actor_kind", "actor_id")
+    added_authority, removed_authority = _diff_refs(old, new, "authority_refs", "authority_kind", "authority_id")
+    added_env, removed_env = _diff_refs(old, new, "environment_refs", "env_kind", "env_id")
 
     added_refs = {
         "actor_refs": added_actor,
@@ -500,6 +406,22 @@ def evidence_diff(ctx, old_path, new_path):
         ("context_read_at", "edits_started_at", "edits_completed_at"),
     )
 
+    # W1262: staleness signal (W1254 producer). Read ``evidence_stale``
+    # + ``stale_reasons`` from each packet so the diff surfaces the
+    # W1234 producer signal alongside the coverage delta. Always-emit
+    # (Pattern-2): consumers see ``stale=False`` + empty reasons as a
+    # real signal, not a missing-data case.
+    def _extract_stale(packet: dict[str, Any]) -> tuple[bool, list[str]]:
+        raw = packet.get("evidence_stale")
+        flag = bool(raw) if isinstance(raw, bool) else False
+        raw_reasons = packet.get("stale_reasons") or []
+        reasons = [r for r in raw_reasons if isinstance(r, str)] if isinstance(raw_reasons, list) else []
+        return flag, reasons
+
+    old_stale, old_stale_reasons = _extract_stale(old)
+    new_stale, new_stale_reasons = _extract_stale(new)
+    stale_drift = (old_stale != new_stale) or (sorted(old_stale_reasons) != sorted(new_stale_reasons))
+
     # Verdict + summary counts
     verdict = _build_verdict(
         hash_drift=hash_drift_block is not None,
@@ -517,16 +439,18 @@ def evidence_diff(ctx, old_path, new_path):
         "regressions": len(regressions),
         "improvements": len(improvements),
         "changed_verdicts": len(changed_verdicts),
-        "added_refs_total": (
-            len(added_actor) + len(added_authority) + len(added_env)
-        ),
-        "removed_refs_total": (
-            len(removed_actor) + len(removed_authority) + len(removed_env)
-        ),
+        "added_refs_total": (len(added_actor) + len(added_authority) + len(added_env)),
+        "removed_refs_total": (len(removed_actor) + len(removed_authority) + len(removed_env)),
         "added_findings": len(added_findings),
         "removed_findings": len(removed_findings),
         "added_artifacts": len(added_artifacts),
         "removed_artifacts": len(removed_artifacts),
+        # W1262: staleness signal pair from W1254. ``stale_drift`` is
+        # True when the boolean flipped OR the reasons set changed; it
+        # surfaces a re-run that addressed (or introduced) staleness.
+        "old_stale": old_stale,
+        "new_stale": new_stale,
+        "stale_drift": stale_drift,
     }
 
     if json_mode:
@@ -543,13 +467,20 @@ def evidence_diff(ctx, old_path, new_path):
                 f"{summary['removed_refs_total']} removed reference records"
             ),
         ]
+        # W1262: staleness fact. Anchors on "flagged" (analytical verb in
+        # tests/test_law4_lint.py _ANALYTICAL_VERBS) when staleness
+        # drifted between packets, on "scanned" (analytical verb)
+        # otherwise - so a no-drift fact still satisfies LAW 4.
+        if stale_drift:
+            facts.append(f"{int(old_stale)} old + {int(new_stale)} new stale flags flagged")
+        else:
+            facts.append(f"{int(old_stale) + int(new_stale)} stale flags scanned")
         next_commands: list[str] = []
         if regressions:
             # First regression is the most useful pointer.
             q = regressions[0]["q"]
             next_commands.append(
-                f"# inspect Q-regression: {q} dropped from "
-                f"{regressions[0]['old']} to {regressions[0]['new']}"
+                f"# inspect Q-regression: {q} dropped from {regressions[0]['old']} to {regressions[0]['new']}"
             )
         if hash_drift_block is not None:
             next_commands.append("roam attest verify")
@@ -573,6 +504,21 @@ def evidence_diff(ctx, old_path, new_path):
             regressions=regressions,
             improvements=improvements,
             timing_drift=timing_drift,
+            # W1262: top-level staleness block mirroring the W1254
+            # producer signal on both packets. Always emitted
+            # (Pattern-2 always-emit) so JSON consumers don't branch
+            # on "did the diff read evidence_stale?".
+            staleness={
+                "old": {
+                    "stale": old_stale,
+                    "stale_reasons": old_stale_reasons,
+                },
+                "new": {
+                    "stale": new_stale,
+                    "stale_reasons": new_stale_reasons,
+                },
+                "drift": stale_drift,
+            },
             agent_contract={
                 "facts": facts,
                 "next_commands": next_commands,
@@ -588,14 +534,24 @@ def evidence_diff(ctx, old_path, new_path):
     click.echo("")
 
     if schema_drift_block is not None:
-        click.echo(
-            f"schema_version: {schema_drift_block['old']!r} -> "
-            f"{schema_drift_block['new']!r}"
-        )
+        click.echo(f"schema_version: {schema_drift_block['old']!r} -> {schema_drift_block['new']!r}")
     if hash_drift_block is not None:
-        click.echo(
-            f"content_hash:   {hash_drift_block['old']} -> {hash_drift_block['new']}"
-        )
+        click.echo(f"content_hash:   {hash_drift_block['old']} -> {hash_drift_block['new']}")
+
+    # W1262: staleness banner. Surface the W1254 producer signal when
+    # either packet is stale OR when staleness drifted between packets.
+    # ASCII-only per project conventions (no emoji). Skipped entirely
+    # when both packets are fresh and no drift fired.
+    if old_stale or new_stale or stale_drift:
+        click.echo(f"[STALE] evidence_stale: {old_stale} -> {new_stale}" + (" (drift)" if stale_drift else ""))
+        if old_stale_reasons:
+            click.echo(f"  old stale_reasons ({len(old_stale_reasons)}):")
+            for reason in old_stale_reasons:
+                click.echo(f"    - {reason}")
+        if new_stale_reasons:
+            click.echo(f"  new stale_reasons ({len(new_stale_reasons)}):")
+            for reason in new_stale_reasons:
+                click.echo(f"    - {reason}")
 
     if changed_verdicts:
         click.echo("\nChanged verdicts:")
@@ -612,11 +568,7 @@ def evidence_diff(ctx, old_path, new_path):
         rows = [[i["q"], i["old"], i["new"]] for i in improvements]
         click.echo(format_table(["Q", "Old", "New"], rows, budget=0))
 
-    other_completeness = [
-        c
-        for c in changed_completeness
-        if c not in regressions and c not in improvements
-    ]
+    other_completeness = [c for c in changed_completeness if c not in regressions and c not in improvements]
     if other_completeness:
         click.echo(f"\nCompleteness drift ({len(other_completeness)}):")
         rows = [[c["q"], c["old"], c["new"]] for c in other_completeness]
@@ -625,9 +577,7 @@ def evidence_diff(ctx, old_path, new_path):
     added_total = summary["added_refs_total"]
     removed_total = summary["removed_refs_total"]
     if added_total or removed_total:
-        click.echo(
-            f"\nRefs: +{added_total} added / -{removed_total} removed"
-        )
+        click.echo(f"\nRefs: +{added_total} added / -{removed_total} removed")
         for label, kind_field, id_field, added_list, removed_list in (
             ("actor_refs", "actor_kind", "actor_id", added_actor, removed_actor),
             (
@@ -649,33 +599,19 @@ def evidence_diff(ctx, old_path, new_path):
                 continue
             click.echo(f"  {label}:")
             for ref in added_list:
-                click.echo(
-                    f"    + {ref.get(kind_field)}:{ref.get(id_field)}"
-                )
+                click.echo(f"    + {ref.get(kind_field)}:{ref.get(id_field)}")
             for ref in removed_list:
-                click.echo(
-                    f"    - {ref.get(kind_field)}:{ref.get(id_field)}"
-                )
+                click.echo(f"    - {ref.get(kind_field)}:{ref.get(id_field)}")
 
     if added_findings or removed_findings:
-        click.echo(
-            f"\nFindings: +{len(added_findings)} added / "
-            f"-{len(removed_findings)} removed"
-        )
+        click.echo(f"\nFindings: +{len(added_findings)} added / -{len(removed_findings)} removed")
         for row in added_findings:
-            click.echo(
-                f"  + {row.get('finding_id_str')}: {(row.get('claim') or '')[:60]}"
-            )
+            click.echo(f"  + {row.get('finding_id_str')}: {(row.get('claim') or '')[:60]}")
         for row in removed_findings:
-            click.echo(
-                f"  - {row.get('finding_id_str')}: {(row.get('claim') or '')[:60]}"
-            )
+            click.echo(f"  - {row.get('finding_id_str')}: {(row.get('claim') or '')[:60]}")
 
     if added_artifacts or removed_artifacts:
-        click.echo(
-            f"\nArtifacts: +{len(added_artifacts)} added / "
-            f"-{len(removed_artifacts)} removed"
-        )
+        click.echo(f"\nArtifacts: +{len(added_artifacts)} added / -{len(removed_artifacts)} removed")
         for art in added_artifacts:
             click.echo(f"  + {art.get('artifact_id')}")
         for art in removed_artifacts:
@@ -683,9 +619,7 @@ def evidence_diff(ctx, old_path, new_path):
 
     if timing_drift:
         click.echo("\nTiming drift:")
-        rows = [
-            [t["field"], str(t["old"]), str(t["new"])] for t in timing_drift
-        ]
+        rows = [[t["field"], str(t["old"]), str(t["new"])] for t in timing_drift]
         click.echo(format_table(["Field", "Old", "New"], rows, budget=0))
 
     if not (
@@ -702,6 +636,12 @@ def evidence_diff(ctx, old_path, new_path):
         or added_artifacts
         or removed_artifacts
         or timing_drift
+        # W1262: stale_drift / stale flags also count as "drift" so the
+        # tail "(no drift detected)" line stays honest. Either packet
+        # being stale OR a staleness toggle qualifies.
+        or old_stale
+        or new_stale
+        or stale_drift
     ):
         # No drift at all - the packets are functionally equivalent.
         click.echo("(no drift detected)")

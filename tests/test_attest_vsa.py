@@ -14,7 +14,6 @@ itself - they consume it read-only. The 31 fixtures in
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -34,7 +33,6 @@ from roam.evidence.change_evidence import ChangeEvidence
 from roam.evidence.refs import ActorRef, AuthorityRef
 from roam.evidence.subject import EvidenceSubject
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -50,24 +48,12 @@ def _minimal_evidence(**overrides) -> ChangeEvidence:
         "verdict": "PASS",
         "risk_level": "low",
         "agent_id": "claude",
-        "actor_refs": (
-            ActorRef(actor_kind="agent", actor_id="claude", trust_tier="self_reported_agent"),
-        ),
-        "authority_refs": (
-            AuthorityRef(authority_kind="mode", authority_id="safe_edit"),
-        ),
-        "changed_subjects": (
-            EvidenceSubject(kind="file", qualified_name="src/foo.py"),
-        ),
-        "findings": (
-            {"rule_id": "test-rule", "severity": "low", "subject_kind": "file"},
-        ),
-        "tests_run": (
-            {"test_id": "test_foo", "passed": True},
-        ),
-        "policy_decisions": (
-            {"rule_id": "policy-x", "decision": "pass"},
-        ),
+        "actor_refs": (ActorRef(actor_kind="agent", actor_id="claude", trust_tier="self_reported_agent"),),
+        "authority_refs": (AuthorityRef(authority_kind="mode", authority_id="safe_edit"),),
+        "changed_subjects": (EvidenceSubject(kind="file", qualified_name="src/foo.py"),),
+        "findings": ({"rule_id": "test-rule", "severity": "low", "subject_kind": "file"},),
+        "tests_run": ({"test_id": "test_foo", "passed": True},),
+        "policy_decisions": ({"rule_id": "policy-x", "decision": "pass"},),
         "constitution_hash": "c0" * 32,
         "rules_config_hash": "ab" * 32,
         "roam_version": "12.4.0",
@@ -228,9 +214,7 @@ class TestRunLedgerRootStatement:
         assert pred["signature_algorithm"] == "hmac-sha256"
 
     def test_optional_fields_omitted_when_none(self):
-        pred = build_run_ledger_root_predicate(
-            run_id="r1", final_signature="aa" * 32, event_count=1
-        )
+        pred = build_run_ledger_root_predicate(run_id="r1", final_signature="aa" * 32, event_count=1)
         # No agent / status / etc. fields when not supplied.
         assert "agent" not in pred
         assert "status" not in pred
@@ -243,7 +227,6 @@ class TestRunLedgerRootStatement:
     def test_build_statement_returns_none_when_chain_unsigned(self, tmp_path, monkeypatch):
         """Empty / unsigned chain (no final_signature on meta.json) returns
         None - we refuse to emit a fake root attestation."""
-        from roam.runs.ledger import RunMeta
 
         class _StubMeta:
             run_id = "r_unsigned"
@@ -254,9 +237,7 @@ class TestRunLedgerRootStatement:
             final_signature = None  # unsigned
             event_count = 0
 
-        monkeypatch.setattr(
-            "roam.runs.ledger.read_run_meta", lambda root, run_id: _StubMeta()
-        )
+        monkeypatch.setattr("roam.runs.ledger.read_run_meta", lambda root, run_id: _StubMeta())
         result = build_run_ledger_root_statement(tmp_path, "r_unsigned")
         assert result is None
 
@@ -270,9 +251,7 @@ class TestRunLedgerRootStatement:
             final_signature = "ab" * 32
             event_count = 7
 
-        monkeypatch.setattr(
-            "roam.runs.ledger.read_run_meta", lambda root, run_id: _StubMeta()
-        )
+        monkeypatch.setattr("roam.runs.ledger.read_run_meta", lambda root, run_id: _StubMeta())
         stmt = build_run_ledger_root_statement(tmp_path, "r_signed")
         assert stmt is not None
         assert stmt["_type"] == STATEMENT_TYPE
@@ -335,16 +314,16 @@ class TestPrBundleEmitSlsaL3:
         subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=str(tmp_path), check=True,
+            cwd=str(tmp_path),
+            check=True,
         )
-        subprocess.run(
-            ["git", "config", "user.name", "test"], cwd=str(tmp_path), check=True
-        )
+        subprocess.run(["git", "config", "user.name", "test"], cwd=str(tmp_path), check=True)
         (tmp_path / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), check=True)
         subprocess.run(
             ["git", "commit", "-q", "-m", "init"],
-            cwd=str(tmp_path), check=True,
+            cwd=str(tmp_path),
+            check=True,
         )
 
         # Create a minimal bundle on disk so emit has something to
@@ -355,21 +334,20 @@ class TestPrBundleEmitSlsaL3:
         # Find the current branch (Git defaults differ: main / master).
         branch = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(tmp_path), capture_output=True, text=True, check=True,
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         bundle = {
             "intent": "demo intent",
             "context_cmd": "roam preflight f",
-            "affected_symbols": [
-                {"symbol": "f", "kind": "function", "file": "a.py"}
-            ],
+            "affected_symbols": [{"symbol": "f", "kind": "function", "file": "a.py"}],
             "tests": [{"test_id": "t1", "passed": True}],
             "verdict": "PASS",
             "risk_level": "low",
         }
-        (bundle_dir / f"{branch}.json").write_text(
-            json.dumps(bundle), encoding="utf-8"
-        )
+        (bundle_dir / f"{branch}.json").write_text(json.dumps(bundle), encoding="utf-8")
 
         # Patch cosign so the signing path is invocation-free.
         from roam.attest import cga as cga_mod
@@ -394,8 +372,7 @@ class TestPrBundleEmitSlsaL3:
         # Parse the emitted envelope and inspect the slsa_l3 block.
         payload = json.loads(result.output)
         assert "slsa_l3" in payload, (
-            "pr-bundle emit --slsa-l3 must surface a slsa_l3 block on the envelope; "
-            f"got keys: {sorted(payload.keys())}"
+            f"pr-bundle emit --slsa-l3 must surface a slsa_l3 block on the envelope; got keys: {sorted(payload.keys())}"
         )
         slsa_block = payload["slsa_l3"]
         assert slsa_block["predicate_type"] == SLSA_VSA_PREDICATE_TYPE
@@ -420,36 +397,32 @@ class TestPrBundleEmitSlsaL3:
         subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=str(tmp_path), check=True,
+            cwd=str(tmp_path),
+            check=True,
         )
-        subprocess.run(
-            ["git", "config", "user.name", "test"], cwd=str(tmp_path), check=True
-        )
+        subprocess.run(["git", "config", "user.name", "test"], cwd=str(tmp_path), check=True)
         (tmp_path / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), check=True)
-        subprocess.run(
-            ["git", "commit", "-q", "-m", "init"], cwd=str(tmp_path), check=True
-        )
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(tmp_path), check=True)
 
         bundle_dir = tmp_path / ".roam" / "pr-bundles"
         bundle_dir.mkdir(parents=True)
         branch = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(tmp_path), capture_output=True, text=True, check=True,
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         bundle = {
             "intent": "demo",
             "context_cmd": "roam preflight f",
-            "affected_symbols": [
-                {"symbol": "f", "kind": "function", "file": "a.py"}
-            ],
+            "affected_symbols": [{"symbol": "f", "kind": "function", "file": "a.py"}],
             "tests": [{"test_id": "t1", "passed": True}],
             "verdict": "PASS",
             "risk_level": "low",
         }
-        (bundle_dir / f"{branch}.json").write_text(
-            json.dumps(bundle), encoding="utf-8"
-        )
+        (bundle_dir / f"{branch}.json").write_text(json.dumps(bundle), encoding="utf-8")
 
         # Mock cosign to "succeed" by faking the result object.
         from roam.attest import cga as cga_mod
@@ -464,7 +437,8 @@ class TestPrBundleEmitSlsaL3:
             cosign_version = "v2.4.0-mock"
 
         monkeypatch.setattr(
-            cga_mod, "cosign_sign_statement",
+            cga_mod,
+            "cosign_sign_statement",
             lambda statement_path, **kw: _FakeResult(),
         )
 
@@ -477,8 +451,13 @@ class TestPrBundleEmitSlsaL3:
         result = runner.invoke(
             cli,
             [
-                "--json", "pr-bundle", "emit", "--no-auto-collect",
-                "--slsa-l3", "--sign", "--keyless",
+                "--json",
+                "pr-bundle",
+                "emit",
+                "--no-auto-collect",
+                "--slsa-l3",
+                "--sign",
+                "--keyless",
             ],
         )
         assert result.exit_code == 0, result.output
@@ -486,14 +465,11 @@ class TestPrBundleEmitSlsaL3:
         payload = json.loads(result.output)
         slsa_block = payload["slsa_l3"]
         assert slsa_block["signed"] is True
-        assert any(
-            sig["target"] == "vsa" and sig["signed"]
-            for sig in slsa_block["signatures"]
-        ), slsa_block["signatures"]
+        assert any(sig["target"] == "vsa" and sig["signed"] for sig in slsa_block["signatures"]), slsa_block[
+            "signatures"
+        ]
 
-    def test_emit_no_auto_collect_falls_back_to_git_rev_parse_head(
-        self, tmp_path, monkeypatch
-    ):
+    def test_emit_no_auto_collect_falls_back_to_git_rev_parse_head(self, tmp_path, monkeypatch):
         """W509 — when the bundle envelope omits ``commit_sha`` (typical on
         ``--no-auto-collect`` runs that hand-craft a minimal bundle), the
         VSA emit path must fall back to ``git rev-parse HEAD`` so
@@ -506,29 +482,33 @@ class TestPrBundleEmitSlsaL3:
         subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=str(tmp_path), check=True,
+            cwd=str(tmp_path),
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "test"],
-            cwd=str(tmp_path), check=True,
+            cwd=str(tmp_path),
+            check=True,
         )
-        (tmp_path / "a.py").write_text(
-            "def f():\n    return 1\n", encoding="utf-8"
-        )
+        (tmp_path / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), check=True)
-        subprocess.run(
-            ["git", "commit", "-q", "-m", "init"], cwd=str(tmp_path), check=True
-        )
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(tmp_path), check=True)
 
         head_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=str(tmp_path), capture_output=True, text=True, check=True,
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         assert len(head_sha) == 40, head_sha
 
         branch = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(tmp_path), capture_output=True, text=True, check=True,
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
         # Minimal bundle WITHOUT commit_sha — the bug condition.
@@ -537,16 +517,12 @@ class TestPrBundleEmitSlsaL3:
         bundle = {
             "intent": "w509 demo",
             "context_cmd": "roam preflight f",
-            "affected_symbols": [
-                {"symbol": "f", "kind": "function", "file": "a.py"}
-            ],
+            "affected_symbols": [{"symbol": "f", "kind": "function", "file": "a.py"}],
             "tests": [{"test_id": "t1", "passed": True}],
             "verdict": "PASS",
             "risk_level": "low",
         }
-        (bundle_dir / f"{branch}.json").write_text(
-            json.dumps(bundle), encoding="utf-8"
-        )
+        (bundle_dir / f"{branch}.json").write_text(json.dumps(bundle), encoding="utf-8")
         # Sanity: the envelope source has no commit_sha.
         assert "commit_sha" not in bundle
 
@@ -568,9 +544,7 @@ class TestPrBundleEmitSlsaL3:
 
         payload = json.loads(result.output)
         slsa_block = payload["slsa_l3"]
-        vsa = json.loads(
-            Path(slsa_block["vsa_path"]).read_text(encoding="utf-8")
-        )
+        vsa = json.loads(Path(slsa_block["vsa_path"]).read_text(encoding="utf-8"))
         subj_digest = vsa["subject"][0]["digest"]
         assert subj_digest.get("sha1") == head_sha, (
             "W509: pr-bundle emit --slsa-l3 --no-auto-collect must fall "
@@ -602,18 +576,13 @@ class TestCgaEmitAlsoVsa:
         subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=str(tmp_path), check=True,
+            cwd=str(tmp_path),
+            check=True,
         )
-        subprocess.run(
-            ["git", "config", "user.name", "test"], cwd=str(tmp_path), check=True
-        )
-        (tmp_path / "a.py").write_text(
-            "def f():\n    return 1\n", encoding="utf-8"
-        )
+        subprocess.run(["git", "config", "user.name", "test"], cwd=str(tmp_path), check=True)
+        (tmp_path / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), check=True)
-        subprocess.run(
-            ["git", "commit", "-q", "-m", "init"], cwd=str(tmp_path), check=True
-        )
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(tmp_path), check=True)
 
     def test_emit_also_vsa_produces_sibling_file(self, tmp_path, monkeypatch):
         """`cga emit --also-vsa` writes <stem>.vsa.json next to the CGA."""
@@ -724,10 +693,14 @@ class TestCgaEmitAlsoVsa:
         result = runner.invoke(
             cli,
             [
-                "--json", "cga", "emit",
-                "--output", str(cga_out),
+                "--json",
+                "cga",
+                "emit",
+                "--output",
+                str(cga_out),
                 "--also-vsa",
-                "--sign", "--keyless",
+                "--sign",
+                "--keyless",
                 "--allow-dirty",
             ],
         )
@@ -745,9 +718,7 @@ class TestCgaEmitAlsoVsa:
         target_names = sorted(p.name for p in signed_targets)
         assert target_names == ["signed.intoto.json", "signed.vsa.json"]
 
-    def test_emit_cga_vsa_sibling_falls_back_to_git_rev_parse_head(
-        self, tmp_path, monkeypatch
-    ):
+    def test_emit_cga_vsa_sibling_falls_back_to_git_rev_parse_head(self, tmp_path, monkeypatch):
         """W520 — parallel to W509 but for the cga-side helper.
 
         Direct-API callers of ``emit_cga_vsa_sibling`` can hand-craft a
@@ -766,7 +737,10 @@ class TestCgaEmitAlsoVsa:
 
         head_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=str(tmp_path), capture_output=True, text=True, check=True,
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         assert len(head_sha) == 40, head_sha
 
@@ -800,9 +774,7 @@ class TestCgaEmitAlsoVsa:
         )
 
         assert result["vsa_path"] is not None, result
-        vsa = json.loads(
-            Path(result["vsa_path"]).read_text(encoding="utf-8")
-        )
+        vsa = json.loads(Path(result["vsa_path"]).read_text(encoding="utf-8"))
         subj_digest = vsa["subject"][0]["digest"]
         assert subj_digest.get("sha1") == head_sha, (
             "W520: emit_cga_vsa_sibling must fall back to "
@@ -888,29 +860,31 @@ class TestVsaCliParity:
         subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
         subprocess.run(
             ["git", "config", "user.email", "test@example.com"],
-            cwd=str(tmp_path), check=True,
+            cwd=str(tmp_path),
+            check=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "test"],
-            cwd=str(tmp_path), check=True,
+            cwd=str(tmp_path),
+            check=True,
         )
-        (tmp_path / "a.py").write_text(
-            "def f():\n    return 1\n", encoding="utf-8"
-        )
+        (tmp_path / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), check=True)
         subprocess.run(
             ["git", "commit", "-q", "-m", "init"],
-            cwd=str(tmp_path), check=True,
+            cwd=str(tmp_path),
+            check=True,
         )
         branch = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(tmp_path), capture_output=True, text=True, check=True,
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         return branch
 
-    def test_pr_bundle_and_cga_emit_byte_identical_invariants(
-        self, tmp_path, monkeypatch
-    ):
+    def test_pr_bundle_and_cga_emit_byte_identical_invariants(self, tmp_path, monkeypatch):
         """Run both CLIs against the same workspace, assert invariant
         fields are byte-identical and document the divergent fields.
         """
@@ -929,16 +903,12 @@ class TestVsaCliParity:
         bundle = {
             "intent": "parity demo",
             "context_cmd": "roam preflight f",
-            "affected_symbols": [
-                {"symbol": "f", "kind": "function", "file": "a.py"}
-            ],
+            "affected_symbols": [{"symbol": "f", "kind": "function", "file": "a.py"}],
             "tests": [{"test_id": "t1", "passed": True}],
             "verdict": "PASS",
             "risk_level": "low",
         }
-        (bundle_dir / f"{branch}.json").write_text(
-            json.dumps(bundle), encoding="utf-8"
-        )
+        (bundle_dir / f"{branch}.json").write_text(json.dumps(bundle), encoding="utf-8")
 
         # Mock cosign so neither path tries to sign.
         monkeypatch.setattr(cga_mod, "cosign_available", lambda: (False, ""))
@@ -962,8 +932,11 @@ class TestVsaCliParity:
         result_cga = runner.invoke(
             cli,
             [
-                "--json", "cga", "emit",
-                "--output", str(cga_out),
+                "--json",
+                "cga",
+                "emit",
+                "--output",
+                str(cga_out),
                 "--also-vsa",
                 "--allow-dirty",
             ],
@@ -984,9 +957,7 @@ class TestVsaCliParity:
         pb_pred = pb_vsa["predicate"]
         cga_pred = cga_vsa["predicate"]
         assert pb_pred["slsaVersion"] == cga_pred["slsaVersion"]
-        assert pb_pred["verifier"] == cga_pred["verifier"], (
-            "verifier block (id + version) MUST agree across CLIs"
-        )
+        assert pb_pred["verifier"] == cga_pred["verifier"], "verifier block (id + version) MUST agree across CLIs"
 
         # Both collectors read the same constitution + rules state, so
         # the synthesised policy URI is identical.
@@ -1003,10 +974,7 @@ class TestVsaCliParity:
         # as a legitimate divergence; W509 made it invariant.
         pb_subj_digest = pb_vsa["subject"][0]["digest"]
         cga_subj_digest = cga_vsa["subject"][0]["digest"]
-        assert cga_subj_digest.get("sha1"), (
-            "cga path should always carry commit sha1; "
-            f"got {cga_subj_digest}"
-        )
+        assert cga_subj_digest.get("sha1"), f"cga path should always carry commit sha1; got {cga_subj_digest}"
         assert pb_subj_digest.get("sha1"), (
             "W509: pr-bundle path must fall back to `git rev-parse HEAD` "
             "when the bundle envelope omits commit_sha; "
@@ -1062,7 +1030,5 @@ class TestVsaCliParity:
         pb_norm = _normalise(pb_vsa)
         cga_norm = _normalise(cga_vsa)
         assert pb_norm == cga_norm, (
-            "Normalised VSA projections diverge across CLIs.\n"
-            f"pr-bundle: {pb_norm}\n"
-            f"cga:       {cga_norm}"
+            f"Normalised VSA projections diverge across CLIs.\npr-bundle: {pb_norm}\ncga:       {cga_norm}"
         )

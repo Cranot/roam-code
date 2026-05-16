@@ -42,7 +42,6 @@ from roam.evidence.banner import (
     render_banner_markdown,
 )
 
-
 # ---------------------------------------------------------------------------
 # Synthetic packet stub
 # ---------------------------------------------------------------------------
@@ -193,9 +192,7 @@ def test_banner_appears_above_limitations() -> None:
     )
 
     # The banner blockquote must appear in the output.
-    assert "> **Evidence coverage:" in md, (
-        "evidence-coverage banner missing from rendered Markdown"
-    )
+    assert "> **Evidence coverage:" in md, "evidence-coverage banner missing from rendered Markdown"
 
     banner_pos = md.index("> **Evidence coverage:")
     limitations_pos = md.index("## Evidence limitations")
@@ -208,10 +205,7 @@ def test_banner_appears_above_limitations() -> None:
     # (Scope, Actors, Findings) — the banner is the first signal a
     # reviewer reads after the title.
     scope_pos = md.index("## Scope")
-    assert banner_pos < scope_pos, (
-        f"banner must render before ## Scope (banner @ {banner_pos}, "
-        f"scope @ {scope_pos})"
-    )
+    assert banner_pos < scope_pos, f"banner must render before ## Scope (banner @ {banner_pos}, scope @ {scope_pos})"
 
 
 # ---------------------------------------------------------------------------

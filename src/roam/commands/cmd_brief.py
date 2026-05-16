@@ -32,6 +32,12 @@ Design notes (CLAUDE.md / agi-in-md alignment):
   * **Fast** (target <500ms). One DB connection, reused across every
     section helper that needs it. We never shell out to sibling
     commands -- everything goes through the Python API.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because brief outputs are invocation-scoped repo state snapshots
+(mode, next, highlights, pr_bundle, runs) — informational summary, not
+per-location violations. See action.yml _SUPPORTED_SARIF allowlist and
+W1154 audit memo.
 """
 
 from __future__ import annotations
@@ -44,10 +50,9 @@ from typing import Any, Optional
 import click
 
 from roam.capability import roam_capability
-from roam.db.connection import db_exists, find_project_root, get_db_path, open_db
+from roam.db.connection import db_exists, find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 from roam.runs.helpers import auto_log
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -391,10 +396,7 @@ def _compose_verdict(
     else:
         bundle_phrase = "no pr-bundle"
 
-    return (
-        f"Briefed: mode={mode_name}, next=`{next_cmd}`, "
-        f"{runs_phrase}, {bundle_phrase}."
-    )
+    return f"Briefed: mode={mode_name}, next=`{next_cmd}`, {runs_phrase}, {bundle_phrase}."
 
 
 def _compose_facts(
@@ -428,7 +430,7 @@ def _compose_facts(
         affected = pr_bundle_section.get("affected_symbol_count", 0)
         facts.append(
             f"pr-bundle active on branch `{pr_bundle_section.get('branch') or '?'}`: "
-            f"intent=\"{intent}\", {affected} affected symbol(s)"
+            f'intent="{intent}", {affected} affected symbol(s)'
         )
     elif bundle_state == "no_active_bundle":
         facts.append("no active pr-bundle on this branch")
@@ -438,27 +440,20 @@ def _compose_facts(
     recent = runs_section.get("recent") or []
     if in_progress:
         first = in_progress[0]
-        facts.append(
-            f"in-progress run: {first.get('run_id')} (agent={first.get('agent')})"
-        )
+        facts.append(f"in-progress run: {first.get('run_id')} (agent={first.get('agent')})")
     if recent:
         agents = sorted({r.get("agent", "") for r in recent if r.get("agent")})
         if agents:
             agents_phrase = ", ".join(agents[:3])
         else:
             agents_phrase = "unknown agent"
-        facts.append(
-            f"recent activity: {len(recent)} closed run(s) by {agents_phrase}"
-        )
+        facts.append(f"recent activity: {len(recent)} closed run(s) by {agents_phrase}")
 
     # Highlights -- one each so the agent has a concrete-noun anchor.
     danger = highlights_section.get("danger_zones") or []
     if danger:
         top = danger[0]
-        facts.append(
-            f"top danger zone: `{top.get('path')}` "
-            f"(score {top.get('danger_score')})"
-        )
+        facts.append(f"top danger zone: `{top.get('path')}` (score {top.get('danger_score')})")
     laws = highlights_section.get("laws") or []
     if laws:
         top = laws[0]
@@ -577,10 +572,7 @@ def _render_text(
         tests_run = pr_bundle_section.get("tests_run", 0)
         lines.append(f"  Branch: {branch}")
         lines.append(f"  Intent: {intent}")
-        lines.append(
-            f"  Affected: {affected} sym, risks: {risks}, "
-            f"tests: {tests_run}/{tests_req}"
-        )
+        lines.append(f"  Affected: {affected} sym, risks: {risks}, tests: {tests_run}/{tests_req}")
     else:
         lines.append('  No active bundle. Initialize: roam pr-bundle init --intent "..."')
     lines.append("")
@@ -593,13 +585,9 @@ def _render_text(
     if not in_progress and not recent:
         lines.append("  (no runs logged yet)")
     for r in in_progress:
-        lines.append(
-            f"  {r.get('run_id'):<28} {r.get('agent', ''):<14} in_progress"
-        )
+        lines.append(f"  {r.get('run_id'):<28} {r.get('agent', ''):<14} in_progress")
     for r in recent:
-        lines.append(
-            f"  {r.get('run_id'):<28} {r.get('agent', ''):<14} {r.get('status', '')}"
-        )
+        lines.append(f"  {r.get('run_id'):<28} {r.get('agent', ''):<14} {r.get('status', '')}")
     lines.append("")
 
     # Next commands

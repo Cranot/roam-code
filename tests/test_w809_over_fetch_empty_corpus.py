@@ -95,10 +95,7 @@ def test_over_fetch_empty_corpus_verdict_signals_absence(empty_corpus):
     # Pattern 2 guardrail — empty corpus must produce an absence verdict,
     # NOT a default "SAFE" / "completed" / "ok" string.
     assert (
-        "no over-fetch" in verdict_lower
-        or "0 " in verdict_lower
-        or "none" in verdict_lower
-        or "empty" in verdict_lower
+        "no over-fetch" in verdict_lower or "0 " in verdict_lower or "none" in verdict_lower or "empty" in verdict_lower
     ), f"verdict should signal absence, got: {verdict!r}"
 
     # Summary tallies must agree with the absence verdict.
@@ -122,16 +119,11 @@ def test_over_fetch_empty_corpus_partial_success_bool_present(empty_corpus):
     result = _invoke_over_fetch_json(empty_corpus)
     envelope = json.loads(result.output)
     summary = envelope["summary"]
-    assert "partial_success" in summary, (
-        "summary.partial_success key MUST be present (always emit, never omit)"
-    )
+    assert "partial_success" in summary, "summary.partial_success key MUST be present (always emit, never omit)"
     assert isinstance(summary["partial_success"], bool), (
-        "summary.partial_success MUST be a bool, "
-        f"got {type(summary['partial_success']).__name__}"
+        f"summary.partial_success MUST be a bool, got {type(summary['partial_success']).__name__}"
     )
-    assert summary["partial_success"] is False, (
-        "empty corpus → 0 real leaks → partial_success MUST be False"
-    )
+    assert summary["partial_success"] is False, "empty corpus → 0 real leaks → partial_success MUST be False"
 
 
 def test_over_fetch_empty_corpus_agent_contract_facts_nonempty(empty_corpus):
@@ -149,6 +141,4 @@ def test_over_fetch_empty_corpus_agent_contract_facts_nonempty(empty_corpus):
     )
     # Every fact is a plain string (no nested objects polluting the contract).
     for fact in facts:
-        assert isinstance(fact, str) and fact.strip(), (
-            f"each fact MUST be a non-empty string, got: {fact!r}"
-        )
+        assert isinstance(fact, str) and fact.strip(), f"each fact MUST be a non-empty string, got: {fact!r}"

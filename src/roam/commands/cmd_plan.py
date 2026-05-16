@@ -2,6 +2,12 @@
 
 Composes data from context, preflight, and testmap into a step-by-step
 strategy for an AI agent to follow when modifying a symbol or file.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because plan outputs are invocation-scoped work plans (read_order[],
+invariants[], safe_points[], touch_carefully[], tests) — task-specific
+advice, not per-location violations. See action.yml _SUPPORTED_SARIF
+allowlist and W1154 audit memo.
 """
 
 from __future__ import annotations
@@ -16,7 +22,13 @@ from roam.commands.cmd_affected_tests import (
 )
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 
 # ---------------------------------------------------------------------------
 # Post-change verification commands (static, per task type)
@@ -366,22 +378,47 @@ def _build_test_shortlist(conn, sym_ids, file_paths):
 def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
     """Resolve CLI arguments into (sym_ids, file_paths, label).
 
-    Returns (sym_ids: set, file_paths: set, label: str, error: str|None).
+    Returns ``(sym_ids: set, file_paths: set, label: str, error: str|None,
+    resolution_tier: str, resolved_target: str | None)``.
+
+    W1245 Pattern-2 variant-D: ``resolution_tier`` is one of
+    ``{"symbol", "fuzzy", "unresolved"}`` when a symbol target was
+    requested (via ``--symbol`` or positional non-file ``target``), or
+    ``"symbol"`` by default for the file / staged branches (which don't
+    walk the find_symbol fallback chain). ``resolved_target`` echoes the
+    qualified name that ``find_symbol`` actually landed on so callers
+    can disclose the divergence between input and resolved name.
     """
     sym_ids = set()
     file_paths = set()
     label = target or symbol_name or file_path or "staged changes"
     error = None
+    resolution_tier = "symbol"
+    resolved_target: str | None = None
 
     if staged:
         from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 
         changed = get_changed_files(root, staged=True)
         if not changed:
-            return sym_ids, file_paths, "staged (no changes)", "No staged changes found"
+            return (
+                sym_ids,
+                file_paths,
+                "staged (no changes)",
+                "No staged changes found",
+                resolution_tier,
+                resolved_target,
+            )
         file_map = resolve_changed_to_db(conn, changed)
         if not file_map:
-            return sym_ids, file_paths, "staged (not indexed)", "Staged files not in index"
+            return (
+                sym_ids,
+                file_paths,
+                "staged (not indexed)",
+                "Staged files not in index",
+                resolution_tier,
+                resolved_target,
+            )
         for path, fid in file_map.items():
             file_paths.add(path)
             syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
@@ -392,12 +429,14 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
     if symbol_name:
         sym = find_symbol(conn, symbol_name)
         if sym is None:
-            return sym_ids, file_paths, symbol_name, f"Symbol not found: {symbol_name}"
+            return sym_ids, file_paths, symbol_name, f"Symbol not found: {symbol_name}", "unresolved", symbol_name
         sym_ids.add(sym["id"])
         file_paths.add(sym["file_path"])
         label = f"{sym['name']} ({loc(sym['file_path'], sym['line_start'])})"
+        resolution_tier = sym.get("_resolution_tier", "symbol")
+        resolved_target = sym["qualified_name"] or sym["name"]
 
-    # --file option
+    # --path option
     if file_path:
         fp_norm = file_path.replace("\\", "/")
         sids, fpaths = _resolve_file_symbols(conn, fp_norm)
@@ -412,7 +451,14 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
                 sids = {s["id"] for s in sids2}
                 fpaths = {frow["path"]}
         if not sids and not staged:
-            return sym_ids, file_paths, file_path, f"File not found in index: {file_path}"
+            return (
+                sym_ids,
+                file_paths,
+                file_path,
+                f"File not found in index: {file_path}",
+                resolution_tier,
+                resolved_target,
+            )
         sym_ids.update(sids)
         file_paths.update(fpaths)
         label = fp_norm
@@ -432,19 +478,28 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
                     sids = {s["id"] for s in sids2}
                     fpaths = {frow["path"]}
             if not sids:
-                return sym_ids, file_paths, target, f"File not found in index: {target}"
+                return (
+                    sym_ids,
+                    file_paths,
+                    target,
+                    f"File not found in index: {target}",
+                    resolution_tier,
+                    resolved_target,
+                )
             sym_ids.update(sids)
             file_paths.update(fpaths)
             label = target_norm
         else:
             sym = find_symbol(conn, target_norm)
             if sym is None:
-                return sym_ids, file_paths, target, f"Symbol not found: {target}"
+                return sym_ids, file_paths, target, f"Symbol not found: {target}", "unresolved", target
             sym_ids.add(sym["id"])
             file_paths.add(sym["file_path"])
             label = f"{sym['name']} ({loc(sym['file_path'], sym['line_start'])})"
+            resolution_tier = sym.get("_resolution_tier", "symbol")
+            resolved_target = sym["qualified_name"] or sym["name"]
 
-    return sym_ids, file_paths, label, error
+    return sym_ids, file_paths, label, error, resolution_tier, resolved_target
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +530,14 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
     help="Type of work to plan for",
 )
 @click.option("--symbol", "symbol_name", default=None, help="Symbol to plan for")
-@click.option("--file", "file_path", default=None, help="File to plan for")
+@click.option("--path", "file_path", default=None, help="File path to plan for")
+@click.option(
+    "--file",
+    "file_path",
+    default=None,
+    hidden=True,
+    help="Deprecated alias for --path. Retained for backward compatibility.",
+)
 @click.option("--staged", is_flag=True, help="Plan for staged changes")
 @click.option("--depth", default=2, type=int, help="Call graph depth for read order")
 @click.pass_context
@@ -486,7 +548,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
     this command generates a general-purpose work plan for any task type:
     refactor, debug, extend, review, or understand.
 
-    TARGET is a symbol name or file path.  Use --symbol / --file for
+    TARGET is a symbol name or file path.  Use --symbol / --path for
     explicit disambiguation, or --staged to plan for staged changes.
 
     \b
@@ -504,18 +566,39 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     if not target and not symbol_name and not file_path and not staged:
-        click.echo("Provide a TARGET symbol/file, --symbol, --file, or --staged.")
+        click.echo("Provide a TARGET symbol/file, --symbol, --path, or --staged.")
         raise SystemExit(1)
 
     ensure_index()
     root = find_project_root()
 
     with open_db(readonly=True) as conn:
-        sym_ids, file_paths, label, error = _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root)
+        (
+            sym_ids,
+            file_paths,
+            label,
+            error,
+            resolution_tier,
+            resolved_target,
+        ) = _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root)
+
+        # W1245 Pattern-2 variant-D: precompute the disclosure block once
+        # so both error and success envelope branches can merge it.
+        disclosure_target = resolved_target or symbol_name or target or label
+        resolution_block = resolution_disclosure(resolution_tier, target=disclosure_target)
+        fuzzy_suffix = " [fuzzy resolution]" if resolution_tier == "fuzzy" else ""
 
         if error or not sym_ids:
             msg = error or f"No symbols found for: {label}"
             if json_mode:
+                # W1245: surface the unresolved-vs-symbol resolver state on
+                # the error envelope too so MCP consumers see a uniform
+                # variant-D disclosure shape across both branches.
+                unresolved_block = (
+                    resolution_block
+                    if resolution_tier in ("unresolved", "fuzzy")
+                    else resolution_disclosure("unresolved", target=disclosure_target)
+                )
                 click.echo(
                     to_json(
                         json_envelope(
@@ -524,8 +607,10 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
                                 "verdict": f"Cannot plan: {msg}",
                                 "task": task,
                                 "error": msg,
+                                **unresolved_block,
                             },
                             budget=token_budget,
+                            **unresolved_block,
                         )
                     )
                 )
@@ -549,10 +634,17 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
             for p in _POST_CHANGE.get(task, _POST_CHANGE["refactor"])
         ]
 
-        verdict = f"Plan for {task} of {label}"
+        verdict = f"Plan for {task} of {label}{fuzzy_suffix}"
 
         # JSON mode
         if json_mode:
+            # W1245 Pattern-2 variant-D: merge resolver disclosure into both
+            # the envelope summary and top-level. The summary already has a
+            # ``target`` key (label-shaped) so we filter the helper's
+            # ``target`` (resolved-name-shaped) out of the summary merge to
+            # avoid clobbering -- the resolved name is still exposed via
+            # the top-level ``target`` field from ``**resolution_block``.
+            summary_block = {k: v for k, v in resolution_block.items() if k != "target"}
             click.echo(
                 to_json(
                     json_envelope(
@@ -566,6 +658,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
                             "safe_points": len(safe_points),
                             "touch_carefully": len(touch_carefully),
                             "tests": tests["count"],
+                            **summary_block,
                         },
                         budget=token_budget,
                         read_order=read_order,
@@ -574,6 +667,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
                         touch_carefully=touch_carefully,
                         tests=tests,
                         post_change=post_change,
+                        **resolution_block,
                     )
                 )
             )

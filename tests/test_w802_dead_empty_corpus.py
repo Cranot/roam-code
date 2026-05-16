@@ -23,7 +23,6 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
@@ -112,10 +111,7 @@ def test_dead_empty_corpus_agent_contract_facts_disclose_state(tmp_path):
 
     contract = payload.get("agent_contract") or {}
     facts = contract.get("facts") or []
-    assert facts, (
-        f"agent_contract.facts empty — should disclose empty-state findings; "
-        f"payload={payload}"
-    )
+    assert facts, f"agent_contract.facts empty — should disclose empty-state findings; payload={payload}"
 
 
 def test_dead_empty_corpus_summary_partial_success_present(tmp_path):
@@ -131,6 +127,5 @@ def test_dead_empty_corpus_summary_partial_success_present(tmp_path):
     # An empty corpus is a fully-resolved "nothing to flag" state, not a
     # partial failure. partial_success must be the literal boolean False.
     assert summary["partial_success"] is False, (
-        f"partial_success should be False on a clean empty corpus, got "
-        f"{summary['partial_success']!r}"
+        f"partial_success should be False on a clean empty corpus, got {summary['partial_success']!r}"
     )

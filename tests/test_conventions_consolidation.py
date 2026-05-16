@@ -30,7 +30,6 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -103,16 +102,13 @@ def project_with_excluded_paths(tmp_path):
     (proj / ".github").mkdir()
     (proj / ".github" / "workflows").mkdir()
     (proj / ".github" / "workflows" / "setup-node.py").write_text(
-        "def setupNode():\n    return 1\n\n"
-        "def installDeps():\n    return 2\n\n"
-        "def runTests():\n    return 3\n"
+        "def setupNode():\n    return 1\n\ndef installDeps():\n    return 2\n\ndef runTests():\n    return 3\n"
     )
 
     # docs/: a python file with camelCase names (should be excluded)
     (proj / "docs").mkdir()
     (proj / "docs" / "examples.py").write_text(
-        "def renderExample():\n    return 1\n\n"
-        "def formatSnippet():\n    return 2\n"
+        "def renderExample():\n    return 1\n\ndef formatSnippet():\n    return 2\n"
     )
 
     git_init(proj)
@@ -358,8 +354,7 @@ class TestCrossCommandInvariance:
         helper_outlier_names = {o["name"] for o in helper_result["outliers"]}
         cli_violation_names = {v["value"]["name"] for v in env.get("violations", [])}
         assert helper_outlier_names == cli_violation_names, (
-            f"conventions CLI violations {cli_violation_names!r} disagree with "
-            f"helper outliers {helper_outlier_names!r}"
+            f"conventions CLI violations {cli_violation_names!r} disagree with helper outliers {helper_outlier_names!r}"
         )
 
         # And the conventions command should surface SOME naming info
@@ -425,9 +420,7 @@ class TestCrossCommandInvariance:
 
         # Every command that emitted a function-style claim must agree.
         unique_styles = set(styles_reported.values())
-        assert len(unique_styles) <= 1, (
-            f"Commands disagree on function dominant style: {styles_reported!r}"
-        )
+        assert len(unique_styles) <= 1, f"Commands disagree on function dominant style: {styles_reported!r}"
 
     def test_pre_fixg_minimap_no_longer_lies(self, cli_runner, known_naming_project, monkeypatch):
         """Regression for Pattern 4: minimap previously reported
@@ -476,12 +469,8 @@ class TestExclusion:
         # All outliers should come from real code paths
         for outlier in result["outliers"]:
             file_path = outlier["file"].replace("\\", "/")
-            assert not file_path.startswith(".github/"), (
-                f"Outlier from excluded path: {file_path}"
-            )
-            assert not file_path.startswith("docs/"), (
-                f"Outlier from excluded path: {file_path}"
-            )
+            assert not file_path.startswith(".github/"), f"Outlier from excluded path: {file_path}"
+            assert not file_path.startswith("docs/"), f"Outlier from excluded path: {file_path}"
 
         # Real source: 3 snake_case functions
         fn = result["by_kind"].get("function")
@@ -506,8 +495,7 @@ class TestExclusion:
 
         # 3 setup-node.py + 2 docs/examples.py = 5 excluded function names
         assert result["total_excluded"] >= 5, (
-            f"Expected at least 5 excluded symbols (3 from .github + 2 from docs), "
-            f"got {result['total_excluded']}"
+            f"Expected at least 5 excluded symbols (3 from .github + 2 from docs), got {result['total_excluded']}"
         )
 
     def test_disable_exclusion_with_empty_tuple(self, project_with_excluded_paths, monkeypatch):
@@ -523,8 +511,7 @@ class TestExclusion:
         fn = result["by_kind"].get("function")
         assert fn is not None
         assert fn["total"] == 8, (
-            f"Without exclusion, expected 8 functions total, got {fn['total']} "
-            f"(breakdown={fn['breakdown']})"
+            f"Without exclusion, expected 8 functions total, got {fn['total']} (breakdown={fn['breakdown']})"
         )
         # Now camelCase (5/8 = 62.5%) is dominant
         assert fn["style"] == "camelCase"

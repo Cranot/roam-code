@@ -36,6 +36,13 @@ Why this shape:
 Low-confidence flag: agents with <2 runs get ``confidence: "low"`` and
 the verdict mentions it explicitly so consumers do not over-index on a
 single data point.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because agent-score findings are invocation-scoped aggregates
+(a composite 0-100 score) tied to a set of runs at invocation time --
+not per-location violations. Multi-location expansion would distort
+SARIF semantics ("score 75 across 10 runs" is not a per-file violation).
+See action.yml line 401 _SUPPORTED_SARIF allowlist and W1149 audit memo.
 """
 
 from __future__ import annotations
@@ -101,9 +108,7 @@ def _score_one(agg: dict) -> dict:
     breadth_factor = min(len(agg["unique_actions"]) / 5.0, 1.0)
 
     score = round(
-        completion_rate * 70.0
-        + clean_rate * 20.0
-        + breadth_factor * 10.0,
+        completion_rate * 70.0 + clean_rate * 20.0 + breadth_factor * 10.0,
         1,
     )
     agg["score"] = score
@@ -273,9 +278,7 @@ def agent_score_cmd(ctx, agent, since, top):
     scored: list[dict] = []
     for a, agg in by_agent.items():
         events_total = agg["_event_count"]
-        partial_rate = (
-            agg["_partial_count"] / events_total if events_total else 0.0
-        )
+        partial_rate = agg["_partial_count"] / events_total if events_total else 0.0
         # Treat in-progress runs as ABANDONED for scoring purposes: an
         # agent that opens runs and never closes them shouldn't earn the
         # 70 completion points for those runs. We keep the raw counters
@@ -292,13 +295,9 @@ def agent_score_cmd(ctx, agent, since, top):
             "partial_success_rate": round(partial_rate, 3),
             "median_run_duration_ms": _median(agg["_durations_ms"]),
             "unique_actions": sorted(agg["_actions"].keys()),
-            "most_common_actions": [
-                {"action": a, "count": c}
-                for a, c in agg["_actions"].most_common(5)
-            ],
+            "most_common_actions": [{"action": a, "count": c} for a, c in agg["_actions"].most_common(5)],
             "most_common_partial_failures": [
-                {"action": a, "count": c}
-                for a, c in agg["_partial_actions"].most_common(5)
+                {"action": a, "count": c} for a, c in agg["_partial_actions"].most_common(5)
             ],
             "highest_partial_success_run_id": agg["_highest_partial_run_id"],
             "event_count": events_total,
@@ -361,9 +360,7 @@ def agent_score_cmd(ctx, agent, since, top):
     # run id is the most likely to be worth replaying.
     for r in scored:
         if r["highest_partial_success_run_id"]:
-            next_commands.append(
-                f"roam replay {r['highest_partial_success_run_id']}"
-            )
+            next_commands.append(f"roam replay {r['highest_partial_success_run_id']}")
             break
     next_commands.append("roam runs list")
     if any(r["confidence"] == "low" for r in scored):

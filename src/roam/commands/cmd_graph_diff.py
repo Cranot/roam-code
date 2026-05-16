@@ -23,12 +23,19 @@ Usage::
 
 Pairs with ``roam trends`` (time-series of *metrics*) and
 ``roam architecture-drift`` (time-series of *graph deltas*).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because graph-diff outputs are invocation-scoped structural
+delta digests — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.graph.versioning import (
@@ -38,7 +45,6 @@ from roam.graph.versioning import (
     snapshot_graph,
     write_snapshot,
 )
-from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 from roam.runs.helpers import auto_log
 
@@ -95,8 +101,7 @@ def _facts(diff, baseline_label: str | None) -> list[str]:
     label = baseline_label or "baseline"
     facts: list[str] = []
     facts.append(
-        f"graph delta vs {label}: added {len(diff.symbols_added)} symbols, "
-        f"removed {len(diff.symbols_removed)} symbols"
+        f"graph delta vs {label}: added {len(diff.symbols_added)} symbols, removed {len(diff.symbols_removed)} symbols"
     )
     facts.append(
         f"graph delta vs {label}: added {len(diff.edges_added)} call edges, "
@@ -107,9 +112,7 @@ def _facts(diff, baseline_label: str | None) -> list[str]:
         f"in-degree, {len(diff.out_degree_shifts)} changed out-degree"
     )
     if diff.new_cycles:
-        facts.append(
-            f"graph delta vs {label}: introduced {len(diff.new_cycles)} new cycles"
-        )
+        facts.append(f"graph delta vs {label}: introduced {len(diff.new_cycles)} new cycles")
     if diff.likely_moves:
         facts.append(
             f"graph delta vs {label}: detected {len(diff.likely_moves)} "
@@ -293,8 +296,7 @@ def graph_diff_cmd(ctx, base, head, top, save_snapshot):
         click.echo("VERDICT: No baseline snapshot found")
         click.echo()
         click.echo(
-            "Capture one with: roam graph-diff --save-snapshot <label>\n"
-            f"Snapshot directory: {root}/.roam/snapshots/"
+            f"Capture one with: roam graph-diff --save-snapshot <label>\nSnapshot directory: {root}/.roam/snapshots/"
         )
         return
 
@@ -316,8 +318,7 @@ def graph_diff_cmd(ctx, base, head, top, save_snapshot):
                 },
                 agent_contract={
                     "facts": [
-                        f"graph-diff head: snapshot label `{head}` not found "
-                        f"under {root}/.roam/snapshots/",
+                        f"graph-diff head: snapshot label `{head}` not found under {root}/.roam/snapshots/",
                         "graph-diff head: list available labels with `ls .roam/snapshots/`",
                     ],
                 },

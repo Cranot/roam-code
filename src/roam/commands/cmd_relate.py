@@ -1,4 +1,11 @@
-"""Show how a set of symbols relate: shared deps, call chains, conflicts."""
+"""Show how a set of symbols relate: shared deps, call chains, conflicts.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because relate outputs are invocation-scoped relation-graph
+rankings (shared dependencies, call chains, conflicts) — not
+per-location violations. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +14,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found_hint
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import json_envelope, resolution_disclosure, to_json
 
 
 def _resolve_symbols_from_files(conn, file_paths):
@@ -190,7 +197,14 @@ def _compute_cohesion(distance_matrix, input_count):
 )
 @click.command()
 @click.argument("symbols", nargs=-1)
-@click.option("--file", "files", multiple=True, help="Include symbols from file/dir path")
+@click.option("--path", "files", multiple=True, help="Include symbols from file/dir path (repeatable)")
+@click.option(
+    "--file",
+    "files",
+    multiple=True,
+    hidden=True,
+    help="Deprecated alias for --path. Retained for backward compatibility.",
+)
 @click.option("--depth", default=3, help="Max hops for connecting paths (default 3)")
 @click.pass_context
 def relate(ctx, symbols, files, depth):
@@ -212,15 +226,24 @@ def relate(ctx, symbols, files, depth):
         input_ids = []
         input_names = {}  # id -> name
         unresolved: list[str] = []
+        # W1245 Pattern-2 variant-D: track per-input resolver tier so the
+        # JSON envelope can disclose fuzzy-LIKE-fallback matches per input
+        # AND OR-combine into a single top-level partial_success flag.
+        # Each record: {"input": <raw>, "resolved": <qualified>, "tier": <enum>}.
+        per_input_resolutions: list[dict[str, str]] = []
 
         for name in symbols:
             sym = find_symbol(conn, name)
             if sym:
                 sid = sym["id"]
+                tier = sym.get("_resolution_tier", "symbol")
+                resolved_name = sym.get("qualified_name") or sym["name"]
+                per_input_resolutions.append({"input": name, "resolved": resolved_name, "tier": tier})
                 if sid not in input_names:
                     input_ids.append(sid)
                     input_names[sid] = sym["name"]
             else:
+                per_input_resolutions.append({"input": name, "resolved": name, "tier": "unresolved"})
                 if json_mode:
                     # Don't pollute the JSON envelope with a plaintext
                     # hint. Track unresolved names and surface them in
@@ -230,7 +253,7 @@ def relate(ctx, symbols, files, depth):
                     click.echo(symbol_not_found_hint(name))
                     raise SystemExit(1)
 
-        # Resolve symbols from --file paths
+        # Resolve symbols from --path paths
         if files:
             file_ids = _resolve_symbols_from_files(conn, files)
             for sid in file_ids:
@@ -243,7 +266,7 @@ def relate(ctx, symbols, files, depth):
         if not input_ids:
             click.echo(
                 "No symbols to analyze.\n"
-                "  Tip: Provide at least one valid symbol name or --file path.\n"
+                "  Tip: Provide at least one valid symbol name or --path path.\n"
                 "       Use `roam search <partial-name>` to find symbol names."
             )
             raise SystemExit(1)
@@ -352,11 +375,29 @@ def relate(ctx, symbols, files, depth):
                     d = distance_matrix.get(key)
                     dist_matrix_out[name][name2] = d
 
+        # W1245 Pattern-2 variant-D: aggregate per-input tiers into a
+        # single top-level disclosure. Most-degraded wins so the top-level
+        # ``resolution`` field stays useful for LAW-6 single-field consumers
+        # (unresolved > fuzzy > symbol). Per-input tiers stay on the
+        # ``resolutions`` array so callers can distinguish "all fuzzy" from
+        # "one fuzzy among many exact" when needed.
+        any_unresolved = any(r["tier"] == "unresolved" for r in per_input_resolutions)
+        any_fuzzy = any(r["tier"] == "fuzzy" for r in per_input_resolutions)
+        if any_unresolved:
+            combined_tier = "unresolved"
+        elif any_fuzzy:
+            combined_tier = "fuzzy"
+        else:
+            combined_tier = "symbol"
+        resolution_block = resolution_disclosure(combined_tier)
+        fuzzy_suffix = " [fuzzy resolution]" if combined_tier == "fuzzy" else ""
+
         verdict = (
             f"{len(input_ids)} symbols analyzed, "
             f"cohesion {cohesion:.2f}, "
             f"{len(direct_edges)} direct edges, "
             f"{len(conflicts_out)} conflict risks"
+            f"{fuzzy_suffix}"
         )
 
         if json_mode:
@@ -370,12 +411,15 @@ def relate(ctx, symbols, files, depth):
                             "cohesion": round(cohesion, 2),
                             "direct_edges": len(direct_edges),
                             "conflict_risks": len(conflicts_out),
+                            **resolution_block,
                         },
                         relationships=relationships,
                         shared_deps=shared_deps_out,
                         shared_callers=shared_callers_out,
                         conflicts=conflicts_out,
                         distance_matrix=dist_matrix_out,
+                        resolutions=per_input_resolutions,
+                        **resolution_block,
                     )
                 )
             )

@@ -40,7 +40,6 @@ from roam.evidence import (
     parse_github_reviews,
 )
 
-
 FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "github_reviews"
 EXAMPLE_FIXTURE = FIXTURE_DIR / "example_pr_reviews.json"
 
@@ -78,13 +77,15 @@ def test_github_review_states_drift_guard() -> None:
     """
     assert isinstance(GITHUB_REVIEW_STATES, frozenset)
     assert len(GITHUB_REVIEW_STATES) == 5
-    assert GITHUB_REVIEW_STATES == frozenset({
-        "APPROVED",
-        "CHANGES_REQUESTED",
-        "COMMENTED",
-        "DISMISSED",
-        "PENDING",
-    })
+    assert GITHUB_REVIEW_STATES == frozenset(
+        {
+            "APPROVED",
+            "CHANGES_REQUESTED",
+            "COMMENTED",
+            "DISMISSED",
+            "PENDING",
+        }
+    )
     with pytest.raises(AttributeError):
         GITHUB_REVIEW_STATES.add("ROGUE_STATE")  # type: ignore[attr-defined]
 
@@ -204,14 +205,16 @@ def test_parse_routes_changes_requested_on_stale_commit_too() -> None:
     because newer commits landed. The directive says "CHANGES_REQUESTED
     is a blocker/policy signal" with no head-commit qualifier.
     """
-    stale_changes_req = [{
-        "id": 9999,
-        "user": {"login": "stale-blocker"},
-        "state": "CHANGES_REQUESTED",
-        "submitted_at": "2026-05-10T08:00:00Z",
-        "commit_id": STALE_SHA,
-        "html_url": "https://github.com/x/y/pull/42#pullrequestreview-9999",
-    }]
+    stale_changes_req = [
+        {
+            "id": 9999,
+            "user": {"login": "stale-blocker"},
+            "state": "CHANGES_REQUESTED",
+            "submitted_at": "2026-05-10T08:00:00Z",
+            "commit_id": STALE_SHA,
+            "html_url": "https://github.com/x/y/pull/42#pullrequestreview-9999",
+        }
+    ]
     _approvals, decisions, _warnings = parse_github_reviews(
         reviews=stale_changes_req,
         head_commit_sha=HEAD_SHA,
@@ -288,9 +291,7 @@ def test_parse_never_stores_review_body() -> None:
 
     payload = "\n".join(payload_pieces)
     for substring in _SENSITIVE_BODY_SUBSTRINGS:
-        assert substring not in payload, (
-            f"review body substring {substring!r} leaked into parser output"
-        )
+        assert substring not in payload, f"review body substring {substring!r} leaked into parser output"
 
 
 def test_parse_returns_approval_record_with_neutral_reason() -> None:
@@ -312,13 +313,15 @@ def test_parse_returns_approval_record_with_neutral_reason() -> None:
 
 def test_parse_validates_review_state_against_closed_enum() -> None:
     """Unknown ``state`` raises ``ValueError`` against GITHUB_REVIEW_STATES."""
-    rogue = [{
-        "id": 7777,
-        "user": {"login": "mallory"},
-        "state": "FROBNICATE",
-        "submitted_at": "2026-05-13T10:00:00Z",
-        "commit_id": HEAD_SHA,
-    }]
+    rogue = [
+        {
+            "id": 7777,
+            "user": {"login": "mallory"},
+            "state": "FROBNICATE",
+            "submitted_at": "2026-05-13T10:00:00Z",
+            "commit_id": HEAD_SHA,
+        }
+    ]
     with pytest.raises(ValueError, match="GITHUB_REVIEW_STATES"):
         parse_github_reviews(
             reviews=rogue,
@@ -364,13 +367,15 @@ def test_parse_rejects_non_mapping_review_entry() -> None:
 
 
 def test_parse_rejects_approved_review_missing_submitted_at() -> None:
-    bad = [{
-        "id": 5555,
-        "user": {"login": "alice"},
-        "state": "APPROVED",
-        "commit_id": HEAD_SHA,
-        # no submitted_at
-    }]
+    bad = [
+        {
+            "id": 5555,
+            "user": {"login": "alice"},
+            "state": "APPROVED",
+            "commit_id": HEAD_SHA,
+            # no submitted_at
+        }
+    ]
     with pytest.raises(ValueError, match="submitted_at"):
         parse_github_reviews(
             reviews=bad,
@@ -401,11 +406,13 @@ def test_parse_is_deterministic() -> None:
     )
 
     # Same approver/scope/timestamp/extra in same order.
-    assert tuple((a.approver, a.timestamp, dict(a.extra)) for a in out_a[0]) == \
-        tuple((a.approver, a.timestamp, dict(a.extra)) for a in out_b[0])
+    assert tuple((a.approver, a.timestamp, dict(a.extra)) for a in out_a[0]) == tuple(
+        (a.approver, a.timestamp, dict(a.extra)) for a in out_b[0]
+    )
     # Same policy-decision rule_id/decision/subject/extra in same order.
-    assert tuple((d.rule_id, d.decision, d.subject, dict(d.extra)) for d in out_a[1]) == \
-        tuple((d.rule_id, d.decision, d.subject, dict(d.extra)) for d in out_b[1])
+    assert tuple((d.rule_id, d.decision, d.subject, dict(d.extra)) for d in out_a[1]) == tuple(
+        (d.rule_id, d.decision, d.subject, dict(d.extra)) for d in out_b[1]
+    )
     # Same warnings, same order.
     assert out_a[2] == out_b[2]
 

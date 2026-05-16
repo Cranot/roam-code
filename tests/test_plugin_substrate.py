@@ -26,7 +26,6 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -193,8 +192,7 @@ def test_plugin_with_bad_entry_point_fails_gracefully(monkeypatch, tmp_path):
     module_name = _write_plugin(
         tmp_path,
         "roam_substrate_broken_plugin",
-        "def register(ctx):\n"
-        "    raise RuntimeError('boom')\n",
+        "def register(ctx):\n    raise RuntimeError('boom')\n",
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.setenv("ROAM_PLUGIN_MODULES", module_name)
@@ -232,8 +230,7 @@ def test_plugins_doctor_reports_failed_loads(monkeypatch, tmp_path):
     module_name = _write_plugin(
         tmp_path,
         "roam_substrate_doctor_plugin",
-        "def register(ctx):\n"
-        "    raise ValueError('synthetic failure')\n",
+        "def register(ctx):\n    raise ValueError('synthetic failure')\n",
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.setenv("ROAM_PLUGIN_MODULES", module_name)

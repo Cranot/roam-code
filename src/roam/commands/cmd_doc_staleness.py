@@ -1,4 +1,12 @@
-"""Detect stale docstrings whose code body has drifted since the docs were written."""
+"""Detect stale docstrings whose code body has drifted since the docs were written.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because doc-staleness outputs are invocation-scoped
+docstring-vs-code drift rankings (per-symbol staleness scores derived
+from git blame ages) — not per-location code violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
+"""
 
 from __future__ import annotations
 

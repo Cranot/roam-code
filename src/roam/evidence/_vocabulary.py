@@ -24,7 +24,6 @@ vice versa.
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Subject kinds (what an evidence packet can be about)
 # ---------------------------------------------------------------------------
@@ -59,29 +58,31 @@ from __future__ import annotations
 #: * ``finding``         - a row in the central findings registry
 #: * ``test``            - a test case identity
 #: * ``artifact``        - a generated artifact (report, SARIF, attestation)
-SUBJECT_KINDS: frozenset[str] = frozenset({
-    "symbol",
-    "file",
-    "module",
-    "directory",
-    "endpoint",
-    "package",
-    "commit",
-    "ledger_entry",
-    "file_pair",
-    "environment",
-    "edge",
-    "cycle",
-    "diff_region",
-    # Evidence-level additions per memo lines 122-130:
-    "rule",
-    "control",
-    "run",
-    "bundle",
-    "finding",
-    "test",
-    "artifact",
-})
+SUBJECT_KINDS: frozenset[str] = frozenset(
+    {
+        "symbol",
+        "file",
+        "module",
+        "directory",
+        "endpoint",
+        "package",
+        "commit",
+        "ledger_entry",
+        "file_pair",
+        "environment",
+        "edge",
+        "cycle",
+        "diff_region",
+        # Evidence-level additions per memo lines 122-130:
+        "rule",
+        "control",
+        "run",
+        "bundle",
+        "finding",
+        "test",
+        "artifact",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -110,20 +111,22 @@ SUBJECT_KINDS: frozenset[str] = frozenset({
 #: * ``maps_to_standard`` - source maps to a named external standard
 #: * ``supersedes``       - source replaces target (audit-preserving)
 #: * ``mitigates``        - source reduces risk associated with target
-LINK_KINDS: frozenset[str] = frozenset({
-    "derived_from",
-    "touches",
-    "calls",
-    "tested_by",
-    "triggered",
-    "blocked_by",
-    "allowed_by",
-    "accepted_by",
-    "satisfies_control",
-    "maps_to_standard",
-    "supersedes",
-    "mitigates",
-})
+LINK_KINDS: frozenset[str] = frozenset(
+    {
+        "derived_from",
+        "touches",
+        "calls",
+        "tested_by",
+        "triggered",
+        "blocked_by",
+        "allowed_by",
+        "accepted_by",
+        "satisfies_control",
+        "maps_to_standard",
+        "supersedes",
+        "mitigates",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -149,24 +152,35 @@ LINK_KINDS: frozenset[str] = frozenset({
 #: * ``log_excerpt``     - selected log lines (after redaction)
 #: * ``raw_envelope``    - raw JSON envelope from a roam subcommand
 #: * ``other``           - escape hatch; record kind in ``extra`` instead
-ARTIFACT_KINDS: frozenset[str] = frozenset({
-    "report",
-    "sarif",
-    "attestation",
-    "cga_predicate",
-    "bundle",
-    "trace",
-    "control_mapping",
-    "manifest",
-    "log_excerpt",
-    "raw_envelope",
-    "other",
-})
+ARTIFACT_KINDS: frozenset[str] = frozenset(
+    {
+        "report",
+        "sarif",
+        "attestation",
+        "cga_predicate",
+        "bundle",
+        "trace",
+        "control_mapping",
+        "manifest",
+        "log_excerpt",
+        "raw_envelope",
+        "other",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Claim severities (severity scale for evidence claims and findings)
 # ---------------------------------------------------------------------------
+
+# CLAIM_SEVERITIES - 5-tier evidence vocabulary (critical / high / medium /
+# low / info). Preserves CVSS-style round-trip when ingesting external feeds
+# (OSV, npm-audit, trivy, GitHub Advisory DB) without lossy normalization.
+#
+# NOT the SARIF projection - see roam.output._severity.SEVERITY_LEVELS for
+# the 4-tier canonical (critical / error / warning / info) that SARIF
+# consumers see. roam.output._severity.SEVERITY_ALIASES maps high->warning,
+# medium->info, low->info at the SARIF emission boundary (W547 / W564).
 
 #: Closed enumeration of claim severities.
 #:
@@ -181,13 +195,15 @@ ARTIFACT_KINDS: frozenset[str] = frozenset({
 #: * ``medium``   - localized risk; review opportunistically
 #: * ``low``      - cosmetic / hygiene; informational
 #: * ``info``     - neutral observation; carries no risk claim
-CLAIM_SEVERITIES: frozenset[str] = frozenset({
-    "critical",
-    "high",
-    "medium",
-    "low",
-    "info",
-})
+CLAIM_SEVERITIES: frozenset[str] = frozenset(
+    {
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "info",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -229,17 +245,19 @@ CLAIM_SEVERITIES: frozenset[str] = frozenset({
 #:                                names the gap rather than silently emitting
 #:                                empty ``approvals`` / ``accepted_risks``
 #:                                tuples.
-REDACTION_REASONS: frozenset[str] = frozenset({
-    "secret",
-    "pii",
-    "sensitive_content",
-    "size_limit",
-    "policy",
-    "user_opt_in_required",
-    "machine_local_path",
-    "schema_strict",
-    "producer_not_available",
-})
+REDACTION_REASONS: frozenset[str] = frozenset(
+    {
+        "secret",
+        "pii",
+        "sensitive_content",
+        "size_limit",
+        "policy",
+        "user_opt_in_required",
+        "machine_local_path",
+        "schema_strict",
+        "producer_not_available",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -264,14 +282,16 @@ REDACTION_REASONS: frozenset[str] = frozenset({
 #:                     tool call inside an MCP session)
 #: * ``ci_runner``   - CI provider job / runner (GitHub Actions, ...)
 #: * ``external``    - unknown / unattributed origin; escape hatch
-ACTOR_KINDS: frozenset[str] = frozenset({
-    "human",
-    "agent",
-    "mcp_client",
-    "tool",
-    "ci_runner",
-    "external",
-})
+ACTOR_KINDS: frozenset[str] = frozenset(
+    {
+        "human",
+        "agent",
+        "mcp_client",
+        "tool",
+        "ci_runner",
+        "external",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -308,14 +328,16 @@ ACTOR_KINDS: frozenset[str] = frozenset({
 #: * ``policy_rule``  - a rule id from ``rules.yml`` (or equivalent)
 #: * ``approval``     - a human approval id (PR review, etc.)
 #: * ``token_scope``  - a hash of the token scope (NEVER the raw token)
-AUTHORITY_KINDS: frozenset[str] = frozenset({
-    "mode",
-    "permit",
-    "lease",
-    "policy_rule",
-    "approval",
-    "token_scope",
-})
+AUTHORITY_KINDS: frozenset[str] = frozenset(
+    {
+        "mode",
+        "permit",
+        "lease",
+        "policy_rule",
+        "approval",
+        "token_scope",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -338,12 +360,14 @@ AUTHORITY_KINDS: frozenset[str] = frozenset({
 #:                       canonical repo id)
 #: * ``branch_range``  - a branch + git-range pair (e.g.
 #:                       ``main:abc1234..def5678``)
-ENV_KINDS: frozenset[str] = frozenset({
-    "ci_job",
-    "local_run",
-    "workspace",
-    "branch_range",
-})
+ENV_KINDS: frozenset[str] = frozenset(
+    {
+        "ci_job",
+        "local_run",
+        "workspace",
+        "branch_range",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -372,13 +396,15 @@ ENV_KINDS: frozenset[str] = frozenset({
 #: * ``local_env``          - env var (``ROAM_AGENT_ID`` and similar)
 #: * ``self_reported_agent``- caller-arg / CLI flag from the agent
 #: * ``unknown``            - no identity surface available (default)
-ACTOR_TRUST_TIERS: frozenset[str] = frozenset({
-    "verified_ci",
-    "git_author",
-    "local_env",
-    "self_reported_agent",
-    "unknown",
-})
+ACTOR_TRUST_TIERS: frozenset[str] = frozenset(
+    {
+        "verified_ci",
+        "git_author",
+        "local_env",
+        "self_reported_agent",
+        "unknown",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -416,14 +442,16 @@ ACTOR_TRUST_TIERS: frozenset[str] = frozenset({
 #: * ``ci_policy``         - from CI branch protection / required checks
 #: * ``human_approval``    - from a recorded approval event
 #: * ``inferred_fallback`` - collector inferred (default mode, etc.)
-AUTHORITY_SOURCES: frozenset[str] = frozenset({
-    "mode",
-    "permit",
-    "rule_config",
-    "ci_policy",
-    "human_approval",
-    "inferred_fallback",
-})
+AUTHORITY_SOURCES: frozenset[str] = frozenset(
+    {
+        "mode",
+        "permit",
+        "rule_config",
+        "ci_policy",
+        "human_approval",
+        "inferred_fallback",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -455,18 +483,38 @@ AUTHORITY_SOURCES: frozenset[str] = frozenset({
 #: * ``legacy_fallback``  - legacy scalar / probe path (lowest signal;
 #:                          retained for backward compat with pre-W210
 #:                          producers that don't stamp a basis explicitly)
-CLAIM_CONFIDENCES: frozenset[str] = frozenset({
-    "direct",
-    "derived",
-    "inferred",
-    "legacy_fallback",
-})
+CLAIM_CONFIDENCES: frozenset[str] = frozenset(
+    {
+        "direct",
+        "derived",
+        "inferred",
+        "legacy_fallback",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Policy-decision verdicts (W279 - promotion of policy_decisions to typed
 # dataclass; see ``roam.evidence.policy.PolicyDecision``)
 # ---------------------------------------------------------------------------
+
+# POLICY_DECISIONS - 8-tier policy-evaluation verdict vocabulary used by
+# ChangeEvidence.policy_decisions[].decision. This is the policy-rule
+# decision layer; OTHER verdict-like vocabularies in roam are:
+#
+# - Permit facade (src/roam/commands/cmd_permit.py): ALLOW / REVIEW / BLOCK -
+#   3-tier coarse risk verdict for human-facing approval flows. Mapped onto
+#   POLICY_DECISIONS via allow=ALLOW, deny=BLOCK, escalate=REVIEW at the
+#   collector boundary.
+# - Rule envelope (src/roam/rules/engine.py): passed=True / passed=False -
+#   2-tier per-rule pass/fail boolean on the rules-engine result dict. Rolls
+#   up into POLICY_DECISIONS pass / fail at the decision level.
+#
+# The three vocabularies are layered by intent: rule envelope (most
+# granular per-rule boolean) -> POLICY_DECISIONS (mid; named verdict over
+# a rule or gate) -> permit facade (coarsest; human-facing approval
+# tri-state). They are NOT aliases of each other; each layer owns a
+# distinct decision granularity.
 
 #: Closed enumeration of policy-decision verdict literals.
 #:
@@ -500,16 +548,18 @@ CLAIM_CONFIDENCES: frozenset[str] = frozenset({
 #:                        explicit ``decision`` literal (rules envelope
 #:                        fallback path - kept in the closed set so
 #:                        the legacy column doesn't silently leak)
-POLICY_DECISIONS: frozenset[str] = frozenset({
-    "pass",
-    "fail",
-    "allow",
-    "deny",
-    "escalate",
-    "redact",
-    "not_evaluated",
-    "unknown",
-})
+POLICY_DECISIONS: frozenset[str] = frozenset(
+    {
+        "pass",
+        "fail",
+        "allow",
+        "deny",
+        "escalate",
+        "redact",
+        "not_evaluated",
+        "unknown",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -587,18 +637,20 @@ POLICY_DECISIONS: frozenset[str] = frozenset({
 #:                            unset paths stay honest rather than
 #:                            silently claiming a higher provenance
 #:                            tier.
-PROVENANCE_SOURCES: frozenset[str] = frozenset({
-    "ci_env_var",
-    "git_config",
-    "run_ledger",
-    "cli_flag",
-    "env_var",
-    "producer_envelope",
-    "audit_trail",
-    "mcp_receipt",
-    "inferred",
-    "unknown",
-})
+PROVENANCE_SOURCES: frozenset[str] = frozenset(
+    {
+        "ci_env_var",
+        "git_config",
+        "run_ledger",
+        "cli_flag",
+        "env_var",
+        "producer_envelope",
+        "audit_trail",
+        "mcp_receipt",
+        "inferred",
+        "unknown",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -633,13 +685,49 @@ PROVENANCE_SOURCES: frozenset[str] = frozenset({
 #:                            or an admin). Filtered out: no current claim.
 #: * ``PENDING``           - reviewer started a review but hasn't submitted.
 #:                            Filtered out: review isn't on the record yet.
-GITHUB_REVIEW_STATES: frozenset[str] = frozenset({
-    "APPROVED",
-    "CHANGES_REQUESTED",
-    "COMMENTED",
-    "DISMISSED",
-    "PENDING",
-})
+GITHUB_REVIEW_STATES: frozenset[str] = frozenset(
+    {
+        "APPROVED",
+        "CHANGES_REQUESTED",
+        "COMMENTED",
+        "DISMISSED",
+        "PENDING",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# Reference-removal verdicts (W1156 - closed-enum substrate for
+# cmd_refs_text + cmd_delete_check; W1134 audit recommendation)
+# ---------------------------------------------------------------------------
+
+# REFERENCE_REMOVAL_VERDICTS - closed-enum domain vocabulary for the
+# reference-removal-safety axis. Distinct from POLICY_DECISIONS (which
+# names policy-rule evaluation: pass/fail/allow/deny/...). Reference
+# removal asks "is this identifier still being called?" - a graph-
+# reachability question, not a policy question.
+#
+# cmd_refs_text emits: safe_to_remove / review / load_bearing
+# cmd_delete_check emits: safe / likely_safe / break_risk
+# Both subsets share the closed-enum invariant.
+#
+# Canonical form: lowercase + underscore (matches POLICY_DECISIONS
+# membership convention). The CLI text-output layer renders as
+# UPPERCASE-WITH-HYPHENS (e.g. "SAFE-TO-REMOVE", "BREAK-RISK") - that's a
+# display concern, not a vocab concern. Validators at the producer
+# boundary normalize via ``.lower().replace("-", "_")`` before membership
+# check.
+#: Closed enumeration of reference-removal verdict literals.
+REFERENCE_REMOVAL_VERDICTS: frozenset[str] = frozenset(
+    {
+        "safe_to_remove",
+        "review",
+        "load_bearing",
+        "safe",
+        "likely_safe",
+        "break_risk",
+    }
+)
 
 
 __all__ = [
@@ -657,4 +745,5 @@ __all__ = [
     "POLICY_DECISIONS",
     "PROVENANCE_SOURCES",
     "GITHUB_REVIEW_STATES",
+    "REFERENCE_REMOVAL_VERDICTS",
 ]

@@ -16,10 +16,7 @@ verifier can read it.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-
-import pytest
 
 from roam.index.relations import (
     _extract_imported_names,
@@ -114,12 +111,7 @@ class TestExtractImportedNames:
         assert "json_loads" in names
 
     def test_docstring_does_not_fake_import(self):
-        text = (
-            '"""Module docstring.\n'
-            "    Examples: should import yaml or call import time later.\n"
-            '"""\n'
-            "import os\n"
-        )
+        text = '"""Module docstring.\n    Examples: should import yaml or call import time later.\n"""\nimport os\n'
         names = _extract_imported_names(text)
         assert "os" in names
         assert "yaml" not in names
@@ -197,8 +189,11 @@ class TestResolveReferencesVerification:
         ]
         drop_stats: dict = {}
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
-            project_root=str(project), drop_stats=drop_stats,
+            refs,
+            symbols_by_name,
+            files_by_path,
+            project_root=str(project),
+            drop_stats=drop_stats,
         )
         assert any(e["kind"] == "import" for e in edges), edges
         assert drop_stats.get("dropped_import_edges", 0) == 0
@@ -206,11 +201,16 @@ class TestResolveReferencesVerification:
     def test_phantom_import_dropped(self, tmp_path):
         """The source has no ``import yaml`` statement, but the resolver
         still produced a ``kind='import'`` edge to a ``yaml`` symbol
-        elsewhere. The verification pass drops it.
+        elsewhere. The verification pass (W167) drops it.
 
-        This reproduces the W158 smoking gun (``seeds.py ->
-        tests/test_runtime_score.py:yaml``) at the unit level: a real
-        import edge backed by no real import statement.
+        Historical context: this reproduces the W158 smoking gun
+        (``seeds.py -> tests/test_runtime_score.py:yaml``) at the unit
+        level — a real import edge backed by no real import statement.
+        The W181 upstream filter now catches the *exact* test-variable
+        shape from that smoking gun before W167 runs, so this test
+        deliberately uses a candidate kind (``constant``) and path
+        (``src/...``) that W181 does NOT filter, so the candidate
+        reaches W167 and the text-verification path is exercised.
         """
         project = _build_project(
             tmp_path,
@@ -221,8 +221,10 @@ class TestResolveReferencesVerification:
         )
         symbols = [
             _sym(1, "seed", file_path="src/seeds.py", line_start=3, line_end=4),
-            # A `yaml` variable lives in some unrelated test file.
-            _sym(2, "yaml", file_path="tests/test_runtime_score.py", kind="variable"),
+            # A `yaml` constant lives in some unrelated production file.
+            # (W181 lets ``constant`` candidates through unconditionally;
+            # the W167 text check is what drops the phantom edge below.)
+            _sym(2, "yaml", file_path="src/other.py", kind="constant"),
         ]
         symbols_by_name, files_by_path = _build_inputs(symbols)
         refs = [
@@ -239,8 +241,11 @@ class TestResolveReferencesVerification:
         ]
         drop_stats: dict = {}
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
-            project_root=str(project), drop_stats=drop_stats,
+            refs,
+            symbols_by_name,
+            files_by_path,
+            project_root=str(project),
+            drop_stats=drop_stats,
         )
         assert not any(e["kind"] == "import" for e in edges), edges
         assert drop_stats["dropped_import_edges"] == 1
@@ -282,8 +287,11 @@ class TestResolveReferencesVerification:
         ]
         drop_stats: dict = {}
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
-            project_root=str(project), drop_stats=drop_stats,
+            refs,
+            symbols_by_name,
+            files_by_path,
+            project_root=str(project),
+            drop_stats=drop_stats,
         )
         assert not any(e["kind"] == "import" for e in edges)
         assert drop_stats["dropped_import_edges"] == 1
@@ -317,8 +325,11 @@ class TestResolveReferencesVerification:
         ]
         drop_stats: dict = {}
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
-            project_root=str(project), drop_stats=drop_stats,
+            refs,
+            symbols_by_name,
+            files_by_path,
+            project_root=str(project),
+            drop_stats=drop_stats,
         )
         assert any(e["kind"] == "import" for e in edges), edges
         assert drop_stats.get("dropped_import_edges", 0) == 0
@@ -358,8 +369,11 @@ class TestResolveReferencesVerification:
         ]
         drop_stats: dict = {}
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
-            project_root=str(project), drop_stats=drop_stats,
+            refs,
+            symbols_by_name,
+            files_by_path,
+            project_root=str(project),
+            drop_stats=drop_stats,
         )
         kinds = sorted(e["kind"] for e in edges)
         assert kinds == ["call", "reference"], edges
@@ -381,10 +395,8 @@ class TestResolveReferencesVerification:
         project = _build_project(tmp_path, {"src/x.py": body})
         symbols = [
             _sym(1, "caller", file_path="src/x.py", line_start=6, line_end=7),
-            _sym(2, "_FUNCTION_CALL_RE",
-                 file_path="src/pr_analyze/rules.py", kind="constant"),
-            _sym(3, "_PATTERN_MATCHERS",
-                 file_path="src/pr_analyze/rules.py", kind="constant"),
+            _sym(2, "_FUNCTION_CALL_RE", file_path="src/pr_analyze/rules.py", kind="constant"),
+            _sym(3, "_PATTERN_MATCHERS", file_path="src/pr_analyze/rules.py", kind="constant"),
         ]
         symbols_by_name, files_by_path = _build_inputs(symbols)
         refs = [
@@ -405,8 +417,11 @@ class TestResolveReferencesVerification:
         ]
         drop_stats: dict = {}
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
-            project_root=str(project), drop_stats=drop_stats,
+            refs,
+            symbols_by_name,
+            files_by_path,
+            project_root=str(project),
+            drop_stats=drop_stats,
         )
         kept = [e for e in edges if e["kind"] == "import"]
         assert len(kept) == 2, edges
@@ -435,8 +450,11 @@ class TestResolveReferencesVerification:
         ]
         drop_stats: dict = {}
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
-            project_root=str(project), drop_stats=drop_stats,
+            refs,
+            symbols_by_name,
+            files_by_path,
+            project_root=str(project),
+            drop_stats=drop_stats,
         )
         assert any(e["kind"] == "import" for e in edges)
         assert drop_stats.get("dropped_import_edges", 0) == 0
@@ -464,7 +482,9 @@ class TestResolveReferencesVerification:
             },
         ]
         edges = resolve_references(
-            refs, symbols_by_name, files_by_path,
+            refs,
+            symbols_by_name,
+            files_by_path,
             project_root=str(project),
         )
         for edge in edges:

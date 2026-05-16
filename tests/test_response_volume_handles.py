@@ -169,9 +169,7 @@ _BIG_TOOLS = [
 
 
 @pytest.mark.parametrize("tool_name,fn_name,kwargs", _BIG_TOOLS, ids=[t[0] for t in _BIG_TOOLS])
-def test_big_tool_returns_handle_envelope_when_response_exceeds_threshold(
-    tool_name, fn_name, kwargs, monkeypatch
-):
+def test_big_tool_returns_handle_envelope_when_response_exceeds_threshold(tool_name, fn_name, kwargs, monkeypatch):
     """For each of the 8 commands, monkeypatch ``_run_roam`` to return a
     >20KB envelope, invoke the MCP tool, and assert the response is a
     tiny handle envelope rather than the fat payload."""
@@ -209,8 +207,7 @@ def test_big_tool_returns_handle_envelope_when_response_exceeds_threshold(
     # Envelope itself must be tiny.
     env_bytes = len(json.dumps(result).encode("utf-8"))
     assert env_bytes < 5 * 1024, (
-        f"{tool_name} handle envelope is {env_bytes} bytes — "
-        f"defeats the purpose of handle-off (must be <5KB)."
+        f"{tool_name} handle envelope is {env_bytes} bytes — defeats the purpose of handle-off (must be <5KB)."
     )
 
 
@@ -243,8 +240,7 @@ def test_new_mcp_wrappers_have_handle_off_wrappers():
             fn = _unwrap(tool)
             result = fn() if fn_name != "verify_imports" else fn(file="")
             assert result.get("is_handle") is True, (
-                f"{fn_name} did not auto-handle a large response — "
-                f"handle-off wrapper not applied"
+                f"{fn_name} did not auto-handle a large response — handle-off wrapper not applied"
             )
     finally:
         mcp_server._run_roam = orig

@@ -3,6 +3,14 @@
 Reads ``.roam/audit-trail.jsonl`` and emits a procurement-friendly
 markdown table, JSON array, or CSV. Supports optional date-range
 filtering and verdict filtering.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because audit-trail-export outputs are audit trail exports —
+not per-location violations. SARIF is reserved for findings with
+file:line coordinates; audit-trail-export's primary deliverable is the
+procurement-friendly audit trail export document. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket C propagation plan +
+W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -14,12 +22,12 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import (
     AUDIT_TRAIL_SCHEMA,
     DEFAULT_AUDIT_TRAIL_PATH,
     INTEGRITY_SUMMARY_SCHEMA,
 )
-from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import load_records as _load_records
 from roam.output.formatter import json_envelope, to_json
 

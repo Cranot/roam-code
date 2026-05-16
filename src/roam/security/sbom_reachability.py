@@ -51,24 +51,16 @@ _CSS_IMPORT_RE = re.compile(
 )
 
 # import('pkg') / await import("pkg") / import(`pkg`)
-_DYNAMIC_IMPORT_RE = re.compile(
-    r"""(?:await\s+)?import\s*\(\s*(?P<q>['"`])(?P<spec>[^'"`)]+)(?P=q)\s*\)"""
-)
+_DYNAMIC_IMPORT_RE = re.compile(r"""(?:await\s+)?import\s*\(\s*(?P<q>['"`])(?P<spec>[^'"`)]+)(?P=q)\s*\)""")
 
 # import X from 'pkg' / import 'pkg' / import * as X from 'pkg'
-_STATIC_IMPORT_RE = re.compile(
-    r"""import\s+(?:[\w*{}\s,]+\s+from\s+)?(?P<q>['"])(?P<spec>[^'"]+)(?P=q)"""
-)
+_STATIC_IMPORT_RE = re.compile(r"""import\s+(?:[\w*{}\s,]+\s+from\s+)?(?P<q>['"])(?P<spec>[^'"]+)(?P=q)""")
 
 # require('pkg') / require("pkg")
-_REQUIRE_RE = re.compile(
-    r"""\brequire\s*\(\s*(?P<q>['"])(?P<spec>[^'"]+)(?P=q)\s*\)"""
-)
+_REQUIRE_RE = re.compile(r"""\brequire\s*\(\s*(?P<q>['"])(?P<spec>[^'"]+)(?P=q)\s*\)""")
 
 # <style ...>...</style> blocks in .vue/.svelte (lang-agnostic)
-_STYLE_BLOCK_RE = re.compile(
-    r"<style\b[^>]*>(?P<body>.*?)</style>", re.IGNORECASE | re.DOTALL
-)
+_STYLE_BLOCK_RE = re.compile(r"<style\b[^>]*>(?P<body>.*?)</style>", re.IGNORECASE | re.DOTALL)
 
 # PHP `use Vendor\Package\...;` / `new Vendor\Package\Foo()`
 _PHP_USE_RE = re.compile(r"""\buse\s+([A-Za-z_][\w\\]*)\s*(?:as\s+\w+)?\s*;""")
@@ -140,8 +132,15 @@ _TSCONFIG_PREFIX = "tsconfig"
 
 # Source extensions to walk for static/dynamic imports.
 _SOURCE_EXTS: tuple[str, ...] = (
-    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
-    ".vue", ".svelte", ".astro",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".vue",
+    ".svelte",
+    ".astro",
 )
 
 # Style extensions to walk for @import.
@@ -499,11 +498,34 @@ def _collect_json_config_refs(data: object, specs: list[str]) -> None:
 # Tokens that should never be flagged as a "binary name" in scripts.
 _SCRIPT_SHELL_TOKENS: frozenset[str] = frozenset(
     {
-        "npm", "npx", "yarn", "pnpm", "bun", "node",
-        "&&", "||", ";", "|", "&",
-        "if", "then", "else", "fi", "for", "do", "done",
-        "cd", "mkdir", "rm", "cp", "mv", "echo", "cat", "exit",
-        "true", "false",
+        "npm",
+        "npx",
+        "yarn",
+        "pnpm",
+        "bun",
+        "node",
+        "&&",
+        "||",
+        ";",
+        "|",
+        "&",
+        "if",
+        "then",
+        "else",
+        "fi",
+        "for",
+        "do",
+        "done",
+        "cd",
+        "mkdir",
+        "rm",
+        "cp",
+        "mv",
+        "echo",
+        "cat",
+        "exit",
+        "true",
+        "false",
     }
 )
 
@@ -681,10 +703,7 @@ def compute_filesystem_reachability(
     ``reachable`` is True iff any source was found.
     """
     declared_set = {d for d in declared_deps if d}
-    out: dict[str, dict] = {
-        dep: {"reachable": False, "sources": [], "confidence": "indirect"}
-        for dep in declared_deps
-    }
+    out: dict[str, dict] = {dep: {"reachable": False, "sources": [], "confidence": "indirect"} for dep in declared_deps}
 
     # Confidence priority. Higher number = stronger evidence of real use.
     priority = {

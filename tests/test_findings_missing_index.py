@@ -26,17 +26,16 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_missing_index import (
     MISSING_INDEX_DETECTOR_VERSION,
     _missing_index_confidence_tier,
     _missing_index_finding_id,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # PHP fixture content — mirrors the one in test_missing_index.py so the
@@ -128,9 +127,7 @@ def php_project(tmp_path):
 
     migration_dir = proj / "database" / "migrations"
     migration_dir.mkdir(parents=True)
-    (migration_dir / "2024_01_01_000000_create_users_table.php").write_text(
-        _MIGRATION_PHP
-    )
+    (migration_dir / "2024_01_01_000000_create_users_table.php").write_text(_MIGRATION_PHP)
 
     controller_dir = proj / "app" / "Http" / "Controllers"
     controller_dir.mkdir(parents=True)
@@ -165,48 +162,28 @@ def _run_missing_index_persist(proj):
 
 def test_missing_index_finding_id_is_deterministic():
     """_missing_index_finding_id returns the same id for the same input."""
-    a = _missing_index_finding_id(
-        "users", ("phone",), "single_where", "app/Http/Controllers/UserController.php", 12
-    )
-    b = _missing_index_finding_id(
-        "users", ("phone",), "single_where", "app/Http/Controllers/UserController.php", 12
-    )
+    a = _missing_index_finding_id("users", ("phone",), "single_where", "app/Http/Controllers/UserController.php", 12)
+    b = _missing_index_finding_id("users", ("phone",), "single_where", "app/Http/Controllers/UserController.php", 12)
     assert a == b
     assert a.startswith("missing-index:query:")
 
     # Different table -> different id.
     assert (
-        _missing_index_finding_id(
-            "orders", ("phone",), "single_where", "app/Http/Controllers/UserController.php", 12
-        )
+        _missing_index_finding_id("orders", ("phone",), "single_where", "app/Http/Controllers/UserController.php", 12)
         != a
     )
     # Different columns -> different id.
     assert (
-        _missing_index_finding_id(
-            "users", ("email",), "single_where", "app/Http/Controllers/UserController.php", 12
-        )
+        _missing_index_finding_id("users", ("email",), "single_where", "app/Http/Controllers/UserController.php", 12)
         != a
     )
     # Different pattern_type -> different id.
-    assert (
-        _missing_index_finding_id(
-            "users", ("phone",), "orderby", "app/Http/Controllers/UserController.php", 12
-        )
-        != a
-    )
+    assert _missing_index_finding_id("users", ("phone",), "orderby", "app/Http/Controllers/UserController.php", 12) != a
     # Different file path -> different id.
-    assert (
-        _missing_index_finding_id(
-            "users", ("phone",), "single_where", "app/Http/Controllers/Other.php", 12
-        )
-        != a
-    )
+    assert _missing_index_finding_id("users", ("phone",), "single_where", "app/Http/Controllers/Other.php", 12) != a
     # Different line -> different id.
     assert (
-        _missing_index_finding_id(
-            "users", ("phone",), "single_where", "app/Http/Controllers/UserController.php", 99
-        )
+        _missing_index_finding_id("users", ("phone",), "single_where", "app/Http/Controllers/UserController.php", 99)
         != a
     )
 
@@ -218,12 +195,8 @@ def test_missing_index_finding_id_is_column_order_invariant():
     payload — the id stays stable regardless of regex match order so
     re-runs always upsert.
     """
-    a = _missing_index_finding_id(
-        "users", ("phone", "status"), "composite_where", "app/X.php", 5
-    )
-    b = _missing_index_finding_id(
-        "users", ("status", "phone"), "composite_where", "app/X.php", 5
-    )
+    a = _missing_index_finding_id("users", ("phone", "status"), "composite_where", "app/X.php", 5)
+    b = _missing_index_finding_id("users", ("status", "phone"), "composite_where", "app/X.php", 5)
     assert a == b
 
 
@@ -288,8 +261,7 @@ def test_missing_index_emits_static_analysis_tier_on_paginated_unindexed(php_pro
         os.chdir(str(php_project))
         with open_db(readonly=True) as conn:
             rows = conn.execute(
-                "SELECT evidence_json, confidence FROM findings "
-                "WHERE source_detector = 'missing-index'"
+                "SELECT evidence_json, confidence FROM findings WHERE source_detector = 'missing-index'"
             ).fetchall()
     finally:
         os.chdir(old_cwd)
@@ -300,8 +272,7 @@ def test_missing_index_emits_static_analysis_tier_on_paginated_unindexed(php_pro
     # detector marks at confidence="high" → "static_analysis".
     tiers = {r["confidence"] for r in rows}
     assert "static_analysis" in tiers, (
-        f"expected at least one static_analysis-tier finding (paginated unindexed "
-        f"WHERE on `phone`); got tiers={tiers}"
+        f"expected at least one static_analysis-tier finding (paginated unindexed WHERE on `phone`); got tiers={tiers}"
     )
     # The `phone` column must appear in at least one finding's evidence.
     has_phone = False
@@ -362,16 +333,11 @@ def test_missing_index_finding_subject_links_to_files_row(php_project):
         os.chdir(str(php_project))
         with open_db(readonly=True) as conn:
             rows = conn.execute(
-                "SELECT subject_id FROM findings "
-                "WHERE source_detector = 'missing-index' AND subject_id IS NOT NULL"
+                "SELECT subject_id FROM findings WHERE source_detector = 'missing-index' AND subject_id IS NOT NULL"
             ).fetchall()
-            assert len(rows) >= 1, (
-                "expected at least one missing-index finding with a resolved subject_id"
-            )
+            assert len(rows) >= 1, "expected at least one missing-index finding with a resolved subject_id"
             for r in rows:
-                f_row = conn.execute(
-                    "SELECT id, path FROM files WHERE id = ?", (r["subject_id"],)
-                ).fetchone()
+                f_row = conn.execute("SELECT id, path FROM files WHERE id = ?", (r["subject_id"],)).fetchone()
                 assert f_row is not None, f"orphan subject_id {r['subject_id']}"
                 # The file resolved must be a PHP file (the detector only
                 # scans PHP source).
@@ -391,16 +357,13 @@ def test_missing_index_rerun_upserts_not_duplicates(php_project):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'missing-index'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'missing-index'"
                 ).fetchall()
             }
             first_count = conn.execute(
                 "SELECT COUNT(*) FROM findings WHERE source_detector = 'missing-index'"
             ).fetchone()[0]
-        assert first_count == len(first_ids), (
-            "duplicate finding_id_str rows on first run"
-        )
+        assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same regex matches, same ids.
         runner = CliRunner()
@@ -411,8 +374,7 @@ def test_missing_index_rerun_upserts_not_duplicates(php_project):
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'missing-index'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'missing-index'"
                 ).fetchall()
             }
             second_count = conn.execute(
@@ -446,9 +408,7 @@ def test_missing_index_persist_ignores_display_filters(php_project):
 
         # Second persist run with a confidence filter — the display
         # slice may shrink, but the persisted row count must NOT.
-        r2 = runner.invoke(
-            cli, ["missing-index", "--persist", "--confidence", "high"]
-        )
+        r2 = runner.invoke(cli, ["missing-index", "--persist", "--confidence", "high"])
         assert r2.exit_code == 0, r2.output
 
         with open_db(readonly=True) as conn:
@@ -459,8 +419,7 @@ def test_missing_index_persist_ignores_display_filters(php_project):
         os.chdir(old_cwd)
 
     assert filtered_count == baseline_count, (
-        f"--confidence filter truncated the registry: baseline={baseline_count} "
-        f"filtered={filtered_count}"
+        f"--confidence filter truncated the registry: baseline={baseline_count} filtered={filtered_count}"
     )
 
 
@@ -477,9 +436,7 @@ def test_missing_index_findings_visible_via_cmd_findings_list(php_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(php_project))
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "missing-index"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "missing-index"])
     finally:
         os.chdir(old_cwd)
     assert result.exit_code == 0, result.output
@@ -514,8 +471,7 @@ def test_no_persist_does_not_emit_findings(php_project):
         with open_db(readonly=True) as conn:
             try:
                 count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'missing-index'"
+                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'missing-index'"
                 ).fetchone()[0]
             except sqlite3.OperationalError:
                 # findings table may be absent on some test schemas — still

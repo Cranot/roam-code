@@ -1,7 +1,6 @@
 import ast
 import re
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -192,8 +191,7 @@ def test_cli_deprecated_commands_is_ast_literal():
             )
         assert isinstance(obj, dict), "_DEPRECATED_COMMANDS must be a dict"
         assert all(isinstance(k, str) for k in obj), (
-            "_DEPRECATED_COMMANDS alias names must be str (the W697 "
-            "allowlist set is keyed on str)"
+            "_DEPRECATED_COMMANDS alias names must be str (the W697 allowlist set is keyed on str)"
         )
         return
     pytest.fail("_DEPRECATED_COMMANDS assignment not found in src/roam/cli.py")

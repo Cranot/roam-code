@@ -18,6 +18,13 @@ test coverage.
 This command CONSUMES those substrates -- it does not extend them. The
 laws / rules / memory / runs / pr-bundle commands continue to own their
 own subsystems.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam constitution`` operates on substrate state in
+``.roam/`` (policy envelopes over the constitution capstone) — not code
+locations or per-location violations. The state is consumed by other
+roam commands + agent runtimes directly from disk; SARIF would be
+redundant. See action.yml _SUPPORTED_SARIF allowlist + W1181-audit memo.
 """
 
 from __future__ import annotations
@@ -152,9 +159,7 @@ def constitution_init(ctx, with_laws, with_rules, force):
         return
 
     try:
-        written = init_constitution(
-            root, with_laws=with_laws, with_rules=with_rules, force=force
-        )
+        written = init_constitution(root, with_laws=with_laws, with_rules=with_rules, force=force)
     except Exception as exc:
         verdict = f"failed to write constitution: {exc}"
         env = json_envelope(
@@ -180,10 +185,7 @@ def constitution_init(ctx, with_laws, with_rules, force):
     n_sources = len(sources)
     n_gates = len(constitution.required_checks) if constitution else 0
 
-    verdict = (
-        f"Constitution initialized "
-        f"({n_sources} source(s) detected, {n_gates} required-checks gate(s) configured)"
-    )
+    verdict = f"Constitution initialized ({n_sources} source(s) detected, {n_gates} required-checks gate(s) configured)"
 
     env = json_envelope(
         "constitution-init",
@@ -363,10 +365,7 @@ def constitution_show(ctx):
     n_sources = len(constitution.sources)
     n_gates = len(constitution.required_checks)
     n_modes = len(constitution.modes)
-    verdict = (
-        f"constitution v{constitution.version} with {n_sources} source(s), "
-        f"{n_gates} gate(s), {n_modes} mode(s)"
-    )
+    verdict = f"constitution v{constitution.version} with {n_sources} source(s), {n_gates} gate(s), {n_modes} mode(s)"
 
     env = json_envelope(
         "constitution-show",

@@ -45,7 +45,7 @@ imported from any layer without dragging YAML or DB dependencies along.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Literal, Mapping, Optional, Union
 
@@ -60,11 +60,11 @@ SuppressionStatus = Literal["safe", "acknowledged", "wont-fix"]
 # inline-annotation matches from on-disk-file matches without sniffing
 # source strings.
 SuppressionSource = Literal[
-    "rule-file-yml",        # .roam-suppressions.yml entry
+    "rule-file-yml",  # .roam-suppressions.yml entry
     "smells-suppress-yml",  # .roam/smells.suppress.yml entry
-    "suppressions-json",    # .roam/suppressions.json entry (canonical W691 dict)
-    "inline-annotation",    # roam: ignore-<command>[task_id] comment
-    "ignore-findings-file", # .roamignore-findings rule
+    "suppressions-json",  # .roam/suppressions.json entry (canonical W691 dict)
+    "inline-annotation",  # roam: ignore-<command>[task_id] comment
+    "ignore-findings-file",  # .roamignore-findings rule
 ]
 
 VALID_STATUSES = frozenset({"safe", "acknowledged", "wont-fix"})

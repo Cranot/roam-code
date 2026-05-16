@@ -8,6 +8,12 @@ applies them and produces per-kind percentages lives in
 command, ``roam describe``, ``roam understand``, ``roam minimap``, and
 ``roam preflight`` all delegate there so they agree on the same
 codebase.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because conventions outputs are invocation-scoped
+convention-classification percentages — not per-location violations.
+See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -36,7 +42,6 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
-
 
 # W133 (W93 follow-up): conventions is the next detector migrating onto
 # the central findings registry (after ``clones`` in W95, ``dead`` in
@@ -195,12 +200,8 @@ def _emit_conventions_findings(
         expected_style = o.get("expected_style") or "?"
         expected_source = o.get("expected_source")
 
-        subject_id = _resolve_convention_subject_id(
-            conn, file_path, name, line_start_int
-        )
-        finding_id = _conventions_finding_id(
-            family, group, name, file_path, line_start_int
-        )
+        subject_id = _resolve_convention_subject_id(conn, file_path, name, line_start_int)
+        finding_id = _conventions_finding_id(family, group, name, file_path, line_start_int)
         evidence = {
             "name": name,
             "kind": kind,
@@ -263,18 +264,11 @@ def _convention_classify(violation: dict) -> tuple[str, str]:
     except (TypeError, ValueError):
         pct_f = 0.0
     if pct_f >= _CONVENTION_HIGH_PCT:
-        return "high", (
-            f"{expected} is dominant in {pct_f:.0f}% of its group; "
-            f"this {actual} symbol is a clear outlier"
-        )
+        return "high", (f"{expected} is dominant in {pct_f:.0f}% of its group; this {actual} symbol is a clear outlier")
     if pct_f >= _CONVENTION_MEDIUM_PCT:
-        return "medium", (
-            f"{expected} dominant in {pct_f:.0f}% of its group; "
-            f"convention real but not unanimous"
-        )
-    return "low", (
-        f"{expected} only {pct_f:.0f}% dominant; convention is weak in this group"
-    )
+        return "medium", (f"{expected} dominant in {pct_f:.0f}% of its group; convention real but not unanimous")
+    return "low", (f"{expected} only {pct_f:.0f}% dominant; convention is weak in this group")
+
 
 # ---------------------------------------------------------------------------
 # Case-style detection
@@ -535,7 +529,12 @@ def is_python_type_alias_signature(signature: str | None, name: str) -> bool:
     # We only accept this when there's a ``|`` outside any brackets in
     # the first ~40 chars — a heuristic that avoids matching bitwise OR.
     head = rhs.split("(", 1)[0]
-    if "|" in head and all(part.strip() and part.strip()[0].isupper() or part.strip() in ("None", "int", "str", "float", "bytes", "bool", "list", "dict", "set", "tuple") for part in head.split("|")):
+    if "|" in head and all(
+        part.strip()
+        and part.strip()[0].isupper()
+        or part.strip() in ("None", "int", "str", "float", "bytes", "bool", "list", "dict", "set", "tuple")
+        for part in head.split("|")
+    ):
         return True
     # Single-token RHS that is itself a PascalCase identifier —
     # treated as an alias to another typedef (the
@@ -1152,9 +1151,7 @@ def conventions(ctx, max_outliers, persist):
         # the legacy scan-everything behaviour is still available via
         # the global ``--include-excluded`` flag.
         exclude_paths = () if include_excluded else None
-        all_symbols, naming_summary, outliers, affixes = _analyze_naming(
-            conn, exclude_paths=exclude_paths
-        )
+        all_symbols, naming_summary, outliers, affixes = _analyze_naming(conn, exclude_paths=exclude_paths)
 
         # --- W133: mirror outliers into the central findings registry ---
         # Runs ONLY with --persist. We emit one row per convention
@@ -1164,9 +1161,7 @@ def conventions(ctx, max_outliers, persist):
         # degrades cleanly without breaking the standard output path.
         if persist:
             try:
-                _emit_conventions_findings(
-                    conn, outliers, CONVENTIONS_DETECTOR_VERSION
-                )
+                _emit_conventions_findings(conn, outliers, CONVENTIONS_DETECTOR_VERSION)
                 conn.commit()
             except sqlite3.OperationalError:
                 pass

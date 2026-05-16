@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
 

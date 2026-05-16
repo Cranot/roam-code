@@ -1,9 +1,9 @@
 """``roam lease`` — multi-agent lease CLI (R21 substrate).
 
 Five subcommands (W20.6 docstring count corrected; ``claim`` takes either
-``--files`` or ``--partition`` as the subject kind):
+``--file`` or ``--partition`` as the subject kind):
 
-  - ``roam lease claim --agent NAME (--files PATH... | --partition ID)`` -- claim a lease
+  - ``roam lease claim --agent NAME (--file PATH... | --partition ID)`` -- claim a lease
   - ``roam lease release <lease_id>``                  -- release a claim
   - ``roam lease list [--agent N] [--include-expired]``-- enumerate leases
   - ``roam lease show <lease_id>``                     -- dump one lease
@@ -37,6 +37,13 @@ Every claim / release / gc event is auto-logged via
 appear in the active run's ``events.jsonl`` timeline alongside
 preflight / diff / critique. Auto-logging is silent if no run is
 active.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam lease`` operates on substrate state in ``.roam/``
+(lease records) — not code locations or per-location violations.
+The state is consumed by other roam commands + agent runtimes directly
+from disk; SARIF would be redundant. See action.yml _SUPPORTED_SARIF
+allowlist + W1181-audit memo.
 """
 
 from __future__ import annotations
@@ -45,7 +52,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
-from roam.exit_codes import EXIT_GATE_FAILURE, EXIT_SUCCESS, EXIT_USAGE
+from roam.exit_codes import EXIT_GATE_FAILURE, EXIT_USAGE
 from roam.leases.store import (
     DEFAULT_TTL_SECONDS,
     Lease,
@@ -71,7 +78,7 @@ from roam.runs.helpers import auto_log
     inputs=["agent", "files", "partition"],
     outputs=["lease_id", "state", "conflicting_lease"],
     examples=[
-        "roam lease claim --agent claude-code --files src/foo.py",
+        "roam lease claim --agent claude-code --file src/foo.py",
         "roam lease list",
         "roam lease release lease_20260513_abc123",
     ],
@@ -126,18 +133,12 @@ def _format_claim_verdict(lease: Lease) -> str:
     n = len(lease.subject)
     noun = "file" if lease.subject_kind == "files" else "partition"
     plural = "" if n == 1 else "s"
-    return (
-        f"claimed lease {lease.lease_id} (agent={lease.agent}, "
-        f"{n} {noun}{plural}, expires {lease.expires_at})"
-    )
+    return f"claimed lease {lease.lease_id} (agent={lease.agent}, {n} {noun}{plural}, expires {lease.expires_at})"
 
 
 def _format_conflict_verdict(conflict: Lease, subject_preview: str) -> str:
     """Build the single-line verdict for a blocked claim (LAW 6)."""
-    return (
-        f"claim BLOCKED: conflict with lease {conflict.lease_id} "
-        f"(agent={conflict.agent}, owns: {subject_preview})"
-    )
+    return f"claim BLOCKED: conflict with lease {conflict.lease_id} (agent={conflict.agent}, owns: {subject_preview})"
 
 
 # ---------------------------------------------------------------------------
@@ -148,16 +149,23 @@ def _format_conflict_verdict(conflict: Lease, subject_preview: str) -> str:
 @lease_group.command("claim")
 @click.option("--agent", required=True, help="Agent identifier (e.g. claude-code, cursor, w17-task).")
 @click.option(
-    "--files",
+    "--file",
     "files",
     multiple=True,
     help="File path(s) to claim. Repeatable. Mutually exclusive with --partition.",
 )
 @click.option(
+    "--files",
+    "files",
+    multiple=True,
+    hidden=True,
+    help="Deprecated alias for --file. Retained for backward compatibility.",
+)
+@click.option(
     "--partition",
     "partition",
     multiple=True,
-    help="Partition id(s) to claim. Repeatable. Mutually exclusive with --files.",
+    help="Partition id(s) to claim. Repeatable. Mutually exclusive with --file.",
 )
 @click.option(
     "--ttl",
@@ -172,7 +180,7 @@ def lease_claim(ctx, agent, files, partition, ttl_seconds):
     """Claim a lease on a set of files or partitions.
 
     \b
-    Exactly one of ``--files`` / ``--partition`` must be supplied
+    Exactly one of ``--file`` / ``--partition`` must be supplied
     (repeatable). On success the lease_id is echoed; on conflict the
     command exits 5 (GATE_FAILURE) and the envelope's
     ``conflicting_lease`` field carries the blocking lease's record.
@@ -180,12 +188,12 @@ def lease_claim(ctx, agent, files, partition, ttl_seconds):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
-    # Validate --files / --partition are mutually exclusive and one was given.
+    # Validate --file / --partition are mutually exclusive and one was given.
     if bool(files) == bool(partition):
         verdict = (
-            "exactly one of --files or --partition must be supplied"
+            "exactly one of --file or --partition must be supplied"
             if not files and not partition
-            else "--files and --partition are mutually exclusive"
+            else "--file and --partition are mutually exclusive"
         )
         if json_mode:
             envelope = json_envelope(
@@ -232,9 +240,7 @@ def lease_claim(ctx, agent, files, partition, ttl_seconds):
 
     root = find_project_root()
     try:
-        claimed, conflict = claim_lease(
-            root, agent=agent, subject=subject, kind=kind, ttl_seconds=ttl_seconds
-        )
+        claimed, conflict = claim_lease(root, agent=agent, subject=subject, kind=kind, ttl_seconds=ttl_seconds)
     except ValueError as exc:
         verdict = f"error: {exc}"
         envelope = json_envelope(
@@ -434,7 +440,7 @@ def lease_release(ctx, lease_id):
             ],
             "next_commands": [
                 "roam lease list",
-                f"roam lease claim --agent NAME --files {existing.subject[0] if existing.subject else '<path>'}",
+                f"roam lease claim --agent NAME --file {existing.subject[0] if existing.subject else '<path>'}",
             ],
         },
     )
@@ -502,7 +508,7 @@ def lease_list(ctx, agent, include_expired, do_gc):
             freed = []
 
     if not lroot.exists():
-        verdict = "no leases yet -- run `roam lease claim --agent NAME --files PATH` to open one"  # W20.6 error-msg consistency
+        verdict = "no leases yet -- run `roam lease claim --agent NAME --file PATH` to open one"  # W20.6 error-msg consistency
         envelope = json_envelope(
             "lease-list",
             summary={
@@ -604,10 +610,7 @@ def lease_show(ctx, lease_id):
         effective = "expired"
 
     n = len(lease.subject)
-    verdict = (
-        f"lease {lease.lease_id} state={effective} agent={lease.agent} "
-        f"({n} {lease.subject_kind})"
-    )
+    verdict = f"lease {lease.lease_id} state={effective} agent={lease.agent} ({n} {lease.subject_kind})"
     envelope = json_envelope(
         "lease-show",
         summary={

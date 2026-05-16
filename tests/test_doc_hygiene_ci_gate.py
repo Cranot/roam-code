@@ -88,9 +88,7 @@ def test_doc_hygiene_workflow_triggers_on_pr_and_push() -> None:
     merge gate. At minimum it has to run on ``pull_request``.
     """
     workflows = _workflow_texts()
-    gate_workflows = [
-        (path, text) for path, text in workflows.items() if f"{BUILD_README_REL} --check" in text
-    ]
+    gate_workflows = [(path, text) for path, text in workflows.items() if f"{BUILD_README_REL} --check" in text]
     assert gate_workflows, "no workflow contains the README count-drift gate"
 
     for path, text in gate_workflows:
@@ -141,8 +139,7 @@ def test_pre_commit_hook_invokes_both_drift_scripts() -> None:
         pytest.skip("pre-commit hook missing (handled by sibling test)")
     text = PRE_COMMIT_HOOK.read_text(encoding="utf-8")
     assert BUILD_README_REL in text, (
-        f"{PRE_COMMIT_HOOK} does not invoke {BUILD_README_REL}. "
-        "Add a `python dev/build_readme_counts.py --check` step."
+        f"{PRE_COMMIT_HOOK} does not invoke {BUILD_README_REL}. Add a `python dev/build_readme_counts.py --check` step."
     )
     assert "--check" in text, (
         f"{PRE_COMMIT_HOOK} mentions {BUILD_README_REL} but not `--check`. "

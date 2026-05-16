@@ -90,9 +90,7 @@ class TestJavaSqliRuleShape:
             verdict = data.get("summary", {}).get("verdict", "")
             assert "No rules" not in verdict, verdict
             rule_ids = data.get("rule_ids") or []
-            assert "java-sqli" in rule_ids, (
-                f"java-sqli missing from sqli pack rule_ids: {rule_ids!r}"
-            )
+            assert "java-sqli" in rule_ids, f"java-sqli missing from sqli pack rule_ids: {rule_ids!r}"
         finally:
             os.chdir(old_cwd)
 
@@ -276,9 +274,7 @@ class TestJavaSqliFindings:
         with open_db(readonly=True) as conn:
             findings = _java_sqli_findings(conn)
 
-        assert findings == [], (
-            f"no-sink project produced unexpected findings: {[f.rule_id for f in findings]!r}"
-        )
+        assert findings == [], f"no-sink project produced unexpected findings: {[f.rule_id for f in findings]!r}"
 
     def test_sanitized_case_marks_sanitizer_when_flagged(self, java_sqli_sanitized_project):
         """PreparedStatement.setString on the path must surface as

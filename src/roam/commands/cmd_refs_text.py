@@ -17,12 +17,19 @@ reachability for code hits, and emits a per-string verdict:
 
 Reuses ``grep_helpers`` so reachability / clone / bridge logic stay
 single-sourced.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because refs-text outputs are invocation-scoped per-string
+verdict envelopes (SAFE-TO-REMOVE / REVIEW / LOAD-BEARING) — not
+per-location violations. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.grep_helpers import (
     build_bridge_index,
     build_clone_index,
@@ -36,9 +43,9 @@ from roam.commands.grep_helpers import (
     lookup_clone_siblings,
     run_search,
 )
-from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.evidence._vocabulary import REFERENCE_REMOVAL_VERDICTS
 from roam.output.formatter import json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
@@ -49,6 +56,20 @@ _PR_HOT_THRESHOLD = 0.0005  # PageRank above this counts as "hot"
 _REVIEW_REACHABLE_MAX = 2  # ≤ this → REVIEW; more → LOAD-BEARING
 
 
+def _validate_verdict(verdict: str) -> str:
+    """Assert ``verdict`` is in the W1156 closed-enum vocabulary.
+
+    Display form is UPPERCASE-WITH-HYPHENS; canonical form is
+    lowercase+underscore. Normalize before membership check and return
+    the original display form so callers stay unchanged.
+    """
+    canonical = verdict.lower().replace("-", "_")
+    assert canonical in REFERENCE_REMOVAL_VERDICTS, (
+        f"verdict {verdict!r} (canonical {canonical!r}) not in REFERENCE_REMOVAL_VERDICTS - see W1156"
+    )
+    return verdict
+
+
 def _verdict_for(per_string: dict) -> tuple[str, str]:
     """Return (verdict, reason) given a per-string analysis dict."""
     code = per_string["surfaces"].get("code", [])
@@ -56,15 +77,15 @@ def _verdict_for(per_string: dict) -> tuple[str, str]:
     hot = [m for m in reachable if (m.get("pagerank") or 0.0) >= _PR_HOT_THRESHOLD]
 
     if not code:
-        return "SAFE-TO-REMOVE", "no references in source code"
+        return _validate_verdict("SAFE-TO-REMOVE"), "no references in source code"
     if not reachable:
-        return "SAFE-TO-REMOVE", f"{len(code)} code reference(s), none reachable"
+        return _validate_verdict("SAFE-TO-REMOVE"), f"{len(code)} code reference(s), none reachable"
     if hot:
-        return "LOAD-BEARING", f"{len(reachable)} reachable, {len(hot)} in hot symbols"
+        return _validate_verdict("LOAD-BEARING"), f"{len(reachable)} reachable, {len(hot)} in hot symbols"
     if len(reachable) <= _REVIEW_REACHABLE_MAX:
         names = ", ".join(sorted({m.get("enclosing_symbol") or m["path"] for m in reachable})[:3])
-        return "REVIEW", f"{len(reachable)} reachable: {names}"
-    return "LOAD-BEARING", f"{len(reachable)} reachable code references"
+        return _validate_verdict("REVIEW"), f"{len(reachable)} reachable: {names}"
+    return _validate_verdict("LOAD-BEARING"), f"{len(reachable)} reachable code references"
 
 
 def _classify_match(m: dict, reach_set: set[int] | None, orphans: set[int]) -> str:

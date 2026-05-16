@@ -1,4 +1,16 @@
-"""Compound refactoring plan for one symbol."""
+"""Compound refactoring plan for one symbol.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_plan_refactor is a recipe-composer (wraps
+``cmd_guard`` helpers + blast-radius + risk-score + layer-analysis
+into a single refactoring plan for one target symbol). When the
+composed detectors expose per-finding SARIF rows, run them directly
+(``roam smells --sarif``, ``roam complexity --sarif``); plan-refactor
+itself returns an invocation-scoped refactor-plan envelope — not
+novel per-location violations. See ``cmd_pr_prep`` for the parallel
+composer disclosure pattern (W1145) + action.yml _SUPPORTED_SARIF
+allowlist + W1085 composer audit + W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +27,13 @@ from roam.commands.context_helpers import (
 )
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
-from roam.output.formatter import budget_truncate, json_envelope, loc, to_json
+from roam.output.formatter import (
+    budget_truncate,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 
@@ -342,8 +360,40 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, symbol)
         if sym is None:
-            click.echo(symbol_not_found(conn, symbol, json_mode=json_mode))
-            raise SystemExit(1)
+            # W1280 — Pattern-2c Convention (c): unresolved exits 0 with a
+            # resolution=unresolved + partial_success disclosure so agents
+            # can distinguish a name-typo from a tool/IO failure. Text
+            # mode keeps the FTS suggestion list (most useful next step
+            # for a human staring at a typo).
+            unresolved_block = resolution_disclosure("unresolved", target=symbol or "")
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "plan-refactor",
+                            summary={
+                                "verdict": f"Symbol '{symbol}' not found",
+                                "partial_success": True,
+                                "state": "not_found",
+                                **unresolved_block,
+                            },
+                            symbol=symbol or "",
+                            **unresolved_block,
+                        )
+                    )
+                )
+            else:
+                click.echo(symbol_not_found(conn, symbol, json_mode=False))
+            return
+
+        # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` stamps
+        # ``_resolution_tier`` so the envelope can distinguish a fully-
+        # resolved success from a degraded fuzzy-LIKE-fallback success.
+        # A refactor plan built on a wrongly-resolved symbol is the
+        # canonical silent-fallback anti-pattern — agents need to see
+        # the disclosure on the success verdict, not just the row.
+        resolution_tier = sym.get("_resolution_tier", "symbol")
+        resolution_block = resolution_disclosure(resolution_tier, target=sym["qualified_name"] or sym["name"])
 
         context = gather_symbol_context(conn, sym, task="refactor", use_propagation=False)
         test_hits = get_affected_tests_bfs(conn, sym["id"], max_hops=8)
@@ -395,6 +445,11 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
         strategy = "manual incremental refactor (simulation unavailable)"
 
     verdict = f"{risk_level} risk ({risk_score}/100), {len(plan_steps)}-step plan, strategy: {strategy}"
+    # W1245 Pattern-2 variant-D: suffix the verdict when the resolver
+    # succeeded through a degraded tier so LAW-6 single-line consumers
+    # still see the disclosure.
+    if resolution_tier == "fuzzy":
+        verdict = f"{verdict} [fuzzy resolution]"
 
     definition = {
         "name": sym["name"],
@@ -419,6 +474,8 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
                 "test_files": total_test_files,
                 "dependent_symbols": int(blast.get("dependent_symbols") or 0),
                 "dependent_files": int(blast.get("dependent_files") or 0),
+                # W1245 Pattern-2 variant-D resolution disclosure.
+                **resolution_block,
             },
             definition=definition,
             context_counts={
@@ -443,6 +500,7 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
             simulation_previews=previews if detail else previews[:1],
             tests=tests if detail else tests[: min(5, len(tests))],
             plan=plan_steps,
+            **resolution_block,
         )
         click.echo(to_json(payload))
         return

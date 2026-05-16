@@ -33,6 +33,15 @@ target module when ``get_command`` is called, but doing the import
 inside the function body keeps the cost paid exactly once at the right
 time (server invocation) instead of leaking across ``--help`` /
 shell-completion paths some users wire into prompts.
+
+Output formats: stdio MCP protocol (server start) or text/JSON for info
+modes (``--list-tools``, ``--list-tools-json``, ``--card``).
+SARIF is deliberately NOT emitted because ``roam mcp`` is a setup /
+bootstrap / daemon command — its output is either the MCP wire
+protocol or human-facing setup status (tool inventory, capability
+cards), not analysis findings with file:line coordinates. SARIF is
+reserved for scanning results. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

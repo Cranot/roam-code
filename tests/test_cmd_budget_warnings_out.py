@@ -21,10 +21,7 @@ from __future__ import annotations
 import json as _json
 from pathlib import Path
 
-import pytest
-
 from roam.commands.cmd_budget import _load_budgets
-
 
 # ---------------------------------------------------------------------------
 # _load_budgets — direct loader behaviour
@@ -109,11 +106,7 @@ def test_load_non_dict_entry_warns_and_skips(tmp_path: Path) -> None:
     """An entry that's a scalar (typo) surfaces the index + type and is skipped."""
     p = tmp_path / "budget.yaml"
     p.write_text(
-        "budgets:\n"
-        "  - just-a-string\n"
-        '  - name: "No new cycles"\n'
-        "    metric: cycles\n"
-        "    max_increase: 0\n",
+        'budgets:\n  - just-a-string\n  - name: "No new cycles"\n    metric: cycles\n    max_increase: 0\n',
         encoding="utf-8",
     )
     warnings_out: list[str] = []
@@ -135,12 +128,7 @@ def test_load_warnings_out_none_is_byte_identical_silent(tmp_path: Path) -> None
 
 def test_load_warnings_out_none_byte_identical_happy_path(tmp_path: Path) -> None:
     """Happy path with no accumulator returns the exact same budgets list as with one."""
-    body = (
-        "budgets:\n"
-        '  - name: "Health score floor"\n'
-        "    metric: health_score\n"
-        "    max_decrease: 5\n"
-    )
+    body = 'budgets:\n  - name: "Health score floor"\n    metric: health_score\n    max_decrease: 5\n'
     p = tmp_path / "budget.yaml"
     p.write_text(body, encoding="utf-8")
 
@@ -152,19 +140,10 @@ def test_load_warnings_out_none_byte_identical_happy_path(tmp_path: Path) -> Non
 
 
 def test_load_no_pyyaml_falls_back_cleanly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    no_pyyaml: None,
 ) -> None:
     """If PyYAML import fails, JSON-shaped file still loads cleanly with no warnings."""
-    import builtins
-
-    real_import = builtins.__import__
-
-    def _fake_import(name, *args, **kwargs):
-        if name == "yaml":
-            raise ImportError("simulated PyYAML absence")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", _fake_import)
     p = tmp_path / "budget.yaml"
     p.write_text(
         _json.dumps(

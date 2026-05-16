@@ -24,6 +24,12 @@ window. The summary also classifies overall direction:
 "Cohesion" is approximated by the inverse of edge churn rate (more new edges
 per symbol = falling cohesion). It's a coarse proxy but it matches what the
 trends command already calls "coupling".
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because architecture-drift outputs are invocation-scoped
+architecture trend rankings — not per-location violations. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ import re
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root
 from roam.graph.versioning import (
@@ -39,7 +46,6 @@ from roam.graph.versioning import (
     list_snapshot_files,
     read_snapshot,
 )
-from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 from roam.runs.helpers import auto_log
 
@@ -222,10 +228,7 @@ def architecture_drift_cmd(ctx, window_spec, top):
         envelope = json_envelope(
             cmd_name,
             summary={
-                "verdict": (
-                    "Need at least 2 snapshots within window — "
-                    f"found {len(snapshots)}"
-                ),
+                "verdict": (f"Need at least 2 snapshots within window — found {len(snapshots)}"),
                 "state": "insufficient_snapshots",
                 "partial_success": True,
                 "window_days": window_days,
@@ -244,10 +247,8 @@ def architecture_drift_cmd(ctx, window_spec, top):
             # auto-derive.
             agent_contract={
                 "facts": [
-                    f"architecture drift needs >= 2 snapshots; found "
-                    f"{len(snapshots)} in {root}/.roam/snapshots/",
-                    "architecture drift skipped: insufficient snapshots "
-                    "to compute trajectory",
+                    f"architecture drift needs >= 2 snapshots; found {len(snapshots)} in {root}/.roam/snapshots/",
+                    "architecture drift skipped: insufficient snapshots to compute trajectory",
                 ],
             },
             next_steps=[
@@ -305,8 +306,7 @@ def architecture_drift_cmd(ctx, window_spec, top):
                     f"architecture drift over {window_days}d window: only "
                     f"{len(loaded)} readable snapshot(s) under "
                     f"{root}/.roam/snapshots/",
-                    "architecture drift skipped: re-capture snapshots with "
-                    "`roam graph-diff --save-snapshot <label>`",
+                    "architecture drift skipped: re-capture snapshots with `roam graph-diff --save-snapshot <label>`",
                 ],
             },
         )

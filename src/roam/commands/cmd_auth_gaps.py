@@ -203,14 +203,14 @@ def _body_has_inline_authorization(body: str) -> bool:
 
 
 _HELPER_DESCENT_MAX_DEPTH = 2  # W36.10: bumped from 1 -> 2 to cover 2-deep
-                               # wrapper chains (AdminController extends
-                               # ResourceController extends BaseController where
-                               # the authorize call lives 2 hops up). Do NOT
-                               # bump beyond 2 — the dogfood corpus only
-                               # justifies depth-1; depth-2 is a conservative
-                               # extension. Depth-3+ risks FP via spurious
-                               # `authorize` matches in unrelated ancestor
-                               # methods of deep framework hierarchies.
+# wrapper chains (AdminController extends
+# ResourceController extends BaseController where
+# the authorize call lives 2 hops up). Do NOT
+# bump beyond 2 — the dogfood corpus only
+# justifies depth-1; depth-2 is a conservative
+# extension. Depth-3+ risks FP via spurious
+# `authorize` matches in unrelated ancestor
+# methods of deep framework hierarchies.
 
 
 def _method_has_authorize(
@@ -1228,8 +1228,7 @@ def _emit_auth_gaps_findings(
             subject = f"{verb} {path}".strip()
             subject_id: int | None = None
             claim = (
-                f"Auth gap: route {verb} {path} ({file_path}:{line}) — "
-                f"kind={kind}, confidence={f.get('confidence')}"
+                f"Auth gap: route {verb} {path} ({file_path}:{line}) — kind={kind}, confidence={f.get('confidence')}"
             )
             evidence = {
                 "type": "route",
@@ -1248,9 +1247,7 @@ def _emit_auth_gaps_findings(
             method = f.get("method") or ""
             subject = f"{controller}::{method}"
             if project_root is not None and method and file_path:
-                subject_id = _resolve_controller_symbol_id(
-                    conn, file_path, method, line, project_root
-                )
+                subject_id = _resolve_controller_symbol_id(conn, file_path, method, line, project_root)
             else:
                 subject_id = None
             claim = (
@@ -1362,6 +1359,7 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
       low    - Read method without authorization (may be intentionally public)
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
     # W596: canonical confidence-LEVEL rank — higher = more confident.
@@ -1449,10 +1447,7 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
     # the explicit "low" case, where they're also dropped because their
     # negated rank (1) is greater than low's negated rank (-1). Same
     # behaviour as the pre-W596 ``.get(..., 99)`` fallback.
-    all_findings = [
-        f for f in all_findings
-        if -confidence_level_rank(f["confidence"], fallback=-1) <= min_conf_rank
-    ]
+    all_findings = [f for f in all_findings if -confidence_level_rank(f["confidence"], fallback=-1) <= min_conf_rank]
 
     # Sort: high first, then medium, then low; within tier by file
     all_findings.sort(
@@ -1472,6 +1467,22 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
     # Split by type for display
     route_findings = [f for f in all_findings if f["type"] == "route"]
     ctrl_findings = [f for f in all_findings if f["type"] == "controller"]
+
+    # --- SARIF output ---
+    # W1195: SARIF projection mirrors the three confidence tiers used
+    # by the findings-registry emit path
+    # (``_auth_gap_confidence_tier``). Three closed-enum rule ids —
+    # ``auth-gaps/direct-unauthenticated-handler`` (error),
+    # ``auth-gaps/helper-indirection`` (warning), and
+    # ``auth-gaps/name-based`` (note) — so a CI gate keyed off
+    # ``level: error`` only blocks on deterministic findings, not
+    # heuristic name-matches.
+    if sarif_mode:
+        from roam.output.sarif import auth_gaps_to_sarif, write_sarif
+
+        sarif = auth_gaps_to_sarif(all_findings)
+        click.echo(write_sarif(sarif))
+        return
 
     # --- JSON output ---
     if json_mode:

@@ -38,9 +38,7 @@ Test inventory:
 from __future__ import annotations
 
 import json as _json
-import re
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -54,9 +52,7 @@ from roam.evidence.oscal import (
     build_oscal_control_mapping,
     load_control_map,
 )
-
 from tests._helpers.repo_root import repo_root
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -110,9 +106,7 @@ def _ns_props(props: list[dict]) -> dict[str, list[str]]:
 
 def test_oscal_document_has_v12_shape():
     doc = _build_doc()
-    assert "control-mapping" in doc, (
-        "missing required top-level control-mapping element"
-    )
+    assert "control-mapping" in doc, "missing required top-level control-mapping element"
     cm = doc["control-mapping"]
 
     # OSCAL v1.x requires uuid + metadata at the document root.
@@ -162,26 +156,17 @@ def test_oscal_per_map_props_include_authority_and_redaction_extensions():
     for mapping in mappings:
         for entry in mapping.get("maps", []):
             props = _ns_props(entry.get("props") or [])
-            assert "wording_guard" in props, (
-                f"missing wording_guard prop on {entry.get('source-control-id')}"
-            )
+            assert "wording_guard" in props, f"missing wording_guard prop on {entry.get('source-control-id')}"
             assert "pass_condition" in props
             assert "claim" in props
             # The W359 extension points: evidence_type + surface lists
             # surface via repeated ``prop`` entries under the namespace.
             # At least one of evidence_type / surface / required_evidence
             # should be present on a non-trivial entry.
-            roam_ext = (
-                props.get("evidence_type", [])
-                + props.get("surface", [])
-                + props.get("required_evidence", [])
-            )
+            roam_ext = props.get("evidence_type", []) + props.get("surface", []) + props.get("required_evidence", [])
             # The strongest invariant: at least 2 of those 3 are non-empty
             # for every entry in the live YAML.
-            assert len(roam_ext) >= 2, (
-                f"entry {entry.get('source-control-id')} lacks roam "
-                f"extension props; saw {props}"
-            )
+            assert len(roam_ext) >= 2, f"entry {entry.get('source-control-id')} lacks roam extension props; saw {props}"
 
 
 def test_oscal_groups_controls_by_framework():
@@ -215,7 +200,11 @@ def test_oscal_groups_controls_by_framework():
 
 from tests._helpers.wording_lint import (
     FORBIDDEN_WORDS as _FORBIDDEN_WORDS,
+)
+from tests._helpers.wording_lint import (
     NEGATION_MARKERS as _NEGATION_MARKERS,
+)
+from tests._helpers.wording_lint import (
     scan_for_overclaims,
 )
 
@@ -237,8 +226,7 @@ def test_oscal_wording_lint_compliance():
         if violations:
             word, window = violations[0]
             raise AssertionError(
-                f"compliance overclaim in OSCAL remarks ({word!r}): "
-                f"...{window}... (full text: {text[:120]!r})"
+                f"compliance overclaim in OSCAL remarks ({word!r}): ...{window}... (full text: {text[:120]!r})"
             )
 
 
@@ -249,10 +237,7 @@ def test_oscal_default_title_and_remarks_are_wording_compliant():
     """
     for text in (DEFAULT_TITLE, DEFAULT_REMARKS):
         violations = scan_for_overclaims(text)
-        assert not violations, (
-            f"forbidden word(s) in OSCAL default text without negation "
-            f"context: {violations!r}"
-        )
+        assert not violations, f"forbidden word(s) in OSCAL default text without negation context: {violations!r}"
 
 
 def test_wording_lint_single_source_of_truth():
@@ -269,12 +254,10 @@ def test_wording_lint_single_source_of_truth():
     from tests._helpers import wording_lint as canonical
 
     assert _FORBIDDEN_WORDS is canonical.FORBIDDEN_WORDS, (
-        "_FORBIDDEN_WORDS must be re-exported from "
-        "tests._helpers.wording_lint, not re-declared locally"
+        "_FORBIDDEN_WORDS must be re-exported from tests._helpers.wording_lint, not re-declared locally"
     )
     assert _NEGATION_MARKERS is canonical.NEGATION_MARKERS, (
-        "_NEGATION_MARKERS must be re-exported from "
-        "tests._helpers.wording_lint, not re-declared locally"
+        "_NEGATION_MARKERS must be re-exported from tests._helpers.wording_lint, not re-declared locally"
     )
     # The canonical vocabulary itself must be the W184-pinned set.
     assert canonical.FORBIDDEN_WORDS == (
@@ -349,7 +332,7 @@ def test_oscal_fixture_matches_built_document():
     canon_a = _json.dumps(actual, sort_keys=True, separators=(",", ":"))
     assert canon_e == canon_a, (
         "fixture drift detected; re-run "
-        ".venv/Scripts/python.exe -c \"from datetime import datetime, timezone; "
+        '.venv/Scripts/python.exe -c "from datetime import datetime, timezone; '
         "import json; from roam.evidence.oscal import build_oscal_control_mapping, "
         "load_control_map; doc = build_oscal_control_mapping("
         "load_control_map('src/roam/templates/audit_report/control-mapping.yaml'), "
@@ -428,7 +411,7 @@ def test_oscal_cli_respects_custom_control_map(tmp_path):
         "      - actor_refs\n"
         "    surface:\n"
         "      - pr-replay\n"
-        "    wording_guard: \"maps to\"\n"
+        '    wording_guard: "maps to"\n'
         "    query: |\n"
         "      SELECT 1\n"
         "    pass_condition: all_required_present\n"
@@ -454,7 +437,7 @@ def test_oscal_v0_yaml_form_is_tolerated(tmp_path):
         "- control_id: LEGACY_ENTRY\n"
         "  source_framework: legacy\n"
         "  claim: legacy claim\n"
-        "  wording_guard: \"maps to\"\n"
+        '  wording_guard: "maps to"\n'
         "  export_text: legacy maps to legacy.\n",
         encoding="utf-8",
     )

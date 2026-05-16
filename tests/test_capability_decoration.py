@@ -142,10 +142,7 @@ def test_never_decorate_set_is_internally_consistent() -> None:
     for name, target in _COMMANDS.items():
         by_target[target].append(name)
 
-    not_actually_shared = [
-        name for name in _DEPRECATED_COMMANDS
-        if len(by_target[_COMMANDS[name]]) < 2
-    ]
+    not_actually_shared = [name for name in _DEPRECATED_COMMANDS if len(by_target[_COMMANDS[name]]) < 2]
     assert not not_actually_shared, (
         f"these names are listed as aliases but their _COMMANDS target "
         f"is not shared with any other command — they could and should "

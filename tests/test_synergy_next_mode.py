@@ -20,8 +20,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (  # noqa: E402
     git_init,
@@ -30,7 +28,6 @@ from conftest import (  # noqa: E402
 )
 
 from roam.runs.ledger import log_event, start_run  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -74,9 +71,7 @@ def _make_clean_indexed_project(tmp_path: Path, name: str = "synergy1_proj") -> 
 # ---------------------------------------------------------------------------
 
 
-def test_next_suggests_mode_upgrade_after_blocked_intent_check(
-    cli_runner, tmp_path, monkeypatch
-):
+def test_next_suggests_mode_upgrade_after_blocked_intent_check(cli_runner, tmp_path, monkeypatch):
     """A logged ``intent-check`` BLOCKED event drives the new branch.
 
     We seed:
@@ -110,9 +105,7 @@ def test_next_suggests_mode_upgrade_after_blocked_intent_check(
                 "'attest' is BLOCKED",
                 "'attest' is allowed in: autonomous_pr",
             ],
-            "next_commands": [
-                "roam mode autonomous_pr  # to unlock 'attest'"
-            ],
+            "next_commands": ["roam mode autonomous_pr  # to unlock 'attest'"],
         },
     )
 

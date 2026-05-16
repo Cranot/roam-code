@@ -248,6 +248,23 @@ def start_run(repo_root: Path, agent: str, started_at: Optional[str] = None) -> 
     except Exception:
         active_mode = None
 
+    # W1255 — stamp the three canonical config-file hashes into the
+    # run's meta.extra so the collector can lift them onto the
+    # ChangeEvidence W210 fields (``rules_config_hash`` /
+    # ``constitution_hash`` / ``control_map_hash``). Missing files
+    # produce the empty string (insufficient-data discipline per
+    # W1234). Best-effort: a hashing failure must NEVER abort run
+    # creation - we fall back to an empty dict and the collector treats
+    # the fields as unstamped (the W210 omit-when-default discipline
+    # keeps the wire shape byte-identical to pre-W1255 packets).
+    config_hashes: dict[str, str] = {}
+    try:
+        from roam.evidence.config_hashes import stamp_all
+
+        config_hashes = stamp_all(Path(repo_root))
+    except Exception:
+        config_hashes = {}
+
     meta = RunMeta(
         run_id=run_id,
         agent=agent,
@@ -255,6 +272,7 @@ def start_run(repo_root: Path, agent: str, started_at: Optional[str] = None) -> 
         ended_at=None,
         status="in_progress",
         mode=active_mode,
+        extra=dict(config_hashes),
     )
     _write_meta(repo_root, meta)
     return meta

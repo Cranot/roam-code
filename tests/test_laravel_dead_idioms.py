@@ -123,9 +123,7 @@ class TestRouteClassStringRegex:
         assert m.group(2) == "index"
 
     def test_fully_qualified_class_name(self):
-        m = _ROUTE_CLASS_STRING_RE.search(
-            "[App\\Http\\Controllers\\FooController::class, 'show']"
-        )
+        m = _ROUTE_CLASS_STRING_RE.search("[App\\Http\\Controllers\\FooController::class, 'show']")
         assert m is not None
         assert m.group(1) == "App\\Http\\Controllers\\FooController"
         assert m.group(2) == "show"
@@ -179,9 +177,7 @@ class TestProjectGating:
         assert _is_laravel_project(tmp_path) is True
 
     def test_composer_with_laravel_framework_detected(self, tmp_path):
-        (tmp_path / "composer.json").write_text(
-            '{"require": {"laravel/framework": "^10"}}'
-        )
+        (tmp_path / "composer.json").write_text('{"require": {"laravel/framework": "^10"}}')
         assert _is_laravel_project(tmp_path) is True
 
     def test_plain_php_project_not_detected(self, tmp_path):
@@ -208,38 +204,45 @@ class TestRouteClassStringResolver:
         """
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
-        (root / "routes" / "web.php").write_text(
-            "<?php\nRoute::get('/foo', [FooController::class, 'index']);\n"
-        )
+        (root / "routes" / "web.php").write_text("<?php\nRoute::get('/foo', [FooController::class, 'index']);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "routes/web.php", language="php")
         _add_file(conn, 2, "app/Http/Controllers/FooController.php", language="php")
         _add_symbol(
-            conn, 100, 2, "FooController",
-            "App\\Http\\Controllers\\FooController", "class",
+            conn,
+            100,
+            2,
+            "FooController",
+            "App\\Http\\Controllers\\FooController",
+            "class",
         )
         _add_symbol(
-            conn, 101, 2, "index",
-            "App\\Http\\Controllers\\FooController\\index", "method",
+            conn,
+            101,
+            2,
+            "index",
+            "App\\Http\\Controllers\\FooController\\index",
+            "method",
         )
         _add_symbol(
-            conn, 102, 2, "unusedMethod",
-            "App\\Http\\Controllers\\FooController\\unusedMethod", "method",
+            conn,
+            102,
+            2,
+            "unusedMethod",
+            "App\\Http\\Controllers\\FooController\\unusedMethod",
+            "method",
         )
 
         n = resolve_laravel_dispatch(conn, root)
         assert n == 1
-        edges = conn.execute(
-            "SELECT source_id, target_id, kind, bridge, confidence FROM edges"
-        ).fetchall()
+        edges = conn.execute("SELECT source_id, target_id, kind, bridge, confidence FROM edges").fetchall()
         assert len(edges) == 1
         e = dict(edges[0])
         # W36.11: source is a synthetic anchor in routes/web.php
         # (file_id=1), NOT the FooController class (id=100).
         assert e["source_id"] != 100, (
-            "Edge source must not be the target controller class — "
-            "that was the W36.9 provenance bug W36.11 fixes."
+            "Edge source must not be the target controller class — that was the W36.9 provenance bug W36.11 fixes."
         )
         source_row = conn.execute(
             "SELECT name, file_id, kind, is_exported FROM symbols WHERE id = ?",
@@ -259,16 +262,18 @@ class TestRouteClassStringResolver:
         because the method is not in the symbol table."""
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
-        (root / "routes" / "web.php").write_text(
-            "<?php\nRoute::get('/x', [FooController::class, 'doesNotExist']);\n"
-        )
+        (root / "routes" / "web.php").write_text("<?php\nRoute::get('/x', [FooController::class, 'doesNotExist']);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "routes/web.php")
         _add_file(conn, 2, "app/Http/Controllers/FooController.php")
         _add_symbol(
-            conn, 100, 2, "FooController",
-            "App\\Http\\Controllers\\FooController", "class",
+            conn,
+            100,
+            2,
+            "FooController",
+            "App\\Http\\Controllers\\FooController",
+            "class",
         )
         # No method symbol called "doesNotExist".
 
@@ -279,20 +284,26 @@ class TestRouteClassStringResolver:
         """Running the resolver twice produces the same edge set, not double."""
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
-        (root / "routes" / "web.php").write_text(
-            "<?php\nRoute::get('/foo', [FooController::class, 'index']);\n"
-        )
+        (root / "routes" / "web.php").write_text("<?php\nRoute::get('/foo', [FooController::class, 'index']);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "routes/web.php")
         _add_file(conn, 2, "app/Http/Controllers/FooController.php")
         _add_symbol(
-            conn, 100, 2, "FooController",
-            "App\\Http\\Controllers\\FooController", "class",
+            conn,
+            100,
+            2,
+            "FooController",
+            "App\\Http\\Controllers\\FooController",
+            "class",
         )
         _add_symbol(
-            conn, 101, 2, "index",
-            "App\\Http\\Controllers\\FooController\\index", "method",
+            conn,
+            101,
+            2,
+            "index",
+            "App\\Http\\Controllers\\FooController\\index",
+            "method",
         )
 
         assert resolve_laravel_dispatch(conn, root) == 1
@@ -312,18 +323,24 @@ class TestEloquentScopeResolver:
         _add_file(conn, 1, "app/Models/Bar.php")
         _add_symbol(conn, 200, 1, "Bar", "App\\Models\\Bar", "class")
         _add_symbol(
-            conn, 201, 1, "scopeActive",
-            "App\\Models\\Bar\\scopeActive", "method",
+            conn,
+            201,
+            1,
+            "scopeActive",
+            "App\\Models\\Bar\\scopeActive",
+            "method",
         )
         _add_symbol(
-            conn, 202, 1, "unusedScope",
-            "App\\Models\\Bar\\unusedScope", "method",
+            conn,
+            202,
+            1,
+            "unusedScope",
+            "App\\Models\\Bar\\unusedScope",
+            "method",
         )
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT source_id, target_id, kind FROM edges WHERE kind = 'laravel_scope'"
-        ).fetchall()
+        rows = conn.execute("SELECT source_id, target_id, kind FROM edges WHERE kind = 'laravel_scope'").fetchall()
         edges = {(r["source_id"], r["target_id"]) for r in rows}
         # scopeActive -> covered; unusedScope -> still has zero inbound edges
         assert (200, 201) in edges
@@ -337,14 +354,16 @@ class TestEloquentScopeResolver:
         _add_file(conn, 1, "app/Models/Bar.php")
         _add_symbol(conn, 200, 1, "Bar", "App\\Models\\Bar", "class")
         _add_symbol(
-            conn, 201, 1, "scopefoo",
-            "App\\Models\\Bar\\scopefoo", "method",
+            conn,
+            201,
+            1,
+            "scopefoo",
+            "App\\Models\\Bar\\scopefoo",
+            "method",
         )
 
         resolve_laravel_dispatch(conn, root)
-        assert conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE kind = 'laravel_scope'"
-        ).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM edges WHERE kind = 'laravel_scope'").fetchone()[0] == 0
 
 
 class TestPolicyAutoDiscoveryResolver:
@@ -359,14 +378,16 @@ class TestPolicyAutoDiscoveryResolver:
         _add_symbol(conn, 300, 1, "Foo", "App\\Models\\Foo", "class")
         _add_symbol(conn, 400, 2, "FooPolicy", "App\\Policies\\FooPolicy", "class")
         _add_symbol(
-            conn, 401, 2, "view",
-            "App\\Policies\\FooPolicy\\view", "method",
+            conn,
+            401,
+            2,
+            "view",
+            "App\\Policies\\FooPolicy\\view",
+            "method",
         )
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT source_id, target_id, kind FROM edges WHERE kind = 'laravel_policy'"
-        ).fetchall()
+        rows = conn.execute("SELECT source_id, target_id, kind FROM edges WHERE kind = 'laravel_policy'").fetchall()
         edges = {(r["source_id"], r["target_id"]) for r in rows}
         assert (300, 401) in edges
 
@@ -377,18 +398,24 @@ class TestPolicyAutoDiscoveryResolver:
         conn = _make_conn()
         _add_file(conn, 1, "app/Policies/OrphanPolicy.php")
         _add_symbol(
-            conn, 500, 1, "OrphanPolicy",
-            "App\\Policies\\OrphanPolicy", "class",
+            conn,
+            500,
+            1,
+            "OrphanPolicy",
+            "App\\Policies\\OrphanPolicy",
+            "class",
         )
         _add_symbol(
-            conn, 501, 1, "view",
-            "App\\Policies\\OrphanPolicy\\view", "method",
+            conn,
+            501,
+            1,
+            "view",
+            "App\\Policies\\OrphanPolicy\\view",
+            "method",
         )
 
         resolve_laravel_dispatch(conn, root)
-        assert conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE kind = 'laravel_policy'"
-        ).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM edges WHERE kind = 'laravel_policy'").fetchone()[0] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -403,31 +430,39 @@ class TestDeadIsStillDead:
         detection FP signal stays."""
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
-        (root / "routes" / "web.php").write_text(
-            "<?php\nRoute::get('/foo', [FooController::class, 'index']);\n"
-        )
+        (root / "routes" / "web.php").write_text("<?php\nRoute::get('/foo', [FooController::class, 'index']);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "routes/web.php")
         _add_file(conn, 2, "app/Http/Controllers/FooController.php")
         _add_symbol(
-            conn, 100, 2, "FooController",
-            "App\\Http\\Controllers\\FooController", "class",
+            conn,
+            100,
+            2,
+            "FooController",
+            "App\\Http\\Controllers\\FooController",
+            "class",
         )
         _add_symbol(
-            conn, 101, 2, "index",
-            "App\\Http\\Controllers\\FooController\\index", "method",
+            conn,
+            101,
+            2,
+            "index",
+            "App\\Http\\Controllers\\FooController\\index",
+            "method",
         )
         _add_symbol(
-            conn, 102, 2, "unusedMethod",
-            "App\\Http\\Controllers\\FooController\\unusedMethod", "method",
+            conn,
+            102,
+            2,
+            "unusedMethod",
+            "App\\Http\\Controllers\\FooController\\unusedMethod",
+            "method",
         )
 
         resolve_laravel_dispatch(conn, root)
         # ``unusedMethod`` (id 102) has zero inbound edges of any kind.
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE target_id = 102"
-        ).fetchone()
+        rows = conn.execute("SELECT COUNT(*) FROM edges WHERE target_id = 102").fetchone()
         assert rows[0] == 0
 
 
@@ -441,9 +476,7 @@ class TestNonLaravelProjectsSkipped:
         """A PHP project without ``artisan`` or ``laravel/framework`` in
         composer.json must not run the resolver — and zero edges are
         inserted even when the patterns would otherwise match."""
-        (tmp_path / "composer.json").write_text(
-            '{"require": {"phpunit/phpunit": "^9"}}'
-        )
+        (tmp_path / "composer.json").write_text('{"require": {"phpunit/phpunit": "^9"}}')
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "foo.php").write_text(
             "<?php\n// [Bar::class, 'baz'] looks like Laravel syntax but isn't.\n"
@@ -470,9 +503,7 @@ class TestObserverRegistrationRegex:
         assert m.group(2) == "FooObserver"
 
     def test_fully_qualified_observer(self):
-        m = _OBSERVER_REGISTER_RE.search(
-            "User::observe(App\\Observers\\UserObserver::class)"
-        )
+        m = _OBSERVER_REGISTER_RE.search("User::observe(App\\Observers\\UserObserver::class)")
         assert m is not None
         assert m.group(2) == "App\\Observers\\UserObserver"
 
@@ -514,37 +545,27 @@ class TestJobDispatchRegex:
 
 class TestShouldQueueRegex:
     def test_single_interface(self):
-        m = _SHOULDQUEUE_CLASS_RE.search(
-            "class SyncJob implements ShouldQueue {"
-        )
+        m = _SHOULDQUEUE_CLASS_RE.search("class SyncJob implements ShouldQueue {")
         assert m is not None
         assert m.group(1) == "SyncJob"
 
     def test_multiple_interfaces_shouldqueue_at_end(self):
-        m = _SHOULDQUEUE_CLASS_RE.search(
-            "class SyncJob implements Bar, Baz, ShouldQueue {"
-        )
+        m = _SHOULDQUEUE_CLASS_RE.search("class SyncJob implements Bar, Baz, ShouldQueue {")
         assert m is not None
         assert m.group(1) == "SyncJob"
 
     def test_multiple_interfaces_shouldqueue_in_middle(self):
-        m = _SHOULDQUEUE_CLASS_RE.search(
-            "class SyncJob implements Bar, ShouldQueue, Baz {"
-        )
+        m = _SHOULDQUEUE_CLASS_RE.search("class SyncJob implements Bar, ShouldQueue, Baz {")
         assert m is not None
         assert m.group(1) == "SyncJob"
 
     def test_class_with_extends_and_shouldqueue(self):
-        m = _SHOULDQUEUE_CLASS_RE.search(
-            "class SyncJob extends BaseJob implements ShouldQueue {"
-        )
+        m = _SHOULDQUEUE_CLASS_RE.search("class SyncJob extends BaseJob implements ShouldQueue {")
         assert m is not None
         assert m.group(1) == "SyncJob"
 
     def test_no_shouldqueue_not_matched(self):
-        assert _SHOULDQUEUE_CLASS_RE.search(
-            "class SyncJob implements Bar {"
-        ) is None
+        assert _SHOULDQUEUE_CLASS_RE.search("class SyncJob implements Bar {") is None
 
 
 class TestArtisanCommandRegex:
@@ -554,16 +575,12 @@ class TestArtisanCommandRegex:
         assert m.group(1) == "FooCommand"
 
     def test_fully_qualified_command(self):
-        m = _ARTISAN_COMMAND_RE.search(
-            "class FooCommand extends Illuminate\\Console\\Command {"
-        )
+        m = _ARTISAN_COMMAND_RE.search("class FooCommand extends Illuminate\\Console\\Command {")
         assert m is not None
         assert m.group(1) == "FooCommand"
 
     def test_extends_other_class_not_matched(self):
-        assert _ARTISAN_COMMAND_RE.search(
-            "class FooCommand extends BaseController {"
-        ) is None
+        assert _ARTISAN_COMMAND_RE.search("class FooCommand extends BaseController {") is None
 
 
 # ---------------------------------------------------------------------------
@@ -579,28 +596,20 @@ class TestObserverRegistration:
         root = _setup_laravel_root(tmp_path)
         (root / "app").mkdir()
         (root / "app" / "Providers").mkdir()
-        (root / "app" / "Providers" / "AppServiceProvider.php").write_text(
-            "<?php\nFoo::observe(FooObserver::class);\n"
-        )
+        (root / "app" / "Providers" / "AppServiceProvider.php").write_text("<?php\nFoo::observe(FooObserver::class);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Providers/AppServiceProvider.php")
         _add_file(conn, 2, "app/Models/Foo.php")
         _add_file(conn, 3, "app/Observers/FooObserver.php")
         _add_symbol(conn, 100, 2, "Foo", "App\\Models\\Foo", "class")
-        _add_symbol(conn, 200, 3, "FooObserver",
-                    "App\\Observers\\FooObserver", "class")
-        _add_symbol(conn, 201, 3, "created",
-                    "App\\Observers\\FooObserver\\created", "method")
-        _add_symbol(conn, 202, 3, "updated",
-                    "App\\Observers\\FooObserver\\updated", "method")
-        _add_symbol(conn, 203, 3, "deleted",
-                    "App\\Observers\\FooObserver\\deleted", "method")
+        _add_symbol(conn, 200, 3, "FooObserver", "App\\Observers\\FooObserver", "class")
+        _add_symbol(conn, 201, 3, "created", "App\\Observers\\FooObserver\\created", "method")
+        _add_symbol(conn, 202, 3, "updated", "App\\Observers\\FooObserver\\updated", "method")
+        _add_symbol(conn, 203, 3, "deleted", "App\\Observers\\FooObserver\\deleted", "method")
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT source_id, target_id FROM edges WHERE kind = 'laravel_observer'"
-        ).fetchall()
+        rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'laravel_observer'").fetchall()
         edges = {(r["source_id"], r["target_id"]) for r in rows}
         # Foo class -> each of created/updated/deleted on FooObserver.
         assert (100, 201) in edges
@@ -614,27 +623,20 @@ class TestObserverRegistration:
         root = _setup_laravel_root(tmp_path)
         (root / "app").mkdir()
         (root / "app" / "Providers").mkdir()
-        (root / "app" / "Providers" / "AppServiceProvider.php").write_text(
-            "<?php\nFoo::observe(FooObserver::class);\n"
-        )
+        (root / "app" / "Providers" / "AppServiceProvider.php").write_text("<?php\nFoo::observe(FooObserver::class);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Providers/AppServiceProvider.php")
         _add_file(conn, 2, "app/Models/Foo.php")
         _add_file(conn, 3, "app/Observers/FooObserver.php")
         _add_symbol(conn, 100, 2, "Foo", "App\\Models\\Foo", "class")
-        _add_symbol(conn, 200, 3, "FooObserver",
-                    "App\\Observers\\FooObserver", "class")
-        _add_symbol(conn, 201, 3, "created",
-                    "App\\Observers\\FooObserver\\created", "method")
-        _add_symbol(conn, 299, 3, "sendAlert",
-                    "App\\Observers\\FooObserver\\sendAlert", "method")
+        _add_symbol(conn, 200, 3, "FooObserver", "App\\Observers\\FooObserver", "class")
+        _add_symbol(conn, 201, 3, "created", "App\\Observers\\FooObserver\\created", "method")
+        _add_symbol(conn, 299, 3, "sendAlert", "App\\Observers\\FooObserver\\sendAlert", "method")
 
         resolve_laravel_dispatch(conn, root)
         # ``created`` covered; ``sendAlert`` has no inbound edge.
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE target_id = 299"
-        ).fetchone()
+        rows = conn.execute("SELECT COUNT(*) FROM edges WHERE target_id = 299").fetchone()
         assert rows[0] == 0
 
 
@@ -662,22 +664,24 @@ class TestJobDispatch:
         _add_file(conn, 2, "app/Jobs/SyncJob.php")
         # Realistic line ranges: class wraps lines 2..6, method wraps 3..5.
         # The Bus::dispatch call is on line 4 — inside store().
-        _add_symbol(conn, 100, 1, "OrderController",
-                    "App\\Http\\Controllers\\OrderController", "class",
-                    line_start=2, line_end=6)
-        _add_symbol(conn, 101, 1, "store",
-                    "App\\Http\\Controllers\\OrderController\\store", "method",
-                    line_start=3, line_end=5)
-        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class",
-                    line_start=1, line_end=3)
-        _add_symbol(conn, 201, 2, "handle",
-                    "App\\Jobs\\SyncJob\\handle", "method",
-                    line_start=2, line_end=2)
+        _add_symbol(
+            conn,
+            100,
+            1,
+            "OrderController",
+            "App\\Http\\Controllers\\OrderController",
+            "class",
+            line_start=2,
+            line_end=6,
+        )
+        _add_symbol(
+            conn, 101, 1, "store", "App\\Http\\Controllers\\OrderController\\store", "method", line_start=3, line_end=5
+        )
+        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class", line_start=1, line_end=3)
+        _add_symbol(conn, 201, 2, "handle", "App\\Jobs\\SyncJob\\handle", "method", line_start=2, line_end=2)
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT source_id, target_id FROM edges WHERE kind = 'laravel_job'"
-        ).fetchall()
+        rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'laravel_job'").fetchall()
         edges = {(r["source_id"], r["target_id"]) for r in rows}
         # W774: edge source is the *method* that called dispatch (store, 101),
         # NOT the enclosing class (OrderController, 100). The class is also
@@ -698,30 +702,19 @@ class TestJobDispatch:
         (root / "app").mkdir()
         (root / "app" / "Console").mkdir()
         (root / "app" / "Console" / "Kernel.php").write_text(
-            "<?php\nclass Kernel {\n"
-            "  public function schedule() {\n"
-            "    SyncJob::dispatch();\n"
-            "  }\n}\n"
+            "<?php\nclass Kernel {\n  public function schedule() {\n    SyncJob::dispatch();\n  }\n}\n"
         )
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Console/Kernel.php")
         _add_file(conn, 2, "app/Jobs/SyncJob.php")
-        _add_symbol(conn, 100, 1, "Kernel", "App\\Console\\Kernel", "class",
-                    line_start=2, line_end=6)
-        _add_symbol(conn, 101, 1, "schedule",
-                    "App\\Console\\Kernel\\schedule", "method",
-                    line_start=3, line_end=5)
-        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class",
-                    line_start=1, line_end=3)
-        _add_symbol(conn, 201, 2, "handle",
-                    "App\\Jobs\\SyncJob\\handle", "method",
-                    line_start=2, line_end=2)
+        _add_symbol(conn, 100, 1, "Kernel", "App\\Console\\Kernel", "class", line_start=2, line_end=6)
+        _add_symbol(conn, 101, 1, "schedule", "App\\Console\\Kernel\\schedule", "method", line_start=3, line_end=5)
+        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class", line_start=1, line_end=3)
+        _add_symbol(conn, 201, 2, "handle", "App\\Jobs\\SyncJob\\handle", "method", line_start=2, line_end=2)
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT source_id, target_id FROM edges WHERE kind = 'laravel_job'"
-        ).fetchall()
+        rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'laravel_job'").fetchall()
         edges = {(r["source_id"], r["target_id"]) for r in rows}
         # W774: containing method, not containing class.
         assert (101, 201) in edges
@@ -736,20 +729,16 @@ class TestQueueHandler:
         (root / "app").mkdir()
         (root / "app" / "Jobs").mkdir()
         (root / "app" / "Jobs" / "SyncJob.php").write_text(
-            "<?php\nclass SyncJob implements ShouldQueue {\n"
-            "  public function handle() {}\n}\n"
+            "<?php\nclass SyncJob implements ShouldQueue {\n  public function handle() {}\n}\n"
         )
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Jobs/SyncJob.php")
         _add_symbol(conn, 100, 1, "SyncJob", "App\\Jobs\\SyncJob", "class")
-        _add_symbol(conn, 101, 1, "handle",
-                    "App\\Jobs\\SyncJob\\handle", "method")
+        _add_symbol(conn, 101, 1, "handle", "App\\Jobs\\SyncJob\\handle", "method")
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT source_id, target_id FROM edges WHERE kind = 'laravel_queue'"
-        ).fetchall()
+        rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'laravel_queue'").fetchall()
         edges = {(r["source_id"], r["target_id"]) for r in rows}
         assert (100, 101) in edges
 
@@ -760,20 +749,16 @@ class TestQueueHandler:
         (root / "app").mkdir()
         (root / "app" / "Jobs").mkdir()
         (root / "app" / "Jobs" / "SyncJob.php").write_text(
-            "<?php\nclass SyncJob implements Bar, ShouldQueue, Baz {\n"
-            "  public function handle() {}\n}\n"
+            "<?php\nclass SyncJob implements Bar, ShouldQueue, Baz {\n  public function handle() {}\n}\n"
         )
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Jobs/SyncJob.php")
         _add_symbol(conn, 100, 1, "SyncJob", "App\\Jobs\\SyncJob", "class")
-        _add_symbol(conn, 101, 1, "handle",
-                    "App\\Jobs\\SyncJob\\handle", "method")
+        _add_symbol(conn, 101, 1, "handle", "App\\Jobs\\SyncJob\\handle", "method")
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE kind = 'laravel_queue' AND target_id = 101"
-        ).fetchone()
+        rows = conn.execute("SELECT COUNT(*) FROM edges WHERE kind = 'laravel_queue' AND target_id = 101").fetchone()
         assert rows[0] == 1
 
 
@@ -786,21 +771,16 @@ class TestArtisanCommand:
         (root / "app" / "Console").mkdir()
         (root / "app" / "Console" / "Commands").mkdir()
         (root / "app" / "Console" / "Commands" / "FooCommand.php").write_text(
-            "<?php\nclass FooCommand extends Command {\n"
-            "  public function handle() {}\n}\n"
+            "<?php\nclass FooCommand extends Command {\n  public function handle() {}\n}\n"
         )
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Console/Commands/FooCommand.php")
-        _add_symbol(conn, 100, 1, "FooCommand",
-                    "App\\Console\\Commands\\FooCommand", "class")
-        _add_symbol(conn, 101, 1, "handle",
-                    "App\\Console\\Commands\\FooCommand\\handle", "method")
+        _add_symbol(conn, 100, 1, "FooCommand", "App\\Console\\Commands\\FooCommand", "class")
+        _add_symbol(conn, 101, 1, "handle", "App\\Console\\Commands\\FooCommand\\handle", "method")
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT source_id, target_id FROM edges WHERE kind = 'laravel_artisan'"
-        ).fetchall()
+        rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'laravel_artisan'").fetchall()
         edges = {(r["source_id"], r["target_id"]) for r in rows}
         assert (100, 101) in edges
 
@@ -811,21 +791,16 @@ class TestArtisanCommand:
         (root / "app" / "Console").mkdir()
         (root / "app" / "Console" / "Commands").mkdir()
         (root / "app" / "Console" / "Commands" / "FooCommand.php").write_text(
-            "<?php\nclass FooCommand extends Illuminate\\Console\\Command {\n"
-            "  public function handle() {}\n}\n"
+            "<?php\nclass FooCommand extends Illuminate\\Console\\Command {\n  public function handle() {}\n}\n"
         )
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Console/Commands/FooCommand.php")
-        _add_symbol(conn, 100, 1, "FooCommand",
-                    "App\\Console\\Commands\\FooCommand", "class")
-        _add_symbol(conn, 101, 1, "handle",
-                    "App\\Console\\Commands\\FooCommand\\handle", "method")
+        _add_symbol(conn, 100, 1, "FooCommand", "App\\Console\\Commands\\FooCommand", "class")
+        _add_symbol(conn, 101, 1, "handle", "App\\Console\\Commands\\FooCommand\\handle", "method")
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE kind = 'laravel_artisan'"
-        ).fetchone()
+        rows = conn.execute("SELECT COUNT(*) FROM edges WHERE kind = 'laravel_artisan'").fetchone()
         assert rows[0] == 1
 
     def test_non_command_class_not_covered(self, tmp_path):
@@ -834,8 +809,7 @@ class TestArtisanCommand:
         root = _setup_laravel_root(tmp_path)
         (root / "app").mkdir()
         (root / "app" / "Foo.php").write_text(
-            "<?php\nclass Foo extends BaseController {\n"
-            "  public function handle() {}\n}\n"
+            "<?php\nclass Foo extends BaseController {\n  public function handle() {}\n}\n"
         )
 
         conn = _make_conn()
@@ -844,9 +818,7 @@ class TestArtisanCommand:
         _add_symbol(conn, 101, 1, "handle", "App\\Foo\\handle", "method")
 
         resolve_laravel_dispatch(conn, root)
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM edges WHERE kind = 'laravel_artisan'"
-        ).fetchone()
+        rows = conn.execute("SELECT COUNT(*) FROM edges WHERE kind = 'laravel_artisan'").fetchone()
         assert rows[0] == 0
 
 
@@ -869,20 +841,26 @@ class TestSyntheticFileAnchorProvenance:
         """
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
-        (root / "routes" / "web.php").write_text(
-            "<?php\nRoute::get('/foo', [FooController::class, 'index']);\n"
-        )
+        (root / "routes" / "web.php").write_text("<?php\nRoute::get('/foo', [FooController::class, 'index']);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "routes/web.php")
         _add_file(conn, 2, "app/Http/Controllers/FooController.php")
         _add_symbol(
-            conn, 100, 2, "FooController",
-            "App\\Http\\Controllers\\FooController", "class",
+            conn,
+            100,
+            2,
+            "FooController",
+            "App\\Http\\Controllers\\FooController",
+            "class",
         )
         _add_symbol(
-            conn, 101, 2, "index",
-            "App\\Http\\Controllers\\FooController\\index", "method",
+            conn,
+            101,
+            2,
+            "index",
+            "App\\Http\\Controllers\\FooController\\index",
+            "method",
         )
 
         resolve_laravel_dispatch(conn, root)
@@ -911,20 +889,26 @@ class TestSyntheticFileAnchorProvenance:
         export — defeating the entire post-resolver."""
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
-        (root / "routes" / "web.php").write_text(
-            "<?php\nRoute::get('/foo', [FooController::class, 'index']);\n"
-        )
+        (root / "routes" / "web.php").write_text("<?php\nRoute::get('/foo', [FooController::class, 'index']);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "routes/web.php")
         _add_file(conn, 2, "app/Http/Controllers/FooController.php")
         _add_symbol(
-            conn, 100, 2, "FooController",
-            "App\\Http\\Controllers\\FooController", "class",
+            conn,
+            100,
+            2,
+            "FooController",
+            "App\\Http\\Controllers\\FooController",
+            "class",
         )
         _add_symbol(
-            conn, 101, 2, "index",
-            "App\\Http\\Controllers\\FooController\\index", "method",
+            conn,
+            101,
+            2,
+            "index",
+            "App\\Http\\Controllers\\FooController\\index",
+            "method",
         )
 
         resolve_laravel_dispatch(conn, root)
@@ -944,18 +928,14 @@ class TestSyntheticFileAnchorProvenance:
         root = _setup_laravel_root(tmp_path)
         (root / "app").mkdir()
         (root / "app" / "Providers").mkdir()
-        (root / "app" / "Providers" / "AppServiceProvider.php").write_text(
-            "<?php\nFoo::observe(FooObserver::class);\n"
-        )
+        (root / "app" / "Providers" / "AppServiceProvider.php").write_text("<?php\nFoo::observe(FooObserver::class);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Providers/AppServiceProvider.php")
         _add_file(conn, 3, "app/Observers/FooObserver.php")
         # Note: NO Foo Model class — only the Observer is indexed.
-        _add_symbol(conn, 200, 3, "FooObserver",
-                    "App\\Observers\\FooObserver", "class")
-        _add_symbol(conn, 201, 3, "created",
-                    "App\\Observers\\FooObserver\\created", "method")
+        _add_symbol(conn, 200, 3, "FooObserver", "App\\Observers\\FooObserver", "class")
+        _add_symbol(conn, 201, 3, "created", "App\\Observers\\FooObserver\\created", "method")
 
         resolve_laravel_dispatch(conn, root)
         row = conn.execute(
@@ -979,20 +959,26 @@ class TestSyntheticFileAnchorProvenance:
         anchor row per file — not accumulate one per run."""
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
-        (root / "routes" / "web.php").write_text(
-            "<?php\nRoute::get('/foo', [FooController::class, 'index']);\n"
-        )
+        (root / "routes" / "web.php").write_text("<?php\nRoute::get('/foo', [FooController::class, 'index']);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "routes/web.php")
         _add_file(conn, 2, "app/Http/Controllers/FooController.php")
         _add_symbol(
-            conn, 100, 2, "FooController",
-            "App\\Http\\Controllers\\FooController", "class",
+            conn,
+            100,
+            2,
+            "FooController",
+            "App\\Http\\Controllers\\FooController",
+            "class",
         )
         _add_symbol(
-            conn, 101, 2, "index",
-            "App\\Http\\Controllers\\FooController\\index", "method",
+            conn,
+            101,
+            2,
+            "index",
+            "App\\Http\\Controllers\\FooController\\index",
+            "method",
         )
 
         resolve_laravel_dispatch(conn, root)
@@ -1015,9 +1001,7 @@ class TestSyntheticFileAnchorProvenance:
         re-indexes when route targets are unresolvable."""
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
-        (root / "routes" / "web.php").write_text(
-            "<?php\nRoute::get('/foo', [GhostController::class, 'index']);\n"
-        )
+        (root / "routes" / "web.php").write_text("<?php\nRoute::get('/foo', [GhostController::class, 'index']);\n")
 
         conn = _make_conn()
         _add_file(conn, 1, "routes/web.php")
@@ -1037,8 +1021,7 @@ class TestSyntheticFileAnchorProvenance:
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
         (root / "routes" / "web.php").write_text(
-            "<?php\nclass RouteHelper {}\n"
-            "Route::get('/foo', [FooController::class, 'index']);\n"
+            "<?php\nclass RouteHelper {}\nRoute::get('/foo', [FooController::class, 'index']);\n"
         )
 
         conn = _make_conn()
@@ -1047,12 +1030,20 @@ class TestSyntheticFileAnchorProvenance:
         # routes/web.php has a class symbol of its own.
         _add_symbol(conn, 50, 1, "RouteHelper", "RouteHelper", "class")
         _add_symbol(
-            conn, 100, 2, "FooController",
-            "App\\Http\\Controllers\\FooController", "class",
+            conn,
+            100,
+            2,
+            "FooController",
+            "App\\Http\\Controllers\\FooController",
+            "class",
         )
         _add_symbol(
-            conn, 101, 2, "index",
-            "App\\Http\\Controllers\\FooController\\index", "method",
+            conn,
+            101,
+            2,
+            "index",
+            "App\\Http\\Controllers\\FooController\\index",
+            "method",
         )
 
         resolve_laravel_dispatch(conn, root)
@@ -1063,9 +1054,7 @@ class TestSyntheticFileAnchorProvenance:
         ).fetchone()[0]
         assert anchor_count == 0
         # Edge source is the real class symbol.
-        row = conn.execute(
-            "SELECT source_id FROM edges WHERE kind = 'laravel_route' AND target_id = 101"
-        ).fetchone()
+        row = conn.execute("SELECT source_id FROM edges WHERE kind = 'laravel_route' AND target_id = 101").fetchone()
         assert row["source_id"] == 50
 
 
@@ -1094,55 +1083,53 @@ class TestW774ContainingSymbolAttribution:
         (root / "app" / "Http" / "Controllers").mkdir()
         # Two methods each dispatching one job.
         (root / "app" / "Http" / "Controllers" / "OrderController.php").write_text(
-            "<?php\n"                          # 1
-            "class OrderController {\n"        # 2
-            "  public function store() {\n"    # 3
-            "    Bus::dispatch(new SyncJob);\n"# 4
-            "  }\n"                            # 5
-            "  public function ship() {\n"     # 6
-            "    Bus::dispatch(new ShipJob);\n"# 7
-            "  }\n"                            # 8
-            "}\n"                              # 9
+            "<?php\n"  # 1
+            "class OrderController {\n"  # 2
+            "  public function store() {\n"  # 3
+            "    Bus::dispatch(new SyncJob);\n"  # 4
+            "  }\n"  # 5
+            "  public function ship() {\n"  # 6
+            "    Bus::dispatch(new ShipJob);\n"  # 7
+            "  }\n"  # 8
+            "}\n"  # 9
         )
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Http/Controllers/OrderController.php")
         _add_file(conn, 2, "app/Jobs/SyncJob.php")
         _add_file(conn, 3, "app/Jobs/ShipJob.php")
-        _add_symbol(conn, 100, 1, "OrderController",
-                    "App\\Http\\Controllers\\OrderController", "class",
-                    line_start=2, line_end=9)
-        _add_symbol(conn, 101, 1, "store",
-                    "App\\Http\\Controllers\\OrderController\\store", "method",
-                    line_start=3, line_end=5)
-        _add_symbol(conn, 102, 1, "ship",
-                    "App\\Http\\Controllers\\OrderController\\ship", "method",
-                    line_start=6, line_end=8)
-        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class",
-                    line_start=1, line_end=3)
-        _add_symbol(conn, 201, 2, "handle",
-                    "App\\Jobs\\SyncJob\\handle", "method",
-                    line_start=2, line_end=2)
-        _add_symbol(conn, 300, 3, "ShipJob", "App\\Jobs\\ShipJob", "class",
-                    line_start=1, line_end=3)
-        _add_symbol(conn, 301, 3, "handle",
-                    "App\\Jobs\\ShipJob\\handle", "method",
-                    line_start=2, line_end=2)
+        _add_symbol(
+            conn,
+            100,
+            1,
+            "OrderController",
+            "App\\Http\\Controllers\\OrderController",
+            "class",
+            line_start=2,
+            line_end=9,
+        )
+        _add_symbol(
+            conn, 101, 1, "store", "App\\Http\\Controllers\\OrderController\\store", "method", line_start=3, line_end=5
+        )
+        _add_symbol(
+            conn, 102, 1, "ship", "App\\Http\\Controllers\\OrderController\\ship", "method", line_start=6, line_end=8
+        )
+        _add_symbol(conn, 200, 2, "SyncJob", "App\\Jobs\\SyncJob", "class", line_start=1, line_end=3)
+        _add_symbol(conn, 201, 2, "handle", "App\\Jobs\\SyncJob\\handle", "method", line_start=2, line_end=2)
+        _add_symbol(conn, 300, 3, "ShipJob", "App\\Jobs\\ShipJob", "class", line_start=1, line_end=3)
+        _add_symbol(conn, 301, 3, "handle", "App\\Jobs\\ShipJob\\handle", "method", line_start=2, line_end=2)
 
         resolve_laravel_dispatch(conn, root)
         edges = {
             (r["source_id"], r["target_id"])
-            for r in conn.execute(
-                "SELECT source_id, target_id FROM edges WHERE kind = 'laravel_job'"
-            ).fetchall()
+            for r in conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'laravel_job'").fetchall()
         }
         # Each dispatch attributes to its own containing method.
         assert (101, 201) in edges
         assert (102, 301) in edges
         # The class is NEVER credited (would be the MIN(id) bug).
         assert all(src != 100 for src, _ in edges), (
-            f"W774 regression: OrderController class attributed as caller. "
-            f"Edges: {edges}"
+            f"W774 regression: OrderController class attributed as caller. Edges: {edges}"
         )
 
     def test_route_inside_method_attributes_to_method(self, tmp_path):
@@ -1153,34 +1140,39 @@ class TestW774ContainingSymbolAttribution:
         (root / "app").mkdir()
         (root / "app" / "Providers").mkdir()
         (root / "app" / "Providers" / "RouteServiceProvider.php").write_text(
-            "<?php\n"                                                 # 1
-            "class RouteServiceProvider {\n"                          # 2
-            "  public function boot() {\n"                            # 3
+            "<?php\n"  # 1
+            "class RouteServiceProvider {\n"  # 2
+            "  public function boot() {\n"  # 3
             "    Route::get('/foo', [FooController::class, 'index']);\n"  # 4
-            "  }\n"                                                   # 5
-            "}\n"                                                     # 6
+            "  }\n"  # 5
+            "}\n"  # 6
         )
 
         conn = _make_conn()
         _add_file(conn, 1, "app/Providers/RouteServiceProvider.php")
         _add_file(conn, 2, "app/Http/Controllers/FooController.php")
-        _add_symbol(conn, 50, 1, "RouteServiceProvider",
-                    "App\\Providers\\RouteServiceProvider", "class",
-                    line_start=2, line_end=6)
-        _add_symbol(conn, 51, 1, "boot",
-                    "App\\Providers\\RouteServiceProvider\\boot", "method",
-                    line_start=3, line_end=5)
-        _add_symbol(conn, 100, 2, "FooController",
-                    "App\\Http\\Controllers\\FooController", "class",
-                    line_start=1, line_end=5)
-        _add_symbol(conn, 101, 2, "index",
-                    "App\\Http\\Controllers\\FooController\\index", "method",
-                    line_start=2, line_end=4)
+        _add_symbol(
+            conn,
+            50,
+            1,
+            "RouteServiceProvider",
+            "App\\Providers\\RouteServiceProvider",
+            "class",
+            line_start=2,
+            line_end=6,
+        )
+        _add_symbol(
+            conn, 51, 1, "boot", "App\\Providers\\RouteServiceProvider\\boot", "method", line_start=3, line_end=5
+        )
+        _add_symbol(
+            conn, 100, 2, "FooController", "App\\Http\\Controllers\\FooController", "class", line_start=1, line_end=5
+        )
+        _add_symbol(
+            conn, 101, 2, "index", "App\\Http\\Controllers\\FooController\\index", "method", line_start=2, line_end=4
+        )
 
         resolve_laravel_dispatch(conn, root)
-        row = conn.execute(
-            "SELECT source_id FROM edges WHERE kind = 'laravel_route' AND target_id = 101"
-        ).fetchone()
+        row = conn.execute("SELECT source_id FROM edges WHERE kind = 'laravel_route' AND target_id = 101").fetchone()
         assert row is not None
         # boot() (51) — not RouteServiceProvider class (50).
         assert row["source_id"] == 51
@@ -1194,8 +1186,8 @@ class TestW774ContainingSymbolAttribution:
         root = _setup_laravel_root(tmp_path)
         (root / "routes").mkdir()
         (root / "routes" / "web.php").write_text(
-            "<?php\n"                                                 # 1
-            "function helper() { return 1; }\n"                       # 2
+            "<?php\n"  # 1
+            "function helper() { return 1; }\n"  # 2
             "Route::get('/foo', [FooController::class, 'index']);\n"  # 3
         )
         (root / "app").mkdir()
@@ -1209,14 +1201,13 @@ class TestW774ContainingSymbolAttribution:
         _add_file(conn, 1, "routes/web.php")
         _add_file(conn, 2, "app/Http/Controllers/FooController.php")
         # helper() lives only on line 2 — does NOT contain line 3 where Route::get is.
-        _add_symbol(conn, 50, 1, "helper", "helper", "function",
-                    line_start=2, line_end=2)
-        _add_symbol(conn, 100, 2, "FooController",
-                    "App\\Http\\Controllers\\FooController", "class",
-                    line_start=2, line_end=2)
-        _add_symbol(conn, 101, 2, "index",
-                    "App\\Http\\Controllers\\FooController\\index", "method",
-                    line_start=2, line_end=2)
+        _add_symbol(conn, 50, 1, "helper", "helper", "function", line_start=2, line_end=2)
+        _add_symbol(
+            conn, 100, 2, "FooController", "App\\Http\\Controllers\\FooController", "class", line_start=2, line_end=2
+        )
+        _add_symbol(
+            conn, 101, 2, "index", "App\\Http\\Controllers\\FooController\\index", "method", line_start=2, line_end=2
+        )
 
         resolve_laravel_dispatch(conn, root)
         row = conn.execute(

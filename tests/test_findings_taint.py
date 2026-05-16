@@ -24,12 +24,12 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_taint import (
     TAINT_DETECTOR_VERSION,
     _taint_finding_id,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
 
 
@@ -122,9 +122,7 @@ def test_taint_persist_flag_default_off(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'taint'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'taint'").fetchone()[0]
             except sqlite3.OperationalError:
                 # findings table may not be present on every test env's
                 # schema flavour — that's still a "no findings emitted"
@@ -177,13 +175,9 @@ def test_taint_finding_id_str_is_deterministic_e2e(tmp_path):
         with open_db(readonly=True) as conn:
             first_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'taint'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'taint'").fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'taint'"
-            ).fetchone()[0]
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'taint'").fetchone()[0]
         assert first_count == len(first_ids), "duplicate finding_id_str on first run"
 
         # Second run — same fixture, same code, same hash inputs.
@@ -194,13 +188,9 @@ def test_taint_finding_id_str_is_deterministic_e2e(tmp_path):
         with open_db(readonly=True) as conn:
             second_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'taint'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'taint'").fetchall()
             }
-            second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'taint'"
-            ).fetchone()[0]
+            second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'taint'").fetchone()[0]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
     finally:
@@ -217,8 +207,7 @@ def test_taint_finding_evidence_links_to_flow(tmp_path):
 
         with open_db(readonly=True) as conn:
             row = conn.execute(
-                "SELECT evidence_json, subject_id, claim FROM findings "
-                "WHERE source_detector = 'taint' LIMIT 1"
+                "SELECT evidence_json, subject_id, claim FROM findings WHERE source_detector = 'taint' LIMIT 1"
             ).fetchone()
             assert row is not None
             evidence = json.loads(row["evidence_json"])
@@ -262,18 +251,14 @@ def test_taint_findings_visible_via_cmd_findings_list(tmp_path):
         _run_taint_persist(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "taint"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "taint"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "taint" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "taint" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "taint" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 

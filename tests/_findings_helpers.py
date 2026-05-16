@@ -79,20 +79,14 @@ def assert_detector_visible_in_findings_count(
     assert result.exit_code == 0, result.output
     envelope = json.loads(result.output)
     assert envelope["summary"]["state"] == "populated"
-    assert detector_kind in envelope["counts"], (
-        f"{detector_kind!r} missing from counts={envelope['counts']!r}"
-    )
+    assert detector_kind in envelope["counts"], f"{detector_kind!r} missing from counts={envelope['counts']!r}"
 
     actual = envelope["counts"][detector_kind]
     if expected_exact_count is not None:
         assert actual == expected_exact_count, (
-            f"{detector_kind} count: expected exact {expected_exact_count}, "
-            f"got {actual}"
+            f"{detector_kind} count: expected exact {expected_exact_count}, got {actual}"
         )
     else:
-        assert actual >= expected_min_count, (
-            f"{detector_kind} count: expected >= {expected_min_count}, "
-            f"got {actual}"
-        )
+        assert actual >= expected_min_count, f"{detector_kind} count: expected >= {expected_min_count}, got {actual}"
 
     return envelope

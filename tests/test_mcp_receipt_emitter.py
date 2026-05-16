@@ -16,16 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import stat
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
 
 import pytest
 
 from roam.evidence.mcp_receipt import hash_input_args
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -34,8 +29,7 @@ from roam.evidence.mcp_receipt import hash_input_args
 
 def _run_async(coro):
     """Run an async function from a sync test (Python 3.10+ compatible)."""
-    return asyncio.get_event_loop().run_until_complete(coro) \
-        if not asyncio.iscoroutine(coro) else asyncio.run(coro)
+    return asyncio.get_event_loop().run_until_complete(coro) if not asyncio.iscoroutine(coro) else asyncio.run(coro)
 
 
 def _read_receipts(receipts_root: Path, bucket: str | None = None) -> list[dict]:
@@ -142,9 +136,7 @@ def test_is_sensitive_detector() -> None:
     from roam.mcp_server import _is_sensitive
 
     # Pure read-only / idempotent / no-task → not sensitive
-    assert _is_sensitive(
-        {"destructive": False, "read_only": True, "idempotent": True, "task_mode": None}
-    ) is False
+    assert _is_sensitive({"destructive": False, "read_only": True, "idempotent": True, "task_mode": None}) is False
 
     # destructive=True → sensitive
     assert _is_sensitive({"destructive": True, "read_only": True, "idempotent": True}) is True
@@ -156,14 +148,12 @@ def test_is_sensitive_detector() -> None:
     assert _is_sensitive({"destructive": False, "read_only": True, "idempotent": False}) is True
 
     # task_mode="required" → sensitive
-    assert _is_sensitive(
-        {"destructive": False, "read_only": True, "idempotent": True, "task_mode": "required"}
-    ) is True
+    assert _is_sensitive({"destructive": False, "read_only": True, "idempotent": True, "task_mode": "required"}) is True
 
     # task_mode="optional" alone is NOT sensitive — only "required" is
-    assert _is_sensitive(
-        {"destructive": False, "read_only": True, "idempotent": True, "task_mode": "optional"}
-    ) is False
+    assert (
+        _is_sensitive({"destructive": False, "read_only": True, "idempotent": True, "task_mode": "optional"}) is False
+    )
 
     # Empty / missing metadata defaults to non-sensitive (safe default)
     assert _is_sensitive({}) is False
@@ -229,9 +219,7 @@ def test_receipt_carries_input_hash(isolated_repo, monkeypatch) -> None:
     assert receipts[0]["input_hash"] == expected_hash
 
 
-def test_receipt_with_active_run_links_run_event_id(
-    isolated_repo, monkeypatch
-) -> None:
+def test_receipt_with_active_run_links_run_event_id(isolated_repo, monkeypatch) -> None:
     """When ROAM_RUN_ID is set, the receipt's run_event_id matches it AND
     the file lives under the run-id bucket directory.
     """
@@ -248,9 +236,7 @@ def test_receipt_with_active_run_links_run_event_id(
     assert receipts[0]["run_event_id"] == "run_test_20260514_xyz"
 
 
-def test_receipt_falls_back_to_no_run_dir_when_no_active_run(
-    isolated_repo, monkeypatch
-) -> None:
+def test_receipt_falls_back_to_no_run_dir_when_no_active_run(isolated_repo, monkeypatch) -> None:
     """With no active run, receipts go to ``.roam/mcp_receipts/_no_run/``."""
     # isolated_repo already clears ROAM_RUN_ID. No real run exists on disk.
     wrapped = _stub_sensitive_tool(monkeypatch)
@@ -264,9 +250,7 @@ def test_receipt_falls_back_to_no_run_dir_when_no_active_run(
     assert receipts[0]["run_event_id"] is None
 
 
-def test_receipt_persist_failure_does_not_break_tool(
-    isolated_repo, monkeypatch
-) -> None:
+def test_receipt_persist_failure_does_not_break_tool(isolated_repo, monkeypatch) -> None:
     """If the receipt write blows up, the underlying tool call still
     returns its result. Audit-trail failures are best-effort.
     """
@@ -295,9 +279,7 @@ def test_receipt_persist_failure_does_not_break_tool(
 # ---------------------------------------------------------------------------
 
 
-def test_destructive_tool_carries_destructive_side_effect(
-    isolated_repo, monkeypatch
-) -> None:
+def test_destructive_tool_carries_destructive_side_effect(isolated_repo, monkeypatch) -> None:
     """A destructive tool's receipt has ``destructive`` in declared_side_effects."""
     import roam.mcp_server as m
 
@@ -328,9 +310,7 @@ def test_destructive_tool_carries_destructive_side_effect(
     assert "write" not in side_effects
 
 
-def test_idempotent_false_carries_non_idempotent(
-    isolated_repo, monkeypatch
-) -> None:
+def test_idempotent_false_carries_non_idempotent(isolated_repo, monkeypatch) -> None:
     """``idempotent=False`` puts ``non_idempotent`` in declared_side_effects."""
     import roam.mcp_server as m
 

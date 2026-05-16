@@ -4,6 +4,13 @@ single overview number for "how dense / connected / cyclic
 is this codebase". Reports density, connected components, average
 in/out degree, top in-degree symbols. Diameter is approximated on a
 sample of nodes to stay fast.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because graph-stats outputs are invocation-scoped graph-topology
+summaries (density, connected components, degree distribution, sampled
+diameter) — not per-location code violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
 """
 
 from __future__ import annotations

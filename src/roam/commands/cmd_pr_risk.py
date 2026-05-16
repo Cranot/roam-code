@@ -1,4 +1,14 @@
-"""Compute risk score for pending changes."""
+"""Compute risk score for pending changes.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because pr-risk findings are invocation-scoped aggregates
+tied to a diff (``subject_kind="commit"``) — not per-location
+violations. The CI gate is informational-only (no PR blocking via
+pr-risk; ``health`` is the gate-failing signal). Multi-file location
+expansion would distort SARIF semantics ("this rule violated at 47
+places in one PR" misrepresents an aggregate score). See action.yml
+line 401 _SUPPORTED_SARIF allowlist and W1147/W1148 audit memos.
+"""
 
 from __future__ import annotations
 
@@ -22,8 +32,7 @@ from roam.commands.changed_files import (
 from roam.commands.cmd_coupling import _compute_surprise
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import format_table, json_envelope, to_json
-
+from roam.output.formatter import WarningsOut, format_table, json_envelope, to_json
 
 # W134 — pr-risk is the sixth detector migrating onto the central findings
 # registry (after clones W95, dead W99, complexity W102, smells W109,
@@ -76,10 +85,7 @@ def _diff_id(
     just adding one more changed file — produces a fresh id so the prior
     finding stays as an audit-trail row.
     """
-    raw = (
-        f"{label}|range={commit_range or ''}|staged={int(staged)}|"
-        f"files={','.join(sorted(file_paths))}"
-    )
+    raw = f"{label}|range={commit_range or ''}|staged={int(staged)}|files={','.join(sorted(file_paths))}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -144,7 +150,7 @@ def _coerce_risk_level(
     default: str,
     *,
     field_name: str,
-    warnings_out: list[str] | None,
+    warnings_out: WarningsOut,
 ) -> str:
     """W989 (Pattern 2 — silent fallback): coerce a pr-risk ``level`` scalar.
 
@@ -211,7 +217,7 @@ def _build_pr_risk_finding_rows(
     data: dict,
     source_version: str,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> list[dict]:
     """Build the W134 finding row dicts from one pr-risk invocation's data.
 
@@ -304,9 +310,8 @@ def _build_pr_risk_finding_rows(
         "author": data["resolved_author"],
         "actor": data["resolved_author"],
     }
-    composite_claim = (
-        f"pr-risk: {data['level']} ({data['risk']}/100) on {label}"
-        + (f" — driver: {data['driver_label']}" if data["driver_label"] else "")
+    composite_claim = f"pr-risk: {data['level']} ({data['risk']}/100) on {label}" + (
+        f" — driver: {data['driver_label']}" if data["driver_label"] else ""
     )
     # W989: route through _coerce_risk_level so an unknown level surfaces
     # via warnings_out (when supplied) instead of being a silent floor.
@@ -318,18 +323,20 @@ def _build_pr_risk_finding_rows(
         field_name="level",
         warnings_out=warnings_out,
     )
-    rows.append({
-        "finding_id_str": _pr_risk_finding_id("composite-risk-score", diff_id),
-        "source_detector": "pr-risk",
-        "source_version": source_version,
-        "subject_kind": "commit",
-        "subject_id": None,
-        "confidence": _PR_RISK_KIND_TO_CONFIDENCE["composite-risk-score"],
-        "claim": composite_claim,
-        "kind": "pr-risk:composite-risk-score",
-        "severity": _PR_RISK_LEVEL_TO_SEVERITY.get(_canonical_level, "info"),
-        "evidence": composite_evidence,
-    })
+    rows.append(
+        {
+            "finding_id_str": _pr_risk_finding_id("composite-risk-score", diff_id),
+            "source_detector": "pr-risk",
+            "source_version": source_version,
+            "subject_kind": "commit",
+            "subject_id": None,
+            "confidence": _PR_RISK_KIND_TO_CONFIDENCE["composite-risk-score"],
+            "claim": composite_claim,
+            "kind": "pr-risk:composite-risk-score",
+            "severity": _PR_RISK_LEVEL_TO_SEVERITY.get(_canonical_level, "info"),
+            "evidence": composite_evidence,
+        }
+    )
 
     # --- Conditional: high-blast-radius-symbol-touched ---
     # Threshold matches the multiplicative factor cap in the composite
@@ -348,22 +355,20 @@ def _build_pr_risk_finding_rows(
             f"{data['total_syms_repo']} symbols affected "
             f"({data['blast_pct']:.1f}%) on {label}"
         )
-        rows.append({
-            "finding_id_str": _pr_risk_finding_id(
-                "high-blast-radius-symbol-touched", diff_id
-            ),
-            "source_detector": "pr-risk",
-            "source_version": source_version,
-            "subject_kind": "commit",
-            "subject_id": None,
-            "confidence": _PR_RISK_KIND_TO_CONFIDENCE[
-                "high-blast-radius-symbol-touched"
-            ],
-            "claim": blast_claim,
-            "kind": "pr-risk:high-blast-radius-symbol-touched",
-            "severity": "high",
-            "evidence": blast_evidence,
-        })
+        rows.append(
+            {
+                "finding_id_str": _pr_risk_finding_id("high-blast-radius-symbol-touched", diff_id),
+                "source_detector": "pr-risk",
+                "source_version": source_version,
+                "subject_kind": "commit",
+                "subject_id": None,
+                "confidence": _PR_RISK_KIND_TO_CONFIDENCE["high-blast-radius-symbol-touched"],
+                "claim": blast_claim,
+                "kind": "pr-risk:high-blast-radius-symbol-touched",
+                "severity": "high",
+                "evidence": blast_evidence,
+            }
+        )
 
     # --- Conditional: test-coverage-gap ---
     # Only emit when there were source files to assess AND coverage is
@@ -382,39 +387,33 @@ def _build_pr_risk_finding_rows(
             f"{data['source_files_count']} changed source files have "
             f"adjacent tests ({data['test_coverage'] * 100:.0f}% covered) on {label}"
         )
-        rows.append({
-            "finding_id_str": _pr_risk_finding_id("test-coverage-gap", diff_id),
-            "source_detector": "pr-risk",
-            "source_version": source_version,
-            "subject_kind": "commit",
-            "subject_id": None,
-            "confidence": _PR_RISK_KIND_TO_CONFIDENCE["test-coverage-gap"],
-            "claim": gap_claim,
-            "kind": "pr-risk:test-coverage-gap",
-            "severity": "medium",
-            "evidence": gap_evidence,
-        })
+        rows.append(
+            {
+                "finding_id_str": _pr_risk_finding_id("test-coverage-gap", diff_id),
+                "source_detector": "pr-risk",
+                "source_version": source_version,
+                "subject_kind": "commit",
+                "subject_id": None,
+                "confidence": _PR_RISK_KIND_TO_CONFIDENCE["test-coverage-gap"],
+                "claim": gap_claim,
+                "kind": "pr-risk:test-coverage-gap",
+                "severity": "medium",
+                "evidence": gap_evidence,
+            }
+        )
 
     # --- Conditional: author-novelty-flag ---
     # Only emit when we have a resolved author AND familiarity was
     # actually assessed AND the risk is meaningful (>= 0.10 on the
     # 0-0.25 scale, i.e. avg_familiarity below ~0.6).
     fam_assessed = (data["familiarity_details"] or {}).get("files_assessed", 0)
-    if (
-        data["resolved_author"]
-        and fam_assessed > 0
-        and data["familiarity_risk"] >= 0.10
-    ):
+    if data["resolved_author"] and fam_assessed > 0 and data["familiarity_risk"] >= 0.10:
         novelty_evidence = {
             **base_evidence,
             "familiarity_risk": round(data["familiarity_risk"], 3),
-            "avg_familiarity": (data["familiarity_details"] or {}).get(
-                "avg_familiarity"
-            ),
+            "avg_familiarity": (data["familiarity_details"] or {}).get("avg_familiarity"),
             "files_assessed": fam_assessed,
-            "files_familiar": (data["familiarity_details"] or {}).get(
-                "files_familiar", 0
-            ),
+            "files_familiar": (data["familiarity_details"] or {}).get("files_familiar", 0),
             # W198: see composite_evidence for the rationale — author is
             # git-blame vocabulary; actor is the agentic-assurance
             # crosswalk term. Both carry the same value.
@@ -426,18 +425,20 @@ def _build_pr_risk_finding_rows(
             f"{fam_assessed - (data['familiarity_details'] or {}).get('files_familiar', 0)}"
             f" of {fam_assessed} changed files on {label}"
         )
-        rows.append({
-            "finding_id_str": _pr_risk_finding_id("author-novelty-flag", diff_id),
-            "source_detector": "pr-risk",
-            "source_version": source_version,
-            "subject_kind": "commit",
-            "subject_id": None,
-            "confidence": _PR_RISK_KIND_TO_CONFIDENCE["author-novelty-flag"],
-            "claim": novelty_claim,
-            "kind": "pr-risk:author-novelty-flag",
-            "severity": "medium",
-            "evidence": novelty_evidence,
-        })
+        rows.append(
+            {
+                "finding_id_str": _pr_risk_finding_id("author-novelty-flag", diff_id),
+                "source_detector": "pr-risk",
+                "source_version": source_version,
+                "subject_kind": "commit",
+                "subject_id": None,
+                "confidence": _PR_RISK_KIND_TO_CONFIDENCE["author-novelty-flag"],
+                "claim": novelty_claim,
+                "kind": "pr-risk:author-novelty-flag",
+                "severity": "medium",
+                "evidence": novelty_evidence,
+            }
+        )
 
     return rows
 
@@ -1304,10 +1305,7 @@ def pr_risk(ctx, commit_range, staged, author, persist):
                         # W198: each reviewer row carries both ``author``
                         # (git-blame) and ``actor`` (crosswalk) for the
                         # same identity. See composite envelope above.
-                        suggested_reviewers=[
-                            {"author": a, "actor": a, "lines": l}
-                            for a, l in top_authors
-                        ],
+                        suggested_reviewers=[{"author": a, "actor": a, "lines": l} for a, l in top_authors],
                         dead_code=new_dead[:10],
                         # W989 (Pattern 2): structured silent-fallback
                         # warnings. Empty list on the happy path; non-empty

@@ -36,7 +36,6 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count  # noqa: E402
 from roam.commands.cmd_pr_risk import (  # noqa: E402
     _PR_RISK_KIND_TO_CONFIDENCE,
     PR_RISK_DETECTOR_VERSION,
@@ -46,7 +45,7 @@ from roam.commands.cmd_pr_risk import (  # noqa: E402
     _pr_risk_finding_id,
 )
 from roam.db.connection import open_db  # noqa: E402
-
+from tests._findings_helpers import assert_detector_visible_in_findings_count  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -94,9 +93,7 @@ def _run_pr_risk_persist(project, *extra_args):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(project))
-        result = runner.invoke(
-            cli, ["pr-risk", "--persist", *extra_args], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["pr-risk", "--persist", *extra_args], catch_exceptions=False)
         return result
     finally:
         os.chdir(old_cwd)
@@ -191,10 +188,7 @@ def test_confidence_tier_table_covers_emitted_kinds():
     # Composite is heuristic (multiplicative weighted sum of fuzzy signals).
     assert _PR_RISK_KIND_TO_CONFIDENCE["composite-risk-score"] == "heuristic"
     # Blast / coverage are graph-derived -> structural.
-    assert (
-        _PR_RISK_KIND_TO_CONFIDENCE["high-blast-radius-symbol-touched"]
-        == "structural"
-    )
+    assert _PR_RISK_KIND_TO_CONFIDENCE["high-blast-radius-symbol-touched"] == "structural"
     assert _PR_RISK_KIND_TO_CONFIDENCE["test-coverage-gap"] == "structural"
     # Novelty rolls up time-decayed churn -> heuristic.
     assert _PR_RISK_KIND_TO_CONFIDENCE["author-novelty-flag"] == "heuristic"
@@ -315,16 +309,11 @@ def test_pr_risk_rerun_upserts_not_duplicates(indexed_project):
             first_ids = {
                 row[0]
                 for row in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'pr-risk'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'pr-risk'"
                 ).fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'pr-risk'"
-            ).fetchone()[0]
-        assert first_count == len(first_ids), (
-            "duplicate finding_id_str rows on first run"
-        )
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'pr-risk'").fetchone()[0]
+        assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
         assert first_count >= 1
 
         # Second run — same diff, same file set, same author -> same ids.
@@ -335,13 +324,10 @@ def test_pr_risk_rerun_upserts_not_duplicates(indexed_project):
             second_ids = {
                 row[0]
                 for row in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'pr-risk'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'pr-risk'"
                 ).fetchall()
             }
-            second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'pr-risk'"
-            ).fetchone()[0]
+            second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'pr-risk'").fetchone()[0]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
     finally:
@@ -375,8 +361,7 @@ def test_pr_risk_different_diff_gets_fresh_finding_id(indexed_project):
 
         # Second diff: ALSO touch service.py so the file set differs.
         service.write_text(
-            original_service
-            + "\n\ndef freshly_added_for_test():\n    return 99\n",
+            original_service + "\n\ndef freshly_added_for_test():\n    return 99\n",
             encoding="utf-8",
         )
 
@@ -397,10 +382,7 @@ def test_pr_risk_different_diff_gets_fresh_finding_id(indexed_project):
         # The first diff's id must still be present (audit trail), and a
         # second, distinct composite id must have been inserted.
         assert first_composite_id in composite_ids
-        assert len(set(composite_ids)) >= 2, (
-            f"expected two distinct composite ids across diffs, "
-            f"got {composite_ids}"
-        )
+        assert len(set(composite_ids)) >= 2, f"expected two distinct composite ids across diffs, got {composite_ids}"
     finally:
         _restore_models(indexed_project, original_models)
         service.write_text(original_service, encoding="utf-8")
@@ -428,10 +410,7 @@ def test_no_persist_does_not_emit_findings(indexed_project):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'pr-risk'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'pr-risk'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, "non-persist pr-risk still wrote to findings"
@@ -482,9 +461,7 @@ def test_pr_risk_findings_visible_via_cmd_findings_list(indexed_project):
         old_cwd = os.getcwd()
         try:
             os.chdir(str(indexed_project))
-            result = runner.invoke(
-                cli, ["--json", "findings", "list", "--detector", "pr-risk"]
-            )
+            result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "pr-risk"])
         finally:
             os.chdir(old_cwd)
         assert result.exit_code == 0, result.output
@@ -493,9 +470,7 @@ def test_pr_risk_findings_visible_via_cmd_findings_list(indexed_project):
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "pr-risk" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "pr-risk" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "pr-risk" for r in envelope["findings"])
     finally:
         _restore_models(indexed_project, original)
 
@@ -568,9 +543,7 @@ def test_emit_helper_writes_composite_only_when_signals_below_thresholds(
                 "files": [],
             },
         }
-        written = _emit_pr_risk_findings(
-            conn, synthetic, PR_RISK_DETECTOR_VERSION
-        )
+        written = _emit_pr_risk_findings(conn, synthetic, PR_RISK_DETECTOR_VERSION)
         conn.commit()
 
     assert written == 1, "only composite-risk-score should fire below thresholds"
@@ -578,10 +551,7 @@ def test_emit_helper_writes_composite_only_when_signals_below_thresholds(
     with open_db(readonly=True) as conn:
         kinds = {
             row[0].split(":")[1]
-            for row in conn.execute(
-                "SELECT finding_id_str FROM findings "
-                "WHERE source_detector = 'pr-risk'"
-            ).fetchall()
+            for row in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'pr-risk'").fetchall()
         }
     assert kinds == {"composite-risk-score"}
 
@@ -625,20 +595,14 @@ def test_emit_helper_writes_all_kinds_when_signals_trigger(indexed_project):
                 "files": [],
             },
         }
-        written = _emit_pr_risk_findings(
-            conn, synthetic, PR_RISK_DETECTOR_VERSION
-        )
+        written = _emit_pr_risk_findings(conn, synthetic, PR_RISK_DETECTOR_VERSION)
         conn.commit()
 
-    assert written == 4, (
-        "expected all four kinds above their thresholds, got "
-        f"{written}"
-    )
+    assert written == 4, f"expected all four kinds above their thresholds, got {written}"
 
     with open_db(readonly=True) as conn:
         rows = conn.execute(
-            "SELECT finding_id_str, confidence FROM findings "
-            "WHERE source_detector = 'pr-risk'"
+            "SELECT finding_id_str, confidence FROM findings WHERE source_detector = 'pr-risk'"
         ).fetchall()
     kinds = {row[0].split(":")[1] for row in rows}
     assert kinds == {
@@ -685,22 +649,16 @@ def test_pr_risk_envelope_includes_findings_array(indexed_project):
         old_cwd = os.getcwd()
         try:
             os.chdir(str(indexed_project))
-            result = runner.invoke(
-                cli, ["--json", "pr-risk"], catch_exceptions=False
-            )
+            result = runner.invoke(cli, ["--json", "pr-risk"], catch_exceptions=False)
         finally:
             os.chdir(old_cwd)
         assert result.exit_code == 0, result.output
 
         envelope = json.loads(result.output)
         assert envelope["command"] == "pr-risk"
-        assert "findings" in envelope, (
-            "expected top-level findings[] on pr-risk envelope (W242)"
-        )
+        assert "findings" in envelope, "expected top-level findings[] on pr-risk envelope (W242)"
         assert isinstance(envelope["findings"], list)
-        assert len(envelope["findings"]) >= 1, (
-            "composite-risk-score must always emit"
-        )
+        assert len(envelope["findings"]) >= 1, "composite-risk-score must always emit"
         # Composite is always present.
         kinds = {f["kind"] for f in envelope["findings"]}
         assert "pr-risk:composite-risk-score" in kinds
@@ -723,9 +681,7 @@ def test_pr_risk_envelope_findings_match_persisted_rows(indexed_project):
         # Clear any prior pr-risk rows so the registry-vs-envelope diff
         # is exact on this invocation.
         with open_db(readonly=False) as conn:
-            conn.execute(
-                "DELETE FROM findings WHERE source_detector = 'pr-risk'"
-            )
+            conn.execute("DELETE FROM findings WHERE source_detector = 'pr-risk'")
             conn.commit()
 
         runner = CliRunner()
@@ -733,7 +689,8 @@ def test_pr_risk_envelope_findings_match_persisted_rows(indexed_project):
         try:
             os.chdir(str(indexed_project))
             result = runner.invoke(
-                cli, ["--json", "pr-risk", "--persist"],
+                cli,
+                ["--json", "pr-risk", "--persist"],
                 catch_exceptions=False,
             )
         finally:
@@ -747,14 +704,12 @@ def test_pr_risk_envelope_findings_match_persisted_rows(indexed_project):
             persisted_ids = {
                 row[0]
                 for row in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'pr-risk'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'pr-risk'"
                 ).fetchall()
             }
 
         assert envelope_ids == persisted_ids, (
-            f"envelope <-> registry drift: envelope={envelope_ids}, "
-            f"registry={persisted_ids}"
+            f"envelope <-> registry drift: envelope={envelope_ids}, registry={persisted_ids}"
         )
     finally:
         _restore_models(indexed_project, original)
@@ -777,9 +732,7 @@ def test_pr_risk_envelope_findings_use_w134_shape(indexed_project):
         old_cwd = os.getcwd()
         try:
             os.chdir(str(indexed_project))
-            result = runner.invoke(
-                cli, ["--json", "pr-risk"], catch_exceptions=False
-            )
+            result = runner.invoke(cli, ["--json", "pr-risk"], catch_exceptions=False)
         finally:
             os.chdir(old_cwd)
         assert result.exit_code == 0, result.output
@@ -809,7 +762,11 @@ def test_pr_risk_envelope_findings_use_w134_shape(indexed_project):
             assert row["subject_id"] is None
             assert row["kind"].startswith("pr-risk:")
             assert row["severity"] in {
-                "critical", "high", "medium", "low", "info",
+                "critical",
+                "high",
+                "medium",
+                "low",
+                "info",
             }
 
         # Composite is always present and is the headline row.
@@ -871,10 +828,7 @@ def test_pr_risk_findings_threshold_gating():
         },
     }
     rows = _build_pr_risk_finding_rows(synthetic, PR_RISK_DETECTOR_VERSION)
-    assert len(rows) == 1, (
-        f"only composite expected below thresholds, got "
-        f"{[r['kind'] for r in rows]}"
-    )
+    assert len(rows) == 1, f"only composite expected below thresholds, got {[r['kind'] for r in rows]}"
     assert rows[0]["kind"] == "pr-risk:composite-risk-score"
     # Composite severity tracks the bucketed risk level.
     assert rows[0]["severity"] == "low"
@@ -909,7 +863,5 @@ def test_pr_risk_findings_threshold_gating():
         "pr-risk:test-coverage-gap",
         "pr-risk:author-novelty-flag",
     }
-    composite_hot = next(
-        r for r in hot_rows if r["kind"] == "pr-risk:composite-risk-score"
-    )
+    composite_hot = next(r for r in hot_rows if r["kind"] == "pr-risk:composite-risk-score")
     assert composite_hot["severity"] == "critical"

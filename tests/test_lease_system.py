@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -93,9 +92,7 @@ def test_claim_creates_lease_file(lease_project):
 
 
 def test_claim_returns_lease_id(lease_project):
-    claimed, conflict = claim_lease(
-        lease_project, agent="agent-a", subject=["src/x.py"]
-    )
+    claimed, conflict = claim_lease(lease_project, agent="agent-a", subject=["src/x.py"])
     assert conflict is None
     assert claimed is not None
     assert claimed.lease_id, "lease_id must be non-empty"
@@ -207,7 +204,7 @@ def _backdate_expiry(repo_root: Path, lease_id: str, seconds_ago: int = 60) -> N
     """Rewrite a lease's ``expires_at`` to seconds_ago in the past."""
     lpath = leases_root(repo_root) / f"{lease_id}.json"
     raw = json.loads(lpath.read_text(encoding="utf-8"))
-    past = (datetime.now(timezone.utc) - timedelta(seconds=seconds_ago))
+    past = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
     raw["expires_at"] = past.isoformat().replace("+00:00", "Z")
     lpath.write_text(json.dumps(raw, indent=2), encoding="utf-8")
 
@@ -373,9 +370,7 @@ def test_cli_release_round_trip(lease_project, cli_runner):
     env1 = parse_json_output(r1)
     lease_id = env1["summary"]["lease_id"]
 
-    r2 = invoke_cli(
-        cli_runner, ["lease", "release", lease_id], cwd=lease_project, json_mode=True
-    )
+    r2 = invoke_cli(cli_runner, ["lease", "release", lease_id], cwd=lease_project, json_mode=True)
     assert r2.exit_code == 0
     env2 = parse_json_output(r2, command="lease-release")
     assert env2["summary"]["state"] == "released"
@@ -489,25 +484,23 @@ def test_w448_read_lease_malformed_json_surfaces_in_warnings_out(lease_project):
     leases_dir = leases_root(lease_project)
     leases_dir.mkdir(parents=True, exist_ok=True)
     # File 1: truncated JSON (parse error).
-    (leases_dir / "lease_20260514_bad001.json").write_text(
-        "{not valid json", encoding="utf-8"
-    )
+    (leases_dir / "lease_20260514_bad001.json").write_text("{not valid json", encoding="utf-8")
     # File 2: top-level value is a list, not a dict.
-    (leases_dir / "lease_20260514_bad002.json").write_text(
-        "[1, 2, 3]", encoding="utf-8"
-    )
+    (leases_dir / "lease_20260514_bad002.json").write_text("[1, 2, 3]", encoding="utf-8")
     # File 3: dict missing the required ``agent`` field (schema-invalid).
     (leases_dir / "lease_20260514_bad003.json").write_text(
-        json.dumps({
-            "lease_id": "lease_20260514_bad003",
-            # NOTE: ``agent`` deliberately missing
-            "subject_kind": "files",
-            "subject": ["src/foo.py"],
-            "ttl_seconds": 3600,
-            "acquired_at": "2026-05-14T00:00:00Z",
-            "expires_at": "2030-01-01T00:00:00Z",
-            "state": "active",
-        }),
+        json.dumps(
+            {
+                "lease_id": "lease_20260514_bad003",
+                # NOTE: ``agent`` deliberately missing
+                "subject_kind": "files",
+                "subject": ["src/foo.py"],
+                "ttl_seconds": 3600,
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "expires_at": "2030-01-01T00:00:00Z",
+                "state": "active",
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -518,19 +511,10 @@ def test_w448_read_lease_malformed_json_surfaces_in_warnings_out(lease_project):
 
     # (b) Threading warnings_out captures the closed-form reason per drop.
     warnings: list[str] = []
-    assert read_lease(
-        lease_project, "lease_20260514_bad001", warnings_out=warnings
-    ) is None
-    assert read_lease(
-        lease_project, "lease_20260514_bad002", warnings_out=warnings
-    ) is None
-    assert read_lease(
-        lease_project, "lease_20260514_bad003", warnings_out=warnings
-    ) is None
-    assert len(warnings) == 3, (
-        f"expected 3 warnings (one per malformed lease file); got "
-        f"{len(warnings)}: {warnings!r}"
-    )
+    assert read_lease(lease_project, "lease_20260514_bad001", warnings_out=warnings) is None
+    assert read_lease(lease_project, "lease_20260514_bad002", warnings_out=warnings) is None
+    assert read_lease(lease_project, "lease_20260514_bad003", warnings_out=warnings) is None
+    assert len(warnings) == 3, f"expected 3 warnings (one per malformed lease file); got {len(warnings)}: {warnings!r}"
     joined = "\n".join(warnings)
     assert "lease_20260514_bad001.json" in joined, joined
     assert "lease_20260514_bad002.json" in joined, joined
@@ -542,12 +526,12 @@ def test_w448_read_lease_malformed_json_surfaces_in_warnings_out(lease_project):
     # (c) Missing-file path is NOT a warning (caller asked for a specific
     # id that simply isn't on disk).
     missing_warnings: list[str] = []
-    assert read_lease(
-        lease_project,
-        "lease_20260514_nope",
-        warnings_out=missing_warnings,
-    ) is None
-    assert missing_warnings == [], (
-        f"missing-file path should not emit a warning; got "
-        f"{missing_warnings!r}"
+    assert (
+        read_lease(
+            lease_project,
+            "lease_20260514_nope",
+            warnings_out=missing_warnings,
+        )
+        is None
     )
+    assert missing_warnings == [], f"missing-file path should not emit a warning; got {missing_warnings!r}"

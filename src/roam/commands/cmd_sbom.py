@@ -1,4 +1,12 @@
-"""Generate Software Bill of Materials (SBOM) with call-graph reachability enrichment."""
+"""Generate Software Bill of Materials (SBOM) with call-graph reachability enrichment.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because sbom outputs are Software Bill of Materials documents
+(CycloneDX/SPDX) — not per-location violations. SARIF is reserved for
+findings with file:line coordinates; sbom's primary deliverable is the
+CycloneDX/SPDX SBOM document. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket C propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -601,10 +609,8 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
         explicit_facts = [
             verdict,
             f"{reachable_direct_count} packages directly imported from source",
-            f"{reachable_heuristic_count} packages reached via heuristic "
-            f"(config files, scripts, loaders)",
-            f"{phantom_count} phantom packages "
-            f"(deps in package.json with no consumer)",
+            f"{reachable_heuristic_count} packages reached via heuristic (config files, scripts, loaders)",
+            f"{phantom_count} phantom packages (deps in package.json with no consumer)",
         ]
 
     # Output
@@ -616,12 +622,8 @@ def sbom(ctx, fmt, output_path, no_reachability, aibom):
                 "total_dependencies": total_deps,
                 "reachable_count": reachable_count if reachability else None,
                 "phantom_count": phantom_count if reachability else None,
-                "reachable_direct_count": (
-                    reachable_direct_count if reachability else None
-                ),
-                "reachable_heuristic_count": (
-                    reachable_heuristic_count if reachability else None
-                ),
+                "reachable_direct_count": (reachable_direct_count if reachability else None),
+                "reachable_heuristic_count": (reachable_heuristic_count if reachability else None),
                 "reachability_computed": reachability is not None,
             },
             "budget": token_budget,

@@ -23,8 +23,8 @@ The CLI surface lives in :mod:`roam.commands.cmd_laws`.
 
 from __future__ import annotations
 
-from roam.laws.miner import Law, Violation, mine_laws
 from roam.laws.checker import check_laws
+from roam.laws.miner import Law, Violation, mine_laws
 from roam.laws.serializer import dump_laws_yaml, load_laws_yaml
 
 __all__ = [

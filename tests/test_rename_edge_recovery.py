@@ -71,9 +71,7 @@ def caller_callee_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
     (proj / "a.py").write_text("def foo():\n    return 1\n")
-    (proj / "b.py").write_text(
-        "from a import foo\n\ndef caller():\n    return foo()\n"
-    )
+    (proj / "b.py").write_text("from a import foo\n\ndef caller():\n    return foo()\n")
     git_init(proj)
     return proj
 
@@ -100,8 +98,7 @@ def test_pure_rename_target_only_preserves_callers(caller_callee_project):
     # Pre-rename: there must be an edge from b.py into a symbol named foo.
     edges_into_foo_before = _edges_into(proj, "foo")
     assert any(src == "b.py" for src, _ in edges_into_foo_before), (
-        f"Initial index produced no b.py -> foo edge; fixture is broken. "
-        f"edges_into_foo_before={edges_into_foo_before}"
+        f"Initial index produced no b.py -> foo edge; fixture is broken. edges_into_foo_before={edges_into_foo_before}"
     )
 
     # Pure rename: a.py -> c.py on disk. b.py is untouched.
@@ -166,9 +163,7 @@ def test_incremental_pure_rename_matches_force_edge_count(caller_callee_project)
     )
 
 
-def test_pure_rename_invokes_neighbor_recovery_branch(
-    caller_callee_project, monkeypatch
-):
+def test_pure_rename_invokes_neighbor_recovery_branch(caller_callee_project, monkeypatch):
     """The neighbor re-extraction branch must actually fire on pure rename.
 
     Spies the ``_re_extract_affected`` method itself, which is the branch
@@ -195,9 +190,7 @@ def test_pure_rename_invokes_neighbor_recovery_branch(
 
     def spy(self, conn, affected_file_ids, get_extractor, all_references, verbose):
         calls.append(len(affected_file_ids))
-        return original(
-            self, conn, affected_file_ids, get_extractor, all_references, verbose
-        )
+        return original(self, conn, affected_file_ids, get_extractor, all_references, verbose)
 
     monkeypatch.setattr(Indexer, "_re_extract_affected", spy)
 

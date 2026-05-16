@@ -4,6 +4,17 @@ Identifies files, symbols, and modules that become orphaned or under-owned
 when one or more developers depart.  Combines git blame ownership analysis,
 CODEOWNERS cross-referencing, PageRank-weighted symbol importance, and
 cluster-level impact to produce a comprehensive knowledge-loss risk report.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because simulate-departure outputs are invocation-scoped team-
+level counterfactual rollups (knowledge-loss risk under proposed
+developer departures, ranked by PageRank-weighted symbol importance
+plus cluster-level impact) — not per-location code violations. The
+simulation describes a what-if ownership-redistribution scenario that
+does not exist on disk, so there are no source coordinates to populate
+SARIF ``locations[]``. See ``cmd_simulate`` for the parallel
+counterfactual disclosure pattern (W1221) + action.yml _SUPPORTED_SARIF
+allowlist + W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -14,6 +25,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.codeowners_helpers import (
     find_codeowners,
     resolve_owners,
@@ -21,7 +33,6 @@ from roam.commands.codeowners_helpers import (
 from roam.commands.codeowners_helpers import (
     parse_codeowners as _parse_codeowners_file,
 )
-from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import (

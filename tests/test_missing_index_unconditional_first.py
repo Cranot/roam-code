@@ -35,7 +35,6 @@ from conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Shared migration — `forms` table with NO composite index on any combination
 # of (employee_id, status, form_type, company_id, priority, type, due_date) so
@@ -159,9 +158,7 @@ def test_unconditional_whereIn_comes_first(cli_runner, tmp_path, monkeypatch):
     data = _run_missing_index(cli_runner, proj, monkeypatch)
 
     composite = _composite_findings(data)
-    assert composite, (
-        f"Expected at least one composite_where finding, got: {data['findings']}"
-    )
+    assert composite, f"Expected at least one composite_where finding, got: {data['findings']}"
 
     f = composite[0]
     cols = f["columns"]
@@ -169,16 +166,11 @@ def test_unconditional_whereIn_comes_first(cli_runner, tmp_path, monkeypatch):
     # The dogfood failure: roam ranked conditional ->when() columns BEFORE the
     # always-applied whereIn. Pin the corrected order.
     assert cols[0] == "employee_id", (
-        f"Pattern 1 regression: expected employee_id (unconditional whereIn) "
-        f"to LEAD the composite, got: {cols}"
+        f"Pattern 1 regression: expected employee_id (unconditional whereIn) to LEAD the composite, got: {cols}"
     )
-    assert set(cols) >= {"employee_id", "status", "form_type"}, (
-        f"Expected all three columns in suggestion, got: {cols}"
-    )
+    assert set(cols) >= {"employee_id", "status", "form_type"}, f"Expected all three columns in suggestion, got: {cols}"
 
-    classifications = {
-        entry["column"]: entry["classification"] for entry in f["column_ordering"]
-    }
+    classifications = {entry["column"]: entry["classification"] for entry in f["column_ordering"]}
     assert classifications["employee_id"] == "unconditional", classifications
     assert classifications["status"] == "conditional", classifications
     assert classifications["form_type"] == "conditional", classifications
@@ -233,22 +225,18 @@ def test_user_scope_and_sort(cli_runner, tmp_path, monkeypatch):
     data = _run_missing_index(cli_runner, proj, monkeypatch)
 
     composite = _composite_findings(data)
-    assert composite, (
-        f"Expected at least one composite_where finding, got: {data['findings']}"
-    )
+    assert composite, f"Expected at least one composite_where finding, got: {data['findings']}"
 
     f = composite[0]
     cols = f["columns"]
 
     # Leading: unconditional where('company_id').
     assert cols[0] == "company_id", (
-        f"Pattern 2 regression: expected company_id (unconditional where) "
-        f"to LEAD the composite, got: {cols}"
+        f"Pattern 2 regression: expected company_id (unconditional where) to LEAD the composite, got: {cols}"
     )
     # Trailing: orderBy('due_date').
     assert cols[-1] == "due_date", (
-        f"Pattern 2 regression: expected due_date (orderBy) to TRAIL the "
-        f"composite, got: {cols}"
+        f"Pattern 2 regression: expected due_date (orderBy) to TRAIL the composite, got: {cols}"
     )
     # Middle: all three conditional ->when() columns are present, between
     # company_id and due_date.
@@ -258,9 +246,7 @@ def test_user_scope_and_sort(cli_runner, tmp_path, monkeypatch):
             f"Expected {opt} between company_id and due_date, got: {cols}"
         )
 
-    classifications = {
-        entry["column"]: entry["classification"] for entry in f["column_ordering"]
-    }
+    classifications = {entry["column"]: entry["classification"] for entry in f["column_ordering"]}
     assert classifications["company_id"] == "unconditional", classifications
     assert classifications["due_date"] == "sort", classifications
     for opt in ("status", "priority", "type"):

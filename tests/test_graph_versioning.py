@@ -34,21 +34,9 @@ def small_project(project_factory):
     """A small Python project with imports + a call chain. Indexed."""
     return project_factory(
         {
-            "app.py": (
-                "from service import handle\n"
-                "def main():\n"
-                "    return handle()\n"
-            ),
-            "service.py": (
-                "from models import User\n"
-                "def handle():\n"
-                "    return User().name\n"
-            ),
-            "models.py": (
-                "class User:\n"
-                "    def __init__(self):\n"
-                "        self.name = 'x'\n"
-            ),
+            "app.py": ("from service import handle\ndef main():\n    return handle()\n"),
+            "service.py": ("from models import User\ndef handle():\n    return User().name\n"),
+            "models.py": ("class User:\n    def __init__(self):\n        self.name = 'x'\n"),
         }
     )
 
@@ -214,12 +202,8 @@ class TestDiffGraphs:
         appearing in B should be flagged as a HIGH-confidence move."""
         from roam.graph.versioning import diff_graphs
 
-        before = _mk_snap(
-            [{"name": "handler", "kind": "function", "file": "old/dir/api.py"}]
-        )
-        after = _mk_snap(
-            [{"name": "handler", "kind": "function", "file": "new/dir/api.py"}]
-        )
+        before = _mk_snap([{"name": "handler", "kind": "function", "file": "old/dir/api.py"}])
+        after = _mk_snap([{"name": "handler", "kind": "function", "file": "new/dir/api.py"}])
         d = diff_graphs(before, after)
         assert len(d.likely_moves) == 1
         mv = d.likely_moves[0]
@@ -235,9 +219,7 @@ class TestDiffGraphs:
     def test_diff_graphs_medium_confidence_when_kind_differs(self):
         from roam.graph.versioning import diff_graphs
 
-        before = _mk_snap(
-            [{"name": "handler", "kind": "function", "file": "old.py"}]
-        )
+        before = _mk_snap([{"name": "handler", "kind": "function", "file": "old.py"}])
         after = _mk_snap([{"name": "handler", "kind": "method", "file": "new.py"}])
         d = diff_graphs(before, after)
         assert len(d.likely_moves) == 1
@@ -267,9 +249,7 @@ class TestDiffGraphs:
 
 
 class TestGraphDiffCli:
-    def test_graph_diff_command_returns_clean_envelope_with_no_baseline(
-        self, small_project, monkeypatch
-    ):
+    def test_graph_diff_command_returns_clean_envelope_with_no_baseline(self, small_project, monkeypatch):
         """No .roam/snapshots/ entries should yield state: no_baseline_snapshot,
         NEVER a crash or empty stdout."""
         monkeypatch.chdir(small_project)
@@ -286,9 +266,7 @@ class TestGraphDiffCli:
         assert data["agent_contract"]["facts"]
         assert any("save-snapshot" in c for c in data["agent_contract"]["next_commands"])
 
-    def test_graph_diff_with_snapshot_returns_diff_envelope(
-        self, small_project, monkeypatch
-    ):
+    def test_graph_diff_with_snapshot_returns_diff_envelope(self, small_project, monkeypatch):
         monkeypatch.chdir(small_project)
         runner = CliRunner()
 

@@ -102,8 +102,7 @@ def test_no_duplicate_atomic_write_helpers_remain():
     assert not offenders, (
         "W17.1 regression — inline atomic-write helpers found in src/roam/.\n"
         "Each of the following functions must either delegate to "
-        "roam.atomic_io or be deleted:\n  - "
-        + "\n  - ".join(offenders)
+        "roam.atomic_io or be deleted:\n  - " + "\n  - ".join(offenders)
     )
 
 

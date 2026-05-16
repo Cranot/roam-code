@@ -6,6 +6,20 @@ Works WITHOUT a roam index -- parses files directly.
 Exit codes:
   0  All files are syntactically clean.
   5  One or more files contain syntax errors (EXIT_GATE_FAILURE).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because syntax-check is a validator-not-detector: its output
+is invocation-scoped tree-sitter parse-failure status (ERROR /
+MISSING AST nodes from the underlying grammar). Tree-sitter parse
+errors describe well-formedness of the input text, not analysis
+findings produced by roam's index — surfacing them via SARIF would
+conflate parser-output (file parseable?) with code-analyzer-output
+(code well-designed?). When agents want a SARIF-shaped parse error
+stream, the parser-native tooling for that language is the correct
+producer. See ``cmd_db_check`` / ``cmd_schema`` /
+``cmd_rules_validate`` for the parallel validator-not-detector
+disclosure pattern (W1192) + action.yml _SUPPORTED_SARIF allowlist +
+W1224-audit memo.
 """
 
 from __future__ import annotations

@@ -88,41 +88,25 @@ class ApprovalRecord:
 
     def __post_init__(self) -> None:
         if not isinstance(self.approver, str) or not self.approver:
-            raise ValueError(
-                "ApprovalRecord.approver must be a non-empty string"
-            )
+            raise ValueError("ApprovalRecord.approver must be a non-empty string")
         if not isinstance(self.scope, str) or not self.scope:
-            raise ValueError(
-                "ApprovalRecord.scope must be a non-empty string"
-            )
+            raise ValueError("ApprovalRecord.scope must be a non-empty string")
         if not isinstance(self.timestamp, str) or not self.timestamp:
-            raise ValueError(
-                "ApprovalRecord.timestamp must be a non-empty ISO-8601 "
-                "UTC string"
-            )
+            raise ValueError("ApprovalRecord.timestamp must be a non-empty ISO-8601 UTC string")
         # Validate timestamp parses (fail fast on garbage); we do not
         # store the parsed datetime because the dataclass is frozen and
         # the canonical-JSON form must round-trip the original string.
         try:
             _parse_iso(self.timestamp)
         except ValueError as exc:
-            raise ValueError(
-                f"ApprovalRecord.timestamp is not ISO-8601 parseable: "
-                f"{self.timestamp!r} ({exc})"
-            ) from exc
+            raise ValueError(f"ApprovalRecord.timestamp is not ISO-8601 parseable: {self.timestamp!r} ({exc})") from exc
         if self.expiry is not None:
             if not isinstance(self.expiry, str) or not self.expiry:
-                raise ValueError(
-                    "ApprovalRecord.expiry must be None or a non-empty "
-                    "ISO-8601 UTC string"
-                )
+                raise ValueError("ApprovalRecord.expiry must be None or a non-empty ISO-8601 UTC string")
             try:
                 _parse_iso(self.expiry)
             except ValueError as exc:
-                raise ValueError(
-                    f"ApprovalRecord.expiry is not ISO-8601 parseable: "
-                    f"{self.expiry!r} ({exc})"
-                ) from exc
+                raise ValueError(f"ApprovalRecord.expiry is not ISO-8601 parseable: {self.expiry!r} ({exc})") from exc
 
     def is_expired(self, *, now_iso: str | None = None) -> bool:
         """Return ``True`` if ``expiry`` is set and ``now`` > ``expiry``.

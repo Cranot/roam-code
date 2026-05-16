@@ -7,6 +7,736 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — W1255-W1278 batch (post-CONSOLIDATE-15, 2026-05-16 /loop iteration N+16)
+
+> **7+ completions since CONSOLIDATE-15 (Section 61).** The follow-
+> through batch after the Pattern-2c 30/30 terminal landed. **The
+> MAJOR load-bearing milestone**: the **W1255 architectural
+> decision** (Option (a) "Keep top-level + add siblings") landed AND
+> shipped within the same consolidation window — `.roam-rules.yml`
+> (root) + `.roam/constitution.yml` (existing) + `.roam/control-map.yml`
+> (new) are the canonical config paths, and `src/roam/evidence/config_hashes.py`
+> (84 LOC, NEW) + ledger.py stamping at `start_run` (+18 LOC) wire
+> the producer side end-to-end. **Side benefit**: `vsa.py` already
+> CONSUMES `constitution_hash` + `rules_config_hash` at lines
+> 281-296 — producer wire-up immediately benefits VSA attestation
+> with zero further code change. W1253 unblocked. Plus the
+> **W1272 Pattern-2c unresolved-path standardization** milestone:
+> 8 commands (`cmd_impact` + 6 helper-callers + `cmd_preflight`
+> already-compliant pin) now emit the canonical Convention-c
+> unresolved-path shape — exit code 0 on unresolved across all 8.
+> Five themes: (1) **W1255 architectural decision recorded + IMPL
+> shipped** — Cranot picked Option (a); `config_hashes.py` substrate
+> + ledger.py producer wire-up + CLAUDE.md doc landed inside the
+> same window. 11 new tests + 101 in-scope tests pass; hash-stability
+> preserved. (2) **W1272 Pattern-2c unresolved-path standardization
+> SHIPPED** — 8-command Convention-c bulk migration (78+105+27+51
+> tests pass; zero regressions; exit-code-0-on-unresolved across all
+> 8). The post-Pattern-2c-terminal follow-up arc surfaced at
+> CONSOLIDATE-15 (W1268-audit) lands within the next consolidation
+> window. (3) **W1273 test_validate_plan dogfood-brittleness fix
+> SHIPPED** — 3 tests hardened (cold-start-guard bypass +
+> `_vp_blast_radius` stubbing); 27/27 tests pass. (4) **Drive-by
+> captures** — W1275 (3 remaining dogfood-brittle tests in
+> `test_validate_plan.py`) + W1276 (`test_impact_auto_logs_not_found_path`
+> RECLASSIFIED → W1272-expected-failing; in flight as W1276-fix) +
+> W1277 (replay-narration provenance for unresolved-path attempts
+> — auto_log removed from `cmd_impact`; signal-loss risk) + W1278
+> (audit 3 remaining `symbol_not_found` callers — `cmd_test_scaffold`
+> / `cmd_plan_refactor` / `cmd_guard`). (5) **Lockstep consolidation
+> discipline** — the every-~8-completions /loop rule fires; the
+> follow-through batch lands cleanly without the multi-arc-terminal
+> volume of CONSOLIDATE-14 / CONSOLIDATE-15.
+
+- **W1255 architectural decision recorded AND shipped within the same window.** Cranot picked Option (a) "Keep top-level + add siblings". Canonical paths: `.roam-rules.yml` (root) + `.roam/constitution.yml` (existing) + `.roam/control-map.yml` (new). W1255-IMPL shipped: `src/roam/evidence/config_hashes.py` (84 LOC, NEW) + `ledger.py` stamping at `start_run` (+18 LOC) + `CLAUDE.md` doc (+17 LOC). 11 new tests + 101 in-scope tests pass. Hash-stability preserved. **Side benefit**: `src/roam/evidence/vsa.py` already CONSUMES `constitution_hash` + `rules_config_hash` at lines 281-296 — the producer wire-up immediately benefits VSA attestation with zero further code change. W1253 unblocked (the W1255 decision was the only blocker remaining on W1253). The architectural-decision-and-implementation arc fitting inside a single consolidation window is the canonical fast-path for substrate-first sequencing — decision captured at CONSOLIDATE-14, decision-locked + implemented within the post-CONSOLIDATE-15 follow-through batch.
+- **W1272 Pattern-2c unresolved-path standardization SHIPPED — 8-command Convention-c bulk migration.** Post-CONSOLIDATE-15 follow-through arc that closes the W1268-audit-captured 5-way unresolved-path divergence at the consumer level. `cmd_impact` + 6 helper-callers (`cmd_dead` / `cmd_safe_delete` / `cmd_closure` / `cmd_symbol` / `cmd_hover` / `cmd_pytest_fixtures` — illustrative; see commit for the full list) + `cmd_preflight` already-compliant pin now emit the canonical Convention-c unresolved-path shape. 78+105+27+51 tests pass. Zero regressions. **Exit code 0 on unresolved** across all 8 commands (was previously divergent — some emitted exit-2, some exit-5, some exit-0 with partial_success: true). The Pattern-2c terminal at 30/30 (CONSOLIDATE-15) addressed the *disclosure* of degraded resolution; W1272 addresses the *shape consistency* of the unresolved-path branch across consumers. Together: Pattern-2c is now both disclosure-complete AND shape-uniform.
+- **W1273 — test_validate_plan dogfood-brittleness fix SHIPPED.** The W1271-audit / W1273-capture / W1274-fix arc from CONSOLIDATE-15 covered the `test_visualize` stale-assertion case; W1273 proper covered the remaining `test_validate_plan` cases. 3 tests hardened: cold-start-guard bypass + `_vp_blast_radius` stubbing applied. 27/27 tests pass. The capture-to-fix arc spans CONSOLIDATE-15 → CONSOLIDATE-16 — clean cross-session follow-through on the dogfood-brittleness surface.
+- **Drive-by captures during this consolidation window (4 captures).** W1275 (harden 3 remaining dogfood-brittle tests in `test_validate_plan.py` — partial W1273 follow-up). W1276 (`test_impact_auto_logs_not_found_path` RECLASSIFIED → W1272-expected-failing; test needs update; in flight as W1276-fix). W1277 (restore replay-narration provenance for unresolved-path attempts; `auto_log` was removed from `cmd_impact` during W1272 standardization — there's a signal-loss risk on the replay-narration surface that wants explicit recovery). W1278 (audit 3 remaining `symbol_not_found` callers — `cmd_test_scaffold` / `cmd_plan_refactor` / `cmd_guard` — for Convention-c alignment; the W1272 bulk migration touched 8 of 11 known callers, the remaining 3 want an audit before bulk-migration).
+
+### In flight — W1255-W1278 batch (parallel dispatches not yet on disk)
+
+- **W1253** — was unblocked by W1255-IMPL landing; the next-session dispatch will pick up.
+- **W1276-fix** — `test_impact_auto_logs_not_found_path` test-needs-update (W1272 follow-up; expected-failing under the new W1272 exit-code-0 contract).
+
+### Added — W1245-W1274 batch (post-CONSOLIDATE-14, 2026-05-16 /loop iteration N+15)
+
+> **~20 completions since CONSOLIDATE-14 (Section 60) — the largest
+> cumulative consolidation since the W1175-RESEARCH propagation arc
+> mid-points.** The MAJOR milestone: **Pattern-2c propagation arc
+> COMPLETE at 30/30 sites.** The W1233-audit roster (originally 38
+> sites) resolved to 30 real true-positives once the W1267-audit
+> filtered out two W1233-audit false positives (`cmd_hotspots` /
+> `cmd_smells` lacked real `find_symbol` callsites). Wave 1 quartet
+> (W1242 + W1243 + W1244 + W1248 — CONSOLIDATE-14) + cmd_annotate
+> (W324 origin template) + W1245 batches 1-4 covering 20 SHIP +
+> 2 BAIL (22 cmd_*.py visited, 20 disclosure-covered + 2 false-
+> positive BAILs) closed every remaining real Pattern-2c site.
+> **Both terminal
+> arcs are now CLOSED**: the SARIF SHIP/SKIP-disclosure 196 → 0
+> propagation arc reached terminal at CONSOLIDATE-14; the Pattern-2c
+> 30/30 arc reaches terminal at CONSOLIDATE-15. The agentic-assurance
+> substrate now spans producer (W1234 evidence_stale + earlier W210
+> packet substrate) + consumer (W1262 doctor/diff stale banner) +
+> attestation (W37x CGA + W377 permit collector) — all three axes
+> structurally complete. Six themes: (1) **Pattern-2c bulk
+> completion** — W1245 batches 1-4 (22 SHIP across `cmd_dead` +
+> `cmd_safe_delete` + `cmd_closure` + `cmd_symbol` + `cmd_hover` +
+> `cmd_pytest_fixtures` + `cmd_plan` + `cmd_context` + `cmd_relate` +
+> `cmd_why` + `cmd_visualize` + `cmd_invariants` + `cmd_testmap` +
+> `cmd_affected_tests` + `cmd_guard` + `cmd_metrics` +
+> `cmd_plan_refactor` + `cmd_pr_bundle` + `cmd_safe_zones` +
+> `cmd_test_scaffold`) + 2 BAIL on W1233-audit false positives
+> (`cmd_hotspots` / `cmd_smells` — no real `find_symbol` callsite).
+> Plus cmd_annotate origin template (W324) accounted in the
+> 30-tally. (2) **Pattern-2c family extensions** — W1250 helper
+> docstring (collision-pattern documented); W1270 helper reserved-
+> key warning (Pattern-2 silent-drop fix at substrate level; first
+> real-world use in W1245-batch-4 `cmd_safe_zones`); W1268-audit
+> surfaced 5-way unresolved-path divergence captured as W1272;
+> W1271-audit surfaced `test_validate_plan` dogfood-brittleness
+> captured as W1273; W1273-fix → W1274 stale-assertion fix in
+> `test_visualize`; W1265 docstring at `vsa.py:133` (W1264 follow-up).
+> (3) **Evidence/W210 extensions** — W1262 doctor/diff stale-evidence
+> banner (consumer-side wire-up of W1234 evidence_stale producer);
+> W1266 `completeness_compat` shared module hoist (-180 LOC duplicate
+> helpers + 205 LOC shared; W1262 drive-by). (4) **Per-kind version
+> stamps** — W1256 `cmd_vibe_check` per-pattern version stamps (10
+> patterns); W1269 `cmd_smells` per-kind version stamps (7 patterns
+> wired). (5) **Audit closures** — W1267 audit corrected the 34-site
+> Pattern-2c list to 30 real true-positives by filtering the two
+> W1233-audit false positives. (6) **CONSOLIDATE pause** — natural
+> stopping point after Wave 2 batch-4 lands; no in-flight dispatches
+> at consolidation time. (Tally arithmetic: 20 SHIP across W1245
+> batches 1-4 + 4 Wave-1 from CONSOLIDATE-14 + 1 W324 cmd_annotate
+> origin + 5 already covered upstream / earlier = 30 real
+> Pattern-2c sites disclosure-covered; the W1233-audit 38-site
+> original count was inflated by 2 false positives + ~6 duplicates
+> already covered by earlier substrates.)
+
+- **Pattern-2c propagation arc COMPLETE at 30/30 sites (W1245 batches 1-4).** The MAJOR load-bearing milestone: every real Pattern-2c site in the W1233-audit enumeration now disclosures resolution-tier via the W1241 `resolution_disclosure()` helper substrate. **Batch breakdown.** W1245-batch-1 (3 SHIP — `cmd_dead` + `cmd_safe_delete` + `cmd_closure`; 2 BAIL — `cmd_hotspots` / `cmd_smells` were W1233-audit false positives, no real `find_symbol` callsites). W1245-batch-2 (5 SHIP — `cmd_symbol` + `cmd_hover` + `cmd_pytest_fixtures` + `cmd_plan` + `cmd_context`). W1245-batch-3 (5 SHIP — `cmd_relate` + `cmd_why` + `cmd_visualize` + `cmd_invariants` + `cmd_testmap`). W1245-batch-4 (7 SHIP — `cmd_affected_tests` + `cmd_guard` + `cmd_metrics` + `cmd_plan_refactor` + `cmd_pr_bundle` + `cmd_safe_zones` + `cmd_test_scaffold`). **Plus the Wave-1 quartet from CONSOLIDATE-14** (W1242 `cmd_impact` + W1243 `cmd_preflight` + W1244 `cmd_diagnose` + W1248 `cmd_trace`) **and the W324 cmd_annotate origin template** — together 30/30 real Pattern-2c sites. W1267-audit corrected the W1233-audit roster (originally 38 sites; surfaced 2 false positives + ~6 duplicates already covered upstream → 30 real true-positives). The W1249 substrate refactor's ~3× LOC simplification per consumer made batches-2/3/4 tractable at ~7 sites per dispatch versus Wave-1's ~1-site-per-dispatch cadence. Hash-stability invariant held throughout: every adoption byte-stable for `symbol`-tier (exact-match) envelopes; only the partial-success branches emit new field bytes. **The propagation arc is structurally complete** — no surviving Pattern-2c gaps remain in the cmd_*.py surface.
+- **Pattern-2c family extensions (W1250 + W1270 + W1268-audit + W1271-audit + W1273-fix + W1274 + W1265).** W1250 expanded the `resolution_disclosure()` helper docstring with the W324 cmd_annotate template precedent + W1241 substrate-first sequencing + collision-pattern documentation (what happens when two resolvers race on the same logical symbol). W1270 added the helper's reserved-key warning surface — the substrate now flags Pattern-2 silent-drop when a downstream caller tries to override a reserved envelope key; the first real-world use landed in W1245-batch-4 `cmd_safe_zones`, where a name-collision between the resolution-tier output and a domain-specific `partial_success` field was caught at substrate layer rather than silently dropped. W1268-audit surfaced a 5-way unresolved-path divergence across the Pattern-2c consumer family (each cmd hand-rolled its own degraded-resolution path) — captured as **W1272** for bundled standardization (10 cmd_*.py / ~150 LOC). W1271-audit surfaced `test_validate_plan` dogfood-brittleness (assertion couples to an unstable transient hash) — captured as **W1273**. W1273-fix shipped as **W1274** (`test_visualize` stale-assertion fix; ~10-20 LOC). W1265 added a load-bearing docstring at `src/roam/evidence/vsa.py:133` (W1264 follow-up — surfaced during W1262 stale-banner wiring). The Pattern-2c family's substrate-first sequencing precedent (substrate → Wave-1 → substrate refactor → bulk migration) is now the canonical playbook for closed-vocab propagation arcs.
+- **Evidence/W210 extensions (W1262 + W1266).** W1262 landed the **consumer-side wire-up of the W1234 evidence_stale producer** — `roam doctor` and `roam diff` now surface a "stale evidence" banner when the W1234-emitted `evidence_stale: true` field appears on the consumed packet (closes the W1254 in-flight dispatch from CONSOLIDATE-14). W1266 hoisted `evidence_completeness_compat` helpers into a shared module (-180 LOC of duplicate helpers across `cmd_doctor` / `cmd_diff` / `cmd_critique` / 3 sibling sites + 205 LOC shared module) — drive-by from W1262 stale-banner wiring; W1266 is the substrate-first-sequencing exemplar applied to evidence completeness checks. **The agentic-assurance substrate now spans all three axes — producer + consumer + attestation — structurally complete.** The W1234 producer (CONSOLIDATE-14) emits; the W1262 consumer (CONSOLIDATE-15) surfaces; the W37x CGA + W377 permit-collector attest. The W210 packet-layer Pattern-2 variant-2f family is now end-to-end live; no producer/consumer/attestation gap survives on the evidence-staleness axis.
+- **Per-kind version stamps — W1256 (vibe-check) + W1269 (smells).** W1256 added per-pattern detector version stamps to `cmd_vibe_check`'s 10 AI-rot patterns (each pattern's emission now carries its own `pattern_version` field — agents can detect a pattern's signal shape changed without forcing the whole detector version to bump). W1269 wired per-kind version stamps for the 7 `cmd_smells` patterns that still shared the composite `SMELLS_DETECTOR_VERSION` fallback (W870 vintage — 7/24 detectors had per-id stamps post-W870; W1269 closes the 7 most-touched of the remaining 17). Both ships are byte-stable additive — no persisted finding rows touched; the new version fields land on the FindingRecord envelope alongside (not replacing) the composite detector version. Together W1256 + W1269 close the version-stamp gap for the two largest pattern-family detectors in the catalog (vibe-check + smells).
+- **Audit closures — W1267.** W1267 corrected the W1233-audit roster from 34 sites to 30 real true-positives. The audit found that `cmd_hotspots` and `cmd_smells` listed in W1233-audit Wave-2 batch-1 lacked a real `find_symbol()` callsite — both commands resolve their inputs via the rule-engine path rather than the symbol-resolver path, so the Pattern-2c disclosure shape doesn't apply (no degraded resolution to disclose). The two BAIL outcomes (W1245-batch-1 BAILs) are recorded with structured rationale; W1233-audit's 38-site original count resolved cleanly to 30 real sites once W1267 + duplicates-already-covered cross-referenced.
+
+### In flight — W1245-W1274 batch (parallel dispatches not yet on disk)
+
+- (none — natural pause point after W1245-batch-4 lands; no parallel dispatches active at consolidation time)
+
+### Added — W1242-W1259 batch (post-CONSOLIDATE-13, 2026-05-16 /loop iteration N+14)
+
+> **~15 completions since CONSOLIDATE-13 (Section 59).** Six themes:
+> (1) **Pattern-2c family enablement — Wave 1 quartet landed** —
+> W1242 `cmd_impact` + W1243 `cmd_preflight` + W1244 `cmd_diagnose` +
+> W1248 `cmd_trace` adopted the W1241 `resolution_disclosure()` helper
+> substrate at the `find_symbol()` / `find_symbol_id()` call sites.
+> The four flagship commands now surface which tier of the resolver
+> succeeded (`symbol` / `file` / `fuzzy` / `unresolved`) + a
+> `partial_success` flag set on any non-`symbol` resolution. Wave 1
+> finishes the highest-traffic Pattern-2c sites first, matching the
+> W1192/W1195 SARIF SHIP sequencing pattern. (2) **Pattern-2c
+> substrate refactor (W1249)** — hoisted `find_symbol` tier-stamping
+> into the substrate helper, eliminating ~100 LOC of duplicate
+> `_detect_resolution_tier` helpers across the four Wave-1 flagships.
+> The W1249 refactor unblocks W1245-batch-1 (Wave 2 first 5 sites) at
+> ~3× LOC simplification per consumer — without it, each Wave-2
+> adoption would carry ~25 LOC of boilerplate the substrate now
+> absorbs. (3) **Wave 16 SKIP-disclosure landed — `_KNOWN_MISSING`
+> 17 → 0** — 17 docstrings shipped across the remaining Bucket B
+> long-tail (`cmd_debt` + `cmd_entry_points` + `cmd_guard` + `cmd_map`
+> + `cmd_metrics` + `cmd_path_coverage` + `cmd_patterns` +
+> `cmd_plan_refactor` + `cmd_pytest_fixtures` + `cmd_risk` +
+> `cmd_safe_delete` + `cmd_safe_zones` + `cmd_simulate_departure` +
+> `cmd_suggest_refactoring` + `cmd_testmap` + `cmd_why_slow` +
+> `cmd_ws`). **The 196 → 0 propagation arc is now fully closed** —
+> 196 commands audited, 196 commands disclosure-covered (179
+> SKIP-disclosure docstrings + 17 SARIF SHIP emitters across
+> CONSOLIDATEs 4 → 14). The W1175-RESEARCH long-tail roster
+> exhausted; arc terminal. (4) **Evidence/W210 wire-up** — W1234
+> shipped the `evidence_stale` producer (W210 packet-layer Pattern-2
+> variant-2f); W1254 (consumer) in flight at consolidation time; W1253
+> BAIL surfaced W1255 architectural prerequisite (no upstream packet
+> exists to mark stale → captured as architectural decision pending).
+> (5) **State-vocab substrate (W1235)** — `_STATE_FAMILY_ALIASES`
+> registry landed at substrate level for state-name normalization
+> across closed-vocab Pattern-2g sites. (6) **SARIF rule rename
+> (W1232)** — `flag-constant-default` rule renamed to `flag-suspect`
+> per W1226 SHIP scope-discipline follow-up, aligning the
+> `cmd_flag_dead` namespace closer to W1227/W1229 naming convention.
+> Plus three CLAUDE.md doc-drift refreshes (W1247 module-local SARIF
+> convention + W1252 findings-registry decision + W1258+W1259
+> 16 → 26 detector count + `emit_finding(conn, record)` API name)
+> and two new research memos (`(internal memo)`
+> already shipped in CONSOLIDATE-13; `(internal memo)`
+> 773 LOC false-positive rate benchmarks across the 26 emitting
+> detectors).
+
+- **Pattern-2c Wave 1 quartet landed (W1242 + W1243 + W1244 + W1248).** Four flagship commands — `cmd_impact` (W1242) / `cmd_preflight` (W1243) / `cmd_diagnose` (W1244) / `cmd_trace` (W1248) — consume the W1241 `resolution_disclosure()` helper substrate at the `find_symbol()` / `find_symbol_id()` call sites. Envelopes now carry `resolution` (closed-enum: `symbol` / `file` / `fuzzy` / `unresolved`) + `partial_success: true` on any non-`symbol` resolution. Wave 1 covers the four highest-traffic Pattern-2c sites first per the W1192/W1195 SARIF SHIP sequencing pattern; Wave 2 (W1245-batch-1 in flight; 5 sites) and Wave 2/3 long-tail (29 remaining sites) carry forward to next session. The four Wave-1 commands are the exact ones that agents call most frequently in pre-edit workflows (`roam impact` for blast radius; `roam preflight` for gate-before-edit; `roam diagnose` for root-cause ranking; `roam trace` for symbolic path traversal) — so the user-facing partial-success disclosure lands in the highest-leverage call sites first.
+- **Pattern-2c substrate refactor (W1249).** Hoisted the `find_symbol` tier-stamping into the canonical `resolution_disclosure()` helper at `src/roam/output/formatter.py:1263`, eliminating ~100 LOC of duplicate `_detect_resolution_tier` helpers across the four Wave-1 flagships (cmd_impact / cmd_preflight / cmd_diagnose / cmd_trace). The W1249 refactor unblocks W1245-batch-1 (Wave 2 first 5 sites — `cmd_hotspots` / `cmd_smells` / `cmd_dead` / `cmd_safe_delete` / `cmd_closure`) at **~3× LOC simplification per consumer** — without it, each Wave-2 adoption would carry ~25 LOC of boilerplate that the substrate now absorbs. The refactor preserves byte-stable envelopes for the Wave-1 quartet (verified per-command via hash-comparison on representative JSON outputs) — no detector output bytes moved.
+- **Wave 16 SKIP-disclosure — `_KNOWN_MISSING` 17 → 0; the 196→0 propagation arc is fully closed.** 17 SKIP-disclosure docstrings landed across the remaining Bucket B long-tail: `cmd_debt` + `cmd_entry_points` + `cmd_guard` + `cmd_map` + `cmd_metrics` + `cmd_path_coverage` + `cmd_patterns` + `cmd_plan_refactor` + `cmd_pytest_fixtures` + `cmd_risk` + `cmd_safe_delete` + `cmd_safe_zones` + `cmd_simulate_departure` + `cmd_suggest_refactoring` + `cmd_testmap` + `cmd_why_slow` + `cmd_ws`. **The 196→0 propagation arc is terminal — 196 commands audited, 196 commands disclosure-covered** (179 SKIP-disclosure docstrings + 17 SARIF SHIP emitters across CONSOLIDATEs 4 → 14). The W1175-RESEARCH long-tail roster has now been fully exhausted; no surviving `_KNOWN_MISSING` entries remain. The arc spanned W1146 → W1259 across 11 CONSOLIDATE waves and ~30 sessions; **Wave 16 is the largest single SKIP-disclosure wave since Wave 14b (CONSOLIDATE-12, 22 docstrings)** at 17 docstrings — closing the long-tail with 0 BAILs and 0 reclassifications, both inverse-drift guards (`tests/test_known_missing_pin_is_current` + `tests/test_pattern_2_propagation_coverage`) green at consolidation time.
+- **Evidence/W210 wire-up (W1234 + W1253 BAIL + W1254 in flight).** W1234 landed the `evidence_stale` producer for the W210 packet-layer Pattern-2 variant-2f — the field is now populated upstream when the evidence-compiler detects time-skew between `context_read_at` / `edits_started_at` / `edits_completed_at` and the current commit. W1254 (consumer-side: the report renderer + projection layers consume `evidence_stale` to surface a "stale evidence" banner) dispatched in parallel at consolidation time. **W1253 BAIL surfaced an architectural prerequisite** — the `pr-bundle emit` path cannot mark a packet stale before any packet exists (no upstream packet to mark) — captured as W1255 architectural decision pending. The BAIL-and-capture discipline (Pattern-3b reclassification arc precedent) applies cleanly: a discovered prerequisite gap becomes a captured architectural decision rather than a silent no-op.
+- **State-vocab substrate (W1235).** Landed the `_STATE_FAMILY_ALIASES` registry at substrate level for state-name normalization across closed-vocab Pattern-2g sites. Captures the W1077/W1080 `structured_unknown_filter` precedent — closed-vocabulary state-name divergence (`"idle"` vs `"waiting"` vs `"pending"` etc.) gets canonicalized at the substrate boundary rather than each detector hand-rolling its own alias table. The registry is the substrate-first equivalent of the W1018 YAML loader substrate (W965-CONSOLIDATE) and the W1241 `resolution_disclosure()` helper (CONSOLIDATE-13). 45-site bulk migration (W1251) captured for next session — same substrate-first sequencing.
+- **SARIF rule rename (W1232).** Renamed the `flag-constant-default` rule under the `flag-*` namespace to `flag-suspect` per the W1226 SHIP scope-discipline follow-up. The rename aligns `cmd_flag_dead`'s closed-enum rule set closer to W1227 / W1229 naming convention — flag-*` rules now express "what the SARIF row claims about the flag" (`flag-staleness` / `flag-single-reference` / `flag-suspect`) rather than mixing claims with antecedent conditions (`flag-constant-default` named the cause rather than the consequence). Hash-stable for the rule-set rename via the SARIF wrapper's `rule_id` field — no persisted finding rows touched.
+- **CLAUDE.md doc-drift refresh (W1247 + W1252 + W1258 + W1259).** Four small but load-bearing CLAUDE.md updates: W1247 added the module-local SARIF convention note (`_to_sarif()` helpers live in the cmd module per SHIP emitter — not centralized — per W1236-audit BENIGN verdict); W1252 captured the findings-registry decision (`emit_finding(conn, record)` as canonical API name — supersedes the older `findings_store.persist(...)` snake_case spelling that drifted into early docs); W1258 + W1259 refreshed the detector count from "16 detectors persist findings" (W146 vintage) to "26 detectors persist findings as of 2026-05-16" with the 10 newly-emitting detectors enumerated (critique, doctor, fan, fingerprint, health, llm-smells, etc. — predominantly aggregator / consumer commands that re-emit derived findings from upstream detectors).
+- **Research memo — `(internal memo)` (773 LOC).** False-positive rate benchmarks across the 26 emitting detectors. Reference for the next per-detector confidence-tier tuning pass (W1256 captured for next session). Companion to `(internal memo)` (884 LOC, shipped CONSOLIDATE-13) — together the two memos cover the W2026-05-16 detector-quality landscape. No source changes; sequencing decisions are Cranot's.
+- **Drift-guard remediation (W1239 + W1240) — hygiene clean.** W1239 (drift-guard hygiene follow-up A from W1231-audit) shipped — stale audit assertion cleaned up. W1240 (drift-guard hygiene follow-up B) shipped — BACKLOG.md table-of-pendings cleaned to match the post-CONSOLIDATE-13 ground truth.
+
+### Audits / verdicts — W1242-W1259 batch
+
+- **W1230 audit — `cmd_test_gaps` SKIP confirm (re-verification).** Originally raised CONSOLIDATE-9 (W1202), re-opened CONSOLIDATE-13 by Wave 14b docstring landing, confirmed CONSOLIDATE-14: REPORT-not-detector pattern (no per-location FindingRecord persistence). SKIP-disclosure docstring stays in place. The verdict has now been re-affirmed across **three consecutive consolidation passes** — strongest signal yet that the classification is stable. **Drive-by drift note**: BACKLOG.md "Outstanding from older rosters" still lists `cmd_test_gaps` in stale carry-forward rosters in earlier CONSOLIDATE-12/13 sections — surfaced for cleanup but not load-bearing.
+- **W1231 audit — drift-guard triage (5-failure)** — CLOSED. Two FIXED (W1237 cmd_risk edge-kind canonicalize + W1238 catalog/detectors.py bare-except migration — both landed CONSOLIDATE-13); two follow-ups SHIPPED CONSOLIDATE-14 (W1239 + W1240 hygiene clean).
+- **W1233 audit — 38 Pattern-2c sites enumeration** — Wave 1 closed (quartet shipped CONSOLIDATE-14); Wave 2 batch-1 in flight; remaining 29 sites captured for Wave 2 batch-2+.
+- **W1236 audit — SARIF helper convention sweep** — VERDICT BENIGN. Module-local SARIF convention consistent across all 37 emitters; no substrate canonicalization needed. W1247 doc-pass landed.
+- **W1246 audit — `cmd_trace.find_symbol_id` Pattern-2c** — VERDICT NON-COMPLIANT (CONSOLIDATE-13). Captured as W1248; shipped CONSOLIDATE-14.
+- **W1257 audit in flight** — ~45-site state-vocab adoption sweep (consumer-side of W1235 `_STATE_FAMILY_ALIASES` registry). Dispatched in parallel at consolidation time; non-CHANGELOG-touching.
+
+### In flight — W1242-W1259 batch (parallel dispatches not yet on disk)
+
+- **W1254 — `evidence_stale` consumer wire-up.** Dispatched at consolidation time. The W210 packet-layer consumer-side: report renderer + projection layers consume the `evidence_stale` field W1234 populates and surface a "stale evidence" banner.
+- **W1245-batch-1 — Pattern-2c Wave 2 adoption (5 sites).** Dispatched at consolidation time. `cmd_hotspots` / `cmd_smells` / `cmd_dead` / `cmd_safe_delete` / `cmd_closure` — the first 5 of the 10 Wave-2 sites surfaced by W1233-audit. W1249's substrate refactor cut per-consumer LOC ~3×, making this batch tractable in a single dispatch.
+- **W1257-audit — state-vocab adoption sweep (45 sites).** Dispatched at consolidation time. Consumer-side of the W1235 `_STATE_FAMILY_ALIASES` registry; same pattern as the W1233-audit dispatch for Pattern-2c.
+
+### Added — W1226-W1248 batch (post-CONSOLIDATE-12, 2026-05-16 /loop iteration N+13)
+
+> **~13 completions since CONSOLIDATE-12 (Section 58).** Four themes:
+> (1) **SARIF SHIP family grew from 34 to 37 emitters** in a single
+> post-CONSOLIDATE-12 window — W1226 `cmd_flag_dead` (35th, three closed-
+> enum rules under the `flag-*` namespace: `flag-staleness` /
+> `flag-single-reference` / `flag-constant-default`; staleness-banded
+> per-result `level` with a **warning ceiling** — heuristic detector,
+> never escalates to error), W1227 `cmd_orphan_routes` (36th, per-route
+> dead-endpoint projection; single closed-enum rule `orphan-route` with
+> confidence-banded per-result `level`: high + medium → warning, low →
+> note; warning ceiling — heuristic detector, never escalates to error;
+> the `used` bucket is filtered upstream so SARIF consumers never see
+> non-actionable rows), W1229 `cmd_verify_imports` (37th, **first SHIP
+> emitter that escalates to error** — two closed-enum rules:
+> `invalid-import` (warning) for unresolved with FTS5 fuzzy-match
+> candidates, `hallucination-import` (error) for unresolved with no
+> candidates; verify-imports is the canonical "hallucination firewall"
+> detector for LLM-era code and the only verify-imports rule that
+> escalates to error per the W1229 scope discipline). (2) **Pattern-2
+> variant-D family enablement (W1241)** — landed the canonical
+> `resolution_disclosure()` helper at
+> `src/roam/output/formatter.py:1263` + `_RESOLUTION_KINDS` frozen
+> closed-enum (`symbol` / `file` / `fuzzy` / `unresolved`) + drift-guard
+> test (`tests/test_resolution_disclosure.py`). Helper substrate now
+> live for the W1242/W1243/W1244 Wave-1 adoption sweep across
+> `cmd_impact` / `cmd_preflight` / `cmd_diagnose` (in flight at
+> consolidation time). (3) **SKIP-disclosure propagation arc continued
+> through Wave 14** — `_KNOWN_MISSING` decremented 20 → 17 via the
+> three W1226/W1227/W1229 SHIP-promote pin-list removals (no new
+> docstring waves this batch — long-tail of the propagation arc).
+> (4) **Drift-guard remediation pass** — W1237 (`cmd_risk` edge-kind
+> vocabulary canonicalized to `roam.db.edge_kinds`) + W1238
+> (`catalog/detectors.py` framework-detector plugin loop migrated from
+> bare-except to `log.warning(...) + continue` per W531 fail-loud
+> discipline; previously-grandfathered `_PRE_W662_PENDING` entries
+> dropped to zero in that file). Plus a 884-LOC research memo
+> (`(internal memo)`) cataloguing the
+> seven-variant Pattern-2 family taxonomy and seven open gaps.
+
+- **SARIF SHIP family grew from 34 to 37 emitters (W1226+W1227+W1229).** Added `cmd_flag_dead` (35th SHIP, three closed-enum rules under `flag-*` namespace — `flag-staleness` / `flag-single-reference` / `flag-constant-default`; staleness-banded per-result `level` with a **warning ceiling** — heuristic detector, never escalates to error), `cmd_orphan_routes` (36th SHIP, per-route dead-endpoint projection; single closed-enum rule `orphan-route`; confidence-banded per-result `level` — high + medium → warning, low → note; warning ceiling — heuristic detector, never escalates to error; the `used` bucket is filtered upstream so SARIF consumers never see non-actionable rows), `cmd_verify_imports` (37th SHIP, **first SHIP emitter that escalates to error** — two closed-enum rules: `invalid-import` (warning) for unresolved with FTS5 fuzzy-match candidates, `hallucination-import` (error) for unresolved with no candidates; verify-imports is the canonical "hallucination firewall" detector for LLM-era code and the only verify-imports rule that escalates to error per the W1229 scope discipline; `resolved` rows are filtered upstream so SARIF consumers never see non-actionable rows). All three wrappers hash-stable additive; no persisted finding rows touched. Hash-stability invariant held across all 37 emitters.
+- **Pattern-2 variant-D family enablement substrate (W1241).** Landed the canonical `resolution_disclosure()` helper at `src/roam/output/formatter.py:1263` + a frozen closed-enum `_RESOLUTION_KINDS` (`symbol` / `file` / `fuzzy` / `unresolved`) + drift-guard test at `tests/test_resolution_disclosure.py`. Implements the W324 cmd_annotate template at substrate level — every command that calls `find_symbol()` with an implicit fallback chain can now surface which tier of the resolver succeeded. The `partial_success` flag is True for any non-`symbol` resolution. Enables the W1242/W1243/W1244 Wave-1 adoption sweep across `cmd_impact` / `cmd_preflight` / `cmd_diagnose` (in flight at consolidation time). The W1233 audit (Pattern-2c on 38 sites — Wave 1+2+3 enumeration) + W1246 audit (cmd_trace `find_symbol_id` non-compliant → W1248 capture) frame the remaining adoption work as a multi-wave propagation arc structurally parallel to the SARIF SHIP / SKIP-DISCLOSURE arc that drove CONSOLIDATEs 4 → 13.
+- **SKIP-disclosure propagation — pin-list 20 → 17 via SHIP-promotes (no new docstring waves).** Each of W1226 + W1227 + W1229 decremented `_KNOWN_MISSING` in-batch via the `tests/test_known_missing_pin_is_current` inverse-drift guard — no second-pass stale-pin sweep required, continuing the W1222 hygiene discipline (CONSOLIDATE-11) and the CONSOLIDATE-12 "every SHIP landing decrements `_KNOWN_MISSING`" pattern. The propagation arc is now **~91% complete from the original 196-file gap (179 commands closed; 196 → 17).** The 17 surviving pin-list entries are all the long-tail audit-needed commands flagged by W1175-RESEARCH (`cmd_debt` + `cmd_entry_points` + `cmd_guard` + `cmd_map` + `cmd_metrics` + `cmd_path_coverage` + `cmd_patterns` + `cmd_plan_refactor` + `cmd_pytest_fixtures` + `cmd_risk` + `cmd_safe_delete` + `cmd_safe_zones` + `cmd_simulate_departure` + `cmd_suggest_refactoring` + `cmd_testmap` + `cmd_why_slow` + `cmd_ws`).
+- **Drift-guard remediation (W1237 + W1238).** W1237 canonicalized the edge-kind vocabulary in `cmd_risk` onto the `roam.db.edge_kinds` registry — closes a quiet drift class where edge-kind literals could diverge across cmd_*.py callsites. W1238 migrated the framework-detector plugin loop in `catalog/detectors.py` (previously at lines 2044/2048, drifted to 2153/2157) from bare `except Exception: continue|pass` to `log.warning(...) + continue` per W531 fail-loud discipline; the plugin-isolation perimeter rationale is preserved in the inline comments at the call site; the swallow is now visible. Two previously-grandfathered `_PRE_W662_PENDING` entries dropped to zero in `catalog/detectors.py` (stale-pin hygiene applied alongside the migration).
+- **Research memo — `(internal memo)` (884 LOC).** Catalogues the **seven-variant Pattern-2 family taxonomy** as of 2026-05-16: 2a compound-recipe / 2b empty-corpus / 2c resolution-state (W1241 helper substrate) / 2d producer-gap (W261 redaction reason) / 2e shared-substrate (W1018 YAML loader) / 2f packet-layer (W210 evidence_stale) / 2g closed-vocabulary-unknown (W1077/W1080 structured_unknown). Companion to `(internal memo)` (yesterday's Python-3.11+ language-feature survey of `warnings_out` — verdict STAY). Surfaces seven open gaps + counts adoption per variant. No source changes; sequencing decisions are Cranot's.
+
+### Audits / verdicts — W1226-W1248 batch
+
+- **W1230 audit — `cmd_test_gaps` re-verification — VERDICT SKIP CONFIRMED.** Carry-forward audit from W1202 (CONSOLIDATE-9) re-opened by the Wave 14b docstring landing. Re-verified: REPORT-not-detector pattern (no per-location FindingRecord persistence). W1202 close confirmed; SKIP-disclosure docstring stays in place.
+- **W1231 audit — drift-guard triage (5 failures → 2 fixes + 2 follow-ups).** Five drift-guard failures triaged: W1237 (`cmd_risk` edge_kinds canonicalize — FIXED), W1238 (`catalog/detectors.py` bare-except migration — FIXED), W1239 (drift-guard hygiene follow-up — FOLLOW-UP), W1240 (drift-guard hygiene follow-up — FOLLOW-UP). Per W531 fail-loud discipline both fixes ship the swallow as a visible `log.warning(...)` rather than a bare `continue|pass`.
+- **W1233 audit — Pattern-2c on 38 sites, Wave 1+2+3 enumeration.** Surveyed 38 call sites of `find_symbol()` / `find_symbol_id()` across `src/roam/commands/`. Wave 1 = `cmd_impact` + `cmd_preflight` + `cmd_diagnose` (captured as W1242 + W1243 + W1244 — in flight at consolidation time). Wave 2 = the next 10 sites (captured as W1245). Wave 3 = remaining (captured as W1246 + W1248). Adoption sequencing parallels the SARIF SHIP / SKIP-DISCLOSURE arc — Wave 1 lands the helper substrate consumers, Wave 2/3 sweep the long tail.
+- **W1236 audit — `cmd_*.py` SARIF helper convention sweep — VERDICT BENIGN.** Surveyed in-module SARIF helper definitions across SHIP emitters. Module-local SARIF convention is consistent across all 37 emitters; no canonicalization needed at substrate level. W1247 captured the doc-pass to ensure CLAUDE.md reflects the module-local SARIF convention.
+- **W1246 audit — `cmd_trace.find_symbol_id` Pattern-2c — VERDICT NON-COMPLIANT.** The `find_symbol_id` callsite in `cmd_trace` does not currently emit `resolution` disclosure on degraded resolution. Captured as W1248 for Wave-3 adoption sweep.
+- **W1224-impl Wave 14 hygiene discipline held across the post-CONSOLIDATE-12 batch.** Each of W1226 + W1227 + W1229 decremented `_KNOWN_MISSING` in-batch — no stale-pin removal sweep needed, continuing the W1222 carry-forward discipline (CONSOLIDATE-11) and the CONSOLIDATE-12 0-stale-pin invariant.
+
+### In flight — W1226-W1248 batch (parallel dispatches not yet on disk)
+
+- **W1242 — `cmd_impact` Pattern-2c adoption** + **W1243 — `cmd_preflight` Pattern-2c adoption** + **W1244 — `cmd_diagnose` Pattern-2c adoption** — dispatched in parallel as the W1241 helper substrate consumers (Wave 1). None touch CHANGELOG / HANDOVER / BACKLOG / SESSION-SNAPSHOT — zero collision risk with this consolidation pass.
+- **W1239 — drift-guard hygiene follow-up audit** dispatched in parallel; non-CHANGELOG-touching.
+
+### Added — W1207-W1224 batch (post-CONSOLIDATE-11, 2026-05-16 /loop iteration N+12)
+
+> **~13 completions since CONSOLIDATE-11 (Section 57).** Two milestones:
+> (1) **SARIF SHIP family closed out the entire CONSOLIDATE-11 SHIP
+> candidate roster — 6 emitters landed (W1207 + W1209 + W1210 + W1211 +
+> W1213 + W1216), bringing the SHIP family from 28 to 34 emitters in a
+> single window.** `cmd_llm_smells` (29th SHIP, 10 closed-enum rules
+> under the `llm-smells/` namespace — first SHIP emitter with
+> double-digit closed-enum rule count + severity-banded `level`) +
+> `cmd_fan` (30th SHIP, per-symbol fan-in/fan-out projection) +
+> `cmd_hotspots` (31st SHIP, runtime-mode only; `--security`/`--danger`
+> sub-modes emit raw findings outside the closed-enum
+> `hotspots/*` rule catalogue per W1210's scope discipline) +
+> `cmd_dark_matter` (32nd SHIP, per-pair hidden-coupling projection;
+> single closed-enum rule `dark-matter/hidden-coupling` with
+> confidence-tier-banded severity) + `cmd_duplicates` (33rd SHIP, BAIL-
+> and-capture promotion landing — per-cluster semantic-duplicate
+> projection; single closed-enum rule `duplicates/cluster` with
+> similarity-banded severity) + `cmd_laws` (34th SHIP, per-rule
+> invariant projection from the W119 mined-laws substrate). All six
+> wrappers hash-stable additive; no persisted finding rows touched.
+> The 6-candidate SHIP roster from CONSOLIDATE-11 closed to **zero
+> outstanding** in this window. (2) **Pattern-3b propagation arc —
+> 14+ waves shipped, `_KNOWN_MISSING` 64 → 20.** W1224-impl landed
+> 37 SKIP-eligible docstrings across two waves (Wave 14a = 15
+> docstrings; Wave 14b = 22 docstrings) — the largest single-wave
+> batch of the arc to date, and 0 BAILs across both sub-waves.
+> Sites: cut / dev_profile / doc_staleness / docs_coverage / drift /
+> effects / eval_retrieve / evidence_diff / evidence_doctor / fitness /
+> fn_coupling / graph_stats / idempotency / index / index_bundle (14a) +
+> ingest_trace / invariants / mutate / owner / pr_diff / pr_prep /
+> side_effects / split / stats / suggest_reviewers / surface /
+> syntax_check / telemetry / test_gaps / test_pyramid / tx_boundaries /
+> version / vuln_map / vuln_reach / workflow / xlang / index_stats (14b).
+> Pin-list now down to 20 surviving entries (`cmd_debt` +
+> `cmd_entry_points` + `cmd_flag_dead` + `cmd_guard` + `cmd_map` +
+> `cmd_metrics` + `cmd_orphan_routes` + `cmd_path_coverage` +
+> `cmd_patterns` + `cmd_plan_refactor` + `cmd_pytest_fixtures` +
+> `cmd_risk` + `cmd_safe_delete` + `cmd_safe_zones` +
+> `cmd_simulate_departure` + `cmd_suggest_refactoring` +
+> `cmd_testmap` + `cmd_verify_imports` + `cmd_why_slow` + `cmd_ws`).
+
+- **SARIF SHIP family grew from 28 to 34 emitters (W1207+W1209+W1210+W1211+W1213+W1216).** Added `cmd_llm_smells` (29th SHIP, 10 closed-enum rules under the `llm-smells/` namespace — severity-banded per-result `level`; per-occurrence LLM-API anti-pattern projection; first SHIP emitter with double-digit closed-enum rule count), `cmd_fan` (30th SHIP, per-symbol fan-in/fan-out projection via `fan_to_sarif`), `cmd_hotspots` (31st SHIP, runtime-mode only via `hotspots_to_sarif`; `--security` and `--danger` sub-modes emit raw findings outside the closed-enum `hotspots/*` rule catalogue per W1210's scope discipline — first SHIP emitter with mode-conditional rule-catalogue scoping), `cmd_dark_matter` (32nd SHIP, per-pair hidden-coupling projection via `dark_matter_to_sarif`; single closed-enum rule `dark-matter/hidden-coupling` with confidence-tier-banded severity), `cmd_duplicates` (33rd SHIP, BAIL-and-capture promotion landing — per-cluster semantic-duplicate projection via `duplicates_to_sarif`; single closed-enum rule `duplicates/cluster` with similarity-banded severity), `cmd_laws` (34th SHIP, per-rule mined-invariant projection via `laws_to_sarif`). All six wrappers hash-stable additive; no persisted finding rows touched.
+- **Pattern-3b propagation arc — 14+ waves shipped, `_KNOWN_MISSING` 64 → 20.** Wave 14 (W1224-impl Wave 14a + Wave 14b) landed **37 SKIP-eligible docstrings across two contiguous sub-waves** with 0 BAILs each. Wave 14a (15 docstrings): cut / dev-profile / doc-staleness / docs-coverage / drift / effects / eval-retrieve / evidence-diff / evidence-doctor / fitness / fn-coupling / graph-stats / idempotency / index / index-bundle. Wave 14b (22 docstrings): ingest-trace / invariants / mutate / owner / pr-diff / pr-prep / side-effects / split / stats / suggest-reviewers / surface / syntax-check / telemetry / test-gaps / test-pyramid / tx-boundaries / version / vuln-map / vuln-reach / workflow / xlang / index-stats. **Largest single-wave batch of the arc to date — 37 docstrings in one window** vs the prior maximum of 12 (W1187-impl Wave 4) and 11 (W1188-impl Wave 5 / W1191-impl Wave 7). Each Wave 14 site BAIL-checked clean (no `emit_finding` / `findings_store.persist` call site at the destination).
+- **6-candidate SHIP roster from CONSOLIDATE-11 closed to zero outstanding.** All six SHIP candidates that CONSOLIDATE-11 deferred (W1207 / W1209 / W1210 / W1211 / W1213 / W1216) shipped in this window. The capture-then-defer discipline (BAIL-and-capture pattern from CONSOLIDATE-10 W1206-impl-skip; deeper-audit reclassification pattern from CONSOLIDATE-10 W1206-audit-unclear) achieved its terminal state — every captured SHIP candidate followed by a clean SHIP landing on next dispatch.
+
+### Audits / verdicts — W1207-W1224 batch
+
+- **W1224-impl (Wave 14a + Wave 14b) — 37 SKIP-eligible docstring sites, 0 BAILs across both sub-waves.** Wave 14a covered the invocation-scoped-aggregate + state-mutating + validator slice (cut / dev-profile / doc-staleness / docs-coverage / drift / effects / eval-retrieve / evidence-diff / evidence-doctor / fitness / fn-coupling / graph-stats / idempotency / index / index-bundle). Wave 14b covered the aggregate / composer / state-mutating / validator slice (ingest-trace / invariants / mutate / owner / pr-diff / pr-prep / side-effects / split / stats / suggest-reviewers / surface / syntax-check / telemetry / test-gaps / test-pyramid / tx-boundaries / version / vuln-map / vuln-reach / workflow / xlang / index-stats). Premise checks uniform on both sub-waves — no per-location FindingRecord persistence; no BAIL discoveries; no reclassifications. Largest single-wave batch of the arc to date.
+- **W1222 pin-list hygiene discipline codified (drive-by carry-forward).** The "every SHIP landing decrements `_KNOWN_MISSING`" discipline surfaced by W1222 (CONSOLIDATE-11 — `cmd_over_fetch` was still pinned despite W1219 having landed) held across all 6 SHIP landings in this window. Each of the 6 emitter landings (W1207 / W1209 / W1210 / W1211 / W1213 / W1216) updated `_KNOWN_MISSING` in-batch via the `tests/test_known_missing_pin_is_current` inverse-drift guard — no second-pass stale-pin sweep required.
+
+### In flight — W1207-W1224 batch (parallel dispatches not yet on disk)
+
+- **W1210 + W1211 — `cmd_hotspots` + `cmd_dark_matter` SHIP impl** were dispatched in parallel to the docstring waves; both have landed their SHIP wrappers + SARIF projection in `_SARIF_CONSUMERS` (visible in the cli.py 34-entry tuple). No additional concurrent waves expected to land on CHANGELOG / HANDOVER / BACKLOG / SESSION-SNAPSHOT in this window.
+
+### Added — W1213-W1222 batch (post-CONSOLIDATE-10, 2026-05-16 /loop iteration N+11)
+
+> **~10 completions since CONSOLIDATE-10 (Section 56).** Two milestones:
+> (1) **SARIF SHIP family grew from 24 to 28 emitters (W1208 + W1217 +
+> W1218 + W1219 + W1215).** `cmd_n1` (24th, W110 N+1 detector wrapper
+> with 3 closed-enum rules — high/med/low; 89+30 tests pass) +
+> `cmd_missing_index` (25th, 3 closed-enum rules; 20 tests pass) +
+> `cmd_orphan_imports` (26th, 3 closed-enum rules —
+> `internal_typo=error` / `missing_package=warning` /
+> `missing_local=warning`) + `cmd_over_fetch` (27th, single closed-enum
+> rule at warning; dual-shape endpoint+model handling) +
+> `cmd_bus_factor` (28th, 3 closed-enum rules — concentration /
+> stale-ownership / solo-summary; directory-anchor pattern;
+> hash-stable sha256 verified). (2) **Pattern-3b propagation arc —
+> 12+ waves shipped, `_KNOWN_MISSING` 96 → 64.** Wave 13 closed 10
+> SKIP-eligible docstrings with zero BAILs (changelog / db_check /
+> intent_check / metrics_push / recommend / report / retrieve /
+> schema / search_semantic / simulate). W1212 reclassification +
+> W1220 SKIP + W1222 inline stale-pin removal close this batch's
+> propagation contribution. 6 SHIP candidates remain pending (W1207
+> `cmd_llm_smells` / W1209 `cmd_fan` / W1210 `cmd_hotspots` /
+> W1211 `cmd_dark_matter` / W1213 `cmd_duplicates` / W1216 `cmd_laws`).
+
+- **SARIF SHIP family grew to 28 emitters (W1208+W1217+W1218+W1219+W1215).** Added cmd_n1 (24th, W110 N+1 detector with 3 closed-enum rules; 89+30 tests pass), cmd_missing_index (25th, 3 closed-enum rules; 20 tests pass), cmd_orphan_imports (26th, 3 confidence tiers — `internal_typo=error` / `missing_package=warning` / `missing_local=warning`), cmd_over_fetch (27th, single closed-enum rule, dual endpoint+model handling), cmd_bus_factor (28th, directory-anchor pattern with 3 rules — concentration / stale-ownership / solo-summary; hash-stable sha256 verified). All five additive wrappers; hash-stability invariant held across all 28 emitters.
+- **Pattern-3b propagation arc — 12+ waves shipped, `_KNOWN_MISSING` 96→64.** Wave 13 (W1221-audit + W1221-impl) landed 10 SKIP-eligible docstrings with 0 BAILs (changelog / db_check / intent_check / metrics_push / recommend / report / retrieve / schema / search_semantic / simulate). W1212 reclassification (REPORT-not-detector for cmd_coverage_gaps) + W1220 SKIP (cmd_capabilities capability-registry manifest emitter) + W1222 inline (stale-pin removal from `_KNOWN_MISSING` per W1219 follow-up) close this batch's propagation contribution. ~22 commands closed across propagation + SHIP-promote in this batch.
+- **W1213 — `cmd_duplicates` SHIP CAPTURED (BAIL discovery in W1206-impl-skip).** Captured cleanly via the BAIL-and-capture pattern; pending impl as SHIP candidate per the W1207-W1213 + W1216 roster.
+
+### Audits / verdicts — W1213-W1222 batch
+
+- **W1221-audit (Wave 13) — 10 SKIP-eligible docstring sites, 0 BAILs.** Sites: `cmd_changelog` + `cmd_db_check` + `cmd_intent_check` + `cmd_metrics_push` + `cmd_recommend` + `cmd_report` + `cmd_retrieve` + `cmd_schema` + `cmd_search_semantic` + `cmd_simulate`. Premise checks passed uniformly — no per-location FindingRecord persistence; no BAIL discoveries; no reclassifications.
+- **W1222 — `cmd_over_fetch` stale-pin removal from `_KNOWN_MISSING`.** Inline follow-up of W1219 SHIP — the over_fetch entry was still pinned in the disclosure-coverage `_KNOWN_MISSING` list despite the SARIF wrapper having landed; removed in-batch.
+
+### Added — W1199-W1212 batch (post-CONSOLIDATE-9, 2026-05-16 /loop iteration N+10)
+
+> **~15 completions since CONSOLIDATE-9 (Section 55).** Three milestones
+> + one reclassification discipline: (1) **SARIF SHIP family grew to
+> 23-24 emitters (W1203 + W1208).** `cmd_test_impact` (23rd SHIP, ~333
+> LOC = 160 prod + 173 test) joined as a per-test reach_count ranker
+> with file-level anchor, reusing the global `--sarif` flag plumbed
+> through `_SARIF_CONSUMERS`; 11 new SARIF tests + 59 pre-existing
+> pass. `cmd_n1` (24th SHIP) joined as a W110 N+1 detector SARIF
+> wrapper with per-query findings. (2) **Pattern-3b propagation arc —
+> 11 waves shipped, 58% gap closed.** `_KNOWN_MISSING` dropped 96 → 82
+> across Wave 10 (W1205-impl, 10 Bucket B docstrings; 96 → 86) and
+> Wave 11 (W1206-impl-skip, 5 of 6 SKIP docstrings; 88 → 82). The
+> 6th SKIP docstring (`cmd_duplicates`) bailed mid-impl and was
+> captured as W1213 SHIP. 114 commands closed across W1180 → W1212
+> (58% of the original 196-file gap). (3) **Reclassification
+> discipline — W1212 + W1213.** W1199 (CONSOLIDATE-9 SHIP candidate
+> for `cmd_coverage_gaps`) was REVISED to SKIP-DISCLOSURE this window
+> via W1206-audit-unclear's deeper audit (REPORT command — wrap_findings
+> is envelope-level, not per-location). Symmetrically, `cmd_duplicates`
+> was discovered as a SHIP candidate by W1206-impl-skip's premise check
+> and captured as W1213. The methodological move is **deeper audit
+> beats initial classification**.
+
+- **SARIF SHIP family at 23-24 emitters (W1203 + W1208).** `cmd_test_impact` (per-test reach_count ranker, file-level anchor; reuses global `--sarif` flag via `_SARIF_CONSUMERS`; ~333 LOC = 160 prod + 173 test; 11 new SARIF tests + 59 pre-existing pass; hash-stable additive wrapper) + `cmd_n1` (W110 N+1 detector wrapper with per-query findings; hash-stable additive wrapper).
+- **Pattern-3b propagation arc — 11 waves shipped, 58% gap closed.** `_KNOWN_MISSING` 96 → 82 across W1205-impl + W1206-impl-skip (114 commands closed across W1180 → W1212). Wave 10 added 10 Bucket B docstrings (`cmd_batch_search` + `cmd_file` + `cmd_symbol` + `cmd_relate` + `cmd_refs_text` + `cmd_history_grep` + `cmd_recipes` + `cmd_sketch` + `cmd_pr_analyze` + `cmd_pr_replay`); Wave 11 added 5 SKIP docstrings (`cmd_affected` + `cmd_closure` + `cmd_compare` + `cmd_conventions` + `cmd_causal_graph`) with `cmd_duplicates` bailed and captured as W1213.
+- **Reclassification discipline applied (W1212 + W1213).** `cmd_coverage_gaps` reclassified from W1199-SHIP (CONSOLIDATE-9) to W1212-SKIP-DISCLOSURE (REPORT command, not per-location detector — wrap_findings is envelope-level, no FindingRecord persistence). `cmd_duplicates` discovered as SHIP via BAIL-and-capture from W1206-impl-skip premise failure. First formal cross-session reclassification in the propagation arc; symmetric direction (SHIP→SKIP and SKIP→SHIP) demonstrated.
+
+### Audits / verdicts — W1199-W1212 batch
+
+- **W1205-audit — Wave 10: 10 Bucket B docstring sites — VERDICT SKIP-DISCLOSURE x10.** All 10 docstring landings shipped via W1205-impl. `_KNOWN_MISSING` 96 → 86.
+- **W1206-audit — Wave 11 mixed batch: 6 SKIP + 4 unclear + 2 SHIP.** SHIP candidates captured as W1207 (`cmd_llm_smells`) + W1208 (`cmd_n1`, shipped this window). 4 unclear resolved via W1206-audit-unclear (below).
+- **W1206-audit-unclear — 4-command deeper audit.** 3 SHIP captured (`cmd_fan` W1209 / `cmd_hotspots` W1210 / `cmd_dark_matter` W1211; ~1-2d each); 1 REVISED SKIP (`cmd_coverage_gaps` is REPORT-not-detector → W1212 supersedes W1199). The deeper-audit reclassification is the first formal cross-session classification revision in the Pattern-3b propagation arc.
+- **W1212 — `cmd_coverage_gaps` REVISED SKIP-DISCLOSURE.** Supersedes W1199 SHIP from CONSOLIDATE-9. REPORT command — wrap_findings stays envelope-level; no FindingRecord. ~10 LOC docstring.
+
+### Added — W1186-W1198 batch (post-CONSOLIDATE-8, 2026-05-16 /loop iteration N+9)
+
+> **~25 completions since CONSOLIDATE-8 (Section 54).** Three milestones:
+> (1) **SARIF SHIP family at 22 emitters (W1192 + W1195).** `cmd_delete_check`
+> (21st SHIP, ~165 LOC) joined as the first SHIP emitter with PRIMARY +
+> SECONDARY SARIF locations (deletion candidate is PRIMARY; surviving
+> refs in code/test/docs/config are SECONDARY) for the BREAK-RISK
+> gate-blocking pattern. `cmd_auth_gaps` (22nd SHIP, ~180 LOC) joined as
+> the first SHIP emitter with explicit 3-tier confidence in SARIF output
+> (`static_analysis` / `structural` / `heuristic` flow from
+> single-source-of-truth confidence map into `properties.confidence`).
+> Pre-batch the SHIP family was 20 (cmd_smells + cmd_clones +
+> cmd_partition + cmd_affected_tests + cmd_impact + cmd_critique + 14
+> pre-existing). (2) **Pattern-3b propagation arc — 9 waves shipped,
+> 51% gap closed.** `_KNOWN_MISSING` dropped 196 → 96 across W1180 +
+> W1181 + W1182 + W1185 + W1187 + W1188 + W1189 + W1190 + W1191 + W1194
+> + W1195 + W1197 + W1198 (100 commands closed; 51% of the original
+> 196-file gap). This batch added 4 more waves on top of Section 54's 3:
+> Wave 6 (W1189-impl, 10 commands; 137 → 127), Wave 7 (W1191-impl, 11
+> commands + cmd_delete_check stale-pin removal drive-by; 125 → 114),
+> Wave 8 (W1194-impl, 10 Bucket B/C/E; 113 → 103), Wave 9 (W1197-impl,
+> 4 SKIP + 2 UNCLEAR-resolved-to-SKIP; 100 → 96). (3) **Capture
+> discipline preserved — 6 SHIP candidates deferred cleanly
+> (W1199-W1204).** W1198-audit identified `cmd_coverage_gaps` (W1199)
+> + `cmd_orphan_routes` (W1200) + `cmd_pytest_fixtures` (W1201) +
+> `cmd_test_gaps` (W1202) + `cmd_test_impact` (W1203) +
+> `cmd_verify_imports` (W1204); ~7-10d total effort. All 6 emit
+> per-location findings in JSON envelope today; remaining work is
+> `emit_finding()` integration + SARIF wrapper per W1192/W1195 scaffold.
+> Hash-stability invariant held across all 22 emitters. 131/131 SARIF
+> tests pass throughout.
+
+- **SARIF SHIP family at 22 emitters (W1192 + W1195).** `cmd_delete_check` (BREAK-RISK gate-blocking, PRIMARY+SECONDARY locations — first SHIP emitter with multi-location pattern; ~165 LOC; hash-stable; 131/131 SARIF tests pass) + `cmd_auth_gaps` (3-tier confidence: `static_analysis`/`structural`/`heuristic`, reuses single-source-of-truth confidence mapping; first SHIP emitter with explicit 3-tier confidence in SARIF output; ~180 LOC; hash-stable; 131/131 SARIF tests pass).
+- **Pattern-3b propagation arc — 9 waves shipped, 51% gap closed.** `_KNOWN_MISSING` 196 → 96 across W1180+W1181+W1182+W1185+W1187+W1188+W1189+W1190+W1191+W1194+W1195+W1197+W1198. Per-wave throughput: 10-12 docstrings; audit-and-emit asymmetric pattern; cryptographic hash-stability where required. Section 55 ships Wave 6 (W1189-impl), Wave 7 (W1191-impl), Wave 8 (W1194-impl), Wave 9 (W1197-impl) on top of Section 54's Waves 3-5.
+- **SHIP candidate pipeline captured (W1199-W1204).** 6 commands deferred from W1198-audit: `cmd_coverage_gaps` / `cmd_orphan_routes` / `cmd_pytest_fixtures` / `cmd_test_gaps` / `cmd_test_impact` / `cmd_verify_imports`. ~7-10d total effort (1-2d each). All emit per-location findings in JSON envelope today; need `emit_finding()` integration + SARIF wrapper per W1192/W1195 scaffold. Capture discipline preserved — surfaced inside next-wave batch and deferred cleanly with file paths + effort estimates rather than collapsing into the same window.
+
+### Audits / verdicts — W1186-W1198 batch
+
+- **W1192-audit — `cmd_delete_check` SHIP (21st SARIF emitter) + `cmd_migration_safety` SKIP (validator-not-detector).** First SHIP emitter with PRIMARY + SECONDARY SARIF locations; pattern portable to any "X is referenced by Y[]" gate-blocking check.
+- **W1195-audit — `cmd_auth_gaps` SHIP (22nd SARIF emitter) + `cmd_audit_trail_verify` SKIP (verifier-not-detector).** First SHIP emitter with explicit 3-tier confidence (`static_analysis`/`structural`/`heuristic`) in SARIF output; pattern portable to any emitter publishing confidence tiers in its JSON envelope.
+- **W1188-audit / W1189-audit / W1191-audit / W1194-audit / W1197-audit — SKIP-DISCLOSURE x52 + 6 SHIP candidates + 2 UNCLEAR→SKIP.** Five propagation-wave verdicts spanning Waves 5-9. The Wave 7 audit surfaced `cmd_delete_check` as a stale-pin candidate; promoted to SHIP via W1192. The Wave 9 audit surfaced 6 SHIP candidates (W1199-W1204) deferred with effort estimates.
+- **W1198-audit — 6 SHIP candidates (W1199-W1204) + 2 UNCLEAR → SKIP.** Capture-over-implementation discipline preserved. SHIP candidates: `cmd_coverage_gaps`, `cmd_orphan_routes`, `cmd_pytest_fixtures`, `cmd_test_gaps`, `cmd_test_impact`, `cmd_verify_imports`. ~7-10d total effort across the six.
+- **W1196 — `breaking_to_sarif()` dormant code investigation.** CAPTURED only; no code change. Captured for future close-out wave.
+
+### Added — W1186-W1189 batch (post-CONSOLIDATE-7, 2026-05-16 /loop iteration N+8)
+
+> **~10 completions since CONSOLIDATE-7 (Section 53).** Three pillars:
+> (1) **SARIF substrate adoption STRUCTURALLY COMPLETE** — all 19
+> `*_to_sarif` helpers across the codebase now use `_rule_entry()` +
+> `_result_entry()` factories (W1178 + W1179a + W1179b + W1186 polish).
+> Hash-stability cryptographically verified via sha256 matches on
+> pre/post adopter outputs. Net ~LOC-neutral overall (per W1080
+> discipline) — the substrate's value is structural API consistency,
+> not raw LOC reduction. (2) **Pattern-3b propagation arc — 5 waves
+> shipped**: Wave 1 (10 bootstrap) + Wave 2 (10 local-state) + W1185
+> outliers (2 commands) + Wave 3 (12 codegen) + Wave 4 (12
+> exploration) + Wave 5 (11 continuation) = **56 commands closed**.
+> `_KNOWN_MISSING` dropped 196 → 138 across this stretch (29% of the
+> original gap closed). Wave 6 audit landed via W1189-audit (10
+> commands queued for next dispatch). (3) **Concurrent-merge
+> discipline battle-tested** — multiple "file modified since read"
+> guards fired across W1179a/b + W1180/W1181/W1185 races and
+> resolved cleanly via the Edit guard's read-before-write contract.
+
+- **SARIF substrate adoption STRUCTURALLY COMPLETE (W1179a + W1179b + W1186).** All 19 `*_to_sarif` helpers across the codebase use `_rule_entry()` + `_result_entry()` factories from `src/roam/output/sarif.py`. W1179a shipped 8 emitter substrate adoption with hash-stability cryptographically verified (sha256 matches on pre/post SARIF outputs); ~LOC-neutral (honest discipline per W1080). W1179b shipped 8 more emitters — PARTIAL extraction is now STRUCTURALLY COMPLETE across all 19 emitters. W1186 polished the substrate by adding an `extras` parameter to `_rule_entry()` (mirroring the `_result_entry()` extras pattern) + 1 inline refactor (taint emitter). 131/131 SARIF tests pass.
+- **Pattern-3b propagation arc — 5 waves shipped (W1180 + W1181 + W1185 + W1182 + W1187 + W1188).** `_KNOWN_MISSING` dropped 196 → 138 across this stretch (56 commands closed). **Wave 1 (W1180)**: 10 bootstrap commands. **Wave 2 (W1181)**: 10 local-state commands. **W1185 outliers**: 2 commands. **Wave 3 (W1182-impl, +12 Bucket C codegen docstrings)**: `_KNOWN_MISSING` 173 → 161. Drive-by: cmd_lsp anchor newline fix. **Wave 4 (W1187-audit + W1187-impl, +12 Bucket B exploration/aggregate docstrings)**: `_KNOWN_MISSING` 161 → 149. **Wave 5 (W1188-audit + W1188-impl, +11 Bucket B continuation docstrings)**: `_KNOWN_MISSING` 149 → 138. **Wave 6 audit landed (W1189-audit)** — 10 candidates queued: `cmd_help_search` + `cmd_timeline` + `cmd_trends` + `cmd_alerts` + `cmd_weather` + `cmd_ai_ratio` + `cmd_ai_readiness` + `cmd_dogfood` + `cmd_postmortem` + `cmd_dogfood_aggregate`.
+- **Concurrent-merge discipline battle-tested.** Multiple `src/roam/output/sarif.py` + `src/roam/cli.py` + `tests/test_sarif_disclosure_coverage.py` edits raced across 5+ parallel waves (W1179a + W1179b + W1180 + W1181 + W1185 + W1182-impl + W1187-impl + W1188-impl). The harness's file-read-before-write Edit guard surfaced the "file modified since read" conflict on every race and forced re-reading; every wave merged cleanly. Third concurrent-merge dance documented this session (preceded by W1159+W1160 in Section 52 and W1180+W1181-impl+W1185-impl in Section 53).
+
+### Audits / verdicts — W1186-W1189 batch
+
+- **W1187-audit — 12 Bucket B exploration/aggregate commands — VERDICT SKIP-DISCLOSURE x12.** Wave 4 batch. Sibling pattern to W1182-audit (codegen-not-analysis) and W1148 (aggregate-not-located-finding). All 12 docstring landings shipped via W1187-impl.
+- **W1188-audit — 11 Bucket B continuation commands — VERDICT SKIP-DISCLOSURE x11.** Wave 5 batch. Continuation of Bucket B exploration/aggregate pattern; all 11 docstring landings shipped via W1188-impl. `_KNOWN_MISSING` 149 → 138.
+- **W1189-audit — Wave 6 batch identified (10 commands).** `cmd_help_search` + `cmd_timeline` + `cmd_trends` + `cmd_alerts` + `cmd_weather` + `cmd_ai_ratio` + `cmd_ai_readiness` + `cmd_dogfood` + `cmd_postmortem` + `cmd_dogfood_aggregate`. Queued for next dispatch (W1190+ impl).
+
+### Added — W1177-W1185 batch (post-CONSOLIDATE-6, 2026-05-16 /loop iteration N+7)
+
+> **~14 completions since CONSOLIDATE-6 (Section 52) including 8 SHIPPED
+> outcomes + 2 RESEARCH memos + 3 AUDIT-VERDICTs + 1 PARTIAL audit-extraction.
+> **Three major systemic shifts landed**: (1) the SARIF helper substrate
+> launched via W1178 — `_rule_entry()` + `_result_entry()` factories in
+> `sarif.py` reduce ~80 LOC of new substrate + ~50 LOC of subtractive
+> adoption across `cmd_dead` + `cmd_critique` + `cmd_partition` (3 adopters);
+> 17 more emitters being refactored in parallel (W1179a/b in flight); (2) the
+> Pattern-3b SARIF-disclosure propagation arc launched via W1175-RESEARCH —
+> 684-line memo planned 30-50 batches with asymmetric propagation (bulk for
+> ~135 likely-SKIP, 1:1 for ~14-20 likely-SHIP, ~17 unclear). Wave 1 (W1180,
+> 10 bootstrap commands) + Wave 2 (W1181-impl, 10 local-state commands) +
+> W1185 outliers (cmd_lsp + cmd_rules_validate) shipped — `_KNOWN_MISSING`
+> dropped from 196 to 174 (33 done, 162 to go); (3) vocabulary canonicalization
+> disciplines W1156 + W1162 + W1176 sealed with cmd_pr_analyze NO_CHANGES →
+> NOCHANGES sweep landing this batch and the REFERENCE_REMOVAL_VERDICTS
+> substrate fully operational. Hash-stability invariant held across all
+> shipped impls.**
+
+- **SARIF helper substrate launched (W1177-audit + W1178 + W1179a/b in flight).** W1177-audit extracted PARTIAL verdict from the 5-phase pipeline survey across 20 SARIF emitters: 3 patterns identified (Fixed-rule, Dynamic-rule, Complex-multi-rule); ~500 LOC subtractive ceiling. W1178 shipped `_rule_entry()` + `_result_entry()` factories in `src/roam/output/sarif.py` (~80 LOC helpers) + 3 adopters (`cmd_dead` + `cmd_critique` + `cmd_partition`) (~50 LOC subtractive). 131/131 SARIF tests pass. W1179a + W1179b refactoring 17 more emitters in parallel; close-out captured at the next CONSOLIDATE checkpoint.
+- **Pattern-3b propagation arc launched — Wave 1 + Wave 2 + W1185 outliers (W1175-RESEARCH + W1180 + W1181-audit + W1181-impl + W1185-audit + W1185-impl).** W1175-RESEARCH (684-line memo at `(internal memo)`) inventoried the 196 unaudited `cmd_*.py` files: ~135 likely-SKIP + ~14-20 likely-SHIP + ~17 unclear. Asymmetric propagation pattern adopted: bulk audit-and-emit for SKIP; 1:1 audit-then-impl for SHIP. **Wave 1 (W1180, +95 LOC across 10 bootstrap commands)**: SARIF-skip docstring rationale propagated; drive-by pruned 10 stale `_KNOWN_MISSING` pins. **Wave 2 (W1181-audit + W1181-impl, 10 Bucket D commands)**: substrate-state nouns documented (concurrent merge with W1180/W1185-impl absorbed cleanly). **W1185 outliers (W1185-audit + W1185-impl, +15 LOC)**: `cmd_lsp` SKIP (editor protocol, not CI/findings) + `cmd_rules_validate` SKIP (validator-not-detector) docstrings landed. **`_KNOWN_MISSING` dropped from 196 to 174** across the 3 waves combined (33 done, 162 to go). **W1182-audit identified 12 Bucket C codegen commands for Wave 3** (`cmd_attest` + `cmd_capsule` + `cmd_agent_export` + `cmd_agents_md` + `cmd_graph_export` + `cmd_cga` + `cmd_sbom` + `cmd_skill_generate` + `cmd_pr_comment_render` + `cmd_audit_trail_export` + `cmd_evidence_oscal` + `cmd_fingerprint`).
+- **Vocabulary canonicalization disciplines extended (W1151 + W1156 + W1162 + W1164 + W1176).** W1151 removed cargo-cult `.upper()` from `_to_level()` across 7 sites in `sarif.py` — hash-stable. W1156 REFERENCE_REMOVAL_VERDICTS frozenset substrate fully operational (~100 LOC; carry-forward from W1156-CONSOLIDATE). W1162 `cmd_flag_dead.py` canonical "likely_stale" with display "likely-stale" preserved via `_STALENESS_DISPLAY` map (mirrors W1156 dual-form normalization pattern). W1176 realises the W1164 audit verdict: `cmd_pr_analyze` NO_CHANGES → NOCHANGES (3 LOC; sibling-aligned bare UPPERCASE).
+
+### Audits / verdicts — W1177-W1185 batch
+
+- **W1177-audit — SARIF helper-substrate extraction audit — VERDICT PARTIAL EXTRACTION.** 5-phase pipeline surveyed across 20 SARIF emitters: 3 patterns identified (Fixed-rule, Dynamic-rule, Complex-multi-rule). `_rule_entry()` + `_result_entry()` helpers viable; ~500 LOC subtractive ceiling. Realised via W1178.
+- **W1181-audit — 10 Bucket D local-state commands — VERDICT SKIP-DISCLOSURE x10.** Substrate-state nouns: mode / runs / lease / memory / permits / annotations / suppress / replay / agent-score / agents-md. None are file:line findings emitters; all surface state stored under `.roam/`. Verdicts landed via W1181-impl docstrings. `cmd_lsp` + `cmd_rules_validate` flagged as outliers (handled via W1185-audit + W1185-impl).
+- **W1182-audit — 12 Bucket C codegen commands — VERDICT pending Wave 3 impl.** `cmd_attest` + `cmd_capsule` + `cmd_agent_export` + `cmd_agents_md` + `cmd_graph_export` + `cmd_cga` + `cmd_sbom` + `cmd_skill_generate` + `cmd_pr_comment_render` + `cmd_audit_trail_export` + `cmd_evidence_oscal` + `cmd_fingerprint`. Codegen-artifact-not-analysis rationale (sibling pattern to W1174). Wave 3 impl in flight.
+- **W1185-audit — 2 outlier commands — VERDICT SKIP x2.** `cmd_lsp` SKIP (editor protocol, not CI); `cmd_rules_validate` SKIP (validator-not-detector — rules check existing rule definitions, do not analyze code).
+
+### Added — W1158-W1176 batch (post-W1156-CONSOLIDATE, 2026-05-16 /loop iteration N+6)
+
+> **~1000+ LOC of impl across 8 SHIPPED outcomes + 2 RESEARCH memos +
+> 3 AUDIT-VERDICTs. 13 completions since W1156-CONSOLIDATE. **Three
+> structural inflections landed**: (1) the SARIF SHIP family grew from
+> 17 commands (post-W1146) to 20 commands via `cmd_impact` +
+> `cmd_affected_tests` + `cmd_partition` (smells / clones SHIP impls
+> in flight as W1171 + W1172); (2) the W1169 SARIF-disclosure-coverage
+> CI lint discovered **196 unaudited cmd_*.py files**, vastly exceeding
+> the W1166-RESEARCH 4-8 estimate, with a `_KNOWN_MISSING` frozenset
+> pinning the gap and W1175-RESEARCH planning the propagation strategy;
+> (3) two vocabulary canonicalization sweeps closed (W1162 likely-stale
+> + W1176 NO_CHANGES → NOCHANGES) extending the W1156 dual-form pattern.
+> `action.yml` allowlist intent documented (W1167) + cli.py ⊃ action.yml
+> subset CI lint pinned (W1168).**
+
+- **SARIF SHIP family expanded to 20 commands (W1159 + W1160 + W1165).** `cmd_impact` SHIP SARIF (~413 LOC across 6 files) emits 4 finding families — `affected-file` (importance→severity), `direct-dependent`, `sf-convention-test`, `indirect-ref` — and lifts `_SARIF_CONSUMERS` 15→16. `cmd_partition` SHIP SARIF (~189 LOC) emits PRIMARY + up-to-10 SECONDARY locations with `conflict_risk` severity scaling (`_SARIF_CONSUMERS` 17→18). `cmd_affected_tests` SHIP SARIF (~147 LOC) uses 3 closed-enum rules (`direct`=error / `transitive`=warning / `colocated`=note) (`_SARIF_CONSUMERS` 16→17). Concurrent-merge dance between W1159 + W1160 surfaced and resolved cleanly via the Edit guard. `cmd_smells` SHIP (~250 LOC) + `cmd_clones` SHIP (~300 LOC, dual-location) in flight as W1171 + W1172. Companion verdicts: `cmd_vibe_check` SKIP-DISCLOSURE (aggregate; W1170-bundle) + `cmd_test_scaffold` SKIP-DISCLOSURE (codegen, not analysis; W1170-bundle).
+- **W332 Pattern-3b SARIF CI-lint substrate complete (W1167 + W1168 + W1169).** `action.yml` `_SUPPORTED_SARIF` 7-command subset intent documented at the YAML source via a +10 LOC comment block (W1167); cli.py 18-command `_SARIF_CONSUMERS` ⊃ action.yml 7-command subset relationship pinned via +28 LOC new `test_action_yml_supported_sarif_subset_of_cli_consumers` in `test_sarif_consumer_list.py` (W1168); SARIF-disclosure coverage lint (+403 LOC new `tests/test_sarif_disclosure_coverage.py`) surfaces 196 unaudited `cmd_*.py` with `_KNOWN_MISSING` frozenset pin (W1169). **Key discovery**: the W1166-RESEARCH 4-8 unaudited estimate was off by ~25x; the CI lint baseline pins the gap so future SARIF audits propagate via single-source-of-truth rather than ad-hoc per-command sweeps.
+- **SARIF-disclosure-pattern maturity memo (W1166-RESEARCH).** 555-line memo at `(internal memo)`. **14 audits surveyed, ZERO contested verdicts** — the SARIF SHIP-vs-SKIP discipline has converged. Top recommendation: ship the W1169 CI lint (DONE this batch). Anti-recommendation: do NOT extract a shared docstring constant — the per-site rationale is load-bearing for future readers anchoring at the call site. Sibling research memo to W1175-RESEARCH (propagation strategy for the 196-file gap; in flight).
+- **Vocabulary canonicalization sweeps (W1162 + W1176).** `cmd_flag_dead.py` (+13/-5 LOC) canonicalizes "likely-stale" → `likely_stale` while preserving display form `"likely-stale"` via new `_STALENESS_DISPLAY` map — extends the W1156 dual-form normalization pattern. `cmd_pr_analyze` (3 LOC) renames `NO_CHANGES` → `NOCHANGES` (sibling-aligned bare UPPERCASE per W1164 audit verdict option a; 3 sites, no hard-coded test assertions). 154/155 tests pass.
+- **SARIF-disclosure docstrings on 2 more commands (W1173 + W1174).** `cmd_vibe_check.py` (+8 LOC) names `roam findings list --detector vibe-check` as the per-finding path; `cmd_test_scaffold.py` (+8 LOC) anchors codegen-artifact-not-analysis rationale (distinct from W1148's invocation-scoped template). The SKIP-DISCLOSURE docstring pattern now spans 17 commands total when combined with the in-flight W1170-bundle siblings.
+
+### Audits / verdicts — W1158-W1176 batch
+
+- **W1158 — SARIF source-drift audit — VERDICT HEALTHY DRIFT.** 4 SARIF sources surveyed (`action.yml` 7-cmd subset ⊂ `cli.py` 18-cmd `_SARIF_CONSUMERS`; `sarif.py` 14 emitters + 4 external; 3 cli-only). No bug. Verdict realised via W1167 (action.yml comment) + W1168 (subset lint).
+- **W1164 — `cmd_pr_analyze` NO_CHANGES naming audit — VERDICT RENAME to `NOCHANGES`.** Option (a) sibling-aligned bare UPPERCASE chosen over option (b) underscore preservation; 3 sites, no hard-coded test assertions, 5 LOC effort. Realised via W1176.
+- **W1170-bundle — SARIF audience-disclosure quartet — VERDICT 2x SHIP + 2x SKIP-DISCLOSURE.** `cmd_smells` SHIP (W1171 in flight, ~250 LOC); `cmd_clones` SHIP (W1172 in flight, ~300 LOC, dual-location pattern); `cmd_vibe_check` SKIP-DISCLOSURE (aggregate, no file:line; W1173 docstring landed); `cmd_test_scaffold` SKIP-DISCLOSURE (codegen artifact, not analysis; W1174 docstring landed).
+
+### Added — W1149-W1156 batch (post-W1149-CONSOLIDATE, 2026-05-16 /loop iteration N+5)
+
+> **~180 LOC of impl across 5 SHIPPED outcomes + 2 AUDIT-VERDICTs.
+> 7 completions since W1149-CONSOLIDATE. **Two structural verdicts
+> landed**: (1) the SARIF-disclosure pattern now spans **9 commands**
+> (W1144 + W1145 + W1148 + W1152 + W1154-impl x6), formally documenting
+> "invocation-scoped aggregates have no SARIF locations[]" as a stable
+> design rule; (2) reference-removal verdicts (cmd_refs_text +
+> cmd_delete_check) elevated to a closed-enum frozenset
+> (`REFERENCE_REMOVAL_VERDICTS`) via W1156 — drift guard pinned in
+> `test_evidence_v0.py` + dual-form normalization preserves CLI display.
+> `publish.yml` hardened with `persist-credentials:false` on build +
+> smoke checkout steps (W1103) + 3 `dist/*.whl` sites converted to a
+> robust single-wheel assertion with quoted variable (W1104).**
+
+- **SARIF-skip disclosure pattern formalized across 9 commands (W1154-impl).** cmd_orchestrate / cmd_diagnose / cmd_oracle / cmd_plan / cmd_brief / cmd_next now document deliberate SARIF-skip rationale at the module-docstring level (invocation-scoped aggregates; no file:line locations). +36 LOC + 6 blank separators across 6 files. Mirrors the prior W1144 / W1145 / W1148 / W1152 docstrings. Total pattern now spans **9 aggregate-style commands** — propagates the "anchor SARIF-skip rationale at the per-site source" discipline so future audits read the call site, not a separate audit memo. W1155 audit pending for the third-tier batch (cmd_fleet / cmd_partition / cmd_affected_tests / cmd_impact / cmd_context).
+- **Reference-removal verdicts substrate (W1156).** New `REFERENCE_REMOVAL_VERDICTS` frozenset in `src/roam/evidence/_vocabulary.py` (6 members: `safe_to_remove` / `review` / `load_bearing` / `safe` / `likely_safe` / `break_risk`). Validators wired in `cmd_refs_text` + `cmd_delete_check` via `_validate_verdict` helpers with **dual-form normalization** — display form `"SAFE-TO-REMOVE"` round-trips to canonical `"safe_to_remove"`, preserving the CLI human-facing surface while pinning the machine-readable enum. Drift guard pinned in `tests/test_evidence_v0.py`. 56 + 34 tests pass. ~100 LOC full substrate.
+- **`publish.yml` supply-chain hardening (W1103 + W1104).** **W1103**: +6 LOC adds `persist-credentials: false` to `actions/checkout` on the build + smoke jobs; publish job correctly untouched (it needs the OIDC token for Trusted Publishing). Removes leaked-credentials attack surface on the non-publish steps. **W1104**: +36/-3 LOC — 3 `dist/*.whl` sites (PEP 639 verify + v2-commands verify + SBOM `pip install` step) converted to a robust single-wheel assertion pattern (`shopt -s nullglob` + length-1 array check + quoted variable expansion) so the publish workflow fails loudly if `dist/` ever contains 0 or 2+ wheels instead of silently degrading on a brace-expansion fallback.
+
+### Audits / verdicts — W1149-W1156 batch
+
+- **W1154 — SARIF-disclosure audit (6 third-tier commands) — VERDICT SKIP-DISCLOSURE x6.** cmd_orchestrate / cmd_diagnose / cmd_oracle / cmd_plan / cmd_brief / cmd_next all classified as aggregate-style commands; none in the SARIF action.yml allowlist. Verdicts landed via W1154-impl docstrings (+36 LOC + 6 blank separators).
+- **W1134 — reference-removal verdict vocabulary audit — VERDICT LOCAL-CLOSED-ENUM.** Reference-removal verdicts (cmd_refs_text + cmd_delete_check) are **orthogonal to** `POLICY_DECISIONS` — the former describe whether a code string is safe to delete; the latter describe whether a policy gate passed. Recommendation: stand up a dedicated `REFERENCE_REMOVAL_VERDICTS` frozenset in `evidence/_vocabulary.py` rather than overloading `POLICY_DECISIONS`. Verdict realised by W1156 impl.
+
+### Added — W1136-W1149 batch (post-W1133-CONSOLIDATE, 2026-05-15 even more iteration)
+
+> **~410 LOC of impl across 10 SHIPPED outcomes (W1100 +28 LOC + W1099-narrow
+> ~80 LOC + W1136 +339 LOC + W1141 +36 LOC + W1144 +6 LOC + W1145 +9 LOC +
+> W1148 +14 LOC) + 1 research memo (W1139-RESEARCH 361 LOC) + 3 SARIF
+> audit verdicts (W1085 + W1146 + W1147). 11 completions + 4 captures
+> since W1133-CONSOLIDATE. **Three structural outcomes**: (a) the W332
+> Pattern-3b CLI-boundary thread is **functionally closed** at v13.x via
+> the W1141 4th-mirror drift guard; (b) the SARIF audience-disclosure
+> trilogy (W1144 + W1145 + W1148) propagated the deliberate-skip
+> rationale docstring across cmd_doctor + cmd_audit + cmd_pr_risk;
+> (c) the Pattern-3b CLI-arg lint matrix now spans 5 axes (W1111 +
+> 4 W1121 siblings) PLUS the option-dest extension (W1136 input_path
+> cluster). The user-facing CLI surface saw the biggest sweep in 30+
+> sections: 14 commands gained metavar="SYMBOL" alignment (Strategy D —
+> no breaking rename) and 6 CLI-only commands gained --file → --path
+> harmonization with hidden alias backward-compat.**
+
+- **W332 Pattern-3b CLI-boundary thread functionally closed (W1136 + W1141).** New `tests/test_w1136_click_option_input_path_dest_lint.py` (339 LOC) blocks new `@click.option(--input-path)` drift at the option-dest axis: 6 canonical sites + 2 legacy carve-outs classified; 4 lint tests + 1 sanity test pass. W1141 (+36 LOC drift guard in `tests/test_mcp_param_names.py`) pins the `_PARAM_ALIASES` table for the input_path-cluster as the 4th mirror in the W332 thread (the 3 prior mirrors land at `mcp_server.py:_PARAM_ALIASES`, `test_w1111_click_argument_name_lint.py`, `test_w1121_click_argument_target_lint.py`). The W332 Pattern-3b CLI-boundary thread is now **functionally closed** at v13.x — per the W1139-RESEARCH coverage matrix, all 6 canonical CLI-side axes are SHIPPED (+ 2 PARTIAL legacy carve-outs documented + 0 GAP).
+- **SARIF audience-disclosure trilogy (W1144 + W1145 + W1148).** Three SARIF skip rationale docstrings landed at the command-module level: W1144 (+6 LOC on `cmd_doctor.py:1-12` — environment-scoped diagnostics, no file:line — no SARIF surface), W1145 (+9 LOC on `cmd_audit.py` — composed-subcommand SARIF flow; no top-level --sarif flag because each subcommand emits its own SARIF if relevant), W1148 (+14/-4 LOC on `cmd_pr_risk.py` — invocation-scoped aggregates with `subject_kind="commit"`; action.yml allowlist already excludes pr-risk by design). cmd_critique audited as SHIP candidate (W1146 verdict; W1146-impl in flight). Closes the W1085 → W1146 → W1147 audit triage chain at the documentation layer; the pattern propagates the deliberate-SARIF-skip rationale to the per-site source so future audits anchor at the call site, not at a separate audit memo.
+- **CLI symbol-cluster metavar alignment (W1100).** 14 sites across 11 files got `metavar="SYMBOL"` (or `"SYMBOL_OR_PATH"` / `"[SYMBOL]"` for context-aware variants on cmd_test_scaffold + cmd_testmap) + docstring identifier-tone refresh. ~28 LOC. Hash-stable. cmd_explain_command + cmd_plugins correctly NOT touched (DOMAIN-DISTINCT per W1108/W1120 — CLI command name + plugin name respectively). Strategy D from W1102-RESEARCH: align metavar without a breaking rename, lock the surface via the W1111 + W1121-target AST lints.
+- **`--file` → `--path` harmonization (W1099-narrow).** 6 CLI-only commands renamed `--file` → `--path` with hidden alias backward-compat: + mcp_server.py + 2 test files updated. ~80 LOC across the cluster. Click's `required=True` + alias limitation surfaced via cmd_triage (manual `UsageError` adaptation needed); cmd_pr_bundle deferred to W1141-followup. 508 of 509 tests pass.
+- **W1139-RESEARCH — Pattern-3b CLI-boundary completeness memo.** 361-line memo at `(internal memo)`. **Coverage matrix**: 6 axes SHIPPED + 2 PARTIAL + 0 GAP. Key finding: W332 functionally closeable in 15 min via the W1141 4th-mirror drift guard (DONE this batch). Companion to W1102-RESEARCH (Section 48) which closed the same question for the `@click.argument` axis.
+
+### Audits / verdicts — W1136-W1149 batch
+
+- **W1085 — `cmd_doctor` SARIF audit — VERDICT SKIP-SARIF.** Environment-scoped diagnostics (Python version, index status, watcher status, OneDrive/Dropbox detection); no file:line. SARIF surface would be empty. Verdict landed via W1144 docstring (+6 LOC).
+- **W1146 — `cmd_critique` SARIF audit — VERDICT SHIP-SARIF.** File-located findings: clones-not-edited findings have file:line; impact entries have file paths; intent is diff-wide. Impl dispatched as W1146-impl (in flight as this CONSOLIDATE runs).
+- **W1147 — `cmd_pr_risk` SARIF audit — VERDICT SKIP-SARIF.** Invocation-scoped aggregates with `subject_kind="commit"`; SARIF expects file:line subjects. action.yml allowlist already excludes pr-risk by design. Verdict landed via W1148 docstring (+14/-4 LOC).
+
+### Added — W1097-W1133 batch (post-W1126-CONSOLIDATE, 2026-05-15 even further iteration)
+
+> **~80 LOC of impl + 253 LOC of new test coverage across 7 SHIPPED
+> outcomes + 6 audits classified into SYMBOL-CONCEPT or DOMAIN-DISTINCT
+> verdicts + 1 BAIL (W1101 — premise inverted, captured W1126 inverted
+> task). 14 completions since W1126-CONSOLIDATE. Two structural
+> closures: (a) the `cmd_runs` placeholder-vocabulary cluster
+> (W1097+W1105+W1116+W1125 = 8 sites swept end-to-end) and (b) the
+> W1118-bundle reclassification (12 W1111 grandfathered sites
+> classified into 10 SYMBOL-CONCEPT + 2 DOMAIN-DISTINCT permanent
+> carve-outs). The v14.0 hard-rename candidate cluster now spans
+> ~21 files (W1133) — significantly bigger than the W1004 audit's
+> original 6-file estimate; this scope expansion feeds the W1098
+> USER-DECISION at v14.0 planning.**
+
+- **AST CI lint for `@click.argument('target')` drift (W1121-target).** New `tests/test_w1121_click_argument_target_lint.py` (253 LOC). 15 sites classified into 4 categories: 13 SYMBOL (joining the v14.0 rename cluster), 1 GIT_REF (`bisect` start/good/bad), 1 FILE_PATH. Companion lint to W1111 — extends the AST drift-block pattern to a second vocabulary axis. Blocks any 16th drift. Covers the W1099 input_path-cluster gap end-to-end for the `target` axis.
+- **W1111 grandfathered-site reclassification (W1106 + W1107 + W1109 + W1118 + W1119 + W1108 + W1120).** All 12 W1111 grandfathered sites classified end-to-end: **10 SYMBOL-CONCEPT** sites confirmed (cmd_closure.py:191, cmd_testmap.py:232, cmd_impact.py:264, cmd_oracle.py x4 symbol_exists/is_test_only/is_reachable/is_clone_of, cmd_diagnose.py:201, plus the 2 already in the v14.0 cluster) joining the v14.0 hard-rename cluster; **2 DOMAIN-DISTINCT** sites (cmd_explain_command.py:150 = CLI command name, cmd_plugins.py:213 = plugin name) marked as **permanent grandfather carve-outs**. The v14.0 rename cluster now spans ~21 files (W1133 informational capture) versus the original W1004 audit's 6-file scope.
+- **`cmd_runs` placeholder-vocabulary structural close (W1125 + W1129 carve-out comments).** `cmd_runs.py:6` placeholder unified (`--action X` → `<action>`); end-to-end closes the `cmd_runs` placeholder cluster across W1097 + W1105 + W1116 + W1125 (8 sites swept). W1129 (+15 LOC across 3 files) applied the W1108 + W1120 DOMAIN-DISTINCT carve-out comments + the W1111 lint disambiguation comments — anchors the permanent carve-out rationale at the per-site source.
+- **findings.py vocabulary cross-link cleanup capstone (W1131).** +54 LOC across `src/roam/db/findings.py`: `source_version` cross-link comment + `evidence_json` size-GUIDANCE flag + `suppressions_json` docstring + module-level docstring refresh. Closes the 4-cleanup cluster (W1122 reverse-pointer + W1123 / W1127 / W1128 follow-ups) over the W1126-batch + W1133-batch span. 66/66 findings tests pass; hash-stable (comments + docstring only).
+- **W1132 — W1111 lint comment update (test-only).** `tests/test_w1111_click_argument_name_lint.py` comment update (~0 LOC, rewording): cmd_impact / cmd_oracle / cmd_diagnose annotations moved from "pending classification" to SYMBOL-CONCEPT confirmed. Net documentation discipline — the W1111 lint's grandfather metadata now reflects the W1118-bundle's classification verdicts.
+
+### Audits / verdicts — W1097-W1133 batch
+
+- **W1118 + W1119 + W1106 + W1107 + W1109 — VERDICT SYMBOL-CONCEPT (10 sites).** All 10 sites resolve `<name>` to a symbol via `find_symbol` / `find_symbol_with_alternatives` — same shape as the v14.0 rename cluster. Optional/default argument shapes preserved at the per-site call.
+- **W1108 + W1120 — VERDICT DOMAIN-DISTINCT (2 permanent carve-outs).** `cmd_explain_command.py:150` resolves a **CLI command name** (not a symbol); `cmd_plugins.py:213` resolves a **plugin name** (not a symbol). Distinct vocabulary axis — out-of-scope for the v14.0 rename. Marked as permanent grandfather; W1129 applied carve-out comments at the per-site source.
+- **W1133 — INFORMATIONAL capture, v14.0 cluster expansion.** The v14.0 hard-rename candidate cluster has grown from the W1004 audit's original 6-file estimate to **~21 files** (8 sites on `@click.argument("name")` + 13 sites on `@click.argument("target")`). USER DECISION W1098 should reference W1133 for the full v14.0 scope at v14.0 planning.
+
+### Added — W1086-W1126 batch (post-W1096-CONSOLIDATE, 2026-05-15 even later iteration)
+
+> **~250 LOC of impl (W1060-take2 + W1086 dominant) + ~120 LOC of new
+> test coverage + 1 research memo (677 LOC) across 8 shipped outcomes +
+> 1 BAIL (W1101 premise-inverted). 9 of 9 dispatches closed; 17 new
+> drive-by W-tasks captured (W1112-W1128). The architectural ship —
+> `to_sarif` gained a `warnings_out` parameter + new closed-enum
+> descriptor `producer.advisory-warning` — unlocks 4 sibling SARIF
+> helpers (W1112-W1115). W1102-RESEARCH closed the W1098 USER-DECISION
+> as "no v14.0 rename needed; ship the W1111 AST CI lint instead".
+> Premise-verification-first discipline continues to outperform
+> force-through (W1101 BAIL: the W1004 audit had misread the dominant
+> convention, so the proposed sweep would have been backwards).**
+
+- **SARIF runtime-notification architectural extension (W1060-take2 + W1086).** `src/roam/output/sarif.py::to_sarif` now accepts `warnings_out: list[str]` + a new closed-enum descriptor `producer.advisory-warning` on the SARIF tool driver (was missing from the W1046 landing). `complexity_to_sarif` was wired through with a `warnings` keyword + `src/roam/commands/cmd_complexity.py` gained a `warnings: list[str] = []` accumulator threaded through 4 envelope sites via the hash-stable omit-when-empty idiom (+84/-29 LOC + 6-test file +39 LOC). 15 SARIF tests pass; hash-stability programmatically asserted for the empty-warnings path. Unblocked W1112-W1115 (4 sibling SARIF helpers: fitness / dead / rules / health) captured as follow-up.
+- **AST CI lint blocking `@click.argument('name')` drift (W1111).** New `tests/test_w1111_click_argument_name_lint.py` (199 LOC; 50 LOC executable). 12-file grandfather set (the 6 commands from the W1004 audit + 6 siblings discovered during the lint sweep). Negative path verified — adding a 13th `@click.argument("name")` site fails the AST scan. Closes the W1098 USER-DECISION via the W1102-RESEARCH deliverable: lock the current drift surface, defer the breaking-change rename until v14.0 ships for unrelated reason.
+- **`roam runs` placeholder-vocabulary unification sweep (W1097 + W1105 + W1116).** `cmd_runs.py` placeholders normalised: 1-line `NAME` → `<name>` at line 944 (W1097), 7-site `--agent NAME` → `--agent <name>` sweep (W1105), 1-line `--run-id ID` → `--run-id <id>` (W1116). 14/14 + 4/4 + 29/29 focused tests pass on each leg. All hash-stable comments/help-text only. Drive-by W1117 captured (square-bracket placeholder convention).
+- **Vocabulary cross-link discipline (W1094 + W1122).** +17 LOC across `src/roam/evidence/_vocabulary.py` + `src/roam/output/_severity.py` for the severity-vocabulary docstring cross-link (W1094 — closes the W1005 BAIL drive-by). +7-line reverse-pointer comment block in `src/roam/db/findings.py:101-107` to `evidence.SUBJECT_KINDS` (W1122 — closes a drive-by from the W1094 sweep). All 3 sites hash-stable (comments only); 55 W210 drift guards + 92 findings tests pass.
+- **W1102-RESEARCH — Click-argument rename strategy memo.** 677-line research memo at `(internal memo)`. Key finding: the MCP boundary is already sealed via the `_PARAM_ALIASES` table landed in W430, so the CLI-side `@click.argument("name")` drift does NOT silent-fail through MCP. Recommendation: ship the W1111 AST CI lint (DONE) to lock the current 12-site grandfather surface; defer a hard rename until v14.0 ships for an unrelated breaking-change reason. **W1098 USER-DECISION downgraded from BLOCKER to FOLLOW-UP.**
+
+### Audits / BAILs — W1086-W1126 batch
+
+- **W1101 — `memory` → `memories` plural sweep — BAILED (premise inverted).** The W1004 audit had read the codebase wrong: ~26 sites use singular-flag/plural-var (the dominant convention) vs ~3 sites with plural-flag. `cmd_memory` FOLLOWS the dominant convention, so the proposed sweep would have inverted it. New task **W1126 — inverted plural-flag harmonize** captured to bring the 3 actual outliers in line with the dominant convention.
+
+### Added — W1041-W1096 batch (post-W1079-CONSOLIDATE, 2026-05-15 later iteration)
+
+> **~63 LOC + ~39 test LOC across 3 shipped impl waves (W1087/W1091/W1096) +
+> 8 BAIL/NO-OP/VALIDATED outcomes (W1041/W1004/W1005/W1007/W1008/W1020/W1048/W1060-narrowed)
+> + 1 helper-confirmed (W1041) — the iteration's load-bearing methodological
+> output is that BAIL-and-CAPTURE is faster and more accurate than force-through.**
+> ~17 waves across the W1041-W1096 stretch; 4 of 11 dispatches landed
+> BAIL/NO-OP (W1041 already alphabetical, W1008 already converged via W706+W1057,
+> W1005 already W547/W564-compliant, W1020 already optimised with scope="module"
+> overrides where viable); 1 BAIL with prereq capture (W1060-narrowed: warnings_out
+> accumulator absent in cmd_complexity, so the proposed runtime-notifications
+> plumb would have been cargo-cult — captured W1084/W1085/W1086 as prereqs
+> instead); 2 VALIDATED-then-fixed (W1007 → W1091 next_commands LAW 4 fix;
+> W1008 → drive-by W1093 captured). The bail discipline (W1019b/W1019e/W1080
+> precedent + W988+W989 "premise verification is the first step" methodology
+> from W1001-CONSOLIDATE) generated 9 follow-up W-tasks (W1084-W1097) instead
+> of forcing-through cargo-cult code. All 11 dispatches used `general-purpose`
+> or `Explore` subagents per the W1072 directive — `claude` subagent
+> worktree-MAX_PATH blocker still active on Windows.
+
+- **W1087 — CI hardening, 9 jobs got `timeout-minutes`, 2 workflows got concurrency groups.** +17 LOC across `.github/workflows/architecture-guardian.yml` + `.github/workflows/cga-attestation.yml` + `.github/workflows/roam-ci.yml`. `architecture-guardian.yml` + `roam-ci.yml` got `concurrency:` groups with `cancel-in-progress: true`; 9 jobs across architecture-guardian / cga-attestation / roam-ci got explicit `timeout-minutes` (deliberate per-job pick, not a uniform default). `publish.yml` left without concurrency — never cancel publishes. Drive-bys captured: W1095 (publish.yml timeouts), W1096 (roam.yml template — sealed inline below).
+- **W1091 — `roam runs verify --all` LAW 4 fix on `state=unsigned` + `state=key_missing`.** +6 LOC at `src/roam/commands/cmd_runs.py:1050-1058` + 1 new test (+39 LOC) at `tests/test_ledger_signing.py`. Pre-fix: `agent_contract.next_commands` was empty on both unsigned + key_missing paths (W1007 surfaced this — LAW 4 violation per "Imperatives beat descriptions"). Post-fix: both branches now populate an imperative `next_command` (`roam runs sign` / `roam runs verify --key-path <path>`). **Hash-stable for tampered + ok paths** — the fix only adds bytes to envelopes that were previously omitting them. Drive-by W1097 (placeholder unify) captured.
+- **W1096 — `roam.yml` dormant template hardened.** +1 line (`timeout-minutes: 20`) + 3-line teaching comment in the dormant `templates/distribution/.../roam.yml` template. Workflow-dispatch-only confirmed; template only fires on manual trigger. Mirrors the W1087 timeout-minutes discipline at the user-facing template surface.
+
+### Audits / NO-OPs — W1041-W1096 batch
+
+- **W1041 — `clones_cross_layer.py` `__all__` already alphabetical (NO-OP).** Verified the W1037 sweep convention matches W855/W856/W857/W858 sibling files. 101 focused tests pass. Drive-by W1090 captured (3 alphabetical-ordering conventions across 9 catalog files — narrow style-rule documentation candidate).
+- **W1048 — actions/* sweep across `.github/workflows/` — SWEPT-CLEAN.** All `actions/*` references already on current majors; this is a pure-Python repo so no `setup-node` versions to bump. Drive-bys captured: W1087 (shipped here), W1088, W1089.
+- **W1060-narrowed — `cmd_complexity` `emit_runtime_notifications` plumb — BAILED.** Verified `cmd_complexity` has zero `warnings_out` accumulators — the proposed plumb would have been cargo-cult (no surface to plumb to). Prereqs captured: W1084 (`cmd_health` re-dispatch), W1085 (`cmd_doctor` SARIF surface), W1086 (`warnings_out` prereq across affected commands).
+- **W1007 — `agent_contract:[]` empty-list mistake — VALIDATED then SEALED by W1091.** Confirmed `cmd_runs.py:1050-1058` emitted empty `next_commands` on state=unsigned + state=key_missing. Tier-1 fix shipped via W1091 (above). Tier-2 design question captured as W1098-bis (auto-derive omit-when-empty across envelopes — DESIGN Q, not in-flight).
+- **W1008 — envelope-root `list_counts` sweep — BAILED.** `list_counts` only exists as a dead local variable inside `formatter.strip_list_payloads`; already converged via W706+W1057. Drive-by W1093 captured (dead-code cleanup, deferred — `formatter.py` modified).
+- **W1004 — 7-cmd click-vocab audit — VALIDATED, DESIGN Q open.** 6 commands (disambiguate / guard / safe_delete / symbol / test_scaffold / uses) diverge on `@click.argument("name")` vs the canonical MCP `"symbol"`. **Click has NO argument-alias support** → migration approach captured as **W1098 (USER DECISION pending)**. W1099 (path-cluster), W1100 (help-text), W1101 (memory plural) captured as siblings.
+- **W1005 — 3-tier vs 5-tier severity Pattern-3a — BAILED.** Codebase already compliant with W547 + W564 discipline. `CLAIM_SEVERITIES` (5-tier evidence vocabulary) vs canonical 4-tier output vocabulary is **layered by design** — not a Pattern-3a divergence. Drive-by W1094 captured (docstring reconciliation).
+- **W1020 — fixture-scope audit — NO-OP.** Already optimised: 8 test files use `scope="module"` override (~642s wall-clock savings); 6 findings test files cannot apply the override (DB mutations require per-test isolation).
+
+### Fixed — CI publish.yml (post-v13.1)
+- **W1047 — `publish.yml` SBOM-upload step fixed.** The post-build `gh release upload` step now passes `--repo` explicitly AND creates the GitHub Release idempotently (`gh release create ... || true`) before attempting the upload, so the step no longer races the release-object creation. PyPI wheel content is unchanged — the v13.1 tag was force-moved to the fix commit (`484e34fa`) and the re-run went **green end-to-end** including the post-publish smoke (workflow run `25932785927`, the first fully-green publish run in the history of the workflow). Both v13.0 and v13.1 GitHub Releases backfilled with their CycloneDX SBOMs as part of the same fix.
+
+### W1079-CONSOLIDATE — Pattern-1D + closest-match disclosure arc + helper-hoist Phase 1 + Pattern-2 propagation finale
+
+> **CONSOLIDATE checkpoint = W1079.** ~17 waves closed since W1042-CONSOLIDATE.
+> **Headline: the Pattern-1D unknown-value disclosure arc went from 1
+> command (W1063 `cmd_findings --detector`) to 9 commands in a single
+> batch — `cmd_findings` / `cmd_search --kind` (W1068) / `cmd_endpoints
+> --framework` (W1069) / `cmd_endpoints --method` (W1075) /
+> `cmd_test_scaffold --framework` (W1070) / `cmd_workflow` + `cmd_explain_command`
+> (W1074) / `cmd_oracle` (W1079) / `cmd_smells` (W1066) — each emitting an
+> explicit structured envelope on the unknown-value path plus a
+> `difflib.get_close_matches`-derived "did you mean?" hint when the typo
+> distance is plausible.** Pattern shape: closed enum → reject unknown
+> with `state="unknown_<axis>"` + `partial_success=true` + `agent_contract.facts`
+> listing the valid set + `next_command` carrying the closest match.
+> Mirrors the W918 / W994 / W995 / W1009 / W1011 / W1032 / W1042 loader
+> envelope shape — Pattern-1D ("silent success on degraded resolution"
+> from CLAUDE.md §"Six systemic anti-patterns") is now the **9th member**
+> of the Pattern-2 propagation family. **W1078** added a deliberate
+> `click.Choice` carve-out (cmd_complete --kind is click-validated, so
+> the Pattern-1D template does not apply; closed not-applicable).
+> **Helper hoist (W1077)** shipped `src/roam/output/structured_unknowns.py::structured_unknown_filter`
+> as Phase 1 (UNUSED on landing — 128 LOC + 15 tests; Phase 2 migration
+> W1080 in flight at consolidation time). **Pattern-2 propagation
+> closures** — W1010 final `cmd_flag_dead._load_known_stale` plumbing-only
+> close (plain-text loader, not YAML — does not flow through
+> `load_yaml_with_warnings`); W1043 `WarningsOut` type alias swept
+> 21 callsites across 8 files in one consistent application. **Operational
+> findings**: W1067 permit-expiry investigation closed NOT-A-BUG
+> (audit-completeness design per W377); W1071 documented permit-vs-lease
+> asymmetry in module docstrings + CLAUDE.md; **W1072 — `claude`
+> subagent is structurally broken on Windows host** via the W686
+> worktree-MAX_PATH regression (the agent platform's default-worktree
+> behavior is the structural issue; the `general-purpose` subagent
+> works around it by not creating a worktree). W1076 documented that
+> CLAUDE.md is intentionally untracked (commit `89a338d9` removed it
+> from public repo — local-only by design). **Test discipline**: W1027
+> extracted the `_no_pyyaml` monkeypatch to a `tests/conftest.py`
+> fixture (6 test files migrated, -50 LOC); W1059 converted 10
+> hardcoded `expires_at` future-dates to relative offsets across 2
+> files; W1065 triaged 3 more files with 0 conversions (all valid
+> B-variant `expires_at`-as-input fixtures). **Research**: W1049-RESEARCH
+> shipped a release-pipeline hardening memo with 3 P1 recommendations
+> (PEP740 attestations + workflow split + SBOM-wheel SHA binding) —
+> queued as W1054 / W1055 / W1056 user-decision-pending. **Hash-stability
+> mandate held trivially across the batch** — every Pattern-1D fix
+> added a new validation path (no pre-fix envelope bytes to compare);
+> W1077 helper shipped unused (no callsites yet); W1010 / W1043 / W1027
+> / W1059 are docs/types/test-fixture only with no runtime behavior
+> delta. **NO commits taken during the session per directive** — entire
+> batch on the working tree for review.
+
+### Added — Pattern-1D + closest-match disclosure arc (W1066 / W1068 / W1069 / W1070 / W1074 / W1075 / W1078 / W1079 — W1079-CONSOLIDATE)
+- **W1068 — `cmd_search --kind` unknown-value disclosure + LAW 4 `kinds` anchor.** Closed-set rejection of unknown `--kind` arguments now emits the canonical Pattern-1D envelope (`state="unknown_kind"` + `partial_success=true` + `agent_contract.facts` listing valid kinds + `next_command` carrying the difflib closest match). LAW 4 concrete-noun anchor set extended with `kinds` terminal in both `src/roam/output/formatter.py:concrete_plural_terminals` and `tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS` to keep the lint compliant on the new fact strings.
+- **W1069 — `cmd_endpoints --framework` unknown-substring disclosure.** Framework-name validation tightened from substring-match to exact-match against a closed framework registry; unknown values now emit the same Pattern-1D envelope with the supported framework list surfaced via `agent_contract.facts`. Closes a silent-fallback class where `--framework djang` was previously matching `django` and `--framework f` matched the first framework alphabetically.
+- **W1070 — `cmd_test_scaffold --framework` unknown-value disclosure.** Sister fix to W1069 for the test-scaffold path; same Pattern-1D envelope.
+- **W1074 — `cmd_workflow` + `cmd_explain_command` `UsageError` difflib augmentation.** Both commands previously raised `click.UsageError` on unknown workflow / command names with no suggestion. Fix: augment the UsageError message with the difflib closest match when distance ≤ cutoff. UsageError shape preserved (no envelope change) — the fix is purely the error message augmentation per LAW 2 imperative voice ("Did you mean `roam <closest>`?").
+- **W1075 — `cmd_endpoints --method` Pattern-1D disclosure.** Method-name validation aligned with the W1069 framework path; closed HTTP-verb set, unknown values surface via the canonical envelope.
+- **W1078 — `cmd_complete --kind` audit closed not-applicable.** `cmd_complete --kind` uses `click.Choice(...)` which already rejects unknown values pre-handler via the canonical Click error shape. No Pattern-1D template applies; documented as a deliberate carve-out so the next reader doesn't try to apply the W1068 pattern here.
+- **W1066 — `cmd_findings` + `cmd_smells` difflib closest-match augmentation.** Both commands already rejected unknown values (post-W1063); this wave adds the difflib-derived `next_command` carrying the closest match. Pairs the W1063 disclosure shape with the W1074 difflib suggestion pattern.
+- **W1079 — `cmd_oracle` unknown-oracle name closest-match.** Per-line shape: each unknown oracle name in the `--oracles` repeatable flag emits its own structured envelope row with `state="unknown_oracle"` + closest-match suggestion. Closes the final unknown-value site in the disclosure arc.
+
+### Added — Helper hoist Phase 1 (W1077 — W1079-CONSOLIDATE)
+- **W1077 — `structured_unknown_filter` helper shipped UNUSED (Phase 1).** New module `src/roam/output/structured_unknowns.py` (128 LOC) + 15 tests in `tests/test_structured_unknowns.py`. Mirrors the W1018 shared YAML helper landing pattern (Phase 1 lands unused; Phase 2 migration proves the abstraction against real callsites). Phase 2 (**W1080**, in flight as of this consolidation) migrates the first 3 callsites — `cmd_findings` + `cmd_search` + `cmd_endpoints --framework` — and is expected to net **-90 to -120 LOC** once landed. The Pattern-1D template defined inline at each W1068 / W1069 / W1070 / W1075 / W1079 callsite is **deliberately duplicated** during Phase 1 to keep each fix reviewable in isolation; Phase 2 consolidates the duplication once 3 callsites have stabilised.
+
+### Pattern-2 propagation closures (W1010 / W1043 — W1079-CONSOLIDATE)
+- **W1010 final — `cmd_flag_dead._load_known_stale` plumbing-only Pattern-2 close.** The W1015-batch deferred close (originally queued behind W1018) sealed here as a plain-text loader migration (NOT through `load_yaml_with_warnings` — the file is line-oriented, not YAML). `warnings_out` plumb + `partial_success=true` envelope flip on malformed lines + `agent_contract.facts` surface. Mirrors the W994 / W995 / W1009 shape but at the plain-text-loader boundary.
+- **W1043 — `WarningsOut` type alias applied across 21 callsites in 8 files.** The W1042-CONSOLIDATE batch shipped `WarningsOut: TypeAlias = list[str]` at the canonical boundary; this wave swept the type alias through every callsite consuming `warnings_out: list[str] | None` (21 sites across 8 files). No runtime behavior change — readability + LSP hint quality only. **Closes the W706-fan-out arc end-to-end** that ran from W918 (cmd_alerts close) through the W994/W995/W1009/W1011/W1017/W1025/W1032/W1042 loader-site closures.
+
+### Test discipline (W1027 / W1059 / W1065 — W1079-CONSOLIDATE)
+- **W1027 — `_no_pyyaml` monkeypatch extracted to `tests/conftest.py` fixture.** 6 test files migrated to consume the new shared fixture; **-50 LOC** net across the test corpus. Closes the duplicated-test-scaffolding class that the W934 catalog-finding-test parametrisation arc had been chipping away at.
+- **W1059 — 10 hardcoded `expires_at` future-dates converted to relative offsets** across 2 files. Same shape as W1002 + W1012 (autouse `freeze_time` fixture interaction); preserves the W1002 / W1003 / W1012 discipline.
+- **W1065 — 3 more files triaged, 0 conversions.** All 3 were valid B-variant test fixtures (the date is the INPUT being tested, not a free parameter); documented as a deliberate carve-out so the next sweep doesn't re-triage them.
+
+### Operational findings (W1067 / W1071 / W1072 / W1076 — W1079-CONSOLIDATE)
+- **W1067 — Permit-expiry investigation closed NOT-A-BUG.** Reported as a permit-expiry race; investigation confirmed audit-completeness design per the W377 marker — permits intentionally remain in the audit trail post-expiry rather than being silently dropped. Documented inline in the permit module docstring.
+- **W1071 — Permit-vs-lease asymmetry documented.** Sibling capture from the W1067 investigation; the permit + lease modules differ on expiry semantics in ways the design intends but the docstrings did not previously articulate. Fix: module-docstring updates on both surfaces + a CLAUDE.md sub-section codifying the asymmetry.
+- **W1072 — `claude` subagent structurally broken on Windows host (operational).** The `claude` subagent creates a worktree by default; W686 / W903 captured the Windows MAX_PATH failure mode that makes this unusable on the roam-code repo path depth. **Use the `general-purpose` subagent instead** — it does not create a worktree. This is a structural issue with the agent platform's default-worktree behavior, not addressable from inside roam.
+- **W1076 — CLAUDE.md is intentionally untracked.** Commit `89a338d9` removed CLAUDE.md from the public repo; the file is now local-only by design (private development guide; not shipped to PyPI/GitHub/landing-page). Documented inline at the top of CLAUDE.md so future readers don't try to re-add it to git.
+
+### Research memos (W1049-RESEARCH — W1079-CONSOLIDATE)
+- **W1049-RESEARCH — Release-pipeline hardening memo, 3 P1 recommendations.** Post-W1047 audit of the `publish.yml` workflow surfaced three P1 hardening recommendations: (1) **PEP 740 attestations** — sign the wheel + sdist with provenance attestation post-OIDC-mint and attach to the GitHub Release alongside the SBOM; (2) **workflow split** — separate build / publish / smoke into independent workflows so a smoke-step failure doesn't block the publish from finishing; (3) **SBOM-wheel SHA binding** — the CycloneDX SBOM should carry the wheel's content SHA so the SBOM cannot be silently swapped post-publish. Queued as **W1054 / W1055 / W1056 — user-decision-pending** per the v13.1 release-prep state CLOSED gate.
+
+
 ## v13.1 (released 2026-05-15) -- Pattern-2 propagation + shared YAML helper + 3 flagship silent-fallback seals
 
 > **THREE flagship Pattern 2 silent-fallback bugs SEALED this batch (W826 `cmd_taint` + W834 `cmd_health` + W836 `cmd_doctor`) + W817 helper-level auto-inject closed Pattern 2 `partial_success` gap across 7 detectors in one shot (dead / clones / complexity / orphan-imports / bus-factor / auth-gaps / hotspots) + W810 `cmd_complexity` Pattern 1B fix (`SystemExit(1)` → return on empty corpus) + W805 empty-corpus sweep covered 25+ detectors (cmd_endpoints/n1/missing-index/over-fetch/smells/duplicates/invariants/vulns/audit-trail-conformance/audit-trail-verify/pr-risk/critique already clean; 7 auto-fixed by W817; 3 flagship dedicated fixes) + W749 dispatch-edge `MIN(id)` fix in registry_dispatch (231 + 34 + 22 edge attribution corrections) + W774 sister fix to `laravel_post.py` (worktree-pending) + W718 cleaned 70+ UPPER-case severity sites + W634 `confidence_level_rank` fail-loud + 15 callers + W444 `mcp_tool_names` duplicate fail-loud + W445 `_REGISTERED_TOOLS` append guard + W707 `_serialize_suppressions` dead-code seal + drift-guard expansion (W703 `_CommentSyntax` + W741 `find_project_root` symlink-safety + W484 `templates/ci/` reachability + W711/W712 mcp `--card`/`--list-tools` coverage + W713 `_SARIF_CONSUMERS` AST-literal + W757 backfilled missing W702) + W397 build_readme_counts AGENTS.md + W734 CONTRIBUTING.md count refresh + five research memos shipped in `dev/` (MCP-EVOLUTION / MCP-SERVER-CARD / MCP-TASKS-EVAL / MCP-ELICITATION-CANDIDATES / DETECTOR-FP-METHODOLOGY) (~50-completion batch behind W836-CONSOLIDATE, 2026-05-15).**

@@ -390,6 +390,30 @@ def _ambiguity_signals(conn: sqlite3.Connection, rows: list) -> dict:
     return {"ref": ref_map, "pr": pr_map, "cc": cc_map, "churn": churn_map}
 
 
+def _stamp_tier(row, tier: str) -> dict:
+    """W1249: convert a sqlite3.Row to a dict and stamp ``_resolution_tier``.
+
+    ``find_symbol`` / ``find_symbol_with_alternatives`` walk a 3-tier chain
+    (qualified-name exact -> simple-name exact -> fuzzy LIKE). The returned
+    row carries no tier metadata, so prior callers re-derived it by comparing
+    ``row["name"]`` / ``row["qualified_name"]`` against the input (W1242 /
+    W1244) or by re-querying (W1248). W1249 hoists that boilerplate into the
+    resolver itself: the boundary stamps the tier on every returned row, and
+    callers read ``row.get("_resolution_tier", "symbol")``.
+
+    sqlite3.Row is immutable so we widen to ``dict`` at the boundary; all
+    existing key-access patterns (``row["id"]``, ``row.keys()``,
+    ``dict(row)``) keep working on the wider type.
+
+    Tier vocabulary aligns with W1241's ``_RESOLUTION_KINDS`` closed enum
+    (``symbol`` / ``fuzzy`` / ``unresolved``; the ``file`` kind is owned by
+    caller-side file-path resolution and is not stamped here).
+    """
+    out = dict(row)
+    out["_resolution_tier"] = tier
+    return out
+
+
 def find_symbol_with_alternatives(conn: sqlite3.Connection, name: str) -> tuple[dict | None, list[dict]]:
     """Find a symbol with disambiguation, returning the best plus alternatives.
 
@@ -397,13 +421,23 @@ def find_symbol_with_alternatives(conn: sqlite3.Connection, name: str) -> tuple[
     matches at the same lookup tier so callers can surface
     ``did_you_mean`` hints. Alternatives are sorted by the same importance
     score :func:`pick_best` uses to choose the winner.
+
+    W1249: every returned row (best + alternatives) carries the
+    ``_resolution_tier`` key per the closed enum
+    (``symbol`` for the two exact-name rungs, ``fuzzy`` for the LIKE
+    fallback). Callers read ``row.get("_resolution_tier", "symbol")``;
+    the default keeps backwards compatibility for any code path that
+    constructs row-like dicts independently.
     """
     file_hint, symbol_name = _parse_file_hint(name)
 
-    for query, params in (
-        (SYMBOL_BY_QUALIFIED, (symbol_name,)),
-        (SYMBOL_BY_NAME, (symbol_name,)),
-        (SEARCH_SYMBOLS, (f"%{symbol_name}%", 10)),
+    # Tier per query position; ``SYMBOL_BY_QUALIFIED`` and ``SYMBOL_BY_NAME``
+    # are both exact-match rungs (the W1242/W1244/W1248 detection helpers all
+    # collapsed them to ``symbol``); ``SEARCH_SYMBOLS`` is the LIKE fallback.
+    for query, params, tier in (
+        (SYMBOL_BY_QUALIFIED, (symbol_name,), "symbol"),
+        (SYMBOL_BY_NAME, (symbol_name,), "symbol"),
+        (SEARCH_SYMBOLS, (f"%{symbol_name}%", 10), "fuzzy"),
     ):
         rows = conn.execute(query, params).fetchall()
         if file_hint:
@@ -411,7 +445,7 @@ def find_symbol_with_alternatives(conn: sqlite3.Connection, name: str) -> tuple[
         if not rows:
             continue
         if len(rows) == 1:
-            return rows[0], []
+            return _stamp_tier(rows[0], tier), []
 
         signals = _ambiguity_signals(conn, rows)
 
@@ -429,7 +463,8 @@ def find_symbol_with_alternatives(conn: sqlite3.Connection, name: str) -> tuple[
 
         ordered = sorted(rows, key=_score, reverse=True)
         best = ordered[0]
-        return best, ordered[1:]
+        alternatives = [_stamp_tier(r, tier) for r in ordered[1:]]
+        return _stamp_tier(best, tier), alternatives
 
     return None, []
 
@@ -446,6 +481,11 @@ def find_symbol(conn: sqlite3.Connection, name: str) -> dict | None:
     6. If file hint provided -> filter candidates first
 
     Always returns a single row or None. Never returns a list.
+
+    W1249: the returned row carries ``_resolution_tier`` (``"symbol"`` for
+    exact-name matches, ``"fuzzy"`` for LIKE-fallback matches). Callers read
+    ``row.get("_resolution_tier", "symbol")``; the default keeps backwards
+    compatibility for callers that build row-like dicts independently.
     """
     best, _ = find_symbol_with_alternatives(conn, name)
     return best

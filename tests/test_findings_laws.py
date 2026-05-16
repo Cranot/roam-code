@@ -33,7 +33,6 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_laws import (
     _LAW_KIND_TO_CONFIDENCE,
     LAWS_DETECTOR_VERSION,
@@ -42,8 +41,8 @@ from roam.commands.cmd_laws import (
 )
 from roam.db.connection import open_db
 from roam.laws.miner import Law
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -175,13 +174,9 @@ def test_laws_rerun_upserts_not_duplicates(tmp_path):
         with open_db(readonly=True) as conn:
             first_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'laws'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'laws'").fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'laws'"
-            ).fetchone()[0]
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'laws'").fetchone()[0]
         assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same miner predicates → same ids.
@@ -192,13 +187,9 @@ def test_laws_rerun_upserts_not_duplicates(tmp_path):
         with open_db(readonly=True) as conn:
             second_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'laws'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'laws'").fetchall()
             }
-            second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'laws'"
-            ).fetchone()[0]
+            second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'laws'").fetchone()[0]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
     finally:
@@ -215,9 +206,7 @@ def test_laws_finding_evidence_carries_law_fields(tmp_path):
 
         with open_db(readonly=True) as conn:
             row = conn.execute(
-                "SELECT evidence_json, claim FROM findings "
-                "WHERE source_detector = 'laws' "
-                "ORDER BY id ASC LIMIT 1"
+                "SELECT evidence_json, claim FROM findings WHERE source_detector = 'laws' ORDER BY id ASC LIMIT 1"
             ).fetchone()
         assert row is not None
         evidence = json.loads(row["evidence_json"])
@@ -279,16 +268,12 @@ def test_law_kind_tier_mapping_structural(tmp_path):
         ]
         written = _emit_laws_findings(conn, laws, LAWS_DETECTOR_VERSION)
         assert written == len(laws)
-        rows = conn.execute(
-            "SELECT evidence_json, confidence FROM findings "
-            "WHERE source_detector = 'laws'"
-        ).fetchall()
+        rows = conn.execute("SELECT evidence_json, confidence FROM findings WHERE source_detector = 'laws'").fetchall()
         assert len(rows) == len(laws)
         for r in rows:
             ev = json.loads(r["evidence_json"])
             assert r["confidence"] == "structural", (
-                f"law kind {ev['kind']!r} expected structural, "
-                f"got {r['confidence']!r}"
+                f"law kind {ev['kind']!r} expected structural, got {r['confidence']!r}"
             )
 
 
@@ -311,9 +296,7 @@ def test_law_kind_tier_mapping_heuristic(tmp_path):
         ]
         written = _emit_laws_findings(conn, laws, LAWS_DETECTOR_VERSION)
         assert written == 1
-        row = conn.execute(
-            "SELECT confidence FROM findings WHERE source_detector = 'laws'"
-        ).fetchone()
+        row = conn.execute("SELECT confidence FROM findings WHERE source_detector = 'laws'").fetchone()
         assert row["confidence"] == "heuristic"
 
 
@@ -331,8 +314,7 @@ def test_law_kind_mapping_covers_all_miner_strategies():
     mapped_kinds = set(_LAW_KIND_TO_CONFIDENCE.keys())
     missing = expected_kinds - mapped_kinds
     assert not missing, (
-        f"law kinds documented in roam.laws.miner but missing from "
-        f"_LAW_KIND_TO_CONFIDENCE: {sorted(missing)}"
+        f"law kinds documented in roam.laws.miner but missing from _LAW_KIND_TO_CONFIDENCE: {sorted(missing)}"
     )
 
 
@@ -350,18 +332,14 @@ def test_laws_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_laws(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "laws"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "laws"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "laws" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "laws" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "laws" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -400,9 +378,7 @@ def test_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'laws'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'laws'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, "non-persist laws still wrote to findings"

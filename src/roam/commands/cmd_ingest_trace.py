@@ -1,4 +1,16 @@
-"""Ingest runtime traces (OpenTelemetry, Jaeger, Zipkin, generic) into the index."""
+"""Ingest runtime traces (OpenTelemetry, Jaeger, Zipkin, generic) into the index.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam ingest-trace`` is a state-mutating ingest
+command — its output is invocation-scoped ingest status (rows
+inserted, spans parsed, services discovered), not per-location code
+violations with file:line coordinates. The hotspot findings produced
+downstream by ``roam hotspots`` consume the ingested traces; SARIF
+exposure belongs there, not on the ingest step. See ``cmd_mutate``
+for the parallel state-mutating disclosure pattern (W1180) +
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

@@ -13,21 +13,18 @@ Tests three concerns:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from pathlib import Path
+from datetime import date
 
 from roam.commands.suppression import load_suppressions, load_suppressions_typed
 from roam.policy.suppression_v2 import (
+    VALID_STATUSES,
     FindingIdSuppression,
     KindSymbolSuppression,
     RuleFileSuppression,
-    SuppressionSource,
-    VALID_STATUSES,
     _coerce_date,
     _coerce_int,
     _coerce_status,
 )
-
 
 # ---------------------------------------------------------------------------
 # RuleFileSuppression — ``.roam-suppressions.yml`` shape
@@ -163,11 +160,7 @@ def test_load_suppressions_typed_matches_legacy_loader(tmp_path):
     """The new typed loader returns the same rows as the legacy dict loader."""
     yml = tmp_path / ".roam-suppressions.yml"
     yml.write_text(
-        "suppressions:\n"
-        "  - rule: secret-detection\n"
-        "    file: tests/fake.py\n"
-        "    reason: fixture\n"
-        "    status: safe\n",
+        "suppressions:\n  - rule: secret-detection\n    file: tests/fake.py\n    reason: fixture\n    status: safe\n",
         encoding="utf-8",
     )
 

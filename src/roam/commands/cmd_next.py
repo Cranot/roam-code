@@ -17,6 +17,12 @@ Design notes:
     name for the suggested next command (just the verb, no flags).
   * Branches are listed in priority order in ``_select_suggestion``;
     the first matching branch wins.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because next outputs are invocation-scoped routing suggestions
+(command, verdict, state) — a single recommendation per invocation, not
+per-location violations. See action.yml _SUPPORTED_SARIF allowlist and
+W1154 audit memo.
 """
 
 from __future__ import annotations
@@ -33,7 +39,6 @@ from roam.capability import roam_capability
 from roam.commands._command_utils import bare_command_name as _bare_command_name
 from roam.db.connection import db_exists, find_project_root, get_db_path
 from roam.output.formatter import json_envelope, to_json
-
 
 # ---------------------------------------------------------------------------
 # State dataclass
@@ -544,8 +549,7 @@ def _select_suggestion(state: RepoState) -> dict:
     if state.pending_before_pr_check and state.pending_before_pr_invocation:
         return {
             "verdict": (
-                f"Run `{state.pending_before_pr_invocation}` "
-                f"-- constitution before_pr check not yet run in this run."
+                f"Run `{state.pending_before_pr_invocation}` -- constitution before_pr check not yet run in this run."
             ),
             "command": state.pending_before_pr_check,
             "reason": "constitution_before_pr_pending",
@@ -561,10 +565,7 @@ def _select_suggestion(state: RepoState) -> dict:
     # with a stale mode block still nudges the agent forward.
     if state.mode_upgrade_target and state.mode_upgrade_invocation:
         blocked = state.mode_upgrade_blocked_command or "a command"
-        verdict = (
-            f"Run `{state.mode_upgrade_invocation}` "
-            f"to enable `{blocked}` (recent intent-check returned BLOCKED)."
-        )
+        verdict = f"Run `{state.mode_upgrade_invocation}` to enable `{blocked}` (recent intent-check returned BLOCKED)."
         return {
             "verdict": verdict,
             "command": "mode",

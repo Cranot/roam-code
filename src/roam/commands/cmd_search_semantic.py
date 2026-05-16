@@ -1,4 +1,14 @@
-"""Semantic search: hybrid BM25 + vector ranking + framework packs."""
+"""Semantic search: hybrid BM25 + vector ranking + framework packs.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because search-semantic outputs are invocation-scoped
+semantic-vector retrieval rankings (top-k symbol matches by hybrid
+BM25 + vector + framework-pack score) — not per-location code
+violations. The ranked symbols are retrieval results, not findings;
+parallel to ``cmd_search`` / ``cmd_retrieve`` SKIP-DISCLOSURE wording.
+See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B
+propagation plan + W1221-audit memo.
+"""
 
 from __future__ import annotations
 

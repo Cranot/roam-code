@@ -20,8 +20,6 @@ locally (when adopted), or CI catches it in the PR.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from tests._helpers.repo_root import repo_root
 
 REPO_ROOT = repo_root()
@@ -66,11 +64,7 @@ def test_ci_workflow_includes_build_readme_counts_check() -> None:
     )
 
     needle = f"{DRIFT_SCRIPT_REL} --check"
-    matching = [
-        path
-        for path in sorted(WORKFLOWS_DIR.glob("*.yml"))
-        if needle in path.read_text(encoding="utf-8")
-    ]
+    matching = [path for path in sorted(WORKFLOWS_DIR.glob("*.yml")) if needle in path.read_text(encoding="utf-8")]
 
     assert matching, (
         f"No workflow in {WORKFLOWS_DIR} invokes `python {needle}`. "

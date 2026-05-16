@@ -1,4 +1,11 @@
-"""Detect developer congestion: files where too many developers work concurrently."""
+"""Detect developer congestion: files where too many developers work concurrently.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because congestion outputs are per-PR developer concurrency
+rankings — not per-code-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1197-audit memo.
+"""
 
 from __future__ import annotations
 

@@ -36,7 +36,6 @@ from roam.index.manifest import (
     write_manifest,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -73,9 +72,7 @@ def test_steps_status_column_exists(tmp_path):
     conn = _fresh_db(tmp_path)
     try:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(index_manifest)")}
-        assert "steps_status" in cols, (
-            f"index_manifest missing steps_status column. Got: {sorted(cols)}"
-        )
+        assert "steps_status" in cols, f"index_manifest missing steps_status column. Got: {sorted(cols)}"
         # USER_VERSION is mirrored into PRAGMA — A8 piggybacks on the
         # discipline test elsewhere, but we also pin it here.
         assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == int(USER_VERSION)
@@ -161,15 +158,11 @@ def test_indexer_records_steps_status_on_clean_run(step_project):
     # the test env (effects / taint may be skipped:module_missing on a
     # lean install), but we MUST see at least the resolvers, clustering
     # and health steps populated — the always-on instrumentation.
-    assert isinstance(steps, dict) and steps, (
-        "Expected non-empty steps_status, got: " + repr(steps)
-    )
+    assert isinstance(steps, dict) and steps, "Expected non-empty steps_status, got: " + repr(steps)
     # No step should be in a ``failed:*`` state on a clean tiny repo.
     for step, entry in steps.items():
         status = entry["status"] if isinstance(entry, dict) else str(entry)
-        assert not status.startswith("failed:"), (
-            f"Unexpected failure on clean run: {step} -> {status}"
-        )
+        assert not status.startswith("failed:"), f"Unexpected failure on clean run: {step} -> {status}"
 
     # Every recorded step that ran (not skipped) should carry a duration_ms.
     for step, entry in steps.items():
