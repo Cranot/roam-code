@@ -101,10 +101,17 @@ CMD_DIR = SRC_ROOT / "commands"
 # variants below are the legacy spellings W547 / W531 are migrating
 # away from.
 
-_UPPER_SEVERITY_LITERALS: frozenset[str] = frozenset({
-    "CRITICAL", "HIGH", "MEDIUM", "LOW",
-    "WARNING", "INFO", "ERROR",
-})
+_UPPER_SEVERITY_LITERALS: frozenset[str] = frozenset(
+    {
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "WARNING",
+        "INFO",
+        "ERROR",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -129,15 +136,10 @@ _PRE_W762_PENDING: dict[str, str] = {
     # W759-pending migration backlog is unchanged; only the line cursor
     # rebased.
     "cmd_preflight.py:185": (
-        "W759-pending: gate-decision verdict envelope; cmd_preflight "
-        "canonical-severity migration in flight"
+        "W759-pending: gate-decision verdict envelope; cmd_preflight canonical-severity migration in flight"
     ),
-    "cmd_preflight.py:300": (
-        "W759-pending: no-target safety envelope; same migration as L185"
-    ),
-    "cmd_preflight.py:322": (
-        "W759-pending: clean-pass envelope; same migration as L185"
-    ),
+    "cmd_preflight.py:300": ("W759-pending: no-target safety envelope; same migration as L185"),
+    "cmd_preflight.py:322": ("W759-pending: clean-pass envelope; same migration as L185"),
     "cmd_preflight.py:855": (
         "W759-pending: fitness severity fall-through default; lifts to "
         "canonical 'warning' alongside the helper migration"
@@ -204,18 +206,11 @@ def _find_blocked_sites(path: Path) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Dict):
             _is_blocked_severity_value(node, blocked_ids, blocked_constants)
-    return [
-        f"{rel}:{blocked_constants[i].lineno}"
-        for i in blocked_ids
-    ]
+    return [f"{rel}:{blocked_constants[i].lineno}" for i in blocked_ids]
 
 
 def _iter_command_files() -> list[Path]:
-    return [
-        p
-        for p in CMD_DIR.glob("cmd_*.py")
-        if "__pycache__" not in p.parts
-    ]
+    return [p for p in CMD_DIR.glob("cmd_*.py") if "__pycache__" not in p.parts]
 
 
 # ---------------------------------------------------------------------------
@@ -249,8 +244,7 @@ def test_no_new_upper_severity_in_summary_envelope() -> None:
         "is lowercase (critical / error / warning / info) per W547. "
         "Use roam.output._severity.normalize_severity() to fold an "
         "upstream UPPER label onto the canonical set, or emit the "
-        "canonical literal directly. Offenders:\n  "
-        + "\n  ".join(sorted(violations))
+        "canonical literal directly. Offenders:\n  " + "\n  ".join(sorted(violations))
     )
 
 
@@ -266,9 +260,7 @@ def test_pre_w762_pending_entries_actually_exist() -> None:
         rel, _, _line = entry.partition(":")
         if not (CMD_DIR / rel).exists():
             missing.append(entry)
-    assert not missing, (
-        f"W762: _PRE_W762_PENDING references missing files: {missing}"
-    )
+    assert not missing, f"W762: _PRE_W762_PENDING references missing files: {missing}"
 
 
 def test_pre_w762_pending_entries_still_have_pattern() -> None:
@@ -299,8 +291,7 @@ def test_pre_w762_pending_entries_still_have_pattern() -> None:
     assert not stale, (
         "W762: _PRE_W762_PENDING entries no longer trip the drift-guard "
         "(the site was migrated). Drop these entries — the allowlist "
-        "must stay minimal so genuine regressions surface:\n  "
-        + "\n  ".join(sorted(stale))
+        "must stay minimal so genuine regressions surface:\n  " + "\n  ".join(sorted(stale))
     )
 
 
@@ -308,12 +299,7 @@ def test_detector_catches_synthetic_summary_envelope_offender(tmp_path: Path) ->
     """The AST detector flags ``summary={"severity": "CRITICAL"}`` — the
     canonical W547 shape.
     """
-    src = (
-        "def cmd():\n"
-        '    return json_envelope("test",\n'
-        '        summary={"severity": "CRITICAL"},\n'
-        "    )\n"
-    )
+    src = 'def cmd():\n    return json_envelope("test",\n        summary={"severity": "CRITICAL"},\n    )\n'
     offender = tmp_path / "cmd_synthetic.py"
     offender.write_text(src, encoding="utf-8")
     tree = ast.parse(offender.read_text(encoding="utf-8"))
@@ -323,8 +309,7 @@ def test_detector_catches_synthetic_summary_envelope_offender(tmp_path: Path) ->
         if isinstance(node, ast.Dict):
             _is_blocked_severity_value(node, blocked_ids, blocked_constants)
     assert len(blocked_ids) == 1, (
-        f"W762 detector must flag the inline CRITICAL literal; "
-        f"got {[blocked_constants[i].value for i in blocked_ids]}"
+        f"W762 detector must flag the inline CRITICAL literal; got {[blocked_constants[i].value for i in blocked_ids]}"
     )
 
 
@@ -333,12 +318,7 @@ def test_detector_catches_synthetic_ternary_offender(tmp_path: Path) -> None:
     SARIF level-map applies regardless of whether the producer was a
     literal or a ternary expression.
     """
-    src = (
-        "def cmd(cond):\n"
-        "    return {\n"
-        '        "severity": "HIGH" if cond else "MEDIUM",\n'
-        "    }\n"
-    )
+    src = 'def cmd(cond):\n    return {\n        "severity": "HIGH" if cond else "MEDIUM",\n    }\n'
     offender = tmp_path / "cmd_synthetic_ternary.py"
     offender.write_text(src, encoding="utf-8")
     tree = ast.parse(offender.read_text(encoding="utf-8"))
@@ -348,9 +328,7 @@ def test_detector_catches_synthetic_ternary_offender(tmp_path: Path) -> None:
         if isinstance(node, ast.Dict):
             _is_blocked_severity_value(node, blocked_ids, blocked_constants)
     values = sorted(blocked_constants[i].value for i in blocked_ids)
-    assert values == ["HIGH", "MEDIUM"], (
-        f"W762 detector must flag both ternary branches; got {values}"
-    )
+    assert values == ["HIGH", "MEDIUM"], f"W762 detector must flag both ternary branches; got {values}"
 
 
 def test_detector_ignores_display_polish_icons_dict(tmp_path: Path) -> None:
@@ -362,11 +340,7 @@ def test_detector_ignores_display_polish_icons_dict(tmp_path: Path) -> None:
     "MEDIUM": "~ ", "LOW": "  "}`` table is one such case in the live
     tree.
     """
-    src = (
-        "def cmd():\n"
-        '    icons = {"CRITICAL": "!!", "HIGH": "! ", "MEDIUM": "~ ", "LOW": "  "}\n'
-        "    return icons\n"
-    )
+    src = 'def cmd():\n    icons = {"CRITICAL": "!!", "HIGH": "! ", "MEDIUM": "~ ", "LOW": "  "}\n    return icons\n'
     offender = tmp_path / "cmd_synthetic_icons.py"
     offender.write_text(src, encoding="utf-8")
     tree = ast.parse(offender.read_text(encoding="utf-8"))
@@ -407,8 +381,7 @@ def test_detector_ignores_helper_return_values(tmp_path: Path) -> None:
         if isinstance(node, ast.Dict):
             _is_blocked_severity_value(node, blocked_ids, blocked_constants)
     assert not blocked_ids, (
-        f"W762 detector must NOT flag helper return values; got "
-        f"{[blocked_constants[i].value for i in blocked_ids]}"
+        f"W762 detector must NOT flag helper return values; got {[blocked_constants[i].value for i in blocked_ids]}"
     )
 
 
@@ -443,9 +416,6 @@ def test_w547_canonical_vocabulary_stays_stable() -> None:
     """
     from roam.output._severity import SEVERITY_LEVELS
 
-    assert SEVERITY_LEVELS == frozenset(
-        {"critical", "error", "warning", "info"}
-    ), (
-        "W762: canonical lowercase 4-tier (W547) has drifted — "
-        "re-cut the W762 drift-guard against the new vocabulary."
+    assert SEVERITY_LEVELS == frozenset({"critical", "error", "warning", "info"}), (
+        "W762: canonical lowercase 4-tier (W547) has drifted — re-cut the W762 drift-guard against the new vocabulary."
     )

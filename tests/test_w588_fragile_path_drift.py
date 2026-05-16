@@ -65,14 +65,10 @@ _ALLOWLIST: dict[str, str] = {
     # The helper itself owns the canonical fallback at the bottom of
     # repo_root() — that fallback IS the fragile-walk shape on
     # purpose (last-resort branch when both git and marker walks fail).
-    "_helpers/repo_root.py": (
-        "canonical helper — owns the historical fallback walk by design"
-    ),
+    "_helpers/repo_root.py": ("canonical helper — owns the historical fallback walk by design"),
     # The helper's drift-guard pins the helper itself; it goes through
     # repo_root() and does NOT use the fragile pattern.
-    "test_repo_root_helper.py": (
-        "pins the helper's contract — uses repo_root() directly"
-    ),
+    "test_repo_root_helper.py": ("pins the helper's contract — uses repo_root() directly"),
 }
 
 
@@ -199,11 +195,7 @@ def _find_fragile_sites(path: Path) -> list[str]:
 
 
 def _iter_test_files() -> list[Path]:
-    return [
-        p
-        for p in TESTS_ROOT.rglob("*.py")
-        if "__pycache__" not in p.parts
-    ]
+    return [p for p in TESTS_ROOT.rglob("*.py") if "__pycache__" not in p.parts]
 
 
 # ---------------------------------------------------------------------------
@@ -242,12 +234,8 @@ def test_pre_w594_pending_entries_actually_exist() -> None:
     this list) silently widen the allowlist and let real regressions
     through.
     """
-    missing = [
-        rel for rel in _PRE_W594_PENDING if not (TESTS_ROOT / rel).exists()
-    ]
-    assert not missing, (
-        f"W588: _PRE_W594_PENDING references missing files: {missing}"
-    )
+    missing = [rel for rel in _PRE_W594_PENDING if not (TESTS_ROOT / rel).exists()]
+    assert not missing, f"W588: _PRE_W594_PENDING references missing files: {missing}"
 
 
 def test_pre_w594_pending_entries_still_have_pattern() -> None:
@@ -268,17 +256,14 @@ def test_pre_w594_pending_entries_still_have_pattern() -> None:
             stale.append(rel)
     assert not stale, (
         "W588: _PRE_W594_PENDING entries no longer contain the fragile "
-        "pattern (W594 migrated them) — drop these from the dict:\n  "
-        + "\n  ".join(stale)
+        "pattern (W594 migrated them) — drop these from the dict:\n  " + "\n  ".join(stale)
     )
 
 
 def test_allowlist_entries_actually_exist() -> None:
     """Every ``_ALLOWLIST`` entry must point at a real file."""
     missing = [rel for rel in _ALLOWLIST if not (TESTS_ROOT / rel).exists()]
-    assert not missing, (
-        f"W588: _ALLOWLIST references missing files: {missing}"
-    )
+    assert not missing, f"W588: _ALLOWLIST references missing files: {missing}"
 
 
 def test_detector_catches_synthetic_offender(tmp_path: Path) -> None:
@@ -307,8 +292,7 @@ def test_detector_catches_synthetic_offender(tmp_path: Path) -> None:
             flagged_lines.append(node.lineno)
     # Three offender lines (parents[1], parent.parent, resolve().parent.parent).
     assert sorted(flagged_lines) == [2, 3, 4], (
-        f"W588 detector should flag all three synthetic offender lines, "
-        f"got {flagged_lines}"
+        f"W588 detector should flag all three synthetic offender lines, got {flagged_lines}"
     )
 
 
@@ -330,8 +314,7 @@ def test_detector_ignores_unrelated_parents_usage(tmp_path: Path) -> None:
     for node in ast.walk(tree):
         if _has_parents_subscript(node):
             assert not _references_dunder_file(node), (
-                "W588 detector should NOT flag .parents[N] chains "
-                "without an __file__ leaf"
+                "W588 detector should NOT flag .parents[N] chains without an __file__ leaf"
             )
 
 
@@ -354,7 +337,4 @@ def test_detector_ignores_docstring_mentions(tmp_path: Path) -> None:
             hits.append(node.lineno)
         if _has_parent_chain(node) and _references_dunder_file(node):
             hits.append(node.lineno)
-    assert hits == [], (
-        f"W588 detector should ignore docstring / string-literal "
-        f"mentions; got hits {hits}"
-    )
+    assert hits == [], f"W588 detector should ignore docstring / string-literal mentions; got hits {hits}"
