@@ -54,11 +54,50 @@ def mcp_status(ctx) -> None:
     try:
         from roam.mcp_server import _CORE_TOOLS, _REGISTERED_TOOLS, _ROAM_RESULT_CACHE
     except Exception as exc:
-        msg = f"MCP server module unavailable: {type(exc).__name__}: {exc}"
+        # W1289 — canonical Pattern-1A failure envelope. The previous handler
+        # produced a one-line "MCP server module unavailable: <ExcType>: <msg>"
+        # that surfaced raw Python exception text (e.g. ``KeyError: 'symbol'``)
+        # to agents without status/error_code/next_command fields. Replaced
+        # with the documented index_not_built envelope shape (CLAUDE.md
+        # §"Pattern-1 family — (A) Hang on missing prerequisite") so consumers
+        # reading only ``summary.verdict`` get an imperative, executable next
+        # action and JSON consumers get the full canonical structure.
+        exc_type = type(exc).__name__
+        exc_msg = str(exc)
+        verdict = "MCP server requires a built index — run `roam init`"
+        envelope = json_envelope(
+            "mcp-status",
+            summary={
+                "verdict": verdict,
+                "level": "warning",
+                "partial_success": False,
+                "state": "not_initialized",
+            },
+            status="index_not_built",
+            isError=True,
+            error_code="INDEX_NOT_BUILT",
+            error=f"MCP server module unavailable: {exc_type}: {exc_msg}",
+            hint="Run `roam init` to bootstrap the index",
+            next_command="roam init",
+            agent_contract={
+                "facts": [
+                    "MCP server cannot start without .roam/index.db",
+                    f"underlying error: {exc_type}",
+                ],
+                "next_commands": [
+                    "roam init",
+                    "# then retry roam mcp-status",
+                ],
+            },
+        )
         if json_mode:
-            click.echo(to_json(json_envelope("mcp-status", summary={"verdict": msg, "ready": False})))
+            click.echo(to_json(envelope))
         else:
-            click.echo(f"VERDICT: {msg}")
+            click.echo(f"VERDICT: {verdict}")
+            click.echo()
+            click.echo(f"Underlying error: {exc_type}: {exc_msg}")
+            click.echo("Hint:             Run `roam init` to bootstrap the index")
+            click.echo("Next command:     roam init")
         return
 
     try:
