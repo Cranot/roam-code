@@ -84,6 +84,47 @@ def index_in_process(project_path, *extra_args):
 # ===========================================================================
 
 
+# ===========================================================================
+# Collection hook: skip dogfood-corpus-dependent tests when internal/dogfood
+# is absent (gitignored private corpus per CLAUDE.md — not on CI / public clones)
+# ===========================================================================
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip tests whose source file references ``internal/dogfood`` when
+    that directory is absent on disk.
+
+    The dogfood corpus is intentionally gitignored. Tests that depend on it
+    pass on local dev (where Cranot has the dir) but fail on CI / public
+    clones with FileNotFoundError or empty-corpus assertions. Rather than
+    edit each of the 17 dogfood-dependent test files individually, do the
+    skip centrally based on a source-text check.
+    """
+    import pathlib
+
+    repo_root = pathlib.Path(__file__).resolve().parent.parent
+    dogfood_dir = repo_root / "internal" / "dogfood"
+    if dogfood_dir.is_dir():
+        # Local dev has the corpus — let tests run normally.
+        return
+
+    skip_marker = pytest.mark.skip(
+        reason="internal/dogfood/ is gitignored — not available on CI / public clones",
+    )
+    _cache: dict[pathlib.Path, bool] = {}
+    for item in items:
+        src = pathlib.Path(item.fspath)
+        if src not in _cache:
+            try:
+                text = src.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                _cache[src] = False
+                continue
+            _cache[src] = ("internal/dogfood" in text) or ("internal\\dogfood" in text)
+        if _cache[src]:
+            item.add_marker(skip_marker)
+
+
 @pytest.fixture(autouse=True)
 def _clear_graph_cache_between_tests():
     """Pass 69 introduced a process-wide graph cache keyed on
