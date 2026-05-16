@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>The 5-Minute Demo — Roam Docs · Credential-free, zero-egress, evidence-emitting</title>
+  <meta name="description" content="Five commands, five minutes — install Roam, gate a change with preflight, critique a diff, and emit a tamper-evident ChangeEvidence packet. Credential-free, zero-egress, local-only.">
+  <link rel="canonical" href="https://roam-code.com/docs/canonical-demo">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="dns-prefetch" href="//github.com">
+  <link rel="dns-prefetch" href="//pypi.org">
+  <link rel="stylesheet" href="/landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="The 5-Minute Demo — Roam">
+  <meta property="og:description" content="Install, gate a change, emit signed evidence — in five commands. Credential-free, zero-egress, local-only.">
+  <meta property="og:url" content="https://roam-code.com/docs/canonical-demo">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://roam-code.com/"},
+      {"@type": "ListItem", "position": 2, "name": "Docs", "item": "https://roam-code.com/docs/"},
+      {"@type": "ListItem", "position": 3, "name": "The 5-Minute Demo", "item": "https://roam-code.com/docs/canonical-demo"}
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span>
+        <span class="visually-hidden">Menu</span>
+      </label>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/setup">Setup</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <nav class="docs-subnav" aria-label="Documentation sections">
+    <div class="docs-subnav-inner">
+      <a href="/docs/getting-started">Getting Started</a>
+      <a href="/docs/integration-tutorials">Integrations</a>
+      <a href="/docs/command-reference">Command Reference</a>
+      <a href="/docs/architecture">Architecture</a>
+      <a href="/docs/agent-contract">Agent Contract</a>
+      <a href="/docs/troubleshooting">Troubleshooting</a>
+    </div>
+  </nav>
+
+  <main id="main" class="docs-page">
+    <p class="eyebrow">The Canonical Demo</p>
+    <h1>Five commands, five minutes, one proof packet</h1>
+    <p class="subtitle">
+      This is the single screen-recording arc. No accounts. No API keys. No network egress.
+      At the end you have a tamper-evident <code>ChangeEvidence</code> packet on disk that
+      answers <em>who acted, what authority existed, what was read, what changed, what could break,
+      what policy applied, what verified it, who accepted risk</em>.
+    </p>
+
+    <div class="callout">
+      Every command on this page runs against the developer's own machine. There is no
+      cloud step. The same recording works on an air-gapped repo, a corporate laptop with
+      no LLM token, or a CI runner with egress disabled. If a step prints output that
+      reaches a server, it's a bug — please file it.
+    </div>
+
+    <section>
+      <h2>Step 1 &mdash; Install and index. Zero accounts, runs offline.</h2>
+<pre><code>pip install "roam-code[mcp]"
+cd /path/to/your/repo
+roam init</code></pre>
+      <p><strong>Expected output excerpt:</strong></p>
+<pre><code>VERDICT: indexed 25,954 symbols across 28 languages in 31.4s
+.roam/index.db ready  |  fitness rules installed  |  CI workflow scaffolded</code></pre>
+      <p>
+        <strong>What this proves about the moat.</strong> <em>Credential-free + zero-egress.</em>
+        You did not create an account, paste an API key, or accept a vendor's terms of service.
+        Indexing parses your source tree with tree-sitter into a local SQLite database under
+        <code>.roam/</code>. Nothing left the machine. The same step works behind a corporate
+        firewall, on an air-gapped laptop, or inside a SCIF.
+      </p>
+    </section>
+
+    <section>
+      <h2>Step 2 &mdash; Score the repo. SARIF for CI, no cloud upload.</h2>
+<pre><code>roam --sarif health &gt; health.sarif</code></pre>
+      <p><strong>Expected output excerpt:</strong></p>
+<pre><code>$ cat health.sarif | head -8
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [ { "tool": { "driver": { "name": "roam", "version": "13.2", ... } } ... ] }
+
+$ roam health   # human-readable verdict
+VERDICT: Fair codebase (70/100) &mdash; 47 critical, 9 warnings, focus: god_components
+Health Score: 70/100  |  Tangle: 0.1% (13/25954 symbols in cycles)</code></pre>
+      <p>
+        <strong>What this proves about the moat.</strong> <em>CI-ready + zero-egress.</em>
+        The same composite score (complexity, cycles, dark-matter coupling, dead code, layer drift)
+        that drives a buyer's PR-replay artifact also ships as SARIF 2.1.0 &mdash; the format GitHub
+        Code Scanning, GitLab, and Defender for DevOps consume natively. No SaaS dashboard fee,
+        no scanner-noise surcharge, no <em>"your source is in our cloud now"</em> step. The file
+        is local; uploading it is the user's choice.
+      </p>
+    </section>
+
+    <section>
+      <h2>Step 3 &mdash; Gate the change. Blast radius before edit.</h2>
+<pre><code>roam preflight ensure_index</code></pre>
+      <p><strong>Expected output excerpt:</strong></p>
+<pre><code>VERDICT: Significant risk &mdash; CRITICAL, 608 symbols in blast radius
+
+Pre-flight check for `ensure_index (src/roam/commands/resolve.py:154)`:
+  Blast radius:     608 symbols in 236 files                 [CRITICAL]
+  Affected tests:   7 direct, 372 transitive, 1 colocated    [OK]
+  Complexity:       cc=3, nest=2                             [LOW]
+  Fitness:          2 rule(s) fail on sibling symbols        [WARNING]
+
+  Overall risk: CRITICAL
+  Risk driver:  blast radius (608 symbols in 236 files, CRITICAL)</code></pre>
+      <p>
+        <strong>What this proves about the moat.</strong> <em>Structural understanding before
+        the AI agent writes a line of code.</em> Cloud IDE agents (Cursor, Cody, Windsurf) and
+        cloud semantic reviewers (CodeRabbit, Greptile, Qodo) all read the diff <em>after</em>
+        the change. Roam reads the graph <em>before</em>. The agent gets a single deterministic
+        verdict &mdash; <strong>608 symbols across 236 files transitively depend on this function</strong>
+        &mdash; that lets it decide whether to proceed, expand its context window, or refuse the edit.
+        The number comes from a real static call-graph walk, not an LLM estimate.
+      </p>
+    </section>
+
+    <section>
+      <h2>Step 4 &mdash; Make the edit, then critique the diff.</h2>
+<pre><code># &lt;agent makes its edit to resolve.py&gt;
+git diff | roam critique</code></pre>
+      <p><strong>Expected output excerpt:</strong></p>
+<pre><code>VERDICT: REVIEW &mdash; 1 high-severity finding, 3 medium
+
+[1] clones-not-edited (HIGH)
+    Edited: src/roam/commands/resolve.py:154 ensure_index
+    Unedited siblings in clone class C-04:
+      tests/test_performance.py:143   ensure_indexed (fixture)
+      tests/test_performance.py:233   ensure_indexed (fixture)
+    Hint: a fix to ensure_index may need the test fixtures to track.
+
+[2] blast-radius-touched (MED): 608 symbols downstream of changed lines</code></pre>
+      <p>
+        <strong>What this proves about the moat.</strong> <em>Structural critique no semantic
+        reviewer ships.</em> <code>roam critique</code> reads the diff as a graph mutation against
+        the local index &mdash; clone siblings the agent didn't update, blast radius of the changed
+        lines, intent vs. dark-matter coupling, fitness-rule violations. Exit code 5 on high severity,
+        so CI gates without parsing markdown. Same SARIF projection as Step 2 if you want Code
+        Scanning to surface it.
+      </p>
+    </section>
+
+    <section>
+      <h2>Step 5 &mdash; Emit the evidence packet, then verify the chain.</h2>
+<pre><code>roam runs start --agent claude-code
+roam mode safe_edit
+roam pr-bundle init --intent "Harden ensure_index cold-start guard"
+# &lt;preflight + critique envelopes auto-collect under .roam/responses/&gt;
+roam pr-bundle emit --strict
+roam runs end --with-pr-bundle-emit
+roam audit-trail-verify</code></pre>
+      <p><strong>Expected output excerpt:</strong></p>
+<pre><code>VERDICT: pr-bundle initialised at wip-ensure-index.json (intent=Harden ensure_index cold-start guard)
+  state:            initialized
+  affected symbols: 0
+  risks:            0
+  tests required:   0
+...
+VERDICT: bundle emitted &mdash; 4 envelopes folded, ChangeEvidence v1.0.0
+  signed:           .roam/pr-bundles/wip-ensure-index.json  (4.2 KB)
+  runs:             .roam/runs/run_20260516_a7f3b1/meta.json  (HMAC chain intact)
+
+VERDICT: chain valid (18 records)
+  path:    .roam/audit-trail.jsonl
+  records: 18
+  first:   2026-05-16T...
+  last:    2026-05-16T...</code></pre>
+      <p>
+        <strong>What this proves about the moat.</strong> <em>Tamper-evident <code>ChangeEvidence</code> +
+        HMAC-chained run ledger.</em> Every step the agent ran logged a structured envelope into the
+        active run. <code>pr-bundle emit</code> compiles those envelopes plus the diff hash, mode,
+        active permits, accepted risks, and tests-required into a single portable JSON packet. The
+        ledger SHA-256-chains every entry &mdash; flipping a byte or splicing a record in the middle
+        breaks the chain and surfaces the affected line. This is the artifact a CISO buyer or auditor
+        sees: <strong>proof that the agent read the right context, was authorised to act, ran the right
+        gates, and recorded the result</strong>. Cursor and Cody log the session; Roam emits the proof.
+      </p>
+    </section>
+
+    <section>
+      <h2>What you just produced</h2>
+      <p>
+        At the end of these five steps, your repo contains:
+      </p>
+      <ul>
+        <li><code>.roam/index.db</code> &mdash; the local graph (25k+ symbols, no cloud copy)</li>
+        <li><code>health.sarif</code> &mdash; SARIF 2.1.0 health score for CI</li>
+        <li><code>.roam/responses/&lt;timestamp&gt;-preflight.json</code> &mdash; the gate envelope</li>
+        <li><code>.roam/responses/&lt;timestamp&gt;-critique.json</code> &mdash; the structural review envelope</li>
+        <li><code>.roam/pr-bundles/&lt;branch&gt;.json</code> &mdash; the signed <code>ChangeEvidence</code> packet (answers the eight evidence questions)</li>
+        <li><code>.roam/runs/&lt;run_id&gt;/events.jsonl</code> &mdash; the HMAC-chained event ledger</li>
+        <li><code>.roam/audit-trail.jsonl</code> &mdash; the global tamper-evident audit trail</li>
+      </ul>
+      <p>
+        None of these files were uploaded anywhere. Sharing one is an explicit user action &mdash;
+        attach to a PR, paste into a ticket, hand to an auditor. The packet is portable, deterministic,
+        and re-verifiable on any machine with <code>roam</code> installed.
+      </p>
+    </section>
+
+    <section>
+      <h2>The category this demo establishes</h2>
+      <p>
+        Every other code-assistance tool on the market today is either (a) a <em>cloud-IDE agent</em>
+        that writes code while logging the session, or (b) a <em>cloud semantic reviewer</em> that reads
+        the diff after the fact. Both require an account, an LLM endpoint, and source-code upload.
+        Neither emits a portable signed evidence packet.
+      </p>
+      <p>
+        Roam is the third shape: <strong>local-CLI agent-assurance</strong>. The five-command arc
+        above is the entire shape of the moat in one sitting. <a href="/compare">See the side-by-side
+        comparison</a> against Cursor, Cody, Windsurf, CodeRabbit, Greptile, Qodo, and SonarQube.
+      </p>
+    </section>
+
+    <nav class="docs-footer-nav" aria-label="Pagination">
+      <a href="/docs/getting-started">
+        <span class="label">← Back to</span>
+        Getting Started
+      </a>
+      <a href="/docs/demos" class="next">
+        <span class="label">Next →</span>
+        Eight concrete failure-pattern demos
+      </a>
+    </nav>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/setup">Setup</a>
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
