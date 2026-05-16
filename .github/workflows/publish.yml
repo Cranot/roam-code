@@ -167,7 +167,7 @@ jobs:
           path: sbom/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           # Idempotency: when a manual twine upload already shipped the wheel,
           # the workflow should no-op cleanly instead of erroring on file collision.
@@ -177,7 +177,7 @@ jobs:
         # Only needed for tag-driven runs; the install is cheap enough
         # to do unconditionally and skip the actual sign step below.
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Sign SBOM with cosign (keyless OIDC)
         # Same Sigstore chain as ``cga emit --sign --keyless``: GitHub OIDC
