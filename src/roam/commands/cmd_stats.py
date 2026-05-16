@@ -4,6 +4,16 @@ single overview number for "where am I". Counts files by
 language, file role, and symbol kind; reports recent commit activity.
 Useful as the first thing an agent runs after ``roam init`` to size
 the codebase.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because stats outputs are invocation-scoped index-rollup
+summaries (file counts by language / role, symbol counts by kind,
+recent commit activity) — not per-location code violations. The
+output describes index size and shape, which is metadata about the
+indexed workspace rather than a defect at a source coordinate. See
+``cmd_graph_stats`` for the parallel topology-summary disclosure
+pattern (W1224) + action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH propagation plan + W1224-audit memo.
 """
 
 from __future__ import annotations

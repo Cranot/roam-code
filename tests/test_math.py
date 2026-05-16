@@ -625,13 +625,9 @@ class TestDetectors:
 
         with open_db(readonly=True, project_root=proj) as conn:
             hits = detect_nested_lookup(conn)
-            assert len(hits) == 0, (
-                f"format_table is a rendering loop, should not flag nested-lookup: {hits}"
-            )
+            assert len(hits) == 0, f"format_table is a rendering loop, should not flag nested-lookup: {hits}"
 
-    def test_nested_lookup_cell_formatting_structural_discriminator(
-        self, project_factory, monkeypatch
-    ):
+    def test_nested_lookup_cell_formatting_structural_discriminator(self, project_factory, monkeypatch):
         """Regression sentinel: the W36.4 ``loop_eq_with_dependent_write``
         signal must independently exclude cell-formatting nested loops,
         even when the function name is NOT in the bounded-nested skip list.
@@ -711,9 +707,7 @@ class TestDetectors:
 
         with open_db(readonly=True, project_root=proj) as conn:
             hits = detect_nested_lookup(conn)
-            assert len(hits) >= 1, (
-                "Genuine O(n*m) cross-product join must still be flagged"
-            )
+            assert len(hits) >= 1, "Genuine O(n*m) cross-product join must still be flagged"
             assert hits[0]["task_id"] == "nested-lookup"
 
     def test_skips_test_files(self, project_factory, monkeypatch):

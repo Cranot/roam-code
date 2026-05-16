@@ -137,6 +137,4 @@ def test_bootstrap_unblocked_with_enforcement_on(runner, fresh_repo, cmd):
     )
     combined = (result.output or "") + (getattr(result, "stderr", "") or "")
     # The gate's signature message must NOT appear.
-    assert "Pass `--override-mode` to bypass" not in combined, (
-        f"{cmd!r} hit the mode gate: {combined}"
-    )
+    assert "Pass `--override-mode` to bypass" not in combined, f"{cmd!r} hit the mode gate: {combined}"

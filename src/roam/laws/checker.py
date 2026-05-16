@@ -13,14 +13,12 @@ laws and routes them by ``rule.kind``.
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 from roam.laws.miner import Law, Violation
-
 
 # Small stdlib + common-3rd-party allowlist for the import-law checker.
 # When a diff adds ``import sqlite3`` inside ``tests/`` we shouldn't flag
@@ -31,20 +29,79 @@ from roam.laws.miner import Law, Violation
 _STDLIB_MODULES = frozenset(
     {
         # Python stdlib (most-imported)
-        "os", "sys", "re", "json", "io", "math", "time", "datetime",
-        "pathlib", "subprocess", "collections", "itertools", "functools",
-        "typing", "dataclasses", "abc", "enum", "contextlib", "logging",
-        "sqlite3", "shutil", "tempfile", "textwrap", "argparse", "ast",
-        "asyncio", "copy", "csv", "hashlib", "hmac", "html", "http",
-        "inspect", "operator", "pickle", "platform", "random", "secrets",
-        "socket", "ssl", "string", "struct", "threading", "traceback",
-        "unittest", "urllib", "uuid", "warnings", "weakref", "xml",
-        "zipfile", "zlib", "__future__", "importlib",
+        "os",
+        "sys",
+        "re",
+        "json",
+        "io",
+        "math",
+        "time",
+        "datetime",
+        "pathlib",
+        "subprocess",
+        "collections",
+        "itertools",
+        "functools",
+        "typing",
+        "dataclasses",
+        "abc",
+        "enum",
+        "contextlib",
+        "logging",
+        "sqlite3",
+        "shutil",
+        "tempfile",
+        "textwrap",
+        "argparse",
+        "ast",
+        "asyncio",
+        "copy",
+        "csv",
+        "hashlib",
+        "hmac",
+        "html",
+        "http",
+        "inspect",
+        "operator",
+        "pickle",
+        "platform",
+        "random",
+        "secrets",
+        "socket",
+        "ssl",
+        "string",
+        "struct",
+        "threading",
+        "traceback",
+        "unittest",
+        "urllib",
+        "uuid",
+        "warnings",
+        "weakref",
+        "xml",
+        "zipfile",
+        "zlib",
+        "__future__",
+        "importlib",
         # Frequent third-party
-        "click", "pytest", "numpy", "pandas", "networkx", "requests",
-        "yaml", "toml", "tomllib", "tomli", "tree_sitter",
-        "tree_sitter_language_pack", "fastmcp", "anthropic",
-        "watchdog", "rich", "tabulate", "ruff",
+        "click",
+        "pytest",
+        "numpy",
+        "pandas",
+        "networkx",
+        "requests",
+        "yaml",
+        "toml",
+        "tomllib",
+        "tomli",
+        "tree_sitter",
+        "tree_sitter_language_pack",
+        "fastmcp",
+        "anthropic",
+        "watchdog",
+        "rich",
+        "tabulate",
+        "ruff",
     }
 )
 
@@ -186,8 +243,8 @@ def _new_file_entry() -> dict:
 
 _IMPORT_PATTERNS = (
     re.compile(r"^\s*(?:from\s+([\w\.]+)\s+import\s+|import\s+([\w\.]+))"),  # Python
-    re.compile(r"^\s*import\s+.*from\s+['\"]([^'\"]+)['\"]"),                # JS/TS ES
-    re.compile(r"^\s*const\s+\w+\s*=\s*require\(['\"]([^'\"]+)['\"]\)"),     # CommonJS
+    re.compile(r"^\s*import\s+.*from\s+['\"]([^'\"]+)['\"]"),  # JS/TS ES
+    re.compile(r"^\s*const\s+\w+\s*=\s*require\(['\"]([^'\"]+)['\"]\)"),  # CommonJS
 )
 
 
@@ -233,12 +290,14 @@ def added_symbols(parsed: dict) -> list[dict]:
             ):
                 m = rx.match(text)
                 if m:
-                    out.append({
-                        "name": m.group(1),
-                        "kind": kind,
-                        "file": path,
-                        "line": lineno,
-                    })
+                    out.append(
+                        {
+                            "name": m.group(1),
+                            "kind": kind,
+                            "file": path,
+                            "line": lineno,
+                        }
+                    )
                     break
     return out
 
@@ -336,10 +395,7 @@ def _check_naming_law(law: Law, syms_added: list[dict]) -> list[Violation]:
                     kind="naming",
                     severity=law.severity,
                     confidence=law.confidence,
-                    message=(
-                        f"{sym['kind']} '{sym['name']}' is {actual},"
-                        f" expected {expected_style}"
-                    ),
+                    message=(f"{sym['kind']} '{sym['name']}' is {actual}, expected {expected_style}"),
                     file=sym["file"],
                     line=sym["line"],
                     evidence={
@@ -403,10 +459,7 @@ def _check_import_law(law: Law, parsed: dict) -> list[Violation]:
                     kind="import",
                     severity=law.severity,
                     confidence=law.confidence,
-                    message=(
-                        f"{norm} imports from {target_bucket}/"
-                        f" — law requires imports from {to_dir}/"
-                    ),
+                    message=(f"{norm} imports from {target_bucket}/ — law requires imports from {to_dir}/"),
                     file=norm,
                     line=0,
                     evidence={
@@ -472,9 +525,7 @@ def _path_bucket(path: str) -> str:
     return "/".join(dirs[:2])
 
 
-def _check_testing_law(
-    law: Law, parsed: dict, syms_added: list[dict]
-) -> list[Violation]:
+def _check_testing_law(law: Law, parsed: dict, syms_added: list[dict]) -> list[Violation]:
     """Flag newly-added public symbols of the matching kind when no
     test file with their name is also added in the same diff.
 
@@ -489,6 +540,7 @@ def _check_testing_law(
     try:
         from roam.commands.changed_files import is_test_file
     except Exception:
+
         def is_test_file(p: str) -> bool:  # type: ignore[no-redef]
             low = (p or "").lower()
             return "test" in low or "spec" in low
@@ -516,10 +568,7 @@ def _check_testing_law(
                 kind="testing",
                 severity=law.severity,
                 confidence=law.confidence,
-                message=(
-                    f"public {sym['kind']} '{name}' added without a"
-                    " matching test file"
-                ),
+                message=(f"public {sym['kind']} '{name}' added without a matching test file"),
                 file=sym["file"],
                 line=sym["line"],
                 evidence={

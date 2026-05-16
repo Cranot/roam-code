@@ -19,7 +19,6 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
 
-
 # W115 — bus-factor is the fourth detector migrating onto the central
 # findings registry (after clones W95, dead W99, complexity W102). The
 # detector stays heuristic by nature — it counts unique authors and
@@ -535,9 +534,7 @@ def _emit_bus_factor_findings(
         # ``actor`` alias of ``name`` so a consumer reading
         # ``evidence_json`` doesn't need to know which surface produced
         # the field.
-        top_authors_with_actor = [
-            {**a, "actor": a.get("name")} for a in (r.get("top_authors") or [])
-        ]
+        top_authors_with_actor = [{**a, "actor": a.get("name")} for a in (r.get("top_authors") or [])]
         evidence = {
             "directory": directory,
             "bus_factor": r.get("bus_factor"),
@@ -658,6 +655,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
     (per-symbol ownership lookup).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     # SYNTHESIS Rank 16: honor the global ``--include-excluded`` flag so
     # users can opt back into the legacy "scan everything" behaviour.
     # Default is to skip ``.github/``, ``.claude/``, ``docs/``, ``dist/``,
@@ -667,9 +665,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
     ensure_index()
 
     with open_db(readonly=not persist) as conn:
-        results, excluded_files_count = _analyse_bus_factor(
-            conn, stale_months, exclude_prefixes=exclude_prefixes
-        )
+        results, excluded_files_count = _analyse_bus_factor(conn, stale_months, exclude_prefixes=exclude_prefixes)
         brain_list = _query_brain_methods(conn) if brain_methods else []
 
         # Round 4 #13, Q: detect single-author projects so we don't flood
@@ -710,27 +706,15 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                     # per-directory — those name actually-actionable
                     # forgotten modules regardless of team size.
                     repo_id = _repo_identifier(project_root)
-                    _emit_solo_author_summary_finding(
-                        conn, results, repo_id, BUS_FACTOR_DETECTOR_VERSION
-                    )
-                    stale_only = [
-                        r for r in results if r.get("stale_primary")
-                    ]
+                    _emit_solo_author_summary_finding(conn, results, repo_id, BUS_FACTOR_DETECTOR_VERSION)
+                    stale_only = [r for r in results if r.get("stale_primary")]
                     if stale_only:
-                        _emit_bus_factor_findings(
-                            conn, stale_only, BUS_FACTOR_DETECTOR_VERSION
-                        )
+                        _emit_bus_factor_findings(conn, stale_only, BUS_FACTOR_DETECTOR_VERSION)
                     conn.commit()
                 else:
-                    persistable = [
-                        r
-                        for r in results
-                        if r.get("concentrated") or r.get("stale_primary")
-                    ]
+                    persistable = [r for r in results if r.get("concentrated") or r.get("stale_primary")]
                     if persistable:
-                        _emit_bus_factor_findings(
-                            conn, persistable, BUS_FACTOR_DETECTOR_VERSION
-                        )
+                        _emit_bus_factor_findings(conn, persistable, BUS_FACTOR_DETECTOR_VERSION)
                         conn.commit()
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — silently no-op.
@@ -744,6 +728,15 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                 results = stale_only
 
         if not results:
+            # SARIF path honors empty input — emit a valid SARIF doc
+            # with zero results so a CI gate consumer sees the rules
+            # catalogue even on a clean / no-history run. Mirrors the
+            # cmd_over_fetch / cmd_auth_gaps empty-list contract.
+            if sarif_mode:
+                from roam.output.sarif import bus_factor_to_sarif, write_sarif
+
+                click.echo(write_sarif(bus_factor_to_sarif([])))
+                return
             no_data_verdict = "no git history data available"
             if json_mode:
                 envelope_kwargs = dict(
@@ -788,6 +781,48 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
             )
         else:
             bus_verdict = "no data"
+
+        # ---------------------------------------------------------------
+        # SARIF branch — emits BEFORE json/text so the pre-existing paths
+        # stay byte-identical. Surfaces the same filtered set the user
+        # sees (post single-author-mode collapse), so a CI gate sees the
+        # same rows. On a solo-author repo without --force-team-mode the
+        # set is already stale-only; we additionally prepend a synthetic
+        # summary_only entry so the SARIF projection can emit the
+        # repo-level solo-author summary row alongside the per-directory
+        # stale-ownership rows.
+        if sarif_mode:
+            from roam.output.sarif import bus_factor_to_sarif, write_sarif
+
+            sarif_findings: list[dict] = list(results)
+            if single_author_mode:
+                repo_id = _repo_identifier(project_root)
+                author_churn: dict[str, int] = {}
+                for r in results:
+                    for a in r.get("top_authors") or []:
+                        name = a.get("name") or ""
+                        if not name:
+                            continue
+                        author_churn[name] = author_churn.get(name, 0) + int(a.get("churn") or 0)
+                unique_authors_count = len(author_churn)
+                total_churn = sum(author_churn.values())
+                dominant_author = ""
+                dominant_share = 0.0
+                if author_churn:
+                    dominant_author, dom_churn = max(author_churn.items(), key=lambda kv: kv[1])
+                    dominant_share = (dom_churn / total_churn) if total_churn else 0.0
+                summary_entry = {
+                    "summary_only": True,
+                    "repo": repo_id,
+                    "total_directories_analyzed": len(results),
+                    "unique_authors_count": unique_authors_count,
+                    "dominant_author": dominant_author,
+                    "dominant_actor": dominant_author,
+                    "dominant_author_share_pct": round(dominant_share * 100),
+                }
+                sarif_findings = [summary_entry] + sarif_findings
+            click.echo(write_sarif(bus_factor_to_sarif(sarif_findings)))
+            return
 
         if json_mode:
             summary = {
@@ -839,10 +874,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                         "concentrated": r["concentrated"],
                         "stale_primary": r["stale_primary"],
                         "staleness_factor": r["staleness_factor"],
-                        "top_authors": [
-                            {**a, "actor": a.get("name")}
-                            for a in r["top_authors"]
-                        ],
+                        "top_authors": [{**a, "actor": a.get("name")} for a in r["top_authors"]],
                     }
                     for r in limited
                 ],
@@ -863,8 +895,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
         )
         if excluded_files_count and not include_excluded:
             click.echo(
-                f"  ({excluded_files_count} files excluded by default — "
-                f"use --include-excluded to scan everything)"
+                f"  ({excluded_files_count} files excluded by default — use --include-excluded to scan everything)"
             )
         click.echo()
 

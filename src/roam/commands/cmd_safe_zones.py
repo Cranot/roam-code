@@ -1,4 +1,15 @@
-"""Identify safe refactoring boundaries for a symbol or file."""
+"""Identify safe refactoring boundaries for a symbol or file.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because safe-zones is a validator-not-detector: its output is
+a single-input boundary verdict (which symbols / regions are safe to
+refactor without breaking callers) for one target per invocation, not
+a codebase-wide scan. SARIF consumers expect a corpus of per-finding
+results at file:line coordinates; safe-zones returns one boundary
+decision per invocation. See ``cmd_safe_delete`` / ``cmd_syntax_check``
+for the parallel validator-not-detector disclosure pattern (W1192) +
+action.yml _SUPPORTED_SARIF allowlist + W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +19,14 @@ from roam.capability import roam_capability
 from roam.commands.graph_helpers import bfs_nx
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import batched_in, open_db
-from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 
 
 def _resolve_file_symbols(conn, target):
@@ -84,6 +102,11 @@ def safe_zones(ctx, target, depth):
         # --- Resolve target to seed symbol IDs ---
         seed_ids: set[int] = set()
         target_label = target
+        # W1245 Pattern-2 variant-D resolution-state tracking. File-target
+        # branch stays implicit ``symbol`` (file-path is the user's
+        # intended primary type, not a fallback); symbol branch reads
+        # the ``_resolution_tier`` stamp post-W1249.
+        resolution_tier: str = "symbol"
 
         # Try as file first
         file_id, file_syms = _resolve_file_symbols(conn, target)
@@ -97,8 +120,35 @@ def safe_zones(ctx, target, depth):
             # Try as symbol
             sym = find_symbol(conn, target)
             if sym is None:
+                if json_mode:
+                    # W1245 Pattern-2 variant-D: structured unresolved
+                    # envelope so MCP consumers see the same shape as
+                    # the resolved branches.
+                    unresolved_disclosure = resolution_disclosure("unresolved", target=target)
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "safe-zones",
+                                summary={
+                                    "verdict": f"Symbol or file not found: {target}",
+                                    "partial_success": True,
+                                    "state": "not_found",
+                                    "internal_size": 0,
+                                    "boundary_size": 0,
+                                    **unresolved_disclosure,
+                                },
+                                internal_zone=[],
+                                boundary=[],
+                                **unresolved_disclosure,
+                            )
+                        )
+                    )
+                    raise SystemExit(1)
                 click.echo(f"Symbol or file not found: {target}")
                 raise SystemExit(1)
+            # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` stamps
+            # ``_resolution_tier`` on the returned row.
+            resolution_tier = sym.get("_resolution_tier", "symbol")
             seed_ids = {sym["id"]}
             target_label = sym["qualified_name"] or sym["name"]
 
@@ -210,6 +260,12 @@ def safe_zones(ctx, target, depth):
             f"{zone_label}: {len(strictly_internal_ids)} internal, {len(boundary_ids)} boundary symbols "
             f"in {len(affected_files)} file{'s' if len(affected_files) != 1 else ''}"
         )
+        # W1245 Pattern-2 variant-D: suffix the verdict when the symbol-
+        # target resolver succeeded through a degraded tier so LAW-6
+        # single-line consumers still see the disclosure.
+        if resolution_tier == "fuzzy":
+            verdict = f"{verdict} [fuzzy resolution]"
+        disclosure = resolution_disclosure(resolution_tier, target=target_label)
 
         # --- JSON output ---
         if json_mode:
@@ -255,6 +311,10 @@ def safe_zones(ctx, target, depth):
                             "boundary_symbols": len(boundary_ids),
                             "total_symbols": len(internal_ids),
                             "affected_files": len(affected_files),
+                            # W1245 Pattern-2 variant-D resolution disclosure.
+                            # Filters helper ``target`` to avoid clobbering the
+                            # explicit ``target=target_label`` kwarg below.
+                            **{k: v for k, v in disclosure.items() if k != "target"},
                         },
                         target=target_label,
                         depth=depth,
@@ -266,6 +326,10 @@ def safe_zones(ctx, target, depth):
                         affected_files=sorted(affected_files),
                         internal=internal_list,
                         boundary=boundary_list,
+                        # W1245 Pattern-2 variant-D resolution disclosure at
+                        # top level. ``target`` filtered to avoid collision
+                        # with the explicit ``target=target_label`` kwarg.
+                        **{k: v for k, v in disclosure.items() if k != "target"},
                     )
                 )
             )

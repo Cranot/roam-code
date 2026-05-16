@@ -147,12 +147,26 @@ _FILENAME_PREFIXES: list[tuple[str, str]] = [
 # import ``file_roles._TEST_PATTERNS`` or the kind constants.
 from roam.index.test_conventions import (  # noqa: E402 — re-export, must follow ROLE_* constants
     DEFAULT_TEST_PATTERNS as _TEST_PATTERNS,
-    KIND_E2E as TEST_KIND_E2E,
-    KIND_INTEGRATION as TEST_KIND_INTEGRATION,
-    KIND_SMOKE as TEST_KIND_SMOKE,
-    KIND_UNIT as TEST_KIND_UNIT,
-    KIND_UNKNOWN as TEST_KIND_UNKNOWN,
+)
+from roam.index.test_conventions import (
+    KIND_E2E as TEST_KIND_E2E,  # noqa: F401 — public re-export under canonical TEST_KIND_* names
+)
+from roam.index.test_conventions import (
+    KIND_INTEGRATION as TEST_KIND_INTEGRATION,  # noqa: F401
+)
+from roam.index.test_conventions import (
+    KIND_SMOKE as TEST_KIND_SMOKE,  # noqa: F401
+)
+from roam.index.test_conventions import (
+    KIND_UNIT as TEST_KIND_UNIT,  # noqa: F401
+)
+from roam.index.test_conventions import (
+    KIND_UNKNOWN as TEST_KIND_UNKNOWN,  # noqa: F401
+)
+from roam.index.test_conventions import (
     classify_test_kind as _canonical_classify_test_kind,
+)
+from roam.index.test_conventions import (
     is_test_file as _canonical_is_test_file,
 )
 

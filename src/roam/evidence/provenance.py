@@ -74,10 +74,7 @@ def provenance_label(source: str, *, detail: str | None = None) -> str:
         'ci_env_var(GITHUB_ACTOR)'
     """
     if source not in PROVENANCE_SOURCES:
-        raise ValueError(
-            f"provenance_label: source={source!r} is not in "
-            f"PROVENANCE_SOURCES"
-        )
+        raise ValueError(f"provenance_label: source={source!r} is not in PROVENANCE_SOURCES")
     if detail is None:
         return source
     return f"{source}({detail})"

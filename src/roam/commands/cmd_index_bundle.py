@@ -17,6 +17,14 @@ extracts to ``.roam/index.db``. Refuses to overwrite without ``--force``.
 Same trust story as the CGA chain: in-toto-style manifest, optional
 cosign keyless or offline signing, deterministic hashing. No network,
 no vendor lock-in.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because index-bundle is a setup/state command — its output is
+human-facing bundle-export status (manifest hash, schema version,
+optional cosign signature) plus the on-disk ``.roam-bundle.tar.gz``
+artifact, not analysis findings with file:line coordinates. SARIF is
+reserved for scanning results. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH propagation plan + W1224-audit memo.
 """
 
 from __future__ import annotations

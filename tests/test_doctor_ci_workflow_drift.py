@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -25,25 +24,13 @@ from roam.commands.cmd_doctor import (
     doctor,
 )
 
-
 # --- Pure-function tests for normalization + registry ----------------
 
 
 def test_normalize_workflow_strips_comments_and_blank_runs() -> None:
     """Comments + blank-line runs must be ignored for drift comparison."""
-    a = (
-        "# header comment\n"
-        "name: roam\n"
-        "\n"
-        "\n"
-        "on: pull_request\n"
-        "# trailing comment\n"
-    )
-    b = (
-        "name: roam\n"
-        "\n"
-        "on: pull_request\n"
-    )
+    a = "# header comment\nname: roam\n\n\non: pull_request\n# trailing comment\n"
+    b = "name: roam\n\non: pull_request\n"
     assert _normalize_workflow_yaml(a) == _normalize_workflow_yaml(b)
 
 
@@ -206,15 +193,9 @@ def test_doctor_envelope_includes_ci_workflow_drift_block(isolated_cwd: Path) ->
 
 def test_extract_python_version_handles_quote_variants() -> None:
     """Single-quote, double-quote, and bare scalar all parse."""
-    assert _extract_python_version_from_workflow(
-        "          python-version: '3.11'\n"
-    ) == "3.11"
-    assert _extract_python_version_from_workflow(
-        '          python-version: "3.12"\n'
-    ) == "3.12"
-    assert _extract_python_version_from_workflow(
-        "          python-version: 3.13\n"
-    ) == "3.13"
+    assert _extract_python_version_from_workflow("          python-version: '3.11'\n") == "3.11"
+    assert _extract_python_version_from_workflow('          python-version: "3.12"\n') == "3.12"
+    assert _extract_python_version_from_workflow("          python-version: 3.13\n") == "3.13"
 
 
 def test_extract_python_version_returns_none_when_absent() -> None:
@@ -278,6 +259,4 @@ def test_drift_check_still_detects_real_drift_with_pin(isolated_cwd: Path) -> No
     result = _check_ci_workflow_drift()
     assert result["passed"] is False
     assert result["_state"] == "drift"
-    assert any(
-        d["template"] == "slsa-src-l3.yml" for d in result["_drifted"]
-    ), result
+    assert any(d["template"] == "slsa-src-l3.yml" for d in result["_drifted"]), result

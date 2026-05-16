@@ -19,25 +19,25 @@ from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.db.edge_kinds import CALL_EDGE_KINDS
+from roam.output.confidence import (
+    confidence_distribution,
+    verdict_with_high_count,
+    wrap_findings,
+)
 from roam.output.formatter import (
     abbrev_kind,
     format_table,
     json_envelope,
     loc,
+    resolution_disclosure,
     strip_list_payloads,
     to_json,
-)
-from roam.output.confidence import (
-    confidence_distribution,
-    verdict_with_high_count,
-    wrap_findings,
 )
 from roam.output.metric_definitions import (
     DEAD_EXPORT_ACTION_DEFINITION,
     DEAD_EXPORT_DEFINITION,
 )
 from roam.rules.dataflow import collect_dataflow_findings
-
 
 # W96 — dead-export detector is the second migration onto the central
 # findings registry (after W95's clones). Detector version is stamped on
@@ -127,10 +127,7 @@ def _emit_dead_findings(conn, dead_records: list[dict]) -> None:
             "scaffolding": d.get("scaffolding", False),
             "scaffolding_evidence": d.get("scaffolding_evidence") or {},
         }
-        claim = (
-            f"Dead export: {d.get('name')} ({kind}) at "
-            f"{file_path}:{d.get('line_start')} — action={action}"
-        )
+        claim = f"Dead export: {d.get('name')} ({kind}) at {file_path}:{d.get('line_start')} — action={action}"
         emit_finding(
             conn,
             FindingRecord(
@@ -186,9 +183,7 @@ def _dead_classify(sym: dict) -> tuple[str, str]:
         age_n = _DEAD_HIGH_AGE_DAYS
 
     if action in ("INTENTIONAL", "INTENTIONAL_SCAFFOLDING"):
-        return "low", (
-            f"action={action}; framework / scaffolding signal — likely false positive"
-        )
+        return "low", (f"action={action}; framework / scaffolding signal — likely false positive")
 
     if action == "SAFE":
         if tested:
@@ -196,14 +191,8 @@ def _dead_classify(sym: dict) -> tuple[str, str]:
             # signal than a truly-orphan symbol.
             return "medium", "no production consumers but tests reference it"
         if age_n >= _DEAD_HIGH_AGE_DAYS:
-            return "high", (
-                f"SAFE to delete, no test coverage, stable for {age_n}d "
-                f"(>= {_DEAD_HIGH_AGE_DAYS}d)"
-            )
-        return "medium", (
-            f"SAFE to delete, no test coverage but edited recently "
-            f"({age_n}d ago — may be WIP)"
-        )
+            return "high", (f"SAFE to delete, no test coverage, stable for {age_n}d (>= {_DEAD_HIGH_AGE_DAYS}d)")
+        return "medium", (f"SAFE to delete, no test coverage but edited recently ({age_n}d ago — may be WIP)")
 
     # REVIEW / unclassified actions — keep medium so consumers don't
     # treat them as either gospel-truth dead or harmless.
@@ -371,6 +360,7 @@ def _load_mcp_tool_names() -> frozenset[str]:
         # ``_tool`` (per the comment at mcp_server.py:927) so this works
         # even on installs without the [mcp] extra.
         from roam.mcp_server import _TOOL_METADATA as _meta
+
         collected.update(_meta.keys())
     except Exception:
         pass
@@ -382,7 +372,9 @@ def _load_mcp_tool_names() -> frozenset[str]:
     # work without configuration.
     try:
         import ast
+
         import roam.mcp_server as _mcp_mod  # noqa: F401  (module-import side effect)
+
         src_path = getattr(_mcp_mod, "__file__", None)
         if src_path:
             with open(src_path, encoding="utf-8") as f:
@@ -839,10 +831,7 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
         # names, but defensively…) fall back to no-op rather than crash.
         return
 
-    use_parallel = (
-        not os.environ.get("ROAM_NO_PARALLEL")
-        and len(test_files) >= 50
-    )
+    use_parallel = not os.environ.get("ROAM_NO_PARALLEL") and len(test_files) >= 50
 
     per_file_hits: list[tuple[str, set]] = []
     parallel_ok = False
@@ -851,9 +840,7 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
             from concurrent.futures import ThreadPoolExecutor
 
             workers = max(1, min(os.cpu_count() or 4, 8))
-            args_iter = (
-                (project_root, path, combined_rx) for path in test_files
-            )
+            args_iter = ((project_root, path, combined_rx) for path in test_files)
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 for path, matched in ex.map(_scan_one_test_file_combined, args_iter):
                     if matched:
@@ -864,9 +851,7 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
 
     if not parallel_ok:
         for path in test_files:
-            path, matched = _scan_one_test_file_combined(
-                (project_root, path, combined_rx)
-            )
+            path, matched = _scan_one_test_file_combined((project_root, path, combined_rx))
             if matched:
                 per_file_hits.append((path, matched))
 
@@ -1229,8 +1214,7 @@ def _get_blame_ages(conn, dead_symbols):
     blame_results: dict[str, list] = {}
 
     use_parallel = (
-        not os.environ.get("ROAM_NO_PARALLEL")
-        and len(file_paths) >= 50  # break-even point: ~50 files
+        not os.environ.get("ROAM_NO_PARALLEL") and len(file_paths) >= 50  # break-even point: ~50 files
     )
 
     if use_parallel:
@@ -1241,9 +1225,7 @@ def _get_blame_ages(conn, dead_symbols):
             # subprocesses just trash the OS scheduler.
             workers = max(1, min(os.cpu_count() or 4, 8))
             with ThreadPoolExecutor(max_workers=workers) as ex:
-                for fp, entries in ex.map(
-                    lambda p: _blame_one_file(project_root, p), file_paths
-                ):
+                for fp, entries in ex.map(lambda p: _blame_one_file(project_root, p), file_paths):
                     blame_results[fp] = entries
         except Exception:
             blame_results = {}  # Fall through to serial
@@ -1863,12 +1845,22 @@ def dead(
         if extinction_target:
             sym, cascade = _predict_extinction(conn, extinction_target)
             if sym is None:
+                # W1245 — Pattern-2 variant-D: surface resolution=unresolved
+                # on the extinction-mode envelope so MCP consumers see the
+                # same disclosure shape as the resolved branch below.
+                unresolved_block = resolution_disclosure("unresolved", target=extinction_target)
                 if json_mode:
                     click.echo(
                         to_json(
                             json_envelope(
                                 "dead",
-                                summary={"error": f"Symbol not found: {extinction_target}"},
+                                summary={
+                                    "verdict": f"Symbol not found: {extinction_target}",
+                                    "error": f"Symbol not found: {extinction_target}",
+                                    **unresolved_block,
+                                },
+                                mode="extinction",
+                                **unresolved_block,
                             )
                         )
                     )
@@ -1876,15 +1868,40 @@ def dead(
                     click.echo(f"Symbol not found: {extinction_target}")
                 return
 
+            # W1245 / W1249 — Pattern-2 variant-D: ``find_symbol`` stamps
+            # ``_resolution_tier`` on the returned row so the extinction-
+            # cascade envelope can distinguish a fully-resolved success
+            # from a degraded fuzzy-match success that may have landed on a
+            # different symbol than the agent intended.
+            resolution_tier = sym.get("_resolution_tier", "symbol")
+            resolved_target = sym["qualified_name"] or sym["name"]
+            resolution_block = resolution_disclosure(resolution_tier, target=resolved_target)
+            extinction_verdict = f"extinction cascade for {extinction_target}: {len(cascade)} symbol(s) would orphan"
+            if resolution_tier == "fuzzy":
+                extinction_verdict = (
+                    f"{extinction_verdict} [fuzzy resolution -- target '{resolved_target}' may not be what you meant]"
+                )
+
             if json_mode:
+                # The ``target`` key is owned by ``resolution_block`` (set to
+                # the resolved qualified/simple name). Spread the block last
+                # so it overrides any prior ``target`` kwarg cleanly without
+                # a duplicate-keyword conflict.
+                envelope_kwargs = {
+                    "mode": "extinction",
+                    "extinction_cascade": cascade,
+                }
+                envelope_kwargs.update(resolution_block)
                 click.echo(
                     to_json(
                         json_envelope(
                             "dead",
-                            summary={"extinction_cascade": len(cascade)},
-                            mode="extinction",
-                            target=extinction_target,
-                            extinction_cascade=cascade,
+                            summary={
+                                "verdict": extinction_verdict,
+                                "extinction_cascade": len(cascade),
+                                **resolution_block,
+                            },
+                            **envelope_kwargs,
                         )
                     )
                 )
@@ -2053,9 +2070,7 @@ def dead(
                         "line_start": r["line_start"],
                         "action": action,
                         "confidence_pct": confidence_pct,
-                        "reason": _dead_reason(
-                            r, consumer_meta, file_import_meta, sibling_meta
-                        ),
+                        "reason": _dead_reason(r, consumer_meta, file_import_meta, sibling_meta),
                         "tested": tested,
                         "scaffolding": scaffolding_evidence is not None,
                         "scaffolding_evidence": scaffolding_evidence or {},

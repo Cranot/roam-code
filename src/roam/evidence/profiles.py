@@ -60,7 +60,6 @@ from roam.evidence.artifact import EvidenceArtifact
 from roam.evidence.change_evidence import ChangeEvidence
 from roam.evidence.refs import ActorRef
 
-
 # ---------------------------------------------------------------------------
 # Profile model
 # ---------------------------------------------------------------------------
@@ -118,10 +117,7 @@ EXPORT_PROFILES: Mapping[str, ExportProfile] = {
         redact_artifact_fields=("content_inline",),
         redact_actor_fields=(),
         inline_artifact_size_limit=8_000,
-        notes_for_consumer=(
-            "Customer-shareable - internal IDs redacted, artifacts by "
-            "reference."
-        ),
+        notes_for_consumer=("Customer-shareable - internal IDs redacted, artifacts by reference."),
     ),
     "audit": ExportProfile(
         name="audit",
@@ -129,10 +125,7 @@ EXPORT_PROFILES: Mapping[str, ExportProfile] = {
         redact_artifact_fields=("content_inline",),
         redact_actor_fields=(),
         inline_artifact_size_limit=8_000,
-        notes_for_consumer=(
-            "Audit profile - identities preserved, artifact content by "
-            "hash."
-        ),
+        notes_for_consumer=("Audit profile - identities preserved, artifact content by hash."),
     ),
     "public": ExportProfile(
         name="public",
@@ -140,10 +133,7 @@ EXPORT_PROFILES: Mapping[str, ExportProfile] = {
         redact_artifact_fields=("content_inline", "path"),
         redact_actor_fields=("human_actor", "display_name"),
         inline_artifact_size_limit=2_000,
-        notes_for_consumer=(
-            "Public profile - all human identities and artifact content "
-            "fully redacted."
-        ),
+        notes_for_consumer=("Public profile - all human identities and artifact content fully redacted."),
     ),
 }
 
@@ -194,10 +184,7 @@ def apply_profile(
 
     profile = EXPORT_PROFILES.get(profile_name)
     if profile is None:
-        warnings.append(
-            f"unknown profile {profile_name!r}; falling back to 'internal' "
-            f"(no redactions applied)"
-        )
+        warnings.append(f"unknown profile {profile_name!r}; falling back to 'internal' (no redactions applied)")
         profile = EXPORT_PROFILES["internal"]
 
     # Fast path: the internal profile is a true pass-through. Returning
@@ -216,41 +203,30 @@ def apply_profile(
             applied_tags.append(f"profile:{profile.name}:human_actor")
 
     # ---- artifacts (context_refs + artifacts tuples) ---------------
-    new_context_refs = _redact_artifacts(
-        packet.context_refs, profile, applied_tags
-    )
-    new_artifacts = _redact_artifacts(
-        packet.artifacts, profile, applied_tags
-    )
+    new_context_refs = _redact_artifacts(packet.context_refs, profile, applied_tags)
+    new_artifacts = _redact_artifacts(packet.artifacts, profile, applied_tags)
 
     # ---- actor_refs (W182 list of ActorRef) ------------------------
-    new_actor_refs = _redact_actor_refs(
-        packet.actor_refs, profile, applied_tags
-    )
+    new_actor_refs = _redact_actor_refs(packet.actor_refs, profile, applied_tags)
 
     # ---- changed_subjects extras -----------------------------------
-    new_changed_subjects = tuple(
-        _redact_subject_extras(s, profile, applied_tags)
-        for s in packet.changed_subjects
-    )
+    new_changed_subjects = tuple(_redact_subject_extras(s, profile, applied_tags) for s in packet.changed_subjects)
 
     # ---- findings / policy_decisions / tests_run / approvals /
     # ---- accepted_risks - all Mapping[str, Any] tuples -------------
-    new_findings = _redact_mapping_tuple(
-        packet.findings, profile, applied_tags, source="findings"
-    )
+    new_findings = _redact_mapping_tuple(packet.findings, profile, applied_tags, source="findings")
     new_policy_decisions = _redact_mapping_tuple(
-        packet.policy_decisions, profile, applied_tags,
+        packet.policy_decisions,
+        profile,
+        applied_tags,
         source="policy_decisions",
     )
-    new_tests_run = _redact_mapping_tuple(
-        packet.tests_run, profile, applied_tags, source="tests_run"
-    )
-    new_approvals = _redact_mapping_tuple(
-        packet.approvals, profile, applied_tags, source="approvals"
-    )
+    new_tests_run = _redact_mapping_tuple(packet.tests_run, profile, applied_tags, source="tests_run")
+    new_approvals = _redact_mapping_tuple(packet.approvals, profile, applied_tags, source="approvals")
     new_accepted_risks = _redact_mapping_tuple(
-        packet.accepted_risks, profile, applied_tags,
+        packet.accepted_risks,
+        profile,
+        applied_tags,
         source="accepted_risks",
     )
 
@@ -322,9 +298,7 @@ def _scrub_extra(
 
     new_extra = {k: v for k, v in extra.items() if k not in profile.redact_extra_keys}
     if len(new_extra) != len(extra):
-        applied_tags.append(
-            f"profile:{profile.name}:{source}_extra"
-        )
+        applied_tags.append(f"profile:{profile.name}:{source}_extra")
     return new_extra
 
 
@@ -357,19 +331,12 @@ def _redact_artifacts(
         new_path = art.path
         new_content_inline = art.content_inline
         new_content_hash = art.content_hash
-        new_extra = _scrub_extra(
-            art.extra, profile, applied_tags, source="artifact"
-        )
+        new_extra = _scrub_extra(art.extra, profile, applied_tags, source="artifact")
 
         # content_inline drop -------------------------------------------------
-        if (
-            "content_inline" in profile.redact_artifact_fields
-            and art.content_inline is not None
-        ):
+        if "content_inline" in profile.redact_artifact_fields and art.content_inline is not None:
             new_content_inline = None
-            applied_tags.append(
-                f"profile:{profile.name}:artifact_inline"
-            )
+            applied_tags.append(f"profile:{profile.name}:artifact_inline")
 
         # Size-budget enforcement (only when content_inline survives) --------
         # We measure the BYTES of the UTF-8 encoded string. If the
@@ -380,18 +347,11 @@ def _redact_artifacts(
         # producer would have set if it was a big blob; we leave both
         # fields ``None`` and rely on the producer's path/hash if
         # present.
-        if (
-            new_content_inline is not None
-            and profile.inline_artifact_size_limit > 0
-        ):
-            inline_bytes = len(
-                new_content_inline.encode("utf-8", errors="replace")
-            )
+        if new_content_inline is not None and profile.inline_artifact_size_limit > 0:
+            inline_bytes = len(new_content_inline.encode("utf-8", errors="replace"))
             if inline_bytes > profile.inline_artifact_size_limit:
                 new_content_inline = None
-                applied_tags.append(
-                    f"profile:{profile.name}:artifact_size_limit"
-                )
+                applied_tags.append(f"profile:{profile.name}:artifact_size_limit")
 
         # path drop -----------------------------------------------------------
         # Done AFTER content_inline so the ``content_hash`` survives as
@@ -399,14 +359,9 @@ def _redact_artifacts(
         # mutual-exclusion validator on ``EvidenceArtifact`` permits
         # the ``(path=None, content_inline=None)`` combination (an
         # artifact known only by its content_hash).
-        if (
-            "path" in profile.redact_artifact_fields
-            and art.path is not None
-        ):
+        if "path" in profile.redact_artifact_fields and art.path is not None:
             new_path = None
-            applied_tags.append(
-                f"profile:{profile.name}:artifact_path"
-            )
+            applied_tags.append(f"profile:{profile.name}:artifact_path")
 
         # Rebuild the artifact. We use the constructor directly so the
         # frozen-dataclass invariants (kind validation, redaction-reason
@@ -450,19 +405,11 @@ def _redact_actor_refs(
     out: list[ActorRef] = []
     for ref in actor_refs:
         new_display_name = ref.display_name
-        new_extra = _scrub_extra(
-            ref.extra, profile, applied_tags, source="actor_ref"
-        )
+        new_extra = _scrub_extra(ref.extra, profile, applied_tags, source="actor_ref")
 
-        if (
-            "display_name" in profile.redact_actor_fields
-            and ref.actor_kind == "human"
-            and ref.display_name is not None
-        ):
+        if "display_name" in profile.redact_actor_fields and ref.actor_kind == "human" and ref.display_name is not None:
             new_display_name = None
-            applied_tags.append(
-                f"profile:{profile.name}:actor_display_name"
-            )
+            applied_tags.append(f"profile:{profile.name}:actor_display_name")
 
         out.append(
             ActorRef(
@@ -490,9 +437,7 @@ def _redact_subject_extras(
     if not profile.redact_extra_keys:
         return subject
 
-    new_extra = _scrub_extra(
-        subject.extra, profile, applied_tags, source="subject"
-    )
+    new_extra = _scrub_extra(subject.extra, profile, applied_tags, source="subject")
     if new_extra is subject.extra:
         return subject
     return dataclasses.replace(subject, extra=new_extra)
@@ -522,9 +467,7 @@ def _redact_mapping_tuple(
         if not isinstance(row, Mapping):
             out.append(row)
             continue
-        scrubbed = {
-            k: v for k, v in row.items() if k not in profile.redact_extra_keys
-        }
+        scrubbed = {k: v for k, v in row.items() if k not in profile.redact_extra_keys}
         if len(scrubbed) != len(row):
             changed = True
         out.append(scrubbed)

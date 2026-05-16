@@ -91,9 +91,7 @@ class TestVerifyFailsClosedOnMissingBundle:
         assert not out.with_suffix(".bundle").exists()
 
         verify = runner.invoke(cli, ["--json", "cga", "verify", str(out)])
-        assert verify.exit_code == 5, (
-            f"expected exit 5 (fail-closed), got {verify.exit_code}\n{verify.output}"
-        )
+        assert verify.exit_code == 5, f"expected exit 5 (fail-closed), got {verify.exit_code}\n{verify.output}"
 
         data = json.loads(verify.output)
         assert data["summary"]["ok"] is False, "verdict must surface ok=false on missing bundle"
@@ -197,9 +195,7 @@ class TestVerifyHelpAdvertisesFailClosedDefault:
         runner = CliRunner()
         result = runner.invoke(cli, ["cga", "verify", "--help"])
         assert result.exit_code == 0, result.output
-        assert "--no-cosign" in result.output, (
-            "verify --help must document the --no-cosign opt-out"
-        )
+        assert "--no-cosign" in result.output, "verify --help must document the --no-cosign opt-out"
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +205,7 @@ class TestVerifyHelpAdvertisesFailClosedDefault:
 
 def _git_on_path() -> bool:
     try:
-        subprocess.run(
-            ["git", "--version"], capture_output=True, timeout=5, check=False
-        )
+        subprocess.run(["git", "--version"], capture_output=True, timeout=5, check=False)
         return True
     except (OSError, subprocess.SubprocessError):
         return False

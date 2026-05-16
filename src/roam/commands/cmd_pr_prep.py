@@ -3,6 +3,16 @@
 replaces calling four commands sequentially before opening a PR
 with a single envelope. Designed for agents and CI: returns a clear
 ``ready_to_open`` boolean plus a per-section summary of findings.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_pr_prep is a recipe-composer (chains diff +
+critique + pr-risk into a single ``ready_to_open`` envelope). The
+composed sub-commands emit their own ``--sarif`` when applicable;
+cmd_pr_prep rolls them up into an invocation-scoped pre-PR fitness
+gate — not per-location violations. See ``cmd_report`` /
+``cmd_workflow`` for the parallel composer disclosure pattern (W1221
+/ W1224) + action.yml _SUPPORTED_SARIF allowlist + W1145 / W1085
+composer audit + W1224-audit memo.
 """
 
 from __future__ import annotations

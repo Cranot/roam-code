@@ -117,9 +117,7 @@ class TestReachableFrom:
             },
         )
         with _Scoped(proj) as conn:
-            matches, evidence = check_reachable_from(
-                conn, entry="handle", target_symbol="query"
-            )
+            matches, evidence = check_reachable_from(conn, entry="handle", target_symbol="query")
         assert matches is True, evidence
         assert evidence["reachable"] is True
         assert evidence["entry"] == "handle"
@@ -136,9 +134,7 @@ class TestReachableFrom:
             },
         )
         with _Scoped(proj) as conn:
-            matches, evidence = check_reachable_from(
-                conn, entry="handle", target_symbol="unrelated"
-            )
+            matches, evidence = check_reachable_from(conn, entry="handle", target_symbol="unrelated")
         assert matches is False, evidence
         assert evidence["status"] == "ok"
         assert evidence["reachable"] is False
@@ -162,9 +158,7 @@ class TestImportsFrom:
             },
         )
         with _Scoped(proj) as conn:
-            matches, evidence = check_imports_from(
-                conn, module="src/legacy", target_file="src/core/main.py"
-            )
+            matches, evidence = check_imports_from(conn, module="src/legacy", target_file="src/core/main.py")
         assert matches is True, evidence
         assert evidence["imports_from"] is True
         assert evidence["imports_matched_count"] >= 1
@@ -179,9 +173,7 @@ class TestImportsFrom:
             },
         )
         with _Scoped(proj) as conn:
-            matches, evidence = check_imports_from(
-                conn, module="src/legacy", target_file="src/utils.py"
-            )
+            matches, evidence = check_imports_from(conn, module="src/legacy", target_file="src/utils.py")
         assert matches is False, evidence
         assert evidence["status"] == "ok"
 
@@ -241,9 +233,7 @@ class TestClonesWith:
             row = conn.execute("SELECT COUNT(*) AS c FROM clone_pairs").fetchone()
             has_clones = row["c"] > 0
 
-            matches, evidence = check_clones_with(
-                conn, symbol_a="create_order", symbol_b="create_invoice"
-            )
+            matches, evidence = check_clones_with(conn, symbol_a="create_order", symbol_b="create_invoice")
 
         if has_clones:
             assert matches is True, evidence
@@ -280,9 +270,7 @@ class TestClonesWith:
             os.chdir(old_cwd)
 
         with _Scoped(proj) as conn:
-            matches, evidence = check_clones_with(
-                conn, symbol_a="alpha", symbol_b="beta"
-            )
+            matches, evidence = check_clones_with(conn, symbol_a="alpha", symbol_b="beta")
         assert matches is False, evidence
         assert evidence["clones_with"] is False
 
@@ -301,16 +289,11 @@ class TestTestedBy:
             tmp_path,
             {
                 "src/foo.py": "def foo():\n    return 42\n",
-                "tests/test_foo.py": (
-                    "from foo import foo\n\n"
-                    "def test_foo():\n    assert foo() == 42\n"
-                ),
+                "tests/test_foo.py": ("from foo import foo\n\ndef test_foo():\n    assert foo() == 42\n"),
             },
         )
         with _Scoped(proj) as conn:
-            matches, evidence = check_tested_by(
-                conn, test_pattern="tests/**", target_symbol="foo"
-            )
+            matches, evidence = check_tested_by(conn, test_pattern="tests/**", target_symbol="foo")
         assert matches is True, evidence
         assert evidence["tested_by"] is True
         assert evidence["test_files_matched"] >= 1
@@ -321,15 +304,11 @@ class TestTestedBy:
             tmp_path,
             {
                 "src/orphan.py": "def orphan():\n    return 99\n",
-                "tests/test_other.py": (
-                    "def test_nothing():\n    assert 1 + 1 == 2\n"
-                ),
+                "tests/test_other.py": ("def test_nothing():\n    assert 1 + 1 == 2\n"),
             },
         )
         with _Scoped(proj) as conn:
-            matches, evidence = check_tested_by(
-                conn, test_pattern="tests/**", target_symbol="orphan"
-            )
+            matches, evidence = check_tested_by(conn, test_pattern="tests/**", target_symbol="orphan")
         assert matches is False, evidence
         # Status may be "ok" (test files present but no path) or
         # "no_tests_indexed" (file_role classifier didn't pick them up).
@@ -351,9 +330,7 @@ class TestNegateInversion:
             tmp_path,
             {
                 "src/legacy/old.py": "def helper():\n    return 1\n",
-                "src/core/main.py": (
-                    "from legacy.old import helper\n\ndef run():\n    return helper()\n"
-                ),
+                "src/core/main.py": ("from legacy.old import helper\n\ndef run():\n    return helper()\n"),
             },
         )
         rule = {
@@ -396,15 +373,11 @@ class TestEvidenceLocalisation:
             tmp_path,
             {
                 "src/db.py": "def query():\n    return 1\n",
-                "src/handler.py": (
-                    "from db import query\n\ndef handle():\n    return query()\n"
-                ),
+                "src/handler.py": ("from db import query\n\ndef handle():\n    return query()\n"),
             },
         )
         with _Scoped(proj) as conn:
-            matches, evidence = check_reachable_from(
-                conn, entry="handle", target_symbol="query"
-            )
+            matches, evidence = check_reachable_from(conn, entry="handle", target_symbol="query")
         assert matches is True
         assert "target_file" in evidence
         assert evidence["target_file"] and "db.py" in evidence["target_file"].replace("\\", "/")
@@ -433,9 +406,7 @@ class TestDispatcher:
     def test_unknown_clause_returns_false_with_evidence(self, tmp_path):
         proj = _build_indexed(tmp_path, {"src/a.py": "def a():\n    return 1\n"})
         with _Scoped(proj) as conn:
-            matches, evidence = evaluate_clause(
-                "no_such_clause", "anything", conn=conn, target_symbol="a"
-            )
+            matches, evidence = evaluate_clause("no_such_clause", "anything", conn=conn, target_symbol="a")
         assert matches is False
         assert evidence["status"] == "unsupported_clause"
         assert "supported" in evidence
@@ -445,9 +416,7 @@ class TestDispatcher:
             tmp_path,
             {
                 "src/db.py": "def query():\n    return 1\n",
-                "src/handler.py": (
-                    "from db import query\n\ndef handle():\n    return query()\n"
-                ),
+                "src/handler.py": ("from db import query\n\ndef handle():\n    return query()\n"),
             },
         )
         with _Scoped(proj) as conn:
@@ -475,9 +444,7 @@ class TestRuleIntegration:
             tmp_path,
             {
                 "src/legacy/old.py": "def helper():\n    return 1\n",
-                "src/core/main.py": (
-                    "from legacy.old import helper\n\ndef run():\n    return helper()\n"
-                ),
+                "src/core/main.py": ("from legacy.old import helper\n\ndef run():\n    return helper()\n"),
                 "src/core/safe.py": "def isolated():\n    return 7\n",
             },
         )

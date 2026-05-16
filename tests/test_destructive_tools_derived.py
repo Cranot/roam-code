@@ -31,9 +31,7 @@ def test_destructive_tools_is_derived_from_metadata() -> None:
     """
     from roam.mcp_server import _DESTRUCTIVE_TOOLS, _TOOL_METADATA
 
-    expected = frozenset(
-        name for name, meta in _TOOL_METADATA.items() if meta.get("destructive", False)
-    )
+    expected = frozenset(name for name, meta in _TOOL_METADATA.items() if meta.get("destructive", False))
     assert _DESTRUCTIVE_TOOLS == expected, (
         "_DESTRUCTIVE_TOOLS is no longer derived from _TOOL_METADATA. "
         "If you added a destructive tool, set destructive=True on its "

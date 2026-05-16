@@ -33,15 +33,14 @@ import subprocess
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_n1 import (
     N1_DETECTOR_VERSION,
     _emit_n1_findings,
     _n1_finding_id,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import index_in_process
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -134,9 +133,7 @@ def _python_only_project(tmp_path):
     proj = tmp_path / "python_proj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "app.py").write_text(
-        "def compute(x):\n    return x * 2\n\ndef main():\n    return compute(21)\n"
-    )
+    (proj / "app.py").write_text("def compute(x):\n    return x * 2\n\ndef main():\n    return compute(21)\n")
     (proj / "utils.py").write_text("def format_value(v):\n    return str(v)\n")
     subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(proj), capture_output=True)
@@ -313,8 +310,7 @@ def test_emit_n1_findings_evidence_carries_payload(tmp_path):
             _emit_n1_findings(conn, [finding])
             conn.commit()
             row = conn.execute(
-                "SELECT evidence_json, claim FROM findings "
-                "WHERE source_detector = 'n1' LIMIT 1"
+                "SELECT evidence_json, claim FROM findings WHERE source_detector = 'n1' LIMIT 1"
             ).fetchone()
         assert row is not None
         evidence = json.loads(row["evidence_json"])
@@ -361,9 +357,7 @@ def test_emit_n1_findings_idempotent_on_rerun(tmp_path):
             _emit_n1_findings(conn, [finding])
             conn.commit()
         with open_db(readonly=True) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'").fetchone()[0]
         assert count == 1, "rerun produced duplicate registry rows"
     finally:
         os.chdir(old_cwd)
@@ -380,9 +374,7 @@ def test_emit_n1_findings_zero_input_returns_zero(tmp_path):
             conn.commit()
         assert emitted == 0
         with open_db(readonly=True) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'").fetchone()[0]
         assert count == 0
     finally:
         os.chdir(old_cwd)
@@ -411,9 +403,7 @@ def test_emit_n1_findings_skips_malformed_rows(tmp_path):
         # Only the well-formed row should land.
         assert emitted == 1
         with open_db(readonly=True) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'").fetchone()[0]
         assert count == 1
     finally:
         os.chdir(old_cwd)
@@ -476,9 +466,7 @@ def test_n1_persist_zero_findings_python_project(tmp_path):
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'").fetchone()[0]
         assert count == 0
     finally:
         os.chdir(old_cwd)
@@ -502,9 +490,7 @@ def test_n1_without_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'n1'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, "non-persist n1 still wrote to findings"
@@ -557,9 +543,7 @@ def test_n1_findings_visible_via_cmd_findings_list(tmp_path):
             conn.commit()
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "n1"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "n1"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"

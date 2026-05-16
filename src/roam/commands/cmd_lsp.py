@@ -36,6 +36,15 @@ The MVP intentionally skips:
 * Cross-file rename code actions (out of MVP scope).
 * The ``--diff`` / ``--check-external`` flags (those are CI-side
   concerns, not editor-time).
+
+Output formats: LSP protocol (JSON-RPC 2.0 over stdio).
+SARIF is deliberately NOT emitted because cmd_lsp serves editor
+real-time integration (VS Code, Neovim, JetBrains, etc.) via
+textDocument/publishDiagnostics, not batch CI/gate analysis.
+Editor-scoped diagnostics do not project meaningfully to GitHub Code
+Scanning. For CI/gate use of the same stale-refs signal, use
+``roam stale-refs --sarif``. See action.yml _SUPPORTED_SARIF
+allowlist + W1185 audit memo.
 """
 
 from __future__ import annotations

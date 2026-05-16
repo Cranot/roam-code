@@ -35,14 +35,12 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, invoke_cli  # noqa: E402
-
 from click.testing import CliRunner  # noqa: E402
+from conftest import git_init, invoke_cli  # noqa: E402
 
 from roam.evidence import PROVENANCE_SOURCES  # noqa: E402
 from roam.evidence.collector import collect_change_evidence  # noqa: E402
 from roam.evidence.github_reviews import parse_github_reviews  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,11 +82,16 @@ def test_add_approval_cli_stamps_cli_flag(bundle_project):
     result = invoke_cli(
         runner,
         [
-            "pr-bundle", "add-approval",
-            "--approver", "human:alice@example.com",
-            "--scope", "pr-42",
-            "--reason", "looks good",
-            "--id", "appr_w293_001",
+            "pr-bundle",
+            "add-approval",
+            "--approver",
+            "human:alice@example.com",
+            "--scope",
+            "pr-42",
+            "--reason",
+            "looks good",
+            "--id",
+            "appr_w293_001",
         ],
         cwd=bundle_project,
     )
@@ -107,9 +110,7 @@ def test_add_approval_cli_stamps_cli_flag(bundle_project):
         None,
     )
     assert target is not None, f"expected approval row absent: {approvals!r}"
-    assert target.get("provenance") == "cli_flag", (
-        f"add-approval did not stamp cli_flag provenance: {target!r}"
-    )
+    assert target.get("provenance") == "cli_flag", f"add-approval did not stamp cli_flag provenance: {target!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -143,13 +144,9 @@ def test_github_review_approved_stamps_producer_envelope_github_review() -> None
     )
     assert approvals, "expected APPROVED-on-head row"
     wire = _approval_record_to_envelope_dict(approvals[0])
-    assert wire.get("provenance") == "producer_envelope(github_review)", (
-        f"github approval missing provenance: {wire!r}"
-    )
+    assert wire.get("provenance") == "producer_envelope(github_review)", f"github approval missing provenance: {wire!r}"
     # Body MUST NOT leak through the provenance hop (W247a guardrail).
-    assert "sensitive private info" not in _json.dumps(wire), (
-        f"review body leaked through provenance hop: {wire!r}"
-    )
+    assert "sensitive private info" not in _json.dumps(wire), f"review body leaked through provenance hop: {wire!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -178,15 +175,10 @@ def test_legacy_approval_dict_gets_unknown_provenance_at_collector() -> None:
         repo_id="github.com/example/repo",
         commit_sha="0" * 40,
     )
-    matching = [
-        a for a in packet.approvals
-        if a.get("approval_id") == "appr_legacy_001"
-    ]
+    matching = [a for a in packet.approvals if a.get("approval_id") == "appr_legacy_001"]
     assert matching, "legacy approval missing from packet"
     row = matching[0]
-    assert row.get("provenance") == "unknown", (
-        f"legacy approval should land at unknown; got {row!r}"
-    )
+    assert row.get("provenance") == "unknown", f"legacy approval should land at unknown; got {row!r}"
 
 
 def test_existing_provenance_preserved_at_collector() -> None:
@@ -209,15 +201,10 @@ def test_existing_provenance_preserved_at_collector() -> None:
         repo_id="github.com/example/repo",
         commit_sha="1" * 40,
     )
-    matching = [
-        a for a in packet.approvals
-        if a.get("approval_id") == "appr_future_001"
-    ]
+    matching = [a for a in packet.approvals if a.get("approval_id") == "appr_future_001"]
     assert matching, "custom approval missing from packet"
     row = matching[0]
-    assert row.get("provenance") == "ci_env_var", (
-        f"existing provenance was overwritten; got {row!r}"
-    )
+    assert row.get("provenance") == "ci_env_var", f"existing provenance was overwritten; got {row!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -248,9 +235,7 @@ def test_approval_provenance_uses_only_PROVENANCE_SOURCES_values() -> None:
         head_commit_sha=head40,
         pr_number=1,
     )
-    rows: list[dict] = [
-        _approval_record_to_envelope_dict(r) for r in gh_approvals
-    ]
+    rows: list[dict] = [_approval_record_to_envelope_dict(r) for r in gh_approvals]
     # Legacy + fallback path: feed an unstamped row through the collector.
     bundle_env = {
         "approvals": [
@@ -273,11 +258,8 @@ def test_approval_provenance_uses_only_PROVENANCE_SOURCES_values() -> None:
 
     for row in rows:
         prov = row.get("provenance")
-        assert isinstance(prov, str) and prov, (
-            f"approval missing provenance: {row!r}"
-        )
+        assert isinstance(prov, str) and prov, f"approval missing provenance: {row!r}"
         base = _provenance_base(prov)
         assert base in PROVENANCE_SOURCES, (
-            f"approval provenance base {base!r} (from {prov!r}) "
-            f"not in PROVENANCE_SOURCES"
+            f"approval provenance base {base!r} (from {prov!r}) not in PROVENANCE_SOURCES"
         )

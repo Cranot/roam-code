@@ -36,7 +36,6 @@ from roam.commands.cmd_orphan_imports import (
 )
 from tests.conftest import make_src_project as _make_project
 
-
 # ---------------------------------------------------------------------------
 # Unit: _is_conftest_path
 # ---------------------------------------------------------------------------
@@ -254,9 +253,7 @@ def test_conftest_import_does_not_surface_as_orphan(tmp_path):
     # so we drop them at project root, matching real pytest layouts.
     (proj / "tests").mkdir()
     (proj / "tests" / "__init__.py").write_text("", encoding="utf-8")
-    (proj / "tests" / "conftest.py").write_text(
-        "# pytest auto-discovers this file\n", encoding="utf-8"
-    )
+    (proj / "tests" / "conftest.py").write_text("# pytest auto-discovers this file\n", encoding="utf-8")
     (proj / "tests" / "test_thing.py").write_text(
         textwrap.dedent(
             """
@@ -276,9 +273,7 @@ def test_conftest_import_does_not_surface_as_orphan(tmp_path):
         before = _orphan_count(proj, runner)
         # No orphans about conftest — the two imports above must resolve.
         # Other random orphans on the fixture should still be zero.
-        assert before == 0, (
-            f"expected 0 orphans; got {before} (likely conftest filter regressed)"
-        )
+        assert before == 0, f"expected 0 orphans; got {before} (likely conftest filter regressed)"
     finally:
         os.chdir(old_cwd)
 
@@ -307,9 +302,7 @@ def test_optional_import_inside_try_except_does_not_surface(tmp_path):
         # If numpy is actually installed in the test venv, this assertion
         # remains correct (the import resolves via importlib too). If not,
         # the try/except filter is what makes it 0.
-        assert count == 0, (
-            f"expected 0 orphans; got {count} (optional-import filter regressed)"
-        )
+        assert count == 0, f"expected 0 orphans; got {count} (optional-import filter regressed)"
     finally:
         os.chdir(old_cwd)
 
@@ -329,9 +322,7 @@ def test_relative_import_to_sibling_does_not_surface(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         count = _orphan_count(proj, runner)
-        assert count == 0, (
-            f"expected 0 orphans; got {count} (relative-import filter regressed)"
-        )
+        assert count == 0, f"expected 0 orphans; got {count} (relative-import filter regressed)"
     finally:
         os.chdir(old_cwd)
 

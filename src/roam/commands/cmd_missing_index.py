@@ -47,7 +47,6 @@ from roam.output.confidence import (
 )
 from roam.output.formatter import json_envelope, loc, to_json
 
-
 # W111 — missing-index is the fourth detector migrating onto the central
 # findings registry (after `clones` (W95), `dead` (W99), and `complexity`
 # (W102)). The shape mirrors those — a stable detector version stamp and
@@ -468,9 +467,9 @@ def _infer_table_from_context(content: str, match_pos: int) -> str | None:
 
 # Predicate classification labels (mirror the indexing semantics above).
 _PRED_UNCONDITIONAL = "unconditional"  # always-applied equality (or whereIn)
-_PRED_CONDITIONAL = "conditional"      # inside a ->when() / if-guarded closure
-_PRED_RANGE = "range"                  # whereBetween / whereDate / where col > x
-_PRED_SORT = "sort"                    # orderBy
+_PRED_CONDITIONAL = "conditional"  # inside a ->when() / if-guarded closure
+_PRED_RANGE = "range"  # whereBetween / whereDate / where col > x
+_PRED_SORT = "sort"  # orderBy
 # Per-classification rank (lower = better leading-column candidate).
 _PRED_RANK = {
     _PRED_UNCONDITIONAL: 0,
@@ -906,10 +905,7 @@ def _check_composite_where(pat, query_cols, indexed, seen) -> dict | None:
 
     # ORDER BY columns that aren't already covered by index — fold them into
     # the composite recommendation so it satisfies filter + sort.
-    sort_cols_to_consider = [
-        c for c in pat.orderby_cols
-        if c not in _SKIP_COLUMNS and not _is_low_cardinality(c)
-    ]
+    sort_cols_to_consider = [c for c in pat.orderby_cols if c not in _SKIP_COLUMNS and not _is_low_cardinality(c)]
     all_candidate_cols = set(query_cols) | set(sort_cols_to_consider)
     if not all_candidate_cols:
         return None
@@ -955,10 +951,7 @@ def _check_composite_where(pat, query_cols, indexed, seen) -> dict | None:
         }
         for (col, cls) in ranked
     ]
-    ranking_explanation = (
-        "leading-column priority: "
-        + " > ".join(f"{col} ({cls})" for (col, cls) in ranked)
-    )
+    ranking_explanation = "leading-column priority: " + " > ".join(f"{col} ({cls})" for (col, cls) in ranked)
 
     return {
         "confidence": confidence,
@@ -1066,10 +1059,7 @@ def _check_orderby_composite(pat, col, indexed, seen) -> dict | None:
         }
         for (c, cls) in ranked
     ]
-    ranking_explanation = (
-        "leading-column priority: "
-        + " > ".join(f"{c} ({cls})" for (c, cls) in ranked)
-    )
+    ranking_explanation = "leading-column priority: " + " > ".join(f"{c} ({cls})" for (c, cls) in ranked)
 
     return {
         "confidence": "low",
@@ -1111,10 +1101,7 @@ def _build_findings(
             f = _check_composite_where(pat, query_cols, indexed, seen)
             if f:
                 findings.append(f)
-                sort_cols_folded = {
-                    c for c in f.get("columns", [])
-                    if c in pat.orderby_cols
-                }
+                sort_cols_folded = {c for c in f.get("columns", []) if c in pat.orderby_cols}
         elif len(query_cols) == 1:
             f = _check_single_where(pat, query_cols[0], indexed, seen)
             if f:
@@ -1122,10 +1109,7 @@ def _build_findings(
 
         # ORDER-BY analysis (per column). Skip any column that was already
         # rolled into the composite_where finding above.
-        order_cols = [
-            c for c in pat.orderby_cols
-            if c not in _SKIP_COLUMNS and c not in sort_cols_folded
-        ]
+        order_cols = [c for c in pat.orderby_cols if c not in _SKIP_COLUMNS and c not in sort_cols_folded]
         for col in order_cols:
             f = _check_orderby_unindexed(pat, col, indexed, seen) or _check_orderby_composite(pat, col, indexed, seen)
             if f:
@@ -1301,15 +1285,11 @@ def _emit_missing_index_findings(
         # the lookup is best-effort.
         subject_id: int | None = None
         if file_path:
-            row = conn.execute(
-                "SELECT id FROM files WHERE path = ?", (file_path,)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
             if row is not None:
                 subject_id = int(row[0])
 
-        finding_id = _missing_index_finding_id(
-            table, columns, pattern_type, file_path, line_no
-        )
+        finding_id = _missing_index_finding_id(table, columns, pattern_type, file_path, line_no)
 
         # Keep the evidence payload small (< 4 KB per the W90 contract).
         # Drop verbose nested rationale dicts if present — the consumer
@@ -1427,6 +1407,7 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
         roam missing-index -n 100              # More results
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
     root = find_project_root()
@@ -1523,6 +1504,18 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
 
         index_summary = f"Indexes found: {total_indexes} across {total_tables} tables"
         migrations_summary = f"Migrations scanned: {len(migration_paths)} | Source files scanned: {len(source_paths)}"
+
+        # --- SARIF output (W1217) ---
+        # Branches BEFORE json/text so the pre-existing paths stay
+        # byte-identical to pre-W1217. The SARIF projection mirrors
+        # the displayed slice — `findings` here has already been
+        # filtered (--confidence / --table) and truncated to --limit,
+        # so a CI gate sees the same evidence the human / agent sees.
+        if sarif_mode:
+            from roam.output.sarif import missing_index_to_sarif, write_sarif
+
+            click.echo(write_sarif(missing_index_to_sarif(findings)))
+            return
 
         # --- JSON output ---
         if json_mode:

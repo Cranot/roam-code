@@ -1,4 +1,14 @@
-"""Run compound report presets — multiple commands in one shot."""
+"""Run compound report presets — multiple commands in one shot.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_report is a recipe-composer (chains preset
+sub-commands like map + health + weather + layers + coupling into a
+single structured-JSON envelope). The composed sub-commands emit their
+own ``--sarif`` when applicable; cmd_report rolls them up into an
+invocation-scoped multi-section summary — not per-location violations.
+See ``cmd_audit`` for the parallel composer disclosure pattern (W1085 /
+W1145) + action.yml _SUPPORTED_SARIF allowlist + W1221-audit memo.
+"""
 
 from __future__ import annotations
 

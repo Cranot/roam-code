@@ -4,6 +4,12 @@ Naming-conventions detection delegates to the canonical helper in
 ``roam.commands.conventions_helper`` so the conventions line agrees
 with ``roam describe``, ``roam understand``, ``roam preflight``, and
 ``roam conventions``.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because minimap outputs are invocation-scoped codebase skeleton
+summaries — not per-location violations. Editor consumers should use
+the JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -561,8 +567,7 @@ def minimap(ctx, update_claude, output_file, init_notes):
                             # LAW 4 (W17.3): name the analytical subject
                             # (the rendered block) + a size cue, not bare "ok".
                             "verdict": (
-                                f"minimap rendered ({len(block)} chars) — "
-                                "wrap in CLAUDE.md with --update-claude"
+                                f"minimap rendered ({len(block)} chars) — wrap in CLAUDE.md with --update-claude"
                             ),
                             "content_char_count": len(block),
                             "caller_metric_definition": "direct_in_degree (Touch carefully + file annotations)",

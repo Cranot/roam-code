@@ -4,6 +4,12 @@ read git commits since the last tag, classify them via prefix
 heuristics (feat / fix / docs / chore / refactor / test), emit a draft
 ``## [Unreleased]`` markdown section. Reduces release-time toil for
 projects that follow Conventional Commits but don't have a CI helper.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because changelog outputs are invocation-scoped git-repo-metadata
+enumerations (commit subjects grouped by Conventional Commits prefix) —
+not per-location code violations. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket B propagation plan + W1221-audit memo.
 """
 
 from __future__ import annotations

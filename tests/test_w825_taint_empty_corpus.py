@@ -51,8 +51,7 @@ def _assert_no_silent_safe(verdict: str) -> None:
     lo = verdict.lower()
     for frag in _FORBIDDEN_VERDICT_FRAGMENTS:
         assert frag not in lo, (
-            f"Silent-SAFE Pattern-2 violation: empty-corpus verdict "
-            f"contains forbidden fragment {frag!r}: {verdict!r}"
+            f"Silent-SAFE Pattern-2 violation: empty-corpus verdict contains forbidden fragment {frag!r}: {verdict!r}"
         )
 
 

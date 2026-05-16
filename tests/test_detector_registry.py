@@ -19,7 +19,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output  # noqa: E402
 
-
 # ----------------------------------------------------------------------------
 # Registry shape
 # ----------------------------------------------------------------------------
@@ -37,8 +36,7 @@ class TestRegistryShape:
         # to the current count — if a future PR drops decorators, this
         # number drops with it and the test fails.
         assert len(_DETECTOR_REGISTRY) >= 34, (
-            f"registry should hold at least 34 decorated detectors, "
-            f"got {len(_DETECTOR_REGISTRY)}"
+            f"registry should hold at least 34 decorated detectors, got {len(_DETECTOR_REGISTRY)}"
         )
 
     def test_high_leverage_detectors_decorated(self):
@@ -79,9 +77,7 @@ class TestRegistryShape:
             assert entry["confidence_basis"] in _CONFIDENCE_BASES, (
                 f"{name} has invalid confidence_basis {entry['confidence_basis']!r}"
             )
-            assert entry["query_cost"] in _QUERY_COSTS, (
-                f"{name} has invalid query_cost {entry['query_cost']!r}"
-            )
+            assert entry["query_cost"] in _QUERY_COSTS, f"{name} has invalid query_cost {entry['query_cost']!r}"
 
     def test_decorator_rejects_bad_confidence_basis(self):
         from roam.catalog.detectors import detector

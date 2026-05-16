@@ -43,7 +43,6 @@ from roam.commands.cmd_pr_risk import (
     _normalise_pr_risk_level,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture: a minimal ``_pr_risk_data`` dict shaped like the one
 # ``cmd_pr_risk`` builds before calling ``_build_pr_risk_finding_rows``.
@@ -101,12 +100,8 @@ def test_canonical_risk_level_silent() -> None:
             field_name="level",
             warnings_out=warnings,
         )
-        assert result == canonical, (
-            f"Canonical {canonical!r} must return untouched, got {result!r}"
-        )
-        assert warnings == [], (
-            f"Canonical {canonical!r} must emit no warnings, got {warnings!r}"
-        )
+        assert result == canonical, f"Canonical {canonical!r} must return untouched, got {result!r}"
+        assert warnings == [], f"Canonical {canonical!r} must emit no warnings, got {warnings!r}"
 
 
 def test_uppercase_risk_level_normalized_silently() -> None:
@@ -131,12 +126,8 @@ def test_uppercase_risk_level_normalized_silently() -> None:
             field_name="level",
             warnings_out=warnings,
         )
-        assert result == expected, (
-            f"UPPER-cased {raw!r} must coerce to {expected!r}, got {result!r}"
-        )
-        assert warnings == [], (
-            f"UPPER-cased {raw!r} must coerce silently, got {warnings!r}"
-        )
+        assert result == expected, f"UPPER-cased {raw!r} must coerce to {expected!r}, got {result!r}"
+        assert warnings == [], f"UPPER-cased {raw!r} must coerce silently, got {warnings!r}"
 
 
 def test_unknown_risk_level_warns_and_defaults() -> None:
@@ -153,24 +144,14 @@ def test_unknown_risk_level_warns_and_defaults() -> None:
             field_name="risk_level",
             warnings_out=warnings,
         )
-        assert result == "low", (
-            f"Unknown {unknown!r} must default to 'low', got {result!r}"
-        )
-        assert len(warnings) == 1, (
-            f"Unknown {unknown!r} must emit exactly one warning, got {warnings!r}"
-        )
+        assert result == "low", f"Unknown {unknown!r} must default to 'low', got {result!r}"
+        assert len(warnings) == 1, f"Unknown {unknown!r} must emit exactly one warning, got {warnings!r}"
         warning = warnings[0]
         # LAW 4 + LAW 2: warning must name the field, name the offending
         # value (string repr), and point at the valid alternatives.
-        assert "risk_level" in warning, (
-            f"Warning must name the field, got: {warning!r}"
-        )
-        assert "low" in warning and "high" in warning, (
-            f"Warning must list the valid spellings, got: {warning!r}"
-        )
-        assert "defaulting" in warning, (
-            f"Warning must name the resolution, got: {warning!r}"
-        )
+        assert "risk_level" in warning, f"Warning must name the field, got: {warning!r}"
+        assert "low" in warning and "high" in warning, f"Warning must list the valid spellings, got: {warning!r}"
+        assert "defaulting" in warning, f"Warning must name the resolution, got: {warning!r}"
 
 
 def test_unknown_risk_level_no_warning_when_accumulator_is_none() -> None:
@@ -256,9 +237,7 @@ def test_build_finding_rows_canonical_level_no_warning() -> None:
             source_version="1.0.0",
             warnings_out=warnings,
         )
-        assert warnings == [], (
-            f"Canonical {canonical!r} must emit no warnings, got {warnings!r}"
-        )
+        assert warnings == [], f"Canonical {canonical!r} must emit no warnings, got {warnings!r}"
         # Severity comes from the canonical mapping (moderate -> medium).
         expected_severity = _PR_RISK_LEVEL_TO_SEVERITY[canonical]
         assert rows[0]["severity"] == expected_severity
@@ -273,9 +252,7 @@ def test_build_finding_rows_hash_stability_without_warnings_out() -> None:
     based on the presence of the accumulator.
     """
     data = _minimal_pr_risk_data(level="moderate")
-    rows_with = _build_pr_risk_finding_rows(
-        data, source_version="1.0.0", warnings_out=[]
-    )
+    rows_with = _build_pr_risk_finding_rows(data, source_version="1.0.0", warnings_out=[])
     rows_without = _build_pr_risk_finding_rows(data, source_version="1.0.0")
     assert rows_with[0]["evidence"] == rows_without[0]["evidence"]
     assert rows_with[0]["finding_id_str"] == rows_without[0]["finding_id_str"]

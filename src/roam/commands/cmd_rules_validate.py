@@ -8,6 +8,15 @@ rule against a representative PR.
 
 Pairs with ``cmd_pr_analyze`` (the consumer) and the sample at
 ``templates/examples/.roam-rules.yml``.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because rules-validate checks the RULES FILE SCHEMA itself
+(YAML structure, glob syntax, severity spelling) — not code violations.
+The two-stage rules workflow separates concerns: ``rules-validate`` ensures
+rule definitions are well-formed BEFORE shipping; ``roam rules`` runs the
+validated rules against code and emits per-violation SARIF. SARIF here
+would conflate validator-output with code-analyzer-output. See action.yml
+_SUPPORTED_SARIF allowlist + W1185 audit memo.
 """
 
 from __future__ import annotations

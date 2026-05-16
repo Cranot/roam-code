@@ -1,4 +1,18 @@
-"""Find backend API routes that have no consumers in the codebase (dead endpoints)."""
+"""Find backend API routes that have no consumers in the codebase (dead endpoints).
+
+W1227: SARIF is deliberately surfaced via the global ``--sarif`` flag.
+cmd_orphan_routes emits per-route orphan findings as envelope items
+(each carrying ``confidence`` / ``method`` / ``path`` / ``file`` /
+``line`` / optional ``controller`` + ``action``) which the
+:func:`roam.output.sarif.orphan_routes_to_sarif` projection maps onto a
+single closed-enum rule id (``orphan-route``) with per-result level
+banded by confidence (high + medium -> warning; low -> note). Dead
+endpoints are real bugs (operational cost + attack surface), not just
+hygiene — the defaultLevel is ``warning`` rather than ``note``. See
+W1227 audit (Wave 15) + the SHIP path in
+:mod:`tests.test_sarif_disclosure_coverage` (cmd_orphan_routes removed
+from ``_KNOWN_MISSING``).
+"""
 
 from __future__ import annotations
 
@@ -626,6 +640,7 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
     Also reports public controller methods that are not mapped to any route.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
     project_root = find_project_root()
@@ -641,6 +656,19 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
     # Apply confidence filter if requested
     if confidence_filter:
         orphans = [o for o in orphans if o["confidence"] == confidence_filter.lower()]
+
+    # --- SARIF output (W1227) -------------------------------------------
+    # SARIF surfaces the closed-enum confidence rule catalogue
+    # (single rule: orphan-route) even on a clean / no-orphans scan so
+    # CI consumers see the rule vocabulary regardless of whether any
+    # finding fired. The ``used`` bucket is filtered upstream by
+    # ``orphan_routes_to_sarif`` (not actionable — has a frontend
+    # consumer).
+    if sarif_mode:
+        from roam.output.sarif import orphan_routes_to_sarif, write_sarif
+
+        click.echo(write_sarif(orphan_routes_to_sarif(orphans)))
+        return
 
     n_high = sum(1 for o in orphans if o["confidence"] == "high")
     n_medium = sum(1 for o in orphans if o["confidence"] == "medium")

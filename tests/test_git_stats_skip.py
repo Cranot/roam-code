@@ -37,7 +37,6 @@ from roam.index import git_stats
 from roam.index.git_stats import _head_unchanged_since_last_run, collect_git_stats
 from roam.index.manifest import collect_manifest, write_manifest
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -91,8 +90,7 @@ class TestHeadUnchangedHelper:
         try:
             manifest = _record_manifest(conn, git_project)
             assert manifest.get("git_head"), (
-                "Test setup broken: manifest didn't capture a HEAD sha "
-                "for the git-tracked project."
+                "Test setup broken: manifest didn't capture a HEAD sha for the git-tracked project."
             )
             assert _head_unchanged_since_last_run(conn, git_project) is True
         finally:
@@ -104,9 +102,7 @@ class TestHeadUnchangedHelper:
         try:
             _record_manifest(conn, git_project)
             # Land a new commit -> live HEAD moves; recorded HEAD stale.
-            (git_project / "app.py").write_text(
-                "def hello():\n    return 'world!'\n"
-            )
+            (git_project / "app.py").write_text("def hello():\n    return 'world!'\n")
             git_commit(git_project, msg="update hello")
             assert _head_unchanged_since_last_run(conn, git_project) is False
         finally:
@@ -164,13 +160,9 @@ class TestCollectGitStatsSkip:
         """No manifest yet -> ``parse_git_log`` must be invoked."""
         conn = _fresh_db(tmp_path)
         try:
-            with mock.patch.object(
-                git_stats, "parse_git_log", wraps=git_stats.parse_git_log
-            ) as spy:
+            with mock.patch.object(git_stats, "parse_git_log", wraps=git_stats.parse_git_log) as spy:
                 collect_git_stats(conn, git_project)
-                assert spy.call_count == 1, (
-                    f"First run should call parse_git_log once; got {spy.call_count}"
-                )
+                assert spy.call_count == 1, f"First run should call parse_git_log once; got {spy.call_count}"
         finally:
             conn.close()
 
@@ -183,8 +175,7 @@ class TestCollectGitStatsSkip:
             with mock.patch.object(git_stats, "parse_git_log") as spy:
                 collect_git_stats(conn, git_project)
                 assert spy.call_count == 0, (
-                    "B5 regression: collect_git_stats called parse_git_log "
-                    "even though manifest HEAD matched live HEAD."
+                    "B5 regression: collect_git_stats called parse_git_log even though manifest HEAD matched live HEAD."
                 )
         finally:
             conn.close()
@@ -195,17 +186,12 @@ class TestCollectGitStatsSkip:
         try:
             _record_manifest(conn, git_project)
             # Land a new commit so live HEAD diverges from recorded HEAD.
-            (git_project / "app.py").write_text(
-                "def hello():\n    return 'world!'\n"
-            )
+            (git_project / "app.py").write_text("def hello():\n    return 'world!'\n")
             git_commit(git_project, msg="update hello")
-            with mock.patch.object(
-                git_stats, "parse_git_log", wraps=git_stats.parse_git_log
-            ) as spy:
+            with mock.patch.object(git_stats, "parse_git_log", wraps=git_stats.parse_git_log) as spy:
                 collect_git_stats(conn, git_project)
                 assert spy.call_count == 1, (
-                    "After a new commit, parse_git_log should be invoked "
-                    f"again; got {spy.call_count} calls."
+                    f"After a new commit, parse_git_log should be invoked again; got {spy.call_count} calls."
                 )
         finally:
             conn.close()
@@ -236,8 +222,7 @@ class TestCollectGitStatsSkip:
                 collect_git_stats(conn, git_project)
             messages = [r.message for r in caplog.records]
             assert any("HEAD unchanged" in m for m in messages), (
-                "Expected an INFO log message naming 'HEAD unchanged'; "
-                f"got: {messages!r}"
+                f"Expected an INFO log message naming 'HEAD unchanged'; got: {messages!r}"
             )
         finally:
             conn.close()

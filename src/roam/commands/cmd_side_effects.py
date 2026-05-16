@@ -15,6 +15,17 @@ Examples
     roam side-effects --kind io_write        # filter by kind
     roam side-effects --kind io_write --top 20
     roam side-effects --json
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because side-effects outputs are invocation-scoped per-symbol
+classification rollups (counts per kind: io_read / io_write /
+mutation / process / none) — not per-location code violations. The
+classification is descriptive metadata about what a function does,
+not a defect at a source coordinate. See ``cmd_effects`` for the
+parallel side-effect classification disclosure pattern (W1224) and
+``cmd_idempotency`` / ``cmd_tx_boundaries`` for the sibling
+world-model classifiers + action.yml _SUPPORTED_SARIF allowlist +
+W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -129,6 +140,7 @@ def side_effects_cmd(ctx, symbol, kind, top):
         "unknown": 1,
         "none": 0,
     }
+
     # W596: canonical confidence-LEVEL rank — higher = more confident.
     def _interest(c):
         return (
@@ -151,23 +163,14 @@ def side_effects_cmd(ctx, symbol, kind, top):
     worst = sorted_filtered[0] if sorted_filtered else None
     if worst is not None and worst.kinds and "none" not in worst.kinds:
         kind_str = "+".join(sorted(worst.kinds))
-        facts.append(
-            f"{worst.symbol} classified {kind_str} "
-            f"(confidence={worst.confidence})"
-        )
+        facts.append(f"{worst.symbol} classified {kind_str} (confidence={worst.confidence})")
     for k in ("io_write", "process", "mutation", "io_read"):
         n = by_kind.get(k, 0)
         if n:
-            facts.append(
-                f"side-effects scan classified {n} symbols as {k} "
-                f"out of {len(all_results)} analysed"
-            )
+            facts.append(f"side-effects scan classified {n} symbols as {k} out of {len(all_results)} analysed")
     pure_n = by_kind.get("none", 0)
     if pure_n:
-        facts.append(
-            f"side-effects scan confirmed {pure_n} symbols are pure "
-            "(no detected side effects)"
-        )
+        facts.append(f"side-effects scan confirmed {pure_n} symbols are pure (no detected side effects)")
     if not facts:
         facts.append("side-effects scan found no symbols to classify")
 
@@ -188,10 +191,7 @@ def side_effects_cmd(ctx, symbol, kind, top):
             "total_classified": len(all_results),
             "surfaced": len(surfaced),
             "filter_kind": kind,
-            "kind_definition": (
-                "coarse-grained agent-facing taxonomy: "
-                "none|io_read|io_write|mutation|process|unknown"
-            ),
+            "kind_definition": ("coarse-grained agent-facing taxonomy: none|io_read|io_write|mutation|process|unknown"),
             "detector": "world_model.side_effects (heuristic)",
         },
         classifications=[c.to_dict() for c in surfaced],
@@ -216,12 +216,14 @@ def side_effects_cmd(ctx, symbol, kind, top):
     rows = []
     for c in surfaced:
         kinds_str = ",".join(c.kinds) if c.kinds else "-"
-        rows.append([
-            c.symbol[:42],
-            kinds_str,
-            c.confidence,
-            (c.file or "")[-46:],
-        ])
+        rows.append(
+            [
+                c.symbol[:42],
+                kinds_str,
+                c.confidence,
+                (c.file or "")[-46:],
+            ]
+        )
     click.echo(
         format_table(
             ["Symbol", "Kinds", "Conf", "File"],

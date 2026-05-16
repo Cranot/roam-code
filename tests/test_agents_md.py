@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -18,7 +17,6 @@ from conftest import (
 )
 
 from tests._helpers.repo_root import repo_root as _repo_root
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -58,10 +56,7 @@ def small_project(tmp_path, monkeypatch):
     tests_dir = proj / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_service.py").write_text(
-        "from service import UserService\n"
-        "\n"
-        "def test_get_user():\n"
-        "    assert UserService().get_user(1) == {'id': 1}\n"
+        "from service import UserService\n\ndef test_get_user():\n    assert UserService().get_user(1) == {'id': 1}\n"
     )
 
     git_init(proj)
@@ -164,9 +159,7 @@ def test_cli_writes_to_stdout_by_default(cli_runner, small_project):
 def test_cli_with_out_flag_writes_file(cli_runner, small_project):
     """`roam agents-md --out path` persists the rendered Markdown."""
     target = small_project / "AGENTS_out.md"
-    result = invoke_cli(
-        cli_runner, ["agents-md", "--out", str(target)], cwd=small_project
-    )
+    result = invoke_cli(cli_runner, ["agents-md", "--out", str(target)], cwd=small_project)
     assert result.exit_code == 0, result.output
     assert target.exists(), "target file should have been created"
     written = target.read_text(encoding="utf-8")

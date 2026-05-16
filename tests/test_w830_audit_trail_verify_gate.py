@@ -28,9 +28,7 @@ from roam.cli import cli
 def empty_project(tmp_path: Path) -> Path:
     """Tmp git project with one .py file and no audit trail yet."""
     (tmp_path / "empty.py").write_text("# empty corpus\n", encoding="utf-8")
-    subprocess.run(
-        ["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "-c", "user.email=t@e.com", "-c", "user.name=t", "add", "-A"],
         cwd=tmp_path,
@@ -94,9 +92,7 @@ def test_gate_fails_closed_on_uninitialized_chain(empty_project: Path):
     init_code, init_out = _invoke(["init"], empty_project)
     assert init_code == 0, f"roam init failed: {init_out}"
 
-    code, out = _invoke(
-        ["--json", "audit-trail-verify", "--gate"], empty_project
-    )
+    code, out = _invoke(["--json", "audit-trail-verify", "--gate"], empty_project)
 
     # Fail-closed: missing trail → exit 5.
     assert code == 5, f"expected exit 5 on uninitialized chain, got {code}; output: {out}"

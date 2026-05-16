@@ -31,7 +31,6 @@ from roam.catalog.detectors import _DETECTOR_REGISTRY
 from roam.catalog.smells import ALL_DETECTORS
 from roam.db.connection import ensure_schema
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -85,12 +84,8 @@ def test_w639_smells_empty_corpus(
 ) -> None:
     """Every ``smells`` detector returns [] on an empty DB without crashing."""
     result = detector_fn(empty_db)
-    assert isinstance(result, list), (
-        f"{detector_name}: expected list, got {type(result).__name__}"
-    )
-    assert result == [], (
-        f"{detector_name}: expected [] on empty corpus, got {len(result)} findings"
-    )
+    assert isinstance(result, list), f"{detector_name}: expected list, got {type(result).__name__}"
+    assert result == [], f"{detector_name}: expected [] on empty corpus, got {len(result)} findings"
 
 
 @pytest.mark.parametrize(
@@ -105,12 +100,8 @@ def test_w639_algo_detectors_empty_corpus(
 ) -> None:
     """Every algorithm-catalog detector returns [] on an empty DB without crashing."""
     result = detector_fn(empty_db)
-    assert isinstance(result, list), (
-        f"{detector_name}: expected list, got {type(result).__name__}"
-    )
-    assert result == [], (
-        f"{detector_name}: expected [] on empty corpus, got {len(result)} findings"
-    )
+    assert isinstance(result, list), f"{detector_name}: expected list, got {type(result).__name__}"
+    assert result == [], f"{detector_name}: expected [] on empty corpus, got {len(result)} findings"
 
 
 def test_w639_smells_registry_count_floor() -> None:
@@ -120,8 +111,7 @@ def test_w639_smells_registry_count_floor() -> None:
     bump forces a deliberate edit through the test, surfacing drops in code
     review."""
     assert len(ALL_DETECTORS) >= 20, (
-        f"smells registry shrank: got {len(ALL_DETECTORS)} detectors, "
-        f"expected >= 20 (floor pinned by W639)"
+        f"smells registry shrank: got {len(ALL_DETECTORS)} detectors, expected >= 20 (floor pinned by W639)"
     )
 
 

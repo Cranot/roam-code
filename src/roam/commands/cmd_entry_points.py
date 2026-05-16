@@ -1,4 +1,17 @@
-"""Entry point catalog with protocol classification and reachability coverage."""
+"""Entry point catalog with protocol classification and reachability coverage.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because entry-points outputs are invocation-scoped protocol-
+classification catalogs (HTTP / gRPC / CLI / queue-consumer / event-
+handler entry symbols with their reachability coverage) — not per-
+location code violations. The catalog describes the architectural
+surface area of the workspace (which symbols are entry points and
+through which protocol) rather than defects at source coordinates;
+SARIF audiences scan for per-finding rule_id + region rows. See
+``cmd_index`` for the parallel catalog/state disclosure pattern
+(W1180) + action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH
+propagation plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

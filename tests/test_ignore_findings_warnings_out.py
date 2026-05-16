@@ -18,13 +18,10 @@ from __future__ import annotations
 import json as _json
 from pathlib import Path
 
-import pytest
-
 from roam.commands.finding_suppress import (
     _load_ignore_findings_file,
     annotate_with_suppression,
 )
-
 
 # ---------------------------------------------------------------------------
 # _load_ignore_findings_file — direct loader behaviour
@@ -123,10 +120,7 @@ def test_load_non_dict_entry_warns_and_skips(tmp_path: Path) -> None:
     """An entry that's a list or scalar (typo) surfaces the index + type."""
     p = tmp_path / ".roamignore-findings"
     p.write_text(
-        "rules:\n"
-        "  - just-a-string\n"
-        "  - task_id: io-in-loop\n"
-        '    path_glob: "src/*.py"\n',
+        'rules:\n  - just-a-string\n  - task_id: io-in-loop\n    path_glob: "src/*.py"\n',
         encoding="utf-8",
     )
     warnings_out: list[str] = []
@@ -146,25 +140,17 @@ def test_load_warnings_out_none_is_byte_identical_silent(tmp_path: Path) -> None
     assert rules == []
 
 
-def test_load_no_pyyaml_json_path_works(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_no_pyyaml_json_path_works(tmp_path: Path, no_pyyaml: None) -> None:
     """If PyYAML import fails, JSON-shaped file still loads cleanly with no warnings."""
-    import builtins
-
-    real_import = builtins.__import__
-
-    def _fake_import(name, *args, **kwargs):
-        if name == "yaml":
-            raise ImportError("simulated PyYAML absence")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", _fake_import)
     p = tmp_path / ".roamignore-findings"
     p.write_text(
-        _json.dumps({
-            "rules": [
-                {"task_id": "io-in-loop", "path_glob": "src/*.py"},
-            ]
-        }),
+        _json.dumps(
+            {
+                "rules": [
+                    {"task_id": "io-in-loop", "path_glob": "src/*.py"},
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     warnings_out: list[str] = []
@@ -208,10 +194,7 @@ def test_annotate_with_suppression_surfaces_loader_warnings(tmp_path: Path) -> N
 def test_annotate_with_suppression_happy_path_no_warnings(tmp_path: Path) -> None:
     """Well-formed file + happy match -> empty accumulator, suppression applied."""
     (tmp_path / ".roamignore-findings").write_text(
-        "rules:\n"
-        "  - task_id: io-in-loop\n"
-        '    path_glob: "src/foo.py"\n'
-        '    reason: "verified"\n',
+        'rules:\n  - task_id: io-in-loop\n    path_glob: "src/foo.py"\n    reason: "verified"\n',
         encoding="utf-8",
     )
     warnings_out: list[str] = []

@@ -76,9 +76,18 @@ class TestHover:
         assert "in_degree" in s
         assert "out_degree" in s
 
-    def test_unknown_symbol_exits_nonzero(self, hover_project):
+    def test_unknown_symbol_exits_zero_with_unresolved_disclosure(self, hover_project):
+        """W1272 — Pattern-2c Convention (c): unresolved exits 0 with a
+        resolution=unresolved disclosure (was: exit non-zero, pre-W1272).
+
+        cmd_hover's text-mode unresolved path still emits the FTS
+        suggestion list so the human caller sees what they probably meant,
+        but the exit code stays 0 so CI gating distinguishes a typo
+        (recoverable) from a tool/IO failure (non-recoverable).
+        """
         from roam.cli import cli
 
         runner = CliRunner()
         res = runner.invoke(cli, ["hover", "definitely_not_a_symbol"])
-        assert res.exit_code != 0
+        assert res.exit_code == 0, res.output
+        assert "not found" in res.output.lower()

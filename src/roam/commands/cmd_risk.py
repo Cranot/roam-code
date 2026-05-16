@@ -1,4 +1,17 @@
-"""Show domain-weighted risk ranking of symbols."""
+"""Show domain-weighted risk ranking of symbols.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because risk outputs are invocation-scoped domain-weighted
+ranking aggregates (symbols scored by domain-keyword weight ×
+complexity × churn × fan-in) — not per-location code violations. The
+ranking describes a portfolio-level prioritization signal aggregated
+from sibling metrics, not novel defects at source coordinates. When
+SARIF-shaped findings are needed, run the underlying detectors
+directly (``roam smells --sarif``, ``roam dead --sarif``,
+``roam complexity --sarif``); risk-rank composes them but produces no
+new per-finding rows. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH propagation plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +25,7 @@ from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
+from roam.db.edge_kinds import call_or_ref_in_clause
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 
 # Default domain keyword -> weight multiplier mapping.
@@ -227,12 +241,18 @@ def _callee_chain_domain(conn, symbol_id, domains, max_depth=3):
     for depth in range(min(max_depth, len(_CALLEE_DECAY))):
         if not frontier:
             break
+        # W512 / W1237: edge-kind vocabulary lives in roam.db.edge_kinds.
+        # The pre-W1237 filter inlined ``('call', 'uses')`` which both (a)
+        # silently dropped plural 'calls'/'reference'/'references' rows the
+        # canonical writer + plugin extractors emit, AND (b) violated the
+        # closed-enum discipline. Switch to the canonical helper so callee
+        # chains track every legitimate call/reference edge.
         callees = batched_in(
             conn,
             "SELECT e.target_id, s.name FROM edges e "
             "JOIN symbols s ON e.target_id = s.id "
             "WHERE e.source_id IN ({ph}) "
-            "AND e.kind IN ('call', 'uses')",
+            f"AND {call_or_ref_in_clause('e.kind')}",
             frontier,
         )
         next_frontier = []

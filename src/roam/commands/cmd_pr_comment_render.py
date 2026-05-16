@@ -9,6 +9,13 @@ Keeping the rendering logic in Python (instead of duplicating it in
 the GitHub App's TypeScript) means a single place updates the comment
 shape — and local engineers can dogfood the same comment they'd see
 on a PR by piping ``roam pr-analyze --json | roam pr-comment-render``.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because pr-comment-render outputs are rendered Markdown PR
+comments — not per-location violations. SARIF is reserved for findings
+with file:line coordinates; pr-comment-render's primary deliverable is
+the rendered Markdown PR comment. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket C propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

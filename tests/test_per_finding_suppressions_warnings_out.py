@@ -24,7 +24,6 @@ from roam.commands.finding_suppress import (
     annotate_with_suppression,
 )
 
-
 # ---------------------------------------------------------------------------
 # _load_per_finding_suppressions — direct loader behaviour
 # ---------------------------------------------------------------------------
@@ -33,9 +32,7 @@ from roam.commands.finding_suppress import (
 def test_load_missing_file_no_warning(tmp_path: Path) -> None:
     """Absent file is the default state — never warn (would spam every run)."""
     warnings_out: list[str] = []
-    suppressions = _load_per_finding_suppressions(
-        tmp_path / "missing.json", warnings_out=warnings_out
-    )
+    suppressions = _load_per_finding_suppressions(tmp_path / "missing.json", warnings_out=warnings_out)
     assert suppressions == {}
     assert warnings_out == []
 
@@ -155,9 +152,7 @@ def test_annotate_with_suppression_surfaces_per_finding_loader_warnings(
 ) -> None:
     """The plumb-through: malformed `.roam/suppressions.json` -> warning at the caller."""
     (tmp_path / ".roam").mkdir()
-    (tmp_path / ".roam" / "suppressions.json").write_text(
-        "{not valid json,,,\n", encoding="utf-8"
-    )
+    (tmp_path / ".roam" / "suppressions.json").write_text("{not valid json,,,\n", encoding="utf-8")
     warnings_out: list[str] = []
     findings = [_make_finding("io-in-loop", "src/foo.py:10")]
     out, count = annotate_with_suppression(
@@ -181,9 +176,7 @@ def test_annotate_with_suppression_per_finding_happy_path_no_warnings(
 
     fid = finding_id("io-in-loop", "src/foo.py:10", "fn")
     (tmp_path / ".roam").mkdir()
-    (tmp_path / ".roam" / "suppressions.json").write_text(
-        _json.dumps({fid: {"reason": "verified"}}), encoding="utf-8"
-    )
+    (tmp_path / ".roam" / "suppressions.json").write_text(_json.dumps({fid: {"reason": "verified"}}), encoding="utf-8")
     warnings_out: list[str] = []
     out, count = annotate_with_suppression(
         [_make_finding("io-in-loop", "src/foo.py:10")],
@@ -201,9 +194,7 @@ def test_annotate_with_suppression_both_loaders_warn_together(tmp_path: Path) ->
     """Both files malformed -> both warnings drain into the same accumulator."""
     (tmp_path / ".roamignore-findings").write_text("- not a mapping\n", encoding="utf-8")
     (tmp_path / ".roam").mkdir()
-    (tmp_path / ".roam" / "suppressions.json").write_text(
-        "{not valid,,,\n", encoding="utf-8"
-    )
+    (tmp_path / ".roam" / "suppressions.json").write_text("{not valid,,,\n", encoding="utf-8")
     warnings_out: list[str] = []
     out, count = annotate_with_suppression(
         [_make_finding("io-in-loop", "src/foo.py:10")],

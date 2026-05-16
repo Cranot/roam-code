@@ -1,4 +1,12 @@
-"""Detect ownership drift: where declared owners differ from actual contributors."""
+"""Detect ownership drift: where declared owners differ from actual contributors.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because drift outputs are invocation-scoped declared-vs-actual
+ownership-mismatch rankings (per-path CODEOWNERS / contributor-blame
+deltas) — not per-location code violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
+"""
 
 from __future__ import annotations
 

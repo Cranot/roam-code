@@ -178,7 +178,7 @@ def suggest_next_steps(command: str, context: dict) -> list[str]:
     elif command == "retrieve":
         low_confidence = context.get("low_confidence", False)
         if low_confidence:
-            steps.append("Refine the task with a known symbol or `--seed-files <path>` to anchor the search")
+            steps.append("Refine the task with a known symbol or `--seed-file <path>` to anchor the search")
             steps.append("Run `roam search <token>` if you know a name fragment — it's exact-match instead of semantic")
         else:
             steps.append("Run `roam context <symbol>` on the top result to get caller/callee detail")

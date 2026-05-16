@@ -25,17 +25,22 @@ We therefore REFUSE to execute unless the caller either:
 
 Bare ``--execute`` is an error -- this prevents accidental "I just
 wanted to see what would happen" runs from mutating state.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam replay`` operates on substrate state in ``.roam/``
+(event narratives over ledger entries) — not code locations or
+per-location violations. The state is consumed by other roam commands +
+agent runtimes directly from disk; SARIF would be redundant. See
+action.yml _SUPPORTED_SARIF allowlist + W1181-audit memo.
 """
 
 from __future__ import annotations
 
-import os
 import shlex
 import subprocess
 import sys
 from collections import Counter
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 import click
@@ -43,7 +48,7 @@ import click
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
 from roam.output.formatter import json_envelope, to_json
-from roam.runs.ledger import read_run_events, read_run_meta, run_dir
+from roam.runs.ledger import read_run_events, read_run_meta
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -246,13 +251,9 @@ def replay_cmd(ctx, run_id, execute, dry_run):
     actions = [(e.get("action") or "") for e in events if e.get("action")]
     action_counter = Counter(actions)
     unique_actions = sorted(action_counter.keys())
-    partial_failures = [
-        (e.get("action") or "") for e in events if bool(e.get("partial_success"))
-    ]
+    partial_failures = [(e.get("action") or "") for e in events if bool(e.get("partial_success"))]
     partial_count = len(partial_failures)
-    verdicts = [
-        e.get("summary_verdict", "") for e in events if e.get("summary_verdict")
-    ]
+    verdicts = [e.get("summary_verdict", "") for e in events if e.get("summary_verdict")]
 
     # State: missing_run handled above; here we discriminate between an
     # in-progress (not yet ended) run and a properly-closed one.
@@ -265,17 +266,14 @@ def replay_cmd(ctx, run_id, execute, dry_run):
     gate_actions = {"preflight", "diff", "critique", "pr-prep", "pr-analyze", "attest", "verify"}
     gate_count = sum(1 for a in actions if a in gate_actions)
     # Cheap "SAFE reached" check: any logged verdict starts with SAFE.
-    safe_reached = any(
-        isinstance(v, str) and v.strip().upper().startswith("SAFE")
-        for v in verdicts
-    )
+    safe_reached = any(isinstance(v, str) and v.strip().upper().startswith("SAFE") for v in verdicts)
     if state == "incomplete_run":
-        verdict = (
-            f"replayed {events_count} event(s) from {run_id} (in progress, agent={meta.agent})"
-        )
+        verdict = f"replayed {events_count} event(s) from {run_id} (in progress, agent={meta.agent})"
     else:
         parts = [
-            f"agent {meta.agent} ran {gate_count} gate command(s)" if gate_count else f"agent {meta.agent} ran {len(actions)} action(s)",
+            f"agent {meta.agent} ran {gate_count} gate command(s)"
+            if gate_count
+            else f"agent {meta.agent} ran {len(actions)} action(s)",
         ]
         if safe_reached:
             parts.append("SAFE verdict reached")
@@ -342,11 +340,7 @@ def replay_cmd(ctx, run_id, execute, dry_run):
                     if line.startswith("VERDICT:"):
                         new_verdict = line[len("VERDICT:") :].strip()
                         break
-                drift = bool(
-                    new_verdict
-                    and item["original_verdict"]
-                    and new_verdict != item["original_verdict"]
-                )
+                drift = bool(new_verdict and item["original_verdict"] and new_verdict != item["original_verdict"])
                 execute_report["results"].append(
                     {
                         "seq": item["seq"],
@@ -441,8 +435,7 @@ def replay_cmd(ctx, run_id, execute, dry_run):
     # W14.2 Synergy 4 — surface the mode at the top of the narrative.
     mode_phrase = f", mode={meta.mode}" if meta.mode else ""
     click.echo(
-        f"RUN {run_id} (agent={meta.agent}{mode_phrase}) started {started}, "
-        f"{events_count} events, status={meta.status}"
+        f"RUN {run_id} (agent={meta.agent}{mode_phrase}) started {started}, {events_count} events, status={meta.status}"
     )
     if events_count == 0:
         click.echo("  (no events logged)")
@@ -455,7 +448,7 @@ def replay_cmd(ctx, run_id, execute, dry_run):
         partial = " [partial]" if ev.get("partial_success") else ""
         label = f"{action} {target}".strip()
         if v:
-            click.echo(f"  [{seq}]  {ts}  {label:<40} -> \"{v}\"{partial}")
+            click.echo(f'  [{seq}]  {ts}  {label:<40} -> "{v}"{partial}')
         else:
             click.echo(f"  [{seq}]  {ts}  {label}{partial}")
     if meta.ended_at:
@@ -465,9 +458,7 @@ def replay_cmd(ctx, run_id, execute, dry_run):
     if execute_report is not None:
         click.echo("")
         mode_label = "PREVIEW (dry-run)" if execute_report["dry_run"] else "EXECUTED"
-        click.echo(
-            f"--execute {mode_label}: {execute_report['would_run_count']} command(s) to replay"
-        )
+        click.echo(f"--execute {mode_label}: {execute_report['would_run_count']} command(s) to replay")
         for item in execute_report["commands"]:
             click.echo(f"  [{item['seq']}] {item['shell']}")
         if execute_report["unknown_actions"]:
@@ -481,4 +472,4 @@ def replay_cmd(ctx, run_id, execute, dry_run):
             if not execute_report["drift"]:
                 click.echo("  (no verdict drift)")
             for d in execute_report["drift"]:
-                click.echo(f"  [{d['seq']}] {d['action']}: \"{d['from']}\" -> \"{d['to']}\"")
+                click.echo(f'  [{d["seq"]}] {d["action"]}: "{d["from"]}" -> "{d["to"]}"')

@@ -310,9 +310,7 @@ class TestMissingIndexJSON:
         triple_keys = {"value", "confidence", "reason"}
         value_required_keys = {"columns", "issue", "query_location", "suggestion"}
         for f in findings:
-            assert triple_keys.issubset(set(f.keys())), (
-                f"Triple missing keys: {triple_keys - set(f.keys())}"
-            )
+            assert triple_keys.issubset(set(f.keys())), f"Triple missing keys: {triple_keys - set(f.keys())}"
             missing = value_required_keys - set(f["value"].keys())
             assert not missing, f"Finding value missing keys {missing}: {f}"
 

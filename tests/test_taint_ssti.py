@@ -296,9 +296,7 @@ class TestPythonSstiFindings:
         # NO render_template_string symbol exists in this fixture, so
         # the engine must produce zero SSTI findings regardless of
         # indexer-extraction state for the source side.
-        assert findings == [], (
-            f"no-sink project produced unexpected findings: {[f.rule_id for f in findings]!r}"
-        )
+        assert findings == [], f"no-sink project produced unexpected findings: {[f.rule_id for f in findings]!r}"
 
     def test_user_wrapper_caught_by_bare_name_match(self, ssti_user_wrapper_project):
         """User-defined function named ``render_template_string`` is a
@@ -328,9 +326,7 @@ class TestPythonSstiFindings:
             findings = _ssti_findings(conn)
 
         for f in findings:
-            assert f.rule_id == "python-ssti", (
-                f"unexpected non-ssti finding from ssti-only rule run: {f}"
-            )
+            assert f.rule_id == "python-ssti", f"unexpected non-ssti finding from ssti-only rule run: {f}"
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,14 @@
-"""Show project skeleton with entry points and key symbols."""
+"""Show project skeleton with entry points and key symbols.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because map outputs are invocation-scoped project-skeleton
+summaries (top PageRank-ranked symbols + entry points grouped by file
+kind / language / role) — not per-location code violations. The
+skeleton describes the architectural surface of the workspace rather
+than defects at source coordinates; SARIF audiences scan for per-
+finding rule_id + region rows. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH propagation plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

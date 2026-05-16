@@ -28,17 +28,27 @@ from __future__ import annotations
 import json
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+
+# W1059: relative-to-now to avoid future-date staleness (mirrors W1012
+# pattern in test_cmd_permit_persist_redteam.py::_valid_permit_dict).
+# Tests below issue permits via `permit issue --expires-at <ts>`; today
+# `permit issue` and the disk reader do NOT filter on expiry, but if a
+# future hardening adds an issue-time future-validation gate or load-time
+# expiry filter, a hardcoded "2027-XX-XX" would silently flip these tests
+# from green to red once that date passes. Anchoring to now+365d keeps
+# the fixture "definitely in the future" for every CI run.
+_FUTURE_EXPIRES_AT = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat().replace("+00:00", "Z")
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, invoke_cli  # noqa: E402
 
 from roam.permits import PERMIT_ID_RE  # noqa: E402
 from roam.permits.store import permits_root  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -70,12 +80,18 @@ def test_permit_issue_persist_writes_file(permit_project):
     result = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "w198-test-scope",
-            "--expires-at", "2026-12-31T23:59:59Z",
-            "--issued-to", "agent:w198-tester",
-            "--issued-by", "human:w198-operator",
-            "--reason", "smoke test",
+            "permit",
+            "issue",
+            "--scope",
+            "w198-test-scope",
+            "--expires-at",
+            "2026-12-31T23:59:59Z",
+            "--issued-to",
+            "agent:w198-tester",
+            "--issued-by",
+            "human:w198-operator",
+            "--reason",
+            "smoke test",
             "--persist",
         ],
         cwd=permit_project,
@@ -111,10 +127,14 @@ def test_permit_without_persist_no_disk_write(permit_project):
     result = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "dry-run-scope",
-            "--expires-at", "2026-12-31T23:59:59Z",
-            "--issued-to", "agent:dry-run",
+            "permit",
+            "issue",
+            "--scope",
+            "dry-run-scope",
+            "--expires-at",
+            "2026-12-31T23:59:59Z",
+            "--issued-to",
+            "agent:dry-run",
         ],
         cwd=permit_project,
     )
@@ -125,9 +145,7 @@ def test_permit_without_persist_no_disk_write(permit_project):
     # is empty -- both satisfy the back-compat contract.
     if proot.exists():
         files = list(proot.glob("*.json"))
-        assert files == [], (
-            f"dry-run unexpectedly wrote permit file(s): {files!r}"
-        )
+        assert files == [], f"dry-run unexpectedly wrote permit file(s): {files!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -147,10 +165,14 @@ def test_permit_id_format_is_permit_yyyymmdd_hex(permit_project):
         runner,
         [
             "--json",
-            "permit", "issue",
-            "--scope", "format-test",
-            "--expires-at", "2027-01-01T00:00:00Z",
-            "--issued-to", "agent:format-tester",
+            "permit",
+            "issue",
+            "--scope",
+            "format-test",
+            "--expires-at",
+            _FUTURE_EXPIRES_AT,
+            "--issued-to",
+            "agent:format-tester",
             "--persist",
         ],
         cwd=permit_project,
@@ -158,9 +180,7 @@ def test_permit_id_format_is_permit_yyyymmdd_hex(permit_project):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     pid = payload["summary"]["permit_id"]
-    assert PERMIT_ID_RE.match(pid), (
-        f"permit_id {pid!r} does not match {PERMIT_ID_RE.pattern!r}"
-    )
+    assert PERMIT_ID_RE.match(pid), f"permit_id {pid!r} does not match {PERMIT_ID_RE.pattern!r}"
     # Also pin the prefix shape so a renamer who edits the regex but
     # forgets the prefix gets caught.
     assert re.match(r"^permit_\d{8}_[0-9a-f]{6,}$", pid)
@@ -198,18 +218,20 @@ def test_permit_persist_writes_atomically(permit_project, monkeypatch):
     result = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "atomic-test",
-            "--expires-at", "2027-01-01T00:00:00Z",
-            "--issued-to", "agent:atomic",
+            "permit",
+            "issue",
+            "--scope",
+            "atomic-test",
+            "--expires-at",
+            _FUTURE_EXPIRES_AT,
+            "--issued-to",
+            "agent:atomic",
             "--persist",
         ],
         cwd=permit_project,
     )
     assert result.exit_code == 0, result.output
-    assert len(calls) == 1, (
-        f"expected exactly one atomic_write_json call, got {len(calls)}"
-    )
+    assert len(calls) == 1, f"expected exactly one atomic_write_json call, got {len(calls)}"
     path, data = calls[0]
     assert path.name.endswith(".json")
     assert data["scope"] == "atomic-test"
@@ -227,10 +249,14 @@ def test_persisted_permit_loaded_by_pr_bundle(permit_project):
     r1 = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "pipeline-test",
-            "--expires-at", "2027-06-01T00:00:00Z",
-            "--issued-to", "agent:pipeline",
+            "permit",
+            "issue",
+            "--scope",
+            "pipeline-test",
+            "--expires-at",
+            _FUTURE_EXPIRES_AT,
+            "--issued-to",
+            "agent:pipeline",
             "--persist",
         ],
         cwd=permit_project,
@@ -267,10 +293,7 @@ def test_persisted_permit_loaded_by_pr_bundle(permit_project):
     envelope = json.loads(r_emit.output)
     permits_top = envelope.get("permits") or []
     matches = [p for p in permits_top if p.get("permit_id") == pid]
-    assert matches, (
-        f"pr-bundle envelope.permits did not contain permit_id={pid!r}; "
-        f"got {permits_top!r}"
-    )
+    assert matches, f"pr-bundle envelope.permits did not contain permit_id={pid!r}; got {permits_top!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -293,10 +316,14 @@ def test_persisted_permit_flows_to_authority_ref_with_real_permit_id(
         runner,
         [
             "--json",
-            "permit", "issue",
-            "--scope", "w294-pipeline",
-            "--expires-at", "2027-02-01T00:00:00Z",
-            "--issued-to", "agent:w294",
+            "permit",
+            "issue",
+            "--scope",
+            "w294-pipeline",
+            "--expires-at",
+            _FUTURE_EXPIRES_AT,
+            "--issued-to",
+            "agent:w294",
             "--persist",
         ],
         cwd=permit_project,
@@ -307,8 +334,7 @@ def test_persisted_permit_flows_to_authority_ref_with_real_permit_id(
 
     permits = _load_permits_from_disk(permit_project)
     assert any(p.get("permit_id") == pid for p in permits), (
-        f"disk reader missed the freshly-persisted permit_id={pid!r}; "
-        f"got {permits!r}"
+        f"disk reader missed the freshly-persisted permit_id={pid!r}; got {permits!r}"
     )
 
     refs = _build_authority_refs(
@@ -321,12 +347,8 @@ def test_persisted_permit_flows_to_authority_ref_with_real_permit_id(
     target = next(r for r in permit_refs if r.authority_id == pid)
     # W294 disambiguation marker: real permit -> extra["permit_id"]
     # populated, NOT the facade auto-stamp.
-    assert target.extra.get("permit_id") == pid, (
-        f"AuthorityRef.extra missing permit_id={pid!r}; got {target.extra!r}"
-    )
-    assert not target.extra.get("facade"), (
-        f"real permit unexpectedly flagged as facade: {target.extra!r}"
-    )
+    assert target.extra.get("permit_id") == pid, f"AuthorityRef.extra missing permit_id={pid!r}; got {target.extra!r}"
+    assert not target.extra.get("facade"), f"real permit unexpectedly flagged as facade: {target.extra!r}"
     # Source axis: source="permit" (W294).
     assert target.source == "permit"
     # Provenance channel: producer_envelope(permit) until corroborated.
@@ -338,9 +360,7 @@ def test_persisted_permit_flows_to_authority_ref_with_real_permit_id(
 # ---------------------------------------------------------------------------
 
 
-def test_persisted_permit_with_active_run_logs_permit_id_in_ledger(
-    permit_project, monkeypatch
-):
+def test_persisted_permit_with_active_run_logs_permit_id_in_ledger(permit_project, monkeypatch):
     """With an active run, ``permit issue --persist`` stamps ``permit_id``
     on the run-ledger event so the W292 harvester can promote the
     matching AuthorityRef to ``provenance="run_ledger"``.
@@ -355,10 +375,14 @@ def test_persisted_permit_with_active_run_logs_permit_id_in_ledger(
         runner,
         [
             "--json",
-            "permit", "issue",
-            "--scope", "w198-corroboration",
-            "--expires-at", "2027-03-01T00:00:00Z",
-            "--issued-to", "agent:corroborator",
+            "permit",
+            "issue",
+            "--scope",
+            "w198-corroboration",
+            "--expires-at",
+            _FUTURE_EXPIRES_AT,
+            "--issued-to",
+            "agent:corroborator",
             "--persist",
         ],
         cwd=permit_project,
@@ -371,9 +395,7 @@ def test_persisted_permit_with_active_run_logs_permit_id_in_ledger(
     issue_events = [e for e in events if e.get("action") == "permit-issue"]
     assert issue_events, f"no permit-issue event in {events!r}"
     ev = issue_events[-1]
-    assert ev.get("permit_id") == pid, (
-        f"expected permit_id={pid!r} on event, got {ev!r}"
-    )
+    assert ev.get("permit_id") == pid, f"expected permit_id={pid!r} on event, got {ev!r}"
     # ``target`` is set to the permit_id by the auto_log call.
     assert ev.get("target") == pid
 
@@ -386,12 +408,9 @@ def test_persisted_permit_with_active_run_logs_permit_id_in_ledger(
     )
 
     warnings: list[str] = []
-    corroborated = _collect_corroborated_authorities_from_runs(
-        permit_project, warnings
-    )
+    corroborated = _collect_corroborated_authorities_from_runs(permit_project, warnings)
     assert ("permit", pid) in corroborated, (
-        f"expected ('permit', {pid!r}) in corroborated set, got "
-        f"{corroborated!r} (warnings={warnings!r})"
+        f"expected ('permit', {pid!r}) in corroborated set, got {corroborated!r} (warnings={warnings!r})"
     )
 
     # End-to-end: real permit + corroboration -> provenance="run_ledger".
@@ -403,12 +422,9 @@ def test_persisted_permit_with_active_run_logs_permit_id_in_ledger(
         caller_mode=None,
         corroborated_authorities=corroborated,
     )
-    target = next(
-        r for r in refs if r.authority_kind == "permit" and r.authority_id == pid
-    )
+    target = next(r for r in refs if r.authority_kind == "permit" and r.authority_id == pid)
     assert target.extra.get("provenance") == "run_ledger", (
-        f"expected provenance=run_ledger after writer-side corroboration, "
-        f"got {target.extra!r}"
+        f"expected provenance=run_ledger after writer-side corroboration, got {target.extra!r}"
     )
     assert target.extra.get("permit_id") == pid
 
@@ -424,11 +440,16 @@ def test_permit_issue_rejects_multiline_reason(permit_project):
     result = invoke_cli(
         runner,
         [
-            "permit", "issue",
-            "--scope", "discipline-test",
-            "--expires-at", "2027-04-01T00:00:00Z",
-            "--issued-to", "agent:strict",
-            "--reason", "line1\nline2",
+            "permit",
+            "issue",
+            "--scope",
+            "discipline-test",
+            "--expires-at",
+            _FUTURE_EXPIRES_AT,
+            "--issued-to",
+            "agent:strict",
+            "--reason",
+            "line1\nline2",
             "--persist",
         ],
         cwd=permit_project,
@@ -443,9 +464,7 @@ def test_permit_issue_rejects_multiline_reason(permit_project):
     files = list(proot.glob("*.json")) if proot.exists() else []
     if files:
         raw = json.loads(files[0].read_text(encoding="utf-8"))
-        assert "\n" not in raw["reason"], (
-            f"multi-line reason landed on disk: {raw['reason']!r}"
-        )
+        assert "\n" not in raw["reason"], f"multi-line reason landed on disk: {raw['reason']!r}"
     else:
         # Rejection path -- exit 2 (USAGE).
         assert result.exit_code != 0, result.output

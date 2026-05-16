@@ -15,6 +15,18 @@ Examples
     roam why-slow --changed               # only symbols in `git diff`
     roam why-slow --changed --base main   # vs main branch
     roam why-slow --json                  # structured output
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because why-slow outputs are invocation-scoped runtime-hotspot
+aggregates (per-symbol call_count / p99_latency_ms scalars derived
+from ingested traces, ranked by runtime-cost score) — not per-location
+code violations. The ranking describes neutral runtime telemetry
+measurement rather than defects at source coordinates; symbols
+appearing on the hot-path are not findings to remediate. When SARIF-
+shaped per-finding hotspot rows ARE wanted, run the dedicated detector
+``roam hotspots --sarif`` (W1210) — why-slow itself is the human-
+facing ranking surface. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH propagation plan + W1224-audit memo.
 """
 
 from __future__ import annotations

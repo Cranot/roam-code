@@ -223,7 +223,11 @@ _SOURCE_PATTERNS: tuple[tuple[re.Pattern, str, str], ...] = (
     (re.compile(r"\basyncio\.(create_task|ensure_future|gather)\("), "process", "asyncio.task"),
     (re.compile(r"\.fetchone\(|\.fetchall\(|\.fetchmany\("), "io_read", "db.fetch"),
     (re.compile(r"\.commit\("), "io_write", "db.commit"),
-    (re.compile(r"\.execute(many)?\(\s*['\"](?:INSERT|UPDATE|DELETE|REPLACE)", re.IGNORECASE), "io_write", "db.execute(write)"),
+    (
+        re.compile(r"\.execute(many)?\(\s*['\"](?:INSERT|UPDATE|DELETE|REPLACE)", re.IGNORECASE),
+        "io_write",
+        "db.execute(write)",
+    ),
     (re.compile(r"\.execute(many)?\(\s*['\"](?:SELECT|PRAGMA)", re.IGNORECASE), "io_read", "db.execute(read)"),
     (re.compile(r"\.write_text\(|\.write_bytes\(|\.writelines\("), "io_write", "path.write_*"),
     (re.compile(r"\.read_text\(|\.read_bytes\("), "io_read", "path.read_*"),
@@ -232,7 +236,13 @@ _SOURCE_PATTERNS: tuple[tuple[re.Pattern, str, str], ...] = (
     (re.compile(r"\bjson\.load\("), "io_read", "json.load"),
     (re.compile(r"\bpickle\.load\("), "io_read", "pickle.load"),
     (re.compile(r"\bshutil\.(copy|move|rmtree)"), "io_write", "shutil.write"),
-    (re.compile(r"(?:^|[^A-Za-z0-9_])_?os\.(remove|unlink|rename|replace|mkdir|makedirs|rmdir|chmod|chown|fdopen)\("), "io_write", "os.fs.write"),
+    (
+        re.compile(
+            r"(?:^|[^A-Za-z0-9_])_?os\.(remove|unlink|rename|replace|mkdir|makedirs|rmdir|chmod|chown|fdopen)\("
+        ),
+        "io_write",
+        "os.fs.write",
+    ),
     (re.compile(r"(?:^|[^A-Za-z0-9_])_?os\.(listdir|walk|stat)\("), "io_read", "os.fs.read"),
     (re.compile(r"\btempfile\.(mktemp|mkstemp|NamedTemporaryFile|TemporaryFile)\("), "io_write", "tempfile.mkstemp"),
     # W13.4: Path-like atomic-write idioms — ``tmp_path.replace(target)``

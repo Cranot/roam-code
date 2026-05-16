@@ -1,7 +1,6 @@
 import ast
 import re
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -192,17 +191,22 @@ def test_cli_deprecated_commands_is_ast_literal():
             )
         assert isinstance(obj, dict), "_DEPRECATED_COMMANDS must be a dict"
         assert all(isinstance(k, str) for k in obj), (
-            "_DEPRECATED_COMMANDS alias names must be str (the W697 "
-            "allowlist set is keyed on str)"
+            "_DEPRECATED_COMMANDS alias names must be str (the W697 allowlist set is keyed on str)"
         )
         return
     pytest.fail("_DEPRECATED_COMMANDS assignment not found in src/roam/cli.py")
 
 
 def test_readme_roadmap_refreshed_for_v11_state():
+    """W1289: pinning v11-era headings is stale — README evolved to v13.2.
+
+    The original test asserted the README's Roadmap section had the
+    v11 ``### Shipped`` / ``### Next`` headings plus a ``MCP v2 agent
+    surface`` line. v13.2's README replaced that section entirely with
+    a narrative geared to the agentic-assurance frame. The test still
+    catches the only stale-era signal worth pinning: that the old
+    "19 tools" count line is gone.
+    """
     text = _readme_text()
-    assert "### Shipped" in text
-    assert "### Next" in text
-    assert "MCP v2 agent surface" in text
-    # Stale count-era roadmap line should not remain.
+    # Stale count-era roadmap line must not remain. (Load-bearing.)
     assert "MCP server -- 19 tools, 2 resources" not in text

@@ -21,8 +21,6 @@ deliberate review.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from roam.db.connection import MIGRATION_OPS_COUNT, USER_VERSION
 
 
@@ -85,13 +83,8 @@ def test_migration_seqs_are_unique_and_monotonic():
     from roam.db.connection import _MIGRATIONS
 
     seqs = [seq for seq, _, _ in _MIGRATIONS]
-    assert seqs == sorted(seqs), (
-        f"_MIGRATIONS seqs are not in increasing order: {seqs}"
-    )
-    assert len(seqs) == len(set(seqs)), (
-        f"_MIGRATIONS contains duplicate seqs: "
-        f"{[s for s in seqs if seqs.count(s) > 1]}"
-    )
+    assert seqs == sorted(seqs), f"_MIGRATIONS seqs are not in increasing order: {seqs}"
+    assert len(seqs) == len(set(seqs)), f"_MIGRATIONS contains duplicate seqs: {[s for s in seqs if seqs.count(s) > 1]}"
 
 
 def test_migrations_are_idempotent_on_a_fresh_db(tmp_path):
@@ -115,6 +108,5 @@ def test_migrations_are_idempotent_on_a_fresh_db(tmp_path):
         v2 = int(conn.execute("PRAGMA user_version").fetchone()[0])
 
     assert v1 == v2 == USER_VERSION, (
-        f"user_version drifted across two ensure_schema runs: "
-        f"v1={v1}, v2={v2}, expected={USER_VERSION}"
+        f"user_version drifted across two ensure_schema runs: v1={v1}, v2={v2}, expected={USER_VERSION}"
     )

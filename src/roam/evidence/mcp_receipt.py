@@ -49,7 +49,6 @@ from typing import Any
 
 from roam.evidence._vocabulary import REDACTION_REASONS
 
-
 #: Closed enumeration of policy-layer decisions on an MCP tool call.
 #:
 #: * ``allow``        - the call was permitted to run
@@ -57,13 +56,15 @@ from roam.evidence._vocabulary import REDACTION_REASONS
 #: * ``escalate``     - the call required human / higher-tier approval
 #: * ``redact``       - the call ran but output was masked
 #: * ``not_evaluated``- no policy layer was active (default)
-_POLICY_DECISIONS: frozenset[str] = frozenset({
-    "allow",
-    "deny",
-    "escalate",
-    "redact",
-    "not_evaluated",
-})
+_POLICY_DECISIONS: frozenset[str] = frozenset(
+    {
+        "allow",
+        "deny",
+        "escalate",
+        "redact",
+        "not_evaluated",
+    }
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -121,15 +122,11 @@ class McpDecisionReceipt:
     def __post_init__(self) -> None:
         if self.policy_decision not in _POLICY_DECISIONS:
             raise ValueError(
-                f"unknown policy_decision: {self.policy_decision!r}; "
-                f"expected one of {sorted(_POLICY_DECISIONS)}"
+                f"unknown policy_decision: {self.policy_decision!r}; expected one of {sorted(_POLICY_DECISIONS)}"
             )
         for reason in self.redactions:
             if reason not in REDACTION_REASONS:
-                raise ValueError(
-                    f"unknown redaction reason: {reason!r}; "
-                    f"must be one of REDACTION_REASONS"
-                )
+                raise ValueError(f"unknown redaction reason: {reason!r}; must be one of REDACTION_REASONS")
         # ``output_ref`` and ``output_hash`` are mutually exclusive —
         # mirrors EvidenceArtifact's path / content_inline discipline.
         # ``output_ref`` carries an artifact pointer (large output
@@ -155,9 +152,7 @@ class McpDecisionReceipt:
 
     def compute_content_hash(self) -> str:
         """sha256 of the canonical-JSON. Used as the receipt's stable id."""
-        return hashlib.sha256(
-            self.to_canonical_json().encode("utf-8")
-        ).hexdigest()
+        return hashlib.sha256(self.to_canonical_json().encode("utf-8")).hexdigest()
 
 
 def hash_input_args(args: Mapping[str, Any]) -> str:

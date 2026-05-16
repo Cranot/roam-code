@@ -62,54 +62,54 @@ XFAIL_ON_GAP = True
 
 # 1) Setup / bootstrap — one-time human-driven, no value through MCP.
 _KNOWN_SETUP_COMMANDS: set[str] = {
-    "init",            # repo-local index bootstrap
-    "index",           # reindex bootstrap (covered by roam_reindex)
-    "index-export",    # bundle ops
+    "init",  # repo-local index bootstrap
+    "index",  # reindex bootstrap (covered by roam_reindex)
+    "index-export",  # bundle ops
     "index-import",
     "index-stats",
-    "graph-export",    # writes to disk; MCP would have to relay a file path
-    "ci-setup",        # generates GH Actions / GitLab CI YAML on disk
-    "mcp-setup",       # generates MCP server config files on disk
-    "mcp-status",      # connectivity diagnostic from outside the MCP layer
-    "mcp",             # the MCP server itself; can't expose-via-MCP
-    "hooks",           # installs git hooks on disk
-    "pre-commit",      # installs git pre-commit hook on disk
-    "plugins",         # introspect plugin manifests on disk
-    "db-check",        # integrity sweep over the local SQLite DB
-    "schema",          # JSON envelope schema reference
-    "config",          # writes .roam/config.json on disk
-    "version",         # static version string
-    "exit-codes",      # static exit-code reference
-    "help-search",     # introspects Click help strings (CLI-only utility)
-    "explain-command", # describes a command's contract (CLI-only utility)
-    "recipes",         # lists ask recipes (CLI-only utility)
+    "graph-export",  # writes to disk; MCP would have to relay a file path
+    "ci-setup",  # generates GH Actions / GitLab CI YAML on disk
+    "mcp-setup",  # generates MCP server config files on disk
+    "mcp-status",  # connectivity diagnostic from outside the MCP layer
+    "mcp",  # the MCP server itself; can't expose-via-MCP
+    "hooks",  # installs git hooks on disk
+    "pre-commit",  # installs git pre-commit hook on disk
+    "plugins",  # introspect plugin manifests on disk
+    "db-check",  # integrity sweep over the local SQLite DB
+    "schema",  # JSON envelope schema reference
+    "config",  # writes .roam/config.json on disk
+    "version",  # static version string
+    "exit-codes",  # static exit-code reference
+    "help-search",  # introspects Click help strings (CLI-only utility)
+    "explain-command",  # describes a command's contract (CLI-only utility)
+    "recipes",  # lists ask recipes (CLI-only utility)
     "skill-generate",  # writes a skill manifest YAML on disk
-    "agents-md",       # writes AGENTS.md on disk
-    "laws",            # self-installing constitution; writes on disk
-    "constitution",    # repo-local constitution CLI; writes on disk
-    "capabilities",    # emits capability registry YAML/JSON
-    "surface",         # canonical capability registry inventory
-    "telemetry",       # local telemetry ring buffer
-    "lsp",             # Language Server Protocol stdio server (not MCP)
+    "agents-md",  # writes AGENTS.md on disk
+    "laws",  # self-installing constitution; writes on disk
+    "constitution",  # repo-local constitution CLI; writes on disk
+    "capabilities",  # emits capability registry YAML/JSON
+    "surface",  # canonical capability registry inventory
+    "telemetry",  # local telemetry ring buffer
+    "lsp",  # Language Server Protocol stdio server (not MCP)
 }
 
 # 2) Local-state only — the value lives on disk in ``.roam/``; running it
 #    through a stateless MCP call would not surface anything an agent
 #    couldn't get from the file directly.
 _KNOWN_LOCAL_STATE_COMMANDS: set[str] = {
-    "memory",         # repo-local agent memory store
-    "annotate",       # persistent symbol/file annotations
-    "annotations",    # alias of annotate
-    "runs",           # per-agent-run event ledger
-    "mode",           # agent-mode policy
-    "lease",          # multi-agent lease registry
-    "replay",         # re-narrate a past run from the ledger
-    "pr-replay",      # generate buyer-facing replay report
-    "suppress",       # record audit-trail-friendly suppression
-    "triage",         # triage manages .roam-suppressions.yml -- local-state mutator like suppress
-    "permit",         # structural-permission verdict facade
-    "intent-check",   # pre-flight on intended command (uses on-disk mode)
-    "ws",             # workspace state (multi-repo grouping)
+    "memory",  # repo-local agent memory store
+    "annotate",  # persistent symbol/file annotations
+    "annotations",  # alias of annotate
+    "runs",  # per-agent-run event ledger
+    "mode",  # agent-mode policy
+    "lease",  # multi-agent lease registry
+    "replay",  # re-narrate a past run from the ledger
+    "pr-replay",  # generate buyer-facing replay report
+    "suppress",  # record audit-trail-friendly suppression
+    "triage",  # triage manages .roam-suppressions.yml -- local-state mutator like suppress
+    "permit",  # structural-permission verdict facade
+    "intent-check",  # pre-flight on intended command (uses on-disk mode)
+    "ws",  # workspace state (multi-repo grouping)
 }
 
 # 3) Daemon / long-running — incompatible with stateless MCP invocations.
@@ -145,40 +145,40 @@ _ALL_SKIPPED = (
 # ---------------------------------------------------------------------------
 
 _KNOWN_TOOL_ALIASES: dict[str, set[str]] = {
-    "dead":            {"roam_dead_code"},
-    "complexity":      {"roam_complexity_report"},
-    "bisect":          {"roam_bisect_blame"},
-    "breaking":        {"roam_breaking_changes"},
-    "budget":          {"roam_budget_check"},
-    "capsule":         {"roam_capsule_export"},
-    "cga":             {"roam_cga_emit", "roam_cga_verify"},
-    "rules":           {"roam_check_rules", "roam_rules_check", "roam_rules_validate"},
-    "trends":          {"roam_trends"},
-    "trend":           {"roam_trends"},
-    "snapshot":        {"roam_trends"},
-    "digest":          {"roam_trends"},
-    "churn":           {"roam_weather"},
-    "weather":         {"roam_weather"},
-    "uses":            {"roam_uses"},
-    "refs":            {"roam_uses"},
-    "vulns":           {"roam_vuln_map", "roam_vuln_reach"},
-    "search":          {"roam_search_symbol", "roam_search_semantic"},
-    "context":         {"roam_context", "roam_ws_context"},
-    "understand":      {"roam_understand", "roam_ws_understand"},
-    "file":            {"roam_file_info"},
-    "review":          {"roam_review_change"},
+    "dead": {"roam_dead_code"},
+    "complexity": {"roam_complexity_report"},
+    "bisect": {"roam_bisect_blame"},
+    "breaking": {"roam_breaking_changes"},
+    "budget": {"roam_budget_check"},
+    "capsule": {"roam_capsule_export"},
+    "cga": {"roam_cga_emit", "roam_cga_verify"},
+    "rules": {"roam_check_rules", "roam_rules_check", "roam_rules_validate"},
+    "trends": {"roam_trends"},
+    "trend": {"roam_trends"},
+    "snapshot": {"roam_trends"},
+    "digest": {"roam_trends"},
+    "churn": {"roam_weather"},
+    "weather": {"roam_weather"},
+    "uses": {"roam_uses"},
+    "refs": {"roam_uses"},
+    "vulns": {"roam_vuln_map", "roam_vuln_reach"},
+    "search": {"roam_search_symbol", "roam_search_semantic"},
+    "context": {"roam_context", "roam_ws_context"},
+    "understand": {"roam_understand", "roam_ws_understand"},
+    "file": {"roam_file_info"},
+    "review": {"roam_review_change"},
     "annotate-symbol": {"roam_annotate_symbol"},
     # W299: ``findings`` is a click group; per-subcommand wrappers match
     # the audit-trail-* precedent (roam_audit_trail_verify /
     # roam_audit_trail_export are separate wrappers, not collapsed).
-    "findings":        {"roam_findings_list", "roam_findings_show", "roam_findings_count"},
+    "findings": {"roam_findings_list", "roam_findings_show", "roam_findings_count"},
     # W305: ``oracle`` is a click group with 5 boolean-oracle subcommands.
     # The advisory audit recognizes the group as wrapped when ANY of the
     # per-subcommand wrappers is registered (same precedent as findings).
     # ``oracle batch`` is intentionally NOT wrapped (takes a JSONL file
     # path the agent would have to prepare on disk); the 5 boolean
     # subcommands below are the MCP-idiomatic surface.
-    "oracle":          {
+    "oracle": {
         "roam_oracle_symbol_exists",
         "roam_oracle_route_exists",
         "roam_oracle_is_test_only",
@@ -191,8 +191,16 @@ _KNOWN_TOOL_ALIASES: dict[str, set[str]] = {
 # are not part of the CLI command name (e.g., ``roam_dead`` is registered
 # as ``roam_dead_code``; ``roam_complexity`` as ``roam_complexity_report``).
 _KNOWN_SUFFIXES: tuple[str, ...] = (
-    "check", "report", "export", "verify", "emit", "validate",
-    "changes", "code", "info", "blame",
+    "check",
+    "report",
+    "export",
+    "verify",
+    "emit",
+    "validate",
+    "changes",
+    "code",
+    "info",
+    "blame",
 )
 
 
@@ -218,6 +226,7 @@ def _unwrapped_commands() -> list[str]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_allowlists_reference_real_commands() -> None:
     """Every skip-taxonomy entry must name a real ``_COMMANDS`` key.
@@ -307,15 +316,10 @@ def test_no_duplicate_mcp_tool_names() -> None:
         for name, fn, ln in decorations:
             if name in duplicates:
                 sites.setdefault(name, []).append(f"def {fn} at line {ln}")
-        rendered = "\n".join(
-            f"  {name!r} ({counts[name]}x): " + "; ".join(sites[name])
-            for name in sorted(duplicates)
-        )
+        rendered = "\n".join(f"  {name!r} ({counts[name]}x): " + "; ".join(sites[name]) for name in sorted(duplicates))
         raise AssertionError(
             "Duplicate @_tool(name=...) registrations in "
-            "src/roam/mcp_server.py:\n"
-            + rendered
-            + "\n\nTwo decorations with the same name silently overwrite "
+            "src/roam/mcp_server.py:\n" + rendered + "\n\nTwo decorations with the same name silently overwrite "
             "_TOOL_METADATA and queue undefined-behaviour FastMCP "
             "registrations. Pick one canonical wrapper and delete the "
             "other, or rename one of the @_tool name kwargs."
@@ -337,7 +341,7 @@ def test_skip_taxonomy_categories_are_disjoint() -> None:
         ("deprecated-alias", _KNOWN_DEPRECATED_ALIAS_COMMANDS),
     ]
     for i, (lbl_a, set_a) in enumerate(pairs):
-        for lbl_b, set_b in pairs[i + 1:]:
+        for lbl_b, set_b in pairs[i + 1 :]:
             overlap = set_a & set_b
             assert not overlap, (
                 f"commands appear in both {lbl_a} and {lbl_b} allowlists "

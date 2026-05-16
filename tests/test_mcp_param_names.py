@@ -30,31 +30,24 @@ import pathlib
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Closed-set legacy-name table (mirrored from ``_PARAM_ALIASES`` via a
 # drift guard below).
 # ---------------------------------------------------------------------------
 
 # W332 input_path family
-_W332_LEGACY_NAMES: frozenset[str] = frozenset(
-    {"rules_path", "rules_file", "statement_path", "envelope_path"}
-)
+_W332_LEGACY_NAMES: frozenset[str] = frozenset({"rules_path", "rules_file", "statement_path", "envelope_path"})
 
 # Pre-W332 families (symbol / path / query) — kept here so the lint is
 # uniformly enforced across all of Pattern 3b, not just the W332 set.
-_PRE_W332_LEGACY_NAMES: frozenset[str] = frozenset(
-    {"name", "target", "file", "pattern"}
-)
+_PRE_W332_LEGACY_NAMES: frozenset[str] = frozenset({"name", "target", "file", "pattern"})
 
 # W347 — extends the symbol / path-cluster alias coverage. ``file_path``
 # / ``filename`` / ``filepath`` collapse to canonical ``path``;
 # ``subject`` is a reserved future symbol-shaped alias. The matching
 # lint case is parametrized below in the same shape as the pre-W332
 # sweep.
-_W347_LEGACY_NAMES: frozenset[str] = frozenset(
-    {"file_path", "filename", "filepath", "subject"}
-)
+_W347_LEGACY_NAMES: frozenset[str] = frozenset({"file_path", "filename", "filepath", "subject"})
 
 
 # ---------------------------------------------------------------------------
@@ -68,19 +61,12 @@ _W347_LEGACY_NAMES: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 
 
-_MCP_SERVER_PATH = (
-    pathlib.Path(__file__).resolve().parent.parent
-    / "src" / "roam" / "mcp_server.py"
-)
+_MCP_SERVER_PATH = pathlib.Path(__file__).resolve().parent.parent / "src" / "roam" / "mcp_server.py"
 
 
 def _is_tool_decorator(node: ast.expr) -> bool:
     """Match the ``@_tool(...)`` decorator call literal."""
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_tool"
-    )
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_tool"
 
 
 def _tool_name_kwarg(decorator: ast.Call) -> str | None:
@@ -194,9 +180,7 @@ def _load_param_aliases_via_ast() -> dict[str, frozenset[str]]:
     for node in ast.walk(module):
         if not isinstance(node, ast.AnnAssign) and not isinstance(node, ast.Assign):
             continue
-        targets = (
-            [node.target] if isinstance(node, ast.AnnAssign) else node.targets
-        )
+        targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
         for t in targets:
             if isinstance(t, ast.Name) and t.id == "_PARAM_ALIASES":
                 value = node.value
@@ -251,14 +235,48 @@ def test_w332_legacy_names_match_param_aliases_map():
     """
     alias_map = _load_param_aliases_via_ast()
     input_path_aliases = alias_map.get("input_path", frozenset())
-    actual_legacies = frozenset(
-        alias for alias in input_path_aliases if alias != "input_path"
-    )
+    actual_legacies = frozenset(alias for alias in input_path_aliases if alias != "input_path")
     assert actual_legacies == _W332_LEGACY_NAMES, (
         f"Drift: _PARAM_ALIASES['input_path'] aliases {sorted(actual_legacies)} "
         f"differ from _W332_LEGACY_NAMES {sorted(_W332_LEGACY_NAMES)}. "
         f"Update _W332_LEGACY_NAMES in this test file so the lint covers "
         f"the new alias."
+    )
+
+
+def test_pre_w332_legacy_names_match_param_aliases_map():
+    """Drift guard: ``_PRE_W332_LEGACY_NAMES`` MUST equal the set of
+    pre-W332 aliases in ``_PARAM_ALIASES`` — i.e. every non-canonical
+    alias under ``symbol`` / ``path`` / ``query`` MINUS the W347
+    additions (``subject`` / ``file_path`` / ``filename`` / ``filepath``).
+
+    If a new alias is added to ``_PARAM_ALIASES["symbol"]`` /
+    ``["path"]`` / ``["query"]`` without extending ``_PRE_W332_LEGACY_NAMES``
+    OR ``_W347_LEGACY_NAMES`` here, the parametrized pre-W332 lint
+    silently stops covering the new alias — this guard catches that
+    by forcing the author to decide which cluster (W332 / W347 / pre-W332)
+    the new alias belongs to. See W1141 / W1139-RESEARCH for the full
+    rationale.
+    """
+    alias_map = _load_param_aliases_via_ast()
+    pre_w332_clusters = ("symbol", "path", "query")
+    actual: set[str] = set()
+    for canon in pre_w332_clusters:
+        for alias in alias_map.get(canon, frozenset()):
+            if alias == canon:
+                continue
+            # Exclude W347 additions — they're covered by the W347 sweep.
+            if alias in _W347_LEGACY_NAMES:
+                continue
+            actual.add(alias)
+    assert _PRE_W332_LEGACY_NAMES == frozenset(actual), (
+        f"_PRE_W332_LEGACY_NAMES drift detected.\n"
+        f"Expected (from _PARAM_ALIASES[symbol|path|query] minus "
+        f"_W347_LEGACY_NAMES): {sorted(actual)}\n"
+        f"Got: {sorted(_PRE_W332_LEGACY_NAMES)}\n"
+        f"If a new alias was added to _PARAM_ALIASES, decide whether it "
+        f"belongs to the W332 / W347 / pre-W332 cluster and update the "
+        f"matching frozenset in tests/test_mcp_param_names.py."
     )
 
 
@@ -275,8 +293,7 @@ def test_w332_deprecated_set_matches_module_constant():
         "deprecated set."
     )
     assert module_constant == _W332_LEGACY_NAMES, (
-        f"Drift: module constant {sorted(module_constant)} != test "
-        f"enumeration {sorted(_W332_LEGACY_NAMES)}."
+        f"Drift: module constant {sorted(module_constant)} != test enumeration {sorted(_W332_LEGACY_NAMES)}."
     )
 
 
@@ -298,7 +315,7 @@ def test_w332_deprecated_set_matches_module_constant():
 _PRE_W332_EXEMPT: dict[tuple[str, str], str] = {
     # Semantically-distinct ``target`` — git ref / non-symbol identifier.
     ("roam_breaking_changes", "target"): "git ref, not a symbol id",
-    # redacted renamed the 9 ``target``-as-symbol declarations
+    # An earlier sweep renamed the 9 ``target``-as-symbol declarations
     # (roam_prepare_change / roam_trace / roam_affected_tests /
     # roam_annotate_symbol / roam_get_annotations / roam_generate_plan /
     # roam_get_invariants / roam_why_fail / roam_metrics) to the
@@ -341,10 +358,7 @@ def test_no_wrapper_declares_pre_w332_legacy_param(tool_name, declared_params, l
     see ``_PRE_W332_EXEMPT`` for the closed list + rationale.
     """
     if (tool_name, legacy_name) in _PRE_W332_EXEMPT:
-        pytest.skip(
-            f"{tool_name}.{legacy_name} exempt: "
-            f"{_PRE_W332_EXEMPT[(tool_name, legacy_name)]}"
-        )
+        pytest.skip(f"{tool_name}.{legacy_name} exempt: {_PRE_W332_EXEMPT[(tool_name, legacy_name)]}")
     assert legacy_name not in declared_params, (
         f"Tool '{tool_name}' declares legacy Pattern-3b param "
         f"'{legacy_name}' as its canonical. Rename to the canonical "
@@ -400,10 +414,7 @@ def test_no_wrapper_declares_w347_legacy_param(tool_name, declared_params, legac
     see ``_W347_EXEMPT`` for the closed list + rationale.
     """
     if (tool_name, legacy_name) in _W347_EXEMPT:
-        pytest.skip(
-            f"{tool_name}.{legacy_name} exempt: "
-            f"{_W347_EXEMPT[(tool_name, legacy_name)]}"
-        )
+        pytest.skip(f"{tool_name}.{legacy_name} exempt: {_W347_EXEMPT[(tool_name, legacy_name)]}")
     assert legacy_name not in declared_params, (
         f"Tool '{tool_name}' declares legacy W347 param "
         f"'{legacy_name}' as its canonical. Rename to the canonical "
@@ -465,8 +476,7 @@ def test_w347_legacy_names_match_param_aliases_map():
     )
 
     assert "subject" in symbol_aliases, (
-        f"_PARAM_ALIASES['symbol'] missing W347 alias 'subject'. "
-        f"Currently has: {sorted(symbol_aliases)}."
+        f"_PARAM_ALIASES['symbol'] missing W347 alias 'subject'. Currently has: {sorted(symbol_aliases)}."
     )
 
 
@@ -480,8 +490,7 @@ def test_w347_deprecated_set_matches_module_constant():
         "constant is the source of truth for the W347 deprecated set."
     )
     assert module_constant == _W347_LEGACY_NAMES, (
-        f"Drift: module constant {sorted(module_constant)} != test "
-        f"enumeration {sorted(_W347_LEGACY_NAMES)}."
+        f"Drift: module constant {sorted(module_constant)} != test enumeration {sorted(_W347_LEGACY_NAMES)}."
     )
 
 
@@ -517,16 +526,9 @@ def test_param_alias_resolves_to_canonical(canonical, alias):
     kwargs = {alias: "x"}
     accepted = {canonical}
     out, warnings = mcp_server._normalize_aliases("roam_test", kwargs, accepted)
-    assert canonical in out, (
-        f"Expected '{alias}' to be rewritten to canonical '{canonical}'; "
-        f"got kwargs={out}."
-    )
-    assert alias not in out, (
-        f"Expected alias '{alias}' to be removed after rewrite; got kwargs={out}."
-    )
-    assert warnings, (
-        f"Expected a deprecation warning when alias '{alias}' was used; got none."
-    )
+    assert canonical in out, f"Expected '{alias}' to be rewritten to canonical '{canonical}'; got kwargs={out}."
+    assert alias not in out, f"Expected alias '{alias}' to be removed after rewrite; got kwargs={out}."
+    assert warnings, f"Expected a deprecation warning when alias '{alias}' was used; got none."
 
 
 def test_param_alias_canonical_wins_when_both_supplied():
@@ -656,9 +658,7 @@ def _discover_w606_pattern_wrappers() -> list[tuple[str, str, str]]:
         params = _params_with_kind_and_default(node)
         # Scan only the positional-or-keyword (and posonly) slice.
         pos_slice = [
-            (name, kind, has_default)
-            for name, kind, has_default in params
-            if kind in ("posonly", "pos_or_kw")
+            (name, kind, has_default) for name, kind, has_default in params if kind in ("posonly", "pos_or_kw")
         ]
         for i, (name, _kind, has_default) in enumerate(pos_slice):
             if name not in _CANONICALS_WITH_ALIAS:
@@ -731,14 +731,9 @@ def test_w606_module_import_succeeds():
 @pytest.mark.parametrize(
     "tool_name,canonical_name,blocker_name",
     _W606_PATTERN_WRAPPERS,
-    ids=[
-        f"{t}::{canon}+{blocker}"
-        for t, canon, blocker in _W606_PATTERN_WRAPPERS
-    ],
+    ids=[f"{t}::{canon}+{blocker}" for t, canon, blocker in _W606_PATTERN_WRAPPERS],
 )
-def test_w606_pattern_wrapper_builds_directly(
-    tool_name, canonical_name, blocker_name
-):
+def test_w606_pattern_wrapper_builds_directly(tool_name, canonical_name, blocker_name):
     """For every wrapper matching the W606 trigger pattern, applying
     ``_wrap_with_alias_normalization`` to the **inner Python function**
     (taken from ``mcp_server`` module attribute via ``__wrapped__``)
@@ -759,7 +754,7 @@ def test_w606_pattern_wrapper_builds_directly(
     # ``__wrapped__`` to the innermost level. The module attribute is
     # the outermost wrapped fn (FastMCP / handle-off / guard / alias),
     # but ``functools.wraps`` keeps the chain reachable.
-    py_name = tool_name[len("roam_"):] if tool_name.startswith("roam_") else tool_name
+    py_name = tool_name[len("roam_") :] if tool_name.startswith("roam_") else tool_name
     outer = getattr(mcp_server, py_name, None)
     if outer is None:
         pytest.skip(f"Module attribute '{py_name}' not found.")
@@ -796,10 +791,7 @@ def test_w606_pattern_wrapper_builds_directly(
         # unchanged. That's a no-op case; not a W606 trigger.
         return
     canonical_param = rewrapped_sig.parameters.get(canonical_name)
-    assert canonical_param is not None, (
-        f"Re-wrapped signature for '{tool_name}' dropped canonical "
-        f"'{canonical_name}'."
-    )
+    assert canonical_param is not None, f"Re-wrapped signature for '{tool_name}' dropped canonical '{canonical_name}'."
     assert canonical_param.kind == _inspect.Parameter.KEYWORD_ONLY, (
         f"W606 regression: '{tool_name}' has canonical-with-alias "
         f"'{canonical_name}' as kind={canonical_param.kind.name} but "
@@ -829,9 +821,7 @@ def test_w606_synthetic_regression_caught_by_wrapper_builder():
 
     # Run the wrapper builder. Should NOT raise — that's the W595 fix.
     try:
-        wrapped = mcp_server._wrap_with_alias_normalization(
-            "roam_synthetic_w606", _fake_inner
-        )
+        wrapped = mcp_server._wrap_with_alias_normalization("roam_synthetic_w606", _fake_inner)
     except ValueError as exc:
         pytest.fail(
             f"W595 regression detected: _wrap_with_alias_normalization "
@@ -894,12 +884,8 @@ def test_w607_collect_alias_candidates_symbol_and_path():
     assert "symbol" not in aliases
     assert "path" not in aliases
     # Every non-identity alias from _PARAM_ALIASES is present.
-    expected_symbol_aliases = {
-        a for a in mcp_server._PARAM_ALIASES["symbol"] if a != "symbol"
-    }
-    expected_path_aliases = {
-        a for a in mcp_server._PARAM_ALIASES["path"] if a != "path"
-    }
+    expected_symbol_aliases = {a for a in mcp_server._PARAM_ALIASES["symbol"] if a != "symbol"}
+    expected_path_aliases = {a for a in mcp_server._PARAM_ALIASES["path"] if a != "path"}
     assert expected_symbol_aliases.issubset(set(aliases))
     assert expected_path_aliases.issubset(set(aliases))
     # No duplicates.
@@ -920,8 +906,7 @@ def test_w607_collect_alias_candidates_declared_alias_skipped():
     accepted, aliases = mcp_server._collect_alias_candidates(_inspect.signature(fn))
     assert "path" in accepted
     assert "file" not in aliases, (
-        f"Alias 'file' must be skipped when the wrapper declares it directly. "
-        f"Got aliases={aliases}."
+        f"Alias 'file' must be skipped when the wrapper declares it directly. Got aliases={aliases}."
     )
 
 
@@ -1018,8 +1003,7 @@ def test_w607_build_merged_annotations_adds_alias_str_types():
     # the helper hard-codes the runtime ``str`` type (not a string).
     for alias_name in aliases:
         assert merged[alias_name] is str, (
-            f"Alias '{alias_name}' annotation should be the runtime "
-            f"``str`` type; got {merged[alias_name]!r}."
+            f"Alias '{alias_name}' annotation should be the runtime ``str`` type; got {merged[alias_name]!r}."
         )
     # Defensive copy: caller can mutate without affecting fn.
     merged["symbol"] = bool

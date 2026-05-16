@@ -21,19 +21,23 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 # All CI env vars the helper probes - scrubbed before every test so the
 # suite is deterministic regardless of where it runs (developer laptop
 # vs GitHub Actions vs CI).
 _CI_ENV_VARS_TO_SCRUB: tuple[str, ...] = (
     "CI",
-    "GITHUB_ACTIONS", "GITHUB_RUN_ID",
-    "GITLAB_CI", "CI_JOB_ID",
-    "BUILDKITE", "BUILDKITE_BUILD_ID",
-    "CIRCLECI", "CIRCLE_BUILD_NUM",
-    "JENKINS_URL", "BUILD_TAG",
-    "TF_BUILD", "BUILD_BUILDID",
+    "GITHUB_ACTIONS",
+    "GITHUB_RUN_ID",
+    "GITLAB_CI",
+    "CI_JOB_ID",
+    "BUILDKITE",
+    "BUILDKITE_BUILD_ID",
+    "CIRCLECI",
+    "CIRCLE_BUILD_NUM",
+    "JENKINS_URL",
+    "BUILD_TAG",
+    "TF_BUILD",
+    "BUILD_BUILDID",
 )
 
 
@@ -62,14 +66,10 @@ def test_build_environment_refs_returns_ci_job_when_provider_detected(
     kinds = [r.env_kind for r in refs]
     assert "ci_job" in kinds, f"expected ci_job ref, got {kinds}"
     # CI suppresses the local_run fallback.
-    assert "local_run" not in kinds, (
-        f"local_run should not appear in a CI run; got {kinds}"
-    )
+    assert "local_run" not in kinds, f"local_run should not appear in a CI run; got {kinds}"
     # The ci_job ref carries the value-var content.
     ci_ref = next(r for r in refs if r.env_kind == "ci_job")
-    assert ci_ref.env_id == "ci-42", (
-        f"unexpected ci_job env_id: {ci_ref.env_id!r}"
-    )
+    assert ci_ref.env_id == "ci-42", f"unexpected ci_job env_id: {ci_ref.env_id!r}"
 
 
 def test_build_environment_refs_returns_local_run_when_no_ci(
@@ -84,9 +84,7 @@ def test_build_environment_refs_returns_local_run_when_no_ci(
 
     kinds = [r.env_kind for r in refs]
     assert "local_run" in kinds, f"expected local_run ref, got {kinds}"
-    assert "ci_job" not in kinds, (
-        f"ci_job should not appear with no CI env; got {kinds}"
-    )
+    assert "ci_job" not in kinds, f"ci_job should not appear with no CI env; got {kinds}"
     local_ref = next(r for r in refs if r.env_kind == "local_run")
     # env_id is non-empty (hostname or the literal "local" fallback).
     assert isinstance(local_ref.env_id, str) and local_ref.env_id, (
@@ -108,16 +106,15 @@ def test_build_environment_refs_includes_workspace_ref(monkeypatch) -> None:
     refs = build_environment_refs(workspace_root="/repo/example")
 
     workspace = [r for r in refs if r.env_kind == "workspace"]
-    assert len(workspace) == 1, (
-        f"expected exactly one workspace ref, got {workspace}"
-    )
+    assert len(workspace) == 1, f"expected exactly one workspace ref, got {workspace}"
     assert workspace[0].env_id == "/repo/example", (
         f"workspace env_id should echo the input; got {workspace[0].env_id!r}"
     )
 
 
 def test_build_environment_refs_falls_back_to_cwd_when_no_workspace_root(
-    monkeypatch, tmp_path,
+    monkeypatch,
+    tmp_path,
 ) -> None:
     """No workspace_root arg -> os.getcwd() is used."""
     _scrub_ci_env(monkeypatch)
@@ -133,9 +130,7 @@ def test_build_environment_refs_falls_back_to_cwd_when_no_workspace_root(
     # compare via resolve() to avoid spurious mismatches.
     expected = os.path.realpath(str(tmp_path))
     actual = os.path.realpath(workspace[0].env_id)
-    assert expected == actual, (
-        f"workspace ref should mirror cwd; expected {expected}, got {actual}"
-    )
+    assert expected == actual, f"workspace ref should mirror cwd; expected {expected}, got {actual}"
 
 
 # ---------------------------------------------------------------------------
@@ -157,12 +152,9 @@ def test_build_environment_refs_includes_branch_range_when_provided(
     )
 
     branch = [r for r in refs if r.env_kind == "branch_range"]
-    assert len(branch) == 1, (
-        f"expected exactly one branch_range ref, got {branch}"
-    )
+    assert len(branch) == 1, f"expected exactly one branch_range ref, got {branch}"
     assert branch[0].env_id == "abc1234..def5678", (
-        f"branch_range env_id should echo the input; "
-        f"got {branch[0].env_id!r}"
+        f"branch_range env_id should echo the input; got {branch[0].env_id!r}"
     )
 
 
@@ -177,9 +169,7 @@ def test_build_environment_refs_omits_branch_range_when_absent(
     refs = build_environment_refs(workspace_root="/repo/example")
 
     kinds = [r.env_kind for r in refs]
-    assert "branch_range" not in kinds, (
-        f"branch_range should be absent without commit_range; got {kinds}"
-    )
+    assert "branch_range" not in kinds, f"branch_range should be absent without commit_range; got {kinds}"
 
 
 def test_build_environment_refs_omits_branch_range_on_empty_string(
@@ -196,9 +186,7 @@ def test_build_environment_refs_omits_branch_range_on_empty_string(
     )
 
     kinds = [r.env_kind for r in refs]
-    assert "branch_range" not in kinds, (
-        f"empty commit_range should not yield a branch_range ref; got {kinds}"
-    )
+    assert "branch_range" not in kinds, f"empty commit_range should not yield a branch_range ref; got {kinds}"
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +209,7 @@ def test_build_environment_refs_canonical_order_in_ci(monkeypatch) -> None:
     )
 
     kinds = [r.env_kind for r in refs]
-    assert kinds == ["ci_job", "workspace", "branch_range"], (
-        f"unexpected ref order: {kinds}"
-    )
+    assert kinds == ["ci_job", "workspace", "branch_range"], f"unexpected ref order: {kinds}"
 
 
 def test_build_environment_refs_canonical_order_local(monkeypatch) -> None:
@@ -235,9 +221,7 @@ def test_build_environment_refs_canonical_order_local(monkeypatch) -> None:
     refs = build_environment_refs(workspace_root="/repo/example")
 
     kinds = [r.env_kind for r in refs]
-    assert kinds == ["workspace", "local_run"], (
-        f"unexpected ref order: {kinds}"
-    )
+    assert kinds == ["workspace", "local_run"], f"unexpected ref order: {kinds}"
 
 
 # ---------------------------------------------------------------------------
@@ -259,9 +243,7 @@ def test_build_environment_refs_honours_explicit_env_arg(monkeypatch) -> None:
     )
 
     kinds = [r.env_kind for r in refs]
-    assert "ci_job" in kinds, (
-        f"explicit env should activate CI detection; got {kinds}"
-    )
+    assert "ci_job" in kinds, f"explicit env should activate CI detection; got {kinds}"
     ci = next(r for r in refs if r.env_kind == "ci_job")
     assert ci.env_id == "circle-99"
 
@@ -275,9 +257,7 @@ def test_build_environment_refs_is_reexported_from_roam_evidence() -> None:
     """The function must be importable as ``from roam.evidence import build_environment_refs``."""
     from roam import evidence
 
-    assert hasattr(evidence, "build_environment_refs"), (
-        "build_environment_refs must be re-exported from roam.evidence"
-    )
+    assert hasattr(evidence, "build_environment_refs"), "build_environment_refs must be re-exported from roam.evidence"
     # Same callable (not a wrapper).
     from roam.evidence.env_refs import build_environment_refs as direct
 

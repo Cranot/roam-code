@@ -9,7 +9,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Pure-function fixture
 # ---------------------------------------------------------------------------
@@ -19,10 +18,7 @@ def test_classify_pure_function_returns_none(project_factory, monkeypatch):
     """A function that does no I/O / spawn / mutation classifies as 'none'."""
     proj = project_factory(
         {
-            "src/pure.py": (
-                "def add(a, b):\n"
-                "    return a + b\n"
-            ),
+            "src/pure.py": ("def add(a, b):\n    return a + b\n"),
         }
     )
     monkeypatch.chdir(proj)
@@ -215,13 +211,7 @@ def test_symbol_filter_returns_only_one(project_factory, monkeypatch):
     """`classify_side_effects(conn, symbol_name='X')` scopes to that one symbol."""
     proj = project_factory(
         {
-            "src/two.py": (
-                "def alpha():\n"
-                "    return 1\n"
-                "\n"
-                "def beta():\n"
-                "    return 2\n"
-            ),
+            "src/two.py": ("def alpha():\n    return 1\n\ndef beta():\n    return 2\n"),
         }
     )
     monkeypatch.chdir(proj)

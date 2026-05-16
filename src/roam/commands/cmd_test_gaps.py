@@ -1,4 +1,15 @@
-"""Find changed symbols that lack test coverage."""
+"""Find changed symbols that lack test coverage.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because test-gaps outputs are invocation-scoped coverage-gap
+aggregates (changed symbols missing a tested-by edge across the
+current diff) — not per-location code violations. The output
+describes "absence of test edges", not a defect at a source
+coordinate; SARIF audiences scan for code-quality / security findings
+rather than diff-scoped coverage rollups. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +18,12 @@ from collections import deque
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import (
     get_changed_files,
     is_test_file,
     resolve_changed_to_db,
 )
-from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import load_symbol_coverage_map
 from roam.db.connection import batched_in, find_project_root, open_db

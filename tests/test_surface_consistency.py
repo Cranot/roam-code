@@ -34,16 +34,14 @@ canonical "what tools EXIST" set, independent of which preset is active.
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
-
 import json
+import re
 
 from click.testing import CliRunner
 
-from roam.cli import _CATEGORIES, _COMMANDS, _DEPRECATED_COMMANDS, cli as roam_cli
+from roam.cli import _CATEGORIES, _COMMANDS, _DEPRECATED_COMMANDS
+from roam.cli import cli as roam_cli
 from roam.commands.cmd_surface import _build_surface
-
 from tests._helpers.repo_root import repo_root
 
 # ---------------------------------------------------------------------------
@@ -89,9 +87,7 @@ def test_every_command_is_categorised_or_allowlisted():
     uncategorised = [
         name
         for name in _COMMANDS
-        if name not in categorised
-        and name not in _INTENTIONALLY_UNCATEGORISED
-        and name not in _DEPRECATED_COMMANDS
+        if name not in categorised and name not in _INTENTIONALLY_UNCATEGORISED and name not in _DEPRECATED_COMMANDS
     ]
     assert not uncategorised, (
         f"{len(uncategorised)} command(s) in _COMMANDS have no _CATEGORIES entry "

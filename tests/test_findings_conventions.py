@@ -31,7 +31,6 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_conventions import (
     CONVENTIONS_DETECTOR_VERSION,
     _conventions_finding_id,
@@ -39,8 +38,8 @@ from roam.commands.cmd_conventions import (
     _emit_conventions_findings,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -132,25 +131,15 @@ def test_conventions_finding_id_is_deterministic():
     assert a == b
     assert a.startswith("conventions:naming-outlier:")
     # Different name → different id.
-    assert _conventions_finding_id(
-        "python", "functions", "other", "src/a.py", 10
-    ) != a
+    assert _conventions_finding_id("python", "functions", "other", "src/a.py", 10) != a
     # Different file → different id.
-    assert _conventions_finding_id(
-        "python", "functions", "goodSnakeCase", "src/b.py", 10
-    ) != a
+    assert _conventions_finding_id("python", "functions", "goodSnakeCase", "src/b.py", 10) != a
     # Different line → different id.
-    assert _conventions_finding_id(
-        "python", "functions", "goodSnakeCase", "src/a.py", 11
-    ) != a
+    assert _conventions_finding_id("python", "functions", "goodSnakeCase", "src/a.py", 11) != a
     # Different family → different id.
-    assert _conventions_finding_id(
-        "js", "functions", "goodSnakeCase", "src/a.py", 10
-    ) != a
+    assert _conventions_finding_id("js", "functions", "goodSnakeCase", "src/a.py", 10) != a
     # Different group → different id.
-    assert _conventions_finding_id(
-        "python", "classes", "goodSnakeCase", "src/a.py", 10
-    ) != a
+    assert _conventions_finding_id("python", "classes", "goodSnakeCase", "src/a.py", 10) != a
 
 
 def test_conventions_rerun_upserts_not_duplicates(tmp_path):
@@ -165,16 +154,13 @@ def test_conventions_rerun_upserts_not_duplicates(tmp_path):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'conventions'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'conventions'"
                 ).fetchall()
             }
             first_count = conn.execute(
                 "SELECT COUNT(*) FROM findings WHERE source_detector = 'conventions'"
             ).fetchone()[0]
-        assert first_count == len(first_ids), (
-            "duplicate finding_id_str rows on first run"
-        )
+        assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same detector predicate → same ids.
         runner = CliRunner()
@@ -185,8 +171,7 @@ def test_conventions_rerun_upserts_not_duplicates(tmp_path):
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'conventions'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'conventions'"
                 ).fetchall()
             }
             second_count = conn.execute(
@@ -245,17 +230,11 @@ def test_conventions_finding_subject_links_to_symbols_row(tmp_path):
 
         with open_db(readonly=True) as conn:
             rows = conn.execute(
-                "SELECT subject_id FROM findings "
-                "WHERE source_detector = 'conventions' AND subject_id IS NOT NULL"
+                "SELECT subject_id FROM findings WHERE source_detector = 'conventions' AND subject_id IS NOT NULL"
             ).fetchall()
-            assert len(rows) >= 1, (
-                "expected at least one conventions finding with a resolved "
-                "subject_id"
-            )
+            assert len(rows) >= 1, "expected at least one conventions finding with a resolved subject_id"
             for r in rows:
-                sym = conn.execute(
-                    "SELECT id, name FROM symbols WHERE id = ?", (r["subject_id"],)
-                ).fetchone()
+                sym = conn.execute("SELECT id, name FROM symbols WHERE id = ?", (r["subject_id"],)).fetchone()
                 assert sym is not None, f"orphan subject_id {r['subject_id']}"
     finally:
         os.chdir(old_cwd)
@@ -311,14 +290,9 @@ def test_conventions_tier_mapping_community_default_is_structural(tmp_path):
                 "line": 20,
             },
         ]
-        written = _emit_conventions_findings(
-            conn, outliers, CONVENTIONS_DETECTOR_VERSION
-        )
+        written = _emit_conventions_findings(conn, outliers, CONVENTIONS_DETECTOR_VERSION)
         assert written == len(outliers)
-        rows = conn.execute(
-            "SELECT confidence FROM findings "
-            "WHERE source_detector = 'conventions'"
-        ).fetchall()
+        rows = conn.execute("SELECT confidence FROM findings WHERE source_detector = 'conventions'").fetchall()
         assert len(rows) == len(outliers)
         for r in rows:
             assert r["confidence"] == "structural"
@@ -345,14 +319,9 @@ def test_conventions_tier_mapping_empirical_is_heuristic(tmp_path):
                 "line": 10,
             },
         ]
-        written = _emit_conventions_findings(
-            conn, outliers, CONVENTIONS_DETECTOR_VERSION
-        )
+        written = _emit_conventions_findings(conn, outliers, CONVENTIONS_DETECTOR_VERSION)
         assert written == 1
-        row = conn.execute(
-            "SELECT confidence FROM findings "
-            "WHERE source_detector = 'conventions'"
-        ).fetchone()
+        row = conn.execute("SELECT confidence FROM findings WHERE source_detector = 'conventions'").fetchone()
         assert row["confidence"] == "heuristic"
 
 
@@ -381,18 +350,14 @@ def test_conventions_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_conventions(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "conventions"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "conventions"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "conventions" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "conventions" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "conventions" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -435,10 +400,9 @@ def test_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'conventions'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'conventions'").fetchone()[
+                    0
+                ]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, "non-persist conventions still wrote to findings"
@@ -483,10 +447,9 @@ def test_other_4_surfaces_do_not_persist_conventions(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'conventions'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'conventions'").fetchone()[
+                    0
+                ]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, (
@@ -587,14 +550,20 @@ def test_conventions_skips_tests_fixtures_directory(tmp_path):
         encoding="utf-8",
     )
     import subprocess as _subprocess
+
     _subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
     _subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
     _subprocess.run(
         ["git", "commit", "-m", "init", "--allow-empty"],
-        cwd=str(proj), capture_output=True,
-        env={**os.environ,
-             "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+        cwd=str(proj),
+        capture_output=True,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
     )
 
     old_cwd = os.getcwd()
@@ -606,10 +575,7 @@ def test_conventions_skips_tests_fixtures_directory(tmp_path):
         # All violations come from the fixture; with the exclusion in
         # place there must be NONE.
         offending = [v for v in violations if "fixtures" in (v.get("file") or "")]
-        assert offending == [], (
-            "tests/fixtures/ identifiers leaked into the conventions detector: "
-            f"{offending}"
-        )
+        assert offending == [], f"tests/fixtures/ identifiers leaked into the conventions detector: {offending}"
         # And the real source file's snake_case function must not
         # itself be flagged (sanity).
         from_real = [v for v in violations if (v.get("file") or "").endswith("real.py")]
@@ -653,8 +619,7 @@ def test_conventions_accepts_python_typealias_pascalcase(tmp_path):
         assert runner.invoke(cli, ["index"]).exit_code == 0
         violations = _conventions_violations(runner)
         # The PascalCase type-alias names must NOT appear as outliers.
-        alias_names = {"PathLike", "LockMode", "CommandTarget",
-                       "Finding", "DetectorSpec", "MaybeName"}
+        alias_names = {"PathLike", "LockMode", "CommandTarget", "Finding", "DetectorSpec", "MaybeName"}
         leaked = [v["name"] for v in violations if v.get("name") in alias_names]
         assert leaked == [], f"type aliases flagged as PascalCase variables: {leaked}"
     finally:

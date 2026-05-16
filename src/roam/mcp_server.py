@@ -928,7 +928,7 @@ def _tool(
     if task_required and task_optional:
         raise ValueError(
             f"_tool({name!r}): task_required and task_optional are disjoint — "
-            f"pick one (preferably task_mode=\"required\" or \"optional\")"
+            f'pick one (preferably task_mode="required" or "optional")'
         )
 
     def decorator(fn):
@@ -1003,9 +1003,7 @@ def _tool(
         # surfaces the hinted description even when fastmcp is absent
         # (tests, CLI-only installs).
         if _mcp_preflight is not None:
-            effective_description = _mcp_preflight.maybe_decorate_description(
-                name, description or ""
-            )
+            effective_description = _mcp_preflight.maybe_decorate_description(name, description or "")
         else:
             effective_description = description or ""
         if effective_description:
@@ -1428,14 +1426,10 @@ _W332_DEPRECATED_INPUT_PATH_PARAMS: frozenset[str] = frozenset(
 # lint case in ``test_mcp_param_names.py`` parametrizes over this set;
 # existing wrappers carrying these names are listed in the lint's
 # ``_PRE_W332_EXEMPT`` table with a per-entry rationale.
-_W347_DEPRECATED_PARAMS: frozenset[str] = frozenset(
-    {"file_path", "filename", "filepath", "subject"}
-)
+_W347_DEPRECATED_PARAMS: frozenset[str] = frozenset({"file_path", "filename", "filepath", "subject"})
 
 
-def _normalize_aliases(
-    tool_name: str, kwargs: dict, accepted: set[str]
-) -> tuple[dict, list[str]]:
+def _normalize_aliases(tool_name: str, kwargs: dict, accepted: set[str]) -> tuple[dict, list[str]]:
     """Rewrite alias keys in ``kwargs`` to canonical names.
 
     Parameters
@@ -1481,16 +1475,12 @@ def _normalize_aliases(
                 continue
             if alias in out and canon not in out:
                 out[canon] = out.pop(alias)
-                warnings.append(
-                    f"{tool_name}: param '{alias}' is deprecated; use '{canon}'"
-                )
+                warnings.append(f"{tool_name}: param '{alias}' is deprecated; use '{canon}'")
             elif alias in out and canon in out:
                 # Both supplied — canonical wins, alias is dropped loudly so
                 # the agent knows its alias was ignored (not silently merged).
                 out.pop(alias)
-                warnings.append(
-                    f"{tool_name}: ignoring '{alias}' (use '{canon}' only)"
-                )
+                warnings.append(f"{tool_name}: ignoring '{alias}' (use '{canon}' only)")
     return out, warnings
 
 
@@ -1538,9 +1528,7 @@ def _collect_alias_candidates(sig) -> tuple[set[str], list[str]]:
     is built by iterating over ``sig.parameters`` which preserves
     declaration order.
     """
-    accepted: set[str] = {
-        p.name for p in sig.parameters.values() if p.name in _PARAM_ALIASES
-    }
+    accepted: set[str] = {p.name for p in sig.parameters.values() if p.name in _PARAM_ALIASES}
     if not accepted:
         return accepted, []
 
@@ -1578,9 +1566,7 @@ def _build_merged_signature(sig, accepted: set[str], aliases_for_tool: list[str]
     """
     import inspect as _inspect
 
-    canonicals_with_alias = {
-        canon for canon in accepted if any(a != canon for a in _PARAM_ALIASES[canon])
-    }
+    canonicals_with_alias = {canon for canon in accepted if any(a != canon for a in _PARAM_ALIASES[canon])}
 
     original_params = list(sig.parameters.values())
 
@@ -1614,9 +1600,7 @@ def _build_merged_signature(sig, accepted: set[str], aliases_for_tool: list[str]
         # POSITIONAL_OR_KEYWORD or POSITIONAL_ONLY
         if p.name in canonicals_with_alias and p.default is _inspect.Parameter.empty:
             if p.name in must_promote_to_kwonly:
-                keyword_only_params.append(
-                    p.replace(kind=_inspect.Parameter.KEYWORD_ONLY, default="")
-                )
+                keyword_only_params.append(p.replace(kind=_inspect.Parameter.KEYWORD_ONLY, default=""))
             else:
                 positional_params.append(p.replace(default=""))
         else:
@@ -2169,7 +2153,7 @@ def _mcp_receipts_root() -> "Path":
 
 def _write_mcp_receipt(
     tool_name: str,
-    args: "Mapping[str, object]",
+    args: "Mapping[str, object]",  # noqa: F821 — string annotation; `from __future__ import annotations` keeps it lazy, no runtime import needed
     state: dict,
 ) -> None:
     """Construct an ``McpDecisionReceipt`` and atomically write it to disk.
@@ -2259,7 +2243,10 @@ import contextlib as _contextlib
 
 
 @_contextlib.contextmanager
-def _mcp_receipt_for(tool_name: str, args: "Mapping[str, object]"):
+def _mcp_receipt_for(
+    tool_name: str,
+    args: "Mapping[str, object]",  # noqa: F821 — string annotation; `from __future__ import annotations` keeps it lazy
+):
     """Emit an ``McpDecisionReceipt`` for a sensitive tool call.
 
     Yields a mutable dict the caller can populate with output info
@@ -2656,7 +2643,7 @@ def _maybe_pass_through_structured_json(output: str, exit_code: int) -> dict | N
     stripped = output.strip()
     if not stripped:
         return None
-    if stripped[0] not in "{[\"":
+    if stripped[0] not in '{["':
         return None
     try:
         parsed = json.loads(stripped)
@@ -3287,8 +3274,7 @@ def _compound_envelope(
         default_verdict = " | ".join(verdicts)
     elif all_failed:
         default_verdict = (
-            f"compound operation: {len(failed_subcommands)} subcommand(s) failed "
-            f"({', '.join(failed_subcommands)})"
+            f"compound operation: {len(failed_subcommands)} subcommand(s) failed ({', '.join(failed_subcommands)})"
         )
     else:
         default_verdict = "compound operation completed"
@@ -4530,10 +4516,7 @@ def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
         supported = sorted(_VP_PLAN_KIND_FIELDS.keys())
         _block(
             "UNKNOWN_KIND",
-            (
-                f"unsupported operation kind: {kind!r}. "
-                f"supported kinds: {', '.join(supported)}."
-            ),
+            (f"unsupported operation kind: {kind!r}. supported kinds: {', '.join(supported)}."),
             supported_kinds=supported,
             expected_fields=dict(_VP_PLAN_KIND_FIELDS),
         )
@@ -5537,7 +5520,7 @@ def retrieve_context(
     for raw in (seed_files or "").split(","):
         path = raw.strip()
         if path:
-            args.extend(["--seed-files", path])
+            args.extend(["--seed-file", path])
     if dry_run:
         args.append("--dry-run")
     return _run_roam(args, root)
@@ -6749,7 +6732,7 @@ def verify_imports(file: str = "", root: str = ".") -> dict:
     """
     args = ["verify-imports"]
     if file:
-        args.extend(["--file", file])
+        args.extend(["--path", file])
     return _run_roam(args, root)
 
 
@@ -7461,7 +7444,7 @@ def relate(symbols: list[str], files: list[str] | None = None, depth: int = 3, r
     args = ["relate"] + symbols
     if files:
         for f in files:
-            args.extend(["--file", f])
+            args.extend(["--path", f])
     if depth != 3:
         args.extend(["--depth", str(depth)])
     return _run_roam(args, root)
@@ -7788,7 +7771,7 @@ def effects(symbol: str = "", path: str = "", effect_type: str = "", root: str =
     if symbol:
         args.append(symbol)
     if path:
-        args.extend(["--file", path])
+        args.extend(["--path", path])
     if effect_type:
         args.extend(["--type", effect_type])
     return _run_roam(args, root)
@@ -8423,7 +8406,7 @@ async def orchestrate(
     args = ["orchestrate", "--agents", str(n_agents)]
     if files:
         for f in files:
-            args.extend(["--files", f])
+            args.extend(["--file", f])
     if staged:
         args.append("--staged")
     if _mcp_progress is not None and ctx is not None:
@@ -11486,11 +11469,12 @@ def roam_x_lang(scope: str = "", root: str = ".") -> dict:
 @_tool(
     name="roam_smells",
     description=(
-        "Run 15 deterministic code-smell detectors over the indexed "
+        "Run 24 deterministic code-smell detectors over the indexed "
         "codebase: brain methods, god classes, deep nesting, shotgun "
         "surgery, feature envy, long parameter lists, large classes, "
-        "dead params, low cohesion, message chains, data clumps, and "
-        "more. Different from ``roam_vibe_check`` (AI-rot pattern "
+        "dead params, low cohesion, message chains, data clumps, type "
+        "switches, cross-layer clones, parallel hierarchies, and more. "
+        "Different from ``roam_vibe_check`` (AI-rot pattern "
         "regex) and ``roam_patterns`` (positive design patterns) -- "
         "this surfaces negative structural anti-patterns from DB "
         "queries."
@@ -12960,9 +12944,7 @@ def roam_recommend(
 
     Returns: ``{summary: {verdict, count}, recommendations: [...]}``.
     """
-    return _run_roam(
-        ["recommend", symbol, "--limit", str(limit)], root
-    )
+    return _run_roam(["recommend", symbol, "--limit", str(limit)], root)
 
 
 # W304: roam_plan
@@ -13027,7 +13009,7 @@ def roam_plan(
     if symbol:
         args.append(symbol)
     if path:
-        args.extend(["--file", path])
+        args.extend(["--path", path])
     if staged:
         args.append("--staged")
     return _run_roam(args, root)
@@ -13129,7 +13111,7 @@ def roam_agent_context(
         "a 0..100 composite (run completion, gate adherence, "
         "preflight compliance, blast accuracy, replay survival). "
         "Empty state (no runs / no matching runs) returns a clean "
-        "envelope with ``state: \"no_data\"`` -- never empty stdout, "
+        'envelope with ``state: "no_data"`` -- never empty stdout, '
         "never a crash. Different from ``roam_runs_verify`` (HMAC "
         "tamper-detection) -- this is the per-agent quality score "
         "across runs."
@@ -13815,8 +13797,7 @@ def roam_oracle_is_reachable_from_entry(
     entry_points: [...]}``.
     """
     return _run_roam(
-        ["oracle", "is-reachable-from-entry", symbol,
-         "--max-hops", str(max_hops)],
+        ["oracle", "is-reachable-from-entry", symbol, "--max-hops", str(max_hops)],
         root,
     )
 
@@ -14675,7 +14656,7 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
             click.echo(
                 "error: mcp-server-card.json not reachable via importlib.resources "
                 f"({exc!r}). Check pyproject.toml ships "
-                "\"roam\" = [\"mcp-server-card.json\"] (W610 drift-guard).",
+                '"roam" = ["mcp-server-card.json"] (W610 drift-guard).',
                 err=True,
             )
             raise SystemExit(1)
@@ -14937,14 +14918,10 @@ else:
 # single source of truth. Adding a flagged tool requires only the matching
 # kwarg on its decorator; no separate set to keep in sync.
 
-_DESTRUCTIVE_TOOLS = frozenset(
-    name for name, meta in _TOOL_METADATA.items() if meta.get("destructive", False)
-)
+_DESTRUCTIVE_TOOLS = frozenset(name for name, meta in _TOOL_METADATA.items() if meta.get("destructive", False))
 
 # ROADMAP A1 / W108: derive _NON_READ_ONLY_TOOLS from _TOOL_METADATA
-_NON_READ_ONLY_TOOLS = frozenset(
-    name for name, meta in _TOOL_METADATA.items() if not meta.get("read_only", True)
-)
+_NON_READ_ONLY_TOOLS = frozenset(name for name, meta in _TOOL_METADATA.items() if not meta.get("read_only", True))
 # ROADMAP A1 / W113: derive _NON_IDEMPOTENT_TOOLS from _TOOL_METADATA.
 # Independent axis from read_only (in current data they coincide — destructive
 # tools are all also non-idempotent — but the semantic distinction matters
@@ -14952,17 +14929,13 @@ _NON_READ_ONLY_TOOLS = frozenset(
 # returns a UUID). The decorator's ``idempotent=...`` kwarg is the source
 # of truth; this derived view is what ``_tool_annotations`` and downstream
 # consumers read.
-_NON_IDEMPOTENT_TOOLS = frozenset(
-    name for name, meta in _TOOL_METADATA.items() if not meta.get("idempotent", True)
-)
+_NON_IDEMPOTENT_TOOLS = frozenset(name for name, meta in _TOOL_METADATA.items() if not meta.get("idempotent", True))
 
 # W99 + W107: ``_TASK_REQUIRED_TOOLS`` derived from ``task_mode == "required"``.
 # Same finalization pattern as ``_DESTRUCTIVE_TOOLS`` above. Reads the canonical
 # 3-way enum rather than the legacy ``task_required`` bool, but the boolean
 # field is still populated in ``_TOOL_METADATA`` for downstream consumers.
-_TASK_REQUIRED_TOOLS = frozenset(
-    name for name, meta in _TOOL_METADATA.items() if meta.get("task_mode") == "required"
-)
+_TASK_REQUIRED_TOOLS = frozenset(name for name, meta in _TOOL_METADATA.items() if meta.get("task_mode") == "required")
 
 # W105 + W107: ``_TASK_OPTIONAL_TOOLS`` derived from ``task_mode == "optional"``.
 # Same finalization pattern as the two above. Pre-W107 the if/elif chain inside
@@ -14970,9 +14943,7 @@ _TASK_REQUIRED_TOOLS = frozenset(
 # both flags; the enum makes that impossible by construction (the decorator
 # raises ValueError if both legacy bools are True). Disjointness is also pinned
 # in ``tests/test_task_optional_tools_derived.py``.
-_TASK_OPTIONAL_TOOLS = frozenset(
-    name for name, meta in _TOOL_METADATA.items() if meta.get("task_mode") == "optional"
-)
+_TASK_OPTIONAL_TOOLS = frozenset(name for name, meta in _TOOL_METADATA.items() if meta.get("task_mode") == "optional")
 
 
 # ---------------------------------------------------------------------------

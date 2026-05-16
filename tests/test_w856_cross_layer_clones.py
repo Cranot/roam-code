@@ -35,7 +35,6 @@ from roam.catalog.clones_cross_layer import (
     detect_cross_layer_clones,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tiny in-memory schema — subset matching what the detector reads.
 # ---------------------------------------------------------------------------
@@ -98,8 +97,7 @@ def _add_function(
 ) -> int:
     sid = _next_id()
     conn.execute(
-        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, ?, ?, ?, ?, ?)",
         (sid, file_id, name, kind, line, line + 20),
     )
     return sid
@@ -112,9 +110,7 @@ def _add_call(conn: sqlite3.Connection, source_id: int, target_id: int) -> None:
     )
 
 
-def _seed_callees(
-    conn: sqlite3.Connection, *, host_file_id: int, names: list[str]
-) -> list[int]:
+def _seed_callees(conn: sqlite3.Connection, *, host_file_id: int, names: list[str]) -> list[int]:
     """Helper: create a list of stub callee symbols and return their ids."""
     out: list[int] = []
     for n in names:
@@ -148,10 +144,7 @@ class TestLayerClassification:
         assert _classify_layer("") is None
 
     def test_windows_style_path_normalised(self) -> None:
-        assert (
-            _classify_layer("app\\http\\controllers\\OrderController.py")
-            == "controller"
-        )
+        assert _classify_layer("app\\http\\controllers\\OrderController.py") == "controller"
 
 
 # ---------------------------------------------------------------------------
@@ -198,9 +191,7 @@ class TestCrossLayerCloneDetector:
 
         # Controller side
         ctrl_file = _add_file(conn, "app/http/controllers/OrderController.py")
-        ctrl_compute = _add_function(
-            conn, file_id=ctrl_file, name="computeTotal", line=42
-        )
+        ctrl_compute = _add_function(conn, file_id=ctrl_file, name="computeTotal", line=42)
         _add_call(conn, ctrl_compute, apply_tax)
         _add_call(conn, ctrl_compute, apply_discount)
         _add_call(conn, ctrl_compute, sum_items)
@@ -208,9 +199,7 @@ class TestCrossLayerCloneDetector:
 
         # Service side -- shares 3 of 4 callees -> jaccard 3/4 = 0.75 (>=0.7).
         svc_file = _add_file(conn, "src/services/order_service.py")
-        svc_calc = _add_function(
-            conn, file_id=svc_file, name="calculateAmount", line=17
-        )
+        svc_calc = _add_function(conn, file_id=svc_file, name="calculateAmount", line=17)
         _add_call(conn, svc_calc, apply_tax)
         _add_call(conn, svc_calc, apply_discount)
         _add_call(conn, svc_calc, sum_items)
@@ -237,9 +226,7 @@ class TestCrossLayerCloneDetector:
         """Controller + repository sharing 3+ callees also emit (any cross-pair)."""
         conn = _make_db(tmp_path)
         domain = _add_file(conn, "src/domain/account.py")
-        a, b, c = _seed_callees(
-            conn, host_file_id=domain, names=["validate_iban", "lookup_bank", "encrypt"]
-        )
+        a, b, c = _seed_callees(conn, host_file_id=domain, names=["validate_iban", "lookup_bank", "encrypt"])
 
         ctrl_file = _add_file(conn, "app/controllers/AccountController.py")
         ctrl = _add_function(conn, file_id=ctrl_file, name="openAccount", line=5)
@@ -267,9 +254,7 @@ class TestCrossLayerCloneDetector:
         """Two controllers sharing callees are NOT flagged (W95/W855 territory)."""
         conn = _make_db(tmp_path)
         domain = _add_file(conn, "src/domain/cart.py")
-        a, b, c, d = _seed_callees(
-            conn, host_file_id=domain, names=["price", "tax", "discount", "round_currency"]
-        )
+        a, b, c, d = _seed_callees(conn, host_file_id=domain, names=["price", "tax", "discount", "round_currency"])
 
         c1 = _add_file(conn, "app/controllers/CartController.py")
         c2 = _add_file(conn, "app/controllers/CheckoutController.py")
@@ -337,9 +322,7 @@ class TestCrossLayerCloneDetector:
         """Two functions in different layers with 0 shared callees -> no finding."""
         conn = _make_db(tmp_path)
         domain = _add_file(conn, "src/domain/m.py")
-        a, b, c, d, e, f = _seed_callees(
-            conn, host_file_id=domain, names=["a", "b", "c", "d", "e", "f"]
-        )
+        a, b, c, d, e, f = _seed_callees(conn, host_file_id=domain, names=["a", "b", "c", "d", "e", "f"])
 
         ctrl = _add_file(conn, "app/controllers/X.py")
         svc = _add_file(conn, "src/services/Y.py")
@@ -361,9 +344,7 @@ class TestCrossLayerCloneDetector:
         """Finding's metric_value is the rounded Jaccard score."""
         conn = _make_db(tmp_path)
         domain = _add_file(conn, "src/domain/m.py")
-        a, b, c, d = _seed_callees(
-            conn, host_file_id=domain, names=["a", "b", "c", "d"]
-        )
+        a, b, c, d = _seed_callees(conn, host_file_id=domain, names=["a", "b", "c", "d"])
 
         ctrl = _add_file(conn, "app/controllers/X.py")
         svc = _add_file(conn, "src/services/Y.py")
@@ -388,9 +369,7 @@ class TestCrossLayerCloneDetector:
         """Evidence dict carries shared_callees, layer_a, layer_b, file_a, file_b."""
         conn = _make_db(tmp_path)
         domain = _add_file(conn, "src/domain/m.py")
-        a, b, c = _seed_callees(
-            conn, host_file_id=domain, names=["alpha", "beta", "gamma"]
-        )
+        a, b, c = _seed_callees(conn, host_file_id=domain, names=["alpha", "beta", "gamma"])
 
         ctrl = _add_file(conn, "app/controllers/X.py")
         svc = _add_file(conn, "src/services/Y.py")
@@ -428,9 +407,7 @@ class TestCrossLayerCloneDetector:
         assert detect_cross_layer_clones(conn) == []
         conn.close()
 
-    def test_callable_symbols_present_but_no_edges_no_findings(
-        self, tmp_path: Path
-    ) -> None:
+    def test_callable_symbols_present_but_no_edges_no_findings(self, tmp_path: Path) -> None:
         """Layered symbols exist but have zero outbound calls -> no findings."""
         conn = _make_db(tmp_path)
         ctrl = _add_file(conn, "app/controllers/X.py")

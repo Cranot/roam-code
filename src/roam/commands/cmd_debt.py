@@ -2,6 +2,18 @@
 
 Core insight (CodeScene): unhealthy code in hotspots (frequently changed files)
 costs 15x more than unhealthy cold code.  debt_score = health_penalty * hotspot_factor.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because debt outputs are invocation-scoped technical-debt
+rollups (debt_score = health_penalty * hotspot_factor aggregated across
+the workspace) — not per-location code violations. The rollup describes
+a portfolio-level prioritization signal rather than a defect at a
+source coordinate; SARIF consumers scan for per-finding rule_id +
+region rows. When SARIF-shaped findings are needed, run the underlying
+detectors directly (``roam smells --sarif``, ``roam dead --sarif``,
+``roam complexity --sarif``) — debt rolls them up but does not produce
+novel per-finding rows. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH propagation plan + W1224-audit memo.
 """
 
 from __future__ import annotations

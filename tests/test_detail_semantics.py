@@ -67,9 +67,7 @@ class TestGuardDetailSemantics:
         assert isinstance(data["callees"], list)
         assert isinstance(data["tests"], list)
 
-    def test_guard_default_omits_progressive_disclosure_flags(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_guard_default_omits_progressive_disclosure_flags(self, cli_runner, indexed_project, monkeypatch):
         """guard uses custom caps, NOT ``strip_list_payloads``. So the
         ``detail_available`` and ``truncated`` flags that
         ``strip_list_payloads`` writes into ``summary`` must NOT appear.
@@ -84,9 +82,7 @@ class TestGuardDetailSemantics:
             "progressive-disclosure flags. See cmd_guard.py docstring."
         )
 
-    def test_guard_detail_keeps_same_top_level_shape(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_guard_detail_keeps_same_top_level_shape(self, cli_runner, indexed_project, monkeypatch):
         """``--detail`` must NOT change the top-level envelope shape --
         same keys appear in both modes. Only list lengths and the
         per-step ``details``/``run:`` text-mode expansion differ."""
@@ -103,9 +99,7 @@ class TestGuardDetailSemantics:
             f"detail={sorted(detail_data.keys())}"
         )
 
-    def test_guard_summary_counts_reflect_untruncated_totals(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_guard_summary_counts_reflect_untruncated_totals(self, cli_runner, indexed_project, monkeypatch):
         """The summary's ``callers``/``callees``/``test_files`` numbers
         must reflect totals, not the (possibly capped) payload length.
         Pattern 3 fix: each count comes with ``caller_metric_definition``."""
@@ -130,46 +124,33 @@ class TestGuardDetailSemantics:
 class TestPlanRefactorDetailSemantics:
     """Pin plan-refactor's truncate-in-place ``--detail`` contract."""
 
-    def test_plan_refactor_default_keeps_plan_array(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_plan_refactor_default_keeps_plan_array(self, cli_runner, indexed_project, monkeypatch):
         """Default ``plan-refactor`` must keep the full ``plan`` array --
         the plan is the headline output. ``strip_list_payloads`` would drop
         it; plan-refactor MUST NOT."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(
-            cli_runner, ["plan-refactor", "create_user"], json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["plan-refactor", "create_user"], json_mode=True)
         data = parse_json_output(result, "plan-refactor")
         assert "plan" in data, "plan-refactor default mode must keep plan array"
         assert isinstance(data["plan"], list)
         assert len(data["plan"]) >= 1, "plan must have at least one step"
 
-    def test_plan_refactor_default_omits_progressive_disclosure_flags(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_plan_refactor_default_omits_progressive_disclosure_flags(self, cli_runner, indexed_project, monkeypatch):
         """plan-refactor uses custom caps, NOT ``strip_list_payloads``. So
         the ``detail_available`` and ``truncated`` flags must NOT appear
         in the summary."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(
-            cli_runner, ["plan-refactor", "create_user"], json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["plan-refactor", "create_user"], json_mode=True)
         data = parse_json_output(result, "plan-refactor")
         summary = data["summary"]
         assert "detail_available" not in summary, (
-            "plan-refactor uses custom caps -- it must NOT use "
-            "strip_list_payloads's progressive-disclosure flags."
+            "plan-refactor uses custom caps -- it must NOT use strip_list_payloads's progressive-disclosure flags."
         )
 
-    def test_plan_refactor_detail_keeps_same_top_level_shape(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_plan_refactor_detail_keeps_same_top_level_shape(self, cli_runner, indexed_project, monkeypatch):
         """``--detail`` must not change envelope shape, only payload sizes."""
         monkeypatch.chdir(indexed_project)
-        default_result = invoke_cli(
-            cli_runner, ["plan-refactor", "create_user"], json_mode=True
-        )
+        default_result = invoke_cli(cli_runner, ["plan-refactor", "create_user"], json_mode=True)
         default_data = parse_json_output(default_result, "plan-refactor")
         detail_result = invoke_cli(
             cli_runner,
@@ -184,15 +165,11 @@ class TestPlanRefactorDetailSemantics:
             f"detail={sorted(detail_data.keys())}"
         )
 
-    def test_plan_refactor_detail_expands_simulation_previews(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_plan_refactor_detail_expands_simulation_previews(self, cli_runner, indexed_project, monkeypatch):
         """``--detail`` returns ALL simulation previews; default returns
         at most one. Pin both invariants so future drift is caught."""
         monkeypatch.chdir(indexed_project)
-        default_result = invoke_cli(
-            cli_runner, ["plan-refactor", "create_user"], json_mode=True
-        )
+        default_result = invoke_cli(cli_runner, ["plan-refactor", "create_user"], json_mode=True)
         default_data = parse_json_output(default_result, "plan-refactor")
         detail_result = invoke_cli(
             cli_runner,
@@ -208,8 +185,7 @@ class TestPlanRefactorDetailSemantics:
         assert isinstance(detail_previews, list)
         # Default caps at <=1 preview; detail returns all.
         assert len(default_previews) <= 1, (
-            f"default plan-refactor must cap simulation_previews to <=1, "
-            f"got {len(default_previews)}"
+            f"default plan-refactor must cap simulation_previews to <=1, got {len(default_previews)}"
         )
         assert len(detail_previews) >= len(default_previews)
 
@@ -225,43 +201,27 @@ class TestPlanRefactorDetailSemantics:
 class TestSuggestRefactoringDetailSemantics:
     """Pin suggest-refactoring's truncate-in-place ``--detail`` contract."""
 
-    def test_suggest_refactoring_default_keeps_recommendations_array(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_suggest_refactoring_default_keeps_recommendations_array(self, cli_runner, indexed_project, monkeypatch):
         """Default ``suggest-refactoring`` must keep the
         ``recommendations`` array -- it is the headline output.
         ``strip_list_payloads`` would drop it; this command MUST NOT."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(
-            cli_runner, ["suggest-refactoring", "--min-score", "0"], json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["suggest-refactoring", "--min-score", "0"], json_mode=True)
         data = parse_json_output(result, "suggest-refactoring")
-        assert "recommendations" in data, (
-            "suggest-refactoring default mode must keep recommendations payload"
-        )
+        assert "recommendations" in data, "suggest-refactoring default mode must keep recommendations payload"
         assert isinstance(data["recommendations"], list)
 
-    def test_suggest_refactoring_default_omits_scoring_block(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_suggest_refactoring_default_omits_scoring_block(self, cli_runner, indexed_project, monkeypatch):
         """Default mode drops the ``scoring`` sub-object (the weight
         recipe). ``--detail`` adds it back. Pin both."""
         monkeypatch.chdir(indexed_project)
-        default_result = invoke_cli(
-            cli_runner, ["suggest-refactoring"], json_mode=True
-        )
+        default_result = invoke_cli(cli_runner, ["suggest-refactoring"], json_mode=True)
         default_data = parse_json_output(default_result, "suggest-refactoring")
-        detail_result = invoke_cli(
-            cli_runner, ["--detail", "suggest-refactoring"], json_mode=True
-        )
+        detail_result = invoke_cli(cli_runner, ["--detail", "suggest-refactoring"], json_mode=True)
         detail_data = parse_json_output(detail_result, "suggest-refactoring")
 
-        assert "scoring" not in default_data, (
-            "suggest-refactoring default mode must NOT include 'scoring' block"
-        )
-        assert "scoring" in detail_data, (
-            "suggest-refactoring --detail must include 'scoring' block"
-        )
+        assert "scoring" not in default_data, "suggest-refactoring default mode must NOT include 'scoring' block"
+        assert "scoring" in detail_data, "suggest-refactoring --detail must include 'scoring' block"
         weights = detail_data["scoring"].get("weights", {})
         # Pin the documented weight keys -- if a future change adds/removes
         # one, the docstring should be updated too.
@@ -279,9 +239,7 @@ class TestSuggestRefactoringDetailSemantics:
     ):
         """suggest-refactoring uses custom caps, NOT ``strip_list_payloads``."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(
-            cli_runner, ["suggest-refactoring"], json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["suggest-refactoring"], json_mode=True)
         data = parse_json_output(result, "suggest-refactoring")
         summary = data["summary"]
         assert "detail_available" not in summary, (
@@ -302,9 +260,7 @@ class TestSuggestRefactoringDetailSemantics:
 class TestSummaryEnvelopeUsersStaySummaryEnvelopeUsers:
     """Pin the contract for the 7 commands that DO use ``strip_list_payloads``."""
 
-    def test_smells_default_marks_detail_available(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_smells_default_marks_detail_available(self, cli_runner, indexed_project, monkeypatch):
         """``smells`` uses ``strip_list_payloads`` -- default mode must
         carry ``detail_available: true`` in the summary. This is the
         canonical progressive-disclosure marker the other 6 commands
@@ -320,9 +276,7 @@ class TestSummaryEnvelopeUsersStaySummaryEnvelopeUsers:
             "the W22.3 audit needs to be re-run."
         )
 
-    def test_health_default_marks_detail_available(
-        self, cli_runner, indexed_project, monkeypatch
-    ):
+    def test_health_default_marks_detail_available(self, cli_runner, indexed_project, monkeypatch):
         """Same invariant as ``smells`` -- health is another
         ``strip_list_payloads`` consumer."""
         monkeypatch.chdir(indexed_project)
@@ -330,6 +284,5 @@ class TestSummaryEnvelopeUsersStaySummaryEnvelopeUsers:
         data = parse_json_output(result, "health")
         summary = data["summary"]
         assert summary.get("detail_available") is True, (
-            "health uses strip_list_payloads -- summary must carry "
-            "'detail_available: true'."
+            "health uses strip_list_payloads -- summary must carry 'detail_available: true'."
         )

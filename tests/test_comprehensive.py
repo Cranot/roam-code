@@ -1495,9 +1495,20 @@ class TestErrorHandling:
         assert rc != 0
 
     def test_nonexistent_symbol(self, err_project):
-        """roam symbol with unknown name should fail gracefully."""
+        """roam symbol with unknown name must communicate failure gracefully.
+
+        Pre-Pattern-2c (pre-W1272) this returned a non-zero exit code. The
+        Pattern-2c unresolved-path convention now returns exit code 0 with
+        a "not found" message in stdout (and ``partial_success: true`` on
+        the JSON envelope). Either shape is acceptable — the test asserts
+        the command produces a discoverable not-found signal rather than
+        silently succeeding.
+        """
         out, rc = roam("symbol", "DoesNotExist", cwd=err_project)
-        assert rc != 0
+        assert rc != 0 or "not found" in out.lower(), (
+            f"roam symbol on unknown name should communicate the miss "
+            f"(non-zero exit OR 'not found' in output); got rc={rc}, out={out!r}"
+        )
 
     def test_empty_search(self, err_project):
         """roam search with no matches should succeed with message."""
@@ -1734,9 +1745,15 @@ class TestTestMap:
         assert "Test coverage" in out or "test" in out.lower()
 
     def test_testmap_not_found(self, polyglot):
-        """roam test-map with nonexistent name should fail gracefully."""
+        """roam test-map with nonexistent name must communicate failure.
+
+        Pattern-2c (W1272): unresolved symbol now exits 0 with a
+        "not found" message rather than non-zero exit. Accept either shape.
+        """
         out, rc = roam("test-map", "NonExistentThing999", cwd=polyglot)
-        assert rc != 0
+        assert rc != 0 or "not found" in out.lower(), (
+            f"expected non-zero exit OR 'not found' in output; got rc={rc}, out={out!r}"
+        )
 
     def test_testmap_help(self):
         """roam test-map --help should work."""
@@ -1809,10 +1826,14 @@ class TestContext:
         assert data["files_to_read"][0]["reason"] == "definition"
 
     def test_context_not_found(self, polyglot):
-        """roam context with nonexistent symbol should fail gracefully."""
+        """roam context with nonexistent symbol must communicate failure.
+
+        Pattern-2c (W1272): unresolved symbol now exits 0 with "not found"
+        in stdout rather than non-zero exit. The 'not found' check is the
+        load-bearing signal — keep that as the primary assertion.
+        """
         out, rc = roam("context", "NonExistentThing999", cwd=polyglot)
-        assert rc != 0
-        assert "not found" in out.lower()
+        assert "not found" in out.lower(), f"expected 'not found' in output; got rc={rc}, out={out!r}"
 
     def test_context_help(self):
         """roam context --help should work."""
@@ -1870,10 +1891,13 @@ class TestSafeDelete:
         assert data["direct_callers"] == 0
 
     def test_safe_delete_not_found(self, polyglot):
-        """roam safe-delete with nonexistent symbol should fail gracefully."""
+        """roam safe-delete with nonexistent symbol must communicate failure.
+
+        Pattern-2c (W1272): unresolved symbol now exits 0 with "not found"
+        in stdout. The 'not found' message is the load-bearing signal.
+        """
         out, rc = roam("safe-delete", "NonExistentThing999", cwd=polyglot)
-        assert rc != 0
-        assert "not found" in out.lower()
+        assert "not found" in out.lower(), f"expected 'not found' in output; got rc={rc}, out={out!r}"
 
     def test_safe_delete_help(self):
         """roam safe-delete --help should work."""
@@ -1925,10 +1949,13 @@ class TestSplit:
         assert rc == 0
 
     def test_split_not_found(self, polyglot):
-        """roam split with nonexistent file should fail gracefully."""
+        """roam split with nonexistent file must communicate failure.
+
+        Pattern-2c (W1272): unresolved path now exits 0 with "not found"
+        in stdout. The 'not found' message is the load-bearing signal.
+        """
         out, rc = roam("split", "nonexistent_file.py", cwd=polyglot)
-        assert rc != 0
-        assert "not found" in out.lower()
+        assert "not found" in out.lower(), f"expected 'not found' in output; got rc={rc}, out={out!r}"
 
     def test_split_help(self):
         """roam split --help should work."""
@@ -2108,9 +2135,15 @@ class TestWhy:
         assert len(data["symbols"]) == 2
 
     def test_why_not_found(self, polyglot):
-        """roam why with unknown symbol should fail."""
+        """roam why with unknown symbol must communicate failure.
+
+        Pattern-2c (W1272): unresolved symbol now exits 0 with "not found"
+        in stdout rather than non-zero exit. Accept either shape.
+        """
         out, rc = roam("why", "NonExistentThing999", cwd=polyglot)
-        assert rc != 0
+        assert rc != 0 or "not found" in out.lower(), (
+            f"expected non-zero exit OR 'not found' in output; got rc={rc}, out={out!r}"
+        )
 
     def test_why_role_classification(self, polyglot):
         """roam why should classify roles correctly."""

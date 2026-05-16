@@ -672,10 +672,37 @@ def partition(ctx, n_agents, output_format):
     ``fleet`` (graph-aware planner for external orchestrators).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
         manifest = compute_partition_manifest(conn, n_agents)
+
+    # -- SARIF format --------------------------------------------------------
+    # W1159: SARIF projection for CI / GitHub Code Scanning integration.
+    # Branches BEFORE json / claude-teams / text paths so those legacy
+    # paths stay byte-identical to pre-W1159 output. The claude-teams
+    # format is an external-SDK contract (not a CI report) so a
+    # ``--sarif --format claude-teams`` combo still routes to SARIF;
+    # consumers wanting the teams shape should drop ``--sarif``.
+    if sarif_mode:
+        from roam.output.sarif import partition_to_sarif, write_sarif
+
+        envelope = json_envelope(
+            "partition",
+            summary={
+                "verdict": manifest["verdict"],
+                "total_partitions": manifest["total_partitions"],
+                "n_agents": manifest["n_agents"],
+                "overall_conflict_probability": manifest["overall_conflict_probability"],
+            },
+            partitions=manifest["partitions"],
+            dependencies=manifest["dependencies"],
+            conflict_hotspots=manifest["conflict_hotspots"],
+            merge_order=manifest["merge_order"],
+        )
+        click.echo(write_sarif(partition_to_sarif(envelope)))
+        return
 
     # -- claude-teams format -------------------------------------------------
     if output_format == "claude-teams":

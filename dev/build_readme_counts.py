@@ -511,6 +511,14 @@ def run(write: bool, *, mode_label: str) -> int:
 
     for path, builder in MARKDOWN_TARGETS:
         if not path.exists():
+            # CLAUDE.md is intentionally untracked from the public repo
+            # (removed in commit 89a338d9 — it's the local-only project
+            # intelligence file). Skip it silently when absent so CI doesn't
+            # fail on a deliberate-absence rather than a real drift. Other
+            # targets in MARKDOWN_TARGETS must always exist in CI; their
+            # absence remains a check failure.
+            if path.name == "CLAUDE.md":
+                continue
             results.append(FileResult(path=path, changed=False, missing_blocks=["<file-missing>"]))
             continue
         results.append(_apply_markdown(path, builder, c, write))

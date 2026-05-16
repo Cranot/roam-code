@@ -1,4 +1,15 @@
-"""Show cross-language symbol bridges detected in the project."""
+"""Show cross-language symbol bridges detected in the project.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because xlang outputs are invocation-scoped cross-language
+bridge enumerations (Apex → Aura/LWC, .proto → Go/Java/Python stubs,
+frontend HTTP → backend routes, template includes, config env-var
+reads) — not per-location code violations. The bridges describe
+detected cross-runtime edges, which are normal architecture metadata
+rather than defects at source coordinates. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -205,15 +216,11 @@ def xlang(ctx, scope):
         # Apply --scope filter to the file list before bridge detection.
         if scope:
             scope_norm = scope.replace("\\", "/").lstrip("./")
-            file_paths = [
-                p for p in file_paths if p.replace("\\", "/").startswith(scope_norm)
-            ]
+            file_paths = [p for p in file_paths if p.replace("\\", "/").startswith(scope_norm)]
             if not file_paths:
                 verdict = f"no files under scope '{scope}'"
                 if json_mode:
-                    _emit_xlang_envelope(
-                        verdict, [], [], state="empty_scope", partial_success=True
-                    )
+                    _emit_xlang_envelope(verdict, [], [], state="empty_scope", partial_success=True)
                 else:
                     click.echo(f"VERDICT: {verdict}\n")
                     click.echo(f"No files matched scope prefix '{scope}'.")

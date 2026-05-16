@@ -28,6 +28,17 @@ pipeline unchanged)::
       "reason": "optional single-line rationale (no body, no secrets)"
     }
 
+Expiry-filtering design (W1067, asymmetric to leases):
+``load_permits_from_disk`` and ``_permit_from_dict`` do NOT filter
+expired permits. ``PermitRecord.is_expired_at`` exists but is unused on
+the read path *by design*. Expired permits flow through to consumers
+and the W377 collector stamps ``extra["expired"]=True`` on the resulting
+AuthorityRef — audit-completeness pattern: "this authority was
+exercised at the time the bundle was emitted." Filtering at read time
+would silently drop evidence from the audit trail. Compare with
+:mod:`roam.leases.store` which DOES filter at read time (live conflict
+resolution semantic). See ``(internal memo)``.
+
 Discipline:
 
 * Atomic writes via :func:`roam.atomic_io.atomic_write_json` -- a crash
@@ -46,12 +57,13 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from roam.atomic_io import atomic_write_json
+from roam.output.formatter import WarningsOut
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -117,36 +129,23 @@ class PermitRecord:
 
     def __post_init__(self) -> None:
         if not isinstance(self.permit_id, str) or not PERMIT_ID_RE.match(self.permit_id):
-            raise ValueError(
-                f"PermitRecord.permit_id must match {PERMIT_ID_RE.pattern!r}; "
-                f"got {self.permit_id!r}"
-            )
+            raise ValueError(f"PermitRecord.permit_id must match {PERMIT_ID_RE.pattern!r}; got {self.permit_id!r}")
         if not isinstance(self.scope, str) or not self.scope.strip():
             raise ValueError("PermitRecord.scope must be a non-empty string")
         if not isinstance(self.expires_at, str) or not self.expires_at:
-            raise ValueError(
-                "PermitRecord.expires_at must be a non-empty ISO-8601 string"
-            )
+            raise ValueError("PermitRecord.expires_at must be a non-empty ISO-8601 string")
         try:
             _parse_iso(self.expires_at)
         except ValueError as exc:
-            raise ValueError(
-                f"PermitRecord.expires_at is not ISO-8601 parseable: "
-                f"{self.expires_at!r} ({exc})"
-            ) from exc
+            raise ValueError(f"PermitRecord.expires_at is not ISO-8601 parseable: {self.expires_at!r} ({exc})") from exc
         if not isinstance(self.issued_to, str) or not self.issued_to.strip():
             raise ValueError("PermitRecord.issued_to must be a non-empty string")
         if not isinstance(self.issued_at, str) or not self.issued_at:
-            raise ValueError(
-                "PermitRecord.issued_at must be a non-empty ISO-8601 string"
-            )
+            raise ValueError("PermitRecord.issued_at must be a non-empty ISO-8601 string")
         try:
             _parse_iso(self.issued_at)
         except ValueError as exc:
-            raise ValueError(
-                f"PermitRecord.issued_at is not ISO-8601 parseable: "
-                f"{self.issued_at!r} ({exc})"
-            ) from exc
+            raise ValueError(f"PermitRecord.issued_at is not ISO-8601 parseable: {self.issued_at!r} ({exc})") from exc
         if not isinstance(self.issued_by, str) or not self.issued_by.strip():
             raise ValueError("PermitRecord.issued_by must be a non-empty string")
         if not isinstance(self.reason, str):
@@ -322,7 +321,7 @@ def list_permits(repo_root: Path) -> list[PermitRecord]:
 def load_permits_from_disk(
     repo_root: Optional[Path],
     *,
-    warnings_out: Optional[list[str]] = None,
+    warnings_out: WarningsOut = None,
 ) -> list[dict]:
     """Read every ``.roam/permits/*.json`` under *repo_root*; validated.
 
@@ -390,15 +389,11 @@ def load_permits_from_disk(
         try:
             raw = json.loads(child.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, ValueError) as exc:
-            _emit_warning(
-                f"permit file {child.name!s} skipped: malformed JSON "
-                f"({type(exc).__name__}: {exc})"
-            )
+            _emit_warning(f"permit file {child.name!s} skipped: malformed JSON ({type(exc).__name__}: {exc})")
             continue
         if not isinstance(raw, dict):
             _emit_warning(
-                f"permit file {child.name!s} skipped: top-level value "
-                f"is not a JSON object (got {type(raw).__name__})"
+                f"permit file {child.name!s} skipped: top-level value is not a JSON object (got {type(raw).__name__})"
             )
             continue
         # W380: route through the validator so a permit dict that cannot
@@ -406,11 +401,7 @@ def load_permits_from_disk(
         record = _permit_from_dict(raw)
         if record is None:
             raw_pid = raw.get("permit_id")
-            id_phrase = (
-                f"permit_id={raw_pid!r}"
-                if isinstance(raw_pid, str) and raw_pid
-                else "permit_id=<missing>"
-            )
+            id_phrase = f"permit_id={raw_pid!r}" if isinstance(raw_pid, str) and raw_pid else "permit_id=<missing>"
             _emit_warning(
                 f"permit file {child.name!s} skipped: schema validation "
                 f"failed ({id_phrase}); fields missing or invalid per "

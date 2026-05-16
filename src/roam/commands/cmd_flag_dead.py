@@ -1,4 +1,16 @@
-"""Detect potentially stale feature flag code (conditionally-dead code behind flags)."""
+"""Detect potentially stale feature flag code (conditionally-dead code behind flags).
+
+W1226: SARIF is deliberately surfaced via the global ``--sarif`` flag.
+cmd_flag_dead emits per-flag staleness findings as envelope items (each
+carrying ``staleness`` / ``reasons`` / ``locations``) which the
+:func:`roam.output.sarif.flag_dead_to_sarif` projection maps onto three
+closed-enum rule ids (``flag-staleness`` / ``flag-single-reference`` /
+``flag-suspect``). See W1226 audit (Wave 15) + W1232 rule-rename (aligns
+the suspect rule id with the envelope's 4-value ``staleness`` vocabulary:
+``stale`` / ``likely_stale`` / ``suspect`` / ``ok``) + the SHIP path
+in :mod:`tests.test_sarif_disclosure_coverage` (cmd_flag_dead removed
+from ``_KNOWN_MISSING``).
+"""
 
 from __future__ import annotations
 
@@ -12,7 +24,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import WarningsOut, format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Feature flag API call patterns — compiled once at module level
@@ -303,17 +315,58 @@ def _walk_for_files(root: Path) -> list[str]:
     return result
 
 
-def _load_known_stale(config_path: str) -> set[str]:
-    """Load a list of known-stale flag names from a config file (one per line)."""
+def _load_known_stale(
+    config_path: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> set[str]:
+    """Load a list of known-stale flag names from a config file (one per line).
+
+    Schema is plain text (NOT YAML): one flag name per non-empty line;
+    ``#``-prefixed lines are comments. This is the only Pattern-2 loader
+    in :mod:`cmd_flag_dead`.
+
+    W1010 (Pattern 2 — silent fallback, plumbing-only variant of the W706
+    playbook): when *warnings_out* is supplied as a ``list[str]``, every
+    silent-fallback path (file unreadable / OSError, UTF-8 decode failure
+    during iteration) appends an actionable warning naming the path, the
+    failure shape, and the resolution. Pre-W1010 callers that don't
+    supply ``warnings_out`` retain byte-identical silent-empty-set
+    behaviour so the existing happy-path consumer
+    (:func:`flag_dead` with a well-formed ``--config`` file) keeps
+    emitting byte-identical envelopes.
+
+    The schema is plain text, NOT YAML — so this loader does NOT migrate
+    to :func:`roam.commands._yaml_loader.load_yaml_with_warnings`. The
+    helper's root-type / mapping invariants don't fit a line-per-flag
+    file; forcing it through would require a synthetic ``{"flags": [...]}``
+    wrapper that obscures the on-disk format.
+    """
     stale: set[str] = set()
+    path_repr = repr(str(config_path))
     try:
         with open(config_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    stale.add(line)
-    except (OSError, UnicodeDecodeError):
-        pass
+            try:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        stale.add(line)
+            except UnicodeDecodeError as exc:
+                if warnings_out is not None:
+                    warnings_out.append(
+                        f"known-stale: {path_repr}: could not decode file as "
+                        f"UTF-8: {exc}. Treating as empty; re-save the file "
+                        f"in UTF-8 to clear this warning."
+                    )
+                return set()
+    except OSError as exc:
+        if warnings_out is not None:
+            warnings_out.append(
+                f"known-stale: {path_repr}: could not read file: {exc}. "
+                f"Treating as empty; fix file permissions / path to "
+                f"re-enable known-stale matching."
+            )
+        return set()
     return stale
 
 
@@ -358,7 +411,12 @@ def analyze_flags(
         if count == 1:
             reasons.append("only referenced in 1 location")
             if staleness != "stale":
-                staleness = "likely-stale"
+                # W1162: canonical form is underscore ("likely_stale") to match
+                # the lowercase-underscore convention shared with
+                # POLICY_DECISIONS / CLAIM_SEVERITIES / REFERENCE_REMOVAL_VERDICTS.
+                # Display strings (text-output recommendations, table labels)
+                # render the hyphenated form via a display-time map below.
+                staleness = "likely_stale"
 
         # Always same default value and that default is a boolean
         if unique_defaults and len(unique_defaults) == 1:
@@ -388,8 +446,8 @@ def analyze_flags(
             }
         )
 
-    # Sort: stale first, then likely-stale, then suspect, then ok
-    staleness_order = {"stale": 0, "likely-stale": 1, "suspect": 2, "ok": 3}
+    # Sort: stale first, then likely_stale, then suspect, then ok
+    staleness_order = {"stale": 0, "likely_stale": 1, "suspect": 2, "ok": 3}
     results.sort(key=lambda r: (staleness_order.get(r["staleness"], 9), r["flag_name"]))
 
     return results
@@ -442,6 +500,7 @@ def flag_dead(ctx, config_path, include_tests):
     but gated behind feature flags that may never fire.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -449,8 +508,9 @@ def flag_dead(ctx, config_path, include_tests):
 
     # Load known-stale flags from config file if provided
     known_stale: set[str] = set()
+    _known_stale_warnings: list[str] = []
     if config_path:
-        known_stale = _load_known_stale(config_path)
+        known_stale = _load_known_stale(config_path, warnings_out=_known_stale_warnings)
 
     # Scan for flag usage
     findings = scan_project_for_flags(project_root, include_tests=include_tests)
@@ -458,11 +518,24 @@ def flag_dead(ctx, config_path, include_tests):
     # Analyze flags for staleness
     flag_summaries = analyze_flags(findings, known_stale=known_stale)
 
+    # --- SARIF output (W1226 / W1232) -----------------------------------
+    # SARIF surfaces the closed-enum staleness rule catalogue
+    # (flag-staleness / flag-single-reference / flag-suspect)
+    # even on a clean / no-flags scan so CI consumers see the rule
+    # vocabulary regardless of whether any flag fired. The ``ok``
+    # bucket is filtered upstream by ``flag_dead_to_sarif`` (not
+    # actionable).
+    if sarif_mode:
+        from roam.output.sarif import flag_dead_to_sarif, write_sarif
+
+        click.echo(write_sarif(flag_dead_to_sarif(flag_summaries)))
+        return
+
     # Compute summary stats
     total_flags = len(flag_summaries)
     total_references = sum(f["count"] for f in flag_summaries)
     stale_count = sum(1 for f in flag_summaries if f["staleness"] == "stale")
-    likely_stale_count = sum(1 for f in flag_summaries if f["staleness"] == "likely-stale")
+    likely_stale_count = sum(1 for f in flag_summaries if f["staleness"] == "likely_stale")
     suspect_count = sum(1 for f in flag_summaries if f["staleness"] == "suspect")
     ok_count = sum(1 for f in flag_summaries if f["staleness"] == "ok")
     files_affected = len({loc["file"] for f in flag_summaries for loc in f["locations"]})
@@ -484,18 +557,22 @@ def flag_dead(ctx, config_path, include_tests):
 
     # --- JSON output ---
     if json_mode:
+        summary_payload: dict = {
+            "verdict": verdict,
+            "total_flags": total_flags,
+            "total_references": total_references,
+            "files_affected": files_affected,
+            "stale": stale_count,
+            "likely_stale": likely_stale_count,
+            "suspect": suspect_count,
+            "ok": ok_count,
+        }
+        if _known_stale_warnings:
+            summary_payload["warnings_out"] = list(_known_stale_warnings)
+            summary_payload["partial_success"] = True
         envelope = json_envelope(
             "flag-dead",
-            summary={
-                "verdict": verdict,
-                "total_flags": total_flags,
-                "total_references": total_references,
-                "files_affected": files_affected,
-                "stale": stale_count,
-                "likely_stale": likely_stale_count,
-                "suspect": suspect_count,
-                "ok": ok_count,
-            },
+            summary=summary_payload,
             budget=token_budget,
             flags=[
                 {
@@ -524,10 +601,23 @@ def flag_dead(ctx, config_path, include_tests):
         click.echo("  Supported providers: LaunchDarkly, Unleash, Split, generic, env-var")
         return
 
+    # W1162: canonical staleness uses underscore form ("likely_stale");
+    # display restores the hyphen for human-readable text output so the
+    # CLI text bytes stay identical to the pre-W1162 envelope.
+    _STALENESS_DISPLAY = {
+        "stale": "STALE",
+        "likely_stale": "LIKELY-STALE",
+        "suspect": "SUSPECT",
+        "ok": "OK",
+    }
+
+    def _display_label(state: str) -> str:
+        return _STALENESS_DISPLAY.get(state, state.upper())
+
     # Summary table
     rows = []
     for f in flag_summaries:
-        staleness_label = f["staleness"].upper()
+        staleness_label = _display_label(f["staleness"])
         defaults_str = ", ".join(f["default_values"]) if f["default_values"] else "-"
         reasons_str = "; ".join(f["reasons"]) if f["reasons"] else "-"
         rows.append(
@@ -555,7 +645,7 @@ def flag_dead(ctx, config_path, include_tests):
         click.echo(f"  {len(flagged)} flags with staleness indicators:")
         click.echo()
         for f in flagged:
-            click.echo(f"  {f['flag_name']} ({f['staleness'].upper()}):")
+            click.echo(f"  {f['flag_name']} ({_display_label(f['staleness'])}):")
             for loc in f["locations"]:
                 click.echo(f"    {loc['file']}:{loc['line']}")
             if f["reasons"]:

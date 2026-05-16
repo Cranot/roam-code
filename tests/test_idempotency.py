@@ -14,10 +14,7 @@ def test_pure_function_is_idempotent(project_factory, monkeypatch):
     """A pure function is trivially idempotent."""
     proj = project_factory(
         {
-            "src/pure.py": (
-                "def add(a, b):\n"
-                "    return a + b\n"
-            ),
+            "src/pure.py": ("def add(a, b):\n    return a + b\n"),
         }
     )
     monkeypatch.chdir(proj)
@@ -66,9 +63,7 @@ def test_naive_write_is_non_idempotent(project_factory, monkeypatch):
     proj = project_factory(
         {
             "src/naive.py": (
-                "def overwrite(path, content):\n"
-                "    with open(path, 'w') as f:\n"
-                "        f.write(content)\n"
+                "def overwrite(path, content):\n    with open(path, 'w') as f:\n        f.write(content)\n"
             ),
         }
     )
@@ -81,21 +76,14 @@ def test_naive_write_is_non_idempotent(project_factory, monkeypatch):
 
     assert results
     c = results[0]
-    assert c.kind == "non_idempotent", (
-        f"Expected non_idempotent, got {c.kind} (evidence={c.evidence})"
-    )
+    assert c.kind == "non_idempotent", f"Expected non_idempotent, got {c.kind} (evidence={c.evidence})"
 
 
 def test_subprocess_is_unknown(project_factory, monkeypatch):
     """A function that spawns a subprocess has unknown idempotency."""
     proj = project_factory(
         {
-            "src/proc.py": (
-                "import subprocess\n"
-                "\n"
-                "def run_external():\n"
-                "    return subprocess.run(['true'])\n"
-            ),
+            "src/proc.py": ("import subprocess\n\ndef run_external():\n    return subprocess.run(['true'])\n"),
         }
     )
     monkeypatch.chdir(proj)

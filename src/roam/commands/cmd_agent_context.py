@@ -1,4 +1,11 @@
-"""Per-agent execution context from multi-agent task decomposition."""
+"""Per-agent execution context from multi-agent task decomposition.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because agent-context outputs are invocation-scoped agent
+context records — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
+"""
 
 from __future__ import annotations
 

@@ -28,15 +28,14 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_doctor import (
-    DOCTOR_DETECTOR_VERSION,
     _DOCTOR_CHECK_SUBKIND,
+    DOCTOR_DETECTOR_VERSION,
     _doctor_finding_id,
     _emit_doctor_findings,
 )
 from roam.db.connection import open_db
-
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 
 # ---------------------------------------------------------------------------
 # Helpers — synthetic check-result fixtures
@@ -149,9 +148,7 @@ def test_emit_doctor_findings_advisory_failure_writes_no_row(tmp_path):
             conn.commit()
 
         with open_db(readonly=True) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'").fetchone()[0]
         assert count == 0, (
             "advisory failures must NOT persist (HYBRID filter is the W156 "
             "load-bearing invariant — they pollute the registry with "
@@ -177,9 +174,7 @@ def test_emit_doctor_findings_passed_check_writes_no_row(tmp_path):
             conn.commit()
 
         with open_db(readonly=True) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'").fetchone()[0]
         assert count == 0
     finally:
         os.chdir(old_cwd)
@@ -205,8 +200,7 @@ def test_emit_doctor_findings_mixed_input_emits_only_blocking(tmp_path):
 
         with open_db(readonly=True) as conn:
             rows = conn.execute(
-                "SELECT finding_id_str FROM findings WHERE source_detector = 'doctor' "
-                "ORDER BY finding_id_str"
+                "SELECT finding_id_str FROM findings WHERE source_detector = 'doctor' ORDER BY finding_id_str"
             ).fetchall()
         # Exactly two: Python version + git executable. Cloud sync and
         # MCP tool registry (both advisory) must be absent; the passed
@@ -234,9 +228,7 @@ def test_emit_doctor_findings_is_idempotent(tmp_path):
         with open_db(readonly=True) as conn:
             first_ids = {
                 r["finding_id_str"]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'doctor'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'doctor'").fetchall()
             }
         assert len(first_ids) == 2
 
@@ -248,13 +240,9 @@ def test_emit_doctor_findings_is_idempotent(tmp_path):
         with open_db(readonly=True) as conn:
             second_ids = {
                 r["finding_id_str"]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'doctor'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'doctor'").fetchall()
             }
-            second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'"
-            ).fetchone()[0]
+            second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'").fetchone()[0]
         assert second_count == 2, "duplicate rows on re-emit"
         assert second_ids == first_ids
     finally:
@@ -311,9 +299,7 @@ def test_doctor_persist_healthy_project_emits_no_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, (
@@ -340,9 +326,7 @@ def test_doctor_no_persist_writes_no_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'doctor'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0

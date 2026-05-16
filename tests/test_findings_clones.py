@@ -28,12 +28,12 @@ import textwrap
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.db.connection import open_db
 from roam.graph.clone_detect import (
     CLONES_DETECTOR_VERSION,
     _clone_pair_finding_id,
 )
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
 
 
@@ -123,13 +123,9 @@ def test_clones_finding_id_str_is_deterministic(tmp_path):
         with open_db(readonly=True) as conn:
             first_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'clones'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'clones'").fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'clones'"
-            ).fetchone()[0]
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'clones'").fetchone()[0]
         assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same threshold, same hash inputs.
@@ -140,13 +136,9 @@ def test_clones_finding_id_str_is_deterministic(tmp_path):
         with open_db(readonly=True) as conn:
             second_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'clones'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'clones'").fetchall()
             }
-            second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'clones'"
-            ).fetchone()[0]
+            second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'clones'").fetchone()[0]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
     finally:
@@ -171,8 +163,7 @@ def test_clones_finding_evidence_links_to_pair(tmp_path):
 
         with open_db(readonly=True) as conn:
             row = conn.execute(
-                "SELECT evidence_json, subject_id FROM findings "
-                "WHERE source_detector = 'clones' LIMIT 1"
+                "SELECT evidence_json, subject_id FROM findings WHERE source_detector = 'clones' LIMIT 1"
             ).fetchone()
             assert row is not None
             evidence = json.loads(row["evidence_json"])
@@ -184,8 +175,7 @@ def test_clones_finding_evidence_links_to_pair(tmp_path):
             # The qname pair stored in evidence_json should also be the
             # one persisted in clone_pairs (authoritative table).
             pair = conn.execute(
-                "SELECT 1 FROM clone_pairs WHERE "
-                "(qname_a = :a AND qname_b = :b) OR (qname_a = :b AND qname_b = :a)",
+                "SELECT 1 FROM clone_pairs WHERE (qname_a = :a AND qname_b = :b) OR (qname_a = :b AND qname_b = :a)",
                 {"a": evidence["qname_a"], "b": evidence["qname_b"]},
             ).fetchone()
             assert pair is not None, "evidence qnames not found in clone_pairs"
@@ -203,16 +193,11 @@ def test_clones_finding_subject_link(tmp_path):
 
         with open_db(readonly=True) as conn:
             rows = conn.execute(
-                "SELECT subject_id FROM findings "
-                "WHERE source_detector = 'clones' AND subject_id IS NOT NULL"
+                "SELECT subject_id FROM findings WHERE source_detector = 'clones' AND subject_id IS NOT NULL"
             ).fetchall()
-            assert len(rows) >= 1, (
-                "expected at least one clones finding with a resolved subject_id"
-            )
+            assert len(rows) >= 1, "expected at least one clones finding with a resolved subject_id"
             for r in rows:
-                sym = conn.execute(
-                    "SELECT id, name FROM symbols WHERE id = ?", (r["subject_id"],)
-                ).fetchone()
+                sym = conn.execute("SELECT id, name FROM symbols WHERE id = ?", (r["subject_id"],)).fetchone()
                 assert sym is not None, f"orphan subject_id {r['subject_id']}"
     finally:
         os.chdir(old_cwd)
@@ -232,18 +217,14 @@ def test_clones_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_clones(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "clones"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "clones"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "clones" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "clones" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "clones" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -311,9 +292,7 @@ def test_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'clones'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'clones'").fetchone()[0]
             except sqlite3.OperationalError:
                 # findings table may not be present on every test env's
                 # schema flavour — that's still a "no findings emitted"
@@ -383,19 +362,13 @@ def _multi_role_project(tmp_path, *, include_fixture: bool = False):
 
     tests_dir = proj / "tests"
     tests_dir.mkdir()
-    (tests_dir / "test_a.py").write_text(
-        body.format(name="process_orders_t") + "\n", encoding="utf-8"
-    )
-    (tests_dir / "test_b.py").write_text(
-        body.format(name="handle_invoices_t") + "\n", encoding="utf-8"
-    )
+    (tests_dir / "test_a.py").write_text(body.format(name="process_orders_t") + "\n", encoding="utf-8")
+    (tests_dir / "test_b.py").write_text(body.format(name="handle_invoices_t") + "\n", encoding="utf-8")
 
     if include_fixture:
         fix_dir = tests_dir / "fixtures"
         fix_dir.mkdir()
-        (fix_dir / "sample.py").write_text(
-            body.format(name="sample_fixture") + "\n", encoding="utf-8"
-        )
+        (fix_dir / "sample.py").write_text(body.format(name="sample_fixture") + "\n", encoding="utf-8")
 
     subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
     subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
@@ -454,25 +427,16 @@ def test_clones_emits_role_bucket_in_evidence(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        result = runner.invoke(
-            cli, ["clones", "--threshold", "0.50", "--persist"]
-        )
+        result = runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"])
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'clones'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
         assert len(rows) >= 1, "expected at least one clones finding row"
         for r in rows:
             ev = json.loads(r["evidence_json"])
-            assert "role_bucket" in ev, (
-                "role_bucket missing from evidence — W165 enrichment never ran"
-            )
-            assert ev["role_bucket"] == "production", (
-                f"src/-only pair should be production, got {ev['role_bucket']!r}"
-            )
+            assert "role_bucket" in ev, "role_bucket missing from evidence — W165 enrichment never ran"
+            assert ev["role_bucket"] == "production", f"src/-only pair should be production, got {ev['role_bucket']!r}"
     finally:
         os.chdir(old_cwd)
 
@@ -485,16 +449,11 @@ def test_clones_test_pair_marked_as_test_intentional(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        result = runner.invoke(
-            cli, ["clones", "--threshold", "0.50", "--persist"]
-        )
+        result = runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"])
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'clones'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
         counts = _bucket_counts(rows)
 
         # The fixture is constructed so every pairwise combination above
@@ -502,8 +461,7 @@ def test_clones_test_pair_marked_as_test_intentional(tmp_path):
         # one row landed in test_intentional and that NO test_intentional
         # row was misclassified as production.
         assert counts["test_intentional"] >= 1, (
-            f"tests/test_a × tests/test_b pair should be test_intentional; "
-            f"counts={counts}"
+            f"tests/test_a × tests/test_b pair should be test_intentional; counts={counts}"
         )
     finally:
         os.chdir(old_cwd)
@@ -542,14 +500,10 @@ def test_clones_exclude_tests_flag_drops_test_findings(tmp_path):
         )
         assert filtered.exit_code == 0, filtered.output
         with open_db(readonly=True) as conn:
-            filt_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'clones'"
-            ).fetchall()
+            filt_rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
         filt_counts = _bucket_counts(filt_rows)
         assert filt_counts["test_intentional"] == 0, (
-            f"--exclude-tests left test_intentional behind on a clean run: "
-            f"{filt_counts}"
+            f"--exclude-tests left test_intentional behind on a clean run: {filt_counts}"
         )
     finally:
         os.chdir(old_cwd)
@@ -561,19 +515,13 @@ def test_clones_exclude_tests_flag_drops_test_findings(tmp_path):
     try:
         os.chdir(str(proj_b))
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        baseline = runner.invoke(
-            cli, ["clones", "--threshold", "0.50", "--persist"]
-        )
+        baseline = runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"])
         assert baseline.exit_code == 0, baseline.output
         with open_db(readonly=True) as conn:
-            base_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'clones'"
-            ).fetchall()
+            base_rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
         base_counts = _bucket_counts(base_rows)
         assert base_counts["test_intentional"] >= 1, (
-            f"baseline (no flag) failed to produce test_intentional rows; "
-            f"counts={base_counts}"
+            f"baseline (no flag) failed to produce test_intentional rows; counts={base_counts}"
         )
         # And the baseline must be strictly larger than the filtered run
         # (assuming the same fixture shape on both branches).
@@ -600,24 +548,16 @@ def test_clones_mixed_bucket_flagged_for_test_leakage(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        result = runner.invoke(
-            cli, ["clones", "--threshold", "0.50", "--persist"]
-        )
+        result = runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"])
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'clones'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
         counts = _bucket_counts(rows)
 
         # The fixture produces process_orders (src/a) clone-paired with
         # process_orders_t (tests/test_a) — that's exactly a mixed pair.
-        assert counts["mixed"] >= 1, (
-            f"expected at least one mixed-bucket finding "
-            f"(src/ × tests/), got counts={counts}"
-        )
+        assert counts["mixed"] >= 1, f"expected at least one mixed-bucket finding (src/ × tests/), got counts={counts}"
 
         # Mixed must survive --exclude-tests (W165 opinionated decision:
         # potential test-leakage > noise reduction for that one bucket).
@@ -627,14 +567,9 @@ def test_clones_mixed_bucket_flagged_for_test_leakage(tmp_path):
         )
         assert filtered.exit_code == 0, filtered.output
         with open_db(readonly=True) as conn:
-            filt_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'clones'"
-            ).fetchall()
+            filt_rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
         filt_counts = _bucket_counts(filt_rows)
-        assert filt_counts["mixed"] >= 1, (
-            f"--exclude-tests must NOT drop the mixed bucket; counts={filt_counts}"
-        )
+        assert filt_counts["mixed"] >= 1, f"--exclude-tests must NOT drop the mixed bucket; counts={filt_counts}"
     finally:
         os.chdir(old_cwd)
 
@@ -712,10 +647,7 @@ def test_clones_exclude_fixtures_drops_fixture_rows(tmp_path):
         )
         assert filtered.exit_code == 0, filtered.output
         with open_db(readonly=True) as conn:
-            filt_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'clones'"
-            ).fetchall()
+            filt_rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
         for r in filt_rows:
             ev = json.loads(r["evidence_json"])
             fa = (ev.get("file_a") or "").replace("\\", "/")
@@ -730,15 +662,10 @@ def test_clones_exclude_fixtures_drops_fixture_rows(tmp_path):
     try:
         os.chdir(str(proj_b))
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        baseline = runner.invoke(
-            cli, ["clones", "--threshold", "0.50", "--persist"]
-        )
+        baseline = runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"])
         assert baseline.exit_code == 0, baseline.output
         with open_db(readonly=True) as conn:
-            base_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'clones'"
-            ).fetchall()
+            base_rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
         base_fixture_rows = []
         for r in base_rows:
             ev = json.loads(r["evidence_json"])

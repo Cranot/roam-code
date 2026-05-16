@@ -327,7 +327,11 @@ class TestMinimapCLI:
 
         data = json.loads(result.output)
         assert data["command"] == "minimap"
-        assert data["summary"]["verdict"] == "ok"
+        # W17.3 (LAW 4): the stdout-mode verdict names the rendered block
+        # + size cue + the follow-up command, not bare "ok".
+        verdict = data["summary"]["verdict"]
+        assert "minimap rendered" in verdict
+        assert "--update-claude" in verdict
         assert "content" in data
 
     def test_json_mode_update(self, tmp_path):
@@ -343,7 +347,11 @@ class TestMinimapCLI:
         import json
 
         data = json.loads(result.output)
-        assert data["summary"]["verdict"] == "ok"
+        # W17.3 (LAW 4): the --update verdict names the action and the target
+        # file ("minimap created/updated in <path>"), not bare "ok".
+        verdict = data["summary"]["verdict"]
+        assert verdict.startswith("minimap ")
+        assert "CLAUDE.md" in verdict
         assert "file" in data
 
     def test_project_notes_included(self, tmp_path):

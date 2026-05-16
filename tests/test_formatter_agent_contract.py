@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from roam.output.formatter import json_envelope
 
-
 # ---------------------------------------------------------------------------
 # Core humanizer behavior
 # ---------------------------------------------------------------------------

@@ -12,6 +12,23 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _disable_cold_start_guard(monkeypatch):
+    """W1282 root-cause fix: ``for_refactor`` and ``for_security_review`` are
+    @_tool-wrapped, so the cold-start guard intercepts them when the project's
+    ``.roam/index.db`` is missing -- the default on CI Linux runners. The
+    guard returns an ``index_not_built`` envelope and never invokes the
+    mocked ``_run_roam``, so ``called_args`` stays empty.
+
+    Mirrors the same fixture in ``test_mcp_refactoring_wrappers.py`` etc.
+    ``ROAM_MCP_DISABLE_COLD_START_GUARD`` flips the guard to a no-op for
+    the duration of each test (see
+    ``roam.mcp_extras.preflight.maybe_cold_start_envelope``).
+    """
+    monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    yield
+
+
 def test_every_registry_value_is_a_live_cli_command():
     """The import-time check already enforces this, but exercise it
     here too so a future hand-edit doesn't slip past."""

@@ -1,4 +1,12 @@
-"""Export the structural graph as a JSON capsule (no function bodies)."""
+"""Export the structural graph as a JSON capsule (no function bodies).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because capsule outputs are JSON graph capsules — not per-location
+violations. SARIF is reserved for findings with file:line coordinates;
+capsule's primary deliverable is the JSON graph capsule. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket C propagation plan +
+W1148 audit memo.
+"""
 
 from __future__ import annotations
 

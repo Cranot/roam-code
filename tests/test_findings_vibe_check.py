@@ -31,7 +31,6 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_vibe_check import (
     VIBE_CHECK_DETECTOR_VERSION,
     _vibe_check_tier,
@@ -42,6 +41,7 @@ from roam.db.findings import (
     CONFIDENCE_HEURISTIC,
     CONFIDENCE_STRUCTURAL,
 )
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
 
 
@@ -63,7 +63,7 @@ def _rot_project(tmp_path):
     return _make_project(
         tmp_path,
         {
-            "lib.py": '''
+            "lib.py": """
             def used_helper(value):
                 return value * 2
 
@@ -81,8 +81,8 @@ def _rot_project(tmp_path):
 
             def stub_three():
                 pass
-            ''',
-            "catch_empty.py": '''
+            """,
+            "catch_empty.py": """
             def process_alpha(data):
                 try:
                     return data["value"]
@@ -100,13 +100,13 @@ def _rot_project(tmp_path):
                     return data["value"]
                 except Exception:
                     pass
-            ''',
-            "main.py": '''
+            """,
+            "main.py": """
             from .lib import used_helper
 
             def main():
                 return used_helper(5)
-            ''',
+            """,
         },
     )
 
@@ -169,16 +169,13 @@ def test_vibe_check_finding_id_str_is_deterministic(tmp_path):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'vibe-check'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'vibe-check'"
                 ).fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'vibe-check'"
-            ).fetchone()[0]
-        assert first_count == len(first_ids), (
-            "duplicate finding_id_str rows on first run"
-        )
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'vibe-check'").fetchone()[
+                0
+            ]
+        assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same detectors, same hash inputs.
         runner = CliRunner()
@@ -189,8 +186,7 @@ def test_vibe_check_finding_id_str_is_deterministic(tmp_path):
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'vibe-check'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'vibe-check'"
                 ).fetchall()
             }
             second_count = conn.execute(
@@ -208,15 +204,9 @@ def test_vibe_finding_id_encodes_kind():
     The format is ``vibe-check:<kind>:<digest>`` — consumers filtering
     by kind can do a prefix match without parsing JSON evidence.
     """
-    assert _vibe_finding_id("dead_exports", "a/b.py:foo", 1).startswith(
-        "vibe-check:dead_exports:"
-    )
-    assert _vibe_finding_id("copy_paste", "a/b.py:foo:hash", 5).startswith(
-        "vibe-check:copy_paste:"
-    )
-    assert _vibe_finding_id("short_churn", "a/b.py", None).startswith(
-        "vibe-check:short_churn:"
-    )
+    assert _vibe_finding_id("dead_exports", "a/b.py:foo", 1).startswith("vibe-check:dead_exports:")
+    assert _vibe_finding_id("copy_paste", "a/b.py:foo:hash", 5).startswith("vibe-check:copy_paste:")
+    assert _vibe_finding_id("short_churn", "a/b.py", None).startswith("vibe-check:short_churn:")
     # Stable under repeated calls.
     assert _vibe_finding_id("stubs", "x", 1) == _vibe_finding_id("stubs", "x", 1)
 
@@ -246,17 +236,12 @@ def test_vibe_check_finding_evidence_carries_pattern_key(tmp_path):
         _run_vibe_check_persist(proj)
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'vibe-check'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'vibe-check'").fetchall()
         assert len(rows) >= 1
         kinds_seen: set[str] = set()
         for r in rows:
             evidence = json.loads(r["evidence_json"])
-            assert "pattern" in evidence, (
-                "each vibe-check finding must label its pattern in evidence"
-            )
+            assert "pattern" in evidence, "each vibe-check finding must label its pattern in evidence"
             kinds_seen.add(evidence["pattern"])
         # At least one of the patterns we engineered into the fixture
         # should fire. dead_exports is the most reliable across CI hosts.
@@ -284,9 +269,7 @@ def test_vibe_check_dead_export_finding_links_to_symbol(tmp_path):
             # are exported and uncalled, so at least one should land.
             assert len(rows) >= 1, "no dead_exports vibe findings emitted"
             for r in rows:
-                assert r["subject_id"] is not None, (
-                    "dead_exports findings must carry a resolved subject_id"
-                )
+                assert r["subject_id"] is not None, "dead_exports findings must carry a resolved subject_id"
                 sym = conn.execute(
                     "SELECT id, name FROM symbols WHERE id = ?",
                     (r["subject_id"],),
@@ -312,18 +295,14 @@ def test_vibe_check_findings_visible_via_cmd_findings_list(tmp_path):
         _run_vibe_check_persist(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "vibe-check"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "vibe-check"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "vibe-check" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "vibe-check" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "vibe-check" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -389,10 +368,7 @@ def test_vibe_check_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'vibe-check'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'vibe-check'").fetchone()[0]
             except sqlite3.OperationalError:
                 # findings table may not be present on every schema flavour
                 # — that's still a "no findings emitted" outcome.
@@ -433,7 +409,7 @@ def _modular_mirage_project(tmp_path):
                 """Real reusable helper — used from multiple sites."""
                 return value + 1
             ''',
-            "main.py": '''
+            "main.py": """
             from .lib_helper import helper_used_once
             from .lib_shared import shared_util
 
@@ -448,7 +424,7 @@ def _modular_mirage_project(tmp_path):
 
             def consumer_c():
                 return shared_util(3)
-            ''',
+            """,
         },
     )
 
@@ -471,28 +447,28 @@ def _polymorphism_project(tmp_path):
                     """Override in subclasses."""
                     raise NotImplementedError
             ''',
-            "dog.py": '''
+            "dog.py": """
             from .base import Animal
 
             class Dog(Animal):
                 def speak(self):
                     return "woof"
-            ''',
-            "cat.py": '''
+            """,
+            "cat.py": """
             from .base import Animal
 
             class Cat(Animal):
                 def speak(self):
                     return "meow"
-            ''',
-            "cow.py": '''
+            """,
+            "cow.py": """
             from .base import Animal
 
             class Cow(Animal):
                 def speak(self):
                     return "moo"
-            ''',
-            "main.py": '''
+            """,
+            "main.py": """
             from .dog import Dog
             from .cat import Cat
             from .cow import Cow
@@ -500,7 +476,7 @@ def _polymorphism_project(tmp_path):
             def main():
                 animals = [Dog(), Cat(), Cow()]
                 return [a.speak() for a in animals]
-            ''',
+            """,
         },
     )
 
@@ -528,7 +504,7 @@ def _boilerplate_project(tmp_path):
                 # return result
                 return result
             ''',
-            "clean.py": '''
+            "clean.py": """
             def real_function(value):
                 # Edge case discovered in prod 2026-03-12 — empty payloads.
                 if not value:
@@ -536,14 +512,14 @@ def _boilerplate_project(tmp_path):
                 # Reuses the legacy seven-day rollup window agreed with finance.
                 window = 7
                 return value * window
-            ''',
-            "main.py": '''
+            """,
+            "main.py": """
             from .inflated import thin_wrapper, compute_total
             from .clean import real_function
 
             def main():
                 return [thin_wrapper(1), compute_total(2), real_function(3)]
-            ''',
+            """,
         },
     )
 
@@ -563,10 +539,7 @@ def test_modular_mirage_single_caller_export_flagged(tmp_path):
                 "WHERE source_detector = 'vibe-check' "
                 "AND finding_id_str LIKE 'vibe-check:modular_mirage:%'"
             ).fetchall()
-        assert len(rows) >= 1, (
-            "expected at least one modular_mirage finding for "
-            "helper_used_once"
-        )
+        assert len(rows) >= 1, "expected at least one modular_mirage finding for helper_used_once"
         mirage_names = []
         for r in rows:
             evidence = json.loads(r["evidence_json"])
@@ -575,13 +548,9 @@ def test_modular_mirage_single_caller_export_flagged(tmp_path):
             assert evidence["research"] == "arxiv:2605.02741"
             assert r["confidence"] == "structural"
             mirage_names.append(evidence["name"])
-        assert "helper_used_once" in mirage_names, (
-            f"expected helper_used_once in flagged names, got {mirage_names}"
-        )
+        assert "helper_used_once" in mirage_names, f"expected helper_used_once in flagged names, got {mirage_names}"
         # The shared_util has THREE callers — must NOT be flagged.
-        assert "shared_util" not in mirage_names, (
-            "shared_util has 3 callers; flagging it would be a false positive"
-        )
+        assert "shared_util" not in mirage_names, "shared_util has 3 callers; flagging it would be a false positive"
     finally:
         os.chdir(old_cwd)
 
@@ -641,14 +610,10 @@ def test_boilerplate_inflation_comment_restating_code_flagged(tmp_path):
             assert r["confidence"] == "heuristic"
             subkinds_seen.add(evidence["subkind"])
             inflated_files.add(evidence["file_path"])
-        assert (
-            "comment_restates_code" in subkinds_seen
-        ), f"expected comment_restates_code, got {subkinds_seen}"
+        assert "comment_restates_code" in subkinds_seen, f"expected comment_restates_code, got {subkinds_seen}"
         # The negative-control file (clean.py) explains intent rather
         # than restating code, so it must not appear.
-        assert not any(
-            "clean.py" in p for p in inflated_files
-        ), f"clean.py should not be flagged; got {inflated_files}"
+        assert not any("clean.py" in p for p in inflated_files), f"clean.py should not be flagged; got {inflated_files}"
     finally:
         os.chdir(old_cwd)
 
@@ -672,16 +637,11 @@ def test_boilerplate_inflation_shallow_wrapper_flagged(tmp_path):
             for r in rows
             if json.loads(r["evidence_json"])["subkind"] == "shallow_wrapper"
         ]
-        assert wrapper_hits, (
-            "expected at least one shallow_wrapper finding for "
-            "thin_wrapper"
-        )
+        assert wrapper_hits, "expected at least one shallow_wrapper finding for thin_wrapper"
         names = {hit.get("snippet", "") for hit in wrapper_hits}
         # The wrapper is recognisably ``thin_wrapper`` — its name should
         # appear in the snippet payload.
-        assert any("thin_wrapper" in s for s in names), (
-            f"expected thin_wrapper in snippets, got {names}"
-        )
+        assert any("thin_wrapper" in s for s in names), f"expected thin_wrapper in snippets, got {names}"
     finally:
         os.chdir(old_cwd)
 
@@ -727,12 +687,8 @@ def test_w371_patterns_do_not_alter_ai_rot_score(tmp_path):
         assert result.exit_code == 0
         envelope = json.loads(result.output)
         # Find the 8 score-bearing rows.
-        score_bearing = [
-            p for p in envelope["patterns"] if not p.get("informational")
-        ]
-        informational = [
-            p for p in envelope["patterns"] if p.get("informational")
-        ]
+        score_bearing = [p for p in envelope["patterns"] if not p.get("informational")]
+        informational = [p for p in envelope["patterns"] if p.get("informational")]
         assert len(score_bearing) == 8
         assert len(informational) == 2
         info_names = {p["name"] for p in informational}

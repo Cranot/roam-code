@@ -76,15 +76,11 @@ class TestEmitRefusesDirtyTree:
         ``subject.git_commit_sha1`` pointed at a commit that didn't reflect
         the analysed state.
         """
-        (cga_project / "untracked.py").write_text(
-            "def newly_added(): pass\n", encoding="utf-8"
-        )
+        (cga_project / "untracked.py").write_text("def newly_added(): pass\n", encoding="utf-8")
         runner = CliRunner()
         out = tmp_path / "cga.json"
         result = runner.invoke(cli, ["cga", "emit", "--output", str(out)])
-        assert result.exit_code != 0, (
-            f"dirty-tree emit must refuse; got exit {result.exit_code}\n{result.output}"
-        )
+        assert result.exit_code != 0, f"dirty-tree emit must refuse; got exit {result.exit_code}\n{result.output}"
         # The error code or text must surface the dirty-tree reason so the
         # user knows the actionable opt-in (commit / stash / --allow-dirty).
         out_lower = result.output.lower()
@@ -97,23 +93,17 @@ class TestEmitRefusesDirtyTree:
         so the predicate cryptographically commits to "this was signed
         against a tree with these uncommitted edits".
         """
-        (cga_project / "untracked.py").write_text(
-            "def newly_added(): pass\n", encoding="utf-8"
-        )
+        (cga_project / "untracked.py").write_text("def newly_added(): pass\n", encoding="utf-8")
         runner = CliRunner()
         out = tmp_path / "cga.json"
-        result = runner.invoke(
-            cli, ["cga", "emit", "--output", str(out), "--allow-dirty"]
-        )
+        result = runner.invoke(cli, ["cga", "emit", "--output", str(out), "--allow-dirty"])
         assert result.exit_code == 0, result.output
 
         statement = json.loads(out.read_text(encoding="utf-8"))
         dirty_hash = statement["predicate"].get("git_dirty_hash")
         # sha256 hex is 64 chars; non-None signals the predicate caught
         # the dirty state.
-        assert dirty_hash is not None, (
-            "predicate must embed the live dirty-hash when --allow-dirty"
-        )
+        assert dirty_hash is not None, "predicate must embed the live dirty-hash when --allow-dirty"
         assert isinstance(dirty_hash, str) and len(dirty_hash) == 64, (
             f"git_dirty_hash must be a sha256 hex digest; got {dirty_hash!r}"
         )
@@ -123,9 +113,7 @@ class TestEmitRefusesDirtyTree:
         subject_digest = statement["subject"][0]["digest"]
         assert "git_commit_sha1" in subject_digest
         sha = subject_digest["git_commit_sha1"]
-        assert sha and sha != "unknown", (
-            f"subject.git_commit_sha1 must be a real SHA; got {sha!r}"
-        )
+        assert sha and sha != "unknown", f"subject.git_commit_sha1 must be a real SHA; got {sha!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -147,21 +135,13 @@ class TestVerifyDetectsMismatch:
         assert emit.exit_code == 0, emit.output
 
         statement = json.loads(out.read_text(encoding="utf-8"))
-        assert statement["predicate"]["git_dirty_hash"] is None, (
-            "fixture must emit on a clean tree"
-        )
+        assert statement["predicate"]["git_dirty_hash"] is None, "fixture must emit on a clean tree"
 
         # Dirty the tree post-emit.
-        (cga_project / "untracked.py").write_text(
-            "def smuggled(): pass\n", encoding="utf-8"
-        )
+        (cga_project / "untracked.py").write_text("def smuggled(): pass\n", encoding="utf-8")
 
-        verify = runner.invoke(
-            cli, ["--json", "cga", "verify", str(out), "--no-cosign"]
-        )
-        assert verify.exit_code == 5, (
-            f"dirty-hash mismatch must exit 5; got {verify.exit_code}\n{verify.output}"
-        )
+        verify = runner.invoke(cli, ["--json", "cga", "verify", str(out), "--no-cosign"])
+        assert verify.exit_code == 5, f"dirty-hash mismatch must exit 5; got {verify.exit_code}\n{verify.output}"
 
         data = json.loads(verify.output)
         assert data["summary"]["ok"] is False
@@ -181,9 +161,7 @@ class TestVerifyDetectsMismatch:
         emit = runner.invoke(cli, ["cga", "emit", "--output", str(out)])
         assert emit.exit_code == 0, emit.output
 
-        verify = runner.invoke(
-            cli, ["--json", "cga", "verify", str(out), "--no-cosign"]
-        )
+        verify = runner.invoke(cli, ["--json", "cga", "verify", str(out), "--no-cosign"])
         assert verify.exit_code == 0, verify.output
         data = json.loads(verify.output)
         assert data["summary"]["ok"] is True
@@ -206,15 +184,11 @@ class TestVerifyDetectsMismatch:
         spoofed_sha = "feedface" + "0" * 32
         monkeypatch.setattr(cga_mod, "_git_commit_sha", lambda root: spoofed_sha)
 
-        verify = runner.invoke(
-            cli, ["--json", "cga", "verify", str(out), "--no-cosign"]
-        )
+        verify = runner.invoke(cli, ["--json", "cga", "verify", str(out), "--no-cosign"])
         assert verify.exit_code == 5, verify.output
         data = json.loads(verify.output)
         joined = " ".join(data.get("errors", []))
-        assert "git_commit_sha1" in joined, (
-            f"verify must name the commit-SHA mismatch; got: {joined}"
-        )
+        assert "git_commit_sha1" in joined, f"verify must name the commit-SHA mismatch; got: {joined}"
 
 
 # ---------------------------------------------------------------------------
@@ -228,9 +202,7 @@ class TestPredicateBindsDirtyHashField:
     let the verifier silently skip the dirty check — the original bug.
     """
 
-    def test_predicate_carries_git_dirty_hash_field_on_clean_emit(
-        self, cga_project, tmp_path
-    ):
+    def test_predicate_carries_git_dirty_hash_field_on_clean_emit(self, cga_project, tmp_path):
         out = tmp_path / "cga.json"
         runner = CliRunner()
         result = runner.invoke(cli, ["cga", "emit", "--output", str(out)])
@@ -253,8 +225,7 @@ class TestPredicateBindsDirtyHashField:
         statement = json.loads(out.read_text(encoding="utf-8"))
         subject = statement["subject"][0]
         assert "git_commit_sha1" in subject["digest"], (
-            "subject.digest must carry git_commit_sha1 so the verifier "
-            "can compare to the live HEAD."
+            "subject.digest must carry git_commit_sha1 so the verifier can compare to the live HEAD."
         )
 
 
@@ -265,9 +236,7 @@ class TestPredicateBindsDirtyHashField:
 
 def _git_on_path() -> bool:
     try:
-        subprocess.run(
-            ["git", "--version"], capture_output=True, timeout=5, check=False
-        )
+        subprocess.run(["git", "--version"], capture_output=True, timeout=5, check=False)
         return True
     except (OSError, subprocess.SubprocessError):
         return False

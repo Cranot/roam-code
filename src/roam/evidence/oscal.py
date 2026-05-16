@@ -175,9 +175,7 @@ def build_oscal_control_mapping(
     # Deterministic document id — UUIDv5 over a canonical hash of the
     # input. Stable across re-emissions of the same control map.
     if document_id is None:
-        canon = json.dumps(
-            controls, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        canon = json.dumps(controls, sort_keys=True, separators=(",", ":")).encode("utf-8")
         digest = hashlib.sha256(canon).hexdigest()
         document_id = str(uuid.uuid5(_UUID_NS, f"control-mapping:{digest}"))
 
@@ -190,31 +188,27 @@ def build_oscal_control_mapping(
         fw = str(entry.get("source_framework") or "unknown")
         by_framework.setdefault(fw, []).append(entry)
 
-    resources, source_resource_id, framework_resource_ids = _build_resources(
-        sorted(by_framework.keys())
-    )
+    resources, source_resource_id, framework_resource_ids = _build_resources(sorted(by_framework.keys()))
 
     mappings = []
     for fw in sorted(by_framework.keys()):
         entries = by_framework[fw]
-        mapping_uuid = str(
-            uuid.uuid5(_UUID_NS, f"mapping:{document_id}:{fw}")
+        mapping_uuid = str(uuid.uuid5(_UUID_NS, f"mapping:{document_id}:{fw}"))
+        mappings.append(
+            {
+                "uuid": mapping_uuid,
+                "source-resource-id": source_resource_id,
+                "target-resource-id": framework_resource_ids[fw],
+                "props": [
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "source-framework",
+                        "value": fw,
+                    }
+                ],
+                "maps": [_build_map_entry(entry, document_id) for entry in entries],
+            }
         )
-        mappings.append({
-            "uuid": mapping_uuid,
-            "source-resource-id": source_resource_id,
-            "target-resource-id": framework_resource_ids[fw],
-            "props": [
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "source-framework",
-                    "value": fw,
-                }
-            ],
-            "maps": [
-                _build_map_entry(entry, document_id) for entry in entries
-            ],
-        })
 
     metadata: dict[str, Any] = {
         "title": title or DEFAULT_TITLE,
@@ -226,10 +220,7 @@ def build_oscal_control_mapping(
             {
                 "ns": ROAM_OSCAL_NS,
                 "name": "schema_version",
-                "value": str(
-                    control_map.get("schema_version")
-                    or "control_mapping/v1"
-                ),
+                "value": str(control_map.get("schema_version") or "control_mapping/v1"),
             },
             {
                 "ns": ROAM_OSCAL_NS,
@@ -290,42 +281,46 @@ def _build_resources(
     resources: list[dict[str, Any]] = []
 
     source_id = str(uuid.uuid5(_UUID_NS, "resource:roam-evidence"))
-    resources.append({
-        "uuid": source_id,
-        "title": "Roam ChangeEvidence",
-        "description": (
-            "Portable evidence packet emitted per code change. Source "
-            "of evidence that maps to the listed governance controls."
-        ),
-        "props": [
-            {
-                "ns": ROAM_OSCAL_NS,
-                "name": "roam_resource_kind",
-                "value": "evidence_source",
-            }
-        ],
-    })
+    resources.append(
+        {
+            "uuid": source_id,
+            "title": "Roam ChangeEvidence",
+            "description": (
+                "Portable evidence packet emitted per code change. Source "
+                "of evidence that maps to the listed governance controls."
+            ),
+            "props": [
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "roam_resource_kind",
+                    "value": "evidence_source",
+                }
+            ],
+        }
+    )
 
     framework_resource_ids: dict[str, str] = {}
     for fw in framework_names:
         rid = str(uuid.uuid5(_UUID_NS, f"resource:framework:{fw}"))
         framework_resource_ids[fw] = rid
-        resources.append({
-            "uuid": rid,
-            "title": _framework_title(fw),
-            "props": [
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "roam_resource_kind",
-                    "value": "framework",
-                },
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "framework_slug",
-                    "value": fw,
-                },
-            ],
-        })
+        resources.append(
+            {
+                "uuid": rid,
+                "title": _framework_title(fw),
+                "props": [
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "roam_resource_kind",
+                        "value": "framework",
+                    },
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "framework_slug",
+                        "value": fw,
+                    },
+                ],
+            }
+        )
 
     return resources, source_id, framework_resource_ids
 
@@ -414,25 +409,31 @@ def _build_map_entry(
     # "ns: prop" extension point per W359 research.
     for et in evidence_types:
         if isinstance(et, str) and et:
-            props.append({
-                "ns": ROAM_OSCAL_NS,
-                "name": "evidence_type",
-                "value": et,
-            })
+            props.append(
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "evidence_type",
+                    "value": et,
+                }
+            )
     for surface in surfaces:
         if isinstance(surface, str) and surface:
-            props.append({
-                "ns": ROAM_OSCAL_NS,
-                "name": "surface",
-                "value": surface,
-            })
+            props.append(
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "surface",
+                    "value": surface,
+                }
+            )
     for req in required_evidence:
         if isinstance(req, str) and req:
-            props.append({
-                "ns": ROAM_OSCAL_NS,
-                "name": "required_evidence",
-                "value": req,
-            })
+            props.append(
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "required_evidence",
+                    "value": req,
+                }
+            )
 
     return {
         "uuid": map_uuid,
@@ -486,10 +487,7 @@ def load_control_map(yaml_path: str | Path) -> Mapping[str, Any]:
     try:
         import yaml
     except ImportError as exc:  # pragma: no cover - guard
-        raise RuntimeError(
-            "PyYAML is required to load control-mapping.yaml. "
-            "Install with: pip install pyyaml"
-        ) from exc
+        raise RuntimeError("PyYAML is required to load control-mapping.yaml. Install with: pip install pyyaml") from exc
 
     text = Path(yaml_path).read_text(encoding="utf-8")
     parsed = yaml.safe_load(text)
@@ -523,9 +521,7 @@ def load_control_map(yaml_path: str | Path) -> Mapping[str, Any]:
 
 #: Pinned title for the AR document. Wording-lint compliant — uses
 #: "supports evidence for", never "certifies".
-DEFAULT_AR_TITLE: str = (
-    "Roam Assessment Results — supports evidence for governance controls"
-)
+DEFAULT_AR_TITLE: str = "Roam Assessment Results — supports evidence for governance controls"
 
 #: Pinned remarks for the AR document. Carries the same audit-clarity
 #: caveat as DEFAULT_REMARKS so consumers see it BEFORE drawing
@@ -541,9 +537,7 @@ DEFAULT_AR_REMARKS: str = (
 #: Pinned title for the synthesized stub Assessment Plan. The AP is
 #: paper-formality boilerplate; the wording flags this explicitly so a
 #: human reviewer immediately knows the AP isn't a hand-authored plan.
-STUB_AP_TITLE: str = (
-    "Roam stub Assessment Plan — continuous AI-assisted code change assessment"
-)
+STUB_AP_TITLE: str = "Roam stub Assessment Plan — continuous AI-assisted code change assessment"
 
 #: Pinned remarks for the stub AP. Explicit about its synthetic nature.
 STUB_AP_REMARKS: str = (
@@ -601,43 +595,40 @@ def synthesize_stub_assessment_plan(
     last_modified = timestamp.isoformat().replace("+00:00", "Z")
 
     if document_id is None:
-        document_id = str(
-            uuid.uuid5(_UUID_NS, f"stub-assessment-plan:{repo_id}")
-        )
+        document_id = str(uuid.uuid5(_UUID_NS, f"stub-assessment-plan:{repo_id}"))
 
-    activity_uuid = str(
-        uuid.uuid5(_UUID_NS, f"stub-ap-activity:{document_id}")
-    )
-    assessment_subject_uuid = str(
-        uuid.uuid5(_UUID_NS, f"stub-ap-subject:{document_id}")
-    )
+    activity_uuid = str(uuid.uuid5(_UUID_NS, f"stub-ap-activity:{document_id}"))
+    # assessment_subject_uuid is reserved for the OSCAL assessment-subjects
+    # block once we model concrete subjects (commits / runs). Leaving the
+    # deterministic UUID derivation in place documents the slot.
+    _reserved_assessment_subject_uuid = str(uuid.uuid5(_UUID_NS, f"stub-ap-subject:{document_id}"))  # noqa: F841
 
     back_matter_resources: list[dict[str, Any]] = []
     if control_mapping_ref:
-        cm_uuid = str(
-            uuid.uuid5(_UUID_NS, f"stub-ap-cm-link:{document_id}")
+        cm_uuid = str(uuid.uuid5(_UUID_NS, f"stub-ap-cm-link:{document_id}"))
+        back_matter_resources.append(
+            {
+                "uuid": cm_uuid,
+                "title": "Roam Control Mapping",
+                "description": (
+                    "Control Mapping document that supports evidence for the "
+                    "controls referenced by this Assessment Plan."
+                ),
+                "props": [
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "roam_resource_kind",
+                        "value": "control_mapping_ref",
+                    }
+                ],
+                "rlinks": [
+                    {
+                        "href": control_mapping_ref,
+                        "media-type": "application/json",
+                    }
+                ],
+            }
         )
-        back_matter_resources.append({
-            "uuid": cm_uuid,
-            "title": "Roam Control Mapping",
-            "description": (
-                "Control Mapping document that supports evidence for the "
-                "controls referenced by this Assessment Plan."
-            ),
-            "props": [
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "roam_resource_kind",
-                    "value": "control_mapping_ref",
-                }
-            ],
-            "rlinks": [
-                {
-                    "href": control_mapping_ref,
-                    "media-type": "application/json",
-                }
-            ],
-        })
 
     metadata: dict[str, Any] = {
         "title": title or STUB_AP_TITLE,
@@ -669,10 +660,7 @@ def synthesize_stub_assessment_plan(
         # flows.
         "import-ssp": {
             "href": "#",
-            "remarks": (
-                "No System Security Plan; stub AP for continuous "
-                "AI-assisted code change assessment."
-            ),
+            "remarks": ("No System Security Plan; stub AP for continuous AI-assisted code change assessment."),
         },
         "assessment-subjects": [
             {
@@ -724,7 +712,7 @@ def synthesize_stub_assessment_plan(
 
 
 def build_oscal_assessment_results(
-    evidence: "Mapping[str, Any] | ChangeEvidence",
+    evidence: "Mapping[str, Any] | ChangeEvidence",  # noqa: F821 — string forward-ref; ChangeEvidence imported under TYPE_CHECKING below
     *,
     import_ap_ref: str | None = None,
     title: str | None = None,
@@ -834,9 +822,7 @@ def build_oscal_assessment_results(
     # to evidence_id (stable across re-runs for the same packet).
     if document_id is None:
         seed = str(content_hash or f"evidence:{evidence_id}")
-        document_id = str(
-            uuid.uuid5(_UUID_NS, f"assessment-results:{seed}")
-        )
+        document_id = str(uuid.uuid5(_UUID_NS, f"assessment-results:{seed}"))
 
     # Build the import-ap reference. When no external AP path is given,
     # synthesize a stub AP and emit it inline in back-matter resources;
@@ -860,9 +846,7 @@ def build_oscal_assessment_results(
     else:
         import_ap_block = {
             "href": import_ap_ref,
-            "remarks": (
-                "External Assessment Plan reference supplied by caller."
-            ),
+            "remarks": ("External Assessment Plan reference supplied by caller."),
         }
 
     # ------------------------------------------------------------------
@@ -881,9 +865,7 @@ def build_oscal_assessment_results(
         # human/agent/ci_runner/tool/mcp_client → tool (closest fit for
         # non-person actors) and human → person.
         party_type = "person" if actor_kind == "human" else "tool"
-        party_uuid = str(
-            uuid.uuid5(_UUID_NS, f"party:{document_id}:{actor_id}")
-        )
+        party_uuid = str(uuid.uuid5(_UUID_NS, f"party:{document_id}:{actor_id}"))
         party: dict[str, Any] = {
             "uuid": party_uuid,
             "type": party_type,
@@ -903,29 +885,33 @@ def build_oscal_assessment_results(
         }
         trust_tier = ar.get("trust_tier")
         if isinstance(trust_tier, str) and trust_tier:
-            party["props"].append({
-                "ns": ROAM_OSCAL_NS,
-                "name": "trust_tier",
-                "value": trust_tier,
-            })
+            party["props"].append(
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "trust_tier",
+                    "value": trust_tier,
+                }
+            )
         parties.append(party)
 
     # Agent id (if not already covered by actor_refs) becomes its own
     # tool party for compatibility with consumers that expect a single
     # tool identity.
     if agent_id and not any(p["name"] == str(agent_id) for p in parties):
-        parties.append({
-            "uuid": str(uuid.uuid5(_UUID_NS, f"party-agent:{agent_id}")),
-            "type": "tool",
-            "name": str(agent_id),
-            "props": [
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "actor_kind",
-                    "value": "agent",
-                }
-            ],
-        })
+        parties.append(
+            {
+                "uuid": str(uuid.uuid5(_UUID_NS, f"party-agent:{agent_id}")),
+                "type": "tool",
+                "name": str(agent_id),
+                "props": [
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "actor_kind",
+                        "value": "agent",
+                    }
+                ],
+            }
+        )
 
     metadata_props: list[dict[str, str]] = [
         {
@@ -940,20 +926,24 @@ def build_oscal_assessment_results(
         },
     ]
     if content_hash:
-        metadata_props.append({
-            "ns": ROAM_OSCAL_NS,
-            "name": "content-hash",
-            "value": str(content_hash),
-        })
+        metadata_props.append(
+            {
+                "ns": ROAM_OSCAL_NS,
+                "name": "content-hash",
+                "value": str(content_hash),
+            }
+        )
     redactions = evidence.get("redactions") or []
     if isinstance(redactions, list):
         for reason in redactions:
             if isinstance(reason, str) and reason:
-                metadata_props.append({
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "redaction",
-                    "value": reason,
-                })
+                metadata_props.append(
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "redaction",
+                        "value": reason,
+                    }
+                )
 
     metadata: dict[str, Any] = {
         "title": title or DEFAULT_AR_TITLE,
@@ -972,42 +962,54 @@ def build_oscal_assessment_results(
     result_uuid = str(uuid.uuid5(_UUID_NS, f"result:{document_id}"))
     result_props: list[dict[str, str]] = []
     if commit_sha:
-        result_props.append({
-            "ns": ROAM_OSCAL_NS,
-            "name": "commit-sha",
-            "value": str(commit_sha),
-        })
+        result_props.append(
+            {
+                "ns": ROAM_OSCAL_NS,
+                "name": "commit-sha",
+                "value": str(commit_sha),
+            }
+        )
     if git_range:
-        result_props.append({
-            "ns": ROAM_OSCAL_NS,
-            "name": "git-range",
-            "value": str(git_range),
-        })
+        result_props.append(
+            {
+                "ns": ROAM_OSCAL_NS,
+                "name": "git-range",
+                "value": str(git_range),
+            }
+        )
     if diff_hash:
-        result_props.append({
-            "ns": ROAM_OSCAL_NS,
-            "name": "diff-hash",
-            "value": str(diff_hash),
-        })
+        result_props.append(
+            {
+                "ns": ROAM_OSCAL_NS,
+                "name": "diff-hash",
+                "value": str(diff_hash),
+            }
+        )
     for rid in run_ids:
         if isinstance(rid, str) and rid:
-            result_props.append({
-                "ns": ROAM_OSCAL_NS,
-                "name": "run-id",
-                "value": rid,
-            })
+            result_props.append(
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "run-id",
+                    "value": rid,
+                }
+            )
     if mode:
-        result_props.append({
-            "ns": ROAM_OSCAL_NS,
-            "name": "roam-mode",
-            "value": str(mode),
-        })
+        result_props.append(
+            {
+                "ns": ROAM_OSCAL_NS,
+                "name": "roam-mode",
+                "value": str(mode),
+            }
+        )
     if risk_level:
-        result_props.append({
-            "ns": ROAM_OSCAL_NS,
-            "name": "risk-level",
-            "value": str(risk_level),
-        })
+        result_props.append(
+            {
+                "ns": ROAM_OSCAL_NS,
+                "name": "risk-level",
+                "value": str(risk_level),
+            }
+        )
 
     # authority_refs surface as result-level props (no native OSCAL
     # equivalent — W359 extension point under urn:roam:oscal:v1).
@@ -1019,11 +1021,13 @@ def build_oscal_assessment_results(
             ak = authref.get("authority_kind")
             aid = authref.get("authority_id")
             if isinstance(ak, str) and isinstance(aid, str):
-                result_props.append({
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "authority-ref",
-                    "value": f"{ak}:{aid}",
-                })
+                result_props.append(
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "authority-ref",
+                        "value": f"{ak}:{aid}",
+                    }
+                )
 
     # Observations: one per finding row + one per changed_subject.
     observations: list[dict[str, Any]] = []
@@ -1035,117 +1039,85 @@ def build_oscal_assessment_results(
     for idx, fnd in enumerate(findings_in):
         if not isinstance(fnd, Mapping):
             continue
-        f_id = str(
-            fnd.get("finding_id")
-            or fnd.get("id")
-            or f"finding-{idx:04d}"
-        )
+        f_id = str(fnd.get("finding_id") or fnd.get("id") or f"finding-{idx:04d}")
         f_kind = str(fnd.get("kind") or fnd.get("detector") or "finding")
         f_severity = str(fnd.get("severity") or "info")
-        f_subject = str(
-            fnd.get("subject_id")
-            or fnd.get("subject")
-            or fnd.get("path")
-            or "<unknown>"
-        )
-        f_message = str(
-            fnd.get("message")
-            or fnd.get("description")
-            or fnd.get("claim")
-            or ""
+        f_subject = str(fnd.get("subject_id") or fnd.get("subject") or fnd.get("path") or "<unknown>")
+        f_message = str(fnd.get("message") or fnd.get("description") or fnd.get("claim") or "")
+
+        obs_uuid = str(uuid.uuid5(_UUID_NS, f"obs:{document_id}:{f_id}"))
+        subj_uuid = str(uuid.uuid5(_UUID_NS, f"subj:{document_id}:{f_subject}"))
+        observations.append(
+            {
+                "uuid": obs_uuid,
+                "title": f"{f_kind} — {f_subject}",
+                "description": f_message or f"finding {f_id}",
+                "methods": ["EXAMINE"],
+                "subjects": [
+                    {
+                        "subject-uuid": subj_uuid,
+                        "type": "component",
+                        "title": f_subject,
+                        "props": [
+                            {
+                                "ns": ROAM_OSCAL_NS,
+                                "name": "subject-kind",
+                                "value": str(fnd.get("subject_kind") or "symbol"),
+                            }
+                        ],
+                    }
+                ],
+                "props": [
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "finding_kind",
+                        "value": f_kind,
+                    },
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "severity",
+                        "value": f_severity,
+                    },
+                ],
+                "remarks": (f"Observation supports evidence for control review. Source detector: {f_kind}."),
+            }
         )
 
-        obs_uuid = str(
-            uuid.uuid5(_UUID_NS, f"obs:{document_id}:{f_id}")
+        finding_uuid = str(uuid.uuid5(_UUID_NS, f"finding:{document_id}:{f_id}"))
+        findings_out.append(
+            {
+                "uuid": finding_uuid,
+                "title": f"{f_kind} — {f_subject}",
+                "description": f_message or f"finding {f_id}",
+                "target": {
+                    "type": "objective-id",
+                    "target-id": f"roam:{f_kind}",
+                    "status": {
+                        "state": ("not-satisfied" if f_severity in ("critical", "high", "blocker") else "satisfied"),
+                        "reason": (f"Finding {f_id} maps to / supports evidence for the {f_kind} control objective."),
+                    },
+                },
+                "related-observations": [{"observation-uuid": obs_uuid}],
+                "props": [
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "severity",
+                        "value": f_severity,
+                    },
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "finding_kind",
+                        "value": f_kind,
+                    },
+                ],
+            }
         )
-        subj_uuid = str(
-            uuid.uuid5(_UUID_NS, f"subj:{document_id}:{f_subject}")
-        )
-        observations.append({
-            "uuid": obs_uuid,
-            "title": f"{f_kind} — {f_subject}",
-            "description": f_message or f"finding {f_id}",
-            "methods": ["EXAMINE"],
-            "subjects": [
-                {
-                    "subject-uuid": subj_uuid,
-                    "type": "component",
-                    "title": f_subject,
-                    "props": [
-                        {
-                            "ns": ROAM_OSCAL_NS,
-                            "name": "subject-kind",
-                            "value": str(
-                                fnd.get("subject_kind") or "symbol"
-                            ),
-                        }
-                    ],
-                }
-            ],
-            "props": [
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "finding_kind",
-                    "value": f_kind,
-                },
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "severity",
-                    "value": f_severity,
-                },
-            ],
-            "remarks": (
-                f"Observation supports evidence for control review. "
-                f"Source detector: {f_kind}."
-            ),
-        })
-
-        finding_uuid = str(
-            uuid.uuid5(_UUID_NS, f"finding:{document_id}:{f_id}")
-        )
-        findings_out.append({
-            "uuid": finding_uuid,
-            "title": f"{f_kind} — {f_subject}",
-            "description": f_message or f"finding {f_id}",
-            "target": {
-                "type": "objective-id",
-                "target-id": f"roam:{f_kind}",
-                "status": {
-                    "state": (
-                        "not-satisfied"
-                        if f_severity in ("critical", "high", "blocker")
-                        else "satisfied"
-                    ),
-                    "reason": (
-                        f"Finding {f_id} maps to / supports evidence for "
-                        f"the {f_kind} control objective."
-                    ),
-                },
-            },
-            "related-observations": [
-                {"observation-uuid": obs_uuid}
-            ],
-            "props": [
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "severity",
-                    "value": f_severity,
-                },
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "finding_kind",
-                    "value": f_kind,
-                },
-            ],
-        })
 
     # Changed subjects become subjects on a single bulk observation
     # when they aren't already covered by per-finding observations.
     changed_subjects = evidence.get("changed_subjects") or []
     if isinstance(changed_subjects, list) and changed_subjects:
-        bulk_obs_uuid = str(
-            uuid.uuid5(_UUID_NS, f"obs-bulk:{document_id}")
-        )
+        bulk_obs_uuid = str(uuid.uuid5(_UUID_NS, f"obs-bulk:{document_id}"))
         bulk_subjects: list[dict[str, Any]] = []
         for cs in changed_subjects:
             if not isinstance(cs, Mapping):
@@ -1154,37 +1126,33 @@ def build_oscal_assessment_results(
             sk = str(cs.get("kind") or cs.get("subject_kind") or "symbol")
             if not sid:
                 continue
-            bulk_subjects.append({
-                "subject-uuid": str(
-                    uuid.uuid5(
-                        _UUID_NS, f"subj-bulk:{document_id}:{sid}"
-                    )
-                ),
-                "type": "component",
-                "title": sid,
-                "props": [
-                    {
-                        "ns": ROAM_OSCAL_NS,
-                        "name": "subject-kind",
-                        "value": sk,
-                    }
-                ],
-            })
+            bulk_subjects.append(
+                {
+                    "subject-uuid": str(uuid.uuid5(_UUID_NS, f"subj-bulk:{document_id}:{sid}")),
+                    "type": "component",
+                    "title": sid,
+                    "props": [
+                        {
+                            "ns": ROAM_OSCAL_NS,
+                            "name": "subject-kind",
+                            "value": sk,
+                        }
+                    ],
+                }
+            )
         if bulk_subjects:
-            observations.append({
-                "uuid": bulk_obs_uuid,
-                "title": "changed subjects in scope",
-                "description": (
-                    f"Subjects modified by the change scope "
-                    f"({len(bulk_subjects)} entries)."
-                ),
-                "methods": ["EXAMINE"],
-                "subjects": bulk_subjects,
-                "remarks": (
-                    "Bulk observation supports evidence for change-"
-                    "tracking controls (which symbols changed)."
-                ),
-            })
+            observations.append(
+                {
+                    "uuid": bulk_obs_uuid,
+                    "title": "changed subjects in scope",
+                    "description": (f"Subjects modified by the change scope ({len(bulk_subjects)} entries)."),
+                    "methods": ["EXAMINE"],
+                    "subjects": bulk_subjects,
+                    "remarks": (
+                        "Bulk observation supports evidence for change-tracking controls (which symbols changed)."
+                    ),
+                }
+            )
 
     # Attestations (approvals)
     attestations: list[dict[str, Any]] = []
@@ -1193,34 +1161,32 @@ def build_oscal_assessment_results(
         for idx, ap in enumerate(approvals):
             if not isinstance(ap, Mapping):
                 continue
-            approver = str(
-                ap.get("approver") or ap.get("party") or "unknown"
+            approver = str(ap.get("approver") or ap.get("party") or "unknown")
+            rationale = str(ap.get("rationale") or ap.get("note") or "approval recorded")
+            attestations.append(
+                {
+                    "responsible-parties": [
+                        {
+                            "role-id": "approver",
+                            "party-uuids": [
+                                str(
+                                    uuid.uuid5(
+                                        _UUID_NS,
+                                        f"party-approver:{document_id}:{approver}",
+                                    )
+                                )
+                            ],
+                        }
+                    ],
+                    "parts": [
+                        {
+                            "name": "approval",
+                            "title": f"Approval by {approver}",
+                            "prose": rationale,
+                        }
+                    ],
+                }
             )
-            rationale = str(
-                ap.get("rationale")
-                or ap.get("note")
-                or "approval recorded"
-            )
-            attestations.append({
-                "responsible-parties": [
-                    {
-                        "role-id": "approver",
-                        "party-uuids": [
-                            str(uuid.uuid5(
-                                _UUID_NS,
-                                f"party-approver:{document_id}:{approver}",
-                            ))
-                        ],
-                    }
-                ],
-                "parts": [
-                    {
-                        "name": "approval",
-                        "title": f"Approval by {approver}",
-                        "prose": rationale,
-                    }
-                ],
-            })
 
     # Risks + mitigating factors (accepted_risks)
     risks: list[dict[str, Any]] = []
@@ -1229,35 +1195,30 @@ def build_oscal_assessment_results(
         for idx, ar_row in enumerate(accepted_risks):
             if not isinstance(ar_row, Mapping):
                 continue
-            risk_uuid = str(
-                uuid.uuid5(_UUID_NS, f"risk:{document_id}:{idx}")
+            risk_uuid = str(uuid.uuid5(_UUID_NS, f"risk:{document_id}:{idx}"))
+            risk_title = str(ar_row.get("title") or ar_row.get("name") or f"risk-{idx}")
+            risk_descr = str(ar_row.get("description") or ar_row.get("rationale") or "accepted risk")
+            risks.append(
+                {
+                    "uuid": risk_uuid,
+                    "title": risk_title,
+                    "description": risk_descr,
+                    "statement": (
+                        "Risk accepted; mitigation maps to / supports evidence for risk-acceptance controls."
+                    ),
+                    "mitigating-factors": [
+                        {
+                            "uuid": str(
+                                uuid.uuid5(
+                                    _UUID_NS,
+                                    f"mitigation:{document_id}:{idx}",
+                                )
+                            ),
+                            "description": risk_descr,
+                        }
+                    ],
+                }
             )
-            risk_title = str(
-                ar_row.get("title") or ar_row.get("name") or f"risk-{idx}"
-            )
-            risk_descr = str(
-                ar_row.get("description")
-                or ar_row.get("rationale")
-                or "accepted risk"
-            )
-            risks.append({
-                "uuid": risk_uuid,
-                "title": risk_title,
-                "description": risk_descr,
-                "statement": (
-                    f"Risk accepted; mitigation maps to / supports "
-                    f"evidence for risk-acceptance controls."
-                ),
-                "mitigating-factors": [
-                    {
-                        "uuid": str(uuid.uuid5(
-                            _UUID_NS,
-                            f"mitigation:{document_id}:{idx}",
-                        )),
-                        "description": risk_descr,
-                    }
-                ],
-            })
 
     result: dict[str, Any] = {
         "uuid": result_uuid,
@@ -1301,16 +1262,9 @@ def build_oscal_assessment_results(
             art_id = str(art.get("artifact_id") or f"artifact-{idx:04d}")
             art_kind = str(art.get("kind") or "other")
             art_title = str(art.get("title") or art_id)
-            art_href = str(
-                art.get("href")
-                or art.get("path")
-                or art.get("uri")
-                or ""
-            )
+            art_href = str(art.get("href") or art.get("path") or art.get("uri") or "")
             res: dict[str, Any] = {
-                "uuid": str(uuid.uuid5(
-                    _UUID_NS, f"artifact:{document_id}:{art_id}"
-                )),
+                "uuid": str(uuid.uuid5(_UUID_NS, f"artifact:{document_id}:{art_id}")),
                 "title": art_title,
                 "props": [
                     {
@@ -1321,48 +1275,54 @@ def build_oscal_assessment_results(
                 ],
             }
             if art_href:
-                res["rlinks"] = [{
-                    "href": art_href,
-                    "media-type": "application/json",
-                }]
+                res["rlinks"] = [
+                    {
+                        "href": art_href,
+                        "media-type": "application/json",
+                    }
+                ]
             ch = art.get("content_hash") or art.get("hash")
             if isinstance(ch, str) and ch:
-                res["props"].append({
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "content-hash",
-                    "value": ch,
-                })
+                res["props"].append(
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "content-hash",
+                        "value": ch,
+                    }
+                )
             bm_resources.append(res)
 
     # When we synthesized a stub AP inline, embed it as a back-matter
     # resource so the AR document is self-contained.
     if stub_ap is not None:
         stub_ap_doc = stub_ap["assessment-plan"]
-        bm_resources.append({
-            "uuid": stub_ap_doc["uuid"],
-            "title": stub_ap_doc["metadata"]["title"],
-            "description": (
-                "Inline stub Assessment Plan generated by roam. The AR "
-                "document's import-ap field references this resource "
-                "via urn:uuid:."
-            ),
-            "props": [
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "roam_resource_kind",
-                    "value": "stub_assessment_plan",
-                },
-                {
-                    "ns": ROAM_OSCAL_NS,
-                    "name": "stub",
-                    "value": "true",
-                },
-            ],
-            # Embed the full AP doc so consumers can resolve the
-            # urn:uuid:<ap-uuid> reference without external fetches.
-            "rlinks": [],
-            "remarks": json.dumps(stub_ap, separators=(",", ":")),
-        })
+        bm_resources.append(
+            {
+                "uuid": stub_ap_doc["uuid"],
+                "title": stub_ap_doc["metadata"]["title"],
+                "description": (
+                    "Inline stub Assessment Plan generated by roam. The AR "
+                    "document's import-ap field references this resource "
+                    "via urn:uuid:."
+                ),
+                "props": [
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "roam_resource_kind",
+                        "value": "stub_assessment_plan",
+                    },
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "stub",
+                        "value": "true",
+                    },
+                ],
+                # Embed the full AP doc so consumers can resolve the
+                # urn:uuid:<ap-uuid> reference without external fetches.
+                "rlinks": [],
+                "remarks": json.dumps(stub_ap, separators=(",", ":")),
+            }
+        )
 
     ar: dict[str, Any] = {
         "uuid": document_id,

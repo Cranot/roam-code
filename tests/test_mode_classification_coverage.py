@@ -79,7 +79,7 @@ def test_unclassified_command_count_does_not_grow_in_policy():
         "_MODE_EXTRAS in src/roam/modes/policy.py or to "
         "_MODE_ALWAYS_ALLOWED in src/roam/cli.py. "
         f"Newly added unclassified: "
-        f"{sorted(set(unclassified))[-(len(unclassified) - UNCLASSIFIED_CEILING):] if len(unclassified) > UNCLASSIFIED_CEILING else []}"
+        f"{sorted(set(unclassified))[-(len(unclassified) - UNCLASSIFIED_CEILING) :] if len(unclassified) > UNCLASSIFIED_CEILING else []}"
     )
 
 
@@ -163,7 +163,7 @@ def test_default_modes_materialise_from_policy_extras():
     ``_MODE_EXTRAS`` up to and including that mode.
     """
     from roam.constitution.loader import _default_modes
-    from roam.modes.policy import VALID_MODES, _MODE_EXTRAS
+    from roam.modes.policy import _MODE_EXTRAS, VALID_MODES
 
     defaults = _default_modes()
     cumulative: set[str] = set()
@@ -175,16 +175,13 @@ def test_default_modes_materialise_from_policy_extras():
         if expected != actual:
             missing = sorted(set(expected) - set(actual))
             extra = sorted(set(actual) - set(expected))
-            failures.append(
-                f"mode {mode!r}: missing={missing} extra={extra}"
-            )
+            failures.append(f"mode {mode!r}: missing={missing} extra={extra}")
 
     assert not failures, (
         "constitution.loader._default_modes() drifted from "
         "policy._MODE_EXTRAS — these MUST stay in lockstep because "
         "the loader treats on-disk constitution mode lists as "
-        "REPLACEMENTS (not extras). Drift details:\n"
-        + "\n".join(failures)
+        "REPLACEMENTS (not extras). Drift details:\n" + "\n".join(failures)
     )
 
 
@@ -366,11 +363,7 @@ def test_w107_demotion_preserves_unclassified_ceiling():
     for verbs in _MODE_EXTRAS.values():
         all_modes_combined |= set(verbs)
 
-    unclassified = [
-        cmd
-        for cmd in _COMMANDS
-        if cmd not in _MODE_ALWAYS_ALLOWED and cmd not in all_modes_combined
-    ]
+    unclassified = [cmd for cmd in _COMMANDS if cmd not in _MODE_ALWAYS_ALLOWED and cmd not in all_modes_combined]
 
     # Same ceiling as ``test_unclassified_command_count_does_not_grow_in_policy``.
     UNCLASSIFIED_CEILING = 152
@@ -434,11 +427,7 @@ def test_unclassified_ceiling_decremented_to_152():
     for verbs in _MODE_EXTRAS.values():
         all_modes_combined |= set(verbs)
 
-    unclassified = [
-        cmd
-        for cmd in _COMMANDS
-        if cmd not in _MODE_ALWAYS_ALLOWED and cmd not in all_modes_combined
-    ]
+    unclassified = [cmd for cmd in _COMMANDS if cmd not in _MODE_ALWAYS_ALLOWED and cmd not in all_modes_combined]
 
     assert len(unclassified) <= 152, (
         f"W248: expected ≤152 unclassified commands after classifying "

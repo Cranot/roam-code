@@ -119,17 +119,14 @@ class TestColdStartGuardWiring:
         )
 
     @pytest.mark.parametrize("tool_name", W304_TOOL_NAMES)
-    def test_wrapper_description_carries_cold_start_hint(
-        self, tool_name: str
-    ) -> None:
+    def test_wrapper_description_carries_cold_start_hint(self, tool_name: str) -> None:
         """W296 hint is auto-appended to every index-gated wrapper."""
         from roam.mcp_extras.preflight import INDEX_REQUIRED_HINT
         from roam.mcp_server import _TOOL_METADATA
 
         desc = _TOOL_METADATA[tool_name].get("description", "")
         assert INDEX_REQUIRED_HINT in desc, (
-            f"{tool_name} description must end with the W296 hint "
-            f"{INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
+            f"{tool_name} description must end with the W296 hint {INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
         )
 
 
@@ -196,9 +193,7 @@ class TestRoamRecommendArgShape:
             mock.return_value = {"ok": True}
             # Default limit=10 mirrors the CLI default per LAW 11.
             roam_recommend(symbol="handleSave")
-            mock.assert_called_once_with(
-                ["recommend", "handleSave", "--limit", "10"], "."
-            )
+            mock.assert_called_once_with(["recommend", "handleSave", "--limit", "10"], ".")
 
     def test_limit_override(self) -> None:
         from roam.mcp_server import roam_recommend
@@ -244,7 +239,8 @@ class TestRoamPlanArgShape:
             roam_plan(file_path="src/api.py", task="review")
             args = mock.call_args[0][0]
             assert args[0] == "plan"
-            assert "--file" in args and "src/api.py" in args
+            # W1099: CLI flag renamed --file -> --path (alias preserved)
+            assert "--path" in args and "src/api.py" in args
             assert "--task" in args and "review" in args
 
     def test_staged(self) -> None:
@@ -266,9 +262,7 @@ class TestRoamAgentPlanArgShape:
             mock.return_value = {"ok": True}
             # Default output_format='plain' mirrors CLI per LAW 11.
             roam_agent_plan(agents=3)
-            mock.assert_called_once_with(
-                ["agent-plan", "--agents", "3", "--format", "plain"], "."
-            )
+            mock.assert_called_once_with(["agent-plan", "--agents", "3", "--format", "plain"], ".")
 
     def test_format_override(self) -> None:
         from roam.mcp_server import roam_agent_plan
@@ -289,9 +283,7 @@ class TestRoamAgentContextArgShape:
             mock.return_value = {"ok": True}
             # Default agents=0 -> CLI picks max(agent_id, 2) per LAW 11.
             roam_agent_context(agent_id=1)
-            mock.assert_called_once_with(
-                ["agent-context", "--agent-id", "1"], "."
-            )
+            mock.assert_called_once_with(["agent-context", "--agent-id", "1"], ".")
 
     def test_explicit_agents(self) -> None:
         from roam.mcp_server import roam_agent_context
@@ -391,9 +383,7 @@ class TestRoamMigrationPlanArgShape:
             mock.return_value = {"ok": True}
             # Default max_risk='high' mirrors the CLI default per LAW 11.
             roam_migration_plan()
-            mock.assert_called_once_with(
-                ["migration-plan", "--max-risk", "high"], "."
-            )
+            mock.assert_called_once_with(["migration-plan", "--max-risk", "high"], ".")
 
     def test_input_path(self) -> None:
         """W332 canonical ``input_path`` -- YAML target-architecture spec."""

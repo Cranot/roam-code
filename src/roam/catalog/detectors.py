@@ -25,7 +25,6 @@ from typing import Any, Callable, Iterable, Mapping
 
 from roam.catalog._shared import is_test_path as _shared_is_test_path
 from roam.catalog._shared import loc as _loc
-
 from roam.catalog.tasks import best_way
 from roam.catalog.versions import detector_version as _detector_version_for_task
 from roam.db.edge_kinds import CALL_EDGE_KINDS
@@ -175,9 +174,7 @@ def detector(
         Detector version string (bump on behavior changes).
     """
     if confidence_basis not in _CONFIDENCE_BASES:
-        raise ValueError(
-            f"confidence_basis must be one of {sorted(_CONFIDENCE_BASES)}, got {confidence_basis!r}"
-        )
+        raise ValueError(f"confidence_basis must be one of {sorted(_CONFIDENCE_BASES)}, got {confidence_basis!r}")
     if query_cost not in _QUERY_COSTS:
         raise ValueError(f"query_cost must be one of {sorted(_QUERY_COSTS)}, got {query_cost!r}")
 
@@ -198,9 +195,7 @@ def detector(
 
 def list_registered_detectors() -> list[dict[str, Any]]:
     """Return registry entries (excluding the callable) for inspection."""
-    return [
-        {k: v for k, v in entry.items() if k != "function"} for entry in _DETECTOR_REGISTRY.values()
-    ]
+    return [{k: v for k, v in entry.items() if k != "function"} for entry in _DETECTOR_REGISTRY.values()]
 
 
 def _is_test_path(path: str) -> bool:
@@ -2141,6 +2136,12 @@ def autodetect_framework_profile() -> str | None:
     # (deterministic for the bundled profiles); plugins are consulted
     # only if nothing built-in matched. Each detector is wrapped in a
     # try/except so a buggy plugin can't break detection.
+    #
+    # W662 / W1238: plugin-isolation perimeter — a third-party detector
+    # may raise any exception class, so ``Exception`` is the correct
+    # width here. We log+continue instead of silently swallowing so the
+    # operator can spot a broken plugin via the warning stream while
+    # the host loop keeps running. Mirrors W531 fail-loud discipline.
     try:
         from pathlib import Path
 
@@ -2150,12 +2151,22 @@ def autodetect_framework_profile() -> str | None:
         for detect in get_plugin_framework_detectors():
             try:
                 result = detect(root)
-            except Exception:
+            except Exception as err:
+                log.warning(
+                    "framework detector plugin %r raised %s: %s",
+                    getattr(detect, "__qualname__", repr(detect)),
+                    type(err).__name__,
+                    err,
+                )
                 continue
             if result:
                 return str(result)
-    except Exception:
-        pass
+    except Exception as err:
+        log.warning(
+            "framework-detector plugin discovery failed: %s: %s",
+            type(err).__name__,
+            err,
+        )
 
     return None
 
@@ -4728,6 +4739,13 @@ def run_detectors(
             framework_active = framework.lower()
     only_set = {n for n in (only or ()) if n}
     exclude_set = {n for n in (exclude or ()) if n} - only_set
+    # W1057 (Pattern 1D + Pattern 2): diff user-supplied --only/--exclude against
+    # the registry-derived authoritative detector-name set so unknown names
+    # don't silently filter-to-zero. Mirrors the framework_unknown precedent
+    # at L4719-4725. Sorted for deterministic envelope hashing. Empty lists on
+    # the happy path keep the meta envelope byte-identical to pre-W1057.
+    only_unknown = sorted(only_set - _DETECTOR_REGISTRY.keys()) if only_set else []
+    exclude_unknown = sorted(exclude_set - _DETECTOR_REGISTRY.keys()) if exclude_set else []
     try:
         findings = []
         failed_detectors = []
@@ -4841,6 +4859,13 @@ def run_detectors(
                 "framework": framework_active,
                 "framework_unknown": framework_unknown,
             }
+            # W1057: surface unknown --only/--exclude names ONLY when the
+            # caller supplied them. Default path (neither flag set) emits no
+            # new keys → byte-identical to pre-W1057 envelopes.
+            if only_set:
+                meta["only_unknown"] = only_unknown
+            if exclude_set:
+                meta["exclude_unknown"] = exclude_unknown
             return findings, meta
 
         return findings

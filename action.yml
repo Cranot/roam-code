@@ -398,7 +398,206 @@ runs:
         declare -A _SEEN=()
 
         # Commands that currently emit SARIF via global --sarif flag.
-        _SUPPORTED_SARIF="health dead complexity rules secrets algo"
+        # _SUPPORTED_SARIF is intentionally a subset of cli.py::_SARIF_CONSUMERS
+        # (37 total CLI SARIF emitters as of W1229; 29 auto-uploaded
+        # here). The 8-entry gap (37 - 29) reflects the mature-stable gating
+        # policy:
+        # detectors auto-upload only after they have shipped, been dogfooded,
+        # and proven low false-positive rates. The gap is policy, not lag.
+        # Commands listed here auto-upload as SARIF via GitHub Code Scanning.
+        # Excluded by design (mature-stable gating per W1158):
+        #   py-types / py-modern (Python-tooling-specific, less universal),
+        #   stale-refs / taint (advanced detectors, opt-in per project),
+        #   audit-trail-conformance-check / check-rules (governance/policy,
+        #     external SARIF pathway), supply-chain / vulns (third-party-data
+        #     dependent, opt-in).
+        # See W1158 audit + (internal memo).
+        # W1165: impact added — universal blast-radius signal for CI.
+        # W1160: affected-tests added — per-test SARIF projection
+        # (DIRECT=error, TRANSITIVE=warning, COLOCATED=note).
+        # W1159: partition added — per-partition conflict-risk + key-symbol
+        # projection (HIGH=error, MEDIUM=warning, LOW=note).
+        # W1171: smells added — per-finding severity projection
+        # (critical=error, warning=warning, info=note), one rule per
+        # registered smell-kind in roam.catalog.registry.
+        # W1172: clones added — two-sided clone-pair / cluster projection
+        # (similarity >= 0.95 -> warning, lower bands -> note; cluster
+        # defaults to warning). PRIMARY anchor = file_a:line_a;
+        # SECONDARY = file_b:line_b (pairs) or up to 10 additional
+        # cluster members.
+        # W1192: delete-check added — per-deletion deletion-safety
+        # projection. BREAK-RISK -> error (gate-blocking), LIKELY-SAFE
+        # -> warning (review-recommended), SAFE -> note (informational).
+        # PRIMARY anchor = from_file:from_line (the deletion site);
+        # SECONDARY = up to 10 survivors[] entries (each path:line).
+        # W1195: auth-gaps added — per-finding PHP / Laravel auth-gap
+        # projection. direct-unauthenticated-handler -> error
+        # (deterministic static-analysis), helper-indirection -> warning
+        # (graph-walked structural), name-based -> note (heuristic).
+        # PRIMARY anchor = file:line (route definition line or
+        # controller method declaration line).
+        # W1203: test-impact added — per-test affected-test projection
+        # (reach_count >= 20 -> warning, < 20 -> note). Informational
+        # ranker (no error band — gating uses affected-tests instead).
+        # PRIMARY anchor = file (test file path, file-level only).
+        # W1208: n1 added — per-finding implicit N+1 projection.
+        # n1/high-confidence -> error (model used in collection /
+        # pagination context), n1/medium-confidence -> warning
+        # (relationship lazy-load, no strong collection-context), and
+        # n1/low-confidence -> note (heuristic match). PRIMARY anchor =
+        # accessor_location (the line that fires per-item I/O).
+        # W1218: orphan-imports added — per-import orphan-import
+        # projection. orphan-imports/internal-typo -> error (Python
+        # top-level package indexed but full dotted path is not —
+        # deterministic typo), orphan-imports/missing-package ->
+        # warning (Python not in index and not importable), and
+        # orphan-imports/missing-local -> warning (JS/Go path-style
+        # didn't resolve). PRIMARY anchor = file:line (the import
+        # statement line).
+        # W1217: missing-index added — per-finding unindexed-query
+        # projection. missing-index/high-confidence -> error (WHERE
+        # on unindexed column in a paginated query — guaranteed
+        # table scan), missing-index/medium-confidence -> warning
+        # (orderBy on non-indexed column, or paginated WHERE
+        # without composite coverage), and missing-index/low-
+        # confidence -> note (column has an individual index but
+        # not the optimal composite). PRIMARY anchor =
+        # query_location (the line that runs the unindexed query).
+        # W1219: over-fetch added — per-finding Laravel/Eloquent
+        # over-fetch projection. Single closed-enum rule
+        # over-fetch/select-star-or-wide-query (defaultLevel
+        # warning). Per-finding level: H severity / high confidence
+        # -> warning (confirmed leak: BARE / UNGUARDED_RELATION
+        # endpoint, or model with 30+ fillable fields & no
+        # Resource); L severity / medium / low confidence -> note
+        # (already partially guarded, or threshold-only model
+        # signal). PRIMARY anchor = file:line — endpoint method
+        # for endpoint findings, model_location (class declaration
+        # line) for model findings.
+        # W1215: bus-factor added — per-directory knowledge-loss
+        # projection. Three closed-enum rules:
+        # bus-factor/author-concentration -> warning (single
+        # author owns >70% of churn), bus-factor/stale-ownership
+        # -> warning (primary author inactive beyond stale-months
+        # threshold), bus-factor/solo-author-summary -> note
+        # (W164 collapse on solo-author repos). Per-result level
+        # maps the HIGH/MEDIUM/LOW risk band onto warning/note
+        # (HIGH -> warning; MEDIUM / LOW -> note). PRIMARY anchor
+        # = directory path (no line — risk applies to the
+        # directory as a whole, not a specific symbol).
+        # W1216: laws added — per-violation mined-law projection.
+        # Five closed-enum rules: laws/naming, laws/import-layering,
+        # laws/test-coverage, laws/error-handling (stub),
+        # laws/co-change (stub) — all defaultLevel note (mined laws
+        # describe emergent conventions, not invariants, so the
+        # advisory band is the safer default). Per-result level via
+        # severity: blocker -> error, warning -> warning, advisory
+        # / unknown -> note. PRIMARY anchor = file:line (the diff
+        # hunk line that introduced the violation).
+        # W1209: fan added — per-finding cross-file fan-in/out
+        # architectural projection. Three closed-enum rules:
+        # fan/hub -> note (high cross-file fan-in, absorbs change
+        # pressure but does not propagate outward), fan/spreader
+        # -> warning (high cross-file fan-out, changes propagate
+        # outward — higher blast-radius risk), fan/high-risk -> error
+        # (both directions over threshold — amplifies blast radius in
+        # both directions, highest architectural-risk band). Per-result
+        # level matches the rule defaultLevel (the flag IS the severity
+        # band). Local-only flags (local-hub / local-spreader) are
+        # skipped per the W150 audit (single-file by design — non-
+        # architectural). PRIMARY anchor = file:line (symbol-mode) or
+        # file (file-mode — no line since the metric applies to the
+        # whole file).
+        # W1213: duplicates added — per-cluster semantic-duplicate
+        # projection. Single closed-enum rule duplicates/cluster
+        # (defaultLevel note). Per-result level scales with the
+        # cluster's avg similarity via _duplicates_cluster_level:
+        # >= 0.95 -> warning (near-identical duplicate cluster),
+        # < 0.95 -> note (structural-pattern match). NEVER escalates to
+        # error — duplicates are refactor opportunities, not defects
+        # (mirrors clones_to_sarif severity ceiling). PRIMARY anchor =
+        # first member's file:line; SECONDARY = up to 10 additional
+        # members so SARIF consumers can highlight the full cluster
+        # footprint without inflating the document.
+        # W1207: llm-smells added — per-occurrence LLM-API anti-pattern
+        # projection. Ten closed-enum rules under the llm-smells/
+        # namespace (no-model-version-pinning, missing-max-tokens,
+        # direct-user-input-concatenation, no-structured-output-validation,
+        # temperature-not-set, missing-timeout, missing-max-retries,
+        # no-system-message, no-retry-on-rate-limit, call-in-loop).
+        # Per-rule defaultLevel reflects the W415 / W415b severity
+        # table: direct-user-input-concatenation -> error (OWASP
+        # LLM01:2025 prompt-injection vector), temperature-not-set /
+        # missing-max-retries -> note, the other seven -> warning.
+        # Per-result level always overrides via the closed _to_level
+        # mapping (critical -> error / warning -> warning / info ->
+        # note). PRIMARY anchor = file:line for each LLM-API call site
+        # or, for the file-level no-retry-on-rate-limit kind, the
+        # file's first completion-call line.
+        # W1210: hotspots added — per-symbol runtime-vs-static rank-
+        # discrepancy projection (default mode only; --security and
+        # --danger reject --sarif). Three closed-enum rules:
+        # hotspots/confirmed -> error (static + runtime agree on
+        # importance — genuinely hot in production), hotspots/upgrade
+        # -> warning (runtime-critical but statically safe — hidden
+        # hotspot static analysis missed), hotspots/downgrade -> note
+        # (statically risky but low traffic — informational; was hot,
+        # no longer). All three carry confidence tier ``runtime`` —
+        # every emitted finding required ingested ``runtime_stats``
+        # rows from ``roam ingest-trace``. PRIMARY anchor = file_path
+        # (no line — compute_hotspots returns symbol_name + file_path,
+        # no specific line; risk applies at symbol granularity).
+        # Findings without an indexed symbol_id are skipped silently
+        # (trace span didn't resolve to a known symbol — no stable
+        # subject to attach to).
+        # W1226: flag-dead added — per-flag feature-flag staleness
+        # projection. Three closed-enum rules under the flag-* namespace:
+        # flag-staleness -> warning (known-stale: flag listed in
+        # --config file, operator-confirmed for removal),
+        # flag-single-reference -> note (flag has a single call site
+        # — likely leftover code, advisory band), flag-suspect
+        # -> warning (suspect: same constant default at every call
+        # site OR all references concentrate in a single file).
+        # Per-result level via :func:`_flag_dead_staleness_level`:
+        # stale + suspect -> warning; likely_stale -> note. NEVER
+        # escalates to error — detector is heuristic (regex-based
+        # call-site scan, no dashboard cross-check) so even the
+        # strongest signal stays in the warning band (mirrors
+        # duplicates_to_sarif severity ceiling). PRIMARY anchor =
+        # first call site's file:line; SECONDARY = up to 10 additional
+        # call sites so consumers can highlight the full call-site
+        # footprint without inflating the document. The ``ok`` bucket
+        # (no staleness indicators) is filtered upstream so SARIF
+        # consumers never see non-actionable rows.
+        # W1227: orphan-routes added — per-route Laravel dead-endpoint
+        # projection. Single closed-enum rule orphan-route
+        # (defaultLevel warning — dead endpoints are real bugs:
+        # operational cost + attack surface, not just hygiene).
+        # Per-result level via :func:`_orphan_routes_confidence_level`:
+        # high + medium -> warning; low -> note. NEVER escalates to
+        # error — detector is heuristic (path-segment grep + Laravel-
+        # route regex parse, no full PHP AST analysis) so even the
+        # strongest signal stays in the warning band (mirrors W1226
+        # flag-dead + W1213 duplicates severity ceilings). PRIMARY
+        # anchor = file:line (the route definition line). The ``used``
+        # bucket (has a frontend consumer — not an orphan) is filtered
+        # upstream so SARIF consumers never see non-actionable rows.
+        # W1229: verify-imports added — per-import hallucination-
+        # firewall projection. Two closed-enum rules:
+        # invalid-import (defaultLevel warning — unresolved with FTS5
+        # fuzzy-match candidates, likely typo / rename) and
+        # hallucination-import (defaultLevel error — unresolved with
+        # no candidates, the imported name genuinely doesn't exist in
+        # the indexed symbol table, the canonical LLM-hallucination
+        # signal). The error band is deliberate — verify-imports is
+        # the only one of the W12xx dead-code detectors that escalates
+        # to error because a hallucinated import is unrecoverable
+        # (no remediation path through fuzzy match) and gates CI
+        # against LLM-generated import drift. PRIMARY anchor =
+        # file:line (the import statement site). ``resolved`` rows
+        # are filtered upstream so SARIF consumers never see
+        # non-actionable rows.
+        _SUPPORTED_SARIF="health dead complexity rules secrets algo critique impact affected-tests partition smells clones delete-check auth-gaps test-impact n1 orphan-imports missing-index over-fetch bus-factor laws fan duplicates llm-smells dark-matter hotspots flag-dead orphan-routes verify-imports"
 
         if [ "${REQUESTED_SARIF_COMMANDS}" = "auto" ] || [ -z "${REQUESTED_SARIF_COMMANDS}" ]; then
           for CMD in ${ANALYSIS_COMMANDS}; do

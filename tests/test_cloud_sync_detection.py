@@ -26,7 +26,6 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.db.fs_detect import cloud_sync_warning, detect_cloud_sync
 
-
 # ---------------------------------------------------------------------------
 # Pure-function detection tests
 # ---------------------------------------------------------------------------

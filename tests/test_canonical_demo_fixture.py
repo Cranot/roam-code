@@ -26,15 +26,9 @@ import pytest
 
 from roam.evidence import ChangeEvidence
 
-
 # Path to the fixture, anchored relative to this test file so the
 # test runs identically from any cwd.
-_FIXTURE_PATH = (
-    pathlib.Path(__file__).resolve().parent.parent
-    / "templates"
-    / "demos"
-    / "canonical-evidence.json"
-)
+_FIXTURE_PATH = pathlib.Path(__file__).resolve().parent.parent / "templates" / "demos" / "canonical-evidence.json"
 
 
 def _load_fixture_text() -> str:
@@ -122,12 +116,8 @@ def _build_packet_from_dict(payload: dict) -> ChangeEvidence:
         completed_at=payload.get("completed_at"),
         verdict=payload.get("verdict"),
         risk_level=payload.get("risk_level"),
-        context_refs=tuple(
-            _artifact(a) for a in payload.get("context_refs", ())
-        ),
-        changed_subjects=tuple(
-            _subject(s) for s in payload.get("changed_subjects", ())
-        ),
+        context_refs=tuple(_artifact(a) for a in payload.get("context_refs", ())),
+        changed_subjects=tuple(_subject(s) for s in payload.get("changed_subjects", ())),
         findings=tuple(payload.get("findings", ())),
         policy_decisions=tuple(payload.get("policy_decisions", ())),
         tests_required=tuple(payload.get("tests_required", ())),
@@ -136,12 +126,8 @@ def _build_packet_from_dict(payload: dict) -> ChangeEvidence:
         accepted_risks=tuple(payload.get("accepted_risks", ())),
         artifacts=tuple(_artifact(a) for a in payload.get("artifacts", ())),
         actor_refs=tuple(_actor(a) for a in payload.get("actor_refs", ())),
-        authority_refs=tuple(
-            _authority(a) for a in payload.get("authority_refs", ())
-        ),
-        environment_refs=tuple(
-            _env(e) for e in payload.get("environment_refs", ())
-        ),
+        authority_refs=tuple(_authority(a) for a in payload.get("authority_refs", ())),
+        environment_refs=tuple(_env(e) for e in payload.get("environment_refs", ())),
         redactions=tuple(payload.get("redactions", ())),
         content_hash=payload.get("content_hash"),
         signature_ref=payload.get("signature_ref"),
@@ -189,9 +175,7 @@ def test_canonical_evidence_content_hash_matches_declared():
     raw = _load_fixture_text()
     payload = _json.loads(raw)
     declared = payload.get("content_hash")
-    assert isinstance(declared, str) and len(declared) == 64, (
-        "Fixture is missing a 64-hex-char content_hash field."
-    )
+    assert isinstance(declared, str) and len(declared) == 64, "Fixture is missing a 64-hex-char content_hash field."
 
     packet = _build_packet_from_dict(payload)
     fresh = packet.compute_content_hash()
@@ -222,14 +206,9 @@ def test_canonical_evidence_assurance_floor_passes():
     result = packet.assurance_floor()  # type: ignore[attr-defined]
     # Accept either a bool or a {"passes": bool, ...} contract.
     if isinstance(result, dict):
-        assert result.get("passes") is True, (
-            f"assurance_floor on the canonical demo packet did not pass: "
-            f"{result!r}"
-        )
+        assert result.get("passes") is True, f"assurance_floor on the canonical demo packet did not pass: {result!r}"
     else:
-        assert bool(result) is True, (
-            "assurance_floor on the canonical demo packet returned falsy"
-        )
+        assert bool(result) is True, "assurance_floor on the canonical demo packet returned falsy"
 
 
 def test_canonical_evidence_completeness_is_8_of_8():
@@ -240,9 +219,7 @@ def test_canonical_evidence_completeness_is_8_of_8():
     Until W210 ships the helper, the test defers.
     """
     if not hasattr(ChangeEvidence, "evidence_completeness"):
-        pytest.skip(
-            "waits for W210 (evidence_completeness helper on ChangeEvidence)"
-        )
+        pytest.skip("waits for W210 (evidence_completeness helper on ChangeEvidence)")
     packet = _build_packet_from_dict(_json.loads(_load_fixture_text()))
     result = packet.evidence_completeness()  # type: ignore[attr-defined]
     # Accept a couple of plausible shapes the helper might return.
@@ -250,8 +227,7 @@ def test_canonical_evidence_completeness_is_8_of_8():
         complete = result.get("complete") or result.get("answered") or 0
         missing = result.get("missing") or 0
         assert complete == 8, (
-            f"evidence_completeness reported {complete} complete answers; "
-            f"the canonical demo packet is built for 8/8."
+            f"evidence_completeness reported {complete} complete answers; the canonical demo packet is built for 8/8."
         )
         assert missing == 0, (
             f"evidence_completeness reported {missing} missing answers; "

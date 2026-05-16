@@ -35,7 +35,6 @@ from roam.runs.ledger import (  # noqa: E402
     start_run,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -102,9 +101,7 @@ def test_runs_show_surfaces_mode_in_envelope(cli_runner, runs_project, monkeypat
     set_active_mode(runs_project, "safe_edit")
     meta = start_run(runs_project, agent="claude-code")
 
-    result = invoke_cli(
-        cli_runner, ["runs", "show", meta.run_id], cwd=runs_project, json_mode=True
-    )
+    result = invoke_cli(cli_runner, ["runs", "show", meta.run_id], cwd=runs_project, json_mode=True)
     data = parse_json_output(result, "runs-show")
     assert_json_envelope(data, "runs-show")
 

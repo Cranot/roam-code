@@ -1,4 +1,12 @@
-"""Documentation coverage and staleness analysis for exported symbols."""
+"""Documentation coverage and staleness analysis for exported symbols.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because docs-coverage outputs are invocation-scoped coverage
+percentages (documented vs undocumented exported symbols rolled up by
+file / package) — not per-location code violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -229,6 +237,8 @@ def docs_coverage(ctx, limit, days, threshold, quality):
         # difference rather than hiding it.
         from roam.quality.public_symbols import (
             CRITERION_HAS_EXPORT_MARKER,
+        )
+        from roam.quality.public_symbols import (
             definition as _ps_def,
         )
 

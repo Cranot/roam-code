@@ -131,10 +131,7 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     "exclude_detectors",
     multiple=True,
     default=(),
-    help=(
-        "A3 — skip these decorated detectors (repeatable). "
-        "Ignored if `--only` is set with the same name."
-    ),
+    help=("A3 — skip these decorated detectors (repeatable). Ignored if `--only` is set with the same name."),
 )
 @click.option(
     "--since",
@@ -293,6 +290,55 @@ def math_cmd(
                 "to see options.",
                 err=True,
             )
+
+        # W1057 (Pattern 1D + Pattern 2): surface unknown --only/--exclude
+        # names so a typo doesn't silently filter the run to zero detectors.
+        # Mirrors the framework_unknown discipline above. Collected for the
+        # JSON envelope's warnings_out / partial_success folding below.
+        # W1064: append difflib closest-match suggestions per unknown name —
+        # mirrors the `--task` precedent above (line 253). Cutoff 0.6 catches
+        # plausible typos ("typo_fixx" → "typo_fix") without spamming
+        # unrelated names.
+        _filter_warnings: list[str] = []
+        only_unknown = detector_meta.get("only_unknown") or []
+        exclude_unknown = detector_meta.get("exclude_unknown") or []
+
+        def _suggest_unknown(unknown_names: list[str]) -> str:
+            """Build a `did-you-mean` fragment for one or more unknown names.
+
+            Returns an empty string when no name has any close match above the
+            cutoff. The fragment lists per-name suggestions so a multi-typo
+            batch (`--only foo --only bar`) gets per-name guidance instead of
+            one merged set."""
+            import difflib
+
+            from roam.catalog.detectors import _DETECTOR_REGISTRY
+
+            registry_names = list(_DETECTOR_REGISTRY.keys())
+            per_name_hints: list[str] = []
+            for u in unknown_names:
+                matches = difflib.get_close_matches(u, registry_names, n=2, cutoff=0.6)
+                if matches:
+                    quoted = " or ".join(f"'{m}'" for m in matches)
+                    per_name_hints.append(f"'{u}' → {quoted}")
+            if not per_name_hints:
+                return ""
+            return f" Did you mean: {'; '.join(per_name_hints)}?"
+
+        if only_unknown:
+            msg = (
+                f"--only: unknown detector name(s): {', '.join(only_unknown)}. "
+                "Run `roam math --list-detectors` to see registered names." + _suggest_unknown(only_unknown)
+            )
+            click.echo(f"NOTE: {msg}", err=True)
+            _filter_warnings.append(msg)
+        if exclude_unknown:
+            msg = (
+                f"--exclude: unknown detector name(s): {', '.join(exclude_unknown)}. "
+                "Run `roam math --list-detectors` to see registered names." + _suggest_unknown(exclude_unknown)
+            )
+            click.echo(f"NOTE: {msg}", err=True)
+            _filter_warnings.append(msg)
 
         # `--since baseline.json`: keep only findings whose
         # (task_id, location, symbol_name) tuple isn't in the baseline. The
@@ -488,17 +534,27 @@ def math_cmd(
             # W706 (Pattern 2): surface suppression-loader silent-fallback
             # warnings. partial_success flips True iff any warning fired —
             # mirrors the cmd_alerts / cmd_pr_risk warnings_out discipline.
-            if _suppression_warnings:
+            # W1057 (Pattern 1D + Pattern 2): unknown --only/--exclude names
+            # fold into the same warnings_out / partial_success discipline.
+            _all_warnings = list(_suppression_warnings) + list(_filter_warnings)
+            if _all_warnings:
                 _math_summary["partial_success"] = True
-                _math_summary["warnings_count"] = len(_suppression_warnings)
+                _math_summary["warnings_count"] = len(_all_warnings)
+            # W1057: surface the unknown-name lists on the summary ONLY when
+            # the caller supplied --only/--exclude (detector-meta keys are
+            # conditional). Keeps the default-path envelope byte-identical.
+            if "only_unknown" in detector_meta:
+                _math_summary["only_unknown"] = list(detector_meta["only_unknown"])
+            if "exclude_unknown" in detector_meta:
+                _math_summary["exclude_unknown"] = list(detector_meta["exclude_unknown"])
             _envelope_extras: dict = {"findings": findings}
-            if _suppression_warnings:
+            if _all_warnings:
                 # Carry the actionable warning strings on the envelope so the
                 # agent can see WHY suppressions did not load (malformed YAML,
-                # missing `rules:` key, non-dict entries, etc.). Empty list
-                # on the happy path; non-empty means the user's
-                # `.roamignore-findings` needs attention.
-                _envelope_extras["warnings_out"] = list(_suppression_warnings)
+                # missing `rules:` key, non-dict entries, etc.) OR why --only /
+                # --exclude filtered to zero (unknown detector name). Empty
+                # list on the happy path.
+                _envelope_extras["warnings_out"] = _all_warnings
             click.echo(
                 to_json(
                     json_envelope(

@@ -57,9 +57,7 @@ def test_audit_trail_conformance_empty_corpus_no_trail(tmp_path: Path) -> None:
 
         # 1. Build the index. No audit trail is touched here.
         init_result = runner.invoke(cli, ["init"], catch_exceptions=False)
-        assert init_result.exit_code == 0, (
-            f"`roam init` failed on empty corpus; output:\n{init_result.output}"
-        )
+        assert init_result.exit_code == 0, f"`roam init` failed on empty corpus; output:\n{init_result.output}"
 
         # 2. Run the conformance check on the (non-existent) audit trail.
         result = runner.invoke(
@@ -84,9 +82,7 @@ def test_audit_trail_conformance_empty_corpus_no_trail(tmp_path: Path) -> None:
     assert "safe" not in verdict, f"silent SAFE verdict on empty trail: {verdict!r}"
     # Verdict mentions the empty-state explicitly (either "empty" or the
     # canonical "no audit trail" phrase used by the command).
-    assert "no audit trail" in verdict or "empty" in verdict, (
-        f"verdict should disclose empty state; got: {verdict!r}"
-    )
+    assert "no audit trail" in verdict or "empty" in verdict, f"verdict should disclose empty state; got: {verdict!r}"
 
     # Pattern 1-D / Pattern 2: explicit partial-success marker on degraded state.
     assert "partial_success" in summary, "summary must publish partial_success marker"
@@ -106,9 +102,7 @@ def test_audit_trail_conformance_empty_corpus_no_trail(tmp_path: Path) -> None:
     assert isinstance(checks, list)
     assert len(checks) == 6, f"expected 6 Article 12 checks, got {len(checks)}"
     for c in checks:
-        assert c["state"] == "not_run", (
-            f"empty-trail check entry should be marked not_run; got: {c!r}"
-        )
+        assert c["state"] == "not_run", f"empty-trail check entry should be marked not_run; got: {c!r}"
         assert c["passed"] is False
 
     # agent_contract.facts (when present) must be non-empty + concrete-noun anchored.

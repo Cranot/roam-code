@@ -28,7 +28,6 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process, invoke_cli, parse_json_output
 
-
 # ===========================================================================
 # Fixtures
 # ===========================================================================
@@ -52,23 +51,9 @@ def mixed_project(tmp_path):
     (repo / ".gitignore").write_text(".roam/\n")
 
     (repo / "handlers.py").write_text(
-        "def safe():\n"
-        "    try:\n"
-        "        risky()\n"
-        "    except Exception:\n"
-        "        pass\n"
-        "\n"
-        "\n"
-        "def risky():\n"
-        "    return 1\n"
+        "def safe():\n    try:\n        risky()\n    except Exception:\n        pass\n\n\ndef risky():\n    return 1\n"
     )
-    (repo / "utils.py").write_text(
-        "from handlers import safe\n"
-        "\n"
-        "\n"
-        "def run():\n"
-        "    return safe()\n"
-    )
+    (repo / "utils.py").write_text("from handlers import safe\n\n\ndef run():\n    return safe()\n")
     git_init(repo)
     old_cwd = os.getcwd()
     try:
@@ -88,17 +73,11 @@ def mixed_project(tmp_path):
 class TestAiRotReconciliation:
     """Verify dashboard and vibe-check agree on AI rot, with shared label."""
 
-    def test_dashboard_and_vibe_check_agree_on_ai_rot_score(
-        self, cli_runner, mixed_project, monkeypatch
-    ):
+    def test_dashboard_and_vibe_check_agree_on_ai_rot_score(self, cli_runner, mixed_project, monkeypatch):
         """Same codebase => same AI rot number, both commands."""
         monkeypatch.chdir(mixed_project)
-        dash_result = invoke_cli(
-            cli_runner, ["dashboard"], cwd=mixed_project, json_mode=True
-        )
-        vibe_result = invoke_cli(
-            cli_runner, ["vibe-check"], cwd=mixed_project, json_mode=True
-        )
+        dash_result = invoke_cli(cli_runner, ["dashboard"], cwd=mixed_project, json_mode=True)
+        vibe_result = invoke_cli(cli_runner, ["vibe-check"], cwd=mixed_project, json_mode=True)
 
         dash = parse_json_output(dash_result, "dashboard")
         vibe = parse_json_output(vibe_result, "vibe-check")
@@ -118,21 +97,15 @@ class TestAiRotReconciliation:
             f"!= vibe-check.summary.score ({vibe_score})"
         )
 
-    def test_dashboard_envelope_has_ai_rot_definition_field(
-        self, cli_runner, mixed_project, monkeypatch
-    ):
+    def test_dashboard_envelope_has_ai_rot_definition_field(self, cli_runner, mixed_project, monkeypatch):
         """Pattern 3 label fix: dashboard must attach the metric definition."""
         monkeypatch.chdir(mixed_project)
-        result = invoke_cli(
-            cli_runner, ["dashboard"], cwd=mixed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["dashboard"], cwd=mixed_project, json_mode=True)
         data = parse_json_output(result, "dashboard")
 
         # Summary-level label (new top-level field for downstream
         # consumers that read only the summary block).
-        assert "ai_rot_definition" in data["summary"], (
-            "dashboard summary missing ai_rot_definition label"
-        )
+        assert "ai_rot_definition" in data["summary"], "dashboard summary missing ai_rot_definition label"
         defn = data["summary"]["ai_rot_definition"]
         assert isinstance(defn, str) and len(defn) > 20
         # Definition must reference the canonical command so an agent
@@ -142,33 +115,23 @@ class TestAiRotReconciliation:
         # Nested vibe_check block also carries the label.
         assert "ai_rot_definition" in data["vibe_check"]
 
-    def test_vibe_check_envelope_has_ai_rot_definition_field(
-        self, cli_runner, mixed_project, monkeypatch
-    ):
+    def test_vibe_check_envelope_has_ai_rot_definition_field(self, cli_runner, mixed_project, monkeypatch):
         """Pattern 3 label fix: vibe-check (the canonical source) labels itself."""
         monkeypatch.chdir(mixed_project)
-        result = invoke_cli(
-            cli_runner, ["vibe-check"], cwd=mixed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["vibe-check"], cwd=mixed_project, json_mode=True)
         data = parse_json_output(result, "vibe-check")
 
-        assert "ai_rot_definition" in data["summary"], (
-            "vibe-check summary missing ai_rot_definition label"
-        )
+        assert "ai_rot_definition" in data["summary"], "vibe-check summary missing ai_rot_definition label"
         # The canonical source also exposes ``ai_rot_score`` as a
         # top-level summary field so downstream commands can read it
         # without knowing the internal "score" name.
         assert "ai_rot_score" in data["summary"]
         assert data["summary"]["ai_rot_score"] == data["summary"]["score"]
 
-    def test_dashboard_next_commands_mentions_vibe_check(
-        self, cli_runner, mixed_project, monkeypatch
-    ):
+    def test_dashboard_next_commands_mentions_vibe_check(self, cli_runner, mixed_project, monkeypatch):
         """LAW 11: dashboard must teach agents about the canonical command."""
         monkeypatch.chdir(mixed_project)
-        result = invoke_cli(
-            cli_runner, ["dashboard"], cwd=mixed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["dashboard"], cwd=mixed_project, json_mode=True)
         data = parse_json_output(result, "dashboard")
 
         agent_contract = data.get("agent_contract", {})
@@ -208,9 +171,7 @@ class TestAiRotReconciliation:
         # Pattern dicts must equal element-wise.
         assert set(first.patterns.keys()) == set(second.patterns.keys())
         for key in first.patterns:
-            assert first.patterns[key] == second.patterns[key], (
-                f"non-idempotent pattern data for {key}"
-            )
+            assert first.patterns[key] == second.patterns[key], f"non-idempotent pattern data for {key}"
         # Definition is the module constant; must be identical.
         assert first.definition == second.definition
 
@@ -247,9 +208,7 @@ class TestAiRotCanonicalModule:
         }
         assert set(result.patterns.keys()) == expected
 
-    def test_score_dataclass_round_trips_to_envelope_dict(
-        self, mixed_project, monkeypatch
-    ):
+    def test_score_dataclass_round_trips_to_envelope_dict(self, mixed_project, monkeypatch):
         """as_envelope_dict() carries the definition label inline."""
         monkeypatch.chdir(mixed_project)
 

@@ -1,4 +1,13 @@
-"""Manage per-project roam configuration (.roam/config.json)."""
+"""Manage per-project roam configuration (.roam/config.json).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam config`` is a setup/bootstrap command — its
+output is human-facing setup status (config keys read / written /
+listed under ``.roam/config.json``), not analysis findings with
+file:line coordinates. SARIF is reserved for scanning results. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -529,11 +538,9 @@ def _show_config(root: Path, current: dict, json_mode: bool) -> None:
         # the contract knows what was inspected.
         config_path = root / ".roam" / "config.json"
         verdict = (
-            f"{len(current)} config key(s) in {config_path}, "
-            f"{len(all_patterns)} active exclude pattern(s)"
+            f"{len(current)} config key(s) in {config_path}, {len(all_patterns)} active exclude pattern(s)"
             if current
-            else f"no {config_path} (using defaults), "
-            f"{len(all_patterns)} active exclude pattern(s)"
+            else f"no {config_path} (using defaults), {len(all_patterns)} active exclude pattern(s)"
         )
         _emit_config_json({"verdict": verdict, "config_keys": len(current)}, **payload)
         return

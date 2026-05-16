@@ -31,7 +31,6 @@ from pathlib import Path
 
 import pytest
 
-
 _WORKTREE_ROOT = Path(__file__).resolve().parents[1]
 _SURFACE_COUNTS_PATH = _WORKTREE_ROOT / "src" / "roam" / "surface_counts.py"
 
@@ -42,9 +41,7 @@ def _load_worktree_surface_counts():
     Bypasses any ``pip install -e .`` editable install pointing at the
     parent checkout. Returns the loaded module.
     """
-    spec = importlib.util.spec_from_file_location(
-        "_worktree_surface_counts_w444", _SURFACE_COUNTS_PATH
-    )
+    spec = importlib.util.spec_from_file_location("_worktree_surface_counts_w444", _SURFACE_COUNTS_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -64,8 +61,7 @@ def test_mcp_tool_names_has_no_duplicates() -> None:
 
     names = sc.mcp_tool_names()
     assert len(names) == len(set(names)), (
-        f"mcp_tool_names() returned duplicate entries: "
-        f"{[n for n in names if names.count(n) > 1]}"
+        f"mcp_tool_names() returned duplicate entries: {[n for n in names if names.count(n) > 1]}"
     )
 
 
@@ -117,6 +113,4 @@ def test_registered_tools_runtime_has_no_duplicates() -> None:
         pytest.skip("_REGISTERED_TOOLS empty (FastMCP not installed)")
 
     duplicates = [n for n in _REGISTERED_TOOLS if _REGISTERED_TOOLS.count(n) > 1]
-    assert not duplicates, (
-        f"_REGISTERED_TOOLS contains duplicate tool names: {sorted(set(duplicates))}"
-    )
+    assert not duplicates, f"_REGISTERED_TOOLS contains duplicate tool names: {sorted(set(duplicates))}"

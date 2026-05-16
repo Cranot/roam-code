@@ -1298,8 +1298,7 @@ def _build_fix_edits(
             if not safe:
                 if refused_log is not None:
                     refused_log.append(
-                        f"{reason} (source={s['file']} line={s['line']} "
-                        f"raw={raw!r} replacement={replacement!r})"
+                        f"{reason} (source={s['file']} line={s['line']} raw={raw!r} replacement={replacement!r})"
                     )
                 continue
             by_source[s["file"]].append(
@@ -3466,9 +3465,7 @@ def stale_refs(
                 # IsADirectoryError all subclass OSError. The scan itself
                 # is complete and useful; treat attestation as a non-fatal
                 # side-channel failure.
-                attest_error = (
-                    f"could not create attestation path {attest_path}: {exc}"
-                )
+                attest_error = f"could not create attestation path {attest_path}: {exc}"
                 # Surface to stderr so text-mode and JSON-mode consumers
                 # both see the warning regardless of which output path is
                 # taken below.

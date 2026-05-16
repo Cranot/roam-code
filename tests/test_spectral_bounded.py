@@ -70,11 +70,7 @@ def small_spectral_project(tmp_path, monkeypatch):
         "    def step2(self):\n"
         "        return 1\n"
     )
-    (proj / "b.py").write_text(
-        "class Gamma:\n"
-        "    def run(self):\n"
-        "        return 2\n"
-    )
+    (proj / "b.py").write_text("class Gamma:\n    def run(self):\n        return 2\n")
     git_init(proj)
     monkeypatch.chdir(proj)
     out, rc = index_in_process(proj)
@@ -104,9 +100,7 @@ def _invoke_spectral(args, cwd, json_mode=True):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(cwd))
-        return runner.invoke(
-            spectral, args, obj={"json": json_mode, "budget": 0}, catch_exceptions=False
-        )
+        return runner.invoke(spectral, args, obj={"json": json_mode, "budget": 0}, catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
 

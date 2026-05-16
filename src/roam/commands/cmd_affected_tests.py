@@ -7,16 +7,22 @@ from collections import deque
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import (
     get_changed_files,
     is_test_file,
     resolve_changed_to_db,
 )
-from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.index.test_conventions import find_test_candidates
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 
 _MAX_HOPS = 10
 
@@ -282,6 +288,7 @@ def affected_tests(ctx, target, staged, show_command):
     (pre-change safety), and ``pr-risk`` (overall PR risk score).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -293,6 +300,16 @@ def affected_tests(ctx, target, staged, show_command):
         all_sym_ids = set()
         all_file_paths = set()
         target_label = target or "staged changes"
+        # W1245 Pattern-2 variant-D resolution-state tracking. The symbol-
+        # target branch below walks ``find_symbol``'s 3-tier resolver chain
+        # (qualified -> simple -> LIKE-fallback); the disclosure flips to
+        # ``fuzzy`` whenever the input string didn't exact-match a single
+        # symbol. The --staged and file-target branches don't go through
+        # ``find_symbol`` so they stay implicit ``symbol`` (multi-target
+        # set-builds aren't degraded; ``staged`` mode is a Pattern-2c
+        # legitimate aggregate rather than a fallback).
+        resolution_tier: str = "symbol"
+        resolved_target_label: str | None = None
 
         # --staged mode: resolve changed files to symbols
         if staged:
@@ -324,8 +341,35 @@ def affected_tests(ctx, target, staged, show_command):
             else:
                 sym = find_symbol(conn, target)
                 if sym is None:
+                    # W1245 Pattern-2 variant-D: structured unresolved
+                    # envelope on JSON mode so MCP consumers see the
+                    # same disclosure shape as the resolved branches.
+                    if json_mode:
+                        unresolved_disclosure = resolution_disclosure("unresolved", target=target)
+                        click.echo(
+                            to_json(
+                                json_envelope(
+                                    "affected-tests",
+                                    summary={
+                                        "verdict": f"Symbol not found: {target}",
+                                        "partial_success": True,
+                                        "state": "not_found",
+                                        **unresolved_disclosure,
+                                    },
+                                    **unresolved_disclosure,
+                                )
+                            )
+                        )
+                        raise SystemExit(1)
                     click.echo(f"Symbol not found: {target}")
                     raise SystemExit(1)
+                # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` stamps
+                # ``_resolution_tier`` on the returned row so the envelope
+                # can distinguish a fully-resolved success from a degraded
+                # fuzzy-match success that may have landed on a different
+                # target.
+                resolution_tier = sym.get("_resolution_tier", "symbol")
+                resolved_target_label = sym["qualified_name"] or sym["name"]
                 all_sym_ids.add(sym["id"])
                 all_file_paths.add(sym["file_path"])
                 target_label = f"{sym['name']} ({abbrev_kind(sym['kind'])}, {loc(sym['file_path'], sym['line_start'])})"
@@ -351,6 +395,34 @@ def affected_tests(ctx, target, staged, show_command):
                 click.echo("# No affected tests found.")
             return
 
+        # SARIF output (W1160): projection for CI / GitHub Code Scanning.
+        # Branches BEFORE json/text so the pre-existing paths stay
+        # byte-identical to pre-W1160.
+        if sarif_mode:
+            from roam.output.sarif import affected_tests_to_sarif, write_sarif
+
+            click.echo(
+                write_sarif(
+                    affected_tests_to_sarif(
+                        {
+                            "command": "affected-tests",
+                            "summary": {"target": target_label},
+                            "tests": [
+                                {
+                                    "file": r["file"],
+                                    "symbol": r["symbol"],
+                                    "kind": r["kind"],
+                                    "hops": r["hops"],
+                                    "via": r["via"],
+                                }
+                                for r in results
+                            ],
+                        }
+                    )
+                )
+            )
+            return
+
         # JSON output
         if json_mode:
             direct_count = sum(1 for r in results if r["kind"] == "DIRECT")
@@ -361,6 +433,18 @@ def affected_tests(ctx, target, staged, show_command):
                 verdict = f"{len(results)} tests affected ({len(seen_order)} files) for {target_label}"
             else:
                 verdict = f"no tests affected for {target_label}"
+
+            # W1245 Pattern-2 variant-D: suffix the verdict when the symbol
+            # target resolved through a degraded tier so LAW-6 single-line
+            # consumers still see the disclosure. The --staged + file paths
+            # stay implicit ``symbol`` (set-build aggregations are not
+            # fallback resolutions).
+            if resolution_tier == "fuzzy":
+                verdict = f"{verdict} [fuzzy resolution]"
+            disclosure = resolution_disclosure(
+                resolution_tier,
+                target=resolved_target_label if resolved_target_label is not None else target_label,
+            )
 
             click.echo(
                 to_json(
@@ -374,6 +458,7 @@ def affected_tests(ctx, target, staged, show_command):
                             "transitive": transitive_count,
                             "colocated": colocated_count,
                             "test_files": len(seen_order),
+                            **disclosure,
                         },
                         budget=token_budget,
                         tests=[
@@ -388,6 +473,7 @@ def affected_tests(ctx, target, staged, show_command):
                         ],
                         pytest_command=pytest_cmd,
                         test_files=seen_order,
+                        **disclosure,
                     )
                 )
             )

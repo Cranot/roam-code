@@ -18,15 +18,14 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_complexity import (
     COMPLEXITY_DETECTOR_VERSION,
     COMPLEXITY_FINDING_THRESHOLD,
     _complexity_finding_id,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -168,9 +167,9 @@ def test_complexity_rerun_upserts_not_duplicates(tmp_path):
                     "SELECT finding_id_str FROM findings WHERE source_detector = 'complexity'"
                 ).fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'complexity'"
-            ).fetchone()[0]
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'complexity'").fetchone()[
+                0
+            ]
         assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same code, same score → same ids.
@@ -240,16 +239,11 @@ def test_complexity_finding_subject_links_to_symbols_row(tmp_path):
 
         with open_db(readonly=True) as conn:
             rows = conn.execute(
-                "SELECT subject_id FROM findings "
-                "WHERE source_detector = 'complexity' AND subject_id IS NOT NULL"
+                "SELECT subject_id FROM findings WHERE source_detector = 'complexity' AND subject_id IS NOT NULL"
             ).fetchall()
-            assert len(rows) >= 1, (
-                "expected at least one complexity finding with a resolved subject_id"
-            )
+            assert len(rows) >= 1, "expected at least one complexity finding with a resolved subject_id"
             for r in rows:
-                sym = conn.execute(
-                    "SELECT id, name FROM symbols WHERE id = ?", (r["subject_id"],)
-                ).fetchone()
+                sym = conn.execute("SELECT id, name FROM symbols WHERE id = ?", (r["subject_id"],)).fetchone()
                 assert sym is not None, f"orphan subject_id {r['subject_id']}"
     finally:
         os.chdir(old_cwd)
@@ -269,18 +263,12 @@ def test_complexity_below_threshold_not_flagged(tmp_path):
         _persist_complexity(proj)
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT claim FROM findings WHERE source_detector = 'complexity'"
-            ).fetchall()
+            rows = conn.execute("SELECT claim FROM findings WHERE source_detector = 'complexity'").fetchall()
             for r in rows:
                 claim = (r["claim"] or "").lower()
-                assert "simple_one" not in claim, (
-                    f"low-complexity symbol leaked into registry: {r['claim']!r}"
-                )
+                assert "simple_one" not in claim, f"low-complexity symbol leaked into registry: {r['claim']!r}"
             # And every emitted finding must be at/above the threshold.
-            scores = conn.execute(
-                "SELECT evidence_json FROM findings WHERE source_detector = 'complexity'"
-            ).fetchall()
+            scores = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'complexity'").fetchall()
             for r in scores:
                 ev = json.loads(r["evidence_json"])
                 assert ev["cognitive_complexity"] >= COMPLEXITY_FINDING_THRESHOLD
@@ -302,18 +290,14 @@ def test_complexity_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_complexity(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "complexity"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "complexity"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "complexity" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "complexity" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "complexity" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -352,9 +336,7 @@ def test_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'complexity'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'complexity'").fetchone()[0]
             except sqlite3.OperationalError:
                 # findings table may not be present on every test env's
                 # schema flavour — that's still a "no findings emitted"
@@ -390,9 +372,7 @@ def test_complexity_persist_no_findings_table_no_crash(tmp_path):
 
         # And the underlying symbol_metrics read path must still produce data.
         with open_db(readonly=True) as conn:
-            metric_count = conn.execute(
-                "SELECT COUNT(*) FROM symbol_metrics"
-            ).fetchone()[0]
+            metric_count = conn.execute("SELECT COUNT(*) FROM symbol_metrics").fetchone()[0]
         assert metric_count >= 1, "symbol_metrics read path broke when findings table absent"
     finally:
         os.chdir(old_cwd)

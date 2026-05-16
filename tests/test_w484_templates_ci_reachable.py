@@ -55,11 +55,7 @@ def _enumerate_resource_template_files() -> list[str]:
     and the package marker.
     """
     root = importlib.resources.files(_TEMPLATES_CI_MODULE)
-    return sorted(
-        entry.name
-        for entry in root.iterdir()
-        if entry.is_file() and not entry.name.endswith(".pyc")
-    )
+    return sorted(entry.name for entry in root.iterdir() if entry.is_file() and not entry.name.endswith(".pyc"))
 
 
 def test_w484_templates_ci_package_has_init_marker() -> None:
@@ -70,9 +66,7 @@ def test_w484_templates_ci_package_has_init_marker() -> None:
     find package-data on some installs, and ``roam ci-setup`` ships empty
     templates. The marker file MUST be reachable via the wheel.
     """
-    resource_init = importlib.resources.files(_TEMPLATES_CI_MODULE).joinpath(
-        "__init__.py"
-    )
+    resource_init = importlib.resources.files(_TEMPLATES_CI_MODULE).joinpath("__init__.py")
     assert resource_init.is_file(), (
         f"Missing __init__.py via importlib.resources in {_TEMPLATES_CI_MODULE}. "
         "Wheel install dropped the package marker — package-data is invisible "
@@ -111,9 +105,7 @@ def test_w484_template_file_reachable_via_importlib_resources(
     New templates dropped into ``src/roam/templates/ci/`` are auto-covered
     via the iterdir() enumeration above.
     """
-    resource = importlib.resources.files(_TEMPLATES_CI_MODULE).joinpath(
-        template_filename
-    )
+    resource = importlib.resources.files(_TEMPLATES_CI_MODULE).joinpath(template_filename)
     assert resource.is_file(), (
         f"Template '{template_filename}' is enumerated under "
         f"importlib.resources('{_TEMPLATES_CI_MODULE}') but does NOT "

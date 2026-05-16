@@ -157,17 +157,14 @@ def build_fts_index(
 
     # Snapshot the live rowids on both sides. An empty FTS5 table is the
     # cold-start case (covers both first-ever-index and post-`force`).
-    fts_rowids: set[int] = {
-        r[0] for r in conn.execute("SELECT rowid FROM symbol_fts").fetchall()
-    }
-    sym_rowids: set[int] = {
-        r[0] for r in conn.execute("SELECT id FROM symbols").fetchall()
-    }
+    fts_rowids: set[int] = {r[0] for r in conn.execute("SELECT rowid FROM symbol_fts").fetchall()}
+    sym_rowids: set[int] = {r[0] for r in conn.execute("SELECT id FROM symbols").fetchall()}
 
     # 1) DELETE rowids that left the symbols table (file removals, renames).
     stale = fts_rowids - sym_rowids
     if stale:
         from roam.db.connection import batched_in
+
         # batched_in is a SELECT helper; for DELETE we chunk ourselves
         # to avoid the SQLite parameter-count limit.
         stale_list = list(stale)

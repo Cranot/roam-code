@@ -5,6 +5,17 @@ symbol missing), duplicate file paths, missing FTS rows, invalid
 line spans, corrupt or missing metrics. Returns a verdict and a
 list of findings. Exit code 5 on any HIGH-severity finding so CI
 can gate on it.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because db-check verifies INDEX INTEGRITY (orphan symbol rows,
+broken edge references, duplicate file paths, FTS row coverage) — not
+per-location code violations in user source. The integrity findings
+describe the SQLite index state, which has no source coordinates to
+populate SARIF ``locations[]``. SARIF here would conflate
+validator-output (index well-formed?) with code-analyzer-output (user
+code well-formed?). See ``cmd_rules_validate`` for the parallel
+validator-not-detector disclosure pattern + action.yml _SUPPORTED_SARIF
+allowlist + W1192 audit memo + W1221-audit memo.
 """
 
 from __future__ import annotations

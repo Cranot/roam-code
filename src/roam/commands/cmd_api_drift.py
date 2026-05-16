@@ -1,4 +1,11 @@
-"""Detect mismatches between backend API responses and frontend type definitions."""
+"""Detect mismatches between backend API responses and frontend type definitions.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because api-drift outputs are invocation-scoped API mismatch
+detections — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
+"""
 
 from __future__ import annotations
 

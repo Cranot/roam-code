@@ -1,4 +1,16 @@
-"""Discover implicit contracts (invariants) for symbols."""
+"""Discover implicit contracts (invariants) for symbols.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because invariants outputs are invocation-scoped implicit-
+contract enumerations (return-type stability, null-checks, ordering
+constraints inferred from call-graph + usage patterns) — not per-
+location code violations. The ``laws`` command ships SARIF when an
+invariant is promoted to a checked law and a violation is observed;
+the ``invariants`` discovery step itself returns candidate contracts
+without source coordinates suitable for SARIF ``locations[]``. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +21,13 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 from roam.output.metric_definitions import (
     BREAKING_RISK_DEFINITION,
     CALLER_METRIC_RAW,
@@ -177,6 +195,18 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
 
     with open_db(readonly=True) as conn:
         results = []
+        # W1245 Pattern-2 variant-D: track the resolver tier of any
+        # find_symbol() callsite reached on the symbol-target branch.
+        # The two callsites below (file-fallback symbol lookup AND
+        # bare-symbol mode) are mutually exclusive at runtime, so a
+        # single tier + resolved_name pair is sufficient. ``symbol``
+        # is the default when target is a file (file path resolution
+        # doesn't walk the symbol fallback chain) or absent. Only
+        # ``--public-api`` / ``--breaking-risk`` batch modes skip
+        # disclosure (no per-name input to grade).
+        resolution_tier = "symbol"
+        resolved_target: str | None = None
+        target_unresolved = False
 
         if target:
             # Detect whether target looks like a file path (has a known extension)
@@ -232,11 +262,21 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                     sym = find_symbol(conn, target)
                     if sym:
                         results.append(_discover_invariants(conn, sym["id"], dict(sym)))
+                        resolution_tier = sym.get("_resolution_tier", "symbol")
+                        resolved_target = sym.get("qualified_name") or sym["name"]
+                    else:
+                        target_unresolved = True
+                        resolved_target = target
             else:
                 # Symbol mode
                 sym = find_symbol(conn, target)
                 if sym:
                     results.append(_discover_invariants(conn, sym["id"], dict(sym)))
+                    resolution_tier = sym.get("_resolution_tier", "symbol")
+                    resolved_target = sym.get("qualified_name") or sym["name"]
+                else:
+                    target_unresolved = True
+                    resolved_target = target
 
         elif public_api:
             # All exported symbols (functions/classes with 0 or more callers)
@@ -277,6 +317,24 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
         total_invariants = sum(len(r["invariants"]) for r in results)
         high_risk = sum(1 for r in results if r["risk_level"] in ("CRITICAL", "HIGH"))
 
+        # W1245 Pattern-2 variant-D: build the disclosure block. When a
+        # symbol-target callsite resolved unresolved, surface that
+        # explicitly via ``resolution="unresolved"`` so the success
+        # verdict on an empty results list isn't indistinguishable from
+        # an exact-but-empty resolution. The batch modes (--public-api,
+        # --breaking-risk) leave the disclosure as the no-op ``symbol``
+        # default because there's no per-input grading to apply.
+        if target_unresolved:
+            disclosure_tier = "unresolved"
+        else:
+            disclosure_tier = resolution_tier
+        # Only emit a disclosure when the symbol-target branch actually
+        # walked the resolver (or attempted it). The batch modes resolve
+        # everything by direct DB query and don't have a tier to report.
+        emit_disclosure = bool(target)
+        resolution_block = resolution_disclosure(disclosure_tier, target=resolved_target) if emit_disclosure else {}
+        fuzzy_suffix = " [fuzzy resolution]" if disclosure_tier == "fuzzy" else ""
+
         if not results:
             verdict = f"No symbols found for: {target or 'query'}"
         elif len(results) == 1:
@@ -284,9 +342,12 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
             verdict = (
                 f"{len(r['invariants'])} invariants for {r['name']}"
                 f" ({r['caller_count']} callers, risk: {r['risk_level']})"
+                f"{fuzzy_suffix}"
             )
         else:
-            verdict = f"{total_invariants} invariants across {len(results)} symbols, {high_risk} high-risk"
+            verdict = (
+                f"{total_invariants} invariants across {len(results)} symbols, {high_risk} high-risk{fuzzy_suffix}"
+            )
 
         if json_mode:
             click.echo(
@@ -313,8 +374,10 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                             # upstream symbols (which would be
                             # direct_in_degree).
                             "caller_metric_definition": CALLER_METRIC_RAW,
+                            **resolution_block,
                         },
                         symbols=results,
+                        **resolution_block,
                     )
                 )
             )

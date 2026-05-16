@@ -14,6 +14,7 @@ from roam.output.formatter import (
     format_table,
     json_envelope,
     loc,
+    resolution_disclosure,
     to_json,
 )
 from roam.output.metric_definitions import (
@@ -261,7 +262,7 @@ def _impact_verdict(dependents, affected_files, total_syms):
     stale_sensitive=True,
 )
 @click.command()
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL")
 @click.option(
     "--hops",
     type=int,
@@ -307,11 +308,12 @@ def _impact_verdict(dependents, affected_files, total_syms):
 )
 @click.pass_context
 def impact(ctx, name, hops, depth, max_callers, timeout):
-    """Show blast radius: what breaks if a symbol changes.
+    """Show blast radius: what breaks if SYMBOL changes.
 
-    Unlike ``uses`` (which lists direct callers), this command computes the
-    transitive blast radius (bounded by default) including affected files
-    and PageRank-weighted importance.
+    SYMBOL is a symbol identifier (bare name or qualified name). Unlike
+    ``uses`` (which lists direct callers), this command computes the
+    transitive blast radius (bounded by default) including affected
+    files and PageRank-weighted importance.
 
     \b
     Examples:
@@ -324,6 +326,7 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
     pre-change checklist), and ``trace`` (k-shortest call paths).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -340,22 +343,46 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, name)
         if sym is None:
-            # W15.2 — auto-log a "symbol not found" event so the replay
-            # timeline shows the failed lookup. Build a minimal envelope
-            # the helper can consume; never let logging derail the exit.
+            # W1272 — Pattern-2c Convention (c): unresolved is a real
+            # success of "I tried and there's nothing to analyze". The
+            # envelope discloses resolution=unresolved + partial_success
+            # so downstream agents see the degraded outcome explicitly,
+            # but the exit code stays 0 so CI doesn't conflate a
+            # name-typo with a tool/IO failure. Pre-W1272 this branch
+            # auto-logged the miss + raised SystemExit(1); per the
+            # W1268 audit the auto-log is reserved for success-path
+            # blast-radius events and exit-0 is the canonical
+            # Convention (c) shape (cf. cmd_dead --extinction).
+            unresolved_disclosure = resolution_disclosure("unresolved", target=name or "")
             not_found_env = json_envelope(
                 "impact",
                 summary={
                     "verdict": f"Symbol '{name}' not found",
                     "partial_success": True,
                     "state": "not_found",
+                    **unresolved_disclosure,
                 },
                 symbol=name or "",
+                **unresolved_disclosure,
             )
-            auto_log(not_found_env, action="impact", target=name or "")
-            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
-            raise SystemExit(1)
+            if json_mode:
+                click.echo(to_json(not_found_env))
+            else:
+                # Preserve the suggestion list in text mode — it remains
+                # the most useful next step for a human user staring at a
+                # typo. ``symbol_not_found`` is text-only here (json_mode
+                # is False).
+                click.echo(symbol_not_found(conn, name, json_mode=False))
+            return
         sym_id = sym["id"]
+        # W1242 / W1249 — Pattern-2 variant-D: ``find_symbol`` stamps
+        # ``_resolution_tier`` on the returned row so the envelope can
+        # distinguish a fully-resolved success from a degraded fuzzy-match
+        # success that may have landed on a different target. Drives the
+        # resolution disclosure merged into every envelope branch below +
+        # the optional verdict suffix.
+        resolution_tier = sym.get("_resolution_tier", "symbol")
+        resolution_block = resolution_disclosure(resolution_tier, target=sym["qualified_name"] or sym["name"])
 
         if not json_mode:
             click.echo(
@@ -364,8 +391,6 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             click.echo()
 
         try:
-            import networkx as nx
-
             from roam.graph.builder import build_symbol_graph
         except ImportError:
             click.echo("Graph module not available. Run `roam index` to build the dependency graph.")
@@ -374,6 +399,8 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
         G = build_symbol_graph(conn)
         if sym_id not in G:
             verdict = f"Symbol '{name}' exists in the index but is not in the dependency graph."
+            if resolution_tier == "fuzzy":
+                verdict = f"{verdict} [fuzzy resolution -- target '{sym['qualified_name'] or sym['name']}' may not be what you meant]"
             tip = f"Run `roam index` to rebuild the graph, or use `roam symbol {name}` to view raw symbol data."
             not_in_graph_env = json_envelope(
                 "impact",
@@ -388,16 +415,26 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                     # the dependency graph.
                     "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
                     "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
+                    # W1242 — Pattern-2 variant-D resolution disclosure.
+                    **resolution_block,
                 },
                 symbol=sym["qualified_name"] or sym["name"],
                 tip=tip,
                 direct_dependents={},
                 affected_file_list=[],
                 indirect_refs=[],
+                **resolution_block,
             )
             # W15.2 — auto-log into the active run. Silent no-op if no run.
             auto_log(not_in_graph_env, action="impact", target=name or "")
-            if json_mode:
+            if sarif_mode:
+                # W1165: SARIF projection for CI / GitHub Code Scanning.
+                # The auto_log call above stays identical across formats so
+                # the audit ledger is invariant.
+                from roam.output.sarif import impact_to_sarif, write_sarif
+
+                click.echo(write_sarif(impact_to_sarif(not_in_graph_env)))
+            elif json_mode:
                 click.echo(to_json(not_in_graph_env))
             else:
                 click.echo(f"{verdict}\n  Tip: {tip}")
@@ -420,11 +457,7 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             max_callers=effective_max_callers,
             deadline=deadline,
         )
-        truncated = (
-            bfs_state["hit_caller_cap"]
-            or bfs_state["hit_depth_cap"]
-            or bfs_state["hit_timeout"]
-        )
+        truncated = bfs_state["hit_caller_cap"] or bfs_state["hit_depth_cap"] or bfs_state["hit_timeout"]
         if bfs_state["hit_timeout"]:
             run_state = "timeout"
         elif bfs_state["hit_caller_cap"]:
@@ -450,11 +483,14 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                 pass
 
         if not dependents:
+            no_dep_verdict = "no dependents"
+            if resolution_tier == "fuzzy":
+                no_dep_verdict = f"{no_dep_verdict} [fuzzy resolution -- target '{sym['qualified_name'] or sym['name']}' may not be what you meant]"
             no_dep_env = json_envelope(
                 "impact",
                 budget=token_budget,
                 summary={
-                    "verdict": "no dependents",
+                    "verdict": no_dep_verdict,
                     "affected_symbols": 0,
                     "affected_files": 0,
                     # W331: even on the leaf-symbol path the consumer
@@ -463,16 +499,24 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                     "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
                     "weighted_impact_definition": WEIGHTED_IMPACT_DEFINITION,
                     "reach_pct_definition": REACH_PCT_DEFINITION,
+                    # W1242 — Pattern-2 variant-D resolution disclosure.
+                    **resolution_block,
                 },
                 symbol=sym["qualified_name"] or sym["name"],
                 affected_symbols=0,
                 affected_files=0,
                 direct_dependents={},
                 affected_file_list=[],
+                **resolution_block,
             )
             # W15.2 — auto-log into the active run. Silent no-op if no run.
             auto_log(no_dep_env, action="impact", target=name or "")
-            if json_mode:
+            if sarif_mode:
+                # W1165: SARIF projection for CI / GitHub Code Scanning.
+                from roam.output.sarif import impact_to_sarif, write_sarif
+
+                click.echo(write_sarif(impact_to_sarif(no_dep_env)))
+            elif json_mode:
                 click.echo(to_json(no_dep_env))
             else:
                 click.echo("VERDICT: no dependents — safe to change")
@@ -498,9 +542,15 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                 _limit_notes.append(f"max-callers={effective_max_callers}")
             if bfs_state["hit_depth_cap"]:
                 _limit_notes.append(f"depth={effective_depth}")
+            verdict = f"{verdict} (partial: {', '.join(_limit_notes)} — re-run with larger limits for full radius)"
+        # W1242 — Pattern-2 variant-D: surface fuzzy-resolution in the verdict
+        # so text-only consumers see the degradation. The exact target the
+        # resolver landed on goes into the suffix so an agent can decide to
+        # re-run with the precise qualified name.
+        if resolution_tier == "fuzzy":
             verdict = (
-                f"{verdict} (partial: {', '.join(_limit_notes)} — "
-                f"re-run with larger limits for full radius)"
+                f"{verdict} [fuzzy resolution -- "
+                f"target '{sym['qualified_name'] or sym['name']}' may not be what you meant]"
             )
 
         # Build the full envelope so we can both auto-log and emit it.
@@ -513,9 +563,7 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
         except Exception:
             pass
 
-        json_deps = {
-            ek: [{"name": i[1], "kind": i[0], "file": i[2]} for i in items] for ek, items in by_kind.items()
-        }
+        json_deps = {ek: [{"name": i[1], "kind": i[0], "file": i[2]} for i in items] for ek, items in by_kind.items()}
         # Build affected file list with importance scores.
         # File importance = max PageRank of any dependent symbol in that file.
         file_importance: dict[str, float] = {}
@@ -534,6 +582,11 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             "max_callers": effective_max_callers,
             "timeout_s": float(timeout) if timeout and timeout > 0 else None,
         }
+        # W1242 — Pattern-2 variant-D: partial_success is true when EITHER
+        # the BFS truncated OR the resolver landed on a fuzzy match. Both
+        # conditions degrade the verdict's reliability; agents need to see
+        # both via one flag.
+        is_partial = truncated or resolution_tier != "symbol"
         impact_env = json_envelope(
             "impact",
             budget=token_budget,
@@ -551,7 +604,7 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                 "reach_pct": round(reach_pct, 1),
                 "sf_convention_tests": len(sf_test_files),
                 "truncated": truncated,
-                "partial_success": truncated,
+                "partial_success": is_partial,
                 "state": run_state,
                 "limits": limits_block,
                 # W331: stamp definitions so consumers know exactly what
@@ -562,6 +615,10 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                 "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
                 "weighted_impact_definition": WEIGHTED_IMPACT_DEFINITION,
                 "reach_pct_definition": REACH_PCT_DEFINITION,
+                # W1242 — Pattern-2 variant-D resolution disclosure. The
+                # helper sets ``partial_success`` to ``resolution != "symbol"``,
+                # so we override above with the combined-OR semantics.
+                **{k: v for k, v in resolution_block.items() if k != "partial_success"},
             },
             symbol=sym["qualified_name"] or sym["name"],
             affected_symbols=len(dependents),
@@ -573,12 +630,25 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             sf_convention_tests=sorted(sf_test_files),
             indirect_refs=indirect_refs,
             truncated=truncated,
-            partial_success=truncated,
+            partial_success=is_partial,
             state=run_state,
             limits=limits_block,
+            **{k: v for k, v in resolution_block.items() if k != "partial_success"},
         )
         # W15.2 — auto-log into the active run (silent no-op if none).
         auto_log(impact_env, action="impact", target=name or "")
+
+        if sarif_mode:
+            # W1165: SARIF projection for CI / GitHub Code Scanning
+            # integration. The auto_log call above stays identical to
+            # the JSON / text paths so the audit ledger is invariant
+            # across output formats. The --text / --json paths are
+            # byte-identical to pre-W1165 (this branch short-circuits
+            # before the legacy branches; nothing above it changed shape).
+            from roam.output.sarif import impact_to_sarif, write_sarif
+
+            click.echo(write_sarif(impact_to_sarif(impact_env)))
+            return
 
         if json_mode:
             click.echo(to_json(impact_env))

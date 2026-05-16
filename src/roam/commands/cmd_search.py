@@ -1,4 +1,11 @@
-"""Find symbols matching a name substring (case-insensitive)."""
+"""Find symbols matching a name substring (case-insensitive).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because search outputs are invocation-scoped symbol-name match
+enumerations — not per-location violations. Editor consumers should use
+the JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +25,7 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
+from roam.output.structured_unknowns import structured_unknown_filter
 
 # FTS5 column layout for symbol_fts: name=0, qualified_name=1, signature=2, kind=3, file_path=4
 _FTS_COLUMNS = ["name", "qualified_name", "signature", "kind", "file_path"]
@@ -259,6 +267,63 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
             EMPTY_INPUT,
             "search pattern cannot be empty — pass a name substring or regex (e.g. `roam search Auth`)",
         )
+    # W1068 (sibling of W1063 + W1064): when ``--kind`` is supplied,
+    # validate against the closed KIND_ABBREV vocabulary BEFORE running
+    # the query. Unknown kinds previously fell into the generic "no
+    # matches" branch — indistinguishable from "valid kind, 0 hits"
+    # (Pattern-1D silent-success on degraded filter resolution).
+    # Accept both the full kind ("function") and its abbreviation
+    # ("fn") so the disclosure matches the help-text contract.
+    # W1080: delegated to the shared ``structured_unknown_filter`` helper.
+    if kind_filter is not None:
+        full_kinds = set(KIND_ABBREV.keys())
+        abbrev_kinds = set(KIND_ABBREV.values())
+        known_kinds = sorted(full_kinds | abbrev_kinds)
+        frag = structured_unknown_filter(
+            requested=kind_filter,
+            known=known_kinds,
+            state="unknown_kind",
+            requested_field="requested_kind",
+            known_field="known_kinds",
+            fact_anchor="kinds",
+        )
+        if frag is not None:
+            verdict_unknown = f"unknown kind {kind_filter!r} ({len(known_kinds)} known){frag['verdict_suffix']}"
+            if json_mode:
+                # Pre-W1080 envelope did NOT carry ``did_you_mean`` in the
+                # summary (the suggestion only landed in the verdict
+                # suffix). Preserve that shape — don't splice
+                # ``frag['did_you_mean']`` into summary here.
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "search",
+                            summary={
+                                "verdict": verdict_unknown,
+                                "partial_success": frag["partial_success"],
+                                "state": frag["state"],
+                                "total": 0,
+                                "pattern": pattern,
+                                "requested_kind": frag["requested_kind"],
+                                "known_kinds": frag["known_kinds"],
+                            },
+                            budget=token_budget,
+                            pattern=pattern,
+                            results=[],
+                            agent_contract={
+                                # LAW 4: helper emits facts anchored on
+                                # ``kinds`` (in the formatter anchor set).
+                                "facts": frag["facts"],
+                                "next_commands": ["roam search --help"],
+                            },
+                        )
+                    )
+                )
+                return
+            click.echo(f"VERDICT: {verdict_unknown}")
+            click.echo()
+            click.echo("Known kinds: " + ", ".join(known_kinds))
+            return
     ensure_index()
     like_pattern = f"%{pattern}%"
     mode_lower = (mode or "substring").lower()

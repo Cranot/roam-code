@@ -36,9 +36,7 @@ def _find_sarif_consumers_node() -> ast.AST:
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == "_SARIF_CONSUMERS":
                     return node.value
-    raise AssertionError(
-        "_SARIF_CONSUMERS not found as module-level assignment in src/roam/cli.py"
-    )
+    raise AssertionError("_SARIF_CONSUMERS not found as module-level assignment in src/roam/cli.py")
 
 
 def test_sarif_consumers_is_literal_tuple_of_strings() -> None:
@@ -48,14 +46,8 @@ def test_sarif_consumers_is_literal_tuple_of_strings() -> None:
         f"got {type(value).__name__}. Dynamic construction defeats the "
         f"W22.3 drift guard in tests/test_sarif_consumer_list.py."
     )
-    non_string = [
-        elt for elt in value.elts
-        if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str))
-    ]
-    assert not non_string, (
-        f"_SARIF_CONSUMERS contains non-string-literal elements: "
-        f"{[ast.dump(e) for e in non_string]}"
-    )
+    non_string = [elt for elt in value.elts if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str))]
+    assert not non_string, f"_SARIF_CONSUMERS contains non-string-literal elements: {[ast.dump(e) for e in non_string]}"
 
 
 def test_sarif_consumers_ast_matches_runtime() -> None:

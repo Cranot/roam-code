@@ -6,12 +6,21 @@ Subcommands:
 - ``roam triage add``   -- add a new suppression
 - ``roam triage stats`` -- show suppression statistics
 - ``roam triage check`` -- check if a specific finding is suppressed
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_triage operates on substrate state in ``.roam/``
+(suppression records, triage decisions) -- not code locations or
+per-location violations. The state is consumed by other roam commands
++ agent runtimes directly from disk; SARIF would be redundant. See
+action.yml _SUPPORTED_SARIF allowlist + W1189-audit reclassification
+memo.
 """
 
 from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.suppression import (
     VALID_STATUSES,
     is_suppressed,
@@ -19,7 +28,6 @@ from roam.commands.suppression import (
     save_suppression,
     suppression_stats,
 )
-from roam.capability import roam_capability
 from roam.db.connection import find_project_root
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -128,7 +136,14 @@ def triage_list(ctx):
 
 @triage.command("add")
 @click.option("--rule", required=True, help="Rule identifier (e.g. secret-detection).")
-@click.option("--file", "file_path", required=True, help="File path (relative to project root).")
+@click.option("--path", "file_path", default=None, help="File path (relative to project root).")
+@click.option(
+    "--file",
+    "file_path",
+    default=None,
+    hidden=True,
+    help="Deprecated alias for --path. Retained for backward compatibility.",
+)
 @click.option("--reason", required=True, help="Justification for suppression.")
 @click.option(
     "--status",
@@ -143,6 +158,9 @@ def triage_add(ctx, rule, file_path, reason, status, line_num, author):
     """Add a new suppression to .roam-suppressions.yml."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()
+
+    if not file_path:
+        raise click.UsageError("Missing option '--path' (file path relative to project root).")
 
     try:
         save_suppression(

@@ -25,9 +25,7 @@ def empty_corpus(tmp_path: Path) -> Path:
     import subprocess
 
     (tmp_path / "empty.py").write_text("# empty corpus\n", encoding="utf-8")
-    subprocess.run(
-        ["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(
         ["git", "-c", "user.email=t@e.com", "-c", "user.name=t", "add", "-A"],
         cwd=tmp_path,
@@ -80,12 +78,8 @@ def test_audit_trail_verify_empty_corpus_emits_structured_envelope(empty_corpus:
     assert "not initialized" in verdict_lc or "empty" in verdict_lc, (
         f"verdict should disclose empty/uninitialized state, got: {verdict!r}"
     )
-    assert "valid" not in verdict_lc, (
-        f"verdict must not claim chain validity for empty trail: {verdict!r}"
-    )
-    assert "safe" not in verdict_lc, (
-        f"verdict must not default to SAFE on empty trail: {verdict!r}"
-    )
+    assert "valid" not in verdict_lc, f"verdict must not claim chain validity for empty trail: {verdict!r}"
+    assert "safe" not in verdict_lc, f"verdict must not default to SAFE on empty trail: {verdict!r}"
 
     # Partial-success must be present and truthy.
     assert "partial_success" in summary

@@ -23,7 +23,6 @@ from __future__ import annotations
 import os
 import subprocess
 
-import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
@@ -69,14 +68,10 @@ def _run_clones_empty(tmp_path):
 
         # Index the empty corpus first — roam clones requires an index.
         init_result = runner.invoke(cli, ["init"], catch_exceptions=False)
-        assert init_result.exit_code == 0, (
-            f"roam init failed (exit {init_result.exit_code}):\n{init_result.output}"
-        )
+        assert init_result.exit_code == 0, f"roam init failed (exit {init_result.exit_code}):\n{init_result.output}"
 
         result = runner.invoke(cli, ["--json", "clones"], catch_exceptions=False)
-        assert result.exit_code == 0, (
-            f"roam clones --json failed (exit {result.exit_code}):\n{result.output}"
-        )
+        assert result.exit_code == 0, f"roam clones --json failed (exit {result.exit_code}):\n{result.output}"
         return parse_json_output(result, command="clones")
     finally:
         os.chdir(old_cwd)

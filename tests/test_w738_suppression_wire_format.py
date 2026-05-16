@@ -20,7 +20,6 @@ Two guard goals here:
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from roam.commands.suppression import (
@@ -29,7 +28,6 @@ from roam.commands.suppression import (
     save_suppression,
 )
 from roam.output.formatter import json_envelope, to_json
-
 
 # ---------------------------------------------------------------------------
 # Guard 1: cmd_triage wire-format invariants (legacy dict path stays stable)
@@ -80,11 +78,7 @@ def test_triage_list_envelope_diverges_on_backslash_path(tmp_path: Path) -> None
     any pre-existing file containing a Windows-style path. Pinned.
     """
     (tmp_path / ".roam-suppressions.yml").write_text(
-        "suppressions:\n"
-        "  - rule: r\n"
-        "    file: src\\x.py\n"
-        "    status: safe\n"
-        "    reason: ok\n",
+        "suppressions:\n  - rule: r\n    file: src\\x.py\n    status: safe\n    reason: ok\n",
         encoding="utf-8",
     )
     legacy = load_suppressions(tmp_path)
@@ -102,12 +96,7 @@ def test_triage_list_envelope_diverges_on_malformed_date(tmp_path: Path) -> None
     (``_coerce_date`` returns None). Pinned.
     """
     (tmp_path / ".roam-suppressions.yml").write_text(
-        "suppressions:\n"
-        "  - rule: r\n"
-        "    file: f.py\n"
-        "    date: 2026/05/14\n"
-        "    reason: ok\n"
-        "    status: safe\n",
+        "suppressions:\n  - rule: r\n    file: f.py\n    date: 2026/05/14\n    reason: ok\n    status: safe\n",
         encoding="utf-8",
     )
     legacy = load_suppressions(tmp_path)
@@ -122,11 +111,7 @@ def test_triage_list_envelope_diverges_on_invalid_status(tmp_path: Path) -> None
     by the legacy parser but dropped by the typed loader. Pinned.
     """
     (tmp_path / ".roam-suppressions.yml").write_text(
-        "suppressions:\n"
-        "  - rule: r\n"
-        "    file: f.py\n"
-        "    status: notvalid\n"
-        "    reason: ok\n",
+        "suppressions:\n  - rule: r\n    file: f.py\n    status: notvalid\n    reason: ok\n",
         encoding="utf-8",
     )
     legacy = load_suppressions(tmp_path)
@@ -186,11 +171,7 @@ def test_save_suppression_dedup_after_typed_normalises_path(tmp_path: Path) -> N
     """
     # Plant a row with a backslash path the parser carries through.
     (tmp_path / ".roam-suppressions.yml").write_text(
-        "suppressions:\n"
-        "  - rule: r1\n"
-        "    file: src\\x.py\n"
-        "    status: safe\n"
-        "    reason: r\n",
+        "suppressions:\n  - rule: r1\n    file: src\\x.py\n    status: safe\n    reason: r\n",
         encoding="utf-8",
     )
     # The new save uses the forward-slash form — typed dedup must catch it.

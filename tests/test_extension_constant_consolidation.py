@@ -46,8 +46,7 @@ def test_doc_extensions_public_alias_matches_private():
     from roam.index import file_roles
 
     assert file_roles._DOC_EXTENSIONS is file_roles.DOC_EXTENSIONS, (
-        "file_roles._DOC_EXTENSIONS must be an alias of the public "
-        "DOC_EXTENSIONS (not a separate frozenset)."
+        "file_roles._DOC_EXTENSIONS must be an alias of the public DOC_EXTENSIONS (not a separate frozenset)."
     )
 
 
@@ -57,9 +56,7 @@ def test_doc_extensions_canonical_contents():
     """
     from roam.index.file_roles import DOC_EXTENSIONS
 
-    assert DOC_EXTENSIONS == frozenset(
-        {".md", ".rst", ".adoc", ".asciidoc", ".txt"}
-    ), (
+    assert DOC_EXTENSIONS == frozenset({".md", ".rst", ".adoc", ".asciidoc", ".txt"}), (
         "DOC_EXTENSIONS canonical set must contain 5 entries: "
         ".md, .rst, .adoc, .asciidoc, .txt. If you need to add or remove an "
         "extension, update the citation comment in file_roles.py and this "

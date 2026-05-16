@@ -21,6 +21,7 @@ is INFORMATIONAL: it tells the next person either to (a) finish the
 W39.1-style backfill, or (b) consciously revise this test's expectations.
 Do NOT lower the bar to mask a missing eval doc.
 """
+
 from __future__ import annotations
 
 import sys
@@ -32,6 +33,12 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "dev"))
 
+_DOGFOOD_DIR_PRESENT = (_REPO_ROOT / "internal" / "dogfood").is_dir()
+pytestmark = pytest.mark.skipif(
+    not _DOGFOOD_DIR_PRESENT,
+    reason="internal/dogfood/ is gitignored — not available on CI / public clones",
+)
+
 
 # Dogfood-v2 commands grouped by current expected state.
 # W39.1 will populate the W36.* fix_refs for auth-gaps/algo/dead/stale-refs.
@@ -39,7 +46,7 @@ DOGFOOD_V2_EXPECTED = {
     # Already-fixed via W18.*
     "sbom": "fixed",
     "stale-refs": "fixed",  # ALSO has W36.1 slugger fix after W39.1
-    "dead": "fixed",        # Vue SFC + Laravel-dead after W39.1
+    "dead": "fixed",  # Vue SFC + Laravel-dead after W39.1
     "missing-index": "fixed",
     "over-fetch": "fixed",
     "ws": "fixed",
@@ -76,9 +83,7 @@ def test_dogfood_v2_corpus_state():
                 f"(latest_eval={row.get('latest')}, status={row.get('status')})"
             )
 
-    assert not failures, "Dogfood-v2 corpus state drift:\n" + "\n".join(
-        f"  - {f}" for f in failures
-    )
+    assert not failures, "Dogfood-v2 corpus state drift:\n" + "\n".join(f"  - {f}" for f in failures)
 
 
 def test_fixed_commands_count_at_least_six():
@@ -107,6 +112,4 @@ def test_no_findings_in_unknown_state():
 
     rows = check_commands(list(DOGFOOD_V2_EXPECTED.keys()))
     missing = [r for r in rows if r["verdict"] in ("unknown", "no_evals")]
-    assert not missing, (
-        f"Commands with no eval docs at all: {[r['command'] for r in missing]}"
-    )
+    assert not missing, f"Commands with no eval docs at all: {[r['command'] for r in missing]}"

@@ -40,7 +40,6 @@ from roam.evidence import (
     EvidenceSubject,
 )
 
-
 # ---------------------------------------------------------------------------
 # Phase 0 - vocabulary
 # ---------------------------------------------------------------------------
@@ -86,25 +85,22 @@ def test_all_link_kinds_documented() -> None:
     contract; the frozenset is the machine-readable contract.
     """
     from roam.evidence import _vocabulary
-    doc = _vocabulary.__doc__ or ""
+
+    # Module-level doc currently unused at this test branch — we pull
+    # inspect.getsource below for the per-constant docstring check.
+    _module_doc = _vocabulary.__doc__ or ""  # noqa: F841
     # The LINK_KINDS constant carries its own docstring above the
     # declaration; pull the source so we can look at it.
     import inspect
+
     source = inspect.getsource(_vocabulary)
     for kind in LINK_KINDS:
-        assert f"``{kind}``" in source, (
-            f"link kind {kind!r} is in LINK_KINDS but not documented in "
-            f"_vocabulary.py"
-        )
+        assert f"``{kind}``" in source, f"link kind {kind!r} is in LINK_KINDS but not documented in _vocabulary.py"
     # Same drift guard for subject and artifact kinds
     for kind in SUBJECT_KINDS:
-        assert f"``{kind}``" in source, (
-            f"subject kind {kind!r} not documented in _vocabulary.py"
-        )
+        assert f"``{kind}``" in source, f"subject kind {kind!r} not documented in _vocabulary.py"
     for kind in ARTIFACT_KINDS:
-        assert f"``{kind}``" in source, (
-            f"artifact kind {kind!r} not documented in _vocabulary.py"
-        )
+        assert f"``{kind}``" in source, f"artifact kind {kind!r} not documented in _vocabulary.py"
 
 
 # ---------------------------------------------------------------------------
@@ -276,13 +272,9 @@ def _fixture_packet() -> ChangeEvidence:
             {"finding_id_str": "smells:src/auth:abc", "claim": "long-params"},
             {"finding_id_str": "dead:src/auth:xyz", "claim": "dead-param"},
         ),
-        policy_decisions=(
-            {"rule": "no_unguarded_io", "decision": "allow"},
-        ),
+        policy_decisions=({"rule": "no_unguarded_io", "decision": "allow"},),
         tests_required=("tests/test_auth.py",),
-        tests_run=(
-            {"id": "tests/test_auth.py::test_login", "outcome": "passed"},
-        ),
+        tests_run=({"id": "tests/test_auth.py::test_login", "outcome": "passed"},),
         approvals=(),
         accepted_risks=(),
         artifacts=(art_path,),
@@ -299,9 +291,7 @@ def test_change_evidence_roundtrip_json_stable() -> None:
     parsed = json.loads(canonical)
     reserialised = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
 
-    assert canonical == reserialised, (
-        "canonical JSON is not byte-stable across parse/serialise"
-    )
+    assert canonical == reserialised, "canonical JSON is not byte-stable across parse/serialise"
 
 
 def test_content_hash_excludes_self() -> None:
@@ -314,10 +304,7 @@ def test_content_hash_excludes_self() -> None:
     stamped = dataclasses.replace(packet, content_hash="deadbeef" * 8)
     h_with = stamped.compute_content_hash()
 
-    assert h_without == h_with, (
-        "content_hash is leaking into its own input - recompute should "
-        "strip it before hashing"
-    )
+    assert h_without == h_with, "content_hash is leaking into its own input - recompute should strip it before hashing"
 
 
 def test_content_hash_stable_across_key_order() -> None:
@@ -537,9 +524,7 @@ def test_change_evidence_with_refs_round_trips_canonical_json() -> None:
     canonical = packet.to_canonical_json()
     parsed = json.loads(canonical)
     reserialised = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
-    assert canonical == reserialised, (
-        "canonical JSON with W182 refs is not byte-stable across parse/serialise"
-    )
+    assert canonical == reserialised, "canonical JSON with W182 refs is not byte-stable across parse/serialise"
     # Spot-check shape
     assert parsed["actor_refs"][0]["actor_kind"] == "agent"
     assert parsed["authority_refs"][0]["authority_kind"] == "mode"
@@ -600,10 +585,7 @@ def test_content_hash_unchanged_when_refs_empty() -> None:
         environment_refs=(),
     )
     assert p_v0_shape.to_canonical_json() == p_explicit_empty.to_canonical_json()
-    assert (
-        p_v0_shape.compute_content_hash()
-        == p_explicit_empty.compute_content_hash()
-    )
+    assert p_v0_shape.compute_content_hash() == p_explicit_empty.compute_content_hash()
 
     # And the schema_version stays "1.0.0" (proves option (a) was taken
     # rather than option (b)).
@@ -720,13 +702,16 @@ def test_confidence_basis_constants_present() -> None:
     consumer can rely on the closed enumeration.
     """
     from roam.evidence._vocabulary import CLAIM_CONFIDENCES
+
     assert isinstance(CLAIM_CONFIDENCES, frozenset)
-    assert CLAIM_CONFIDENCES == frozenset({
-        "direct",
-        "derived",
-        "inferred",
-        "legacy_fallback",
-    })
+    assert CLAIM_CONFIDENCES == frozenset(
+        {
+            "direct",
+            "derived",
+            "inferred",
+            "legacy_fallback",
+        }
+    )
     # Drift guard: frozenset is immutable
     with pytest.raises(AttributeError):
         CLAIM_CONFIDENCES.add("rogue_basis")  # type: ignore[attr-defined]
@@ -829,14 +814,14 @@ def test_version_fields_omitted_when_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# W287 - ``_resolve_roam_version`` helper
+# W287 - ``resolve_roam_version`` helper
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_roam_version_returns_package_version() -> None:
+def testresolve_roam_version_returns_package_version() -> None:
     """The helper returns the installed ``roam-code`` version string.
 
-    W287 directive. ``_resolve_roam_version()`` is the producer-side
+    W287 directive. ``resolve_roam_version()`` is the producer-side
     hook for stamping :attr:`ChangeEvidence.roam_version` from the real
     package metadata rather than a hard-coded string. The helper must:
 
@@ -846,15 +831,15 @@ def test_resolve_roam_version_returns_package_version() -> None:
       see a match).
     """
     from roam import __version__
-    from roam.evidence.change_evidence import _resolve_roam_version
+    from roam.evidence.change_evidence import resolve_roam_version
 
-    resolved = _resolve_roam_version()
+    resolved = resolve_roam_version()
     assert isinstance(resolved, str)
     assert resolved
     assert resolved == __version__
 
 
-def test_resolve_roam_version_falls_back_on_metadata_failure(
+def testresolve_roam_version_falls_back_on_metadata_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The helper returns ``"unknown"`` when ``roam.__version__`` is unavailable.
@@ -867,7 +852,7 @@ def test_resolve_roam_version_falls_back_on_metadata_failure(
     import sys
 
     import roam
-    from roam.evidence.change_evidence import _resolve_roam_version
+    from roam.evidence.change_evidence import resolve_roam_version
 
     # Force ``from roam import __version__`` to raise during the helper's
     # deferred import. Easiest reliable way: temporarily remove the
@@ -880,7 +865,7 @@ def test_resolve_roam_version_falls_back_on_metadata_failure(
         # Sanity: the helper's deferred ``from roam import __version__``
         # must hit ``ImportError`` now.
         assert "roam" in sys.modules
-        result = _resolve_roam_version()
+        result = resolve_roam_version()
         assert result == "unknown"
     finally:
         # ``monkeypatch.delattr`` already restores on test teardown, but
@@ -888,7 +873,7 @@ def test_resolve_roam_version_falls_back_on_metadata_failure(
         roam.__version__ = saved  # type: ignore[attr-defined]
 
 
-def test_resolve_roam_version_falls_back_when_version_is_empty(
+def testresolve_roam_version_falls_back_when_version_is_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Empty / non-string ``__version__`` values fall back to ``"unknown"``.
@@ -901,13 +886,13 @@ def test_resolve_roam_version_falls_back_when_version_is_empty(
     special-case.
     """
     import roam
-    from roam.evidence.change_evidence import _resolve_roam_version
+    from roam.evidence.change_evidence import resolve_roam_version
 
     monkeypatch.setattr(roam, "__version__", "", raising=False)
-    assert _resolve_roam_version() == "unknown"
+    assert resolve_roam_version() == "unknown"
 
     monkeypatch.setattr(roam, "__version__", None, raising=False)
-    assert _resolve_roam_version() == "unknown"
+    assert resolve_roam_version() == "unknown"
 
 
 def test_change_evidence_default_roam_version_stays_none() -> None:
@@ -963,9 +948,7 @@ def test_assurance_floor_passes_when_minimum_present() -> None:
         # actor: at least one actor_refs entry
         actor_refs=(ActorRef(actor_kind="agent", actor_id="agent:a"),),
         # authority: at least one authority_refs entry
-        authority_refs=(
-            AuthorityRef(authority_kind="mode", authority_id="mode:safe_edit"),
-        ),
+        authority_refs=(AuthorityRef(authority_kind="mode", authority_id="mode:safe_edit"),),
         # changed_subjects: non-empty
         changed_subjects=(subj,),
         # findings: non-empty
@@ -1026,12 +1009,7 @@ def test_evidence_completeness_8q_table() -> None:
     assert table_p["missing"] == 3
     assert table_p["not_applicable"] == 1
     # Sum of Q-states equals 8 (sanity check on the totals)
-    assert (
-        table_p["complete"]
-        + table_p["partial"]
-        + table_p["missing"]
-        + table_p["not_applicable"]
-    ) == 8
+    assert (table_p["complete"] + table_p["partial"] + table_p["missing"] + table_p["not_applicable"]) == 8
 
     # Fully populated: all 8 questions complete.
     subj = EvidenceSubject(kind="symbol", qualified_name="src/x.py::f")
@@ -1043,9 +1021,7 @@ def test_evidence_completeness_8q_table() -> None:
     full = ChangeEvidence(
         evidence_id="ev_w210_complete_full",
         actor_refs=(ActorRef(actor_kind="agent", actor_id="agent:a"),),
-        authority_refs=(
-            AuthorityRef(authority_kind="mode", authority_id="mode:safe_edit"),
-        ),
+        authority_refs=(AuthorityRef(authority_kind="mode", authority_id="mode:safe_edit"),),
         context_refs=(art,),
         changed_subjects=(subj,),
         risk_level="low",
@@ -1055,9 +1031,7 @@ def test_evidence_completeness_8q_table() -> None:
     )
     table_f = full.evidence_completeness()
     for q in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"):
-        assert table_f[q] == "complete", (
-            f"{q} expected complete, got {table_f[q]}"
-        )
+        assert table_f[q] == "complete", f"{q} expected complete, got {table_f[q]}"
     assert table_f["complete"] == 8
     assert table_f["partial"] == 0
     assert table_f["missing"] == 0
@@ -1085,9 +1059,7 @@ def test_existing_w182_hash_stability_preserved() -> None:
     """
     # Bare packet (the empty-defaults case)
     p_bare = ChangeEvidence(evidence_id="ev_compat_1")
-    expected_bare_hash = (
-        "c64772f6c8c0314637cd47d94f00f8d5924633a037d379e8b0e3b10e14d0158b"
-    )
+    expected_bare_hash = "c64772f6c8c0314637cd47d94f00f8d5924633a037d379e8b0e3b10e14d0158b"
     assert p_bare.compute_content_hash() == expected_bare_hash, (
         "W210 additions perturbed the bare-packet hash. The omit-when-"
         "default rule is the only thing preventing this drift; check "
@@ -1136,9 +1108,7 @@ def test_existing_w182_hash_stability_preserved() -> None:
         authority_refs=(auth,),
         environment_refs=(env,),
     )
-    expected_w182_hash = (
-        "b234978474e0bbbdf95cc4c7aa695750ff0bd110781d631975304979c32bc502"
-    )
+    expected_w182_hash = "b234978474e0bbbdf95cc4c7aa695750ff0bd110781d631975304979c32bc502"
     assert p_w182.compute_content_hash() == expected_w182_hash, (
         "W210 additions perturbed the W182 packet hash. The W210 fields "
         "must default to omit-sentinel values that do NOT appear in "
@@ -1166,9 +1136,7 @@ def _w534_read_fixture(name: str) -> str:
     """Read a golden fixture's raw canonical JSON bytes."""
     from pathlib import Path
 
-    return (
-        Path(__file__).parent / "fixtures" / "evidence" / f"{name}.json"
-    ).read_text(encoding="utf-8")
+    return (Path(__file__).parent / "fixtures" / "evidence" / f"{name}.json").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("name", _W534_FIXTURE_NAMES)
@@ -1203,9 +1171,7 @@ def test_w534_round_trip_preserves_content_hash(name: str) -> None:
     """
     from pathlib import Path
 
-    sha_path = (
-        Path(__file__).parent / "fixtures" / "evidence" / f"{name}.sha256"
-    )
+    sha_path = Path(__file__).parent / "fixtures" / "evidence" / f"{name}.sha256"
     expected = sha_path.read_text(encoding="utf-8").strip()
 
     body = _w534_read_fixture(name)
@@ -1221,22 +1187,20 @@ def test_w534_round_trip_preserves_content_hash(name: str) -> None:
 def test_w534_round_trip_preserves_nested_dataclass_fields() -> None:
     """Parse -> serialise reconstructs every nested dataclass shape."""
     # Build a packet with every nested-dataclass field type populated.
-    subj = EvidenceSubject(
-        kind="symbol", qualified_name="src/foo.py::bar"
-    )
+    subj = EvidenceSubject(kind="symbol", qualified_name="src/foo.py::bar")
     art = EvidenceArtifact(
-        artifact_id="sarif:abc", kind="sarif",
+        artifact_id="sarif:abc",
+        kind="sarif",
         path=".roam/exports/x.sarif",
         content_hash="9" * 64,
     )
     actor = ActorRef(actor_kind="agent", actor_id="agent:test")
     auth = AuthorityRef(
-        authority_kind="mode", authority_id="mode:safe_edit",
+        authority_kind="mode",
+        authority_id="mode:safe_edit",
         source="mode",
     )
-    env = EnvironmentRef(
-        env_kind="workspace", env_id="workspace:/home/x"
-    )
+    env = EnvironmentRef(env_kind="workspace", env_id="workspace:/home/x")
 
     original = ChangeEvidence(
         evidence_id="ev_w534_nested",
@@ -1270,9 +1234,7 @@ def test_w534_strict_mode_raises_on_unknown_subject_kind() -> None:
     packet = ChangeEvidence(
         evidence_id="ev_w534_strict_subject",
         verdict="SAFE",
-        changed_subjects=(
-            EvidenceSubject(kind="symbol", qualified_name="x"),
-        ),
+        changed_subjects=(EvidenceSubject(kind="symbol", qualified_name="x"),),
     )
     canon = packet.to_canonical_json()
     # Splice a bad subject kind in.
@@ -1394,9 +1356,7 @@ def test_w561_with_drops_strict_mode_still_raises() -> None:
     packet = ChangeEvidence(
         evidence_id="ev_w561_strict_subject",
         verdict="SAFE",
-        changed_subjects=(
-            EvidenceSubject(kind="symbol", qualified_name="src/a.py::x"),
-        ),
+        changed_subjects=(EvidenceSubject(kind="symbol", qualified_name="src/a.py::x"),),
     )
     canon = packet.to_canonical_json()
     bad = canon.replace('"kind":"symbol"', '"kind":"not_a_real_kind"', 1)
@@ -1431,3 +1391,44 @@ def test_w561_with_drops_aggregates_multiple_dropped_rows() -> None:
     assert parsed.changed_subjects[0].kind == "file"
     assert len(drops) == 2
     assert all("changed_subject" in d for d in drops)
+
+
+# ---------------------------------------------------------------------------
+# W1156 - REFERENCE_REMOVAL_VERDICTS closed-enum substrate for
+# cmd_refs_text + cmd_delete_check (W1134 audit recommendation)
+# ---------------------------------------------------------------------------
+
+
+def test_reference_removal_verdicts_membership() -> None:
+    """Drift guard: REFERENCE_REMOVAL_VERDICTS pins the 6-member alphabet.
+
+    Two CLI consumers split the alphabet:
+      * cmd_refs_text emits: safe_to_remove / review / load_bearing
+      * cmd_delete_check emits: safe / likely_safe / break_risk
+
+    Canonical form is lowercase + underscore (matches POLICY_DECISIONS
+    convention). The CLI text-output layer renders as
+    UPPERCASE-WITH-HYPHENS; validators normalize before membership check.
+
+    See W1134 audit + W1156 for context.
+    """
+    from roam.evidence._vocabulary import REFERENCE_REMOVAL_VERDICTS
+
+    expected = frozenset(
+        {
+            "safe_to_remove",
+            "review",
+            "load_bearing",
+            "safe",
+            "likely_safe",
+            "break_risk",
+        }
+    )
+    assert REFERENCE_REMOVAL_VERDICTS == expected, (
+        f"Drift detected: {REFERENCE_REMOVAL_VERDICTS - expected} added "
+        f"OR {expected - REFERENCE_REMOVAL_VERDICTS} removed. "
+        f"See W1134 audit + W1156 for context."
+    )
+    # Drift guard: frozenset is immutable
+    with pytest.raises(AttributeError):
+        REFERENCE_REMOVAL_VERDICTS.add("rogue_verdict")  # type: ignore[attr-defined]

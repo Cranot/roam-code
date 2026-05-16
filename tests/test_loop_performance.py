@@ -16,8 +16,6 @@ the timings aren't perturbed by parallel-test contention.
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -112,9 +110,7 @@ def test_perf_index_100_files(tmp_path):
     elapsed = time.perf_counter() - start
     assert rc == 0, f"index failed:\n{out}"
     print(f"\n[PERF] index 100 files: {elapsed:.2f}s (budget {INIT_BUDGET_S}s)")
-    assert elapsed < INIT_BUDGET_S, (
-        f"index took {elapsed:.2f}s, exceeds budget {INIT_BUDGET_S}s"
-    )
+    assert elapsed < INIT_BUDGET_S, f"index took {elapsed:.2f}s, exceeds budget {INIT_BUDGET_S}s"
 
 
 # ---------------------------------------------------------------------------
@@ -137,13 +133,8 @@ def test_perf_laws_mine_100_files(tmp_path, cli_runner, monkeypatch):
     )
     elapsed = time.perf_counter() - start
     assert r.exit_code == 0, r.output
-    print(
-        f"\n[PERF] laws mine 100 files: {elapsed:.2f}s "
-        f"(budget {LAWS_MINE_BUDGET_S}s)"
-    )
-    assert elapsed < LAWS_MINE_BUDGET_S, (
-        f"laws mine took {elapsed:.2f}s, exceeds budget {LAWS_MINE_BUDGET_S}s"
-    )
+    print(f"\n[PERF] laws mine 100 files: {elapsed:.2f}s (budget {LAWS_MINE_BUDGET_S}s)")
+    assert elapsed < LAWS_MINE_BUDGET_S, f"laws mine took {elapsed:.2f}s, exceeds budget {LAWS_MINE_BUDGET_S}s"
 
 
 # ---------------------------------------------------------------------------
@@ -164,13 +155,9 @@ def test_perf_constitution_init(tmp_path, cli_runner, monkeypatch):
     r = _invoke(cli_runner, ["--json", "constitution", "init"])
     elapsed = time.perf_counter() - start
     assert r.exit_code == 0, r.output
-    print(
-        f"\n[PERF] constitution init: {elapsed:.2f}s "
-        f"(budget {CONSTITUTION_INIT_BUDGET_S}s)"
-    )
+    print(f"\n[PERF] constitution init: {elapsed:.2f}s (budget {CONSTITUTION_INIT_BUDGET_S}s)")
     assert elapsed < CONSTITUTION_INIT_BUDGET_S, (
-        f"constitution init took {elapsed:.2f}s, "
-        f"exceeds budget {CONSTITUTION_INIT_BUDGET_S}s"
+        f"constitution init took {elapsed:.2f}s, exceeds budget {CONSTITUTION_INIT_BUDGET_S}s"
     )
 
 
@@ -256,10 +243,5 @@ def test_perf_full_loop_under_30s(tmp_path, cli_runner, monkeypatch):
     assert r.exit_code == 0, r.output
 
     elapsed = time.perf_counter() - start
-    print(
-        f"\n[PERF] full e2e loop on 100-file project: "
-        f"{elapsed:.2f}s (budget {FULL_LOOP_BUDGET_S}s)"
-    )
-    assert elapsed < FULL_LOOP_BUDGET_S, (
-        f"full loop took {elapsed:.2f}s, exceeds budget {FULL_LOOP_BUDGET_S}s"
-    )
+    print(f"\n[PERF] full e2e loop on 100-file project: {elapsed:.2f}s (budget {FULL_LOOP_BUDGET_S}s)")
+    assert elapsed < FULL_LOOP_BUDGET_S, f"full loop took {elapsed:.2f}s, exceeds budget {FULL_LOOP_BUDGET_S}s"

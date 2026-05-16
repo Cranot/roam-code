@@ -32,7 +32,6 @@ from roam.evidence import (
     apply_profile,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -116,13 +115,9 @@ def _packet_with_everything() -> ChangeEvidence:
                 "raw_text": "def f(a, b, c, d, e, f, g): ...",
             },
         ),
-        policy_decisions=(
-            {"rule": "no_unguarded_io", "outcome": "allow"},
-        ),
+        policy_decisions=({"rule": "no_unguarded_io", "outcome": "allow"},),
         tests_required=("tests/test_auth.py::test_login",),
-        tests_run=(
-            {"id": "tests/test_auth.py::test_login", "outcome": "passed"},
-        ),
+        tests_run=({"id": "tests/test_auth.py::test_login", "outcome": "passed"},),
         approvals=(),
         accepted_risks=(),
         artifacts=(art_path,),
@@ -211,9 +206,7 @@ def test_audit_profile_preserves_actor_identities() -> None:
     packet = _packet_with_hash()
     redacted, _ = apply_profile(packet, "audit")
     assert redacted.human_actor == "alice@example.com"
-    human_ref = next(
-        r for r in redacted.actor_refs if r.actor_kind == "human"
-    )
+    human_ref = next(r for r in redacted.actor_refs if r.actor_kind == "human")
     assert human_ref.display_name == "Alice"
 
 
@@ -252,13 +245,9 @@ def test_public_profile_redacts_human_actor() -> None:
     packet = _packet_with_hash()
     redacted, _ = apply_profile(packet, "public")
     assert redacted.human_actor is None
-    human_ref = next(
-        r for r in redacted.actor_refs if r.actor_kind == "human"
-    )
+    human_ref = next(r for r in redacted.actor_refs if r.actor_kind == "human")
     assert human_ref.display_name is None
-    agent_ref = next(
-        r for r in redacted.actor_refs if r.actor_kind == "agent"
-    )
+    agent_ref = next(r for r in redacted.actor_refs if r.actor_kind == "agent")
     # Agent display name is NOT redacted - it's a system identity.
     assert agent_ref.display_name == "Claude Code 4.7"
 
@@ -354,8 +343,7 @@ def test_profile_does_not_change_content_hash_field() -> None:
     for profile_name in ("customer", "audit", "public"):
         redacted, _ = apply_profile(packet, profile_name)
         assert redacted.content_hash == recorded, (
-            f"profile {profile_name} mutated content_hash: "
-            f"{recorded} -> {redacted.content_hash}"
+            f"profile {profile_name} mutated content_hash: {recorded} -> {redacted.content_hash}"
         )
 
 
@@ -379,12 +367,8 @@ def test_redacted_packet_round_trips_through_canonical_json() -> None:
         # Parseable JSON:
         parsed = json.loads(canonical)
         # Round-trip is byte-stable:
-        reserialised = json.dumps(
-            parsed, sort_keys=True, separators=(",", ":")
-        )
-        assert canonical == reserialised, (
-            f"canonical JSON not byte-stable for profile {profile_name!r}"
-        )
+        reserialised = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
+        assert canonical == reserialised, f"canonical JSON not byte-stable for profile {profile_name!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -407,12 +391,7 @@ def test_export_profiles_covers_four_names() -> None:
 # ---------------------------------------------------------------------------
 
 
-_W216_FIXTURE = (
-    pathlib.Path(__file__).resolve().parent.parent
-    / "templates"
-    / "demos"
-    / "canonical-evidence.json"
-)
+_W216_FIXTURE = pathlib.Path(__file__).resolve().parent.parent / "templates" / "demos" / "canonical-evidence.json"
 
 
 @pytest.mark.skipif(
@@ -490,12 +469,8 @@ def test_apply_profile_on_w216_fixture_public() -> None:
         completed_at=payload.get("completed_at"),
         verdict=payload.get("verdict"),
         risk_level=payload.get("risk_level"),
-        context_refs=tuple(
-            _artifact(a) for a in payload.get("context_refs", ())
-        ),
-        changed_subjects=tuple(
-            _subject(s) for s in payload.get("changed_subjects", ())
-        ),
+        context_refs=tuple(_artifact(a) for a in payload.get("context_refs", ())),
+        changed_subjects=tuple(_subject(s) for s in payload.get("changed_subjects", ())),
         findings=tuple(payload.get("findings", ())),
         policy_decisions=tuple(payload.get("policy_decisions", ())),
         tests_required=tuple(payload.get("tests_required", ())),
@@ -504,12 +479,8 @@ def test_apply_profile_on_w216_fixture_public() -> None:
         accepted_risks=tuple(payload.get("accepted_risks", ())),
         artifacts=tuple(_artifact(a) for a in payload.get("artifacts", ())),
         actor_refs=tuple(_actor(a) for a in payload.get("actor_refs", ())),
-        authority_refs=tuple(
-            _authority(a) for a in payload.get("authority_refs", ())
-        ),
-        environment_refs=tuple(
-            _env(e) for e in payload.get("environment_refs", ())
-        ),
+        authority_refs=tuple(_authority(a) for a in payload.get("authority_refs", ())),
+        environment_refs=tuple(_env(e) for e in payload.get("environment_refs", ())),
         redactions=tuple(payload.get("redactions", ())),
         content_hash=payload.get("content_hash"),
         signature_ref=payload.get("signature_ref"),
@@ -551,14 +522,16 @@ def test_apply_profile_redacts_typed_policy_decision_rows() -> None:
     """
     from roam.evidence import PolicyDecision
 
-    typed_pd = PolicyDecision.from_dict({
-        "rule_id": "rule_a",
-        "decision": "allow",
-        "evidence_ref": "rule:rule_a",
-        "internal_id": "internal-policy-77",  # redacted by customer
-        "raw_text": "raw clause body",       # redacted by customer
-        "severity": "low",                    # survives
-    })
+    typed_pd = PolicyDecision.from_dict(
+        {
+            "rule_id": "rule_a",
+            "decision": "allow",
+            "evidence_ref": "rule:rule_a",
+            "internal_id": "internal-policy-77",  # redacted by customer
+            "raw_text": "raw clause body",  # redacted by customer
+            "severity": "low",  # survives
+        }
+    )
     legacy_dict = {
         "rule_id": "rule_b",
         "decision": "allow",
@@ -571,6 +544,7 @@ def test_apply_profile_redacts_typed_policy_decision_rows() -> None:
     # Sanity: PolicyDecision is observable as a Mapping (the contract
     # _redact_mapping_tuple relies on).
     from collections.abc import Mapping as MappingABC
+
     assert isinstance(typed_pd, MappingABC)
     # Iterating yields the canonical-view keys (Mapping ABC contract).
     assert set(iter(typed_pd)) == set(typed_pd.to_dict().keys())
@@ -601,7 +575,4 @@ def test_apply_profile_redacts_typed_policy_decision_rows() -> None:
         assert "severity" in v
 
     # The masking trail records the policy_decisions scrub explicitly.
-    assert any(
-        r == "profile:customer:policy_decisions_extra"
-        for r in redacted.redactions
-    )
+    assert any(r == "profile:customer:policy_decisions_extra" for r in redacted.redactions)

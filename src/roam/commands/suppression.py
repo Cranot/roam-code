@@ -16,9 +16,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from roam.output.formatter import WarningsOut
 from roam.policy.suppression_v2 import (
-    RuleFileSuppression,
     VALID_STATUSES,  # re-export for back-compat
+    RuleFileSuppression,
 )
 
 # Re-exported for code that imports VALID_STATUSES from this module.
@@ -159,7 +160,7 @@ def _parse_suppressions_yaml_root_dict(text: str) -> dict:
 def _validate_suppression_rows(
     rows: list,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
     source_path: str | None = None,
 ) -> list[dict]:
     """Apply required-field validation to a list of parsed suppression rows.
@@ -255,7 +256,7 @@ def _serialize_suppressions(suppressions: list[dict]) -> str:
 def load_suppressions(
     project_root: str | Path,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> list[dict]:
     """Load suppressions from ``.roam-suppressions.yml`` in *project_root*.
 
@@ -316,15 +317,13 @@ def load_suppressions(
         # `suppressions:` key. Silent-empty matches pre-W1032 behaviour.
         return []
 
-    return _validate_suppression_rows(
-        rows, warnings_out=warnings_out, source_path=str(config_path)
-    )
+    return _validate_suppression_rows(rows, warnings_out=warnings_out, source_path=str(config_path))
 
 
 def load_suppressions_typed(
     project_root: str | Path,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> list[RuleFileSuppression]:
     """Typed counterpart of :func:`load_suppressions` (W692).
 
@@ -341,10 +340,7 @@ def load_suppressions_typed(
     does. Pre-W1032 callers that don't supply ``warnings_out`` retain
     byte-identical silent-empty-list behaviour.
     """
-    return [
-        RuleFileSuppression.from_dict(d)
-        for d in load_suppressions(project_root, warnings_out=warnings_out)
-    ]
+    return [RuleFileSuppression.from_dict(d) for d in load_suppressions(project_root, warnings_out=warnings_out)]
 
 
 def is_suppressed(

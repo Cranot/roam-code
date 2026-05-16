@@ -33,6 +33,13 @@ from typing import Any, Callable, Literal, Mapping, overload
 
 from roam.output.formatter import WarningsOut
 
+__all__ = [
+    "WarningsOut",
+    "append_warning",
+    "load_yaml_with_warnings",
+    "parse_rule_list",
+]
+
 # Per-callsite schema validator. Receives the parsed object (dict, or
 # top-level list when ``allow_list_root=True``), returns an empty list on
 # success or a list of pre-formatted warning strings on validation
@@ -116,8 +123,7 @@ def _run_tiny_parser_branch(
             warnings_out,
             config_label,
             path,
-            f"PyYAML not installed; fallback parser failed: "
-            f"{exc2}. Install PyYAML or use the documented shape.",
+            f"PyYAML not installed; fallback parser failed: {exc2}. Install PyYAML or use the documented shape.",
         )
         return False, empty
     if data is None or data == {} or data == []:
@@ -289,8 +295,7 @@ def load_yaml_with_warnings(
             warnings_out,
             config_label,
             path,
-            f"could not read file: {exc}. Treating as empty; fix file "
-            f"permissions / encoding to re-enable.",
+            f"could not read file: {exc}. Treating as empty; fix file permissions / encoding to re-enable.",
         )
         return empty
 
@@ -359,8 +364,7 @@ def load_yaml_with_warnings(
                 warnings_out,
                 config_label,
                 path,
-                f"root is {type(data).__name__!r}, expected a mapping or a "
-                f"list. Treating as empty.",
+                f"root is {type(data).__name__!r}, expected a mapping or a list. Treating as empty.",
             )
             return empty
     else:
@@ -369,8 +373,7 @@ def load_yaml_with_warnings(
                 warnings_out,
                 config_label,
                 path,
-                f"root is {type(data).__name__!r}, expected a mapping. "
-                f"Treating as empty.",
+                f"root is {type(data).__name__!r}, expected a mapping. Treating as empty.",
             )
             return empty
 
@@ -397,3 +400,66 @@ def load_yaml_with_warnings(
             return empty
 
     return data
+
+
+def parse_rule_list(text: str) -> list[dict[str, Any]]:
+    """Parse a minimal ``- name: X\\n  key: val`` rule list (no PyYAML dep).
+
+    Handles the documented shape::
+
+        - name: rule-a
+          metric: cycles
+          max_increase: 5
+          enabled: true
+        - name: rule-b
+          ...
+
+    Returns a list of mappings (one per ``- name:`` line). Empty lines and
+    ``#``-prefixed comments are ignored. Scalar values are coerced in order:
+    ``true``/``false`` -> bool, then ``int``, then ``float``, otherwise the
+    string is kept as-is (with surrounding single/double quotes stripped).
+
+    Shared by ``cmd_fitness`` and ``cmd_budget`` (W1058 hoist of the W1019c
+    + W1051 clones). Each callsite wraps the result in a domain-specific
+    top-level key (``{"rules": [...]}`` / ``{"budgets": [...]}``) so the
+    helper's mapping-root invariant holds; see :func:`load_yaml_with_warnings`.
+
+    Callers pass this via ``tiny_parser=`` to :func:`load_yaml_with_warnings`
+    inside a thin wrapper that re-keys the list under the callsite's
+    expected top-level key.
+    """
+    rules: list[dict[str, Any]] = []
+    current_rule: dict[str, Any] | None = None
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if stripped.startswith("- name:"):
+            if current_rule:
+                rules.append(current_rule)
+            current_rule = {"name": stripped.split(":", 1)[1].strip().strip('"').strip("'")}
+        elif current_rule and ":" in stripped:
+            key, val = stripped.split(":", 1)
+            key = key.strip()
+            val_str = val.strip().strip('"').strip("'")
+            coerced: Any
+            if val_str.lower() == "true":
+                coerced = True
+            elif val_str.lower() == "false":
+                coerced = False
+            else:
+                try:
+                    coerced = int(val_str)
+                except ValueError:
+                    try:
+                        coerced = float(val_str)
+                    except ValueError:
+                        coerced = val_str
+            current_rule[key] = coerced
+
+    if current_rule:
+        rules.append(current_rule)
+
+    return rules

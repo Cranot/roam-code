@@ -1,4 +1,15 @@
-"""Inspect ask workflow recipes without running their command steps."""
+"""Inspect ask workflow recipes without running their command steps.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_workflow is a recipe-composer / inspector (lists
+the ask-workflow recipes and their command-step DAG without executing
+them). When a workflow IS executed via ``roam ask``, the composed
+sub-commands emit their own ``--sarif`` when applicable; cmd_workflow
+itself returns an invocation-scoped recipe-metadata enumeration —
+not per-location violations. See ``cmd_report`` for the parallel
+composer disclosure pattern (W1221) + action.yml _SUPPORTED_SARIF
+allowlist + W1145 / W1085 composer audit + W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -172,11 +183,21 @@ def workflow(ctx, recipe_name, list_recipes, query, next_after):
 
     recipe = by_name(recipe_name)
     if recipe is None:
+        # W1074 (sibling of W1066): append difflib closest-match suggestion
+        # when the typo lands within cutoff 0.6 of a registered recipe name.
+        # The 25-recipe vocab is tiny; difflib is effectively free here.
+        # Suggestion is additive — when no name is within cutoff the
+        # message stays byte-identical to the pre-W1074 phrasing.
+        import difflib
+
         from roam.output.errors import UNKNOWN_RECIPE, structured_usage_error
 
-        raise structured_usage_error(
-            UNKNOWN_RECIPE,
-            f"unknown workflow recipe: {recipe_name!r}. Run `roam workflow --list`.",
-        )
+        known_names = sorted(r.name for r in RECIPES)
+        close_matches = difflib.get_close_matches(recipe_name, known_names, n=2, cutoff=0.6)
+        base_msg = f"unknown workflow recipe: {recipe_name!r}. Run `roam workflow --list`."
+        if close_matches:
+            quoted = " or ".join(f"'{m}'" for m in close_matches)
+            base_msg = f"{base_msg} Did you mean: {quoted}?"
+        raise structured_usage_error(UNKNOWN_RECIPE, base_msg)
 
     _emit_recipe_detail(recipe, query, json_mode)

@@ -121,9 +121,7 @@ def cold_start_envelope(tool_name: str) -> dict[str, Any]:
     anchor set -- so the lint at ``tests/test_law4_lint.py`` accepts it.
     """
     # Terminal token: "tools" (concrete-noun anchor per CLAUDE.md LAW 4).
-    verdict = (
-        "Index not built. Run `roam init` in a terminal first, then retry MCP tools."
-    )
+    verdict = "Index not built. Run `roam init` in a terminal first, then retry MCP tools."
     return {
         "command": tool_name,
         "status": "index_not_built",
@@ -174,9 +172,7 @@ def maybe_cold_start_envelope(tool_name: str, root: str | Path = ".") -> dict[st
 # Description hint -- appended to tool descriptions for index-gated tools.
 # Imperative voice per CLAUDE.md LAW 2 ("Run X" not "This command does X").
 # ---------------------------------------------------------------------------
-INDEX_REQUIRED_HINT: str = (
-    "Requires a built index -- run `roam init` first if you haven't yet."
-)
+INDEX_REQUIRED_HINT: str = "Requires a built index -- run `roam init` first if you haven't yet."
 
 
 def maybe_decorate_description(tool_name: str, description: str) -> str:

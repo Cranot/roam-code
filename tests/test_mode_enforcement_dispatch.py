@@ -188,9 +188,7 @@ def test_meta_commands_always_allowed(runner, fresh_repo, cmd):
     # Our gate's signature message must NOT appear: that's how we
     # distinguish "the gate blocked dispatch" from "the command
     # itself produced a BLOCKED verdict in its own output".
-    assert "Pass `--override-mode` to bypass" not in combined, (
-        argv, combined
-    )
+    assert "Pass `--override-mode` to bypass" not in combined, (argv, combined)
     # And the command's own output must be present (proves it ran).
     assert expect in combined, (argv, combined)
 
@@ -255,7 +253,6 @@ def test_override_logged_to_active_run(runner, fresh_repo, monkeypatch):
     events = list(read_run_events(fresh_repo, meta.run_id))
     overrides = [e for e in events if e.get("action") == "mode-override"]
     assert overrides, (
-        "expected at least one mode-override event in run "
-        f"{meta.run_id}; saw {[e.get('action') for e in events]}"
+        f"expected at least one mode-override event in run {meta.run_id}; saw {[e.get('action') for e in events]}"
     )
     assert overrides[0].get("target") == "attest"

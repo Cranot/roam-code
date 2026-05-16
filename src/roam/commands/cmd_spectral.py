@@ -1,9 +1,18 @@
-"""Spectral bisection command -- alternative module decomposition via Fiedler vector."""
+"""Spectral bisection command -- alternative module decomposition via Fiedler vector.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because spectral outputs are invocation-scoped spectral
+decomposition partitions — not per-location violations. Multi-file
+expansion would distort SARIF semantics. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
+"""
 
 from __future__ import annotations
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
@@ -15,7 +24,6 @@ from roam.graph.spectral import (
     spectral_gap,
     verdict_from_gap,
 )
-from roam.capability import roam_capability
 from roam.output.formatter import format_table, json_envelope, to_json
 
 _MAX_GRAPH_SYMBOLS = 5000

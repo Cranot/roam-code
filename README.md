@@ -55,6 +55,7 @@ Mechanically: Roam parses your repo once, stores structural facts in a local SQL
 | **Change safety** | "What breaks if I edit this? Which tests run?" | `preflight` · `impact` · `affected-tests` · `diff` · `guard` |
 | **PR review** | "Did the AI miss a clone, a caller, a test?" | `critique` · `pr-analyze` · `pr-risk` · `pr-comment-render` |
 | **Algorithmic judgment** | "Is this code *correct but slow*?" | `math` / `algo` · `n1` · `missing-index` · `hotspots` |
+| **DRY + shape review** | "Did the repo duplicate behavior in another layer?" | `smells` · `clones` · `duplicates` · `safe-delete` |
 | **Architecture governance** | "Is the architecture drifting?" | `layers` · `cycles` · `clusters` · `health` · `budget` · `fitness` · `dark-matter` |
 | **Refactor safety** | "Can I simulate this refactor first?" | `simulate` · `mutate` · `safe-delete` · `closure` · `plan-refactor` |
 | **Multi-agent coordination** | "Can multiple agents work in parallel?" | `fleet` · `partition` · `orchestrate` · `agent-plan` |
@@ -76,10 +77,16 @@ Roam doesn't replace your linter, SAST, or AI semantic reviewer — it complemen
 
 This is the reason agent-generated code goes red after deploy without ever failing CI. Roam catches it before merge.
 
+### DRY and Shape Review
+
+Roam also looks for code that is **correct but duplicated in the wrong shape**. `roam smells`, `roam clones`, and `roam critique` catch structural duplication, cross-layer clone patterns, parallel hierarchies, type switches, data clumps, feature envy, and clone siblings that an AI edit forgot to update. That matters because DRY debt is often invisible to local tests: the patch works in one path while the same behavior quietly diverges somewhere else.
+
+The broader idea is **principle intelligence**: Roam makes engineering principles observable in the repo. Instead of merely saying "keep code simple" or "prefer small changes," it surfaces the concrete signals behind those principles: hidden coupling, brittle tests, speculative abstractions, missing safety gates, oversized change batches, and evidence gaps.
+
 > **For teams running AI coding agents:** the OSS engine ships paid layers on top — **[Roam Review](#roam-review-pr-bot-for-ai-generated-changes)** (PR bot, early access), **[Roam Cloud](#roam-cloud-metrics-history-no-source-upload)** (metrics dashboard, early access), **[Roam Self-Hosted](https://roam-code.com/pricing#self-hosted)** (regulated stacks, early access), and **[PR Replay](#pr-replay-one-shot-paid-audit)** (one-shot audit, available today via email). All are licensed separately; the CLI stays Apache 2.0 forever.
 
 ```
-Codebase ──> [Index] ──> Semantic Graph ──> 200+ Commands ──> AI Agent
+Codebase ──> [Index] ──> Semantic Graph ──> 238 Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
            28 languages   + edges            govern
@@ -141,7 +148,7 @@ $ roam diff                    # blast radius of uncommitted changes
 
 - **3 flagship Pattern-2 silent-fallback bugs sealed (W826/W834/W836).** `cmd_taint`, `cmd_health`, and `cmd_doctor` now emit explicit `state="empty_corpus"` + `partial_success=True` on unanalyzed repos instead of false `Healthy 100/100` / `No taint findings` / `all checks passed` verdicts. Security-critical for `cmd_taint`, CI-gate-critical for `cmd_health --gate`.
 - **Shared YAML config-loader helper.** New `src/roam/commands/_yaml_loader.py::load_yaml_with_warnings()` absorbs the boilerplate Pattern-2 plumbing (PyYAML + tiny-parser + structured warnings + root-type check). 5 of 7 surveyed YAML loaders migrated. Net ~125 LOC removed across the package.
-- **5 new smell detectors.** `type-switch`, `speculative-generality`, `empty-catch`, `rename-invariant-clone`, `cross-layer-clone`, `parallel-hierarchy` (smells roster 19 → 24 in-file + 3 sibling-file detectors).
+- **5 new live smell detectors.** `type-switch`, `speculative-generality`, `empty-catch`, `cross-layer-clone`, and `parallel-hierarchy` bring the `roam smells` roster to 24 deterministic detectors. The rename-invariant clone work exists as clone-analysis groundwork, not a public `roam smells --kind` id yet.
 - **`@detector` registry consolidation (W941, Gate-1 closure).** `ALL_DETECTORS` and `_SMELL_KIND_TO_CONFIDENCE` are derived views from the `@detector`-decorated registry. Parallel-maintenance debt class eliminated for smell detectors.
 - **Cargo-cult `or ""` cleanup (W1029/W1013/W1014/W1034).** 14 defensive wrappers removed across `cmd_complexity`, `cmd_fan`, `cmd_risk`, `cmd_fn_coupling`, `laws/miner`, `world_model/causal_graph`, `search/tfidf`, `search/index_embeddings`. 3 helpers None-guarded at source.
 - **SQL `LIKE` `ESCAPE` discipline (W990–W993).** 26 wildcard-unsafe `LIKE` patterns hardened across 4 files; drift-guard test enforces forever.
@@ -259,7 +266,7 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md#130--2026-05-13).
 - **Large codebases (100+ files)** -- graph queries beat linear search at scale
 - **Architecture governance** -- health scores, CI quality gates, budget enforcement, fitness functions
 - **Safe refactoring** -- blast radius, affected tests, pre-change safety checks, graph-level editing
-- **Multi-agent orchestration** -- partition codebases for parallel agent work with zero-conflict guarantees
+- **Multi-agent orchestration** -- partition codebases for parallel agent work with conflict-aware planning
 - **Security analysis** -- vulnerability reachability mapping, auth gaps, CVE path tracing
 - **Algorithm optimization** -- detect O(n^2) loops, N+1 queries, and 21 other anti-patterns with suggested fixes
 - **Backend quality** -- auth gaps, missing indexes, over-fetching models, non-idempotent migrations, orphan routes, API drift
@@ -540,7 +547,7 @@ roam health
 | Command | Description |
 |---------|-------------|
 | `roam health [--no-framework] [--gate]` | Composite health score (0-100): weighted geometric mean of tangle ratio, god components, bottlenecks, layer violations. `--gate` runs quality gate checks from `.roam-gates.yml` (exit 5 on failure) |
-| `roam smells [--file F] [--min-severity S]` | Code smell detection: 15 deterministic detectors (brain methods, god classes, feature envy, shotgun surgery, data clumps, etc.) with per-file health scores |
+| `roam smells [--file F] [--min-severity S]` | Code smell detection: 24 deterministic detectors (brain methods, god classes, feature envy, shotgun surgery, data clumps, type switches, cross-layer clones, parallel hierarchies, etc.) with per-file health scores |
 | `roam dashboard` | Unified single-screen project status: health, hotspots, risks, ownership, and AI-rot indicators |
 | `roam vibe-check [--threshold N]` | AI-rot auditor: 8-pattern taxonomy with composite risk score and prioritized findings |
 | `roam llm-smells [--min-severity S] [--persist]` | LLM-API integration anti-patterns: 10 patterns (no-model-version-pinning, missing-max-tokens, prompt-injection surface, missing timeout/retries, no system message, LLM call in loop, etc.). Scans files that import openai/anthropic/langchain/litellm/google.generativeai/cohere/mistralai/together/groq/fireworks/llama_index/replicate. Distinct audience from `vibe-check` |
@@ -726,7 +733,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam causal-graph [SYMBOL] [--kind K] [--top N]` | Build per-symbol causal graphs: trace input-to-sink data dependencies (param/global/env flowing into side-effect / return / raise / mutation). Heuristic — false negatives expected |
 | `roam dark-matter [--min-cochanges N]` | Detect hidden co-change couplings not explained by import/call edges |
 | `roam simulate move\|extract\|merge\|delete` | Counterfactual architecture simulator: test refactoring ideas in-memory, see metric deltas before writing code |
-| `roam orchestrate --agents N [--files P]` | Multi-agent swarm partitioning: split codebase for parallel agents with zero-conflict guarantees |
+| `roam orchestrate --agents N [--files P]` | Multi-agent swarm partitioning: split codebase for parallel agents with conflict-aware planning |
 | `roam partition [--agents N]` | Multi-agent partition manifest: conflict risk, complexity, and suggested ownership splits |
 | `roam fingerprint [--compact] [--compare F]` | Topology fingerprint: extract/compare architectural signatures across repos |
 | `roam graph-diff [--base L] [--head L] [--save-snapshot N]` | Structural diff between two graph snapshots: added/removed symbols, edge churn, new cycles, layer migrations, likely-move rename heuristics. Persists snapshots under `.roam/snapshots/` |
@@ -1079,7 +1086,7 @@ pip install "roam-code[mcp]"
 roam mcp
 ```
 
-169 tools, 10 resources, and 6 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
+224 tools, 10 resources, and 6 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
 
 See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run flow, the cold-start envelope your agent will see on a fresh repo, and the canonical 7-step agent sequence.
 
@@ -1310,7 +1317,7 @@ Core preset tools: `roam_affected_tests`, `roam_alerts`, `roam_ask`, `roam_audit
 | `roam_simulate` | Predict metric deltas from move/extract/merge/delete operations. |
 | `roam_simulate_departure` | Simulate knowledge loss if a developer leaves the team. |
 | `roam_sketch` | Render a compact structural skeleton of a directory: every file's exported symbols with kind, signature, line range, and first-line docstring. Different from ``roam_understand`` (broader project overview) and ``roam_file_info`` (one-file skeleton) -- this is the directory-level API surface in a single view, with optional ``full=True`` to include private symbols. |
-| `roam_smells` | Run 15 deterministic code-smell detectors over the indexed codebase: brain methods, god classes, deep nesting, shotgun surgery, feature envy, long parameter lists, large classes, dead params, low cohesion, message chains, data clumps, and more. Different from ``roam_vibe_check`` (AI-rot pattern regex) and ``roam_patterns`` (positive design patterns) -- this surfaces negative structural anti-patterns from DB queries. |
+| `roam_smells` | Run 24 deterministic code-smell detectors over the indexed codebase: brain methods, god classes, deep nesting, shotgun surgery, feature envy, long parameter lists, large classes, dead params, low cohesion, message chains, data clumps, type switches, cross-layer clones, parallel hierarchies, and more. Different from ``roam_vibe_check`` (AI-rot pattern regex) and ``roam_patterns`` (positive design patterns) -- this surfaces negative structural anti-patterns from DB queries. |
 | `roam_spectral` | Spectral bisection: Fiedler vector partition tree and modularity gap. |
 | `roam_split` | Analyse a file's internal call / reference graph and propose natural decomposition groups via Louvain community detection. Reports per-group isolation %, internal vs cross-group edges, and ranked extraction candidates (groups with >=3 symbols and >=50% isolation). Different from ``roam_clusters`` (repo-wide module partitioning) -- this analyses ONE file's internal seams. |
 | `roam_stale_refs` | Find dangling file references — markdown links / HTML href-src / backtick paths whose target is missing. v12.48 adds anchor validation, confidence-tagged hints, --diff branch filter, --fix preview/apply, and --sort-by ranking. Set enrich_with_llm=True for LLM-sampled hints on findings the deterministic providers couldn't resolve. |
@@ -1863,8 +1870,8 @@ Documentation lives at <https://roam-code.com/docs/>:
 | Git churn / co-change | Yes | No | No | No |
 | Architecture simulation | Yes | No | No | No |
 | Multi-agent partitioning | Yes | No | No | No |
-| MCP tools for agents | 101 (24 in default core preset) | Client only | Client only | 34 (SonarQube) |
-| Languages | 26 | 70+ | 50+ | 12-42 |
+| MCP tools for agents | 224 (57 in default core preset) | Client only | Client only | 34 (SonarQube) |
+| Languages | 28 | 70+ | 50+ | 12-42 |
 | 100% local, zero API keys | Yes | No | No | Partial |
 | Open source | Apache 2.0 | No | Partial | Partial |
 
@@ -1956,8 +1963,8 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (201 canonical + 7 aliases)
-│   ├── mcp_server.py                  # MCP server (169 tools, 10 resources, 6 prompts)
+│   ├── cli.py                         # Click CLI (231 canonical + 7 aliases)
+│   ├── mcp_server.py                  # MCP server (224 tools, 10 resources, 6 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
@@ -2045,26 +2052,6 @@ roam-code/
 Optional: [fastmcp](https://github.com/jlowin/fastmcp) >= 2.0 (MCP server — install with `pip install "roam-code[mcp]"`)
 
 Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `pip install "roam-code[semantic]"`; verify activation with `roam config --semantic-status`.
-
-## Roadmap
-
-### Shipped
-
-- [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 229 canonical CLI commands (236 with aliases) and 169 MCP tools.
-- [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
-- [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
-- [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.
-- [x] Ownership/review intelligence: `codeowners`, `drift`, `simulate-departure`, `suggest-reviewers`, `api-changes`, `test-gaps`, `semantic-diff`, `secrets`.
-- [x] Multi-agent operations: `partition`, `affected`, `syntax-check`, workspace-aware context and traces.
-- [x] Budget-aware context delivery: `--budget` (partial rollout), PageRank-weighted truncation, conversation-aware ranking.
-
-### Next
-
-- [x] Terminal demo GIF in README.
-- [ ] GitHub repo topics.
-- [ ] GitHub Discussions enabled.
-- [ ] MCP directory + awesome-list submissions.
 
 ## Contributing
 

@@ -388,10 +388,7 @@ class RoamPluginContext:
                 registration semantics).
         """
         if not isinstance(profile, FrameworkProfile):
-            raise TypeError(
-                "profile must be a FrameworkProfile (got "
-                f"{type(profile).__name__})"
-            )
+            raise TypeError(f"profile must be a FrameworkProfile (got {type(profile).__name__})")
         name = (profile.name or "").strip()
         if not name:
             raise ValueError("FrameworkProfile.name must be non-empty")

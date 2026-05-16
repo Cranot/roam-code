@@ -19,12 +19,9 @@ from __future__ import annotations
 
 import sys
 import time
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
-
 
 # ---------------------------------------------------------------------------
 # Import-cost regression guards
@@ -76,9 +73,7 @@ def test_cmd_mcp_help_does_not_load_mcp_server():
     assert result.exit_code == 0
     assert "roam mcp" in result.output
     assert "--no-auto-index" in result.output
-    assert "roam.mcp_server" not in sys.modules, (
-        "Rendering --help should not import roam.mcp_server."
-    )
+    assert "roam.mcp_server" not in sys.modules, "Rendering --help should not import roam.mcp_server."
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +106,7 @@ def stub_mcp_server(monkeypatch):
 
     captured = {}
 
-    def fake_callback(transport, host, port, no_auto_index, list_tools,
-                      list_tools_json, compat_profile, card):
+    def fake_callback(transport, host, port, no_auto_index, list_tools, list_tools_json, compat_profile, card):
         captured.update(
             transport=transport,
             host=host,
@@ -298,6 +292,4 @@ def test_cmd_mcp_help_is_fast_subprocess(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "roam mcp" in result.stdout
-    assert elapsed < 2.0, (
-        f"roam mcp --help took {elapsed:.2f}s (regression — should be <2s)"
-    )
+    assert elapsed < 2.0, f"roam mcp --help took {elapsed:.2f}s (regression — should be <2s)"

@@ -25,11 +25,7 @@ def fresh_project(tmp_path):
     proj = tmp_path / "init_no_unsolicited"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "app.py").write_text(
-        "def main():\n"
-        '    """Entry point."""\n'
-        '    print("hi")\n'
-    )
+    (proj / "app.py").write_text('def main():\n    """Entry point."""\n    print("hi")\n')
     git_init(proj)
     return proj
 
@@ -45,27 +41,18 @@ class TestInitNoUnsolicitedWrites:
         result = invoke_cli(cli_runner, ["init"], cwd=fresh_project)
         assert result.exit_code == 0, f"init failed:\n{result.output}"
         workflow = fresh_project / ".github" / "workflows" / "roam.yml"
-        assert not workflow.exists(), (
-            f"unsolicited workflow file at {workflow} — default init must "
-            "not write CI config"
-        )
+        assert not workflow.exists(), f"unsolicited workflow file at {workflow} — default init must not write CI config"
         # The .github directory itself shouldn't be created either.
         gh_dir = fresh_project / ".github"
-        assert not gh_dir.exists(), (
-            f"unsolicited .github/ directory created at {gh_dir}"
-        )
+        assert not gh_dir.exists(), f"unsolicited .github/ directory created at {gh_dir}"
 
     def test_explicit_with_ci_github_creates_workflow(self, cli_runner, fresh_project, monkeypatch):
         """``--with-ci=github`` is the explicit opt-in — workflow must exist."""
         monkeypatch.chdir(fresh_project)
-        result = invoke_cli(
-            cli_runner, ["init", "--with-ci=github"], cwd=fresh_project
-        )
+        result = invoke_cli(cli_runner, ["init", "--with-ci=github"], cwd=fresh_project)
         assert result.exit_code == 0, f"init --with-ci=github failed:\n{result.output}"
         workflow = fresh_project / ".github" / "workflows" / "roam.yml"
-        assert workflow.exists(), (
-            "--with-ci=github should create .github/workflows/roam.yml"
-        )
+        assert workflow.exists(), "--with-ci=github should create .github/workflows/roam.yml"
         # Sanity: file is non-empty and looks like a workflow.
         content = workflow.read_text(encoding="utf-8")
         assert content.strip(), "generated workflow is empty"
@@ -82,6 +69,5 @@ class TestInitNoUnsolicitedWrites:
         result = invoke_cli(cli_runner, ["init"], cwd=fresh_project)
         assert result.exit_code == 0
         assert "ci-setup" in result.output.lower(), (
-            "expected `roam ci-setup` hint in default init output, got:\n"
-            f"{result.output}"
+            f"expected `roam ci-setup` hint in default init output, got:\n{result.output}"
         )

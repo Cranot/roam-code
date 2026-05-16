@@ -26,7 +26,6 @@ from __future__ import annotations
 from roam.evidence._vocabulary import AUTHORITY_SOURCES, PROVENANCE_SOURCES
 from roam.evidence.collector import _build_authority_refs
 
-
 # ---------------------------------------------------------------------------
 # Per-authority-kind source mapping
 # ---------------------------------------------------------------------------
@@ -110,8 +109,7 @@ def test_approval_authority_has_source_human_approval() -> None:
     refs = _build_authority_refs(
         pr_bundle_envelope={
             "approvals": [
-                {"approval_id": "appr_pr42_review1",
-                 "approver": "human:alice@example.com"},
+                {"approval_id": "appr_pr42_review1", "approver": "human:alice@example.com"},
             ],
         },
         caller_mode=None,
@@ -174,8 +172,7 @@ def test_source_and_provenance_are_independent_fields() -> None:
             "leases": [{"lease_id": "lease_beta"}],
             "rules_passed": [{"rule_id": "no-debug-prints"}],
             "approvals": [
-                {"approval_id": "appr_pr42",
-                 "approver": "human:alice@example.com"},
+                {"approval_id": "appr_pr42", "approver": "human:alice@example.com"},
             ],
         },
         caller_mode=None,
@@ -190,8 +187,7 @@ def test_source_and_provenance_are_independent_fields() -> None:
     # belongs to PROVENANCE_SOURCES.
     for ref in by_kind.values():
         assert ref.source in AUTHORITY_SOURCES, (
-            f"source={ref.source!r} for kind={ref.authority_kind!r} not in "
-            f"AUTHORITY_SOURCES"
+            f"source={ref.source!r} for kind={ref.authority_kind!r} not in AUTHORITY_SOURCES"
         )
         provenance = ref.extra.get("provenance")
         assert isinstance(provenance, str) and provenance, (
@@ -200,8 +196,7 @@ def test_source_and_provenance_are_independent_fields() -> None:
         # Strip the optional ``"(detail)"`` suffix for the membership check.
         prov_base = provenance.split("(", 1)[0]
         assert prov_base in PROVENANCE_SOURCES, (
-            f"provenance base {prov_base!r} for kind={ref.authority_kind!r} "
-            f"not in PROVENANCE_SOURCES"
+            f"provenance base {prov_base!r} for kind={ref.authority_kind!r} not in PROVENANCE_SOURCES"
         )
 
     # mode: source="mode" (closed enum literal), provenance="producer_envelope(mode)"

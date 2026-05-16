@@ -1,4 +1,11 @@
-"""Analyze CODEOWNERS coverage, ownership distribution, and unowned files."""
+"""Analyze CODEOWNERS coverage, ownership distribution, and unowned files.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because codeowners outputs are per-file owner attribution
+metadata (advisory, not violations) — not per-code-location
+violations. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH propagation plan + W1197-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +13,7 @@ from collections import defaultdict
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.codeowners_helpers import (  # noqa: F401 — re-exported for backward compat
     _CODEOWNERS_LOCATIONS,
     _codeowners_match,
@@ -13,7 +21,6 @@ from roam.commands.codeowners_helpers import (  # noqa: F401 — re-exported for
     parse_codeowners,
     resolve_owners,
 )
-from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json

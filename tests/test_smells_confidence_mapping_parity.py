@@ -146,8 +146,7 @@ def test_all_detectors_have_confidence_tier() -> None:
     if missing:
         cmd_smells_path = _cmd_smells_path()
         suggestion_lines = "\n".join(
-            f'    "{smell_id}": "{_SMELL_DEFAULT_CONFIDENCE}",  # TODO: pick tier'
-            for smell_id in missing
+            f'    "{smell_id}": "{_SMELL_DEFAULT_CONFIDENCE}",  # TODO: pick tier' for smell_id in missing
         )
         raise AssertionError(
             f"_SMELL_KIND_TO_CONFIDENCE is missing rows for "
@@ -187,7 +186,7 @@ def test_no_orphan_confidence_keys() -> None:
             f"{orphans}.\n"
             f"   Fix: remove the orphan row(s) from "
             f"{cmd_smells_path}, OR (if the detector is in flight) add "
-            f"it to ALL_DETECTORS / a ``_finding(\"<id>\", ...)`` call "
+            f'it to ALL_DETECTORS / a ``_finding("<id>", ...)`` call '
             f"in {smells_path} so both halves stay parallel."
         )
 
@@ -207,16 +206,13 @@ def test_all_confidence_values_are_canonical() -> None:
     fix.
     """
     invalid: list[tuple[str, str]] = sorted(
-        (smell_id, tier)
-        for smell_id, tier in _SMELL_KIND_TO_CONFIDENCE.items()
-        if tier not in _SMELL_CONFIDENCE_TIERS
+        (smell_id, tier) for smell_id, tier in _SMELL_KIND_TO_CONFIDENCE.items() if tier not in _SMELL_CONFIDENCE_TIERS
     )
 
     if invalid:
         cmd_smells_path = _cmd_smells_path()
         bad_rows = "\n".join(
-            f"    {smell_id!r}: {tier!r}  -- not a smells-canonical tier"
-            for smell_id, tier in invalid
+            f"    {smell_id!r}: {tier!r}  -- not a smells-canonical tier" for smell_id, tier in invalid
         )
         raise AssertionError(
             f"_SMELL_KIND_TO_CONFIDENCE has {len(invalid)} non-canonical "
@@ -262,8 +258,7 @@ def test_decorator_and_handrolled_agree_on_confidence_tier() -> None:
 
     if disagreements:
         rows = "\n".join(
-            f"    {smell_id!r}: decorator={dec!r}, handrolled={hr!r}"
-            for smell_id, dec, hr in disagreements
+            f"    {smell_id!r}: decorator={dec!r}, handrolled={hr!r}" for smell_id, dec, hr in disagreements
         )
         raise AssertionError(
             f"Decorator-registered confidence tiers disagree with "

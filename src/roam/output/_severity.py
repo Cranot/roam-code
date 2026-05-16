@@ -43,6 +43,14 @@ from typing import Any
 # Canonical vocabulary
 # ---------------------------------------------------------------------------
 
+# SEVERITY_LEVELS - 4-tier canonical roam severity (critical / error / warning
+# / info). Matches SARIF 2.1.0 spec (https://docs.oasis-open.org/sarif/sarif/v2.1.0).
+#
+# NOT the evidence-claim vocabulary - see roam.evidence._vocabulary.CLAIM_SEVERITIES
+# for the 5-tier CVSS-preserving alphabet used inside ChangeEvidence
+# packets and the findings registry. SEVERITY_ALIASES below normalizes the
+# CVSS tiers (high / medium / low) onto this canonical at SARIF emission.
+
 # Closed canonical roam severity vocabulary. Lowercase — every consumer
 # must normalize before comparing. Membership is O(1) via frozenset.
 #
@@ -51,12 +59,14 @@ from typing import Any
 # SARIF levels (the lingua franca for CI surfaces) and because the
 # OpenVEX/CVSS spellings (critical/high/medium/low) are domain-specific
 # aliases — see :data:`SEVERITY_ALIASES`.
-SEVERITY_LEVELS: frozenset[str] = frozenset({
-    "critical",
-    "error",
-    "warning",
-    "info",
-})
+SEVERITY_LEVELS: frozenset[str] = frozenset(
+    {
+        "critical",
+        "error",
+        "warning",
+        "info",
+    }
+)
 
 # Historic spellings that resolve into the canonical set.
 #

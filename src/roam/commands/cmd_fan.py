@@ -15,7 +15,6 @@ from roam.output.file_role_hints import is_excluded_path
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 from roam.output.framework_filter import FRAMEWORK_PRIMITIVE_NAMES as _FRAMEWORK_NAMES
 
-
 # W152: fan is the fifth detector migrating onto the central findings
 # registry (after ``clones`` in W95, ``dead`` in W99, ``complexity`` in
 # W102, ``smells`` in W109). The shape mirrors those — a stable detector
@@ -131,9 +130,7 @@ def _emit_fan_findings(
 
     source_detector = "fan-symbol" if mode == "symbol" else "fan-file"
     subject_kind = "symbol" if mode == "symbol" else "file"
-    caller_metric_definition = data.get("summary", {}).get(
-        "caller_metric_definition"
-    )
+    caller_metric_definition = data.get("summary", {}).get("caller_metric_definition")
 
     written = 0
     for item in data.get("items", []):
@@ -223,10 +220,7 @@ def _emit_fan_findings(
                 "total": item.get("total"),
                 "caller_metric_definition": caller_metric_definition,
             }
-            claim = (
-                f"{kind_label}: {file_path} — "
-                f"fan_in={item.get('fan_in')}, fan_out={item.get('fan_out')}"
-            )
+            claim = f"{kind_label}: {file_path} — fan_in={item.get('fan_in')}, fan_out={item.get('fan_out')}"
 
         finding_id = _fan_finding_id(source_detector, flag, subject_key)
         emit_finding(
@@ -422,6 +416,7 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
     graph), and ``hotspots`` (runtime hotspots).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -457,6 +452,13 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
             scope_meta = _file_scope_metrics(conn, [r["id"] for r in rows])
 
             if not rows:
+                if sarif_mode:
+                    # W1209: SARIF output with empty results (rules catalogue
+                    # still emitted so consumers can introspect the closed enum).
+                    from roam.output.sarif import fan_to_sarif, write_sarif
+
+                    click.echo(write_sarif(fan_to_sarif([])))
+                    return
                 if json_mode:
                     click.echo(
                         to_json(
@@ -523,6 +525,17 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                 except sqlite3.OperationalError:
                     # findings table missing (pre-W89 schema) — degrade gracefully.
                     pass
+
+            # --- W1209: SARIF projection (symbol mode) ---
+            # Branches BEFORE json/text so the pre-existing paths stay
+            # byte-identical. Only the three cross-file architectural
+            # flags (HIGH-RISK / hub / spreader) project to SARIF —
+            # local-only flags are skipped per the W150 audit.
+            if sarif_mode:
+                from roam.output.sarif import fan_to_sarif, write_sarif
+
+                click.echo(write_sarif(fan_to_sarif(symbol_items)))
+                return
 
             if json_mode:
                 _top_in = max(rows, key=lambda r: r["in_degree"] or 0)
@@ -617,6 +630,12 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
             ).fetchall()
 
             if not rows:
+                if sarif_mode:
+                    # W1209: SARIF output with empty results.
+                    from roam.output.sarif import fan_to_sarif, write_sarif
+
+                    click.echo(write_sarif(fan_to_sarif([])))
+                    return
                 if json_mode:
                     click.echo(
                         to_json(
@@ -667,9 +686,7 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                         conn,
                         {
                             "summary": {
-                                "caller_metric_definition": (
-                                    "direct_in_degree (file-level: distinct source files)"
-                                )
+                                "caller_metric_definition": ("direct_in_degree (file-level: distinct source files)")
                             },
                             "items": file_items,
                         },
@@ -680,6 +697,17 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                 except sqlite3.OperationalError:
                     # findings table missing (pre-W89 schema) — degrade gracefully.
                     pass
+
+            # --- W1209: SARIF projection (file mode) ---
+            # Branches BEFORE json/text so the pre-existing paths stay
+            # byte-identical. fan_to_sarif handles file-mode rows via
+            # the ``path`` field (no line — metric applies to the
+            # whole file).
+            if sarif_mode:
+                from roam.output.sarif import fan_to_sarif, write_sarif
+
+                click.echo(write_sarif(fan_to_sarif(file_items)))
+                return
 
             if json_mode:
                 _top_in_r = max(rows, key=lambda r: r["fan_in"])

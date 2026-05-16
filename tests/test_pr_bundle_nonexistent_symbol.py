@@ -37,7 +37,6 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import parse_json_output  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -77,9 +76,7 @@ def _read_bundle_file(proj: Path, branch: str = "w20-5-branch") -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_add_nonexistent_symbol_returns_partial_success(
-    project_factory, cli_runner, monkeypatch
-):
+def test_add_nonexistent_symbol_returns_partial_success(project_factory, cli_runner, monkeypatch):
     """Ghost symbol: record is written but the envelope MUST warn.
 
     The bundle file still contains the entry (additive fix), but the
@@ -88,10 +85,7 @@ def test_add_nonexistent_symbol_returns_partial_success(
     """
     proj = project_factory(
         {
-            "src/real.py": (
-                "def real_symbol():\n"
-                "    return 1\n"
-            ),
+            "src/real.py": ("def real_symbol():\n    return 1\n"),
         }
     )
     _pin_branch(proj)
@@ -146,19 +140,14 @@ def test_add_nonexistent_symbol_returns_partial_success(
 # ---------------------------------------------------------------------------
 
 
-def test_resolved_symbol_returns_clean_state(
-    project_factory, cli_runner, monkeypatch
-):
+def test_resolved_symbol_returns_clean_state(project_factory, cli_runner, monkeypatch):
     """Happy path: a real indexed symbol gets resolution_state="ok",
     partial_success stays False (subject to other proofs missing), and
     the verdict does NOT contain the "not in index" warning.
     """
     proj = project_factory(
         {
-            "src/real.py": (
-                "def real_symbol():\n"
-                "    return 1\n"
-            ),
+            "src/real.py": ("def real_symbol():\n    return 1\n"),
         }
     )
     _pin_branch(proj)
@@ -201,9 +190,7 @@ def test_resolved_symbol_returns_clean_state(
 # ---------------------------------------------------------------------------
 
 
-def test_emit_surfaces_unresolved_symbol_count(
-    project_factory, cli_runner, monkeypatch
-):
+def test_emit_surfaces_unresolved_symbol_count(project_factory, cli_runner, monkeypatch):
     """Mixed bundle: 1 resolved + 2 ghost symbols.
 
     The emit envelope's ``summary.unresolved_affected_symbols_count``
@@ -212,10 +199,7 @@ def test_emit_surfaces_unresolved_symbol_count(
     """
     proj = project_factory(
         {
-            "src/real.py": (
-                "def real_symbol():\n"
-                "    return 1\n"
-            ),
+            "src/real.py": ("def real_symbol():\n    return 1\n"),
         }
     )
     _pin_branch(proj)
@@ -241,10 +225,7 @@ def test_emit_surfaces_unresolved_symbol_count(
     assert "2" in data["summary"]["verdict"], data["summary"]["verdict"]
 
     # Per-record resolution_state is preserved through emit.
-    states = sorted(
-        rec.get("resolution_state", "?")
-        for rec in data["affected_symbols"]
-    )
+    states = sorted(rec.get("resolution_state", "?") for rec in data["affected_symbols"])
     # 1 ok + 2 not_found (or whatever unresolved variant the DB picked).
     assert states.count("ok") == 1, states
     assert sum(1 for s in states if s in {"not_found", "no_db", "lookup_failed"}) == 2, states

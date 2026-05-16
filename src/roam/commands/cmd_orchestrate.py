@@ -1,4 +1,11 @@
-"""Swarm orchestration: partition codebase for parallel multi-agent work."""
+"""Swarm orchestration: partition codebase for parallel multi-agent work.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because orchestrate outputs are invocation-scoped agent-partition
+advice (agents[], merge_order[], shared_interfaces[]) — not per-location
+violations. SARIF requires ``locations[]`` with file:line coordinates.
+See action.yml _SUPPORTED_SARIF allowlist and W1154 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +18,7 @@ from roam.output.formatter import json_envelope, to_json
 
 
 def _resolve_target_files(conn, file_args, staged, root):
-    """Resolve --files and --staged into a list of file paths.
+    """Resolve --file and --staged into a list of file paths.
 
     Returns a list of file path strings (forward-slash normalized) or None
     if no filtering was requested (whole codebase).
@@ -78,10 +85,17 @@ def _resolve_target_files(conn, file_args, staged, root):
     help="Number of agents to partition work for",
 )
 @click.option(
+    "--file",
+    "file_args",
+    multiple=True,
+    help="Restrict to specific files or directories. Repeatable.",
+)
+@click.option(
     "--files",
     "file_args",
     multiple=True,
-    help="Restrict to specific files or directories",
+    hidden=True,
+    help="Deprecated alias for --file. Retained for backward compatibility.",
 )
 @click.option(
     "--staged",
@@ -94,7 +108,7 @@ def orchestrate(ctx, n_agents, file_args, staged):
 
     Assigns exclusive write zones, read-only dependencies, interface
     contracts, merge order, and conflict probability for N agents.
-    Supports ``--files`` and ``--staged`` to restrict to a subgraph.
+    Supports ``--file`` and ``--staged`` to restrict to a subgraph.
 
     Unlike ``partition`` (which provides deeper analytical metrics like
     difficulty scores, churn, and co-change coupling), this command
@@ -105,7 +119,7 @@ def orchestrate(ctx, n_agents, file_args, staged):
     Examples:
       roam orchestrate --n-agents 3
       roam orchestrate --n-agents 4 --staged
-      roam orchestrate --n-agents 5 --files src/api.py --files src/auth.py
+      roam orchestrate --n-agents 5 --file src/api.py --file src/auth.py
       roam --json orchestrate --n-agents 4
 
     See also ``partition`` (deeper analytical metrics + claude-teams

@@ -20,19 +20,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (  # noqa: E402
     assert_json_envelope,
-    git_commit,
     git_init,
     index_in_process,
-    invoke_cli,
     parse_json_output,
 )
 
 from roam.cli import cli  # noqa: E402
 from roam.db.connection import open_db  # noqa: E402
-from roam.laws.checker import check_laws, parse_added  # noqa: E402
+from roam.laws.checker import check_laws  # noqa: E402
 from roam.laws.miner import Law, mine_laws  # noqa: E402
 from roam.laws.serializer import dump_laws_yaml, load_laws_yaml  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -120,17 +117,14 @@ def layered_project(tmp_path, monkeypatch):
     # Create several db modules
     db_names = ("users", "orders", "payments", "tokens", "sessions", "audit")
     for name in db_names:
-        (db_dir / f"{name}.py").write_text(
-            f"def get_{name}(): return []\ndef put_{name}(x): return x\n"
-        )
+        (db_dir / f"{name}.py").write_text(f"def get_{name}(): return []\ndef put_{name}(x): return x\n")
 
     # Each handler imports from src.db.* — strong A -> B signal. Use the
     # same set so every handler resolves to a real db module (the indexer
     # drops unresolved imports from file_edges).
     for name in db_names:
         (handlers / f"{name}.py").write_text(
-            f"from src.db.{name} import get_{name}, put_{name}\n"
-            f"def handle_{name}():\n    return get_{name}()\n"
+            f"from src.db.{name} import get_{name}, put_{name}\ndef handle_{name}():\n    return get_{name}()\n"
         )
 
     git_init(proj)
@@ -153,9 +147,7 @@ def tested_project(tmp_path, monkeypatch):
     public_fns = ["fetch_user", "update_user", "delete_user", "list_users", "make_token"]
     for fn in public_fns:
         (src / f"{fn}.py").write_text(f"def {fn}(*a, **k): return None\n")
-        (tests / f"test_{fn}.py").write_text(
-            f"from src.{fn} import {fn}\ndef test_{fn}(): {fn}()\n"
-        )
+        (tests / f"test_{fn}.py").write_text(f"from src.{fn} import {fn}\ndef test_{fn}(): {fn}()\n")
 
     git_init(proj)
     monkeypatch.chdir(proj)
@@ -187,13 +179,8 @@ def test_mine_skips_below_threshold(mixed_project):
 
     # 50/50 split — no naming law for function should emit at the default
     # 70% threshold.
-    naming_fn = [
-        law for law in laws
-        if law.kind == "naming" and law.rule.get("symbol_kind") == "function"
-    ]
-    assert not naming_fn, (
-        f"expected no function naming law on 50/50 split, got: {naming_fn!r}"
-    )
+    naming_fn = [law for law in laws if law.kind == "naming" and law.rule.get("symbol_kind") == "function"]
+    assert not naming_fn, f"expected no function naming law on 50/50 split, got: {naming_fn!r}"
 
 
 def test_check_naming_law_flags_violation():
@@ -265,9 +252,11 @@ def test_mine_import_layering(layered_project):
 
     # Confirm at least one law points handlers -> db
     handler_law = next(
-        (law for law in import_laws
-         if law.rule.get("from_dir", "").endswith("handlers")
-         and law.rule.get("to_dir", "").endswith("db")),
+        (
+            law
+            for law in import_laws
+            if law.rule.get("from_dir", "").endswith("handlers") and law.rule.get("to_dir", "").endswith("db")
+        ),
         None,
     )
     assert handler_law is not None, (
@@ -292,60 +281,69 @@ def _seed_mixed_kind_edges(conn) -> None:
     edges: a real ``import`` (src/lib -> src/db) and a misresolved
     ``call`` (src/lib -> tests/) — the exact W158 shape."""
     # Two files in src/lib (gives us min_sample headroom for the real law)
-    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
-                 (101, "src/lib/a.py", "python", "h1"))
-    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
-                 (102, "src/lib/b.py", "python", "h2"))
-    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
-                 (103, "src/lib/c.py", "python", "h3"))
-    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
-                 (104, "src/lib/d.py", "python", "h4"))
-    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
-                 (105, "src/lib/e.py", "python", "h5"))
+    conn.execute(
+        "INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)", (101, "src/lib/a.py", "python", "h1")
+    )
+    conn.execute(
+        "INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)", (102, "src/lib/b.py", "python", "h2")
+    )
+    conn.execute(
+        "INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)", (103, "src/lib/c.py", "python", "h3")
+    )
+    conn.execute(
+        "INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)", (104, "src/lib/d.py", "python", "h4")
+    )
+    conn.execute(
+        "INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)", (105, "src/lib/e.py", "python", "h5")
+    )
     # Five files in src/db (real import targets)
     for fid, name in [(201, "x"), (202, "y"), (203, "z"), (204, "w"), (205, "v")]:
-        conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
-                     (fid, f"src/db/{name}.py", "python", f"hd{fid}"))
+        conn.execute(
+            "INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
+            (fid, f"src/db/{name}.py", "python", f"hd{fid}"),
+        )
     # One file in tests/ (the fabrication target)
-    conn.execute("INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)",
-                 (301, "tests/test_unit.py", "python", "ht"))
+    conn.execute(
+        "INSERT INTO files (id, path, language, hash) VALUES (?, ?, ?, ?)", (301, "tests/test_unit.py", "python", "ht")
+    )
 
     # Symbols: caller in each src/lib file, callee in each src/db file,
     # plus one callee in tests/.
     for sid, name, fid in [
-        (1001, "use_x", 101), (1002, "use_y", 102), (1003, "use_z", 103),
-        (1004, "use_w", 104), (1005, "use_v", 105),
-        (2001, "x", 201), (2002, "y", 202), (2003, "z", 203),
-        (2004, "w", 204), (2005, "v", 205),
+        (1001, "use_x", 101),
+        (1002, "use_y", 102),
+        (1003, "use_z", 103),
+        (1004, "use_w", 104),
+        (1005, "use_v", 105),
+        (2001, "x", 201),
+        (2002, "y", 202),
+        (2003, "z", 203),
+        (2004, "w", 204),
+        (2005, "v", 205),
         (3001, "_add", 301),
     ]:
         conn.execute(
-            "INSERT INTO symbols (id, name, kind, file_id, line_start, line_end) "
-            "VALUES (?, ?, 'function', ?, 1, 2)",
+            "INSERT INTO symbols (id, name, kind, file_id, line_start, line_end) VALUES (?, ?, 'function', ?, 1, 2)",
             (sid, name, fid),
         )
 
     # Edges: 5 real imports src/lib -> src/db
     for sid, tid in [(1001, 2001), (1002, 2002), (1003, 2003), (1004, 2004), (1005, 2005)]:
-        conn.execute("INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, 'import', 1)",
-                     (sid, tid))
+        conn.execute("INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, 'import', 1)", (sid, tid))
     # Two fabricated edges:
     #   (a) a misresolved CALL from src/lib -> tests/ — only the
     #       ``file_edges`` aggregator would surface this as an import.
-    conn.execute("INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, 'call', 1)",
-                 (1001, 3001))
+    conn.execute("INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, 'call', 1)", (1001, 3001))
     #   (b) an import row whose RESOLVER picked a tests/ symbol (the
     #       gate_presets.py ``import yaml`` failure mode). Kind is
     #       legitimately 'import' but the resolution is fabricated;
     #       only the W158 sanity filter (non-test -> test edges are
     #       structurally impossible) catches this.
-    conn.execute("INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, 'import', 1)",
-                 (1002, 3001))
+    conn.execute("INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, 'import', 1)", (1002, 3001))
     # And the file_edges aggregation labels ALL as 'imports' (the bug).
     for s, t in [(101, 201), (102, 202), (103, 203), (104, 204), (105, 205), (101, 301), (102, 301)]:
         conn.execute(
-            "INSERT INTO file_edges (source_file_id, target_file_id, kind, symbol_count) "
-            "VALUES (?, ?, 'imports', 1)",
+            "INSERT INTO file_edges (source_file_id, target_file_id, kind, symbol_count) VALUES (?, ?, 'imports', 1)",
             (s, t),
         )
 
@@ -362,8 +360,10 @@ def test_mine_imports_excludes_non_import_edge_kinds(tmp_path, monkeypatch):
     monkeypatch.chdir(proj)
 
     # Bootstrap a minimal DB with the schema applied.
-    from roam.db.connection import ensure_schema
     import sqlite3 as _sql
+
+    from roam.db.connection import ensure_schema
+
     (proj / ".roam").mkdir()
     db_path = proj / ".roam" / "index.db"
     conn = _sql.connect(str(db_path))
@@ -389,8 +389,7 @@ def test_mine_imports_excludes_non_import_edge_kinds(tmp_path, monkeypatch):
 
     # Positive control: the real src/lib -> src/db law DOES surface.
     lib_to_db = [
-        law for law in import_laws
-        if law.rule.get("from_dir") == "src/lib" and law.rule.get("to_dir") == "src/db"
+        law for law in import_laws if law.rule.get("from_dir") == "src/lib" and law.rule.get("to_dir") == "src/db"
     ]
     assert lib_to_db, (
         f"expected a real src/lib -> src/db law from the 5 import edges, "
@@ -401,8 +400,7 @@ def test_mine_imports_excludes_non_import_edge_kinds(tmp_path, monkeypatch):
     examples = lib_to_db[0].evidence.get("examples", [])
     for ex in examples:
         assert "tests/" not in ex, (
-            f"example cites a tests/ path which means it was sourced "
-            f"from the misresolved call edge — example: {ex!r}"
+            f"example cites a tests/ path which means it was sourced from the misresolved call edge — example: {ex!r}"
         )
 
     conn.close()

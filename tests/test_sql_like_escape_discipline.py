@@ -39,7 +39,6 @@ from pathlib import Path
 
 import pytest
 
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SRC = _REPO_ROOT / "src" / "roam"
 
@@ -154,16 +153,10 @@ def _walk_src_for_violations() -> list[tuple[str, int, str]]:
             # at the assignment line so the user knows where to fix.
             if isinstance(node, ast.Assign):
                 v = node.value
-                if (
-                    isinstance(v, ast.Constant)
-                    and isinstance(v.value, str)
-                    and "LIKE" in v.value.upper()
-                ):
+                if isinstance(v, ast.Constant) and isinstance(v.value, str) and "LIKE" in v.value.upper():
                     for pat, has_escape in _scan_string_for_like_violations(v.value):
                         if not has_escape:
-                            violations.append(
-                                (rel, node.lineno, f"{pat}  [module-level]")
-                            )
+                            violations.append((rel, node.lineno, f"{pat}  [module-level]"))
     return violations
 
 
@@ -174,14 +167,8 @@ def _strip_allowlisted(
     out: list[tuple[str, int, str]] = []
     for path, line, pat in violations:
         skip = False
-        for allow_path, allow_line, allow_substr, _rationale in (
-            _INTENTIONAL_WILDCARD_ALLOWLIST
-        ):
-            if (
-                path.endswith(allow_path)
-                and line == allow_line
-                and allow_substr in pat
-            ):
+        for allow_path, allow_line, allow_substr, _rationale in _INTENTIONAL_WILDCARD_ALLOWLIST:
+            if path.endswith(allow_path) and line == allow_line and allow_substr in pat:
                 skip = True
                 break
         if not skip:
@@ -201,9 +188,7 @@ def test_no_unescaped_like_underscore_in_src() -> None:
     violations = _walk_src_for_violations()
     surviving = _strip_allowlisted(violations)
     if surviving:
-        formatted = "\n".join(
-            f"  {path}:{line}  LIKE '{pat}'" for path, line, pat in surviving
-        )
+        formatted = "\n".join(f"  {path}:{line}  LIKE '{pat}'" for path, line, pat in surviving)
         pytest.fail(
             "Found "
             f"{len(surviving)} LIKE patterns with literal `_` and no ESCAPE clause:\n"
@@ -220,9 +205,7 @@ def test_allowlist_entries_are_well_formed() -> None:
         assert full.exists(), f"allowlist path does not exist: {path}"
         assert isinstance(line, int) and line > 0, f"bad line for {path}: {line}"
         assert substr, f"empty pattern substring for {path}:{line}"
-        assert (
-            rationale and len(rationale) >= 10
-        ), f"rationale too short for {path}:{line}: {rationale!r}"
+        assert rationale and len(rationale) >= 10, f"rationale too short for {path}:{line}: {rationale!r}"
 
 
 def test_audit_helpers_detect_known_unescaped() -> None:

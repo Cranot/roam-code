@@ -311,7 +311,11 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     (26, "math_signals.calls_in_loops_qualified", _alter("math_signals", "calls_in_loops_qualified", "TEXT")),
     (27, "math_signals.loop_lookup_calls", _alter("math_signals", "loop_lookup_calls", "TEXT")),
     (28, "math_signals.front_ops_in_loop", _alter("math_signals", "front_ops_in_loop", "INTEGER DEFAULT 0")),
-    (29, "math_signals.loop_with_multiplication", _alter("math_signals", "loop_with_multiplication", "INTEGER DEFAULT 0")),
+    (
+        29,
+        "math_signals.loop_with_multiplication",
+        _alter("math_signals", "loop_with_multiplication", "INTEGER DEFAULT 0"),
+    ),
     (30, "math_signals.loop_with_modulo", _alter("math_signals", "loop_with_modulo", "INTEGER DEFAULT 0")),
     # cross-language bridge metadata
     (31, "edges.bridge", _alter("edges", "bridge", "TEXT")),
@@ -336,7 +340,11 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     (44, "symbols.field_base_type", _alter("symbols", "field_base_type", "TEXT")),
     (45, "symbols.field_metadata", _alter("symbols", "field_metadata", "TEXT")),
     (46, "edges.call_function", _alter("edges", "call_function", "TEXT")),
-    (47, "idx_symbols_framework_type", _exec("CREATE INDEX IF NOT EXISTS idx_symbols_framework_type ON symbols(framework_type)")),
+    (
+        47,
+        "idx_symbols_framework_type",
+        _exec("CREATE INDEX IF NOT EXISTS idx_symbols_framework_type ON symbols(framework_type)"),
+    ),
     # v11 — drop redundant idx_edges_kind (subsumed by idx_edges_kind_target)
     (48, "drop idx_edges_kind", _exec("DROP INDEX IF EXISTS idx_edges_kind")),
     # virtual / managed tables — both helpers are idempotent
@@ -350,8 +358,11 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     # observed in the 2026-05 dogfood (streaming CSV / column-wise
     # output / matrix render). Pre-existing rows default to 0; after a
     # re-index the column reflects the actual structural signal.
-    (51, "math_signals.loop_eq_with_dependent_write",
-        _alter("math_signals", "loop_eq_with_dependent_write", "INTEGER DEFAULT 0")),
+    (
+        51,
+        "math_signals.loop_eq_with_dependent_write",
+        _alter("math_signals", "loop_eq_with_dependent_write", "INTEGER DEFAULT 0"),
+    ),
     # W82 / ROADMAP A8: index_manifest.steps_status — JSON map of per-sub-step
     # completion status ({step: {status, error_excerpt, duration_ms}}). Lets
     # `roam doctor` surface "your index is missing X because that step failed".
@@ -386,34 +397,37 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     # table now activates that reservation. Indexes are created in the same
     # step (also idempotent) so a consumer that runs `roam findings` on a
     # legacy DB hits indexed scans, not full table scans.
-    (56, "findings registry table + indexes", _exec(
-        "CREATE TABLE IF NOT EXISTS findings ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "finding_id_str TEXT NOT NULL UNIQUE, "
-        "subject_kind TEXT NOT NULL, "
-        "subject_id INTEGER, "
-        "claim TEXT NOT NULL, "
-        "evidence_json TEXT, "
-        "confidence TEXT, "
-        "source_detector TEXT NOT NULL, "
-        "source_version TEXT, "
-        "supersedes_id INTEGER REFERENCES findings(id) ON DELETE SET NULL, "
-        "suppressions_json TEXT DEFAULT '[]', "
-        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-        ")"
-    )),
-    (57, "idx_findings_subject", _exec(
-        "CREATE INDEX IF NOT EXISTS idx_findings_subject "
-        "ON findings(subject_kind, subject_id)"
-    )),
-    (58, "idx_findings_detector", _exec(
-        "CREATE INDEX IF NOT EXISTS idx_findings_detector "
-        "ON findings(source_detector)"
-    )),
-    (59, "idx_findings_created", _exec(
-        "CREATE INDEX IF NOT EXISTS idx_findings_created "
-        "ON findings(created_at)"
-    )),
+    (
+        56,
+        "findings registry table + indexes",
+        _exec(
+            "CREATE TABLE IF NOT EXISTS findings ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "finding_id_str TEXT NOT NULL UNIQUE, "
+            "subject_kind TEXT NOT NULL, "
+            "subject_id INTEGER, "
+            "claim TEXT NOT NULL, "
+            "evidence_json TEXT, "
+            "confidence TEXT, "
+            "source_detector TEXT NOT NULL, "
+            "source_version TEXT, "
+            "supersedes_id INTEGER REFERENCES findings(id) ON DELETE SET NULL, "
+            "suppressions_json TEXT DEFAULT '[]', "
+            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+            ")"
+        ),
+    ),
+    (
+        57,
+        "idx_findings_subject",
+        _exec("CREATE INDEX IF NOT EXISTS idx_findings_subject ON findings(subject_kind, subject_id)"),
+    ),
+    (
+        58,
+        "idx_findings_detector",
+        _exec("CREATE INDEX IF NOT EXISTS idx_findings_detector ON findings(source_detector)"),
+    ),
+    (59, "idx_findings_created", _exec("CREATE INDEX IF NOT EXISTS idx_findings_created ON findings(created_at)")),
 ]
 
 

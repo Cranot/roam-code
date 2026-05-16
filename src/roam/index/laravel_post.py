@@ -109,9 +109,7 @@ VERSION: str = "1.0.0"
 # Matches the class-string callable form: [ClassName::class, 'method']
 # - Class name may be namespaced with backslashes (e.g. App\Http\Controllers\FooController)
 # - Method name in single or double quotes
-_ROUTE_CLASS_STRING_RE = re.compile(
-    r"\[\s*([A-Za-z_][\w\\]*)::class\s*,\s*['\"]([A-Za-z_]\w*)['\"]\s*\]"
-)
+_ROUTE_CLASS_STRING_RE = re.compile(r"\[\s*([A-Za-z_][\w\\]*)::class\s*,\s*['\"]([A-Za-z_]\w*)['\"]\s*\]")
 
 # Eloquent scope method convention: scope + Capital letter + rest of camelCase name.
 # "scope" alone (no suffix) is rejected.
@@ -120,18 +118,27 @@ _ELOQUENT_SCOPE_RE = re.compile(r"^scope[A-Z]\w*$")
 # Observer registration: ``Foo::observe(FooObserver::class)``.
 # Group 1: the model class (short name, no leading namespace segments).
 # Group 2: the observer class (may be fully qualified with backslashes).
-_OBSERVER_REGISTER_RE = re.compile(
-    r"\b([A-Za-z_]\w*)::observe\(\s*([A-Za-z_][\w\\]*)::class\s*\)"
-)
+_OBSERVER_REGISTER_RE = re.compile(r"\b([A-Za-z_]\w*)::observe\(\s*([A-Za-z_][\w\\]*)::class\s*\)")
 
 # Standard Eloquent observer method names. A registered Observer's methods
 # matching these names are invoked by the framework on the corresponding
 # model lifecycle event. Custom helper methods on the Observer class are
 # *not* covered (they remain dead unless called explicitly).
 _OBSERVER_METHODS = (
-    "retrieved", "creating", "created", "updating", "updated",
-    "saving", "saved", "deleting", "deleted", "restoring", "restored",
-    "trashed", "forceDeleted", "replicating",
+    "retrieved",
+    "creating",
+    "created",
+    "updating",
+    "updated",
+    "saving",
+    "saved",
+    "deleting",
+    "deleted",
+    "restoring",
+    "restored",
+    "trashed",
+    "forceDeleted",
+    "replicating",
 )
 
 # Job dispatch — two forms:
@@ -721,9 +728,7 @@ def resolve_laravel_dispatch(conn, project_root: Path | None = None) -> int:
     class_id_by_name = _build_class_id_by_name(conn)
     class_method_lookup = _build_class_method_lookup(conn)
     file_symbol_ranges = _build_file_symbol_ranges(conn)
-    php_files = conn.execute(
-        "SELECT id, path FROM files WHERE language = 'php'"
-    ).fetchall()
+    php_files = conn.execute("SELECT id, path FROM files WHERE language = 'php'").fetchall()
 
     # Idiom 1: Route class-string
     for r in php_files:
@@ -795,11 +800,7 @@ def resolve_laravel_dispatch(conn, project_root: Path | None = None) -> int:
         "laravel_queue",
         "laravel_artisan",
     )
-    delete_sql = (
-        "DELETE FROM edges WHERE kind IN ("
-        + ",".join(f"'{k}'" for k in _LARAVEL_EDGE_KINDS)
-        + ")"
-    )
+    delete_sql = "DELETE FROM edges WHERE kind IN (" + ",".join(f"'{k}'" for k in _LARAVEL_EDGE_KINDS) + ")"
 
     if not edges:
         with conn:

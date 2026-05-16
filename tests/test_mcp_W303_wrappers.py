@@ -115,17 +115,14 @@ class TestColdStartGuardWiring:
         )
 
     @pytest.mark.parametrize("tool_name", W303_TOOL_NAMES)
-    def test_wrapper_description_carries_cold_start_hint(
-        self, tool_name: str
-    ) -> None:
+    def test_wrapper_description_carries_cold_start_hint(self, tool_name: str) -> None:
         """W296 hint is auto-appended to every index-gated wrapper."""
         from roam.mcp_extras.preflight import INDEX_REQUIRED_HINT
         from roam.mcp_server import _TOOL_METADATA
 
         desc = _TOOL_METADATA[tool_name].get("description", "")
         assert INDEX_REQUIRED_HINT in desc, (
-            f"{tool_name} description must end with the W296 hint "
-            f"{INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
+            f"{tool_name} description must end with the W296 hint {INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
         )
 
 
@@ -142,9 +139,7 @@ class TestRoamCoverageGapsArgShape:
             mock.return_value = {"ok": True}
             # Default max_depth=8 mirrors the CLI default per LAW 11.
             roam_coverage_gaps()
-            mock.assert_called_once_with(
-                ["coverage-gaps", "--max-depth", "8"], "."
-            )
+            mock.assert_called_once_with(["coverage-gaps", "--max-depth", "8"], ".")
 
     def test_gate_names(self) -> None:
         from roam.mcp_server import roam_coverage_gaps
@@ -199,9 +194,7 @@ class TestRoamSideEffectsArgShape:
             mock.return_value = {"ok": True}
             # Default symbol="" -> CLI scans all per LAW 11; top=50 default.
             roam_side_effects()
-            mock.assert_called_once_with(
-                ["side-effects", "--top", "50"], "."
-            )
+            mock.assert_called_once_with(["side-effects", "--top", "50"], ".")
 
     def test_symbol_filter(self) -> None:
         from roam.mcp_server import roam_side_effects
@@ -232,9 +225,7 @@ class TestRoamIdempotencyArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_idempotency()
-            mock.assert_called_once_with(
-                ["idempotency", "--top", "50"], "."
-            )
+            mock.assert_called_once_with(["idempotency", "--top", "50"], ".")
 
     def test_symbol_filter(self) -> None:
         from roam.mcp_server import roam_idempotency
@@ -265,9 +256,7 @@ class TestRoamCausalGraphArgShape:
             mock.return_value = {"ok": True}
             # Default top=20 mirrors the CLI default per LAW 11.
             roam_causal_graph()
-            mock.assert_called_once_with(
-                ["causal-graph", "--top", "20"], "."
-            )
+            mock.assert_called_once_with(["causal-graph", "--top", "20"], ".")
 
     def test_symbol_filter(self) -> None:
         from roam.mcp_server import roam_causal_graph
@@ -297,9 +286,7 @@ class TestRoamTxBoundariesArgShape:
             mock.return_value = {"ok": True}
             # Default top=30 mirrors the CLI default per LAW 11.
             roam_tx_boundaries()
-            mock.assert_called_once_with(
-                ["tx-boundaries", "--top", "30"], "."
-            )
+            mock.assert_called_once_with(["tx-boundaries", "--top", "30"], ".")
 
     def test_symbol_filter(self) -> None:
         from roam.mcp_server import roam_tx_boundaries

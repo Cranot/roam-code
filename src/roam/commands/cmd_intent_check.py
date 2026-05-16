@@ -21,6 +21,13 @@ Examples::
 
     roam intent-check preflight
     # -> ALLOWED — 'preflight' allowed in safe_edit mode
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because intent-check outputs are invocation-scoped
+user-intent-classification aggregates (ALLOWED / BLOCKED verdict over
+an intended command name under the active mode) — not per-location
+code violations. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH Bucket B propagation plan + W1221-audit memo.
 """
 
 from __future__ import annotations
@@ -105,9 +112,7 @@ def intent_check_cmd(ctx, intended_command: Optional[str]):
 
     # Find which modes WOULD allow it (for upgrade suggestion).
     policies = list_modes(repo_root)
-    modes_allowing = [
-        m for m in VALID_MODES if intended_command in policies[m].allowed_commands
-    ]
+    modes_allowing = [m for m in VALID_MODES if intended_command in policies[m].allowed_commands]
     upgrade_to = modes_allowing[0] if (not allowed and modes_allowing) else None
 
     if allowed:
@@ -141,11 +146,7 @@ def intent_check_cmd(ctx, intended_command: Optional[str]):
             "next_commands": (
                 [f"roam {intended_command}"]
                 if allowed
-                else (
-                    [f"roam mode {upgrade_to}  # to unlock '{intended_command}'"]
-                    if upgrade_to
-                    else []
-                )
+                else ([f"roam mode {upgrade_to}  # to unlock '{intended_command}'"] if upgrade_to else [])
             ),
         },
     )

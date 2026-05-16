@@ -1,4 +1,13 @@
-"""Remove stale/orphaned data from the index without a full rebuild."""
+"""Remove stale/orphaned data from the index without a full rebuild.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam clean`` is a setup/bootstrap command — its
+output is human-facing setup status (orphaned rows pruned from the
+index DB), not analysis findings with file:line coordinates.
+SARIF is reserved for scanning results. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1148 audit memo.
+"""
 
 from __future__ import annotations
 

@@ -74,8 +74,7 @@ def _find_deprecated_commands_assign(tree: ast.Module) -> ast.Dict:
                 )
                 matches.append(node.value)
     assert len(matches) == 1, (
-        "Expected exactly one module-level _DEPRECATED_COMMANDS assignment "
-        f"in src/roam/cli.py; found {len(matches)}."
+        f"Expected exactly one module-level _DEPRECATED_COMMANDS assignment in src/roam/cli.py; found {len(matches)}."
     )
     return matches[0]
 
@@ -119,10 +118,7 @@ def test_deprecated_commands_literal_keys_are_constant_strings() -> None:
             continue
         if not isinstance(key_node, ast.Constant) or not isinstance(key_node.value, str):
             bad_keys.append(ast.unparse(key_node))
-    assert not bad_keys, (
-        "_DEPRECATED_COMMANDS outer keys must all be string literals; "
-        f"non-literal entries: {bad_keys}"
-    )
+    assert not bad_keys, f"_DEPRECATED_COMMANDS outer keys must all be string literals; non-literal entries: {bad_keys}"
 
 
 def test_deprecated_commands_literal_values_are_inner_dict_literals() -> None:
@@ -150,8 +146,7 @@ def test_deprecated_commands_literal_values_are_inner_dict_literals() -> None:
                 continue
             if inner_key.value not in _ALLOWED_INNER_KEYS:
                 violations.append(
-                    f"{alias!r}: inner key {inner_key.value!r} not in closed "
-                    f"enumeration {sorted(_ALLOWED_INNER_KEYS)}",
+                    f"{alias!r}: inner key {inner_key.value!r} not in closed enumeration {sorted(_ALLOWED_INNER_KEYS)}",
                 )
             if not isinstance(inner_val, ast.Constant) or not isinstance(inner_val.value, str):
                 violations.append(
@@ -160,8 +155,7 @@ def test_deprecated_commands_literal_values_are_inner_dict_literals() -> None:
     assert not violations, (
         "_DEPRECATED_COMMANDS inner shape drift -- expected "
         "`dict[str, dict[str, str]]` literals with keys in "
-        f"{sorted(_ALLOWED_INNER_KEYS)}:\n"
-        + "\n".join(f"  - {v}" for v in violations)
+        f"{sorted(_ALLOWED_INNER_KEYS)}:\n" + "\n".join(f"  - {v}" for v in violations)
     )
 
 
@@ -205,7 +199,6 @@ def test_deprecated_commands_inner_replacement_targets_resolve() -> None:
             continue
         if replacement in _DEPRECATED_COMMANDS:
             bad.append(
-                f"{alias!r}: replacement {replacement!r} is itself deprecated "
-                "(would chain deprecation warnings)",
+                f"{alias!r}: replacement {replacement!r} is itself deprecated (would chain deprecation warnings)",
             )
     assert not bad, "\n".join(bad)

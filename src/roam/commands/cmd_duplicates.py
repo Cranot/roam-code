@@ -16,7 +16,6 @@ from roam.db.connection import open_db
 from roam.index.file_roles import is_test as _is_test
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
-
 # W165 — Test / fixture / production bucketing for duplicates findings.
 #
 # The 212-eval dogfood corpus (internal/dogfood/SYNTHESIS-2026-05-12.md)
@@ -30,9 +29,7 @@ from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 # Mixed is preserved through ``--exclude-tests`` (one side src, one side
 # test ⇒ potential test-leakage signal worth keeping).
 
-_FIXTURE_PATTERN = re.compile(
-    r"(^|/)(fixtures?|test_fixtures|testdata|test_data)(/|$)"
-)
+_FIXTURE_PATTERN = re.compile(r"(^|/)(fixtures?|test_fixtures|testdata|test_data)(/|$)")
 
 
 def _is_fixture_path(path: str) -> bool:
@@ -58,9 +55,7 @@ def _role_bucket_for_files(files: list[str]) -> str:
     """
     if not files:
         return "production"
-    test_sides = [
-        bool(f and (_is_test(f) or _is_fixture_path(f))) for f in files
-    ]
+    test_sides = [bool(f and (_is_test(f) or _is_fixture_path(f))) for f in files]
     if all(test_sides):
         return "test_intentional"
     if any(test_sides):
@@ -434,9 +429,7 @@ def _emit_duplicates_findings(
         # W165 — bucket the cluster (production / test_intentional /
         # mixed) and persist it on every finding so registry consumers
         # (``roam findings list --detector duplicates``) can post-filter.
-        role_bucket = _role_bucket_for_files(
-            [r["file_path"] for r in functions]
-        )
+        role_bucket = _role_bucket_for_files([r["file_path"] for r in functions])
 
         evidence = {
             "similarity": c.get("similarity"),
@@ -454,10 +447,7 @@ def _emit_duplicates_findings(
         sim = c.get("similarity")
         sim_pct = round(float(sim) * 100) if sim is not None else 0
         anchor_name = anchor["name"] or "?"
-        claim = (
-            f"Duplicate cluster: {len(functions)} functions "
-            f"({sim_pct}% avg similarity) anchored at {anchor_name}"
-        )
+        claim = f"Duplicate cluster: {len(functions)} functions ({sim_pct}% avg similarity) anchored at {anchor_name}"
 
         emit_finding(
             conn,
@@ -577,6 +567,7 @@ def duplicates(
     AST-derived metrics from the index for comparison.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -817,9 +808,7 @@ def duplicates(
         # ``--exclude-fixtures`` drops any cluster touching a fixtures/
         # / testdata/ path regardless of bucket.
         for c in cluster_list:
-            c["role_bucket"] = _role_bucket_for_files(
-                [r["file_path"] for r in c["functions"]]
-            )
+            c["role_bucket"] = _role_bucket_for_files([r["file_path"] for r in c["functions"]])
 
         if exclude_tests or exclude_fixtures:
             filtered: list[dict] = []
@@ -882,45 +871,67 @@ def duplicates(
         else:
             verdict_parts.append("No semantic duplicates detected")
         if sampled:
-            verdict_parts.append(
-                f"sampled {sample_size}/{original_candidate_count} candidates"
-            )
+            verdict_parts.append(f"sampled {sample_size}/{original_candidate_count} candidates")
         if truncated:
-            verdict_parts.append(
-                f"truncated to top {len(cluster_list)}/{total_clusters_found} clusters"
-            )
+            verdict_parts.append(f"truncated to top {len(cluster_list)}/{total_clusters_found} clusters")
         verdict = "; ".join(verdict_parts)
 
         # ── 7. Output ───────────────────────────────────────────────
-        if json_mode:
-            clusters_json = []
-            for i, c in enumerate(cluster_list):
-                clusters_json.append(
-                    {
-                        "id": i + 1,
-                        "similarity": c["similarity"],
-                        "size": c["size"],
-                        "functions": [
-                            {
-                                "name": r["name"],
-                                "qualified_name": r["qualified_name"],
-                                "kind": r["kind"],
-                                "file": r["file_path"],
-                                "line": r["line_start"],
-                                "lines": r["line_count"] or 0,
-                                "pagerank": round(r["pagerank"] or 0, 4),
-                            }
-                            for r in c["functions"]
-                        ],
-                        "pattern": c["pattern"],
-                        "suggestion": c["suggestion"],
-                        # W165 — bucket on the live cluster object so JSON
-                        # consumers can filter without going through the
-                        # registry.
-                        "role_bucket": c.get("role_bucket", "production"),
-                    }
-                )
+        # Build the per-cluster JSON dicts once — the SARIF path and the
+        # JSON path both consume them; keeping the construction shared
+        # guarantees the SARIF projection sees the same shape that
+        # downstream registry consumers do.
+        clusters_json = []
+        for i, c in enumerate(cluster_list):
+            clusters_json.append(
+                {
+                    "id": i + 1,
+                    "similarity": c["similarity"],
+                    "size": c["size"],
+                    "functions": [
+                        {
+                            "name": r["name"],
+                            "qualified_name": r["qualified_name"],
+                            "kind": r["kind"],
+                            "file": r["file_path"],
+                            "line": r["line_start"],
+                            "lines": r["line_count"] or 0,
+                            "pagerank": round(r["pagerank"] or 0, 4),
+                        }
+                        for r in c["functions"]
+                    ],
+                    "pattern": c["pattern"],
+                    "suggestion": c["suggestion"],
+                    # W165 — bucket on the live cluster object so JSON
+                    # consumers can filter without going through the
+                    # registry.
+                    "role_bucket": c.get("role_bucket", "production"),
+                }
+            )
 
+        # -- SARIF format ----------------------------------------------------
+        # W1213: SARIF projection for CI / GitHub Code Scanning integration.
+        # Branches BEFORE the json / text paths so those legacy paths stay
+        # byte-identical to pre-W1213 output. ``--sarif --json`` resolves to
+        # SARIF (CI-format consumers want the SARIF document, not the JSON
+        # envelope). Mirrors the W1172 ``cmd_clones`` SARIF wiring.
+        if sarif_mode:
+            from roam.output.sarif import duplicates_to_sarif, write_sarif
+
+            sarif_envelope = json_envelope(
+                "duplicates",
+                summary={
+                    "verdict": verdict,
+                    "total_clusters": len(cluster_list),
+                    "total_functions": total_functions,
+                    "estimated_reducible_lines": estimated_lines,
+                },
+                clusters=clusters_json,
+            )
+            click.echo(write_sarif(duplicates_to_sarif(sarif_envelope)))
+            return
+
+        if json_mode:
             summary_payload = {
                 "verdict": verdict,
                 "total_clusters": len(cluster_list),

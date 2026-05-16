@@ -12,6 +12,7 @@ from pathlib import Path
 
 from roam.db.connection import find_project_root
 from roam.index.parser import detect_language, parse_file
+from roam.output.formatter import WarningsOut
 from roam.rules.ast_match import (
     compile_ast_pattern,
     find_ast_matches,
@@ -24,21 +25,62 @@ from roam.rules.dataflow import collect_dataflow_findings
 # ---------------------------------------------------------------------------
 
 
-def _load_yaml(path: Path) -> dict | None:
-    """Load a single YAML file, returning the parsed dict or None on error.
+def _load_yaml(
+    path: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> dict | list | None:
+    """Load a single YAML rule file, returning the parsed object or None on error.
 
-    Falls back to a minimal line parser when PyYAML is not installed.
+    Delegates file-read + parse + root-type check (mapping OR list, since
+    a malformed top-level-list file is a valid wrong-shape signal — see
+    ``_parse_simple_yaml_text``) to
+    :func:`roam.commands._yaml_loader.load_yaml_with_warnings` (W1036
+    leftover scope: cmd_adrs + rules.engine sibling migration of W1051
+    + W1052).
+
+    W1036 (Pattern 2 — silent fallback, mirror of W706's
+    ``_load_ignore_findings_file``): when *warnings_out* is supplied as
+    a ``list[str]``, every silent-fallback path (file unreadable,
+    malformed YAML, tiny-parser fallback failure) appends an actionable
+    warning naming the path, the failure shape, and the resolution.
+    Pre-W1036 callers that don't supply ``warnings_out`` retain
+    byte-identical silent-``None`` behaviour: the legacy
+    :func:`load_rules` flow continues to synthesize a placeholder
+    ``{"_error": "failed to parse <name>"}`` record for each
+    unparseable file so ``evaluate_rule`` can surface the parse error
+    inside the rules envelope.
     """
-    try:
-        import yaml
-    except ImportError:
-        return _parse_simple_yaml(path)
+    from roam.commands._yaml_loader import load_yaml_with_warnings
 
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    except Exception:
+    pre_warnings = len(warnings_out) if warnings_out is not None else 0
+    data = load_yaml_with_warnings(
+        path,
+        tiny_parser=_parse_simple_yaml_text,
+        allow_list_root=True,
+        config_label="rules-yaml",
+        warnings_out=warnings_out,
+    )
+    if data is None:
+        # Helper returns None only when the file is missing.
         return None
+    if warnings_out is not None and len(warnings_out) > pre_warnings:
+        # Helper recorded a parse failure (read error / malformed YAML /
+        # tiny-parser fallback failure). Preserve the pre-W1036 contract:
+        # downstream ``load_rules`` synthesizes an `_error` placeholder
+        # when ``_load_yaml`` returns None, and the rules envelope
+        # surfaces the parse error per-rule. Returning the empty container
+        # here would hide the placeholder.
+        return None
+    # PyYAML-without-warnings_out path: when the caller didn't pass an
+    # accumulator AND PyYAML (or the tiny parser) raised, the helper
+    # still returns the empty container (``[]`` because
+    # ``allow_list_root=True``) silently. Treat the empty container as
+    # "file produced no useful data" so the historical
+    # ``return None`` -> placeholder-_error flow holds.
+    if warnings_out is None and isinstance(data, (dict, list)) and not data:
+        return None
+    return data
 
 
 def _coerce_scalar(val: str) -> object:
@@ -60,6 +102,25 @@ def _coerce_scalar(val: str) -> object:
 def _parse_simple_yaml(path: Path) -> dict | None:
     """Minimal YAML subset parser for rule files (no PyYAML dependency).
 
+    Reads ``path`` and delegates to :func:`_parse_simple_yaml_text`. Kept
+    as the historical entry point for callers that still pass a ``Path``
+    (W1036: the shared helper substrate uses
+    :func:`_parse_simple_yaml_text` directly so the helper can run on the
+    in-memory text it already read).
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    try:
+        return _parse_simple_yaml_text(text)
+    except ValueError:
+        return None
+
+
+def _parse_simple_yaml_text(text: str) -> dict | list | None:
+    """Minimal YAML subset parser for rule files (no PyYAML dependency).
+
     Handles:
     * flat key-value pairs
     * inline lists ``[a, b, c]``
@@ -75,12 +136,14 @@ def _parse_simple_yaml(path: Path) -> dict | None:
     a ``- key: value`` item and the current frame is an empty dict, we
     promote it to a list inside the parent container at the recorded
     ``parent_key``, then push a new dict frame for the item.
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except Exception:
-        return None
 
+    W1036: hoisted from :func:`_parse_simple_yaml` so the shared
+    :func:`roam.commands._yaml_loader.load_yaml_with_warnings` helper can
+    invoke this directly as its ``tiny_parser`` callback on the
+    pre-read text. Raises ``ValueError`` on truly malformed input (e.g.
+    unbalanced brackets) — the helper catches that and routes through
+    the tiny-parser-failed warning path.
+    """
     # 12.35 (2026-05-06) — sanity-check obviously malformed YAML so callers
     # don't get a permissive non-empty result that hides the bug. PyYAML
     # raises YAMLError on shapes like `this is not: valid: yaml: at all: [`;
@@ -101,7 +164,7 @@ def _parse_simple_yaml(path: Path) -> dict | None:
         opens = unquoted.count("[") + unquoted.count("{")
         closes = unquoted.count("]") + unquoted.count("}")
         if opens != closes:
-            raise ValueError(f"malformed YAML: unbalanced brackets in {path}")
+            raise ValueError("malformed YAML: unbalanced brackets")
 
     # 12.35 — top-level-is-a-list detection. PyYAML returns a Python list
     # for input that starts with `- `; the loader downstream surfaces a
@@ -307,11 +370,25 @@ def _emit_simple_yaml(doc: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def load_rules(rules_dir: Path) -> list[dict]:
+def load_rules(
+    rules_dir: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
     """Load all .yaml/.yml files from the rules directory.
 
     Returns a list of rule dicts. Files that fail to parse are silently
     skipped (a warning is included in the rule's ``_error`` key).
+
+    W1036 (Pattern 2 — silent fallback, sibling of W1051 + W1052): when
+    *warnings_out* is supplied as a ``list[str]``, every silent-fallback
+    path inside :func:`_load_yaml` (file unreadable, malformed YAML,
+    tiny-parser fallback failure, non-mapping root) appends an
+    actionable warning naming the path, the failure shape, and the
+    resolution. Pre-W1036 callers that don't supply ``warnings_out``
+    retain byte-identical silent-`_error` behaviour: each unparseable
+    file still becomes a placeholder rule with ``_error`` so the
+    envelope surfaces per-file parse failures via :func:`evaluate_rule`.
     """
     if not rules_dir.is_dir():
         return []
@@ -322,13 +399,23 @@ def load_rules(rules_dir: Path) -> list[dict]:
             continue
         if p.suffix not in (".yaml", ".yml"):
             continue
-        data = _load_yaml(p)
-        if data is None:
+        data = _load_yaml(p, warnings_out=warnings_out)
+        if data is None or not isinstance(data, dict):
+            # None = parse failure / missing file; list = top-level-list
+            # is a wrong-root-type signal the engine cannot evaluate. Both
+            # turn into the `_error` placeholder so the envelope surfaces
+            # which file failed and why.
+            error_msg = f"failed to parse {p.name}"
+            if isinstance(data, list):
+                error_msg = (
+                    f"{p.name}: top-level list is not a valid rule shape; "
+                    "expected a mapping with keys like `name`, `severity`, `match`"
+                )
             rules.append(
                 {
                     "name": p.name,
                     "severity": "error",
-                    "_error": f"failed to parse {p.name}",
+                    "_error": error_msg,
                     "_file": str(p),
                 }
             )
@@ -1209,10 +1296,7 @@ def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: i
                             "file": rule.get("_file", ""),
                             "line": None,
                             "clause": cname,
-                            "reason": (
-                                f"unknown clause '{cname}' — supported: "
-                                f"{', '.join(SUPPORTED_CLAUSES)}"
-                            ),
+                            "reason": (f"unknown clause '{cname}' — supported: {', '.join(SUPPORTED_CLAUSES)}"),
                         }
                     ],
                 }
@@ -1258,9 +1342,7 @@ def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: i
                 if status not in ("ok",):
                     partial = True
                 # must => clause must hold; must_not => clause must NOT hold.
-                fired = (block_kind == "must" and not matches) or (
-                    block_kind == "must_not" and matches
-                )
+                fired = (block_kind == "must" and not matches) or (block_kind == "must_not" and matches)
                 if fired:
                     violations.append(
                         {
@@ -1270,9 +1352,7 @@ def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: i
                             "clause": cname,
                             "block": block_kind,
                             "evidence": evidence,
-                            "reason": _format_clause_reason(
-                                block_kind, cname, carg, sym, evidence, message
-                            ),
+                            "reason": _format_clause_reason(block_kind, cname, carg, sym, evidence, message),
                         }
                     )
     elif is_file_scoped:
@@ -1293,9 +1373,7 @@ def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: i
                 status = evidence.get("status", "ok") if isinstance(evidence, dict) else "ok"
                 if status not in ("ok",):
                     partial = True
-                fired = (block_kind == "must" and not matches) or (
-                    block_kind == "must_not" and matches
-                )
+                fired = (block_kind == "must" and not matches) or (block_kind == "must_not" and matches)
                 if fired:
                     violations.append(
                         {
@@ -1406,12 +1484,26 @@ def evaluate_rule(rule: dict, conn, G=None, *, max_depth: int = 3, max_nodes: in
     return _evaluate_symbol_match(rule, conn)
 
 
-def evaluate_all(rules_dir: Path, conn, *, max_depth: int = 3, max_nodes: int = 100) -> list[dict]:
+def evaluate_all(
+    rules_dir: Path,
+    conn,
+    *,
+    max_depth: int = 3,
+    max_nodes: int = 100,
+    warnings_out: WarningsOut = None,
+) -> list[dict]:
     """Load and evaluate all rules from the rules directory.
 
     Returns a list of result dicts, one per rule.
+
+    W1036 (Pattern 2 — silent fallback, sibling of W1051 + W1052):
+    ``warnings_out`` is plumbed through to :func:`load_rules` so each
+    silent-fallback path inside the per-file loader appends a
+    structured warning. Pre-W1036 callers (no accumulator) get
+    byte-identical behaviour — every parse failure still surfaces via
+    the existing ``_error`` placeholder rule.
     """
-    rules = load_rules(rules_dir)
+    rules = load_rules(rules_dir, warnings_out=warnings_out)
     results: list[dict] = []
     for rule in rules:
         results.append(evaluate_rule(rule, conn, max_depth=max_depth, max_nodes=max_nodes))

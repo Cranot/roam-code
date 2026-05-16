@@ -36,10 +36,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from tests._helpers.repo_root import repo_root
-
 
 # ── Module discovery ─────────────────────────────────────────────────
 
@@ -65,10 +62,7 @@ def _call_is_as_file(node: ast.AST) -> bool:
     func = node.func
     if isinstance(func, ast.Name) and func.id == "as_file":
         return True
-    if (
-        isinstance(func, ast.Attribute)
-        and func.attr == "as_file"
-    ):
+    if isinstance(func, ast.Attribute) and func.attr == "as_file":
         return True
     return False
 
@@ -218,10 +212,7 @@ def test_no_as_file_path_captured_outside_with_block() -> None:
 
         for target, lineno in _find_unsafe_with_blocks(tree):
             rel = module_path.relative_to(repo_root())
-            offenders.append(
-                f"  {rel} (line {lineno}): "
-                f"`as_file(...) as {target}:` captured outside `with` block"
-            )
+            offenders.append(f"  {rel} (line {lineno}): `as_file(...) as {target}:` captured outside `with` block")
 
     assert offenders == [], (
         "W668: `importlib.resources.as_file(...)` returns a temp-extraction "
@@ -231,9 +222,7 @@ def test_no_as_file_path_captured_outside_with_block() -> None:
         "(e.g. `.read_text()` / `.open()`), or skip `as_file()` and read "
         "the resource via `Path(str(files(...)))` directly when the W664 "
         "drift-guard guarantees the package is a real on-disk subpackage.\n"
-        "Offenders:\n"
-        + "\n".join(offenders)
-        + "\nSee `(internal memo)` for the fix template."
+        "Offenders:\n" + "\n".join(offenders) + "\nSee `(internal memo)` for the fix template."
     )
 
 
@@ -282,6 +271,5 @@ def test_self_test_detector_quiet_on_known_good_sample() -> None:
     assert offenders == [], (
         "W668 drift-guard self-test failed: the detector flagged a SAFE "
         "consume-inside-`with` pattern (`return resource_path.read_text()`). "
-        "The detector is over-aggressive. False positives:\n"
-        + "\n".join(f"  {t}@{ln}" for t, ln in offenders)
+        "The detector is over-aggressive. False positives:\n" + "\n".join(f"  {t}@{ln}" for t, ln in offenders)
     )

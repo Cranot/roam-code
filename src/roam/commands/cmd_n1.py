@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
-import os
 import re
 import sqlite3
 from collections import defaultdict
@@ -43,7 +42,6 @@ from roam.output.confidence import (
     wrap_findings,
 )
 from roam.output.formatter import json_envelope, loc, to_json
-
 
 # W110: n1 is the fourth detector migrating onto the central findings
 # registry (after `clones` in W95, `dead` in W99, and `complexity` in
@@ -121,8 +119,7 @@ def _resolve_accessor_subject_id(conn, finding: dict) -> int | None:
         # exact path equality.
         try:
             row = conn.execute(
-                "SELECT s.id FROM symbols s "
-                "WHERE s.name = ? AND s.line_start = ? LIMIT 1",
+                "SELECT s.id FROM symbols s WHERE s.name = ? AND s.line_start = ? LIMIT 1",
                 (accessor_name, line_start),
             ).fetchone()
         except sqlite3.OperationalError:
@@ -212,6 +209,7 @@ def _emit_n1_findings(conn, findings: list[dict]) -> int:
         )
         emitted += 1
     return emitted
+
 
 # Sentinel used by helpers that accept pre-fetched bulk data. Distinct from
 # ``None`` because ``None`` is a valid "caller pre-fetched and there's no
@@ -842,8 +840,7 @@ def _bulk_fetch_accessor_edge_traces(conn, accessor_ids):
             sub_callee_names.setdefault(cid, set())
         for r in batched_in(
             conn,
-            "SELECT e.source_id, t.name FROM edges e JOIN symbols t ON e.target_id = t.id "
-            "WHERE e.source_id IN ({ph})",
+            "SELECT e.source_id, t.name FROM edges e JOIN symbols t ON e.target_id = t.id WHERE e.source_id IN ({ph})",
             list(callee_method_ids),
         ):
             sub_callee_names.setdefault(int(r["source_id"]), set()).add(r["name"])
@@ -851,8 +848,9 @@ def _bulk_fetch_accessor_edge_traces(conn, accessor_ids):
     return callees_by_accessor, sub_callee_names
 
 
-def _trace_io_via_edges(conn, accessor_id, model_method_names, *,
-                        bulk_callees=_BULK_NOT_FETCHED, bulk_sub_names=_BULK_NOT_FETCHED):
+def _trace_io_via_edges(
+    conn, accessor_id, model_method_names, *, bulk_callees=_BULK_NOT_FETCHED, bulk_sub_names=_BULK_NOT_FETCHED
+):
     """Strategy 1: walk outgoing edges from the accessor to look for
     relationship-defining methods or query-builder methods.
 
@@ -955,8 +953,9 @@ def _trace_io_via_source(conn, accessor_info, model_methods, model_method_names)
     return io_chains
 
 
-def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods, *,
-                       bulk_callees=_BULK_NOT_FETCHED, bulk_sub_names=_BULK_NOT_FETCHED):
+def _trace_accessor_io(
+    conn, accessor_id, accessor_info, model_methods, *, bulk_callees=_BULK_NOT_FETCHED, bulk_sub_names=_BULK_NOT_FETCHED
+):
     """Trace an accessor method to see if it triggers I/O.
 
     Uses two strategies:
@@ -973,8 +972,11 @@ def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods, *,
     """
     model_method_names = {m["name"] for m in model_methods}
     io_chains = _trace_io_via_edges(
-        conn, accessor_id, model_method_names,
-        bulk_callees=bulk_callees, bulk_sub_names=bulk_sub_names,
+        conn,
+        accessor_id,
+        model_method_names,
+        bulk_callees=bulk_callees,
+        bulk_sub_names=bulk_sub_names,
     )
     if not io_chains:
         io_chains = _trace_io_via_source(conn, accessor_info, model_methods, model_method_names)
@@ -1087,9 +1089,7 @@ def _build_resource_config_cache(conn) -> list[str]:
     if root is None:
         return contents
     rows = conn.execute(
-        "SELECT f.path FROM files f "
-        "WHERE f.path LIKE '%config/resources.php' "
-        "OR f.path LIKE '%config/resources/%'"
+        "SELECT f.path FROM files f WHERE f.path LIKE '%config/resources.php' OR f.path LIKE '%config/resources/%'"
     ).fetchall()
     for row in rows:
         abs_path = root / row["path"]
@@ -1234,9 +1234,7 @@ def _iter_resource_config_contents(conn, root):
     if root is None:
         return
     rows = conn.execute(
-        "SELECT f.path FROM files f "
-        "WHERE f.path LIKE '%config/resources.php' "
-        "OR f.path LIKE '%config/resources/%'"
+        "SELECT f.path FROM files f WHERE f.path LIKE '%config/resources.php' OR f.path LIKE '%config/resources/%'"
     ).fetchall()
     for row in rows:
         abs_path = root / row["path"]
@@ -1399,15 +1397,11 @@ def analyze_n1(conn, confidence_filter=None):
     # parent_id-linked bulk fetch above misses PHP models (parser doesn't
     # set parent_id), so on Laravel apps the fallback used to fire for
     # every model and defeat the surrounding bulk work.
-    model_file_ids = [
-        int(mi["file_id"]) for mi in models.values() if mi.get("file_id") is not None
-    ]
+    model_file_ids = [int(mi["file_id"]) for mi in models.values() if mi.get("file_id") is not None]
     # Resolve file_id for any model that arrived without one (defensive —
     # ``_find_model_classes`` selects file_id, but consumers could in
     # principle pass a model dict missing it). Single batched IN query.
-    missing_fid_model_ids = [
-        int(mid) for mid, mi in models.items() if mi.get("file_id") is None
-    ]
+    missing_fid_model_ids = [int(mid) for mid, mi in models.items() if mi.get("file_id") is None]
     if missing_fid_model_ids:
         from roam.db.connection import batched_in
 
@@ -1464,16 +1458,13 @@ def analyze_n1(conn, confidence_filter=None):
             line_end = model_info.get("line_end") or 999999
             if fid is not None:
                 model_methods = [
-                    m for m in methods_by_file.get(int(fid), [])
-                    if line_start <= m["line_start"] <= line_end
+                    m for m in methods_by_file.get(int(fid), []) if line_start <= m["line_start"] <= line_end
                 ]
             else:
                 # ``model_file_ids`` resolution above should have filled
                 # this in; preserve the legacy per-model query as a last
                 # resort so we don't silently drop methods.
-                row = conn.execute(
-                    "SELECT file_id FROM symbols WHERE id = ?", (model_id,)
-                ).fetchone()
+                row = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (model_id,)).fetchone()
                 fallback_fid = row["file_id"] if row else None
                 if fallback_fid is not None:
                     model_methods = conn.execute(
@@ -1485,7 +1476,9 @@ def analyze_n1(conn, confidence_filter=None):
 
         # Step 1: Find $appends / virtual properties (uses bulk-fetched row)
         appended = _find_appends_properties(
-            conn, model_id, model_info,
+            conn,
+            model_id,
+            model_info,
             bulk_appends_sym=appends_by_model.get(model_id),
         )
         if not appended:
@@ -1493,7 +1486,10 @@ def analyze_n1(conn, confidence_filter=None):
 
         # Step 2: Find accessor methods (uses bulk-fetched methods)
         accessors = _find_accessor_methods(
-            conn, model_id, model_info, appended,
+            conn,
+            model_id,
+            model_info,
+            appended,
             bulk_methods=methods_by_model.get(model_id),
         )
         if not accessors:
@@ -1512,7 +1508,8 @@ def analyze_n1(conn, confidence_filter=None):
         # Step 3: Find what's already eager loaded (uses bulk-fetched
         # ``$with`` symbol + cached resource-config contents)
         eager_loaded = _find_eager_loads(
-            conn, model_name,
+            conn,
+            model_name,
             controller_cache=controller_cache,
             bulk_with_sym=with_sym_by_model.get(model_id),
             resource_config_contents=resource_config_contents,
@@ -1521,7 +1518,9 @@ def analyze_n1(conn, confidence_filter=None):
 
         # Step 4: Find collection contexts (uses bulk-fetched refs)
         collection_ctxs = _find_collection_contexts(
-            conn, model_id, model_name,
+            conn,
+            model_id,
+            model_name,
             bulk_refs=incoming_refs_by_model.get(model_id),
         )
 
@@ -1529,7 +1528,10 @@ def analyze_n1(conn, confidence_filter=None):
         for accessor_info, attr_name in accessors:
             aid = int(accessor_info["id"])
             io_chains = _trace_accessor_io(
-                conn, aid, accessor_info, model_methods,
+                conn,
+                aid,
+                accessor_info,
+                model_methods,
                 bulk_callees=callees_by_accessor.get(aid, []),
                 bulk_sub_names=sub_callee_names,
             )
@@ -1691,6 +1693,7 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
     (runtime evidence to confirm the suspicion).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=not persist) as conn:
@@ -1732,6 +1735,18 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
             if total
             else "No implicit N+1 patterns detected"
         )
+
+        # --- SARIF output (W1208) ---
+        # Branches BEFORE json/text so the pre-existing paths stay
+        # byte-identical to pre-W1208. The SARIF projection mirrors the
+        # displayed slice — `findings` here has already been sorted by
+        # confidence (high first) and truncated to `--limit`, so a CI
+        # gate sees the same evidence the human / agent sees.
+        if sarif_mode:
+            from roam.output.sarif import n1_to_sarif, write_sarif
+
+            click.echo(write_sarif(n1_to_sarif(findings)))
+            return
 
         # --- JSON output ---
         if json_mode:

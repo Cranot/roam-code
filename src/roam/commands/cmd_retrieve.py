@@ -7,8 +7,17 @@ ranking is structural (PageRank + clones + lexical), not symbol-specific.
 Examples
 --------
     roam retrieve "is it safe to delete UserSession"
-    roam retrieve "trace login flow" --seed-files src/auth.py --budget 6000
+    roam retrieve "trace login flow" --seed-file src/auth.py --budget 6000
     roam --json retrieve "n+1 query in checkout" --k 10
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because retrieve outputs are invocation-scoped task-grounded
+context envelopes (ranked code spans within a token budget for a
+free-form task) — not per-location code violations. The ranked spans
+are retrieval results, not findings; an external SARIF consumer would
+have nothing actionable to gate on. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket B propagation plan + W1221-audit
+memo.
 """
 
 from __future__ import annotations
@@ -31,7 +40,7 @@ def _suggest_refinements(task: str, candidates: list[dict]) -> list[str]:
     Heuristics:
     1. **Drop common NL words** — "trace the login flow" → "login flow".
        Removes filler that diluted the lexical signal.
-    2. **Suggest --seed-files anchor** — using the file of the
+    2. **Suggest --seed-file anchor** — using the file of the
        highest-scoring candidate as a seed often promotes the right
        neighbours.
     3. **Pivot to roam search** — when the query contains a clear
@@ -84,7 +93,7 @@ def _suggest_refinements(task: str, candidates: list[dict]) -> list[str]:
     if candidates:
         top_file = (candidates[0].get("file_path") or candidates[0].get("file") or "").replace("\\", "/")
         if top_file:
-            suggestions.append(f'roam retrieve "{task}" --seed-files {top_file}')
+            suggestions.append(f'roam retrieve "{task}" --seed-file {top_file}')
 
     # 3. If the query contains an identifier-shape, suggest exact search.
     import re
@@ -204,7 +213,7 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     outputs=["candidates", "verdict"],
     examples=[
         'roam retrieve "is it safe to delete UserSession"',
-        'roam retrieve "trace login flow" --seed-files src/auth.py',
+        'roam retrieve "trace login flow" --seed-file src/auth.py',
         'roam --json retrieve "n+1 query in checkout"',
     ],
     tags=["exploration", "retrieval", "agent"],
@@ -244,11 +253,19 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     ),
 )
 @click.option(
-    "--seed-files",
+    "--seed-file",
     "seed_files",
     multiple=True,
     type=str,
     help="Seed the rerank with one or more files (can be repeated). Falls back to inference when absent.",
+)
+@click.option(
+    "--seed-files",
+    "seed_files",
+    multiple=True,
+    type=str,
+    hidden=True,
+    help="Deprecated alias for --seed-file. Retained for backward compatibility.",
 )
 @click.option(
     "--dry-run",
@@ -465,7 +482,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
     click.echo(f"VERDICT: {verdict}")
     if not candidates:
         click.echo()
-        click.echo("Try `roam retrieve <task> --seed-files <path>` to anchor the search.")
+        click.echo("Try `roam retrieve <task> --seed-file <path>` to anchor the search.")
         return
 
     click.echo()

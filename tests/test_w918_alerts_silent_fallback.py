@@ -57,17 +57,11 @@ def test_unknown_metric_emits_warning(tmp_path: Path) -> None:
 
     # The threshold IS still applied (backward compat) ...
     assert "coverage" in resolved, (
-        "Backward compat: legacy fallback must still apply the default "
-        "threshold for unknown metrics."
+        "Backward compat: legacy fallback must still apply the default threshold for unknown metrics."
     )
     # ... AND the warning is surfaced.
-    assert len(warnings) == 1, (
-        f"Expected exactly one warning for the unknown ``coverage`` "
-        f"metric, got: {warnings}"
-    )
-    assert "coverage" in warnings[0], (
-        f"Warning text must name the offending metric, got: {warnings[0]!r}"
-    )
+    assert len(warnings) == 1, f"Expected exactly one warning for the unknown ``coverage`` metric, got: {warnings}"
+    assert "coverage" in warnings[0], f"Warning text must name the offending metric, got: {warnings[0]!r}"
 
 
 def test_unknown_metric_warning_is_actionable(tmp_path: Path) -> None:
@@ -86,25 +80,20 @@ def test_unknown_metric_warning_is_actionable(tmp_path: Path) -> None:
 
     # Names the specific metric (LAW 4 — concrete-noun anchor on the
     # actual user input, not an abstract reference like "your config").
-    assert "test_pass_rate" in warning, (
-        f"Warning text must name the offending metric, got: {warning!r}"
-    )
+    assert "test_pass_rate" in warning, f"Warning text must name the offending metric, got: {warning!r}"
     # Points at the config file the user must edit (LAW 2 — imperative
     # next step; user knows where to go).
     assert ".roam/alerts.yaml" in warning, (
-        f"Warning text must point at the config file the user edits, "
-        f"got: {warning!r}"
+        f"Warning text must point at the config file the user edits, got: {warning!r}"
     )
     # Names the silently-applied defaults so the user understands the
     # current behaviour, not just that something is wrong.
     assert "op='>'" in warning and "value=0" in warning, (
-        f"Warning text must disclose the silent fallback parameters "
-        f"(op='>' value=0), got: {warning!r}"
+        f"Warning text must disclose the silent fallback parameters (op='>' value=0), got: {warning!r}"
     )
     # Imperative next-step verb in the trailing clause.
     assert "Add" in warning or "add" in warning, (
-        f"Warning text must end on an imperative next step "
-        f"(LAW 2: 'Add a threshold entry...'), got: {warning!r}"
+        f"Warning text must end on an imperative next step (LAW 2: 'Add a threshold entry...'), got: {warning!r}"
     )
 
 
@@ -136,8 +125,7 @@ def test_complete_unknown_metric_emits_no_warning(tmp_path: Path) -> None:
     intent explicit, so no Pattern 2 warning fires.
     """
     _make_minimal_alerts_yaml(
-        "thresholds:\n"
-        "  coverage: { op: '<', value: 80, level: critical }\n",
+        "thresholds:\n  coverage: { op: '<', value: 80, level: critical }\n",
         tmp_path,
     )
 
@@ -210,20 +198,13 @@ def test_cli_envelope_carries_warnings_out_field(tmp_path: Path, monkeypatch) ->
 
     # Envelope MUST carry ``warnings_out`` as a list (Pattern 2:
     # consumers can rely on the key being present even when empty).
-    assert "warnings_out" in data, (
-        f"Envelope must carry top-level ``warnings_out`` key, got: "
-        f"{list(data.keys())}"
-    )
+    assert "warnings_out" in data, f"Envelope must carry top-level ``warnings_out`` key, got: {list(data.keys())}"
     assert isinstance(data["warnings_out"], list)
-    assert len(data["warnings_out"]) == 1, (
-        f"Expected exactly one warning for ``coverage``, got: "
-        f"{data['warnings_out']}"
-    )
+    assert len(data["warnings_out"]) == 1, f"Expected exactly one warning for ``coverage``, got: {data['warnings_out']}"
     assert "coverage" in data["warnings_out"][0]
 
     # ``partial_success`` must be True on the summary when the
     # silent-fallback path fired.
     assert data["summary"].get("partial_success") is True, (
-        f"summary.partial_success must be True when silent-fallback "
-        f"warnings fired, got summary: {data['summary']}"
+        f"summary.partial_success must be True when silent-fallback warnings fired, got summary: {data['summary']}"
     )

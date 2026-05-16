@@ -28,32 +28,16 @@ def stack_leak_project(tmp_path):
     (proj / ".gitignore").write_text(".roam/\n")
     src = proj / "src"
     src.mkdir()
-    (src / "models.py").write_text(
-        "class User:\n"
-        "    def __init__(self, name):\n"
-        "        self.name = name\n"
-    )
-    (src / "service.py").write_text(
-        "from models import User\n"
-        "\n"
-        "def create_user(name):\n"
-        "    return User(name)\n"
-    )
-    (src / "utils.py").write_text(
-        "from models import User\n"
-        "\n"
-        "def get_name(u):\n"
-        "    return u.name\n"
-    )
+    (src / "models.py").write_text("class User:\n    def __init__(self, name):\n        self.name = name\n")
+    (src / "service.py").write_text("from models import User\n\ndef create_user(name):\n    return User(name)\n")
+    (src / "utils.py").write_text("from models import User\n\ndef get_name(u):\n    return u.name\n")
     git_init(proj)
     index_in_process(proj)
     return proj
 
 
 class TestDescribeNoStackLeak:
-    def test_agent_prompt_does_not_emit_stack_line(
-        self, cli_runner, stack_leak_project, monkeypatch
-    ):
+    def test_agent_prompt_does_not_emit_stack_line(self, cli_runner, stack_leak_project, monkeypatch):
         """``Stack:`` must not appear anywhere in agent-prompt text.
 
         Output line ``Stack: src`` was the regression we're guarding
@@ -61,14 +45,11 @@ class TestDescribeNoStackLeak:
         value.
         """
         monkeypatch.chdir(stack_leak_project)
-        result = invoke_cli(
-            cli_runner, ["describe", "--agent-prompt"], cwd=stack_leak_project
-        )
+        result = invoke_cli(cli_runner, ["describe", "--agent-prompt"], cwd=stack_leak_project)
         assert result.exit_code == 0, f"describe failed:\n{result.output}"
         for line in result.output.splitlines():
             assert not line.startswith("Stack:"), (
-                f"unexpected Stack line in agent-prompt output: {line!r}\n"
-                f"full output:\n{result.output}"
+                f"unexpected Stack line in agent-prompt output: {line!r}\nfull output:\n{result.output}"
             )
         # Sanity: the language list (the line that subsumes Stack) is still there.
         assert "Project:" in result.output

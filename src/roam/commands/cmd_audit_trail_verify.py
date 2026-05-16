@@ -22,6 +22,16 @@ will then pass on the next run. Pattern 2 (silent-fallback) discipline:
 the structured JSON envelope always emits BEFORE the gate's
 ``sys.exit(5)`` so consumers can read ``state="uninitialized"`` and
 disambiguate uninitialized-chains from tampered-chains.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because audit-trail-verify produces chain-integrity verdicts
+(``valid`` / ``broken`` / ``uninitialized``) — not per-code-location
+violations. Findings are persisted via ``--persist`` with
+``subject_kind="ledger_entry"``, which intentionally does not resolve
+to source code symbols. The CI gate (exit 5 on tamper) is the
+actionable signal; SARIF would conflate ledger-state-audit with
+code-analysis-result. See action.yml _SUPPORTED_SARIF allowlist
++ W1195 audit memo.
 """
 
 from __future__ import annotations
@@ -73,9 +83,7 @@ _ISSUE_KIND_TO_SLUG: dict[str, str] = {
 }
 
 
-def _audit_trail_verify_finding_id(
-    audit_trail_path: str, line_number: int, issue: str
-) -> str:
+def _audit_trail_verify_finding_id(audit_trail_path: str, line_number: int, issue: str) -> str:
     """Stable, deterministic finding id for one chain anomaly.
 
     The (audit_trail_path, line_number, issue_kind) tuple re-identifies
@@ -122,9 +130,7 @@ def _emit_audit_trail_verify_findings(
         if "not found" in issue_kind:
             continue
         line_number = int(issue.get("line") or 0)
-        finding_id = _audit_trail_verify_finding_id(
-            audit_trail_path, line_number, issue_kind
-        )
+        finding_id = _audit_trail_verify_finding_id(audit_trail_path, line_number, issue_kind)
         evidence = {
             "audit_trail_path": audit_trail_path,
             "line": line_number,
@@ -135,13 +141,8 @@ def _emit_audit_trail_verify_findings(
             "verdict": issue.get("verdict"),
             "detail": issue.get("detail"),
         }
-        claim = (
-            f"audit-trail-verify: line {line_number} of "
-            f"{audit_trail_path} — {issue_kind}"
-        )
-        confidence = _ISSUE_KIND_TO_CONFIDENCE.get(
-            issue_kind, _ISSUE_DEFAULT_CONFIDENCE
-        )
+        claim = f"audit-trail-verify: line {line_number} of {audit_trail_path} — {issue_kind}"
+        confidence = _ISSUE_KIND_TO_CONFIDENCE.get(issue_kind, _ISSUE_DEFAULT_CONFIDENCE)
         emit_finding(
             conn,
             FindingRecord(
@@ -253,9 +254,7 @@ def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
     ),
 )
 @click.pass_context
-def audit_trail_verify(
-    ctx, input_path: str | None, gate: bool, persist: bool
-) -> None:
+def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -> None:
     """Verify SHA-256 chain integrity of a roam audit trail.
 
     \b
@@ -285,9 +284,7 @@ def audit_trail_verify(
             from roam.db.connection import open_db
 
             with open_db(readonly=False) as conn:
-                _emit_audit_trail_verify_findings(
-                    conn, issues, str(path), AUDIT_TRAIL_VERIFY_DETECTOR_VERSION
-                )
+                _emit_audit_trail_verify_findings(conn, issues, str(path), AUDIT_TRAIL_VERIFY_DETECTOR_VERSION)
                 conn.commit()
         except (sqlite3.OperationalError, click.ClickException):
             # findings table missing OR no .roam/index.db yet — degrade

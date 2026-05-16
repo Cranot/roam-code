@@ -814,9 +814,7 @@ class TestW832CritiqueCheckStatusCLI:
     a silent "No concerns" verdict — must surface partial_success.
     """
 
-    def test_cli_check_exception_surfaces_partial_critique(
-        self, critique_project, monkeypatch
-    ):
+    def test_cli_check_exception_surfaces_partial_critique(self, critique_project, monkeypatch):
         from roam.commands import cmd_critique as _cmd
 
         def _boom(*args, **kwargs):
@@ -841,9 +839,7 @@ class TestW832CritiqueCheckStatusCLI:
         diff_path.write_text(diff, encoding="utf-8")
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "critique", "--input", str(diff_path)]
-        )
+        result = runner.invoke(cli, ["--json", "critique", "--input", str(diff_path)])
         # The crash is caught — the command must NOT exit on the
         # exception (Pattern 1-B: partial signal beats total failure).
         assert result.exit_code in (0, 5), (
@@ -887,9 +883,7 @@ class TestW832CritiqueCheckStatusCLI:
             diff_path = proj / "patch.diff"
             diff_path.write_text(diff, encoding="utf-8")
 
-            result = runner.invoke(
-                cli, ["--json", "critique", "--input", str(diff_path)]
-            )
+            result = runner.invoke(cli, ["--json", "critique", "--input", str(diff_path)])
             assert result.exit_code in (0, 5), result.output
             data = json.loads(result.output)
             check_status = data["summary"]["check_status"]
@@ -900,9 +894,6 @@ class TestW832CritiqueCheckStatusCLI:
             assert cs.startswith("skipped:"), f"expected skipped:*, got {cs!r}"
             # Partial state must be disclosed.
             assert data["summary"]["partial_success"] is True
-            assert (
-                data["summary"]["verdict"]
-                != "No concerns from roam critique"
-            )
+            assert data["summary"]["verdict"] != "No concerns from roam critique"
         finally:
             os.chdir(old_cwd)

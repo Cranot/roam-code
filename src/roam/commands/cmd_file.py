@@ -1,4 +1,11 @@
-"""Show file skeleton: all definitions with signatures."""
+"""Show file skeleton: all definitions with signatures.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because file-skeleton outputs are invocation-scoped definition
+summaries — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
+"""
 
 from __future__ import annotations
 

@@ -88,11 +88,7 @@ _INLINE_EQ_PATTERN = re.compile(
 
 
 def _iter_source_files() -> list[Path]:
-    return [
-        p
-        for p in SRC_ROOT.rglob("*.py")
-        if "__pycache__" not in p.parts
-    ]
+    return [p for p in SRC_ROOT.rglob("*.py") if "__pycache__" not in p.parts]
 
 
 def _docstring_ids(tree: ast.AST) -> set[int]:
@@ -108,11 +104,7 @@ def _docstring_ids(tree: ast.AST) -> set[int]:
         if not isinstance(body, list) or not body:
             continue
         first = body[0]
-        if (
-            isinstance(first, ast.Expr)
-            and isinstance(first.value, ast.Constant)
-            and isinstance(first.value.value, str)
-        ):
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
             ids.add(id(first.value))
     return ids
 
@@ -152,8 +144,7 @@ def test_no_inline_edge_kind_in_tuples() -> None:
             continue
         violations.extend(_find_string_violations(path, _INLINE_IN_PATTERN))
     assert not violations, (
-        "W512: inline edges.kind IN-tuple — import from "
-        "roam.db.edge_kinds instead:\n  " + "\n  ".join(violations)
+        "W512: inline edges.kind IN-tuple — import from roam.db.edge_kinds instead:\n  " + "\n  ".join(violations)
     )
 
 
@@ -198,9 +189,7 @@ def test_canonical_module_imports_consistent() -> None:
 
 def test_allowlist_entries_actually_exist() -> None:
     """Every allowlist entry must point at a real file (no stale rows)."""
-    missing = [
-        rel for rel in _ALLOWLIST if not (SRC_ROOT / rel).exists()
-    ]
+    missing = [rel for rel in _ALLOWLIST if not (SRC_ROOT / rel).exists()]
     assert not missing, f"W512 allowlist references missing files: {missing}"
 
 
@@ -221,15 +210,9 @@ def test_allowlist_entries_actually_exist() -> None:
         ("catalog/python_idioms.py", "CALL_EDGE_KINDS"),
     ],
 )
-def test_migrated_sites_import_canonical_module(
-    rel: str, expected_marker: str
-) -> None:
+def test_migrated_sites_import_canonical_module(rel: str, expected_marker: str) -> None:
     """The known migration targets each import from roam.db.edge_kinds."""
     path = SRC_ROOT / rel
     text = path.read_text(encoding="utf-8")
-    assert "roam.db.edge_kinds" in text, (
-        f"W512: {rel} should import from roam.db.edge_kinds"
-    )
-    assert expected_marker in text, (
-        f"W512: {rel} should reference {expected_marker}"
-    )
+    assert "roam.db.edge_kinds" in text, f"W512: {rel} should import from roam.db.edge_kinds"
+    assert expected_marker in text, f"W512: {rel} should reference {expected_marker}"
