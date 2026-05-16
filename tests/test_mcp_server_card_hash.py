@@ -30,10 +30,12 @@ from tests._helpers.repo_root import repo_root
 # v13.1 (2026-05-15): bumped after version bump 13.0 → 13.1 (card body
 # only changed the ``"version"`` field; W554 audit-report YAML bundle
 # unchanged; all other card content stable).
-# v13.2 (2026-05-16, W1307): bumped after version bump 13.1 → 13.2.
+# v13.2 (2026-05-16, W1307+W1308): bumped after version bump 13.1 → 13.2.
 # Card body changed only in the "version" field; auto-derived counts
-# (238 commands / 224 MCP tools / 57 core preset) unchanged.
-_EXPECTED_CARD_SHA256 = "b9e39c86536c5dba86695d4692d0000216b5d1fefaf4f90d03d6a91704f76300"
+# (238 commands / 224 MCP tools / 57 core preset) unchanged. The hash
+# is computed on the LF-line-ending bytes (canonical git storage) so
+# the pin matches the CI Linux digest, not the Windows-CRLF digest.
+_EXPECTED_CARD_SHA256 = "bef2dc3e8d4618e5a105621430d32bb93361e3e8d0c4f5f0f6fb7dfd50fe3ca8"
 
 
 def _card_path() -> Path:
