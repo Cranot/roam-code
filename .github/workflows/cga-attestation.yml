@@ -53,7 +53,7 @@ jobs:
         run: pip install -e .
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Index the repo
         run: |
@@ -138,7 +138,7 @@ jobs:
         run: pip install -e .
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Index the repo
         run: |
