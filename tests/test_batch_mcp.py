@@ -12,7 +12,6 @@ Covers:
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from unittest.mock import patch
 
@@ -21,6 +20,25 @@ import pytest
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _disable_cold_start_guard(monkeypatch):
+    """W1281 root-cause fix: tests mock open_db / db_exists via _patch_db,
+    but the @_tool cold-start guard reads ``roam.db.connection.db_exists``
+    independently (via ``mcp_extras.preflight.index_is_built``). When a
+    project's ``.roam/index.db`` is missing -- which is the default on CI
+    Linux runners -- the guard returns an ``index_not_built`` envelope
+    BEFORE the inner function runs, so the test sees a different summary
+    shape (no ``queries_executed`` / ``symbols_resolved`` field).
+
+    Mirrors the same fixture in ``test_mcp_refactoring_wrappers.py`` etc.
+    ``ROAM_MCP_DISABLE_COLD_START_GUARD`` flips the guard to a no-op for
+    the duration of each test (see
+    ``roam.mcp_extras.preflight.maybe_cold_start_envelope``).
+    """
+    monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    yield
 
 
 @pytest.fixture()
@@ -392,16 +410,6 @@ class TestBatchGetOne:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    os.environ.get("CI") == "true",
-    reason=(
-        "CI Linux fails on KeyError: 'queries_executed' inside summary while "
-        "Windows local passes. Root cause is plausibly @_tool wrapper / "
-        "_maybe_handle_off env-conditional transformation on the empty-queries "
-        "branch. Tracked as a follow-up task. Skipping the class here keeps "
-        "v13.2 CI green; the local dev workflow still runs the tests."
-    ),
-)
 class TestBatchSearch:
     """Integration-style tests for the roam_batch_search MCP tool."""
 
@@ -610,14 +618,6 @@ class TestBatchSearch:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    os.environ.get("CI") == "true",
-    reason=(
-        "Same CI/local divergence as TestBatchSearch (W1281). "
-        "KeyError: 'symbols_resolved' on CI Linux only. Skipping the "
-        "class here keeps v13.2 CI green; local dev still runs tests."
-    ),
-)
 class TestBatchGet:
     """Integration-style tests for the roam_batch_get MCP tool."""
 
