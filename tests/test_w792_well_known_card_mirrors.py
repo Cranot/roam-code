@@ -19,7 +19,13 @@ from pathlib import Path
 
 import pytest
 
-_WELL_KNOWN = Path(__file__).resolve().parent.parent / "templates" / "distribution" / "landing-page" / ".well-known"
+_WELL_KNOWN = (
+    Path(__file__).resolve().parent.parent
+    / "templates"
+    / "distribution"
+    / "landing-page"
+    / ".well-known"
+)
 
 _CANONICAL = _WELL_KNOWN / "mcp-server-card.json"
 _SEP_1649 = _WELL_KNOWN / "mcp" / "server-card.json"
@@ -41,7 +47,9 @@ def test_w792_all_three_variants_byte_identical() -> None:
     """All three .well-known card paths must hash to the same SHA256."""
     hashes = {path: _sha256(path) for path in _VARIANTS}
     canonical_hash = hashes[_CANONICAL]
-    drifted = {str(path): h for path, h in hashes.items() if h != canonical_hash}
+    drifted = {
+        str(path): h for path, h in hashes.items() if h != canonical_hash
+    }
     assert not drifted, (
         "MCP server-card .well-known mirrors drifted from canonical "
         f"({_CANONICAL.name}={canonical_hash}); drifted={drifted}"
@@ -52,4 +60,6 @@ def test_w792_all_three_variants_same_size() -> None:
     """Defence-in-depth: byte length must match (catches truncation before hash)."""
     sizes = {str(path): path.stat().st_size for path in _VARIANTS}
     distinct = set(sizes.values())
-    assert len(distinct) == 1, f"MCP server-card .well-known mirrors differ in size: {sizes}"
+    assert len(distinct) == 1, (
+        f"MCP server-card .well-known mirrors differ in size: {sizes}"
+    )

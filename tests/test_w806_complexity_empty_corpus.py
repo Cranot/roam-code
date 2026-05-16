@@ -58,7 +58,9 @@ def _run_complexity_json(repo):
     if not raw.startswith("{"):
         start = raw.find("{")
         end = raw.rfind("}")
-        assert start >= 0 and end > start, f"complexity emitted no JSON envelope on empty corpus (rc={rc}):\n{out}"
+        assert start >= 0 and end > start, (
+            f"complexity emitted no JSON envelope on empty corpus (rc={rc}):\n{out}"
+        )
         raw = raw[start : end + 1]
     envelope = json.loads(raw)
     return envelope, rc, out
