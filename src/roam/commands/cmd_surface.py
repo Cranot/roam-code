@@ -69,31 +69,38 @@ def _build_surface() -> dict:
     for name, target in _COMMANDS.items():
         target_to_names.setdefault(target, []).append(name)
 
-    # MCP-exposed tools (read from mcp_server registry).
-    # ``_TOOL_METADATA`` is populated unconditionally by every ``@_tool(...)``
-    # decorator (the decorator writes metadata BEFORE the fastmcp-presence
-    # check), so the count of *defined* tools is env-independent and equals
-    # the AST-derived ground truth in ``roam.surface_counts``. Distinguish
-    # that from ``mcp_introspection_available``, which now means "the
-    # FastMCP transport is importable and could actually serve these tools
-    # at runtime" — two different signals on two different axes.
-    mcp_tools: list[str] = []
+    # MCP-exposed tools.
+    #
+    # W1290: counts come from the AST-based ``roam.surface_counts`` helper,
+    # NOT from a runtime ``import roam.mcp_server``. The runtime path is
+    # fragile on fresh installs (any transitive ImportError silently lands
+    # in the outer ``except`` and produces ``mcp_tool_count: 0``, which is
+    # exactly the smoke-transcript Bug #1 a CTO/CISO sees as broken trust
+    # in the "224 MCP tools" headline). The AST scan is env-independent,
+    # equals the ground-truth count by construction, and survives a missing
+    # optional dep.
+    #
+    # The runtime import is kept ONLY for ``mcp_introspection_available``
+    # — a distinct signal meaning "the FastMCP transport is importable and
+    # could actually serve these tools at runtime", on a different axis
+    # from the count of *defined* tools.
+    from roam.surface_counts import (
+        mcp_preset_counts,
+        mcp_tool_names as _ast_mcp_tool_names,
+    )
+
+    mcp_tools: list[str] = _ast_mcp_tool_names()
+    preset_counts: dict[str, int] = mcp_preset_counts()
     mcp_introspection_available = False
-    preset_counts: dict[str, int] = {}
     try:
-        from roam.mcp_server import _PRESETS, _TOOL_METADATA
         from roam.mcp_server import FastMCP as _FastMCP
 
         mcp_introspection_available = _FastMCP is not None
-        mcp_tools = list(_TOOL_METADATA.keys())
-        total = len(_TOOL_METADATA)
-        # "full" preset is the empty-set sentinel meaning "no filter / all tools".
-        # Resolve it to the actual total so consumers don't see a misleading 0.
-        for preset_name, members in _PRESETS.items():
-            preset_counts[preset_name] = len(members) if members else total
     except Exception:
-        # MCP server module failed to import entirely — leave both signals as the
-        # "unavailable / empty" baseline set above.
+        # mcp_server module failed to import (e.g. transitive import error on
+        # a fresh install without [mcp] extras). The counts above are still
+        # correct because they're AST-derived; only the transport signal is
+        # left at the "unavailable" baseline.
         pass
 
     from roam.cli import _deprecation_record

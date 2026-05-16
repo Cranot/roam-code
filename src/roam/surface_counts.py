@@ -221,6 +221,113 @@ def _is_tool_decorator(node: ast.expr) -> bool:
     return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_tool"
 
 
+def _eval_set_expr(node: ast.expr, env: dict[str, set[str]]) -> set[str]:
+    """Evaluate a static set expression from `_PRESETS` against a name env.
+
+    Supports the exact shapes used in ``mcp_server._PRESETS``:
+
+    - ``set()`` -> empty set (used for the ``full`` sentinel)
+    - ``_CORE_TOOLS.copy()`` -> a copy of ``env["_CORE_TOOLS"]``
+    - ``{"a", "b", ...}`` -> a Set literal
+    - ``_CORE_TOOLS | {"a", "b"}`` -> union BinOp combining the above
+
+    Raises ``ValueError`` on any unsupported shape so a future ``_PRESETS``
+    rewrite that uses, say, list comprehensions or imported names fails
+    loudly instead of silently producing wrong counts.
+    """
+    if isinstance(node, ast.Set):
+        return {ast.literal_eval(elt) for elt in node.elts}
+    if isinstance(node, ast.Call):
+        # set() with no args -> empty set sentinel for the "full" preset
+        if isinstance(node.func, ast.Name) and node.func.id == "set" and not node.args and not node.keywords:
+            return set()
+        # `<Name>.copy()` -> copy of the named set
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "copy"
+            and isinstance(node.func.value, ast.Name)
+            and not node.args
+            and not node.keywords
+        ):
+            ref = node.func.value.id
+            if ref not in env:
+                raise ValueError(f"unknown set name in _PRESETS: {ref!r}")
+            return set(env[ref])
+        raise ValueError(f"unsupported call in _PRESETS: {ast.dump(node)}")
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _eval_set_expr(node.left, env) | _eval_set_expr(node.right, env)
+    if isinstance(node, ast.Name):
+        if node.id not in env:
+            raise ValueError(f"unknown set name in _PRESETS: {node.id!r}")
+        return set(env[node.id])
+    raise ValueError(f"unsupported expression in _PRESETS: {ast.dump(node)}")
+
+
+def mcp_preset_counts() -> dict[str, int]:
+    """Return ``{preset_name: tool_count}`` parsed from ``_PRESETS`` in mcp_server.py.
+
+    AST-only; no runtime import of ``roam.mcp_server`` (which transitively
+    requires every command module and is fragile on fresh installs). The
+    ``full`` preset is the empty-set sentinel meaning "no filter / all
+    tools" — we resolve it to the actual total so consumers don't see a
+    misleading 0. Closed enumeration (CLAUDE.md Constraint 8): the keys
+    are exactly the literal keys of ``_PRESETS``.
+    """
+    mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
+    module = _load_ast(mcp_path)
+    core_tools = _literal_assignment(module, "_CORE_TOOLS")
+    if not isinstance(core_tools, set):
+        raise TypeError("_CORE_TOOLS is not a set literal")
+
+    # Locate the `_PRESETS = {...}` (or annotated `_PRESETS: ... = {...}`) Dict node.
+    presets_dict: ast.Dict | None = None
+    for node in module.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "_PRESETS":
+                    if isinstance(node.value, ast.Dict):
+                        presets_dict = node.value
+                    break
+        elif isinstance(node, ast.AnnAssign):
+            if (
+                isinstance(node.target, ast.Name)
+                and node.target.id == "_PRESETS"
+                and node.value is not None
+                and isinstance(node.value, ast.Dict)
+            ):
+                presets_dict = node.value
+        if presets_dict is not None:
+            break
+    if presets_dict is None:
+        raise KeyError("`_PRESETS` dict not found in mcp_server.py")
+
+    # Build the static name environment the preset values reference.
+    decorated = set()
+    for node in ast.walk(module):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not _is_tool_decorator(decorator):
+                continue
+            for kw in decorator.keywords:
+                if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    decorated.add(kw.value.value)
+    total = len(decorated)
+    env: dict[str, set[str]] = {"_CORE_TOOLS": set(core_tools)}
+
+    counts: dict[str, int] = {}
+    for key_node, value_node in zip(presets_dict.keys, presets_dict.values):
+        if not (isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)):
+            raise ValueError(f"non-string key in _PRESETS: {ast.dump(key_node)}")
+        name = key_node.value
+        members = _eval_set_expr(value_node, env)
+        # `full` is the empty-set "no filter / all tools" sentinel — match
+        # the runtime resolution in mcp_server / cmd_surface so consumers
+        # see the actual total, not 0.
+        counts[name] = len(members) if members else total
+    return counts
+
+
 def mcp_surface_counts() -> dict:
     """Return MCP tool counts from `_tool(name=...)` decorators and presets."""
     mcp_path = _repo_root() / "src" / "roam" / "mcp_server.py"
@@ -246,6 +353,7 @@ def mcp_surface_counts() -> dict:
         "core_tools": len(core_tools),
         "registered_tools": len(set(decorated_tool_names)),
         "duplicate_tool_names": duplicates,
+        "preset_counts": mcp_preset_counts(),
     }
 
 
