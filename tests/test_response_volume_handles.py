@@ -71,6 +71,12 @@ def _isolate_handle_dir(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ROAM_MCP_HANDLE_KB", "20")
+    # W1292: the W296 cold-start guard fires before the monkeypatched
+    # _run_roam runs and returns its own envelope (".roam/index.db
+    # missing"), so the handle-off wrapper never sees a >threshold
+    # payload. Bypass the guard so the test exercises handle-off
+    # logic instead of the cold-start short-circuit.
+    monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
     # Reset GC counter so amortised cleanup doesn't fire mid-test and
     # delete the file under test.
     try:
