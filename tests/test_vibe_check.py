@@ -320,16 +320,13 @@ class TestVibeCheckJSON:
         score_bearing = [p for p in patterns if not p.get("informational")]
         informational = [p for p in patterns if p.get("informational")]
         assert len(score_bearing) == 8, (
-            "8 score-bearing patterns must remain; W371 must not promote "
-            "informational patterns into the weight set"
+            "8 score-bearing patterns must remain; W371 must not promote informational patterns into the weight set"
         )
         assert len(informational) == 2
         info_names = {p["name"] for p in informational}
         assert info_names == {"modular_mirage", "boilerplate_inflation"}
         for p in informational:
-            assert p["weight"] == 0, (
-                f"informational pattern {p['name']} must have weight 0"
-            )
+            assert p["weight"] == 0, f"informational pattern {p['name']} must have weight 0"
         for p in patterns:
             assert "name" in p
             assert "found" in p

@@ -3,6 +3,13 @@
 Provides two CLI commands:
   - ``roam annotate <target> <content>`` — write an annotation
   - ``roam annotations <target>``        — read annotations
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam annotate`` operates on substrate state in ``.roam/``
+(annotation records) — not code locations or per-location violations.
+The state is consumed by other roam commands + agent runtimes directly
+from disk; SARIF would be redundant. See action.yml _SUPPORTED_SARIF
+allowlist + W1181-audit memo.
 """
 
 from __future__ import annotations

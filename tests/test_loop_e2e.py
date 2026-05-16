@@ -32,8 +32,6 @@ Coordination notes:
 from __future__ import annotations
 
 import json
-import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -45,9 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (  # noqa: E402
     git_init,
     index_in_process,
-    parse_json_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,13 +76,7 @@ def _fixture_project(tmp_path: Path, name: str = "loopproj") -> Path:
     proj = tmp_path / name
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "main.py").write_text(
-        "def hello():\n"
-        "    return 'hi'\n"
-        "\n"
-        "def add(a, b):\n"
-        "    return a + b\n"
-    )
+    (proj / "main.py").write_text("def hello():\n    return 'hi'\n\ndef add(a, b):\n    return a + b\n")
     (proj / "writer.py").write_text(
         "def dump_state(path, content):\n"
         "    with open(path, 'w') as f:\n"
@@ -109,9 +99,7 @@ def _fixture_project(tmp_path: Path, name: str = "loopproj") -> Path:
     )
     git_init(proj)
     # Pin a stable branch so pr-bundle filename is deterministic across tests.
-    subprocess.run(
-        ["git", "checkout", "-B", "loop-branch"], cwd=proj, capture_output=True
-    )
+    subprocess.run(["git", "checkout", "-B", "loop-branch"], cwd=proj, capture_output=True)
     out, rc = index_in_process(proj)
     assert rc == 0, f"index failed:\n{out}"
     return proj
@@ -266,9 +254,7 @@ def test_loop_full_chain_with_runs_ledger(tmp_path, cli_runner, monkeypatch):
     auto = edata["summary"].get("auto_collect") or {}
     # With ROAM_RUN_ID set, preflight/diff envelopes landed in
     # .roam/responses/, so envelopes_scanned should be >= 1.
-    assert auto.get("envelopes_scanned", 0) >= 1, (
-        f"expected auto-collect to fold >= 1 envelope, got {auto}"
-    )
+    assert auto.get("envelopes_scanned", 0) >= 1, f"expected auto-collect to fold >= 1 envelope, got {auto}"
 
     # Step 11: runs end.
     r = _invoke(cli_runner, ["--json", "runs", "end"])
@@ -289,8 +275,7 @@ def test_loop_full_chain_with_runs_ledger(tmp_path, cli_runner, monkeypatch):
     repdata = _parse_json(r)
     events = repdata.get("events", [])
     assert len(events) >= 4, (
-        f"expected >= 4 events in replay, got {len(events)}:\n"
-        f"{json.dumps(events, indent=2)[:1000]}"
+        f"expected >= 4 events in replay, got {len(events)}:\n{json.dumps(events, indent=2)[:1000]}"
     )
     actions = {e.get("action") for e in events}
     # The critical assertion: preflight AND pr-bundle BOTH show up. This is
@@ -301,9 +286,7 @@ def test_loop_full_chain_with_runs_ledger(tmp_path, cli_runner, monkeypatch):
     # pr-bundle-emit; allow either canonical form. Accept any action that
     # begins with 'pr-bundle'.
     pr_bundle_actions = [a for a in actions if a and a.startswith("pr-bundle")]
-    assert pr_bundle_actions, (
-        f"no pr-bundle actions in replay: {sorted(a for a in actions if a)}"
-    )
+    assert pr_bundle_actions, f"no pr-bundle actions in replay: {sorted(a for a in actions if a)}"
 
     # Step 13: agent-score.
     r = _invoke(cli_runner, ["--json", "agent-score"])
@@ -363,9 +346,7 @@ def test_loop_laws_mine_then_check(tmp_path, cli_runner, monkeypatch):
 
     # Introduce a camelCase function that violates the naming convention.
     # The diff stays unstaged; laws-check defaults to --diff-source working.
-    (proj / "violator.py").write_text(
-        "def fetchUserCamel(uid): return uid\n"
-    )
+    (proj / "violator.py").write_text("def fetchUserCamel(uid): return uid\n")
     # Stage but don't commit — staged is fine for working too because the
     # working diff includes unstaged changes.
     # laws-check uses git diff which includes new files only when -- they
@@ -434,9 +415,7 @@ def test_loop_constitution_apply_gates(tmp_path, cli_runner, monkeypatch):
     # The verdict should mention preflight (the canonical before_edit gate)
     # OR mention the gate name itself, OR mention how many checks ran.
     needles = ("preflight", "before_edit", "check", "gate")
-    assert any(n in verdict.lower() for n in needles), (
-        f"verdict didn't mention any of {needles}: {verdict!r}"
-    )
+    assert any(n in verdict.lower() for n in needles), f"verdict didn't mention any of {needles}: {verdict!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -530,14 +509,8 @@ def test_loop_pr_bundle_with_r28_auto_risks(tmp_path, cli_runner, monkeypatch):
     assert rec.get("world_model_confidence") in ("high", "medium", "low"), rec
 
     # The auto-risk should be present.
-    auto_risks = [
-        r
-        for r in bundle["risks"]
-        if r.get("source_command") == "auto:world-model"
-    ]
-    assert len(auto_risks) >= 1, (
-        f"expected >= 1 auto:world-model risk, got: {bundle['risks']}"
-    )
+    auto_risks = [r for r in bundle["risks"] if r.get("source_command") == "auto:world-model"]
+    assert len(auto_risks) >= 1, f"expected >= 1 auto:world-model risk, got: {bundle['risks']}"
     risk = auto_risks[0]
     assert risk.get("severity") in ("M", "H"), risk
     assert "dump_state" in (risk.get("description") or ""), risk
@@ -583,9 +556,7 @@ def test_loop_mode_restricts_what_runs(tmp_path, cli_runner, monkeypatch):
     assert "allowed" in data["summary"], data["summary"]
     # In read_only mode, attest should NOT be allowed (it's a write-side
     # command per the policy table).
-    assert data["summary"]["allowed"] is False, (
-        f"expected attest BLOCKED in read_only, got: {data['summary']}"
-    )
+    assert data["summary"]["allowed"] is False, f"expected attest BLOCKED in read_only, got: {data['summary']}"
 
     # Conversely, in autonomous_pr mode it should be allowed.
     r = _invoke(cli_runner, ["--json", "mode", "autonomous_pr"])
@@ -593,9 +564,7 @@ def test_loop_mode_restricts_what_runs(tmp_path, cli_runner, monkeypatch):
 
     r = _invoke(cli_runner, ["--json", "mode", "--check", "attest"])
     data = _parse_json(r)
-    assert data["summary"]["allowed"] is True, (
-        f"expected attest ALLOWED in autonomous_pr, got: {data['summary']}"
-    )
+    assert data["summary"]["allowed"] is True, f"expected attest ALLOWED in autonomous_pr, got: {data['summary']}"
 
     # Test dispatch-level enforcement only IF W14.2 has shipped a
     # gate at the CLI surface. Probe for it by attempting to invoke

@@ -1,4 +1,16 @@
-"""Query reachability of ingested vulnerabilities through the call graph."""
+"""Query reachability of ingested vulnerabilities through the call graph.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because vuln-reach outputs are invocation-scoped reachability
+aggregates (vulnerable paths from entry points to ingested CVE-tagged
+symbols, ranked by depth / fan-in) — not per-location code
+violations in source-coordinate form. The underlying CVE-to-symbol
+mapping comes from ``roam vuln-map`` (the producer); SARIF exposure
+for vulnerability findings is reserved for ecosystem scanners
+(npm/pip/trivy/osv) whose native output already targets SARIF
+consumers. See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH
+propagation plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

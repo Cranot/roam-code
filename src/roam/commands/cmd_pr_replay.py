@@ -26,6 +26,15 @@ Usage:
 
     # Paid Deep report on a 90-day historical window
     roam pr-replay --tier deep --range "v1.0..main" --output report.md
+
+Output formats: text (default), ``--json``, plus a buyer-facing Markdown
+narrative report written via ``--output``. SARIF is deliberately NOT
+emitted because pr-replay outputs are invocation-scoped buyer-facing
+report envelopes (composed from ``roam postmortem`` aggregations) — not
+per-location violations. The composed subcommands emit their own
+--sarif when applicable; cmd_pr_replay rolls them up into a narrative
+report. See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH
+Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -437,8 +446,7 @@ def _build_review_suggestions(
         "suggested_ci_gates": ci_gates,
         "what_review_would_have_blocked": blocked,
         "upgrade_pitch": (
-            "Roam Review enforces these gates on every PR automatically. "
-            "See https://roam-code.com/compare."
+            "Roam Review enforces these gates on every PR automatically. See https://roam-code.com/compare."
         ),
     }
     # Only include the YAML preview when we actually matched a template —
@@ -637,7 +645,7 @@ def _active_run_id_for_replay() -> str | None:
             in_progress = False
             try:
                 meta = _json.loads((child / "meta.json").read_text(encoding="utf-8"))
-                in_progress = (meta.get("status") == "in_progress")
+                in_progress = meta.get("status") == "in_progress"
             except Exception:  # noqa: BLE001 — meta drift must not block
                 pass
             candidates.append((mtime, child.name, in_progress))
@@ -650,9 +658,7 @@ def _active_run_id_for_replay() -> str | None:
     return candidates[0][1]
 
 
-def _gather_rules_envelopes(
-    active_run_id: str | None, warnings: list[str]
-) -> list[dict]:
+def _gather_rules_envelopes(active_run_id: str | None, warnings: list[str]) -> list[dict]:
     """Best-effort: emit one envelope by invoking ``roam rules --json``.
 
     The collector consumes any envelope shaped like ``{results: [...]}``
@@ -672,9 +678,7 @@ def _gather_rules_envelopes(
                     try:
                         out.append(_json.loads(f.read_text(encoding="utf-8")))
                     except Exception as exc:  # noqa: BLE001
-                        warnings.append(
-                            f"rules-envelope at {f.name} unparseable: {exc}"
-                        )
+                        warnings.append(f"rules-envelope at {f.name} unparseable: {exc}")
             except OSError as exc:
                 warnings.append(f"rules-envelopes dir unreadable: {exc}")
             if out:
@@ -688,24 +692,18 @@ def _gather_rules_envelopes(
         from roam.cli import cli
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "rules"], catch_exceptions=True
-        )
+        result = runner.invoke(cli, ["--json", "rules"], catch_exceptions=True)
         if result.exit_code == 0 and result.output:
             payload = _json.loads(result.output)
             out.append(payload)
         elif result.exit_code != 0:
-            warnings.append(
-                f"roam rules exited {result.exit_code}; rules envelope skipped"
-            )
+            warnings.append(f"roam rules exited {result.exit_code}; rules envelope skipped")
     except Exception as exc:  # noqa: BLE001 — best-effort
         warnings.append(f"rules-envelope gather failed: {exc}")
     return out
 
 
-def _gather_audit_trail_envelope(
-    active_run_id: str | None, warnings: list[str]
-) -> dict | None:
+def _gather_audit_trail_envelope(active_run_id: str | None, warnings: list[str]) -> dict | None:
     """Best-effort: invoke ``roam audit-trail-verify --json``.
 
     The audit trail itself lives at ``.roam/audit-trail.jsonl`` (global,
@@ -720,13 +718,9 @@ def _gather_audit_trail_envelope(
         from roam.cli import cli
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "audit-trail-verify"], catch_exceptions=True
-        )
+        result = runner.invoke(cli, ["--json", "audit-trail-verify"], catch_exceptions=True)
         if result.exit_code != 0 or not result.output:
-            warnings.append(
-                f"audit-trail-verify exited {result.exit_code}; envelope skipped"
-            )
+            warnings.append(f"audit-trail-verify exited {result.exit_code}; envelope skipped")
             return None
         env = _json.loads(result.output)
         # Stamp the active run id onto the envelope summary so the
@@ -740,9 +734,7 @@ def _gather_audit_trail_envelope(
         return None
 
 
-def _gather_vuln_reach_envelopes(
-    commit_range: str, warnings: list[str]
-) -> list[dict]:
+def _gather_vuln_reach_envelopes(commit_range: str, warnings: list[str]) -> list[dict]:
     """Best-effort: emit one envelope by invoking ``roam vuln-reach --json``.
 
     Skips when no vulnerabilities DB has been ingested (the command
@@ -756,9 +748,7 @@ def _gather_vuln_reach_envelopes(
         from roam.cli import cli
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "vuln-reach"], catch_exceptions=True
-        )
+        result = runner.invoke(cli, ["--json", "vuln-reach"], catch_exceptions=True)
         if result.exit_code == 0 and result.output:
             payload = _json.loads(result.output)
             # Only attach if the command actually reports vulnerabilities;
@@ -769,17 +759,13 @@ def _gather_vuln_reach_envelopes(
             if vulns:
                 out.append(payload)
         elif result.exit_code != 0:
-            warnings.append(
-                f"roam vuln-reach exited {result.exit_code}; envelope skipped"
-            )
+            warnings.append(f"roam vuln-reach exited {result.exit_code}; envelope skipped")
     except Exception as exc:  # noqa: BLE001 — best-effort
         warnings.append(f"vuln-reach envelope gather failed: {exc}")
     return out
 
 
-def _gather_test_impact_envelopes(
-    commit_range: str, warnings: list[str]
-) -> list[dict]:
+def _gather_test_impact_envelopes(commit_range: str, warnings: list[str]) -> list[dict]:
     """Best-effort: emit one envelope by invoking ``roam test-impact --json``.
 
     The command expects ``--changed-files`` or scans staged + unstaged
@@ -793,26 +779,20 @@ def _gather_test_impact_envelopes(
         from roam.cli import cli
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "test-impact"], catch_exceptions=True
-        )
+        result = runner.invoke(cli, ["--json", "test-impact"], catch_exceptions=True)
         if result.exit_code == 0 and result.output:
             payload = _json.loads(result.output)
             tests = payload.get("tests") or []
             if tests:
                 out.append(payload)
         elif result.exit_code != 0:
-            warnings.append(
-                f"roam test-impact exited {result.exit_code}; envelope skipped"
-            )
+            warnings.append(f"roam test-impact exited {result.exit_code}; envelope skipped")
     except Exception as exc:  # noqa: BLE001 — best-effort
         warnings.append(f"test-impact envelope gather failed: {exc}")
     return out
 
 
-def _gather_cga_envelopes(
-    active_run_id: str | None, warnings: list[str]
-) -> list[dict]:
+def _gather_cga_envelopes(active_run_id: str | None, warnings: list[str]) -> list[dict]:
     """Best-effort: load CGA in-toto statements from ``.roam/attestations/``.
 
     A signed CGA emits a ``<short_hash>.intoto.json`` file under
@@ -835,9 +815,7 @@ def _gather_cga_envelopes(
             try:
                 statement = _json.loads(path.read_text(encoding="utf-8"))
             except Exception as exc:  # noqa: BLE001
-                warnings.append(
-                    f"cga statement at {path.name} unparseable: {exc}"
-                )
+                warnings.append(f"cga statement at {path.name} unparseable: {exc}")
                 continue
             predicate = statement.get("predicate") or {}
             envelope = {
@@ -857,9 +835,7 @@ def _gather_cga_envelopes(
     return out
 
 
-def _gather_mcp_receipts_dir(
-    active_run_id: str | None, warnings: list[str]
-) -> str | None:
+def _gather_mcp_receipts_dir(active_run_id: str | None, warnings: list[str]) -> str | None:
     """Best-effort: return ``.roam/mcp_receipts/<run_id>/`` when present.
 
     The collector tolerates a missing directory (no warnings, no
@@ -955,10 +931,7 @@ def _gather_context_files(
         # ``git diff`` on a missing range exits non-zero — surface a
         # warning but never abort the replay.
         stderr_tail = result.stderr.decode("utf-8", errors="replace").strip()[:200]
-        warnings.append(
-            f"_gather_context_files: git diff returned {result.returncode}: "
-            f"{stderr_tail}"
-        )
+        warnings.append(f"_gather_context_files: git diff returned {result.returncode}: {stderr_tail}")
         return []
     text = result.stdout.decode("utf-8", errors="replace")
     seen: set[str] = set()
@@ -973,10 +946,7 @@ def _gather_context_files(
         # the packet. The collector enforces its own ceilings too, but
         # capping at the producer is the cheaper guard.
         if len(out) >= 500:
-            warnings.append(
-                "_gather_context_files: capped at 500 entries; "
-                "larger diffs are intentionally truncated"
-            )
+            warnings.append("_gather_context_files: capped at 500 entries; larger diffs are intentionally truncated")
             break
     return out
 
@@ -1038,9 +1008,7 @@ def _gather_constitution_policy_decisions(
         from roam.constitution.loader import load_constitution
         from roam.db.connection import find_project_root
     except Exception as exc:  # noqa: BLE001 — best-effort
-        warnings.append(
-            f"_gather_constitution_policy_decisions: import failed ({exc})"
-        )
+        warnings.append(f"_gather_constitution_policy_decisions: import failed ({exc})")
         return []
     try:
         repo_root = find_project_root()
@@ -1052,9 +1020,7 @@ def _gather_constitution_policy_decisions(
         constitution = load_constitution(Path(repo_root))
     except Exception as exc:  # noqa: BLE001 — loader is supposed to never
         # raise, but be defensive in case a future change reverses that.
-        warnings.append(
-            f"_gather_constitution_policy_decisions: load failed ({exc})"
-        )
+        warnings.append(f"_gather_constitution_policy_decisions: load failed ({exc})")
         return []
     if constitution is None:
         return []
@@ -1066,9 +1032,7 @@ def _gather_constitution_policy_decisions(
     # no way to distinguish "no gates configured" from "gates exist but
     # the file is malformed."
     if constitution.metadata.get("unparseable"):
-        warnings.append(
-            "constitution: .roam/constitution.yml is malformed — required_checks ignored"
-        )
+        warnings.append("constitution: .roam/constitution.yml is malformed — required_checks ignored")
         return []
     # W293 — stamp provenance at the producer/gatherer ingestion site so
     # the typed PolicyDecision's ``extra["provenance"]`` carries the
@@ -1076,6 +1040,7 @@ def _gather_constitution_policy_decisions(
     # ``.roam/constitution.yml`` source surface.
     try:
         from roam.evidence.provenance import provenance_label
+
         prov = provenance_label("producer_envelope", detail="constitution")
     except Exception:  # noqa: BLE001 - helper is supposed to never fail
         prov = None
@@ -1123,9 +1088,7 @@ def _gather_permit_policy_decisions(
         from roam.db.connection import find_project_root
         from roam.permits.store import load_permits_from_disk
     except Exception as exc:  # noqa: BLE001 — best-effort
-        warnings.append(
-            f"_gather_permit_policy_decisions: import failed ({exc})"
-        )
+        warnings.append(f"_gather_permit_policy_decisions: import failed ({exc})")
         return []
     try:
         repo_root = find_project_root()
@@ -1145,6 +1108,7 @@ def _gather_permit_policy_decisions(
     # W293 — provenance stamp for permit rows.
     try:
         from roam.evidence.provenance import provenance_label
+
         prov = provenance_label("producer_envelope", detail="permit")
     except Exception:  # noqa: BLE001 - helper is supposed to never fail
         prov = None
@@ -1196,9 +1160,7 @@ def _gather_lease_policy_decisions(
         from roam.db.connection import find_project_root
         from roam.leases import list_leases
     except Exception as exc:  # noqa: BLE001 — best-effort
-        warnings.append(
-            f"_gather_lease_policy_decisions: import failed ({exc})"
-        )
+        warnings.append(f"_gather_lease_policy_decisions: import failed ({exc})")
         return []
     try:
         repo_root = find_project_root()
@@ -1218,14 +1180,12 @@ def _gather_lease_policy_decisions(
         # quiet path on a bare repo.
         try:
             from roam.modes import get_active_mode
+
             active_mode = get_active_mode(Path(repo_root))
         except Exception:  # noqa: BLE001 — best-effort, never block
             active_mode = None
         if active_mode in {"migration", "autonomous_pr"}:
-            warnings.append(
-                f"leases: .roam/leases/ directory not found — "
-                f"expected for mode '{active_mode}'"
-            )
+            warnings.append(f"leases: .roam/leases/ directory not found — expected for mode '{active_mode}'")
         return []
     try:
         # W425: thread the producer-warning bucket so malformed /
@@ -1240,13 +1200,12 @@ def _gather_lease_policy_decisions(
         )
     except Exception as exc:  # noqa: BLE001 — list_leases is supposed to
         # never raise, but be defensive.
-        warnings.append(
-            f"_gather_lease_policy_decisions: list_leases failed ({exc})"
-        )
+        warnings.append(f"_gather_lease_policy_decisions: list_leases failed ({exc})")
         return []
     # W293 — provenance stamp for lease rows.
     try:
         from roam.evidence.provenance import provenance_label
+
         prov = provenance_label("producer_envelope", detail="lease")
     except Exception:  # noqa: BLE001 - helper is supposed to never fail
         prov = None
@@ -1339,8 +1298,10 @@ def _approval_record_to_envelope_dict(record) -> dict:
     if "provenance" not in out:
         try:
             from roam.evidence.provenance import provenance_label
+
             out["provenance"] = provenance_label(
-                "producer_envelope", detail="github_review",
+                "producer_envelope",
+                detail="github_review",
             )
         except Exception:  # noqa: BLE001 - helper is supposed to never fail
             pass
@@ -1380,8 +1341,7 @@ def _gather_github_reviews(
 
     if pr_number is None:
         warnings.append(
-            "github review source provided without --github-pr-number; "
-            "skipping (parser requires a PR number)"
+            "github review source provided without --github-pr-number; skipping (parser requires a PR number)"
         )
         return (), (), True
 
@@ -1399,9 +1359,7 @@ def _gather_github_reviews(
             parse_github_reviews,
         )
     except Exception as exc:  # noqa: BLE001 - parser import is best-effort
-        warnings.append(
-            f"github review parser unavailable: {exc}"
-        )
+        warnings.append(f"github review parser unavailable: {exc}")
         return (), (), True
 
     try:
@@ -1416,12 +1374,12 @@ def _gather_github_reviews(
                     f"--github-pr-number"
                 )
             reviews = harvest_reviews_from_gh_cli(
-                owner=owner, repo=repo, pr_number=pr_number,
+                owner=owner,
+                repo=repo,
+                pr_number=pr_number,
             )
     except Exception as exc:  # noqa: BLE001 - load is best-effort
-        warnings.append(
-            f"github review load failed: {exc}"
-        )
+        warnings.append(f"github review load failed: {exc}")
         return (), (), True
 
     try:
@@ -1431,17 +1389,13 @@ def _gather_github_reviews(
             pr_number=pr_number,
         )
     except Exception as exc:  # noqa: BLE001 - parse is best-effort
-        warnings.append(
-            f"github review parse failed: {exc}"
-        )
+        warnings.append(f"github review parse failed: {exc}")
         return (), (), True
 
     for w in parser_warnings:
         warnings.append(f"github review: {w}")
 
-    approval_dicts = tuple(
-        _approval_record_to_envelope_dict(r) for r in approvals
-    )
+    approval_dicts = tuple(_approval_record_to_envelope_dict(r) for r in approvals)
     policy_dicts = tuple(d.to_dict() for d in policy_decisions)
     return approval_dicts, policy_dicts, True
 
@@ -1458,23 +1412,15 @@ def _parse_gh_spec(spec: str) -> tuple[str, str, int | None]:
         try:
             pr_num: int | None = int(pr_part)
         except ValueError as exc:
-            raise ValueError(
-                f"--github-reviews-gh PR component is not an int: "
-                f"{pr_part!r}"
-            ) from exc
+            raise ValueError(f"--github-reviews-gh PR component is not an int: {pr_part!r}") from exc
     else:
         repo_part = spec
         pr_num = None
     if "/" not in repo_part:
-        raise ValueError(
-            f"--github-reviews-gh expected OWNER/REPO[#PR], got {spec!r}"
-        )
+        raise ValueError(f"--github-reviews-gh expected OWNER/REPO[#PR], got {spec!r}")
     owner, repo = repo_part.split("/", 1)
     if not owner or not repo:
-        raise ValueError(
-            f"--github-reviews-gh OWNER/REPO halves must be non-empty: "
-            f"{spec!r}"
-        )
+        raise ValueError(f"--github-reviews-gh OWNER/REPO halves must be non-empty: {spec!r}")
     return owner, repo, pr_num
 
 
@@ -1716,10 +1662,7 @@ def _collect_change_evidence(
                 commit_range=commit_range,
                 workspace_root=str(w272_ws_root) if w272_ws_root else None,
             )
-            w272_env_refs_dicts = [
-                {"env_kind": r.env_kind, "env_id": r.env_id}
-                for r in w272_env_refs_tuple
-            ]
+            w272_env_refs_dicts = [{"env_kind": r.env_kind, "env_id": r.env_id} for r in w272_env_refs_tuple]
         except Exception:
             w272_env_refs_tuple = ()
             w272_env_refs_dicts = []
@@ -1747,23 +1690,17 @@ def _collect_change_evidence(
         pre_warnings.append(f"_gather_rules_envelopes crashed: {exc}")
         rules_envelopes = []
     try:
-        audit_trail_envelope = _gather_audit_trail_envelope(
-            active_run_id, pre_warnings
-        )
+        audit_trail_envelope = _gather_audit_trail_envelope(active_run_id, pre_warnings)
     except Exception as exc:  # noqa: BLE001
         pre_warnings.append(f"_gather_audit_trail_envelope crashed: {exc}")
         audit_trail_envelope = None
     try:
-        vuln_reach_envelopes = _gather_vuln_reach_envelopes(
-            commit_range, pre_warnings
-        )
+        vuln_reach_envelopes = _gather_vuln_reach_envelopes(commit_range, pre_warnings)
     except Exception as exc:  # noqa: BLE001
         pre_warnings.append(f"_gather_vuln_reach_envelopes crashed: {exc}")
         vuln_reach_envelopes = []
     try:
-        test_impact_envelopes = _gather_test_impact_envelopes(
-            commit_range, pre_warnings
-        )
+        test_impact_envelopes = _gather_test_impact_envelopes(commit_range, pre_warnings)
     except Exception as exc:  # noqa: BLE001
         pre_warnings.append(f"_gather_test_impact_envelopes crashed: {exc}")
         test_impact_envelopes = []
@@ -1773,9 +1710,7 @@ def _collect_change_evidence(
         pre_warnings.append(f"_gather_cga_envelopes crashed: {exc}")
         cga_envelopes = []
     try:
-        mcp_receipts_dir = _gather_mcp_receipts_dir(
-            active_run_id, pre_warnings
-        )
+        mcp_receipts_dir = _gather_mcp_receipts_dir(active_run_id, pre_warnings)
     except Exception as exc:  # noqa: BLE001
         pre_warnings.append(f"_gather_mcp_receipts_dir crashed: {exc}")
         mcp_receipts_dir = None
@@ -1784,31 +1719,19 @@ def _collect_change_evidence(
     # (constitution gates / permits / leases). The collector concatenates
     # the results with its existing rules + audit-trail decisions.
     try:
-        constitution_policy_decisions = (
-            _gather_constitution_policy_decisions(pre_warnings)
-        )
+        constitution_policy_decisions = _gather_constitution_policy_decisions(pre_warnings)
     except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(
-            f"_gather_constitution_policy_decisions crashed: {exc}"
-        )
+        pre_warnings.append(f"_gather_constitution_policy_decisions crashed: {exc}")
         constitution_policy_decisions = []
     try:
-        permit_policy_decisions = _gather_permit_policy_decisions(
-            pre_warnings
-        )
+        permit_policy_decisions = _gather_permit_policy_decisions(pre_warnings)
     except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(
-            f"_gather_permit_policy_decisions crashed: {exc}"
-        )
+        pre_warnings.append(f"_gather_permit_policy_decisions crashed: {exc}")
         permit_policy_decisions = []
     try:
-        lease_policy_decisions = _gather_lease_policy_decisions(
-            pre_warnings
-        )
+        lease_policy_decisions = _gather_lease_policy_decisions(pre_warnings)
     except Exception as exc:  # noqa: BLE001
-        pre_warnings.append(
-            f"_gather_lease_policy_decisions crashed: {exc}"
-        )
+        pre_warnings.append(f"_gather_lease_policy_decisions crashed: {exc}")
         lease_policy_decisions = []
     extra_policy_decisions: list[dict] = []
     extra_policy_decisions.extend(constitution_policy_decisions)
@@ -1821,9 +1744,7 @@ def _collect_change_evidence(
     # into an ``EvidenceArtifact`` via
     # ``_build_context_refs_from_context_files``.
     try:
-        context_files = _gather_context_files(
-            commit_range, commits, pre_warnings
-        )
+        context_files = _gather_context_files(commit_range, commits, pre_warnings)
     except Exception as exc:  # noqa: BLE001 — best-effort
         pre_warnings.append(f"_gather_context_files crashed: {exc}")
         context_files = []
@@ -1837,14 +1758,12 @@ def _collect_change_evidence(
     # source was supplied but yielded no approvals, we deliberately SKIP the
     # ``producer_not_available`` stamp below — the operator checked, the
     # data was empty, that is not the same as "producer unavailable."
-    gh_approval_dicts, gh_policy_dicts, gh_source_was_provided = (
-        _gather_github_reviews(
-            fixture_path=github_reviews_json,
-            gh_spec=github_reviews_gh,
-            pr_number=github_pr_number,
-            head_commit_sha=head_sha,
-            warnings=pre_warnings,
-        )
+    gh_approval_dicts, gh_policy_dicts, gh_source_was_provided = _gather_github_reviews(
+        fixture_path=github_reviews_json,
+        gh_spec=github_reviews_gh,
+        pr_number=github_pr_number,
+        head_commit_sha=head_sha,
+        warnings=pre_warnings,
     )
     if gh_approval_dicts:
         existing = list(pr_bundle_envelope.get("approvals") or [])
@@ -1885,15 +1804,32 @@ def _collect_change_evidence(
     # "checked, no approval on head commit" — not "producer unavailable."
     # Skip the redaction stamp so Q8 honestly scores ``missing`` instead of
     # the misleading ``partial`` the marker would induce.
-    if (
-        not _existing_approvals
-        and not _existing_accepted
-        and not gh_source_was_provided
-    ):
+    if not _existing_approvals and not _existing_accepted and not gh_source_was_provided:
         _q8_redactions = list(pr_bundle_envelope.get("redactions") or [])
         if "producer_not_available" not in _q8_redactions:
             _q8_redactions.append("producer_not_available")
             pr_bundle_envelope["redactions"] = _q8_redactions
+
+    # ── W1279 — config-hash drift detection wire-up. Lift the three
+    # W1255-IMPL hashes from the active run's meta.json (packet-side)
+    # and recompute on-disk (current-side) so the collector's W1253
+    # drift detector can fire. Missing run / missing meta gracefully
+    # degrades to ``packet_config_hashes=None`` -> no drift flag, no
+    # crash. Repo-root resolution failure also degrades cleanly:
+    # ``gather_hash_kwargs`` swallows filesystem errors via
+    # ``current_hashes_or_none``.
+    try:
+        from roam.db.connection import find_project_root
+        from roam.evidence.config_hashes_producer import gather_hash_kwargs
+
+        try:
+            _repo_root_for_hashes = find_project_root()
+        except Exception:  # noqa: BLE001
+            _repo_root_for_hashes = Path(".")
+        _hash_kwargs = gather_hash_kwargs(_repo_root_for_hashes, active_run_id)
+    except Exception as exc:  # noqa: BLE001 - hash wire-up is best-effort
+        pre_warnings.append(f"_w1279_gather_hash_kwargs crashed: {exc}")
+        _hash_kwargs = {}
 
     packet, warnings = collect_change_evidence(
         pr_bundle_envelope=pr_bundle_envelope,
@@ -1911,13 +1847,17 @@ def _collect_change_evidence(
         diff_hash=diff_hash,
         mode="pr_replay",
         schema_version=EVIDENCE_SCHEMA_VERSION,
+        **_hash_kwargs,
     )
     warnings = list(pre_warnings) + list(warnings)
 
     # Warnings -> stderr, one line each. Surface them so an operator can
     # spot upstream-envelope drift, but never fail the command.
     for w in warnings:
-        print(f"[pr-replay] evidence-collector warning: {w}", file=sys.stderr)
+        # Deliberate stderr write — surfacing collector warnings without
+        # failing the command. click.echo to stderr would be equivalent but
+        # less explicit about the intent.
+        print(f"[pr-replay] evidence-collector warning: {w}", file=sys.stderr)  # noqa: T201
 
     # Merge commit subjects back in (W176 produced none — we passed no
     # ``affected_symbols``), then re-stamp the content hash so the on-disk
@@ -1941,9 +1881,7 @@ def _collect_change_evidence(
     # ``EnvironmentRef`` rows come first to preserve their canonical
     # order; ours append in their own canonical order behind.
     if w272_env_refs_tuple:
-        seen: set[tuple[str, str]] = {
-            (r.env_kind, r.env_id) for r in packet.environment_refs
-        }
+        seen: set[tuple[str, str]] = {(r.env_kind, r.env_id) for r in packet.environment_refs}
         merged_env_refs = list(packet.environment_refs)
         for r in w272_env_refs_tuple:
             key = (r.env_kind, r.env_id)
@@ -2045,6 +1983,7 @@ def _collapse_to_line(s: str) -> str:
     # deliberately wide — we'd rather drop a legitimate escape than let
     # one through into a buyer report.
     import re as _re
+
     text = _re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", text)
     text = _re.sub(r"\x1b\][^\x07]*\x07", "", text)
     text = text.replace("\x1b", "")
@@ -2168,12 +2107,14 @@ def _render_banner_markdown(evidence) -> str:
     keep ``roam --help`` cold-start fast).
     """
     from roam.evidence.banner import render_banner_markdown
+
     return render_banner_markdown(evidence)
 
 
 def _banner_envelope_block(evidence) -> dict:
     """Thin wrapper for :func:`roam.evidence.banner.banner_envelope_block`."""
     from roam.evidence.banner import banner_envelope_block
+
     return banner_envelope_block(evidence)
 
 
@@ -2222,10 +2163,7 @@ def _render_evidence_markdown(
     for c in commits:
         for f in c.get("files") or []:
             files_seen.add(str(f))
-    out.append(
-        f"- {len(evidence.changed_subjects)} symbols changed across "
-        f"{len(files_seen)} files"
-    )
+    out.append(f"- {len(evidence.changed_subjects)} symbols changed across {len(files_seen)} files")
     out.append(f"- Diff hash: `{evidence.diff_hash or 'unavailable'}`")
     out.append("")
 
@@ -2363,10 +2301,7 @@ def _render_evidence_markdown(
                 # W217 hostile-input safety: ``class`` is detector-named
                 # and could contain hostile chars from a custom detector.
                 safe_class = _escape_cell_code(row["class"])
-                out.append(
-                    f"| `{safe_class}` | {row['total_findings']} | "
-                    f"{row['commits_with_finding']} |"
-                )
+                out.append(f"| `{safe_class}` | {row['total_findings']} | {row['commits_with_finding']} |")
         out.append("")
 
         # Suggested .roam/rules.yml
@@ -2400,8 +2335,7 @@ def _render_evidence_markdown(
         out.append("")
         if not would_block:
             out.append(
-                "_No high-severity findings recurred. Review's BLOCK verdict "
-                "would not have fired on this window._"
+                "_No high-severity findings recurred. Review's BLOCK verdict would not have fired on this window._"
             )
         else:
             out.append("| SHA | Date | Subject | High findings | Rationale |")
@@ -2415,10 +2349,7 @@ def _render_evidence_markdown(
                 date = _escape_cell_text(b.get("date", "?"))
                 subj = _escape_cell_text(b.get("subject", "") or "")
                 rationale = _escape_cell_text(b.get("rationale", "") or "")
-                out.append(
-                    f"| `{sha}` | {date} | {subj} | "
-                    f"{b.get('high_findings', 0)} | {rationale} |"
-                )
+                out.append(f"| `{sha}` | {date} | {subj} | {b.get('high_findings', 0)} | {rationale} |")
         out.append("")
 
     # Evidence limitations (W185 — agentic-assurance crosswalk §"Build deltas"
@@ -2522,8 +2453,7 @@ def _render_evidence_limitations(evidence) -> str:
 _Q_GAP_LABELS: dict[str, tuple[str, str]] = {
     "Q1": (
         "actor",
-        "no actor identity recorded; the change cannot be "
-        "attributed to a specific human, agent, or MCP client.",
+        "no actor identity recorded; the change cannot be attributed to a specific human, agent, or MCP client.",
     ),
     "Q2": (
         "authority",
@@ -2539,13 +2469,11 @@ _Q_GAP_LABELS: dict[str, tuple[str, str]] = {
     ),
     "Q4": (
         "changed_subjects",
-        "no `changed_subjects[]` entries; the packet does not "
-        "name what changed.",
+        "no `changed_subjects[]` entries; the packet does not name what changed.",
     ),
     "Q5": (
         "risk",
-        "no `risk_level` recorded; the report does not classify "
-        "the risk introduced by the change.",
+        "no `risk_level` recorded; the report does not classify the risk introduced by the change.",
     ),
     "Q6": (
         "policy",
@@ -2555,13 +2483,11 @@ _Q_GAP_LABELS: dict[str, tuple[str, str]] = {
     ),
     "Q7": (
         "verify",
-        "no `tests_run[]` or `artifacts[]` entries; nothing "
-        "external verifies that the change was tested.",
+        "no `tests_run[]` or `artifacts[]` entries; nothing external verifies that the change was tested.",
     ),
     "Q8": (
         "accept",
-        "no `approvals[]` or `accepted_risks[]` entries; the "
-        "report does not show who accepted residual risk.",
+        "no `approvals[]` or `accepted_risks[]` entries; the report does not show who accepted residual risk.",
     ),
 }
 
@@ -2572,30 +2498,16 @@ _Q_GAP_LABELS: dict[str, tuple[str, str]] = {
 # WITHOUT adding an explanation here causes the derived bullet to fall
 # back to a generic phrasing — see :func:`_derive_limitations`.
 _REDACTION_EXPLANATIONS: dict[str, str] = {
-    "secret": (
-        "secrets scrubbed by collector hardening (W232/W241/W249)"
-    ),
+    "secret": ("secrets scrubbed by collector hardening (W232/W241/W249)"),
     "pii": "personally identifiable information removed",
     "sensitive_content": "policy-sensitive content removed",
-    "size_limit": (
-        "packet exceeded the 256 KiB budget; some fields were "
-        "truncated (W280)"
-    ),
+    "size_limit": ("packet exceeded the 256 KiB budget; some fields were truncated (W280)"),
     "policy": "content removed by an explicit policy rule",
-    "user_opt_in_required": (
-        "raw context requires explicit user enablement before "
-        "appearing in the report"
-    ),
-    "machine_local_path": (
-        "local filesystem path redacted to avoid leaking the "
-        "developer's working directory"
-    ),
-    "schema_strict": (
-        "content stripped to keep the packet schema-strict"
-    ),
+    "user_opt_in_required": ("raw context requires explicit user enablement before appearing in the report"),
+    "machine_local_path": ("local filesystem path redacted to avoid leaking the developer's working directory"),
+    "schema_strict": ("content stripped to keep the packet schema-strict"),
     "producer_not_available": (
-        "no producer is wired for this evidence type yet — the "
-        "data source does not exist, it is not masked (W261)"
+        "no producer is wired for this evidence type yet — the data source does not exist, it is not masked (W261)"
     ),
 }
 
@@ -2653,27 +2565,17 @@ def _derive_limitations(evidence) -> tuple[str, ...]:
                 # Q-gap bullet and the redaction bullet — they agree
                 # by construction, not by string-matching.
                 redactions = getattr(evidence, "redactions", ()) or ()
-                if (
-                    q_key == "Q8"
-                    and "producer_not_available" in redactions
-                ):
+                if q_key == "Q8" and "producer_not_available" in redactions:
                     detail = (
                         "limitation declared via "
                         "`producer_not_available` redaction; no real "
                         "approval data available from this producer."
                     )
                 else:
-                    detail = (
-                        "the packet carries weak signal but the "
-                        "corroborating structured field is empty."
-                    )
-                bullets.append(
-                    f"- **{q_key} ({name}): PARTIAL** — {detail}"
-                )
+                    detail = "the packet carries weak signal but the corroborating structured field is empty."
+                bullets.append(f"- **{q_key} ({name}): PARTIAL** — {detail}")
             else:  # missing
-                bullets.append(
-                    f"- **{q_key} ({name}): MISSING** — {why}"
-                )
+                bullets.append(f"- **{q_key} ({name}): MISSING** — {why}")
 
     # Source 2: Redaction reasons. Iterate in tuple order (deterministic
     # by construction) so the bullet ordering is stable across runs.
@@ -2681,12 +2583,9 @@ def _derive_limitations(evidence) -> tuple[str, ...]:
     for reason in redactions:
         explanation = _REDACTION_EXPLANATIONS.get(
             reason,
-            "reason not in the documented vocabulary; consult the "
-            "producer that emitted it.",
+            "reason not in the documented vocabulary; consult the producer that emitted it.",
         )
-        bullets.append(
-            f"- **Redacted content: `{reason}`** — {explanation}"
-        )
+        bullets.append(f"- **Redacted content: `{reason}`** — {explanation}")
 
     # Source 3: Trust-tier warnings. W211 vocabulary: an actor whose
     # ``trust_tier`` is ``self_reported_agent`` or ``unknown`` has no
@@ -2715,12 +2614,9 @@ def _derive_limitations(evidence) -> tuple[str, ...]:
         # is already safe, but routing it through the same helper keeps
         # the rendering uniform and resilient to future enum drift.
         safe_tier = _escape_cell_code(tier)
-        corroboration = (
-            "no CI-attested or git-author corroboration available"
-        )
+        corroboration = "no CI-attested or git-author corroboration available"
         bullets.append(
-            f"- **Actor identity unverified**: `agent_id=\"{actor_id}\"` "
-            f"classified as `{safe_tier}`; {corroboration}."
+            f'- **Actor identity unverified**: `agent_id="{actor_id}"` classified as `{safe_tier}`; {corroboration}.'
         )
 
     return tuple(bullets)
@@ -2812,10 +2708,7 @@ def _render_actors_section(evidence) -> str:
     actor_refs = getattr(evidence, "actor_refs", ()) or ()
 
     if actor_refs:
-        rows = [
-            (r.actor_kind, r.actor_id, r.display_name or "—")
-            for r in actor_refs
-        ]
+        rows = [(r.actor_kind, r.actor_id, r.display_name or "—") for r in actor_refs]
         return _format_actors_table(rows)
 
     # Fall back to legacy flat fields if refs are empty but the older
@@ -2830,8 +2723,7 @@ def _render_actors_section(evidence) -> str:
         if human_actor:
             rows.append(("human", human_actor, "—"))
         return (
-            _format_actors_table(rows)
-            + "\n\n_(Synthesised from `agent_id` / `human_actor` legacy "
+            _format_actors_table(rows) + "\n\n_(Synthesised from `agent_id` / `human_actor` legacy "
             "fields; populate `actor_refs` for richer attribution.)_"
         )
 
@@ -2855,10 +2747,7 @@ def _render_authorities_section(evidence) -> str:
             "mode, permit, approval, policy rule, or token scope — see "
             "Evidence limitations below._"
         )
-    rows = [
-        (r.authority_kind, r.authority_id, r.granted_by or "—")
-        for r in authority_refs
-    ]
+    rows = [(r.authority_kind, r.authority_id, r.granted_by or "—") for r in authority_refs]
     return _format_authorities_table(rows)
 
 
@@ -3484,15 +3373,10 @@ def pr_replay_cmd(
     # PR-number requirement live here so an operator sees the error
     # before any evidence work begins.
     if github_reviews_json is not None and github_reviews_gh is not None:
+        raise click.UsageError("Use --github-reviews-json OR --github-reviews-gh, not both.")
+    if (github_reviews_json is not None or github_reviews_gh is not None) and github_pr_number is None:
         raise click.UsageError(
-            "Use --github-reviews-json OR --github-reviews-gh, not both."
-        )
-    if (
-        github_reviews_json is not None or github_reviews_gh is not None
-    ) and github_pr_number is None:
-        raise click.UsageError(
-            "--github-pr-number is required when --github-reviews-json or "
-            "--github-reviews-gh is set."
+            "--github-pr-number is required when --github-reviews-json or --github-reviews-gh is set."
         )
 
     tier = tier.lower()
@@ -3626,17 +3510,13 @@ def pr_replay_cmd(
             summary=summary,
             by_detector=by_detector,
             generated_at=generated_at,
-            github_reviews_json=(
-                str(github_reviews_json) if github_reviews_json else None
-            ),
+            github_reviews_json=(str(github_reviews_json) if github_reviews_json else None),
             github_pr_number=github_pr_number,
             github_reviews_gh=github_reviews_gh,
         )
         if evidence_json_target:
             evidence_json_target.parent.mkdir(parents=True, exist_ok=True)
-            evidence_json_target.write_text(
-                evidence_packet.to_canonical_json(), encoding="utf-8"
-            )
+            evidence_json_target.write_text(evidence_packet.to_canonical_json(), encoding="utf-8")
             evidence_written_to = str(evidence_json_target)
             if not json_mode:
                 click.echo(f"Wrote ChangeEvidence JSON to {evidence_written_to}")
@@ -3651,9 +3531,7 @@ def pr_replay_cmd(
             markdown_companion_target.write_text(companion_md, encoding="utf-8")
             markdown_companion_written_to = str(markdown_companion_target)
             if not json_mode:
-                click.echo(
-                    f"Wrote Markdown companion to {markdown_companion_written_to}"
-                )
+                click.echo(f"Wrote Markdown companion to {markdown_companion_written_to}")
 
     if json_mode:
         extra_payload: dict = {
@@ -3671,9 +3549,7 @@ def pr_replay_cmd(
         # packet was built for this invocation (e.g. neither --evidence
         # nor --markdown / --evidence-bundle was passed).
         if evidence_packet is not None:
-            extra_payload["evidence_coverage"] = _banner_envelope_block(
-                evidence_packet
-            )
+            extra_payload["evidence_coverage"] = _banner_envelope_block(evidence_packet)
 
         click.echo(
             to_json(
@@ -3695,9 +3571,7 @@ def pr_replay_cmd(
                         "review_suggestions_present": review_suggestions is not None,
                         "evidence_path": evidence_written_to,
                         "markdown_path": markdown_companion_written_to,
-                        "evidence_content_hash": (
-                            evidence_packet.content_hash if evidence_packet else None
-                        ),
+                        "evidence_content_hash": (evidence_packet.content_hash if evidence_packet else None),
                         "evidence_coverage_tier": (
                             extra_payload.get("evidence_coverage", {}).get("tier")
                             if evidence_packet is not None

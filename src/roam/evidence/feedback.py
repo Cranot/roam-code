@@ -65,23 +65,27 @@ from roam.atomic_io import atomic_write_json
 #:                                  data
 #: * ``deferred``                 — acknowledged but pushed to later
 #: * ``duplicate``                — same as another finding
-FEEDBACK_DECISIONS: frozenset[str] = frozenset({
-    "accepted_real",
-    "dismissed_false_positive",
-    "dismissed_by_design",
-    "dismissed_test_fixture",
-    "deferred",
-    "duplicate",
-})
+FEEDBACK_DECISIONS: frozenset[str] = frozenset(
+    {
+        "accepted_real",
+        "dismissed_false_positive",
+        "dismissed_by_design",
+        "dismissed_test_fixture",
+        "deferred",
+        "duplicate",
+    }
+)
 
 #: Set of decisions that count as a dismissal. Used by
 #: :func:`aggregate_dismissal_reasons` to filter the rationale stream
 #: down to the rules-pack improvement signal.
-_DISMISSAL_DECISIONS: frozenset[str] = frozenset({
-    "dismissed_false_positive",
-    "dismissed_by_design",
-    "dismissed_test_fixture",
-})
+_DISMISSAL_DECISIONS: frozenset[str] = frozenset(
+    {
+        "dismissed_false_positive",
+        "dismissed_by_design",
+        "dismissed_test_fixture",
+    }
+)
 
 #: Maximum length for the optional ``free_text`` field. Anything longer
 #: is truncated at construction time. The cap keeps feedback payloads
@@ -215,27 +219,15 @@ class FindingFeedback:
 
     def __post_init__(self) -> None:
         if not isinstance(self.finding_id_str, str) or not self.finding_id_str:
-            raise ValueError(
-                "FindingFeedback.finding_id_str must be a non-empty string"
-            )
+            raise ValueError("FindingFeedback.finding_id_str must be a non-empty string")
         if self.decision not in FEEDBACK_DECISIONS:
-            raise ValueError(
-                f"unknown decision: {self.decision!r}; "
-                f"expected one of {sorted(FEEDBACK_DECISIONS)}"
-            )
+            raise ValueError(f"unknown decision: {self.decision!r}; expected one of {sorted(FEEDBACK_DECISIONS)}")
         if not isinstance(self.rationale, str) or not self.rationale:
-            raise ValueError(
-                "FindingFeedback.rationale must be a non-empty string"
-            )
+            raise ValueError("FindingFeedback.rationale must be a non-empty string")
         if not isinstance(self.reviewer, str) or not self.reviewer:
-            raise ValueError(
-                "FindingFeedback.reviewer must be a non-empty string"
-            )
+            raise ValueError("FindingFeedback.reviewer must be a non-empty string")
         if not isinstance(self.timestamp, str) or not self.timestamp:
-            raise ValueError(
-                "FindingFeedback.timestamp must be a non-empty ISO-8601 "
-                "UTC string"
-            )
+            raise ValueError("FindingFeedback.timestamp must be a non-empty ISO-8601 UTC string")
         # Validate timestamp parses (fail fast on garbage); we do not
         # store the parsed datetime because the dataclass is frozen and
         # the canonical-JSON form must round-trip the original string.
@@ -243,8 +235,7 @@ class FindingFeedback:
             _parse_iso(self.timestamp)
         except ValueError as exc:
             raise ValueError(
-                f"FindingFeedback.timestamp is not ISO-8601 parseable: "
-                f"{self.timestamp!r} ({exc})"
+                f"FindingFeedback.timestamp is not ISO-8601 parseable: {self.timestamp!r} ({exc})"
             ) from exc
         # free_text: truncate (NOT reject) — UX choice. Reviewers paste
         # in long-ish notes; silently truncating is friendlier than
@@ -252,13 +243,9 @@ class FindingFeedback:
         # is frozen.
         if self.free_text is not None:
             if not isinstance(self.free_text, str):
-                raise ValueError(
-                    "FindingFeedback.free_text must be a string or None"
-                )
+                raise ValueError("FindingFeedback.free_text must be a string or None")
             if len(self.free_text) > FREE_TEXT_MAX_CHARS:
-                object.__setattr__(
-                    self, "free_text", self.free_text[:FREE_TEXT_MAX_CHARS]
-                )
+                object.__setattr__(self, "free_text", self.free_text[:FREE_TEXT_MAX_CHARS])
 
     def to_canonical_json(self) -> str:
         """Deterministic JSON: sorted keys, no insignificant whitespace.
@@ -347,16 +334,14 @@ def load_feedback(
             obj = json.loads(raw)
         except (OSError, json.JSONDecodeError) as exc:
             warnings.warn(
-                f"load_feedback: skipping malformed feedback file "
-                f"{entry.name!r}: {exc}",
+                f"load_feedback: skipping malformed feedback file {entry.name!r}: {exc}",
                 UserWarning,
                 stacklevel=2,
             )
             continue
         if not isinstance(obj, dict):
             warnings.warn(
-                f"load_feedback: skipping non-object feedback file "
-                f"{entry.name!r}",
+                f"load_feedback: skipping non-object feedback file {entry.name!r}",
                 UserWarning,
                 stacklevel=2,
             )
@@ -373,8 +358,7 @@ def load_feedback(
             )
         except (KeyError, TypeError, ValueError) as exc:
             warnings.warn(
-                f"load_feedback: skipping invalid feedback file "
-                f"{entry.name!r}: {exc}",
+                f"load_feedback: skipping invalid feedback file {entry.name!r}: {exc}",
                 UserWarning,
                 stacklevel=2,
             )
@@ -408,9 +392,7 @@ def aggregate_dismissal_reasons(
     detector.
     """
     if not isinstance(detector, str) or not detector:
-        raise ValueError(
-            "aggregate_dismissal_reasons: detector must be a non-empty string"
-        )
+        raise ValueError("aggregate_dismissal_reasons: detector must be a non-empty string")
 
     all_feedback = load_feedback(feedback_dir=feedback_dir)
     prefix = f"{detector}:"
@@ -425,9 +407,7 @@ def aggregate_dismissal_reasons(
     # Return ordered dict: descending count, alphabetical tie-break.
     # Python 3.7+ dicts preserve insertion order — relied on by
     # callers that want the "top rationale" to be the first key.
-    return dict(
-        sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    )
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
 # ---------------------------------------------------------------------------

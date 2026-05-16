@@ -39,7 +39,6 @@ from roam.index.test_conventions import (
     JavaScriptConvention,
 )
 
-
 # ---------------------------------------------------------------------------
 # JavaScriptConvention — Vitest extension
 # ---------------------------------------------------------------------------
@@ -100,26 +99,16 @@ class TestJavaScriptConventionClassifyKind:
 
     def test_colocated_spec_is_unit(self):
         """Vitest convention: colocated spec = unit test."""
-        assert (
-            self.conv.classify_kind("src/composables/useFoo.test.ts") == KIND_UNIT
-        )
+        assert self.conv.classify_kind("src/composables/useFoo.test.ts") == KIND_UNIT
 
     def test_underscore_tests_dir_is_unit(self):
-        assert (
-            self.conv.classify_kind("src/composables/__tests__/useFoo.test.ts")
-            == KIND_UNIT
-        )
+        assert self.conv.classify_kind("src/composables/__tests__/useFoo.test.ts") == KIND_UNIT
 
     def test_vue_sfc_test_is_unit(self):
-        assert (
-            self.conv.classify_kind("src/components/Foo.test.vue") == KIND_UNIT
-        )
+        assert self.conv.classify_kind("src/components/Foo.test.vue") == KIND_UNIT
 
     def test_tests_integration_dir_is_integration(self):
-        assert (
-            self.conv.classify_kind("tests/integration/api.test.ts")
-            == KIND_INTEGRATION
-        )
+        assert self.conv.classify_kind("tests/integration/api.test.ts") == KIND_INTEGRATION
 
     def test_tests_e2e_dir_is_e2e(self):
         assert self.conv.classify_kind("tests/e2e/login.spec.ts") == KIND_E2E
@@ -131,15 +120,10 @@ class TestJavaScriptConventionClassifyKind:
         # Cypress's own convention uses .cy.ts, but the broader
         # JavaScriptConvention only claims .test/.spec files. We use
         # .spec.ts which is also a valid Cypress filename.
-        assert (
-            self.conv.classify_kind("cypress/e2e/checkout.spec.ts") == KIND_E2E
-        )
+        assert self.conv.classify_kind("cypress/e2e/checkout.spec.ts") == KIND_E2E
 
     def test_integration_infix_in_name(self):
-        assert (
-            self.conv.classify_kind("src/services/api.integration.test.ts")
-            == KIND_INTEGRATION
-        )
+        assert self.conv.classify_kind("src/services/api.integration.test.ts") == KIND_INTEGRATION
 
     def test_non_test_file_returns_unknown(self):
         from roam.index.test_conventions import KIND_UNKNOWN
@@ -161,17 +145,11 @@ class TestFileRolesVitest:
 
     def test_vitest_spec_detected_as_unit(self):
         """src/composables/useFoo.test.ts → unit (colocated Vitest spec)."""
-        assert (
-            classify_test_kind("src/composables/useFoo.test.ts")
-            == TEST_KIND_UNIT
-        )
+        assert classify_test_kind("src/composables/useFoo.test.ts") == TEST_KIND_UNIT
 
     def test_vitest_integration_spec_detected(self):
         """tests/integration/api.test.ts → integration."""
-        assert (
-            classify_test_kind("tests/integration/api.test.ts")
-            == TEST_KIND_INTEGRATION
-        )
+        assert classify_test_kind("tests/integration/api.test.ts") == TEST_KIND_INTEGRATION
 
     def test_vitest_e2e_spec_detected(self):
         """tests/e2e/login.spec.ts → e2e."""
@@ -179,9 +157,7 @@ class TestFileRolesVitest:
 
     def test_vue_sfc_test_detected_as_unit(self):
         """Foo.test.vue → unit."""
-        assert (
-            classify_test_kind("src/components/Foo.test.vue") == TEST_KIND_UNIT
-        )
+        assert classify_test_kind("src/components/Foo.test.vue") == TEST_KIND_UNIT
 
     def test_python_pytest_still_unknown_when_no_hint(self):
         """Python tests without kind hints stay 'unknown' — they don't
@@ -202,9 +178,7 @@ def _vitest_project(tmp_path, monkeypatch):
     spec under tests/integration/, 1 e2e spec under tests/e2e/."""
     # Source
     (tmp_path / "src" / "composables").mkdir(parents=True)
-    (tmp_path / "src" / "composables" / "useFoo.ts").write_text(
-        "export function useFoo() { return 1; }\n"
-    )
+    (tmp_path / "src" / "composables" / "useFoo.ts").write_text("export function useFoo() { return 1; }\n")
     (tmp_path / "src" / "composables" / "useFoo.test.ts").write_text(
         "import { useFoo } from './useFoo';\n"
         "import { test, expect } from 'vitest';\n"
@@ -212,9 +186,7 @@ def _vitest_project(tmp_path, monkeypatch):
     )
     # Vue SFC + colocated unit test
     (tmp_path / "src" / "components").mkdir(parents=True)
-    (tmp_path / "src" / "components" / "Foo.vue").write_text(
-        "<template><div>Foo</div></template>\n"
-    )
+    (tmp_path / "src" / "components" / "Foo.vue").write_text("<template><div>Foo</div></template>\n")
     (tmp_path / "src" / "components" / "Foo.test.vue").write_text(
         "<script>\nimport { test } from 'vitest';\ntest('renders', () => {});\n</script>\n"
     )
@@ -232,8 +204,7 @@ def _vitest_project(tmp_path, monkeypatch):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "-q", "-m", "init"],
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"],
         cwd=tmp_path,
         check=True,
     )
@@ -261,19 +232,11 @@ def test_test_pyramid_counts_vitest_specs(_vitest_project):
     # (tests/e2e/login.spec.ts). Indexer may or may not pick up .vue
     # depending on grammar availability; require unit >= 1 to keep
     # the test stable across machines.
-    assert summary["unit"] >= 1, (
-        f"expected at least 1 unit test, got {summary['unit']}: {summary}"
-    )
-    assert summary["integration"] >= 1, (
-        f"expected at least 1 integration test, got {summary['integration']}: {summary}"
-    )
-    assert summary["e2e"] >= 1, (
-        f"expected at least 1 e2e test, got {summary['e2e']}: {summary}"
-    )
+    assert summary["unit"] >= 1, f"expected at least 1 unit test, got {summary['unit']}: {summary}"
+    assert summary["integration"] >= 1, f"expected at least 1 integration test, got {summary['integration']}: {summary}"
+    assert summary["e2e"] >= 1, f"expected at least 1 e2e test, got {summary['e2e']}: {summary}"
     # Most importantly: the total must reflect the test files we wrote.
-    assert summary["total"] >= 3, (
-        f"expected total >= 3, got {summary['total']}: {summary}"
-    )
+    assert summary["total"] >= 3, f"expected total >= 3, got {summary['total']}: {summary}"
 
 
 # ---------------------------------------------------------------------------
@@ -299,9 +262,7 @@ def test_n1_skips_vitest_specs_on_vue_project(_vitest_project):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     summary = payload["summary"]
-    assert summary["total"] == 0, (
-        f"expected 0 N+1 findings on a Vue/Vitest project, got {summary['total']}: {summary}"
-    )
+    assert summary["total"] == 0, f"expected 0 N+1 findings on a Vue/Vitest project, got {summary['total']}: {summary}"
     # The verdict must still be a non-empty string (Pattern 1 in CLAUDE.md
     # — no JSON-parse-on-empty-input).
     assert isinstance(summary["verdict"], str) and summary["verdict"]
@@ -338,13 +299,13 @@ def _vue_router_project(tmp_path, monkeypatch):
     (tmp_path / "src" / "views").mkdir(parents=True)
     (tmp_path / "src" / "views" / "Home.vue").write_text(
         "<template><div>Home</div></template>\n"
-        "<script setup lang=\"ts\">\n"
+        '<script setup lang="ts">\n'
         "// no routes here — pure component\n"
         "</script>\n"
     )
     (tmp_path / "src" / "App.vue").write_text(
         "<template><router-view /></template>\n"
-        "<script setup lang=\"ts\">\n"
+        '<script setup lang="ts">\n'
         "import { createRouter } from 'vue-router';\n"
         "const inlineRoutes = [\n"
         "  { path: '/about', component: () => import('./views/About.vue') },\n"
@@ -355,8 +316,7 @@ def _vue_router_project(tmp_path, monkeypatch):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "-q", "-m", "init"],
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"],
         cwd=tmp_path,
         check=True,
     )
@@ -383,22 +343,17 @@ def test_endpoints_detects_vue_router_routes(_vue_router_project):
 
     # At minimum: the 3 routes in router/index.ts must surface.
     vue_router_eps = [e for e in endpoints if e.get("framework") == "vue-router"]
-    assert len(vue_router_eps) >= 3, (
-        f"expected >= 3 vue-router endpoints, got {len(vue_router_eps)}: {endpoints}"
-    )
+    assert len(vue_router_eps) >= 3, f"expected >= 3 vue-router endpoints, got {len(vue_router_eps)}: {endpoints}"
 
     paths = {e["path"] for e in vue_router_eps}
     assert "/" in paths, f"missing '/' route: {paths}"
     assert "/users" in paths, f"missing '/users' route: {paths}"
-    assert any(p.startswith("/users/") for p in paths), (
-        f"missing '/users/:id' route: {paths}"
-    )
+    assert any(p.startswith("/users/") for p in paths), f"missing '/users/:id' route: {paths}"
 
     # Vue Router routes are method-agnostic — every entry must report
     # method == 'ROUTE' (not 'GET'/'POST'/...).
     assert all(e["method"] == "ROUTE" for e in vue_router_eps), (
-        f"vue-router endpoints must use method 'ROUTE': "
-        f"{[e['method'] for e in vue_router_eps]}"
+        f"vue-router endpoints must use method 'ROUTE': {[e['method'] for e in vue_router_eps]}"
     )
 
     # Framework count and verdict must reflect the new framework.
@@ -412,7 +367,7 @@ def test_endpoints_skips_vue_files_without_router(tmp_path, monkeypatch):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "Plain.vue").write_text(
         "<template><div>Plain</div></template>\n"
-        "<script setup lang=\"ts\">\n"
+        '<script setup lang="ts">\n'
         "const items = [{ path: '/looks-like-a-route' }];\n"
         "// no router import here — must NOT be detected.\n"
         "</script>\n"
@@ -420,8 +375,7 @@ def test_endpoints_skips_vue_files_without_router(tmp_path, monkeypatch):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "-q", "-m", "init"],
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"],
         cwd=tmp_path,
         check=True,
     )
@@ -436,6 +390,5 @@ def test_endpoints_skips_vue_files_without_router(tmp_path, monkeypatch):
     payload = json.loads(result.output)
     vue_router_eps = [e for e in payload.get("endpoints", []) if e.get("framework") == "vue-router"]
     assert vue_router_eps == [], (
-        f"expected no vue-router endpoints on a project without createRouter, "
-        f"got {vue_router_eps}"
+        f"expected no vue-router endpoints on a project without createRouter, got {vue_router_eps}"
     )

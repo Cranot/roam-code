@@ -4,6 +4,12 @@ Reports: category, maturity, aliases, deprecation, MCP exposure, the
 DB tables it touches (best-effort source-grep), graph passes, optional
 extras, expected cost, stale-index sensitivity. Used by docs and by
 agents deciding which command to invoke.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because explain-command outputs are invocation-scoped command
+metadata — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -147,6 +153,9 @@ def _scan_module_for_extras(module_path: Path) -> list[str]:
     requires_index=False,
 )
 @click.command("explain-command")
+# W1108 — legitimate non-symbol "name" concept: CLI command name.
+# Resolves against surface_data["commands"] registry, not symbols
+# in the codebase graph. Permanent grandfather per W1111 audit.
 @click.argument("name")
 @click.pass_context
 def explain_command(ctx, name: str):
@@ -155,7 +164,20 @@ def explain_command(ctx, name: str):
     surface_data = _build_surface()
     match = next((c for c in surface_data["commands"] if c["name"] == name), None)
     if not match:
+        # W1074 (sibling of W1066): append difflib closest-match suggestion
+        # when the typo lands within cutoff 0.6 of a registered command
+        # name. The vocabulary is ~238 entries — borderline but still
+        # tractable. The suggestion is additive: a no-match path keeps the
+        # pre-W1074 error/hint lines byte-identical (the "Did you mean"
+        # line is omitted entirely when no candidate is within cutoff).
+        import difflib
+
+        known_names = sorted(c["name"] for c in surface_data["commands"])
+        close_matches = difflib.get_close_matches(name, known_names, n=2, cutoff=0.6)
         click.echo(f"ERROR: unknown command '{name}'.", err=True)
+        if close_matches:
+            quoted = " or ".join(f"'{m}'" for m in close_matches)
+            click.echo(f"  hint: did you mean {quoted}?", err=True)
         click.echo("  hint: run 'roam surface' to list every canonical command name.", err=True)
         ctx.exit(2)
 

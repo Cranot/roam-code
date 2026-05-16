@@ -23,7 +23,6 @@ the imperative fix step.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -33,7 +32,6 @@ from roam.commands.suppression import (
     load_suppressions_typed,
 )
 from roam.policy.suppression_v2 import RuleFileSuppression
-
 
 # ---------------------------------------------------------------------------
 # Missing-file path: no warning, no exception, empty list. The Pattern-2
@@ -87,10 +85,7 @@ def test_valid_load_returns_expected_dicts_without_warning(tmp_path: Path) -> No
 def test_valid_load_pre_w1032_caller_returns_same_dicts(tmp_path: Path) -> None:
     # Same input — the pre-W1032 call shape must produce the same rows.
     (tmp_path / ".roam-suppressions.yml").write_text(
-        "suppressions:\n"
-        "  - rule: r\n"
-        "    file: f\n"
-        "    status: safe\n",
+        "suppressions:\n  - rule: r\n    file: f\n    status: safe\n",
         encoding="utf-8",
     )
     result_pre = load_suppressions(tmp_path)
@@ -174,10 +169,7 @@ def test_malformed_entry_pre_w1032_silently_skips(tmp_path: Path) -> None:
     # Same shape as above — without warnings_out, the malformed rows are
     # silently dropped (byte-identical to pre-W1032 behaviour).
     (tmp_path / ".roam-suppressions.yml").write_text(
-        "suppressions:\n"
-        "  - file: only-file.py\n"
-        "  - rule: good\n"
-        "    file: good.py\n",
+        "suppressions:\n  - file: only-file.py\n  - rule: good\n    file: good.py\n",
         encoding="utf-8",
     )
     result = load_suppressions(tmp_path)
@@ -194,11 +186,7 @@ def test_malformed_entry_pre_w1032_silently_skips(tmp_path: Path) -> None:
 def test_typed_wrapper_plumbs_warnings_through(tmp_path: Path) -> None:
     pytest.importorskip("yaml")
     (tmp_path / ".roam-suppressions.yml").write_text(
-        "suppressions:\n"
-        "  - file: missing-rule.py\n"
-        "  - rule: r\n"
-        "    file: f\n"
-        "    status: safe\n",
+        "suppressions:\n  - file: missing-rule.py\n  - rule: r\n    file: f\n    status: safe\n",
         encoding="utf-8",
     )
     warnings_out: list[str] = []
@@ -215,9 +203,7 @@ def test_typed_wrapper_plumbs_warnings_through(tmp_path: Path) -> None:
 def test_typed_wrapper_pre_w1032_signature_still_works(tmp_path: Path) -> None:
     # Pre-W1032 callers used the positional-only signature. Same result.
     (tmp_path / ".roam-suppressions.yml").write_text(
-        "suppressions:\n"
-        "  - rule: r\n"
-        "    file: f\n",
+        "suppressions:\n  - rule: r\n    file: f\n",
         encoding="utf-8",
     )
     result = load_suppressions_typed(tmp_path)

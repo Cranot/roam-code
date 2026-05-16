@@ -25,15 +25,9 @@ envelope snapshots — the latter are brittle to harmless reshuffling.
 
 from __future__ import annotations
 
-import json
-import shutil
 import sys
-from pathlib import Path
-
-import pytest
 
 from tests._helpers.repo_root import repo_root
-
 
 REPO_ROOT = repo_root()
 _SRC_DIR = REPO_ROOT / "src"
@@ -207,9 +201,7 @@ def test_graph_diff_no_baseline_source_pins_concrete_facts():
     """Source-level regression: ``cmd_graph_diff.py`` must explicitly
     pass ``agent_contract={"facts": [...]}`` in the no-baseline branch.
     Pre-W17.3 it relied on auto-derive which produced abstract facts."""
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_graph_diff.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_graph_diff.py").read_text(encoding="utf-8")
     assert "graph-diff baseline: no snapshot found under" in src
     assert "graph-diff baseline: run `roam graph-diff --save-snapshot" in src
     # And the head-not-found branch also got an explicit contract:
@@ -226,14 +218,10 @@ def test_architecture_drift_insufficient_snapshots_has_concrete_facts():
     must emit concrete-noun-anchored facts via ``agent_contract``.
     Pre-W17.3 these passed ``facts=[]`` as a payload kwarg, which the
     auto-derive then overrode with "N window days findings" noise."""
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_architecture_drift.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_architecture_drift.py").read_text(encoding="utf-8")
     # Both insufficient-snapshot envelopes must have an explicit
     # agent_contract dict.
-    assert src.count('agent_contract={') >= 2, (
-        "architecture-drift must pin agent_contract in both no-data branches"
-    )
+    assert src.count("agent_contract={") >= 2, "architecture-drift must pin agent_contract in both no-data branches"
     # The concrete subject anchor and the actionable command must appear:
     assert "architecture drift over" in src
     assert "architecture drift needs >= 2 snapshots" in src
@@ -248,9 +236,7 @@ def test_architecture_drift_insufficient_snapshots_has_concrete_facts():
 def test_capabilities_verdict_is_concrete():
     """``cmd_capabilities`` must emit a concrete verdict naming the
     registered count + AI-safe count, not bare ``"count 10"``."""
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_capabilities.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_capabilities.py").read_text(encoding="utf-8")
     assert "registered capabilities" in src
     # The bare verdict-less envelope MUST be gone. The summary now
     # includes a "verdict" key.
@@ -260,9 +246,7 @@ def test_capabilities_verdict_is_concrete():
 def test_minimap_verdict_drops_bare_ok():
     """``minimap`` no longer emits ``verdict: "ok"`` on either branch —
     those are abstract (LAW 6 compression-survives fails)."""
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_minimap.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_minimap.py").read_text(encoding="utf-8")
     # The action-naming forms must be present:
     assert "minimap rendered" in src
     assert "minimap " in src  # something more than the bare "ok"
@@ -272,9 +256,7 @@ def test_endpoints_pins_concrete_facts():
     """``endpoints`` overrides the auto-derive with explicit
     ``agent_contract`` facts so the bare ``count``/``framework_count``
     keys don't produce ``"count 10"`` / ``"framework count 2"``."""
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_endpoints.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_endpoints.py").read_text(encoding="utf-8")
     assert "endpoints scan found" in src
     assert "agent_contract=" in src
 
@@ -283,9 +265,7 @@ def test_forecast_pins_concrete_facts():
     """``forecast`` overrides the auto-derive: ``symbols_at_risk`` keyed
     as a non-noun terminal otherwise auto-derived to "N symbols at
     risk findings"."""
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_forecast.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_forecast.py").read_text(encoding="utf-8")
     assert "forecast scope:" in src
     assert "forecast risk:" in src
 
@@ -294,9 +274,7 @@ def test_trends_renamed_latest_health_for_humanizer():
     """``cmd_trends`` renamed ``latest_health`` to ``latest_health_score``
     so the humanizer renders ``"latest health score 75"`` instead of
     ``"75 latest health findings"``."""
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_trends.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_trends.py").read_text(encoding="utf-8")
     assert "latest_health_score" in src
     # And the bare ``latest_health`` key (without the suffix) should be gone:
     # (use the assignment pattern, not the substring, to allow comments

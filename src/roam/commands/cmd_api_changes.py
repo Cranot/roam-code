@@ -2,6 +2,12 @@
 
 Extends the basic ``breaking`` command with full API surface comparison:
 visibility changes, type changes, optional param additions, and severity levels.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because api-changes outputs are invocation-scoped API-surface
+delta summaries — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

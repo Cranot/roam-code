@@ -31,9 +31,7 @@ warning-text drift gets caught here, not at a callsite.
 
 from __future__ import annotations
 
-import builtins
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +42,6 @@ from roam.commands._yaml_loader import (
     load_yaml_with_warnings,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -54,26 +51,6 @@ def _write(tmp_path: Path, name: str, content: str) -> Path:
     p = tmp_path / name
     p.write_text(content, encoding="utf-8")
     return p
-
-
-def _no_pyyaml(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force the PyYAML import inside the helper to fail.
-
-    The helper imports ``yaml`` lazily inside ``load_yaml_with_warnings``;
-    we intercept the import at the builtins level so existing
-    ``import yaml`` statements in already-imported modules stay live but
-    a fresh import (the one inside the helper) raises ImportError.
-    """
-    real_import = builtins.__import__
-
-    def _fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "yaml":
-            raise ImportError("forced for test: PyYAML unavailable")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", _fake_import)
-    # Drop any cached top-level yaml import so the helper truly re-imports.
-    monkeypatch.delitem(sys.modules, "yaml", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +88,9 @@ def test_valid_yaml_dict_returns_parsed(tmp_path: Path) -> None:
     )
     warnings: list[str] = []
     result = load_yaml_with_warnings(
-        path, config_label="ignore-findings", warnings_out=warnings,
+        path,
+        config_label="ignore-findings",
+        warnings_out=warnings,
     )
     assert isinstance(result, dict)
     assert "rules" in result
@@ -124,7 +103,9 @@ def test_valid_json_loads_via_yaml(tmp_path: Path) -> None:
     path = _write(tmp_path, "ok.json", json.dumps({"k": [1, 2, 3]}))
     warnings: list[str] = []
     result = load_yaml_with_warnings(
-        path, config_label="cfg", warnings_out=warnings,
+        path,
+        config_label="cfg",
+        warnings_out=warnings,
     )
     assert result == {"k": [1, 2, 3]}
     assert warnings == []
@@ -136,7 +117,8 @@ def test_valid_json_loads_via_yaml(tmp_path: Path) -> None:
 
 
 def test_read_oserror_warns_and_returns_empty(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = _write(tmp_path, "exists.yml", "k: v\n")
 
@@ -146,7 +128,9 @@ def test_read_oserror_warns_and_returns_empty(
     monkeypatch.setattr(Path, "read_text", _boom)
     warnings: list[str] = []
     result = load_yaml_with_warnings(
-        path, config_label="cfg", warnings_out=warnings,
+        path,
+        config_label="cfg",
+        warnings_out=warnings,
     )
     assert result == {}
     assert len(warnings) == 1
@@ -165,7 +149,9 @@ def test_malformed_yaml_warns_and_returns_empty(tmp_path: Path) -> None:
     path = _write(tmp_path, "broken.yml", "rules: [unterminated\n")
     warnings: list[str] = []
     result = load_yaml_with_warnings(
-        path, config_label="cfg", warnings_out=warnings,
+        path,
+        config_label="cfg",
+        warnings_out=warnings,
     )
     assert result == {}
     assert len(warnings) == 1
@@ -182,7 +168,9 @@ def test_list_root_rejected_when_dict_expected(tmp_path: Path) -> None:
     path = _write(tmp_path, "list.yml", "- a\n- b\n")
     warnings: list[str] = []
     result = load_yaml_with_warnings(
-        path, config_label="cfg", warnings_out=warnings,
+        path,
+        config_label="cfg",
+        warnings_out=warnings,
     )
     assert result == {}
     assert len(warnings) == 1
@@ -194,7 +182,9 @@ def test_scalar_root_rejected_when_dict_expected(tmp_path: Path) -> None:
     path = _write(tmp_path, "scalar.yml", "42\n")
     warnings: list[str] = []
     result = load_yaml_with_warnings(
-        path, config_label="cfg", warnings_out=warnings,
+        path,
+        config_label="cfg",
+        warnings_out=warnings,
     )
     assert result == {}
     assert len(warnings) == 1
@@ -240,22 +230,24 @@ def test_scalar_root_rejected_even_when_list_allowed(tmp_path: Path) -> None:
 
 
 def test_no_pyyaml_json_fallback_succeeds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    no_pyyaml: None,
 ) -> None:
-    _no_pyyaml(monkeypatch)
     path = _write(tmp_path, "ok.json", json.dumps({"k": "v"}))
     warnings: list[str] = []
     result = load_yaml_with_warnings(
-        path, config_label="cfg", warnings_out=warnings,
+        path,
+        config_label="cfg",
+        warnings_out=warnings,
     )
     assert result == {"k": "v"}
     assert warnings == []
 
 
 def test_no_pyyaml_tiny_parser_succeeds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    no_pyyaml: None,
 ) -> None:
-    _no_pyyaml(monkeypatch)
     path = _write(tmp_path, "ok.yml", "rules:\n  - task_id: x\n")
 
     def _tiny(text: str) -> dict[str, Any]:
@@ -274,13 +266,15 @@ def test_no_pyyaml_tiny_parser_succeeds(
 
 
 def test_no_pyyaml_no_tiny_parser_non_json_warns(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    no_pyyaml: None,
 ) -> None:
-    _no_pyyaml(monkeypatch)
     path = _write(tmp_path, "yaml-only.yml", "rules:\n  - a\n")
     warnings: list[str] = []
     result = load_yaml_with_warnings(
-        path, config_label="cfg", warnings_out=warnings,
+        path,
+        config_label="cfg",
+        warnings_out=warnings,
     )
     assert result == {}
     assert len(warnings) == 1
@@ -289,9 +283,9 @@ def test_no_pyyaml_no_tiny_parser_non_json_warns(
 
 
 def test_no_pyyaml_tiny_parser_returns_empty_warns(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    no_pyyaml: None,
 ) -> None:
-    _no_pyyaml(monkeypatch)
     path = _write(tmp_path, "unrecognised.yml", "weird stuff that nothing parses\n")
 
     def _tiny(text: str) -> dict[str, Any]:
@@ -310,9 +304,9 @@ def test_no_pyyaml_tiny_parser_returns_empty_warns(
 
 
 def test_no_pyyaml_tiny_parser_raises_warns(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    no_pyyaml: None,
 ) -> None:
-    _no_pyyaml(monkeypatch)
     path = _write(tmp_path, "x.yml", "stuff\n")
 
     def _tiny(text: str) -> dict[str, Any]:
@@ -427,7 +421,9 @@ def test_empty_file_returns_empty_container_no_warning(tmp_path: Path) -> None:
     path = _write(tmp_path, "empty.yml", "")
     warnings: list[str] = []
     result = load_yaml_with_warnings(
-        path, config_label="cfg", warnings_out=warnings,
+        path,
+        config_label="cfg",
+        warnings_out=warnings,
     )
     assert result == {}
     assert warnings == []
@@ -490,7 +486,7 @@ class TestParseErrorLabel:
         # Unclosed flow sequence — PyYAML still raises (JSON-on-disk that's
         # malformed gets caught by the YAML parser); the label change is
         # what surfaces "JSON" to the agent reading the warning.
-        path = _write(tmp_path, "broken.json", "{\"k\": [unterminated\n")
+        path = _write(tmp_path, "broken.json", '{"k": [unterminated\n')
         warnings: list[str] = []
         result = load_yaml_with_warnings(
             path,
@@ -509,7 +505,9 @@ class TestParseErrorLabel:
         path = _write(tmp_path, "broken.yml", "rules: [unterminated\n")
         warnings: list[str] = []
         result = load_yaml_with_warnings(
-            path, config_label="cfg", warnings_out=warnings,
+            path,
+            config_label="cfg",
+            warnings_out=warnings,
         )
         assert result == {}
         assert len(warnings) == 1
@@ -552,14 +550,17 @@ class TestForceTinyParser:
     """
 
     def test_force_tiny_parser_routes_to_tiny_parser_not_pyyaml(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
-        # PyYAML IS installed here (no _no_pyyaml monkeypatch). The kwarg
+        # PyYAML IS installed here (no ``no_pyyaml`` fixture). The kwarg
         # must still skip it entirely and fire the tiny_parser. Use a
         # sentinel that yaml.safe_load could parse (so we can prove the
         # tiny_parser was preferred, not used as a fallback).
         path = _write(
-            tmp_path, "ok.yml", "suppressions:\n  - id: 'x'\n",
+            tmp_path,
+            "ok.yml",
+            "suppressions:\n  - id: 'x'\n",
         )
         calls: list[str] = []
 
@@ -584,7 +585,8 @@ class TestForceTinyParser:
         assert warnings == []
 
     def test_force_tiny_parser_raise_emits_warning_returns_empty(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         # Same vocabulary as the ImportError fallback path so the warning
         # text stays single-sourced (one regex catches both engines).
@@ -607,7 +609,8 @@ class TestForceTinyParser:
         assert "domain parser refused this row" in warnings[0]
 
     def test_force_tiny_parser_without_tiny_parser_raises_value_error(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         # Boundary check: the kwarg requires a tiny_parser. ValueError, not
         # a silent empty-container — misuse should be loud at the call site

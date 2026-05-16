@@ -35,9 +35,7 @@ def _fresh_conn(tmp_path):
 def test_findings_table_exists_on_fresh_db(tmp_path):
     """SCHEMA_SQL creates the table on first open."""
     with _fresh_conn(tmp_path) as conn:
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='findings'"
-        ).fetchone()
+        row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='findings'").fetchone()
         assert row is not None, "findings table was not created on fresh DB"
 
 
@@ -45,8 +43,7 @@ def test_findings_indexes_exist(tmp_path):
     """The three supporting indexes are created so list_findings hits indexed scans."""
     with _fresh_conn(tmp_path) as conn:
         index_rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' "
-            "AND tbl_name='findings' AND name LIKE 'idx_findings_%'"
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='findings' AND name LIKE 'idx_findings_%'"
         ).fetchall()
         names = {r[0] for r in index_rows}
         assert "idx_findings_subject" in names
@@ -58,9 +55,7 @@ def test_findings_table_has_source_version_column(tmp_path):
     """W81 reserved source_version specifically for this table — verify it landed."""
     with _fresh_conn(tmp_path) as conn:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(findings)").fetchall()}
-        assert "source_version" in cols, (
-            "source_version column missing — W81 reserved this for the findings table"
-        )
+        assert "source_version" in cols, "source_version column missing — W81 reserved this for the findings table"
 
 
 def test_emit_finding_round_trip(tmp_path):
@@ -142,14 +137,12 @@ def test_finding_unique_constraint_enforced(tmp_path):
 
     with _fresh_conn(tmp_path) as conn:
         conn.execute(
-            "INSERT INTO findings (finding_id_str, subject_kind, claim, source_detector) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO findings (finding_id_str, subject_kind, claim, source_detector) VALUES (?, ?, ?, ?)",
             ("unique-test", "symbol", "first", "det"),
         )
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
-                "INSERT INTO findings (finding_id_str, subject_kind, claim, source_detector) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO findings (finding_id_str, subject_kind, claim, source_detector) VALUES (?, ?, ?, ?)",
                 ("unique-test", "symbol", "duplicate", "det"),
             )
 
@@ -174,9 +167,7 @@ def test_supersede_finding_links_chain(tmp_path):
         new_id = supersede_finding(conn, "det:sym:old", successor)
 
         # Both rows still exist.
-        rows = conn.execute(
-            "SELECT id, finding_id_str, supersedes_id FROM findings ORDER BY id"
-        ).fetchall()
+        rows = conn.execute("SELECT id, finding_id_str, supersedes_id FROM findings ORDER BY id").fetchall()
         assert len(rows) == 2
 
         # Old row unchanged; new row links back.
@@ -207,26 +198,44 @@ def test_list_findings_filters_by_detector(tmp_path):
     """list_findings(detector=X) returns only that detector's rows."""
     with _fresh_conn(tmp_path) as conn:
         for det in ("alpha", "alpha", "beta"):
-            emit_finding(conn, FindingRecord(
-                finding_id_str=f"{det}:sym:{id(det)}-{det}",
-                subject_kind="symbol",
-                claim=f"{det} finding",
-                source_detector=det,
-            ))
+            emit_finding(
+                conn,
+                FindingRecord(
+                    finding_id_str=f"{det}:sym:{id(det)}-{det}",
+                    subject_kind="symbol",
+                    claim=f"{det} finding",
+                    source_detector=det,
+                ),
+            )
         # Force unique ids since id() above may collide on interned strings.
         conn.execute("DELETE FROM findings")
-        emit_finding(conn, FindingRecord(
-            finding_id_str="alpha:sym:1", subject_kind="symbol",
-            claim="a1", source_detector="alpha",
-        ))
-        emit_finding(conn, FindingRecord(
-            finding_id_str="alpha:sym:2", subject_kind="symbol",
-            claim="a2", source_detector="alpha",
-        ))
-        emit_finding(conn, FindingRecord(
-            finding_id_str="beta:sym:1", subject_kind="symbol",
-            claim="b1", source_detector="beta",
-        ))
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="alpha:sym:1",
+                subject_kind="symbol",
+                claim="a1",
+                source_detector="alpha",
+            ),
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="alpha:sym:2",
+                subject_kind="symbol",
+                claim="a2",
+                source_detector="alpha",
+            ),
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="beta:sym:1",
+                subject_kind="symbol",
+                claim="b1",
+                source_detector="beta",
+            ),
+        )
 
         alpha_only = list_findings(conn, detector="alpha")
         assert len(alpha_only) == 2
@@ -240,18 +249,36 @@ def test_list_findings_filters_by_detector(tmp_path):
 def test_list_findings_filters_by_subject(tmp_path):
     """Subject-kind + subject-id composes correctly."""
     with _fresh_conn(tmp_path) as conn:
-        emit_finding(conn, FindingRecord(
-            finding_id_str="d:sym:1", subject_kind="symbol",
-            subject_id=10, claim="s10", source_detector="d",
-        ))
-        emit_finding(conn, FindingRecord(
-            finding_id_str="d:file:1", subject_kind="file",
-            subject_id=10, claim="f10", source_detector="d",
-        ))
-        emit_finding(conn, FindingRecord(
-            finding_id_str="d:sym:2", subject_kind="symbol",
-            subject_id=20, claim="s20", source_detector="d",
-        ))
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="d:sym:1",
+                subject_kind="symbol",
+                subject_id=10,
+                claim="s10",
+                source_detector="d",
+            ),
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="d:file:1",
+                subject_kind="file",
+                subject_id=10,
+                claim="f10",
+                source_detector="d",
+            ),
+        )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="d:sym:2",
+                subject_kind="symbol",
+                subject_id=20,
+                claim="s20",
+                source_detector="d",
+            ),
+        )
 
         sym_only = list_findings(conn, subject_kind="symbol")
         assert len(sym_only) == 2
@@ -265,14 +292,24 @@ def test_count_by_detector(tmp_path):
     """count_by_detector returns the right per-detector totals."""
     with _fresh_conn(tmp_path) as conn:
         for i in range(3):
-            emit_finding(conn, FindingRecord(
-                finding_id_str=f"a:sym:{i}", subject_kind="symbol",
-                claim=f"a{i}", source_detector="alpha",
-            ))
-        emit_finding(conn, FindingRecord(
-            finding_id_str="b:sym:1", subject_kind="symbol",
-            claim="b1", source_detector="beta",
-        ))
+            emit_finding(
+                conn,
+                FindingRecord(
+                    finding_id_str=f"a:sym:{i}",
+                    subject_kind="symbol",
+                    claim=f"a{i}",
+                    source_detector="alpha",
+                ),
+            )
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="b:sym:1",
+                subject_kind="symbol",
+                claim="b1",
+                source_detector="beta",
+            ),
+        )
 
         counts = count_by_detector(conn)
         assert counts == {"alpha": 3, "beta": 1}
@@ -286,9 +323,7 @@ def test_count_by_detector_empty(tmp_path):
 
 def test_user_version_bumped_to_16(tmp_path):
     """A4 migration ran; user_version is at the expected era."""
-    assert USER_VERSION >= 16, (
-        f"USER_VERSION is {USER_VERSION}; A4 (findings registry) must bump it to >= 16."
-    )
+    assert USER_VERSION >= 16, f"USER_VERSION is {USER_VERSION}; A4 (findings registry) must bump it to >= 16."
 
     with _fresh_conn(tmp_path) as conn:
         row = conn.execute("PRAGMA user_version").fetchone()
@@ -304,10 +339,15 @@ def test_default_confidence_is_heuristic(tmp_path):
     silently overclaiming.
     """
     with _fresh_conn(tmp_path) as conn:
-        emit_finding(conn, FindingRecord(
-            finding_id_str="def:sym:1", subject_kind="symbol",
-            claim="default", source_detector="def",
-        ))
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="def:sym:1",
+                subject_kind="symbol",
+                claim="default",
+                source_detector="def",
+            ),
+        )
         fetched = get_finding(conn, "def:sym:1")
         assert fetched is not None
         assert fetched["confidence"] == CONFIDENCE_HEURISTIC

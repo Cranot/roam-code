@@ -197,12 +197,8 @@ def test_w889_catalog_layer_recognises_camelcase_test_basenames(path: str) -> No
     """
     from roam.commands.changed_files import is_test_file
 
-    assert is_test_path(path) is True, (
-        f"catalog ``is_test_path`` should recognise camelCase test basename: {path!r}"
-    )
-    assert is_test_file(path) is True, (
-        f"commands ``is_test_file`` should recognise camelCase test basename: {path!r}"
-    )
+    assert is_test_path(path) is True, f"catalog ``is_test_path`` should recognise camelCase test basename: {path!r}"
+    assert is_test_file(path) is True, f"commands ``is_test_file`` should recognise camelCase test basename: {path!r}"
 
 
 @pytest.mark.parametrize(
@@ -236,12 +232,8 @@ def test_w889_catalog_layer_rejects_camelcase_production_files(path: str) -> Non
     """
     from roam.commands.changed_files import is_test_file
 
-    assert is_test_path(path) is False, (
-        f"catalog ``is_test_path`` should reject production file: {path!r}"
-    )
-    assert is_test_file(path) is False, (
-        f"commands ``is_test_file`` should reject production file: {path!r}"
-    )
+    assert is_test_path(path) is False, f"catalog ``is_test_path`` should reject production file: {path!r}"
+    assert is_test_file(path) is False, f"commands ``is_test_file`` should reject production file: {path!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -273,12 +265,8 @@ def test_w891_catalog_layer_recognises_elixir_and_dart_basenames(path: str) -> N
     """
     from roam.commands.changed_files import is_test_file
 
-    assert is_test_path(path) is True, (
-        f"catalog ``is_test_path`` should recognise Elixir/Dart test basename: {path!r}"
-    )
-    assert is_test_file(path) is True, (
-        f"commands ``is_test_file`` should recognise Elixir/Dart test basename: {path!r}"
-    )
+    assert is_test_path(path) is True, f"catalog ``is_test_path`` should recognise Elixir/Dart test basename: {path!r}"
+    assert is_test_file(path) is True, f"commands ``is_test_file`` should recognise Elixir/Dart test basename: {path!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -304,19 +292,15 @@ def test_w893_apex_underscore_test_cls_parity() -> None:
     from roam.commands.changed_files import is_test_file as commands_is_test_file
     from roam.index.test_conventions import (
         ApexConvention,
+    )
+    from roam.index.test_conventions import (
         is_test_file as canonical_is_test_file,
     )
 
     path = "force-app/main/default/classes/UserController_Test.cls"
-    assert is_test_path(path) is True, (
-        f"catalog ``is_test_path`` should recognise ``*_Test.cls``: {path!r}"
-    )
-    assert commands_is_test_file(path) is True, (
-        f"commands ``is_test_file`` should recognise ``*_Test.cls``: {path!r}"
-    )
-    assert canonical_is_test_file(path) is True, (
-        f"canonical ``is_test_file`` should recognise ``*_Test.cls``: {path!r}"
-    )
+    assert is_test_path(path) is True, f"catalog ``is_test_path`` should recognise ``*_Test.cls``: {path!r}"
+    assert commands_is_test_file(path) is True, f"commands ``is_test_file`` should recognise ``*_Test.cls``: {path!r}"
+    assert canonical_is_test_file(path) is True, f"canonical ``is_test_file`` should recognise ``*_Test.cls``: {path!r}"
     # ApexConvention adapter takes a bare basename / relative path.
     assert ApexConvention().is_test_file("UserController_Test.cls") is True, (
         "ApexConvention adapter should recognise ``*_Test.cls``"

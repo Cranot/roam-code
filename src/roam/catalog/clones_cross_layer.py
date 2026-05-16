@@ -62,7 +62,6 @@ from roam.catalog._shared import loc as _loc
 from roam.catalog._shared import make_smell_finding
 from roam.db.edge_kinds import CALL_EDGE_KINDS
 
-
 # Detector identity constants (W81 versioning discipline). Bump on shape
 # changes so findings-registry consumers can spot rows from a stale shape.
 CROSS_LAYER_CLONE_DETECTOR = "cross-layer-clone"
@@ -382,17 +381,13 @@ def detect_cross_layer_clones(
     # Re-bucket each layer to only keep symbols that actually have a
     # non-empty callee set; the comparison loop below skips empties
     # anyway but pre-filtering keeps the O(n*m) tighter.
-    layered_with_callees: dict[
-        str, list[tuple[int, str, str, int | None, str, set[str]]]
-    ] = defaultdict(list)
+    layered_with_callees: dict[str, list[tuple[int, str, str, int | None, str, set[str]]]] = defaultdict(list)
     for layer, rows in by_layer.items():
         for sym_id, sym_name, sym_kind, sym_line, sym_path in rows:
             callees = callees_by_id.get(sym_id)
             if not callees:
                 continue
-            layered_with_callees[layer].append(
-                (sym_id, sym_name, sym_kind, sym_line, sym_path, callees)
-            )
+            layered_with_callees[layer].append((sym_id, sym_name, sym_kind, sym_line, sym_path, callees))
 
     if len(layered_with_callees) < 2:
         return []
@@ -406,8 +401,8 @@ def detect_cross_layer_clones(
             layer_a, layer_b = layers[i], layers[j]
             rows_a = layered_with_callees[layer_a]
             rows_b = layered_with_callees[layer_b]
-            for (sid_a, name_a, _ka, line_a, path_a, callees_a) in rows_a:
-                for (sid_b, name_b, _kb, _lb, path_b, callees_b) in rows_b:
+            for sid_a, name_a, _ka, line_a, path_a, callees_a in rows_a:
+                for sid_b, name_b, _kb, _lb, path_b, callees_b in rows_b:
                     # Skip same-symbol self-pairs (cannot happen across
                     # different layers but guards against degenerate
                     # rows with mis-classified paths).

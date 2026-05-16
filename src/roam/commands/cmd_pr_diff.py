@@ -1,4 +1,15 @@
-"""Show structural consequences of code changes (graph delta, not text diff)."""
+"""Show structural consequences of code changes (graph delta, not text diff).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because pr-diff outputs are invocation-scoped graph-delta
+summaries (symbols added / removed / modified, edges gained / lost,
+blast-radius shifts between two refs) — not per-location code
+violations. The downstream ``pr-risk`` / ``pr-analyze`` commands roll
+this delta into risk findings; pr-diff itself returns the structural
+delta envelope without source coordinates suitable for SARIF
+``locations[]``. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH propagation plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

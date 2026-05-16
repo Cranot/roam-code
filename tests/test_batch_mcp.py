@@ -543,8 +543,7 @@ class TestBatchSearch:
         assert "errors" in result
         assert "bad_query" in result["errors"]
         assert "_fatal" not in result["errors"], (
-            "raised exception in one query incorrectly triggered batch-wide fatal: "
-            + repr(result["errors"])
+            "raised exception in one query incorrectly triggered batch-wide fatal: " + repr(result["errors"])
         )
         # All 3 queries should have been attempted
         assert call_count[0] == 3, f"only {call_count[0]} of 3 queries attempted"
@@ -741,8 +740,7 @@ class TestBatchGet:
         assert "errors" in result
         assert "bad_sym" in result["errors"]
         assert "_fatal" not in result["errors"], (
-            "raised exception in one symbol incorrectly triggered batch-wide fatal: "
-            + repr(result["errors"])
+            "raised exception in one symbol incorrectly triggered batch-wide fatal: " + repr(result["errors"])
         )
         # All 3 symbols should have been attempted
         assert call_count[0] == 3, f"only {call_count[0]} of 3 symbols attempted"

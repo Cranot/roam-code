@@ -15,6 +15,7 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
+
 # W414: All dashboard tests in this file are read-only against the indexed
 # project (text output, JSON output, section presence). Re-indexing on
 # every test costs ~2s x 17. Override at module scope so the project is
@@ -117,12 +118,8 @@ def indexed_project(tmp_path_factory):
         "GIT_COMMITTER_EMAIL": "t@t.com",
     }
     subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "t@t.com"], cwd=str(proj), capture_output=True
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"], cwd=str(proj), capture_output=True
-    )
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(proj), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(proj), capture_output=True)
     subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "init"],

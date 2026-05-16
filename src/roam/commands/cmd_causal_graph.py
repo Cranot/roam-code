@@ -13,6 +13,12 @@ Examples
     roam causal-graph --kind param_to_effect       # filter by edge kind
     roam causal-graph --top 50
     roam causal-graph --json
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because causal-graph outputs are invocation-scoped causal
+dependency rankings — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -131,9 +137,7 @@ def causal_graph_cmd(ctx, symbol, kind, top):
     # Build verdict.
     if symbol and not filtered:
         if not all_graphs:
-            verdict = (
-                f"No function/method/constructor named '{symbol}' classified."
-            )
+            verdict = f"No function/method/constructor named '{symbol}' classified."
         else:
             # Symbol exists but has no edges (pure / opaque).
             g0 = all_graphs[0]
@@ -150,10 +154,7 @@ def causal_graph_cmd(ctx, symbol, kind, top):
             n = per_kind.get(k, 0)
             if n:
                 parts.append(f"{n} {k}")
-        verdict = (
-            f"{g0.symbol} has {len(g0.edges)} causal edges "
-            f"({', '.join(parts) if parts else 'no edges'})"
-        )
+        verdict = f"{g0.symbol} has {len(g0.edges)} causal edges ({', '.join(parts) if parts else 'no edges'})"
         partial_success = False
     else:
         # Aggregate verdict across the whole codebase.
@@ -162,9 +163,8 @@ def causal_graph_cmd(ctx, symbol, kind, top):
             n = by_kind.get(k, 0)
             if n:
                 parts2.append(f"{n} {k}")
-        verdict = (
-            f"Causal scan: {len(all_graphs)} symbols, {total_edges} edges"
-            + (" (" + ", ".join(parts2) + ")" if parts2 else "")
+        verdict = f"Causal scan: {len(all_graphs)} symbols, {total_edges} edges" + (
+            " (" + ", ".join(parts2) + ")" if parts2 else ""
         )
         partial_success = False
 
@@ -202,13 +202,8 @@ def causal_graph_cmd(ctx, symbol, kind, top):
         # source for readability ("`path`" beats "`param:path`").
         display_src = top_input.split(":", 1)[1] if ":" in top_input else top_input
         sink_breakdown = per_input_sinks.get(top_input, Counter())
-        sink_summary = ", ".join(
-            f"{n} {sk}" for sk, n in sink_breakdown.most_common(3)
-        ) or "edges"
-        facts.append(
-            f"{worst.symbol} input `{display_src}` causes {top_n} sink edges "
-            f"({sink_summary})"
-        )
+        sink_summary = ", ".join(f"{n} {sk}" for sk, n in sink_breakdown.most_common(3)) or "edges"
+        facts.append(f"{worst.symbol} input `{display_src}` causes {top_n} sink edges ({sink_summary})")
     if by_kind.get("param_to_effect", 0):
         facts.append(
             f"causal scan found {by_kind['param_to_effect']} param_to_effect edges "
@@ -231,8 +226,7 @@ def causal_graph_cmd(ctx, symbol, kind, top):
         )
     if truncated_count:
         facts.append(
-            f"causal scan truncated {truncated_count} symbols at "
-            f"{MAX_EDGES_PER_SYMBOL} edges (noise cap reached)"
+            f"causal scan truncated {truncated_count} symbols at {MAX_EDGES_PER_SYMBOL} edges (noise cap reached)"
         )
     if not facts:
         facts.append("causal scan found no inputs flowing into side-effects")
@@ -295,21 +289,20 @@ def causal_graph_cmd(ctx, symbol, kind, top):
     for g in surfaced:
         # Compact summary string for top edges.
         if g.edges:
-            top_edges = ", ".join(
-                f"{e.source}→{e.sink}"
-                for e in g.edges[:3]
-            )
+            top_edges = ", ".join(f"{e.source}→{e.sink}" for e in g.edges[:3])
             if len(g.edges) > 3:
                 top_edges += f", +{len(g.edges) - 3}"
         else:
             top_edges = "-"
-        rows.append([
-            g.symbol[:38],
-            str(len(g.edges)),
-            g.confidence,
-            top_edges[:60],
-            (g.file or "")[-32:],
-        ])
+        rows.append(
+            [
+                g.symbol[:38],
+                str(len(g.edges)),
+                g.confidence,
+                top_edges[:60],
+                (g.file or "")[-32:],
+            ]
+        )
     click.echo(
         format_table(
             ["Symbol", "Edges", "Conf", "Top edges", "File"],
@@ -317,10 +310,7 @@ def causal_graph_cmd(ctx, symbol, kind, top):
         )
     )
     if len(filtered) > len(surfaced):
-        click.echo(
-            f"\n(+{len(filtered) - len(surfaced)} more; "
-            f"--top {len(filtered)} to surface all)"
-        )
+        click.echo(f"\n(+{len(filtered) - len(surfaced)} more; --top {len(filtered)} to surface all)")
 
 
 __all__ = ["causal_graph_cmd"]

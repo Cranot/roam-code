@@ -3,6 +3,14 @@
 handy for plugging the in-memory NetworkX graph into external
 tooling (Gephi, Cytoscape, igraph, custom analyses). Stays read-only;
 no network egress.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because graph-export outputs are graph-format exports
+(GraphML/DOT/JSONL) — not per-location violations. SARIF is reserved
+for findings with file:line coordinates; graph-export's primary
+deliverable is the graph-format export file. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket C propagation plan +
+W1148 audit memo.
 """
 
 from __future__ import annotations

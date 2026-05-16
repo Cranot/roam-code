@@ -34,9 +34,7 @@ def test_task_required_tools_is_derived_from_metadata() -> None:
     """
     from roam.mcp_server import _TASK_REQUIRED_TOOLS, _TOOL_METADATA
 
-    expected = frozenset(
-        name for name, meta in _TOOL_METADATA.items() if meta.get("task_required", False)
-    )
+    expected = frozenset(name for name, meta in _TOOL_METADATA.items() if meta.get("task_required", False))
     assert _TASK_REQUIRED_TOOLS == expected, (
         "_TASK_REQUIRED_TOOLS is no longer derived from _TOOL_METADATA. "
         "If you added a required-task tool, set task_required=True on its "
@@ -52,8 +50,7 @@ def test_task_required_tools_is_frozenset() -> None:
     from roam.mcp_server import _TASK_REQUIRED_TOOLS
 
     assert isinstance(_TASK_REQUIRED_TOOLS, frozenset), (
-        f"_TASK_REQUIRED_TOOLS must be a frozenset, got "
-        f"{type(_TASK_REQUIRED_TOOLS).__name__}"
+        f"_TASK_REQUIRED_TOOLS must be a frozenset, got {type(_TASK_REQUIRED_TOOLS).__name__}"
     )
 
 
@@ -119,8 +116,7 @@ def test_task_required_flag_is_disjoint_from_task_optional() -> None:
 
     overlap = _TASK_REQUIRED_TOOLS & _TASK_OPTIONAL_TOOLS
     assert not overlap, (
-        f"Tools cannot be both task_required and in _TASK_OPTIONAL_TOOLS: "
-        f"{sorted(overlap)}. Pick one classification."
+        f"Tools cannot be both task_required and in _TASK_OPTIONAL_TOOLS: {sorted(overlap)}. Pick one classification."
     )
 
 

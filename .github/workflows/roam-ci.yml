@@ -23,18 +23,27 @@ permissions:
   pull-requests: write        # needed for sticky PR comments in self-analysis
   security-events: write      # needed for SARIF upload in self-analysis
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # -- Test suite across all supported Python versions -----------------------
   # Ubuntu-only: roam-code is pure Python with no compiled extensions; a
   # single-OS matrix covers correctness without the 3x cost of a full matrix.
   # Use -m "not slow" to skip timing-sensitive performance tests that are
   # prone to flaking under CI resource constraints.
+  #
+  # 3.9 dropped 2026-05-16: pyproject.toml requires-python = ">=3.10". The
+  # 3.9 matrix entry was failing every PR with "Package 'roam-code' requires
+  # a different Python: 3.9.25 not in '>=3.10'".
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false   # let all Python versions report; don't abort early
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,6 +70,7 @@ jobs:
   # enough; the matrix above covers grammar/version drift.
   test-no-optional-deps:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,6 +92,7 @@ jobs:
   # Fast code style / lint gate. Only needs to pass on one Python version.
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -110,6 +121,7 @@ jobs:
   #     metadata (author, creator, EXIF, embedded paths).
   doc-hygiene:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -158,6 +170,7 @@ jobs:
   # fails before merge — not after the bad wheel ships to PyPI.
   wheel-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -176,6 +189,14 @@ jobs:
           /tmp/wheel-test/bin/pip install --upgrade pip
           /tmp/wheel-test/bin/pip install dist/roam_code-*.whl
           /tmp/wheel-test/bin/pip install pytest
+          # PyYAML is a documented optional runtime dep
+          # (pyproject.toml note: "In production it stays optional — the
+          # in-tree _parse_simple_yaml fallback covers the documented shapes").
+          # The smoke step below invokes `roam evidence-oscal --kind
+          # control-mapping`, which goes through src/roam/evidence/oscal.py
+          # — that path raises RuntimeError when PyYAML is absent. The
+          # smoke job needs it to verify the full evidence-OSCAL path.
+          /tmp/wheel-test/bin/pip install pyyaml
 
       - name: Run wheel-drift tests against the installed wheel
         # cwd OUTSIDE the source tree so importlib.resources resolves
@@ -203,6 +224,7 @@ jobs:
   # health gate (>=50) so the job fails loudly if quality degrades.
   self-analysis:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4

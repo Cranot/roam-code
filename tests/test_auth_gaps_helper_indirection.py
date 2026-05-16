@@ -41,7 +41,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Unit-level tests for the new helpers (cheap, no DB, no indexer)
 # ---------------------------------------------------------------------------
@@ -67,9 +66,7 @@ class TestBodyHasInlineAuthorization:
 
     def test_helper_allowlist_name_recognised(self):
         """Layer-1: $this->authorizeIfPolicyExists(...) — the dogfood name."""
-        assert _body_has_inline_authorization(
-            "$this->authorizeIfPolicyExists('view', Foo::class);"
-        )
+        assert _body_has_inline_authorization("$this->authorizeIfPolicyExists('view', Foo::class);")
 
     def test_helper_allowlist_check_policy_recognised(self):
         assert _body_has_inline_authorization("$this->checkPolicy('admin');")
@@ -97,9 +94,7 @@ class TestMethodHasAuthorizeDescent:
         and contains $this->authorize()."""
         body = "$this->authorizeIt('view', Foo::class); return Foo::all();"
         own_methods = {
-            "authorizeIt": (
-                "protected function authorizeIt() { $this->authorize($action, $target); }"
-            ),
+            "authorizeIt": ("protected function authorizeIt() { $this->authorize($action, $target); }"),
         }
         assert _method_has_authorize(body, own_class_methods=own_methods)
 
@@ -316,9 +311,7 @@ class TestAnalyzeControllerFileWithHelperIndirection:
             class_source_map=class_source_map,
         )
         high_findings = [f for f in findings if f["confidence"] == "high"]
-        assert high_findings == [], (
-            f"Descent through ancestor helper failed; got high findings: {high_findings}"
-        )
+        assert high_findings == [], f"Descent through ancestor helper failed; got high findings: {high_findings}"
 
     def test_literal_authorize_still_recognised(self, tmp_path):
         """Regression: direct $this->authorize() must still suppress findings."""
@@ -351,9 +344,7 @@ class TestAnalyzeControllerFileWithHelperIndirection:
         )
         findings = _analyze_controller_file(str(controller_path), controller_path.read_text())
         # Expect at least one high or medium finding for `store`.
-        store_findings = [
-            f for f in findings if f.get("method") == "store" and f["confidence"] in ("high", "medium")
-        ]
+        store_findings = [f for f in findings if f.get("method") == "store" and f["confidence"] in ("high", "medium")]
         assert store_findings, f"Missing-auth should be flagged but wasn't. All findings: {findings}"
 
     def test_unknown_helper_still_flagged(self, tmp_path):
@@ -445,9 +436,7 @@ def laravel_with_helper_indirection(tmp_path):
 
 
 class TestAuthGapsCliWithHelperIndirection:
-    def test_helper_indirection_no_high_findings(
-        self, cli_runner, laravel_with_helper_indirection, monkeypatch
-    ):
+    def test_helper_indirection_no_high_findings(self, cli_runner, laravel_with_helper_indirection, monkeypatch):
         """End-to-end: with route auth + helper indirection, no controller
         method should be flagged at high confidence."""
         monkeypatch.chdir(laravel_with_helper_indirection)

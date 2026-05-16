@@ -70,7 +70,7 @@ from typing import Any
 from roam.evidence._vocabulary import REDACTION_REASONS, SUBJECT_KINDS
 from roam.evidence.actor_trust import classify_actor_trust_tier
 from roam.evidence.artifact import EvidenceArtifact
-from roam.evidence.change_evidence import ChangeEvidence, _resolve_roam_version
+from roam.evidence.change_evidence import ChangeEvidence, resolve_roam_version
 from roam.evidence.mcp_receipt import McpDecisionReceipt
 from roam.evidence.provenance import provenance_label
 from roam.evidence.refs import ActorRef, AuthorityRef, EnvironmentRef
@@ -86,68 +86,72 @@ from roam.evidence.subject import EvidenceSubject
 # ``project``/``version``/``_meta`` come from ``json_envelope`` and are
 # part of every envelope - skip them silently. ``budget``, ``schema``,
 # ``schema_version`` are likewise envelope chrome rather than payload.
-_PR_BUNDLE_ENVELOPE_CHROME: frozenset[str] = frozenset({
-    "schema",
-    "schema_version",
-    "command",
-    "project",
-    "version",
-    "_meta",
-    "budget",
-    "summary",
-})
+_PR_BUNDLE_ENVELOPE_CHROME: frozenset[str] = frozenset(
+    {
+        "schema",
+        "schema_version",
+        "command",
+        "project",
+        "version",
+        "_meta",
+        "budget",
+        "summary",
+    }
+)
 
 # Top-level keys we know how to extract from a pr-bundle envelope. The
 # real pr-bundle envelope (``cmd_pr_bundle._build_envelope``) emits
 # these plus a few state markers we tolerate but don't pull data from.
-_PR_BUNDLE_KNOWN_PAYLOAD: frozenset[str] = frozenset({
-    # data fields the collector reads
-    "intent",
-    "context_read",
-    "affected_symbols",
-    "risks",
-    "tests_required",
-    "tests_run",
-    "known_non_goals",
-    "roam_verdict",
-    "bundle_meta",
-    "bundle_path",
-    "mode_block",
-    # caller-or-envelope identity fields the collector reads
-    "actor",
-    "timestamps",
-    "run_ids",
-    "agent_id",
-    "human_actor",
-    "mode",
-    "verdict",
-    "risk_level",
-    "commit_sha",
-    "git_range",
-    "diff_hash",
-    "repo_id",
-    "redactions",
-    "approvals",
-    "accepted_risks",
-    "context_files",
-    "agent_contract",
-    # W190 / W268 - agentic-assurance authority producers. W189 shipped
-    # ``approvals`` / ``accepted_risks``; W268 promoted ``permits`` and
-    # ``leases`` to real top-level producer fields on the pr-bundle
-    # envelope (read from ``.roam/permits/*.json`` and
-    # ``.roam/leases/*.json``). ``roam permit`` is still a verdict
-    # facade per W198 so the on-disk permits directory is usually
-    # empty - that's fine, the envelope just carries ``permits: []``.
-    "permits",
-    "leases",
-    "rules_passed",
-    # W266 - producer-side env_refs (cmd_pr_bundle now materialises them
-    # via the shared ``build_environment_refs`` helper). The collector
-    # still rebuilds its own EnvironmentRef tuple independently from
-    # caller args + envelope git/repo_id - so this key is informational
-    # to the collector and only needs the unknown-key allowlist entry.
-    "environment_refs",
-})
+_PR_BUNDLE_KNOWN_PAYLOAD: frozenset[str] = frozenset(
+    {
+        # data fields the collector reads
+        "intent",
+        "context_read",
+        "affected_symbols",
+        "risks",
+        "tests_required",
+        "tests_run",
+        "known_non_goals",
+        "roam_verdict",
+        "bundle_meta",
+        "bundle_path",
+        "mode_block",
+        # caller-or-envelope identity fields the collector reads
+        "actor",
+        "timestamps",
+        "run_ids",
+        "agent_id",
+        "human_actor",
+        "mode",
+        "verdict",
+        "risk_level",
+        "commit_sha",
+        "git_range",
+        "diff_hash",
+        "repo_id",
+        "redactions",
+        "approvals",
+        "accepted_risks",
+        "context_files",
+        "agent_contract",
+        # W190 / W268 - agentic-assurance authority producers. W189 shipped
+        # ``approvals`` / ``accepted_risks``; W268 promoted ``permits`` and
+        # ``leases`` to real top-level producer fields on the pr-bundle
+        # envelope (read from ``.roam/permits/*.json`` and
+        # ``.roam/leases/*.json``). ``roam permit`` is still a verdict
+        # facade per W198 so the on-disk permits directory is usually
+        # empty - that's fine, the envelope just carries ``permits: []``.
+        "permits",
+        "leases",
+        "rules_passed",
+        # W266 - producer-side env_refs (cmd_pr_bundle now materialises them
+        # via the shared ``build_environment_refs`` helper). The collector
+        # still rebuilds its own EnvironmentRef tuple independently from
+        # caller args + envelope git/repo_id - so this key is informational
+        # to the collector and only needs the unknown-key allowlist entry.
+        "environment_refs",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -175,80 +179,88 @@ _PR_BUNDLE_KNOWN_PAYLOAD: frozenset[str] = frozenset({
 # Any key outside this set is dropped silently. Extending this set is
 # a deliberate audit moment: each new key must be verified non-leakable
 # (i.e. carries metadata, not raw content / source / credentials).
-_FINDING_SAFE_KEYS: frozenset[str] = frozenset({
-    "finding_id_str",
-    "id",              # cmd_pr_replay shorthand for finding_id_str
-    "source_detector",
-    "detector",        # cmd_pr_replay shorthand for source_detector
-    "source_version",
-    "subject_kind",
-    "subject_id",
-    "confidence",
-    "confidence_basis",
-    "claim",
-    "kind",            # detector-specific kind (e.g. "patch.clone_not_edited")
-    "severity",
-    "tier",
-    "evidence_ref",    # path/hash reference to another packet; never raw bytes
-    # vuln-reach extras the W193 flattener stamps - all scalar / well-shaped:
-    "cve",
-    "package",
-    "reachable",
-    "hops",
-    "blast_radius",
-    "path",            # vuln-reach reachability path (list of symbol names)
-    # pr-risk / critique extras
-    "check",           # critique check id, e.g. "clones_not_edited"
-    "rule_id",
-    "redactions",      # forward-pointer: per-row redaction stamps
-    # cmd_pr_replay postmortem-aggregate extras (scalar counters):
-    "total_findings",
-    "commits_with_finding",
-    "source",          # e.g. "postmortem-aggregate" - origin label, never raw
-})
+_FINDING_SAFE_KEYS: frozenset[str] = frozenset(
+    {
+        "finding_id_str",
+        "id",  # cmd_pr_replay shorthand for finding_id_str
+        "source_detector",
+        "detector",  # cmd_pr_replay shorthand for source_detector
+        "source_version",
+        "subject_kind",
+        "subject_id",
+        "confidence",
+        "confidence_basis",
+        "claim",
+        "kind",  # detector-specific kind (e.g. "patch.clone_not_edited")
+        "severity",
+        "tier",
+        "evidence_ref",  # path/hash reference to another packet; never raw bytes
+        # vuln-reach extras the W193 flattener stamps - all scalar / well-shaped:
+        "cve",
+        "package",
+        "reachable",
+        "hops",
+        "blast_radius",
+        "path",  # vuln-reach reachability path (list of symbol names)
+        # pr-risk / critique extras
+        "check",  # critique check id, e.g. "clones_not_edited"
+        "rule_id",
+        "redactions",  # forward-pointer: per-row redaction stamps
+        # cmd_pr_replay postmortem-aggregate extras (scalar counters):
+        "total_findings",
+        "commits_with_finding",
+        "source",  # e.g. "postmortem-aggregate" - origin label, never raw
+    }
+)
 
 # Closed allowlist of TOP-LEVEL keys that survive the vuln-reach
 # raw_envelope inline. Free-form fields (description, message, snippet)
 # do NOT appear here, which is the whole point.
-_VULN_REACH_SAFE_KEYS: frozenset[str] = frozenset({
-    "summary",
-    "vulnerabilities",
-    "command",
-    "schema",
-    "schema_version",
-})
+_VULN_REACH_SAFE_KEYS: frozenset[str] = frozenset(
+    {
+        "summary",
+        "vulnerabilities",
+        "command",
+        "schema",
+        "schema_version",
+    }
+)
 
 # Closed allowlist of per-vulnerability-row keys that survive the
 # whitelist copy. Excludes ``description``, ``snippet``, ``raw_message``
 # and any other free-form field a producer might (incorrectly) populate
 # with raw bytes / prompts / source.
-_VULN_ROW_SAFE_KEYS: frozenset[str] = frozenset({
-    "cve",
-    "cve_id",
-    "package",
-    "package_name",
-    "package_version",
-    "reachable",
-    "severity",
-    "fix_available",
-    "hops",
-    "blast_radius",
-    "path",  # reachability path (list of symbol names; not raw source)
-})
+_VULN_ROW_SAFE_KEYS: frozenset[str] = frozenset(
+    {
+        "cve",
+        "cve_id",
+        "package",
+        "package_name",
+        "package_version",
+        "reachable",
+        "severity",
+        "fix_available",
+        "hops",
+        "blast_radius",
+        "path",  # reachability path (list of symbol names; not raw source)
+    }
+)
 
 # Closed allowlist of summary fields on a vuln-reach envelope. The
 # vuln-reach summary today emits scalar verdict / counts; keep the set
 # narrow so a future producer cannot ride a free-form field through.
-_VULN_REACH_SUMMARY_SAFE_KEYS: frozenset[str] = frozenset({
-    "verdict",
-    "count",
-    "total",
-    "total_reachable",
-    "total_unreachable",
-    "command",
-    "schema_version",
-    "state",
-})
+_VULN_REACH_SUMMARY_SAFE_KEYS: frozenset[str] = frozenset(
+    {
+        "verdict",
+        "count",
+        "total",
+        "total_reachable",
+        "total_unreachable",
+        "command",
+        "schema_version",
+        "state",
+    }
+)
 
 # Path prefixes that name user-home / credential / config directories.
 # A path containing any of these substrings (after slash-normalisation)
@@ -420,16 +432,10 @@ def _safe_vuln_reach_envelope(envelope: Mapping[str, Any]) -> dict:
             safe_rows = []
             for row in v:
                 if isinstance(row, Mapping):
-                    safe_rows.append(
-                        {kk: vv for kk, vv in row.items()
-                         if kk in _VULN_ROW_SAFE_KEYS}
-                    )
+                    safe_rows.append({kk: vv for kk, vv in row.items() if kk in _VULN_ROW_SAFE_KEYS})
             safe["vulnerabilities"] = safe_rows
         elif k == "summary" and isinstance(v, Mapping):
-            safe["summary"] = {
-                kk: vv for kk, vv in v.items()
-                if kk in _VULN_REACH_SUMMARY_SAFE_KEYS
-            }
+            safe["summary"] = {kk: vv for kk, vv in v.items() if kk in _VULN_REACH_SUMMARY_SAFE_KEYS}
         elif k in _VULN_REACH_SAFE_KEYS:
             # Scalar safe keys (command, schema, schema_version) - copy verbatim.
             safe[k] = v
@@ -471,9 +477,7 @@ def _evidence_id_from_inputs(
         return f"ev_range_{digest}"
     if pr_bundle_envelope:
         try:
-            canonical = json.dumps(
-                pr_bundle_envelope, sort_keys=True, separators=(",", ":")
-            )
+            canonical = json.dumps(pr_bundle_envelope, sort_keys=True, separators=(",", ":"))
             digest = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
             return f"ev_bundle_{digest}"
         except (TypeError, ValueError):
@@ -499,9 +503,7 @@ def _coalesce(*values: Any) -> Any | None:
     return None
 
 
-def _get_pr_bundle_field(
-    envelope: Mapping[str, Any], key: str
-) -> Any | None:
+def _get_pr_bundle_field(envelope: Mapping[str, Any], key: str) -> Any | None:
     """Look up a field at top level, then under ``bundle_meta``, then
     under ``summary``. Returns the first non-empty match."""
     top = envelope.get(key)
@@ -537,44 +539,47 @@ def _build_changed_subjects_from_affected(
     for rec in affected:
         if isinstance(rec, str):
             try:
-                out.append(EvidenceSubject(
-                    kind="symbol",
-                    qualified_name=rec,
-                    repo_id=repo_id,
-                ))
-            except ValueError as exc:
-                warnings.append(
-                    f"pr_bundle.affected_symbols: skipped {rec!r} ({exc})"
+                out.append(
+                    EvidenceSubject(
+                        kind="symbol",
+                        qualified_name=rec,
+                        repo_id=repo_id,
+                    )
                 )
+            except ValueError as exc:
+                warnings.append(f"pr_bundle.affected_symbols: skipped {rec!r} ({exc})")
             continue
         if not isinstance(rec, Mapping):
-            warnings.append(
-                "pr_bundle.affected_symbols: skipped non-dict / non-string row"
-            )
+            warnings.append("pr_bundle.affected_symbols: skipped non-dict / non-string row")
             continue
         name = rec.get("name") or rec.get("qualified_name") or rec.get("symbol")
         if not name:
-            warnings.append(
-                "pr_bundle.affected_symbols: skipped row with no name"
-            )
+            warnings.append("pr_bundle.affected_symbols: skipped row with no name")
             continue
         extra: dict[str, Any] = {}
-        for field in ("kind", "file", "blast_radius", "resolution_state",
-                      "side_effect_kinds", "idempotency_kind",
-                      "world_model_confidence", "causal_diff_state"):
+        for field in (
+            "kind",
+            "file",
+            "blast_radius",
+            "resolution_state",
+            "side_effect_kinds",
+            "idempotency_kind",
+            "world_model_confidence",
+            "causal_diff_state",
+        ):
             if field in rec and rec[field] not in (None, ""):
                 extra[field] = rec[field]
         try:
-            out.append(EvidenceSubject(
-                kind="symbol",
-                qualified_name=str(name),
-                repo_id=repo_id,
-                extra=extra,
-            ))
-        except ValueError as exc:
-            warnings.append(
-                f"pr_bundle.affected_symbols: rejected row {name!r} ({exc})"
+            out.append(
+                EvidenceSubject(
+                    kind="symbol",
+                    qualified_name=str(name),
+                    repo_id=repo_id,
+                    extra=extra,
+                )
             )
+        except ValueError as exc:
+            warnings.append(f"pr_bundle.affected_symbols: rejected row {name!r} ({exc})")
     return tuple(out)
 
 
@@ -604,14 +609,10 @@ def _build_context_refs_from_context_files(
             path = entry.get("path")
             chash = entry.get("content_hash")
         else:
-            warnings.append(
-                f"pr_bundle.context_files[{idx}]: skipped non-string / non-dict row"
-            )
+            warnings.append(f"pr_bundle.context_files[{idx}]: skipped non-string / non-dict row")
             continue
         if not path:
-            warnings.append(
-                f"pr_bundle.context_files[{idx}]: skipped row with no path"
-            )
+            warnings.append(f"pr_bundle.context_files[{idx}]: skipped row with no path")
             continue
         artifact_id = f"ctx:{idx}:{_short_path_hash(str(path))}"
         try:
@@ -634,9 +635,7 @@ def _build_context_refs_from_context_files(
                 )
             out.append(art)
         except ValueError as exc:
-            warnings.append(
-                f"pr_bundle.context_files[{idx}]: rejected ({exc})"
-            )
+            warnings.append(f"pr_bundle.context_files[{idx}]: rejected ({exc})")
     return tuple(out)
 
 
@@ -674,28 +673,19 @@ def _normalise_findings_envelope(
     """
     rows = envelope.get("findings")
     if not isinstance(rows, list):
-        warnings.append(
-            f"{source_label}: no 'findings' array at top level - skipped"
-        )
+        warnings.append(f"{source_label}: no 'findings' array at top level - skipped")
         return []
     out: list[Mapping[str, Any]] = []
     for row in rows:
         if not isinstance(row, Mapping):
-            warnings.append(
-                f"{source_label}: skipped non-dict finding row"
-            )
+            warnings.append(f"{source_label}: skipped non-dict finding row")
             continue
         # Track unknown subject_kind values so the caller spots drift.
         kind = row.get("subject_kind")
         if kind is not None and kind not in SUBJECT_KINDS:
-            warnings.append(
-                f"{source_label}: finding row has unknown subject_kind "
-                f"{kind!r} (kept anyway)"
-            )
+            warnings.append(f"{source_label}: finding row has unknown subject_kind {kind!r} (kept anyway)")
         # W241: closed allowlist copy. Free-form keys never survive.
-        safe_row: dict[str, Any] = {
-            k: v for k, v in row.items() if k in _FINDING_SAFE_KEYS
-        }
+        safe_row: dict[str, Any] = {k: v for k, v in row.items() if k in _FINDING_SAFE_KEYS}
         # W241: scrub the ``claim`` field through the secret-pattern
         # check. Producer hardening (W240) is layer 1; this is layer 2
         # for envelopes from non-W240 producers.
@@ -730,14 +720,10 @@ def _normalise_redactions(
     out: list[str] = []
     for r in raw:
         if not isinstance(r, str):
-            warnings.append(
-                f"{source_label}: redaction reason is not a string ({r!r}) - dropped"
-            )
+            warnings.append(f"{source_label}: redaction reason is not a string ({r!r}) - dropped")
             continue
         if r not in REDACTION_REASONS:
-            warnings.append(
-                f"{source_label}: unknown redaction reason {r!r} - dropped"
-            )
+            warnings.append(f"{source_label}: unknown redaction reason {r!r} - dropped")
             continue
         out.append(r)
     return out
@@ -775,6 +761,264 @@ def _collect_run_event_metadata(
             if latest is None or ts > latest:
                 latest = ts
     return run_ids, earliest, latest
+
+
+# ---------------------------------------------------------------------------
+# W1234 - change-scope timestamps (context_read_at / edits_started_at /
+# edits_completed_at) + evidence_stale flag.
+# ---------------------------------------------------------------------------
+#
+# The W210 scaffold added three change-scope timestamps + an
+# ``evidence_stale`` flag on :class:`ChangeEvidence` but never wired a
+# producer. This block is the producer-side wire-up: walk the run-ledger
+# event stream, classify each event as a "context-read" probe or a
+# post-edit action, and let the earliest / latest timestamps in each
+# bucket drive the three new fields.
+#
+# Classifier discipline (closed allowlists, no free-form pattern match):
+#
+# * ``_CONTEXT_READ_ACTIONS`` - actions whose semantic is "gather state
+#   to plan an edit" or "describe the codebase as it stands". The LATEST
+#   such timestamp seeds ``context_read_at`` (the most recent read wins,
+#   matching the W210 semantic "when did the agent last refresh its
+#   understanding").
+#
+# * ``_EDIT_PHASE_ACTIONS`` - actions whose semantic is "report on edits
+#   that have already happened". The EARLIEST timestamp seeds
+#   ``edits_started_at``; the LATEST seeds ``edits_completed_at``.
+#
+# * ``pr-bundle`` is a meta-action whose semantic varies by subcommand;
+#   ``_PR_BUNDLE_CONTEXT_SUBCOMMANDS`` and ``_PR_BUNDLE_EDIT_SUBCOMMANDS``
+#   split it on the ``envelope_command`` field that ``auto_log`` already
+#   stamps on every emitted event. Subcommands not in either set
+#   (e.g. ``pr-bundle-add-approval`` / ``pr-bundle-validate``) stay
+#   unclassified - they don't move either timestamp.
+#
+# Pattern-2 always-emit + honest-defaults: missing timestamps mean
+# "insufficient data", NOT "no staleness". ``evidence_stale`` defaults
+# to ``False`` and only flips ``True`` when BOTH ``context_read_at`` AND
+# ``edits_started_at`` are populated AND the read post-dates the start
+# of edits. The hash-stable defaults preserve byte-identical canonical
+# JSON for any packet whose run_events don't contain phase-classifiable
+# entries (see :data:`_W210_OMIT_WHEN_DEFAULT_FIELDS`).
+
+_CONTEXT_READ_ACTIONS: frozenset[str] = frozenset(
+    {
+        "preflight",
+        "impact",
+        "pr-prep",
+        "pr-analyze",
+        "architecture-drift",
+        "brief",
+        "agents-md",
+        "causal-graph",
+        "side-effects",
+        "idempotency",
+        "tx-boundaries",
+        "laws-mine",
+        "laws-check",
+        "graph-diff",
+    }
+)
+
+_EDIT_PHASE_ACTIONS: frozenset[str] = frozenset(
+    {
+        "diff",
+        "critique",
+        "attest",
+        "verify",
+    }
+)
+
+# ``pr-bundle`` is the umbrella action label every pr-bundle subcommand
+# emits; the precise subcommand lives on ``envelope_command``. These two
+# allowlists split the umbrella into the two phases the way the bundle
+# lifecycle reads on the wire (init/intent/add-affected/add-risk/etc.
+# are "still gathering context" steps; add-test-run / emit are
+# "reporting on completed edits" steps).
+_PR_BUNDLE_CONTEXT_SUBCOMMANDS: frozenset[str] = frozenset(
+    {
+        "pr-bundle-init",
+        "pr-bundle-set-intent",
+        "pr-bundle-add-affected",
+        "pr-bundle-add-risk",
+        "pr-bundle-add-test-required",
+        "pr-bundle-add-non-goal",
+        "pr-bundle-add-context-cmd",
+        "pr-bundle-add-context-symbol",
+        "pr-bundle-add-context-file",
+    }
+)
+
+_PR_BUNDLE_EDIT_SUBCOMMANDS: frozenset[str] = frozenset(
+    {
+        "pr-bundle-add-test-run",
+        # The bare ``pr-bundle`` command_label is the ``emit`` subcommand
+        # (see cmd_pr_bundle.py line 2788 - the only call site without a
+        # subcommand suffix). ``emit`` is the canonical "edits are done,
+        # producing the proof bundle" terminal step.
+        "pr-bundle",
+    }
+)
+
+
+def _classify_event_phase(event: Mapping[str, Any]) -> str | None:
+    """Return ``"context_read"`` / ``"edit"`` / ``None`` for one event.
+
+    Returns ``None`` when the event is not classifiable (unknown action,
+    unclassified pr-bundle subcommand, or missing fields). The caller
+    treats ``None`` as "leave the timestamps alone" - the honest
+    insufficient-data path.
+    """
+    action = event.get("action")
+    if not isinstance(action, str) or not action:
+        return None
+    if action in _CONTEXT_READ_ACTIONS:
+        return "context_read"
+    if action in _EDIT_PHASE_ACTIONS:
+        return "edit"
+    if action == "pr-bundle":
+        env_cmd = event.get("envelope_command")
+        if isinstance(env_cmd, str):
+            if env_cmd in _PR_BUNDLE_CONTEXT_SUBCOMMANDS:
+                return "context_read"
+            if env_cmd in _PR_BUNDLE_EDIT_SUBCOMMANDS:
+                return "edit"
+    return None
+
+
+def _collect_change_scope_timestamps(
+    events: Iterable[Mapping[str, Any]],
+) -> tuple[str | None, str | None, str | None]:
+    """Return (context_read_at, edits_started_at, edits_completed_at).
+
+    Walks the run-ledger event stream, classifies each event via
+    :func:`_classify_event_phase`, and picks:
+
+    * ``context_read_at`` = LATEST ts of any ``"context_read"`` event
+      (the most recent read wins - matches the W210 semantic of "when
+      did the agent last refresh its understanding").
+    * ``edits_started_at`` = EARLIEST ts of any ``"edit"`` event (the
+      first sign the agent reported on completed edits).
+    * ``edits_completed_at`` = LATEST ts of any ``"edit"`` event.
+
+    Any timestamp the stream doesn't surface returns ``None``. The
+    caller treats ``None`` as insufficient data - it does NOT flip
+    ``evidence_stale`` to ``True``.
+    """
+    context_read_at: str | None = None
+    edits_started_at: str | None = None
+    edits_completed_at: str | None = None
+
+    for ev in events:
+        if not isinstance(ev, Mapping):
+            continue
+        ts = ev.get("ts")
+        if not isinstance(ts, str) or not ts:
+            continue
+        phase = _classify_event_phase(ev)
+        if phase == "context_read":
+            # Latest context-read wins.
+            if context_read_at is None or ts > context_read_at:
+                context_read_at = ts
+        elif phase == "edit":
+            # Earliest edit-event seeds the start.
+            if edits_started_at is None or ts < edits_started_at:
+                edits_started_at = ts
+            # Latest edit-event seeds the end.
+            if edits_completed_at is None or ts > edits_completed_at:
+                edits_completed_at = ts
+
+    return context_read_at, edits_started_at, edits_completed_at
+
+
+def _compute_evidence_stale(
+    context_read_at: str | None,
+    edits_started_at: str | None,
+) -> tuple[bool, tuple[str, ...]]:
+    """Return ``(evidence_stale, stale_reasons)`` for the two timestamps.
+
+    Stale iff BOTH timestamps are populated AND ``context_read_at`` is
+    at-or-after ``edits_started_at`` (the agent re-read state AFTER edits
+    began, so any verdict the read produced was on the modified tree).
+    Missing timestamps return ``(False, ())`` - insufficient data is
+    NOT a positive staleness signal (W210 honest-defaults discipline).
+
+    The reason string names the precise comparison so a downstream
+    reviewer can spot-check it without re-running the collector.
+    """
+    if not context_read_at or not edits_started_at:
+        return False, ()
+    if context_read_at >= edits_started_at:
+        reason = f"context_read_at ({context_read_at}) at-or-after edits_started_at ({edits_started_at})"
+        return True, (reason,)
+    return False, ()
+
+
+# ---------------------------------------------------------------------------
+# W1253 - hash-drift detection for the three W210 config-hash fields.
+# ---------------------------------------------------------------------------
+#
+# W1255-IMPL stamped the three canonical config hashes (rules_config_hash /
+# constitution_hash / control_map_hash) into RunMeta.extra at run-start time
+# via ``roam.evidence.config_hashes.stamp_all``. W1253 is the consumer
+# side: at collection time, compare the packet-stamped hashes against the
+# current on-disk hashes; when they differ, flip ``evidence_stale=True``
+# and append a stale_reason that names the drifted field + the truncated
+# hashes (first 12 hex chars are enough to fingerprint a sha256 while
+# keeping the reason readable).
+#
+# Insufficient-data discipline (mirrors W1234 + W1255):
+#   - missing packet hash (``""`` or absent) -> no drift verdict
+#   - missing current hash (``""`` or absent) -> no drift verdict
+#   Both honest defaults: the absence of one side is NOT a positive
+#   drift signal. Hash equality on one side alone proves nothing.
+#
+# Combines with W1234 timestamp staleness: BOTH signals contribute to
+# ``stale_reasons`` and either one flips ``evidence_stale=True``.
+
+_CONFIG_HASH_FIELDS: tuple[str, ...] = (
+    "rules_config_hash",
+    "constitution_hash",
+    "control_map_hash",
+)
+
+
+def _detect_hash_drift(
+    packet_hashes: Mapping[str, str] | None,
+    current_hashes: Mapping[str, str] | None,
+) -> tuple[tuple[str, ...], dict[str, str]]:
+    """Return ``(stale_reasons, current_hashes_dict)`` for config-hash drift.
+
+    Walks the three W210 config-hash fields (``rules_config_hash`` /
+    ``constitution_hash`` / ``control_map_hash``) and compares the
+    packet-stamped hashes against the current on-disk hashes. A drift
+    verdict requires BOTH sides populated with a non-empty string;
+    missing data is NOT a positive signal (W1234 insufficient-data
+    discipline).
+
+    The returned ``current_hashes_dict`` is a fresh dict the caller can
+    use to populate the ChangeEvidence packet's three hash fields. When
+    both inputs are absent the dict is empty; when only one side is
+    present we still pass it through so the packet records what we
+    observed.
+
+    The reason string names the field plus the first 12 hex chars of
+    each side - enough to fingerprint a sha256 while keeping the
+    message readable for a human reviewer.
+    """
+    reasons: list[str] = []
+    packet = dict(packet_hashes) if packet_hashes else {}
+    current = dict(current_hashes) if current_hashes else {}
+    for field_name in _CONFIG_HASH_FIELDS:
+        packet_h = packet.get(field_name, "")
+        current_h = current.get(field_name, "")
+        if not packet_h or not current_h:
+            # Insufficient data on at least one side - no drift verdict.
+            continue
+        if packet_h != current_h:
+            reasons.append(f"{field_name} mismatch (packet={packet_h[:12]}..., current={current_h[:12]}...)")
+    return tuple(reasons), current
 
 
 # ---------------------------------------------------------------------------
@@ -1045,9 +1289,7 @@ def _collect_corroborated_authorities_from_runs(
         )
         from roam.runs.signing import ensure_ledger_key, verify_chain
     except Exception as exc:  # noqa: BLE001 - runs module optional
-        warnings.append(
-            f"authority-corroboration: runs module unavailable ({exc})"
-        )
+        warnings.append(f"authority-corroboration: runs module unavailable ({exc})")
         return frozenset()
 
     try:
@@ -1060,17 +1302,13 @@ def _collect_corroborated_authorities_from_runs(
     try:
         key = ensure_ledger_key(Path(repo_root))
     except Exception as exc:  # noqa: BLE001 - key missing / corrupt
-        warnings.append(
-            f"authority-corroboration: ledger key unavailable ({exc})"
-        )
+        warnings.append(f"authority-corroboration: ledger key unavailable ({exc})")
         return frozenset()
 
     try:
         run_metas = list(list_runs(Path(repo_root)))
     except Exception as exc:  # noqa: BLE001
-        warnings.append(
-            f"authority-corroboration: list_runs failed ({exc})"
-        )
+        warnings.append(f"authority-corroboration: list_runs failed ({exc})")
         return frozenset()
 
     for meta in run_metas:
@@ -1089,10 +1327,7 @@ def _collect_corroborated_authorities_from_runs(
         try:
             result = verify_chain(events, key)
         except Exception as exc:  # noqa: BLE001
-            warnings.append(
-                f"authority-corroboration: verify_chain crashed on "
-                f"{meta.run_id} ({exc})"
-            )
+            warnings.append(f"authority-corroboration: verify_chain crashed on {meta.run_id} ({exc})")
             continue
         if result.get("state") != "ok":
             # tampered / unsigned / unknown_run -> no corroboration.
@@ -1349,13 +1584,15 @@ def _build_authority_refs(
                 if k == "provenance":
                     continue
                 merged_extra[k] = v
-        refs.append(AuthorityRef(
-            authority_kind=kind,
-            authority_id=authority_id,
-            granted_by=granted_by,
-            source=source,
-            extra=merged_extra,
-        ))
+        refs.append(
+            AuthorityRef(
+                authority_kind=kind,
+                authority_id=authority_id,
+                granted_by=granted_by,
+                source=source,
+                extra=merged_extra,
+            )
+        )
 
     # Resolve the effective mode (caller kwarg already absorbed elsewhere
     # but we re-derive here so the helper is self-contained).
@@ -1731,7 +1968,6 @@ def _collect_corroborated_ids_from_runs(
         from roam.runs.ledger import (
             list_runs,
             read_run_events,
-            read_run_meta,
         )
         from roam.runs.signing import ensure_ledger_key, verify_chain
     except Exception as exc:  # noqa: BLE001 - runs module optional
@@ -1773,9 +2009,7 @@ def _collect_corroborated_ids_from_runs(
         try:
             result = verify_chain(events, key)
         except Exception as exc:  # noqa: BLE001
-            warnings.append(
-                f"corroboration: verify_chain crashed on {meta.run_id} ({exc})"
-            )
+            warnings.append(f"corroboration: verify_chain crashed on {meta.run_id} ({exc})")
             continue
         if result.get("state") != "ok":
             # tampered / unsigned / unknown_run -> no corroboration.
@@ -1850,9 +2084,14 @@ def _collect_corroborated_ids_from_mcp_receipts(
         tool_call = data.get("tool_call")
         client_id = data.get("client_id")
         tool_name = data.get("tool_name")
-        if not (isinstance(tool_call, str) and tool_call
-                and isinstance(client_id, str) and client_id
-                and isinstance(tool_name, str) and tool_name):
+        if not (
+            isinstance(tool_call, str)
+            and tool_call
+            and isinstance(client_id, str)
+            and client_id
+            and isinstance(tool_name, str)
+            and tool_name
+        ):
             continue
         try:
             receipt = McpDecisionReceipt(
@@ -1860,9 +2099,7 @@ def _collect_corroborated_ids_from_mcp_receipts(
                 client_id=client_id,
                 tool_name=tool_name,
                 actor_ref_id=data.get("actor_ref_id"),
-                declared_side_effects=tuple(
-                    data.get("declared_side_effects") or ()
-                ),
+                declared_side_effects=tuple(data.get("declared_side_effects") or ()),
                 required_mode=data.get("required_mode"),
                 input_hash=data.get("input_hash"),
                 policy_decision=data.get("policy_decision", "not_evaluated"),
@@ -1910,12 +2147,8 @@ def _collect_corroborated_ids(
         except Exception:
             return frozenset(), frozenset()
 
-    run_tools, run_actors = _collect_corroborated_ids_from_runs(
-        repo_root, warnings
-    )
-    mcp_tools, mcp_actors = _collect_corroborated_ids_from_mcp_receipts(
-        mcp_receipts_dir, warnings
-    )
+    run_tools, run_actors = _collect_corroborated_ids_from_runs(repo_root, warnings)
+    mcp_tools, mcp_actors = _collect_corroborated_ids_from_mcp_receipts(mcp_receipts_dir, warnings)
     return (
         frozenset(run_tools | mcp_tools),
         frozenset(run_actors | mcp_actors),
@@ -2028,21 +2261,23 @@ def _build_environment_refs(
 # Recognised top-level fields per rule-result row. Anything outside this
 # set on an individual rule row triggers a warning so callers can spot
 # producer drift (W192).
-_RULE_RESULT_KNOWN_FIELDS: frozenset[str] = frozenset({
-    "name",
-    "rule_id",
-    "id",
-    "passed",
-    "decision",
-    "severity",
-    "violations",
-    "reason",
-    "evidence_ref",
-    "clause",
-    "partial_success",
-    "category",
-    "description",
-})
+_RULE_RESULT_KNOWN_FIELDS: frozenset[str] = frozenset(
+    {
+        "name",
+        "rule_id",
+        "id",
+        "passed",
+        "decision",
+        "severity",
+        "violations",
+        "reason",
+        "evidence_ref",
+        "clause",
+        "partial_success",
+        "category",
+        "description",
+    }
+)
 
 
 def _flatten_rules_envelope_to_policy_decisions(
@@ -2061,9 +2296,7 @@ def _flatten_rules_envelope_to_policy_decisions(
     out: list[Mapping[str, Any]] = []
     rows = envelope.get("results")
     if not isinstance(rows, list):
-        warnings.append(
-            f"{source_label}: no 'results' array at top level - skipped"
-        )
+        warnings.append(f"{source_label}: no 'results' array at top level - skipped")
         return out
     # W293 — every row flattened from a ``roam rules`` envelope carries
     # the ``producer_envelope(rule)`` provenance: the rules-validate
@@ -2071,15 +2304,11 @@ def _flatten_rules_envelope_to_policy_decisions(
     _rule_prov = provenance_label("producer_envelope", detail="rule")
     for idx, row in enumerate(rows):
         if not isinstance(row, Mapping):
-            warnings.append(
-                f"{source_label}[{idx}]: skipped non-dict rule row"
-            )
+            warnings.append(f"{source_label}[{idx}]: skipped non-dict rule row")
             continue
         rule_id = row.get("rule_id") or row.get("id") or row.get("name")
         if not rule_id:
-            warnings.append(
-                f"{source_label}[{idx}]: skipped rule row with no id/name"
-            )
+            warnings.append(f"{source_label}[{idx}]: skipped rule row with no id/name")
             continue
         # Decision: prefer explicit ``decision`` field; fall back to the
         # ``passed`` boolean shape that roam rules emits today.
@@ -2110,10 +2339,7 @@ def _flatten_rules_envelope_to_policy_decisions(
         # Surface unknown per-row keys so callers spot drift.
         for key in row.keys():
             if key not in _RULE_RESULT_KNOWN_FIELDS:
-                warnings.append(
-                    f"{source_label}[{idx}]: unrecognised field {key!r} on "
-                    f"rule {rule_id!r}"
-                )
+                warnings.append(f"{source_label}[{idx}]: unrecognised field {key!r} on rule {rule_id!r}")
         entry["provenance"] = _rule_prov
         out.append(entry)
     return out
@@ -2145,9 +2371,7 @@ def _inline_raw_envelope_artifact(
     try:
         body = json.dumps(envelope, sort_keys=True, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
-        warnings.append(
-            f"{source_label}: could not serialise raw envelope ({exc})"
-        )
+        warnings.append(f"{source_label}: could not serialise raw envelope ({exc})")
         return None
     redactions: tuple[str, ...] = ()
     if len(body.encode("utf-8")) > max_inline_bytes:
@@ -2161,6 +2385,7 @@ def _inline_raw_envelope_artifact(
         # path explicitly opted for "inline + truncate + stamp" instead
         # (see docstring above), so the advisory is already addressed.
         import warnings as _stdlib_warnings  # local import to avoid name clash with the list param
+
         with _stdlib_warnings.catch_warnings():
             _stdlib_warnings.filterwarnings(
                 "ignore",
@@ -2174,9 +2399,7 @@ def _inline_raw_envelope_artifact(
                 redactions=redactions,
             )
     except ValueError as exc:
-        warnings.append(
-            f"{source_label}: rejected raw_envelope artifact ({exc})"
-        )
+        warnings.append(f"{source_label}: rejected raw_envelope artifact ({exc})")
         return None
 
 
@@ -2202,9 +2425,7 @@ def _flatten_vuln_reach_envelope(
     if isinstance(raw, list):
         for row_idx, row in enumerate(raw):
             if not isinstance(row, Mapping):
-                warnings.append(
-                    f"{source_label}: skipped non-dict vuln row [{row_idx}]"
-                )
+                warnings.append(f"{source_label}: skipped non-dict vuln row [{row_idx}]")
                 continue
             cve = row.get("cve") or row.get("cve_id") or "?"
             pkg = row.get("package") or row.get("package_name") or "?"
@@ -2213,10 +2434,7 @@ def _flatten_vuln_reach_envelope(
                 "finding_id_str": f"vuln-reach:{cve}:{pkg}",
                 "source_detector": "vuln-reach",
                 "subject_kind": "package",
-                "claim": (
-                    f"{cve} reachable in {pkg}"
-                    if row.get("reachable") else f"{cve} not reachable in {pkg}"
-                ),
+                "claim": (f"{cve} reachable in {pkg}" if row.get("reachable") else f"{cve} not reachable in {pkg}"),
                 "cve": cve,
                 "package": pkg,
                 "reachable": bool(row.get("reachable")),
@@ -2228,10 +2446,7 @@ def _flatten_vuln_reach_envelope(
                 finding["severity"] = severity
             rows.append(finding)
     else:
-        warnings.append(
-            f"{source_label}: no 'vulnerabilities' (or 'reachable_vulns') "
-            f"array - flattening skipped"
-        )
+        warnings.append(f"{source_label}: no 'vulnerabilities' (or 'reachable_vulns') array - flattening skipped")
     # W241 (Leak B / W236c): apply the closed-allowlist schema BEFORE
     # inlining. The whole vuln-reach envelope used to ride through
     # verbatim; any free-form field on a vulnerability row
@@ -2262,6 +2477,7 @@ def _flatten_vuln_reach_envelope(
         # ``size_limit`` redaction stamp; rewrapping here must not
         # re-fire the warning.
         import warnings as _stdlib_warnings  # noqa: PLC0415 - local alias avoids name clash with the list param
+
         with _stdlib_warnings.catch_warnings():
             _stdlib_warnings.filterwarnings(
                 "ignore",
@@ -2301,19 +2517,11 @@ def _flatten_test_impact_envelope(
             if isinstance(row, str) and row:
                 tests_required.append(row)
             elif isinstance(row, Mapping):
-                tf = (
-                    row.get("file")
-                    or row.get("test_file")
-                    or row.get("path")
-                    or row.get("test_id")
-                )
+                tf = row.get("file") or row.get("test_file") or row.get("path") or row.get("test_id")
                 if isinstance(tf, str) and tf:
                     tests_required.append(tf)
     else:
-        warnings.append(
-            f"{source_label}: no 'tests' (or 'affected_tests') array "
-            f"- tests_required not flattened"
-        )
+        warnings.append(f"{source_label}: no 'tests' (or 'affected_tests') array - tests_required not flattened")
 
     tests_run: list[Mapping[str, Any]] = []
     raw_runs = envelope.get("tests_run") or envelope.get("matched_runs")
@@ -2349,9 +2557,7 @@ def _fold_cga_envelope_to_artifact(
     parsed; never raises - the collector is forgiving by contract.
     """
     if not isinstance(envelope, Mapping):
-        warnings.append(
-            f"{source_label}: expected dict, got {type(envelope).__name__}; ignored"
-        )
+        warnings.append(f"{source_label}: expected dict, got {type(envelope).__name__}; ignored")
         return None
 
     statement = envelope.get("statement")
@@ -2385,22 +2591,15 @@ def _fold_cga_envelope_to_artifact(
 
     if statement_hash is None and isinstance(statement, Mapping):
         try:
-            canonical = json.dumps(
-                statement, sort_keys=True, separators=(",", ":")
-            )
+            canonical = json.dumps(statement, sort_keys=True, separators=(",", ":"))
             statement_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         except (TypeError, ValueError) as exc:
-            warnings.append(
-                f"{source_label}: could not serialise CGA statement ({exc})"
-            )
+            warnings.append(f"{source_label}: could not serialise CGA statement ({exc})")
 
     if statement_hash is None:
         # No statement we could hash AND no merkle root in summary -
         # the envelope is unparseable for our purposes.
-        warnings.append(
-            f"{source_label}: missing both statement and summary.merkle_root; "
-            f"cga artifact skipped"
-        )
+        warnings.append(f"{source_label}: missing both statement and summary.merkle_root; cga artifact skipped")
         return None
 
     if predicate_type is None:
@@ -2474,9 +2673,7 @@ def _fold_cga_envelope_to_artifact(
             extra=extra,
         )
     except ValueError as exc:
-        warnings.append(
-            f"{source_label}: rejected CGA artifact ({exc})"
-        )
+        warnings.append(f"{source_label}: rejected CGA artifact ({exc})")
         return None
 
 
@@ -2506,14 +2703,10 @@ def _audit_trail_to_artifact_and_decisions(
     # artifact_id stays stable across collectors and the content_hash
     # can be verified by any consumer that has the envelope bytes.
     try:
-        canonical = json.dumps(
-            envelope, sort_keys=True, separators=(",", ":")
-        )
+        canonical = json.dumps(envelope, sort_keys=True, separators=(",", ":"))
         trail_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     except (TypeError, ValueError) as exc:
-        warnings.append(
-            f"{source_label}: could not serialise audit-trail envelope ({exc})"
-        )
+        warnings.append(f"{source_label}: could not serialise audit-trail envelope ({exc})")
         trail_hash = None
 
     # Identify the run / path the trail belongs to so the artifact_id
@@ -2539,8 +2732,7 @@ def _audit_trail_to_artifact_and_decisions(
             entries_count = ec
 
     artifact_id_suffix = run_id or (
-        hashlib.sha1(audit_trail_path.encode("utf-8")).hexdigest()[:12]
-        if audit_trail_path else "unknown"
+        hashlib.sha1(audit_trail_path.encode("utf-8")).hexdigest()[:12] if audit_trail_path else "unknown"
     )
     artifact_id = f"audit-trail:{artifact_id_suffix}"
 
@@ -2583,9 +2775,7 @@ def _audit_trail_to_artifact_and_decisions(
                     extra=extra,
                 )
         except ValueError as exc:
-            warnings.append(
-                f"{source_label}: rejected audit-trail artifact ({exc})"
-            )
+            warnings.append(f"{source_label}: rejected audit-trail artifact ({exc})")
             artifact = None
 
     # W293 — audit-trail chain-integrity rows are produced by parsing the
@@ -2600,20 +2790,24 @@ def _audit_trail_to_artifact_and_decisions(
     # so downstream consumers can answer "was the chain valid?" without
     # walking the artifact's extra dict.
     if chain_valid is True:
-        decisions.append({
-            "rule_id": "audit_trail_chain_integrity",
-            "decision": "pass",
-            "evidence_ref": f"artifact:{artifact_id}",
-            "provenance": _audit_trail_prov,
-        })
+        decisions.append(
+            {
+                "rule_id": "audit_trail_chain_integrity",
+                "decision": "pass",
+                "evidence_ref": f"artifact:{artifact_id}",
+                "provenance": _audit_trail_prov,
+            }
+        )
     elif chain_valid is False:
-        decisions.append({
-            "rule_id": "audit_trail_chain_integrity",
-            "decision": "fail",
-            "evidence_ref": f"artifact:{artifact_id}",
-            "reason": "audit trail chain verification failed",
-            "provenance": _audit_trail_prov,
-        })
+        decisions.append(
+            {
+                "rule_id": "audit_trail_chain_integrity",
+                "decision": "fail",
+                "evidence_ref": f"artifact:{artifact_id}",
+                "reason": "audit trail chain verification failed",
+                "provenance": _audit_trail_prov,
+            }
+        )
 
     if isinstance(issues, list):
         for issue in issues:
@@ -2685,30 +2879,22 @@ def _read_mcp_receipts_dir(
     try:
         files = sorted(dir_path.glob("*.json"))
     except OSError as exc:
-        warnings.append(
-            f"mcp_receipts_dir: could not list {dir_path} ({exc})"
-        )
+        warnings.append(f"mcp_receipts_dir: could not list {dir_path} ({exc})")
         return artifacts, refs
 
     for file in files:
         try:
             body = file.read_text(encoding="utf-8")
         except OSError as exc:
-            warnings.append(
-                f"mcp_receipts_dir: could not read {file.name} ({exc})"
-            )
+            warnings.append(f"mcp_receipts_dir: could not read {file.name} ({exc})")
             continue
         try:
             data = json.loads(body)
         except (json.JSONDecodeError, ValueError) as exc:
-            warnings.append(
-                f"mcp_receipts_dir: malformed JSON in {file.name} ({exc})"
-            )
+            warnings.append(f"mcp_receipts_dir: malformed JSON in {file.name} ({exc})")
             continue
         if not isinstance(data, Mapping):
-            warnings.append(
-                f"mcp_receipts_dir: {file.name} is not a JSON object - skipped"
-            )
+            warnings.append(f"mcp_receipts_dir: {file.name} is not a JSON object - skipped")
             continue
         # McpDecisionReceipt validates its own fields; absorb the
         # ValueError defensively so one bad receipt doesn't break the
@@ -2718,12 +2904,16 @@ def _read_mcp_receipts_dir(
             tool_call = data.get("tool_call")
             client_id = data.get("client_id")
             tool_name = data.get("tool_name")
-            if not (isinstance(tool_call, str) and tool_call
-                    and isinstance(client_id, str) and client_id
-                    and isinstance(tool_name, str) and tool_name):
+            if not (
+                isinstance(tool_call, str)
+                and tool_call
+                and isinstance(client_id, str)
+                and client_id
+                and isinstance(tool_name, str)
+                and tool_name
+            ):
                 warnings.append(
-                    f"mcp_receipts_dir: {file.name} missing required "
-                    f"tool_call/client_id/tool_name - skipped"
+                    f"mcp_receipts_dir: {file.name} missing required tool_call/client_id/tool_name - skipped"
                 )
                 continue
             receipt = McpDecisionReceipt(
@@ -2731,9 +2921,7 @@ def _read_mcp_receipts_dir(
                 client_id=client_id,
                 tool_name=tool_name,
                 actor_ref_id=data.get("actor_ref_id"),
-                declared_side_effects=tuple(
-                    data.get("declared_side_effects") or ()
-                ),
+                declared_side_effects=tuple(data.get("declared_side_effects") or ()),
                 required_mode=data.get("required_mode"),
                 input_hash=data.get("input_hash"),
                 policy_decision=data.get("policy_decision", "not_evaluated"),
@@ -2744,9 +2932,7 @@ def _read_mcp_receipts_dir(
                 extra=data.get("extra") or {},
             )
         except (ValueError, TypeError) as exc:
-            warnings.append(
-                f"mcp_receipts_dir: rejected receipt {file.name} ({exc})"
-            )
+            warnings.append(f"mcp_receipts_dir: rejected receipt {file.name} ({exc})")
             continue
 
         content_hash = receipt.compute_content_hash()
@@ -2770,9 +2956,7 @@ def _read_mcp_receipts_dir(
                 extra=extra,
             )
         except ValueError as exc:
-            warnings.append(
-                f"mcp_receipts_dir: rejected artifact for {file.name} ({exc})"
-            )
+            warnings.append(f"mcp_receipts_dir: rejected artifact for {file.name} ({exc})")
             continue
         artifacts.append(artifact)
 
@@ -2796,10 +2980,7 @@ def _read_mcp_receipts_dir(
                     )
                 )
             except ValueError as exc:
-                warnings.append(
-                    f"mcp_receipts_dir: rejected ActorRef "
-                    f"({kind!r}, {actor_id!r}): {exc}"
-                )
+                warnings.append(f"mcp_receipts_dir: rejected ActorRef ({kind!r}, {actor_id!r}): {exc}")
 
     return artifacts, refs
 
@@ -2829,6 +3010,8 @@ def collect_change_evidence(
     diff_hash: str | None = None,
     mode: str | None = None,
     schema_version: str | None = None,
+    packet_config_hashes: Mapping[str, str] | None = None,
+    current_config_hashes: Mapping[str, str] | None = None,
 ) -> tuple[ChangeEvidence, list[str]]:
     """Collect evidence packet + warning list (unmappable fields).
 
@@ -2901,6 +3084,25 @@ def collect_change_evidence(
     ``diff_hash``, ``mode``, ``repo_id``, ``schema_version``) win
     over anything the envelopes carry. This mirrors CLAUDE.md LAW 11:
     explicit caller intent beats inferred values.
+
+    W1253 config-hash drift detection (optional inputs):
+
+    * ``packet_config_hashes`` - the three W210 config-file hashes
+      stamped onto the run at start time (lifted from
+      ``RunMeta.extra`` by the W1255-IMPL producer). Keys are the
+      ChangeEvidence field names (``rules_config_hash`` /
+      ``constitution_hash`` / ``control_map_hash``); values are 64-char
+      sha256 hex digests or the empty string for missing files. When
+      provided, the packet's three hash fields record these values so
+      an audit-time verifier can re-check the drift signal.
+    * ``current_config_hashes`` - the same three hashes recomputed
+      against the current on-disk content (typically via
+      :func:`roam.evidence.config_hashes.stamp_all`). When BOTH
+      ``packet_config_hashes[k]`` and ``current_config_hashes[k]`` are
+      non-empty AND differ, ``evidence_stale=True`` flips and a
+      ``stale_reasons`` entry names the drifted field. Missing data
+      on either side is NOT a positive drift signal (insufficient-data
+      discipline mirrors W1234).
     """
     warnings: list[str] = []
 
@@ -2930,10 +3132,7 @@ def collect_change_evidence(
 
     if pr_bundle_envelope is not None:
         if not isinstance(pr_bundle_envelope, Mapping):
-            warnings.append(
-                "pr_bundle_envelope: expected dict, got "
-                f"{type(pr_bundle_envelope).__name__}; ignored"
-            )
+            warnings.append(f"pr_bundle_envelope: expected dict, got {type(pr_bundle_envelope).__name__}; ignored")
         else:
             # Identity fields - top-level OR nested under bundle_meta /
             # actor / timestamps containers. We probe both shapes.
@@ -2954,9 +3153,7 @@ def collect_change_evidence(
                 _nested(pr_bundle_envelope, ("bundle_meta", "run_ids")),
             )
             if isinstance(run_ids_raw, (list, tuple)):
-                bundle_run_ids = tuple(
-                    str(r) for r in run_ids_raw if isinstance(r, str) and r
-                )
+                bundle_run_ids = tuple(str(r) for r in run_ids_raw if isinstance(r, str) and r)
             # W249 - layer-2 scrub. Run BEFORE picking values so the
             # secret-shaped substrings never land in bundle_agent_id /
             # bundle_human_actor (which feed ChangeEvidence.agent_id /
@@ -2981,14 +3178,12 @@ def collect_change_evidence(
                 )
             # Legacy top-level fields - scrub each individually.
             legacy_agent_id, lai_hit = _redact_secrets_in_string(
-                pr_bundle_envelope.get("agent_id")
-                if isinstance(pr_bundle_envelope.get("agent_id"), str) else ""
+                pr_bundle_envelope.get("agent_id") if isinstance(pr_bundle_envelope.get("agent_id"), str) else ""
             )
             if lai_hit:
                 had_actor_secret = True
             legacy_human_actor, lha_hit = _redact_secrets_in_string(
-                pr_bundle_envelope.get("human_actor")
-                if isinstance(pr_bundle_envelope.get("human_actor"), str) else ""
+                pr_bundle_envelope.get("human_actor") if isinstance(pr_bundle_envelope.get("human_actor"), str) else ""
             )
             if lha_hit:
                 had_actor_secret = True
@@ -3037,9 +3232,7 @@ def collect_change_evidence(
                 _nested(pr_bundle_envelope, ("summary", "verdict")),
             )
             if isinstance(raw_verdict, str):
-                scrubbed_verdict, verdict_hit = _redact_secrets_in_string(
-                    raw_verdict
-                )
+                scrubbed_verdict, verdict_hit = _redact_secrets_in_string(raw_verdict)
                 if verdict_hit:
                     had_actor_secret = True
                 bundle_verdict = scrubbed_verdict
@@ -3083,20 +3276,14 @@ def collect_change_evidence(
 
             tests_run_raw = pr_bundle_envelope.get("tests_run")
             if isinstance(tests_run_raw, list):
-                bundle_tests_run = tuple(
-                    dict(t) for t in tests_run_raw if isinstance(t, Mapping)
-                )
+                bundle_tests_run = tuple(dict(t) for t in tests_run_raw if isinstance(t, Mapping))
 
             approvals_raw = pr_bundle_envelope.get("approvals")
             if isinstance(approvals_raw, list):
-                bundle_approvals = tuple(
-                    dict(a) for a in approvals_raw if isinstance(a, Mapping)
-                )
+                bundle_approvals = tuple(dict(a) for a in approvals_raw if isinstance(a, Mapping))
             accepted_raw = pr_bundle_envelope.get("accepted_risks")
             if isinstance(accepted_raw, list):
-                bundle_accepted_risks = tuple(
-                    dict(r) for r in accepted_raw if isinstance(r, Mapping)
-                )
+                bundle_accepted_risks = tuple(dict(r) for r in accepted_raw if isinstance(r, Mapping))
 
             # Redactions on the pr-bundle envelope.
             bundle_redactions = _normalise_redactions(
@@ -3113,14 +3300,8 @@ def collect_change_evidence(
             # Unrecognised top-level keys -> warning. This is the memo's
             # "warning list for fields that cannot yet map cleanly".
             for key in pr_bundle_envelope.keys():
-                if (
-                    key not in _PR_BUNDLE_ENVELOPE_CHROME
-                    and key not in _PR_BUNDLE_KNOWN_PAYLOAD
-                ):
-                    warnings.append(
-                        f"pr_bundle_envelope: unrecognised top-level field "
-                        f"{key!r}"
-                    )
+                if key not in _PR_BUNDLE_ENVELOPE_CHROME and key not in _PR_BUNDLE_KNOWN_PAYLOAD:
+                    warnings.append(f"pr_bundle_envelope: unrecognised top-level field {key!r}")
 
     # ------------------------------------------------------------------
     # Step 2 - flatten findings from every findings envelope into one
@@ -3130,16 +3311,9 @@ def collect_change_evidence(
     findings: list[Mapping[str, Any]] = []
     for idx, env in enumerate(findings_envelopes):
         if not isinstance(env, Mapping):
-            warnings.append(
-                f"findings_envelopes[{idx}]: expected dict, got "
-                f"{type(env).__name__}; skipped"
-            )
+            warnings.append(f"findings_envelopes[{idx}]: expected dict, got {type(env).__name__}; skipped")
             continue
-        findings.extend(
-            _normalise_findings_envelope(
-                env, warnings, source_label=f"findings_envelopes[{idx}]"
-            )
-        )
+        findings.extend(_normalise_findings_envelope(env, warnings, source_label=f"findings_envelopes[{idx}]"))
         # Also harvest redactions from findings envelopes.
         bundle_redactions.extend(
             _normalise_redactions(
@@ -3151,14 +3325,12 @@ def collect_change_evidence(
 
     if critique_envelope is not None:
         if not isinstance(critique_envelope, Mapping):
-            warnings.append(
-                "critique_envelope: expected dict, got "
-                f"{type(critique_envelope).__name__}; ignored"
-            )
+            warnings.append(f"critique_envelope: expected dict, got {type(critique_envelope).__name__}; ignored")
         else:
             findings.extend(
                 _normalise_findings_envelope(
-                    critique_envelope, warnings,
+                    critique_envelope,
+                    warnings,
                     source_label="critique_envelope",
                 )
             )
@@ -3172,14 +3344,12 @@ def collect_change_evidence(
 
     if pr_risk_envelope is not None:
         if not isinstance(pr_risk_envelope, Mapping):
-            warnings.append(
-                "pr_risk_envelope: expected dict, got "
-                f"{type(pr_risk_envelope).__name__}; ignored"
-            )
+            warnings.append(f"pr_risk_envelope: expected dict, got {type(pr_risk_envelope).__name__}; ignored")
         else:
             findings.extend(
                 _normalise_findings_envelope(
-                    pr_risk_envelope, warnings,
+                    pr_risk_envelope,
+                    warnings,
                     source_label="pr_risk_envelope",
                 )
             )
@@ -3202,17 +3372,12 @@ def collect_change_evidence(
     audit_trail_decisions: list[Mapping[str, Any]] = []
     if audit_trail_envelope is not None:
         if not isinstance(audit_trail_envelope, Mapping):
-            warnings.append(
-                "audit_trail_envelope: expected dict, got "
-                f"{type(audit_trail_envelope).__name__}; ignored"
-            )
+            warnings.append(f"audit_trail_envelope: expected dict, got {type(audit_trail_envelope).__name__}; ignored")
         else:
-            audit_trail_artifact, audit_trail_decisions = (
-                _audit_trail_to_artifact_and_decisions(
-                    audit_trail_envelope,
-                    warnings,
-                    source_label="audit_trail_envelope",
-                )
+            audit_trail_artifact, audit_trail_decisions = _audit_trail_to_artifact_and_decisions(
+                audit_trail_envelope,
+                warnings,
+                source_label="audit_trail_envelope",
             )
             bundle_redactions.extend(
                 _normalise_redactions(
@@ -3226,15 +3391,10 @@ def collect_change_evidence(
     rules_decisions: list[Mapping[str, Any]] = []
     for idx, env in enumerate(rules_envelopes):
         if not isinstance(env, Mapping):
-            warnings.append(
-                f"rules_envelopes[{idx}]: expected dict, got "
-                f"{type(env).__name__}; skipped"
-            )
+            warnings.append(f"rules_envelopes[{idx}]: expected dict, got {type(env).__name__}; skipped")
             continue
         rules_decisions.extend(
-            _flatten_rules_envelope_to_policy_decisions(
-                env, warnings, source_label=f"rules_envelopes[{idx}]"
-            )
+            _flatten_rules_envelope_to_policy_decisions(env, warnings, source_label=f"rules_envelopes[{idx}]")
         )
         bundle_redactions.extend(
             _normalise_redactions(
@@ -3248,14 +3408,9 @@ def collect_change_evidence(
     vuln_reach_artifacts: list[EvidenceArtifact] = []
     for idx, env in enumerate(vuln_reach_envelopes):
         if not isinstance(env, Mapping):
-            warnings.append(
-                f"vuln_reach_envelopes[{idx}]: expected dict, got "
-                f"{type(env).__name__}; skipped"
-            )
+            warnings.append(f"vuln_reach_envelopes[{idx}]: expected dict, got {type(env).__name__}; skipped")
             continue
-        rows, art = _flatten_vuln_reach_envelope(
-            env, warnings, f"vuln_reach_envelopes[{idx}]", idx
-        )
+        rows, art = _flatten_vuln_reach_envelope(env, warnings, f"vuln_reach_envelopes[{idx}]", idx)
         findings.extend(rows)
         if art is not None:
             vuln_reach_artifacts.append(art)
@@ -3273,14 +3428,9 @@ def collect_change_evidence(
     test_impact_artifacts: list[EvidenceArtifact] = []
     for idx, env in enumerate(test_impact_envelopes):
         if not isinstance(env, Mapping):
-            warnings.append(
-                f"test_impact_envelopes[{idx}]: expected dict, got "
-                f"{type(env).__name__}; skipped"
-            )
+            warnings.append(f"test_impact_envelopes[{idx}]: expected dict, got {type(env).__name__}; skipped")
             continue
-        treq, trun, art = _flatten_test_impact_envelope(
-            env, warnings, f"test_impact_envelopes[{idx}]", idx
-        )
+        treq, trun, art = _flatten_test_impact_envelope(env, warnings, f"test_impact_envelopes[{idx}]", idx)
         extra_tests_required.extend(treq)
         extra_tests_run.extend(trun)
         if art is not None:
@@ -3297,14 +3447,9 @@ def collect_change_evidence(
     cga_artifacts: list[EvidenceArtifact] = []
     for idx, env in enumerate(cga_envelopes):
         if not isinstance(env, Mapping):
-            warnings.append(
-                f"cga_envelopes[{idx}]: expected dict, got "
-                f"{type(env).__name__}; skipped"
-            )
+            warnings.append(f"cga_envelopes[{idx}]: expected dict, got {type(env).__name__}; skipped")
             continue
-        art = _fold_cga_envelope_to_artifact(
-            env, warnings, f"cga_envelopes[{idx}]", idx
-        )
+        art = _fold_cga_envelope_to_artifact(env, warnings, f"cga_envelopes[{idx}]", idx)
         if art is not None:
             cga_artifacts.append(art)
         bundle_redactions.extend(
@@ -3316,15 +3461,66 @@ def collect_change_evidence(
         )
 
     # W197 - MCP decision receipts directory walk.
-    mcp_receipt_artifacts, mcp_receipt_actor_refs = _read_mcp_receipts_dir(
-        mcp_receipts_dir, warnings
-    ) if mcp_receipts_dir is not None else ([], [])
+    mcp_receipt_artifacts, mcp_receipt_actor_refs = (
+        _read_mcp_receipts_dir(mcp_receipts_dir, warnings) if mcp_receipts_dir is not None else ([], [])
+    )
 
     # ------------------------------------------------------------------
     # Step 3 - run-event timestamps and run_ids.
     # ------------------------------------------------------------------
     ev_list = list(run_events) if run_events else []
     ev_run_ids, ev_earliest, ev_latest = _collect_run_event_metadata(ev_list)
+
+    # W1234 - W210 change-scope timestamps from the run-ledger event
+    # stream. Distinct from the run-wide ``started_at`` / ``completed_at``
+    # above: those bracket the WHOLE run; these bracket the change-scope
+    # phases inside it (context-read vs. post-edit). When the event
+    # stream doesn't surface phase-classifiable entries the three values
+    # stay ``None`` (honest-default; the W210 omit-when-default rule
+    # keeps the canonical-JSON / content_hash byte-stable).
+    (
+        change_scope_context_read_at,
+        change_scope_edits_started_at,
+        change_scope_edits_completed_at,
+    ) = _collect_change_scope_timestamps(ev_list)
+    evidence_stale, stale_reasons_tuple = _compute_evidence_stale(
+        change_scope_context_read_at,
+        change_scope_edits_started_at,
+    )
+
+    # W1253 - config-hash drift detection. The W1255-IMPL producer
+    # stamps the three canonical config hashes into RunMeta.extra at
+    # run-start; this consumer-side block compares those packet-stamped
+    # hashes against the current on-disk hashes and flips
+    # ``evidence_stale=True`` when any of the three drift. Drift
+    # reasons combine with the W1234 timestamp staleness reasons; the
+    # flag is sticky (either signal raises it). Both kwargs are
+    # optional - when neither side is provided the packet's three
+    # hash fields stay ``None`` and the W210 omit-when-default rule
+    # keeps the canonical JSON byte-stable for pre-W1253 packets.
+    #
+    # The packet records the PACKET-STAMPED hashes (the run-start
+    # values), NOT the current on-disk values. An audit-time consumer
+    # re-computes the on-disk hashes itself and compares against the
+    # packet record to re-verify the drift signal independently.
+    hash_drift_reasons, _current_hashes_seen = _detect_hash_drift(
+        packet_config_hashes,
+        current_config_hashes,
+    )
+    if hash_drift_reasons:
+        evidence_stale = True
+    stale_reasons = stale_reasons_tuple + hash_drift_reasons
+
+    # Lift the packet-stamped hashes onto the ChangeEvidence packet
+    # fields. Empty strings ("") collapse to None so the W210
+    # omit-when-default discipline kicks in and the canonical JSON
+    # stays byte-stable for packets whose run never stamped a given
+    # config (insufficient-data discipline: "" is the W1255 absent
+    # sentinel, distinct from "computed but empty").
+    _packet_h = dict(packet_config_hashes) if packet_config_hashes else {}
+    _stamped_rules_config_hash = _packet_h.get("rules_config_hash") or None
+    _stamped_constitution_hash = _packet_h.get("constitution_hash") or None
+    _stamped_control_map_hash = _packet_h.get("control_map_hash") or None
 
     # ------------------------------------------------------------------
     # Step 4 - resolve final values with the caller-wins precedence:
@@ -3372,9 +3568,7 @@ def collect_change_evidence(
     # parseable receipt, the sets stay empty and tool actors fall to
     # ``unknown`` per the W285 guardrail (honest noise > name-based
     # shortcut).
-    corroborated_tool_ids, corroborated_actor_ids = _collect_corroborated_ids(
-        mcp_receipts_dir, warnings
-    )
+    corroborated_tool_ids, corroborated_actor_ids = _collect_corroborated_ids(mcp_receipts_dir, warnings)
 
     # W292 - harvest (authority_kind, authority_id) pairs from
     # HMAC-verified run-ledger events. Membership promotes the matching
@@ -3388,9 +3582,7 @@ def collect_change_evidence(
     except Exception:
         _authority_repo_root = None
     if _authority_repo_root is not None:
-        corroborated_authorities = _collect_corroborated_authorities_from_runs(
-            _authority_repo_root, warnings
-        )
+        corroborated_authorities = _collect_corroborated_authorities_from_runs(_authority_repo_root, warnings)
     else:
         corroborated_authorities = frozenset()
 
@@ -3399,22 +3591,19 @@ def collect_change_evidence(
     # canonical JSON (see ``_W182_OMIT_WHEN_EMPTY_FIELDS``) so pre-W182
     # hashes stay stable when no refs are populated.
     actor_refs = _build_actor_refs(
-        pr_bundle_envelope=pr_bundle_envelope
-            if isinstance(pr_bundle_envelope, Mapping) else None,
+        pr_bundle_envelope=pr_bundle_envelope if isinstance(pr_bundle_envelope, Mapping) else None,
         run_events=ev_list,
         caller_agent_id=None,  # no kwarg yet; bundle_agent_id flows via ``actor`` block
         corroborated_tool_ids=corroborated_tool_ids,
         corroborated_actor_ids=corroborated_actor_ids,
     )
     authority_refs = _build_authority_refs(
-        pr_bundle_envelope=pr_bundle_envelope
-            if isinstance(pr_bundle_envelope, Mapping) else None,
+        pr_bundle_envelope=pr_bundle_envelope if isinstance(pr_bundle_envelope, Mapping) else None,
         caller_mode=final_mode,
         corroborated_authorities=corroborated_authorities,
     )
     environment_refs = _build_environment_refs(
-        pr_bundle_envelope=pr_bundle_envelope
-            if isinstance(pr_bundle_envelope, Mapping) else None,
+        pr_bundle_envelope=pr_bundle_envelope if isinstance(pr_bundle_envelope, Mapping) else None,
         caller_repo_id=final_repo_id,
         caller_git_range=final_git_range,
         caller_commit_sha=final_commit_sha,
@@ -3432,9 +3621,7 @@ def collect_change_evidence(
     # (e.g. an mcp_client whose id isn't in any verified source) stay
     # ``unknown`` per the honest-noise contract.
     if mcp_receipt_actor_refs:
-        existing_pairs: set[tuple[str, str]] = {
-            (r.actor_kind, r.actor_id) for r in actor_refs
-        }
+        existing_pairs: set[tuple[str, str]] = {(r.actor_kind, r.actor_id) for r in actor_refs}
         # Cache the env/git/run-ledger probes once - they're invariant
         # across the merged refs and re-reading would only cost cycles.
         _ci_env_detected = _detect_ci_env_id() is not None
@@ -3482,20 +3669,13 @@ def collect_change_evidence(
     all_policy_decisions.extend(audit_trail_decisions)
     for idx, entry in enumerate(extra_policy_decisions):
         if not isinstance(entry, Mapping):
-            warnings.append(
-                f"extra_policy_decisions[{idx}]: expected dict, got "
-                f"{type(entry).__name__}; skipped"
-            )
+            warnings.append(f"extra_policy_decisions[{idx}]: expected dict, got {type(entry).__name__}; skipped")
             continue
         if not entry.get("rule_id"):
-            warnings.append(
-                f"extra_policy_decisions[{idx}]: missing rule_id; skipped"
-            )
+            warnings.append(f"extra_policy_decisions[{idx}]: missing rule_id; skipped")
             continue
         if not entry.get("decision"):
-            warnings.append(
-                f"extra_policy_decisions[{idx}]: missing decision; skipped"
-            )
+            warnings.append(f"extra_policy_decisions[{idx}]: missing decision; skipped")
             continue
         all_policy_decisions.append(entry)
 
@@ -3547,9 +3727,7 @@ def collect_change_evidence(
     else:
         final_tests_required = bundle_tests_required
     if extra_tests_run:
-        final_tests_run: tuple[Mapping[str, Any], ...] = (
-            tuple(bundle_tests_run) + tuple(extra_tests_run)
-        )
+        final_tests_run: tuple[Mapping[str, Any], ...] = tuple(bundle_tests_run) + tuple(extra_tests_run)
     else:
         final_tests_run = bundle_tests_run
 
@@ -3588,7 +3766,25 @@ def collect_change_evidence(
         # / PR Bundle packets, so the stamp lives here. Helper handles
         # ``importlib.metadata`` failure with the ``"unknown"`` sentinel
         # so collection never crashes on a malformed package install.
-        roam_version=_resolve_roam_version(),
+        roam_version=resolve_roam_version(),
+        # W1234 - W210 change-scope timestamps + stale-evidence flag
+        # producer wire-up. Defaults (``None`` / ``False`` / ``()``)
+        # are omitted from canonical JSON per
+        # ``_W210_OMIT_WHEN_DEFAULT_FIELDS`` so packets whose event
+        # stream lacks classifiable entries stay byte-identical to
+        # pre-W1234 packets.
+        context_read_at=change_scope_context_read_at,
+        edits_started_at=change_scope_edits_started_at,
+        edits_completed_at=change_scope_edits_completed_at,
+        evidence_stale=evidence_stale,
+        stale_reasons=stale_reasons,
+        # W1253 - packet-stamped config hashes (from RunMeta.extra at
+        # run-start time via W1255-IMPL). None when the caller didn't
+        # surface them; the W210 omit-when-default rule then keeps
+        # canonical JSON byte-stable for pre-W1253 packets.
+        rules_config_hash=_stamped_rules_config_hash,
+        constitution_hash=_stamped_constitution_hash,
+        control_map_hash=_stamped_control_map_hash,
     )
     if final_schema_version is not None:
         packet_kwargs["schema_version"] = final_schema_version

@@ -46,19 +46,13 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
 FIXTURE_HEAD_SHA = "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"
-FIXTURE_PATH = (
-    Path(__file__).parent
-    / "fixtures"
-    / "github_reviews"
-    / "example_pr_reviews.json"
-)
+FIXTURE_PATH = Path(__file__).parent / "fixtures" / "github_reviews" / "example_pr_reviews.json"
 
 
 def _invoke(*args: str) -> tuple[int, str]:
@@ -93,9 +87,7 @@ def patched_head_sha(monkeypatch):
     """
     from roam.commands import cmd_pr_replay
 
-    monkeypatch.setattr(
-        cmd_pr_replay, "_git_head_sha", lambda: FIXTURE_HEAD_SHA
-    )
+    monkeypatch.setattr(cmd_pr_replay, "_git_head_sha", lambda: FIXTURE_HEAD_SHA)
     yield FIXTURE_HEAD_SHA
 
 
@@ -124,16 +116,18 @@ def test_no_github_args_preserves_producer_not_available(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_fixture_approved_on_head_populates_approvals_and_q8_complete(
-    tmp_path, patched_head_sha
-):
+def test_fixture_approved_on_head_populates_approvals_and_q8_complete(tmp_path, patched_head_sha):
     """APPROVED review on head commit lifts Q8 from partial to complete."""
     target = tmp_path / "evidence.json"
     code, _ = _invoke(
-        "--tier", "sample",
-        "--evidence", str(target),
-        "--github-reviews-json", str(FIXTURE_PATH),
-        "--github-pr-number", "42",
+        "--tier",
+        "sample",
+        "--evidence",
+        str(target),
+        "--github-reviews-json",
+        str(FIXTURE_PATH),
+        "--github-pr-number",
+        "42",
     )
     assert code == 0
     payload = _json.loads(target.read_text(encoding="utf-8"))
@@ -141,19 +135,16 @@ def test_fixture_approved_on_head_populates_approvals_and_q8_complete(
     approvals = payload.get("approvals") or []
     # Alice (id=1001) approved on head; Bob (id=1002) approved on a stale
     # commit -> filtered. Expected = 1 surviving approval.
-    assert len(approvals) >= 1, (
-        f"expected at least one approval on packet, got {approvals}"
-    )
+    assert len(approvals) >= 1, f"expected at least one approval on packet, got {approvals}"
     aliases = {a.get("approver") for a in approvals}
-    assert "alice" in aliases, (
-        f"expected alice in approvers; got {aliases}"
-    )
+    assert "alice" in aliases, f"expected alice in approvers; got {aliases}"
 
     # Q8 must score 'complete' — reconstruct a ChangeEvidence directly
     # from the on-disk payload and call evidence_completeness(). The
     # Q8 rule (approvals OR accepted_risks -> complete) is field-driven,
     # so as long as ``approvals`` survives the rebuild we're complete.
     from roam.evidence import ChangeEvidence
+
     rebuilt = ChangeEvidence(
         evidence_id=payload["evidence_id"],
         schema_version=payload.get("schema_version", "1.0.0"),
@@ -171,30 +162,28 @@ def test_fixture_approved_on_head_populates_approvals_and_q8_complete(
 # ---------------------------------------------------------------------------
 
 
-def test_stale_approved_review_filtered_and_warned(
-    tmp_path, patched_head_sha
-):
+def test_stale_approved_review_filtered_and_warned(tmp_path, patched_head_sha):
     """An APPROVED review on a stale commit is dropped + warned on stderr."""
     target = tmp_path / "evidence.json"
     code, captured = _invoke(
-        "--tier", "sample",
-        "--evidence", str(target),
-        "--github-reviews-json", str(FIXTURE_PATH),
-        "--github-pr-number", "42",
+        "--tier",
+        "sample",
+        "--evidence",
+        str(target),
+        "--github-reviews-json",
+        str(FIXTURE_PATH),
+        "--github-pr-number",
+        "42",
     )
     assert code == 0
     payload = _json.loads(target.read_text(encoding="utf-8"))
     approvers = {a.get("approver") for a in (payload.get("approvals") or [])}
     # Bob's approval is on commit 'stale222...' which != fixture head.
-    assert "bob" not in approvers, (
-        f"expected bob to be filtered as stale; approvers={approvers}"
-    )
+    assert "bob" not in approvers, f"expected bob to be filtered as stale; approvers={approvers}"
     # Surface in the warnings stream: pr-replay logs collector warnings
     # to stderr with the ``[pr-replay] evidence-collector warning:``
     # prefix. The W247a parser-warning string contains 'stale approval'.
-    assert "stale" in captured.lower(), (
-        f"expected stale-approval warning in stderr output; got: {captured!r}"
-    )
+    assert "stale" in captured.lower(), f"expected stale-approval warning in stderr output; got: {captured!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -202,36 +191,29 @@ def test_stale_approved_review_filtered_and_warned(
 # ---------------------------------------------------------------------------
 
 
-def test_changes_requested_yields_policy_decision_deny(
-    tmp_path, patched_head_sha
-):
+def test_changes_requested_yields_policy_decision_deny(tmp_path, patched_head_sha):
     """A CHANGES_REQUESTED review appears as a ``decision="deny"`` row."""
     target = tmp_path / "evidence.json"
     code, _ = _invoke(
-        "--tier", "sample",
-        "--evidence", str(target),
-        "--github-reviews-json", str(FIXTURE_PATH),
-        "--github-pr-number", "42",
+        "--tier",
+        "sample",
+        "--evidence",
+        str(target),
+        "--github-reviews-json",
+        str(FIXTURE_PATH),
+        "--github-pr-number",
+        "42",
     )
     assert code == 0
     payload = _json.loads(target.read_text(encoding="utf-8"))
     decisions = payload.get("policy_decisions") or []
     review_decisions = [
-        d for d in decisions
-        if isinstance(d.get("rule_id"), str)
-        and d["rule_id"].startswith("github_review:")
+        d for d in decisions if isinstance(d.get("rule_id"), str) and d["rule_id"].startswith("github_review:")
     ]
-    assert len(review_decisions) >= 1, (
-        f"expected at least one github_review: decision; got {decisions}"
-    )
+    assert len(review_decisions) >= 1, f"expected at least one github_review: decision; got {decisions}"
     # Carol's review (id=1003) is CHANGES_REQUESTED on the head commit.
-    assert any(
-        d.get("decision") == "deny"
-        and d.get("rule_id") == "github_review:1003"
-        for d in review_decisions
-    ), (
-        f"expected deny decision rule_id=github_review:1003; got "
-        f"{review_decisions}"
+    assert any(d.get("decision") == "deny" and d.get("rule_id") == "github_review:1003" for d in review_decisions), (
+        f"expected deny decision rule_id=github_review:1003; got {review_decisions}"
     )
 
 
@@ -240,9 +222,7 @@ def test_changes_requested_yields_policy_decision_deny(
 # ---------------------------------------------------------------------------
 
 
-def test_review_bodies_do_not_appear_in_canonical_json(
-    tmp_path, patched_head_sha
-):
+def test_review_bodies_do_not_appear_in_canonical_json(tmp_path, patched_head_sha):
     """W247a guardrail: review bodies MUST NOT appear in the packet bytes.
 
     The fixture's bodies contain distinctive substrings (e.g. "sensitive
@@ -251,10 +231,14 @@ def test_review_bodies_do_not_appear_in_canonical_json(
     """
     target = tmp_path / "evidence.json"
     code, _ = _invoke(
-        "--tier", "sample",
-        "--evidence", str(target),
-        "--github-reviews-json", str(FIXTURE_PATH),
-        "--github-pr-number", "42",
+        "--tier",
+        "sample",
+        "--evidence",
+        str(target),
+        "--github-reviews-json",
+        str(FIXTURE_PATH),
+        "--github-pr-number",
+        "42",
     )
     assert code == 0
     raw = target.read_text(encoding="utf-8")
@@ -269,9 +253,7 @@ def test_review_bodies_do_not_appear_in_canonical_json(
         "Reviewing now, will submit",
     ]
     for needle in leaks:
-        assert needle not in raw, (
-            f"review body leaked into canonical JSON: {needle!r}"
-        )
+        assert needle not in raw, f"review body leaked into canonical JSON: {needle!r}"
 
     # W293 regression: the provenance hop on approvals / policy_decisions
     # must NOT pull review bodies through. Inspect the parsed packet
@@ -284,8 +266,7 @@ def test_review_bodies_do_not_appear_in_canonical_json(
         # W293. Confirm the field exists AND no body-shaped key sneaks in.
         for forbidden in ("body", "body_text", "body_html"):
             assert forbidden not in row, (
-                f"W293 regression: forbidden body key {forbidden!r} "
-                f"appeared on row after provenance hop: {row!r}"
+                f"W293 regression: forbidden body key {forbidden!r} appeared on row after provenance hop: {row!r}"
             )
 
 
@@ -294,29 +275,28 @@ def test_review_bodies_do_not_appear_in_canonical_json(
 # ---------------------------------------------------------------------------
 
 
-def test_parser_failure_appends_warning_does_not_crash(
-    tmp_path, patched_head_sha
-):
+def test_parser_failure_appends_warning_does_not_crash(tmp_path, patched_head_sha):
     """A malformed fixture surfaces a warning but pr-replay still completes."""
     bad = tmp_path / "broken_reviews.json"
     bad.write_text("this is not json", encoding="utf-8")
 
     target = tmp_path / "evidence.json"
     code, captured = _invoke(
-        "--tier", "sample",
-        "--evidence", str(target),
-        "--github-reviews-json", str(bad),
-        "--github-pr-number", "42",
+        "--tier",
+        "sample",
+        "--evidence",
+        str(target),
+        "--github-reviews-json",
+        str(bad),
+        "--github-pr-number",
+        "42",
     )
-    assert code == 0, (
-        f"pr-replay must not crash on malformed fixture; output: {captured!r}"
-    )
+    assert code == 0, f"pr-replay must not crash on malformed fixture; output: {captured!r}"
     assert target.exists(), "evidence packet was not written"
     # Warning text mentions github review or load failure.
-    assert (
-        "github review" in captured.lower()
-        or "load failed" in captured.lower()
-    ), f"expected github-review warning on stderr; got {captured!r}"
+    assert "github review" in captured.lower() or "load failed" in captured.lower(), (
+        f"expected github-review warning on stderr; got {captured!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -324,9 +304,7 @@ def test_parser_failure_appends_warning_does_not_crash(
 # ---------------------------------------------------------------------------
 
 
-def test_review_source_provided_suppresses_producer_not_available(
-    tmp_path, patched_head_sha
-):
+def test_review_source_provided_suppresses_producer_not_available(tmp_path, patched_head_sha):
     """When a source is checked, ``producer_not_available`` MUST NOT fire.
 
     The W247b semantic: "checked, no approval" is distinct from
@@ -338,32 +316,37 @@ def test_review_source_provided_suppresses_producer_not_available(
     # but DOES count as "source was checked."
     empty_fixture = tmp_path / "no_approvals.json"
     empty_fixture.write_text(
-        _json.dumps([
-            {
-                "id": 9001,
-                "user": {"login": "zoe"},
-                "state": "COMMENTED",
-                "submitted_at": "2026-05-13T10:00:00Z",
-                "commit_id": FIXTURE_HEAD_SHA,
-                "html_url": "https://example.test/pr/42#review-9001",
-                "body": "Just commenting, no verdict.",
-            }
-        ]),
+        _json.dumps(
+            [
+                {
+                    "id": 9001,
+                    "user": {"login": "zoe"},
+                    "state": "COMMENTED",
+                    "submitted_at": "2026-05-13T10:00:00Z",
+                    "commit_id": FIXTURE_HEAD_SHA,
+                    "html_url": "https://example.test/pr/42#review-9001",
+                    "body": "Just commenting, no verdict.",
+                }
+            ]
+        ),
         encoding="utf-8",
     )
 
     target = tmp_path / "evidence.json"
     code, _ = _invoke(
-        "--tier", "sample",
-        "--evidence", str(target),
-        "--github-reviews-json", str(empty_fixture),
-        "--github-pr-number", "42",
+        "--tier",
+        "sample",
+        "--evidence",
+        str(target),
+        "--github-reviews-json",
+        str(empty_fixture),
+        "--github-pr-number",
+        "42",
     )
     assert code == 0
     payload = _json.loads(target.read_text(encoding="utf-8"))
     assert "producer_not_available" not in (payload.get("redactions") or []), (
-        f"producer_not_available should NOT fire when source provided; "
-        f"redactions={payload.get('redactions')!r}"
+        f"producer_not_available should NOT fire when source provided; redactions={payload.get('redactions')!r}"
     )
 
 
@@ -375,10 +358,14 @@ def test_review_source_provided_suppresses_producer_not_available(
 def test_both_review_sources_raises_usage_error(tmp_path):
     """``--github-reviews-json`` and ``--github-reviews-gh`` are mutually exclusive."""
     code, captured = _invoke(
-        "--tier", "sample",
-        "--github-reviews-json", str(FIXTURE_PATH),
-        "--github-reviews-gh", "owner/repo#42",
-        "--github-pr-number", "42",
+        "--tier",
+        "sample",
+        "--github-reviews-json",
+        str(FIXTURE_PATH),
+        "--github-reviews-gh",
+        "owner/repo#42",
+        "--github-pr-number",
+        "42",
     )
     # Click UsageError -> exit 2 by default.
     assert code != 0
@@ -388,8 +375,10 @@ def test_both_review_sources_raises_usage_error(tmp_path):
 def test_github_source_without_pr_number_raises_usage_error(tmp_path):
     """``--github-reviews-json`` without ``--github-pr-number`` is rejected."""
     code, captured = _invoke(
-        "--tier", "sample",
-        "--github-reviews-json", str(FIXTURE_PATH),
+        "--tier",
+        "sample",
+        "--github-reviews-json",
+        str(FIXTURE_PATH),
     )
     assert code != 0
     assert "--github-pr-number is required" in captured or "pr-number" in captured.lower()

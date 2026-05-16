@@ -1,4 +1,14 @@
-"""Analyze a file's internal structure and suggest decomposition."""
+"""Analyze a file's internal structure and suggest decomposition.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because split outputs are invocation-scoped decomposition
+recommendations (candidate split boundaries inside one file ranked by
+cohesion / coupling) — not per-location code violations. The
+recommendation describes a structural reorganization opportunity, not
+a defect at a source coordinate. See ``cmd_cut`` for the parallel
+graph-partition boundary disclosure pattern (W1224) + action.yml
+_SUPPORTED_SARIF allowlist + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

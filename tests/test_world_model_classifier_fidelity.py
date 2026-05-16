@@ -46,12 +46,7 @@ def test_os_replace_classified_as_io_write(project_factory, monkeypatch):
     signal for agents — ``replace`` mutates the destination atomically."""
     proj = project_factory(
         {
-            "src/replacer.py": (
-                "import os\n"
-                "\n"
-                "def swap(tmp, dst):\n"
-                "    os.replace(tmp, dst)\n"
-            ),
+            "src/replacer.py": ("import os\n\ndef swap(tmp, dst):\n    os.replace(tmp, dst)\n"),
         }
     )
     monkeypatch.chdir(proj)
@@ -61,9 +56,7 @@ def test_os_replace_classified_as_io_write(project_factory, monkeypatch):
         results = _classify(conn, "swap")
 
     assert results, "Expected to classify 'swap'"
-    assert "io_write" in results[0].kinds, (
-        f"Expected io_write for os.replace, got {results[0].kinds}"
-    )
+    assert "io_write" in results[0].kinds, f"Expected io_write for os.replace, got {results[0].kinds}"
 
 
 # ---------------------------------------------------------------------------
@@ -75,13 +68,7 @@ def test_os_remove_classified_as_io_write(project_factory, monkeypatch):
     proj = project_factory(
         {
             "src/clean.py": (
-                "import os\n"
-                "\n"
-                "def cleanup(path):\n"
-                "    os.remove(path)\n"
-                "\n"
-                "def unlink_path(path):\n"
-                "    os.unlink(path)\n"
+                "import os\n\ndef cleanup(path):\n    os.remove(path)\n\ndef unlink_path(path):\n    os.unlink(path)\n"
             ),
         }
     )
@@ -89,12 +76,8 @@ def test_os_remove_classified_as_io_write(project_factory, monkeypatch):
     from roam.db.connection import open_db
 
     with open_db(readonly=True) as conn:
-        all_results = {
-            r.symbol.rsplit(".", 1)[-1]: r for r in _classify(conn, "cleanup")
-        }
-        all_results.update(
-            {r.symbol.rsplit(".", 1)[-1]: r for r in _classify(conn, "unlink_path")}
-        )
+        all_results = {r.symbol.rsplit(".", 1)[-1]: r for r in _classify(conn, "cleanup")}
+        all_results.update({r.symbol.rsplit(".", 1)[-1]: r for r in _classify(conn, "unlink_path")})
 
     assert "io_write" in all_results["cleanup"].kinds
     assert "io_write" in all_results["unlink_path"].kinds
@@ -111,12 +94,7 @@ def test_shutil_copy_classified_as_io_write(project_factory, monkeypatch):
     write at the destination."""
     proj = project_factory(
         {
-            "src/copier.py": (
-                "import shutil\n"
-                "\n"
-                "def copy_file(src, dst):\n"
-                "    shutil.copy(src, dst)\n"
-            ),
+            "src/copier.py": ("import shutil\n\ndef copy_file(src, dst):\n    shutil.copy(src, dst)\n"),
         }
     )
     monkeypatch.chdir(proj)
@@ -126,9 +104,7 @@ def test_shutil_copy_classified_as_io_write(project_factory, monkeypatch):
         results = _classify(conn, "copy_file")
 
     assert results, "Expected to classify 'copy_file'"
-    assert "io_write" in results[0].kinds, (
-        f"shutil.copy must classify as io_write, got {results[0].kinds}"
-    )
+    assert "io_write" in results[0].kinds, f"shutil.copy must classify as io_write, got {results[0].kinds}"
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +112,7 @@ def test_shutil_copy_classified_as_io_write(project_factory, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_atomic_write_text_pattern_classified_correctly(
-    project_factory, monkeypatch
-):
+def test_atomic_write_text_pattern_classified_correctly(project_factory, monkeypatch):
     """The canonical safe-write idiom (``tempfile.mkstemp`` -> write ->
     ``os.replace``) is the strongest test of the prefix table. It must
     classify as ``io_write`` — historically classified as ``none``
@@ -167,8 +141,7 @@ def test_atomic_write_text_pattern_classified_correctly(
 
     assert results, "Expected to classify 'atomic_write_text'"
     assert "io_write" in results[0].kinds, (
-        f"Atomic-write idiom must classify as io_write, got "
-        f"{results[0].kinds} (evidence: {results[0].evidence})"
+        f"Atomic-write idiom must classify as io_write, got {results[0].kinds} (evidence: {results[0].evidence})"
     )
     # And the result MUST NOT be the unsignal-bearing 'none' bucket.
     assert "none" not in results[0].kinds
@@ -202,6 +175,4 @@ def test_path_replace_classified_as_io_write(project_factory, monkeypatch):
         results = _classify(conn, "swap_path")
 
     assert results, "Expected to classify 'swap_path'"
-    assert "io_write" in results[0].kinds, (
-        f"Path.replace must classify as io_write, got {results[0].kinds}"
-    )
+    assert "io_write" in results[0].kinds, f"Path.replace must classify as io_write, got {results[0].kinds}"

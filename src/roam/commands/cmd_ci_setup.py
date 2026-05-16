@@ -1,4 +1,13 @@
-"""Generate CI/CD pipeline configurations for roam-code integration."""
+"""Generate CI/CD pipeline configurations for roam-code integration.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam ci-setup`` is a setup/bootstrap command — its
+output is human-facing setup status (CI workflow YAML written for the
+detected platform), not analysis findings with file:line coordinates.
+SARIF is reserved for scanning results. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -634,9 +643,7 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
     # with the CI YAML), runs regardless of platform.
     oscal_block: dict[str, object] | None = None
     if with_oscal:
-        cm_action, ap_action = _write_oscal_artifacts(
-            project_root, repo_id=project_name
-        )
+        cm_action, ap_action = _write_oscal_artifacts(project_root, repo_id=project_name)
         oscal_block = {
             "control_mapping": {
                 "path": _OSCAL_CONTROL_MAPPING_PATH,
@@ -753,9 +760,7 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
         if slsa_output_path is not None:
             _print_slsa_src_l3_instructions(slsa_output_path)
         if oscal_block is not None:
-            _print_oscal_post_setup_instructions(
-                _OSCAL_CONTROL_MAPPING_PATH, _OSCAL_STUB_AP_PATH
-            )
+            _print_oscal_post_setup_instructions(_OSCAL_CONTROL_MAPPING_PATH, _OSCAL_STUB_AP_PATH)
         return
 
     # Print template (no --write)
@@ -801,10 +806,10 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
 
     # W471 — also print the SLSA SRC-L3 auto-trigger template when requested.
     if slsa_output_path is not None and slsa_rendered is not None:
-        click.echo(f"\n=== SLSA SRC-L3 auto-trigger workflow (W471) ===\n")
+        click.echo("\n=== SLSA SRC-L3 auto-trigger workflow (W471) ===\n")
         click.echo(slsa_rendered)
         click.echo(f"\n--- Save as: {slsa_output_path} ---")
-        click.echo(f"Or run: roam ci-setup --platform github --with-slsa-l3 --write")
+        click.echo("Or run: roam ci-setup --platform github --with-slsa-l3 --write")
 
     # W535 — when persistent OSCAL artifacts were written, surface the
     # paths so the user can immediately use --import-ap-ref against them.
@@ -812,9 +817,7 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
     # (not just shown) regardless of --write, because the .roam/oscal/
     # tree is roam state, not project source.
     if oscal_block is not None:
-        _print_oscal_post_setup_instructions(
-            _OSCAL_CONTROL_MAPPING_PATH, _OSCAL_STUB_AP_PATH
-        )
+        _print_oscal_post_setup_instructions(_OSCAL_CONTROL_MAPPING_PATH, _OSCAL_STUB_AP_PATH)
 
 
 def _print_post_setup_instructions(platform: str, output_path: str) -> None:

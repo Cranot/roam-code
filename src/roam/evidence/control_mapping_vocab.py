@@ -33,7 +33,6 @@ lands.
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Framework slugs (W502 closed enum + W506 SLSA / ISO rename)
 # ---------------------------------------------------------------------------
@@ -61,17 +60,19 @@ from __future__ import annotations
 #: * ``slsa_src_l2``              - SLSA v1.2 Source Track Level 2
 #: * ``slsa_src_l3``              - SLSA v1.2 Source Track Level 3
 #: * ``internal_ai_change_policy``- Internal AI-change policy
-FRAMEWORK_SLUGS: frozenset[str] = frozenset({
-    "eu_ai_act_art_12",
-    "iso_iec_42001",
-    "nist_ai_rmf",
-    "nist_ai_600_1",
-    "nist_sp_800_218a",
-    "soc_2_cc8_1",
-    "slsa_src_l2",
-    "slsa_src_l3",
-    "internal_ai_change_policy",
-})
+FRAMEWORK_SLUGS: frozenset[str] = frozenset(
+    {
+        "eu_ai_act_art_12",
+        "iso_iec_42001",
+        "nist_ai_rmf",
+        "nist_ai_600_1",
+        "nist_sp_800_218a",
+        "soc_2_cc8_1",
+        "slsa_src_l2",
+        "slsa_src_l3",
+        "internal_ai_change_policy",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -121,11 +122,13 @@ FRAMEWORK_TITLES: dict[str, str] = {
 #: * ``conditional``          - only evaluate when an external
 #:                              precondition holds (e.g. a feature
 #:                              flag is enabled)
-PASS_CONDITIONS: frozenset[str] = frozenset({
-    "all_required_present",
-    "any_required_present",
-    "conditional",
-})
+PASS_CONDITIONS: frozenset[str] = frozenset(
+    {
+        "all_required_present",
+        "any_required_present",
+        "conditional",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -151,15 +154,17 @@ PASS_CONDITIONS: frozenset[str] = frozenset({
 #: * ``self-hosted``           - self-hosted deployment of the evidence layer
 #: * ``due-diligence``         - the due-diligence evidence pack
 #: * ``security-reachability`` - the vuln-reachability report
-SURFACES: frozenset[str] = frozenset({
-    "pr-replay",
-    "governance-pack",
-    "review",
-    "team-mcp-gateway",
-    "self-hosted",
-    "due-diligence",
-    "security-reachability",
-})
+SURFACES: frozenset[str] = frozenset(
+    {
+        "pr-replay",
+        "governance-pack",
+        "review",
+        "team-mcp-gateway",
+        "self-hosted",
+        "due-diligence",
+        "security-reachability",
+    }
+)
 
 
 __all__ = [

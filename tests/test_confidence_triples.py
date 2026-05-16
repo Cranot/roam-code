@@ -36,7 +36,6 @@ from roam.output.confidence import (
     wrap_findings,
 )
 
-
 # ---------------------------------------------------------------------------
 # 1. Helper-level tests
 # ---------------------------------------------------------------------------
@@ -272,20 +271,14 @@ def _make_smells_db(tmp_path: Path) -> None:
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
         "VALUES (1, 1, 'process_everything', 'function', 10, 200, '(data, config, opts)')"
     )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-        "VALUES (1, 75, 6)"
-    )
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (1, 75, 6)")
     # Add a second symbol with deep nesting (warning severity)
     conn.execute("INSERT INTO files (id, path) VALUES (2, 'src/nested.py')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
         "VALUES (2, 2, 'nested_fn', 'function', 1, 50)"
     )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-        "VALUES (2, 12, 7)"
-    )
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (2, 12, 7)")
     # Message chain — info severity
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
@@ -457,9 +450,7 @@ def orphan_imports_project(tmp_path):
     (src / "__init__.py").write_text("")
     (src / "real.py").write_text("def f(): pass\n")
     (tmp_path / "src" / "main.py").write_text(
-        "from pkg.does_not_exist import thing\n"
-        "from pkg.real import f\n"
-        "import totally_made_up_package_xyz\n"
+        "from pkg.does_not_exist import thing\nfrom pkg.real import f\nimport totally_made_up_package_xyz\n"
     )
 
     # Build a minimal index DB that records the indexed Python files so
@@ -482,9 +473,7 @@ def orphan_imports_project(tmp_path):
     conn.close()
     # Commit so git status is clean
     subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "add orphan", "--allow-empty"], cwd=str(tmp_path), capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", "add orphan", "--allow-empty"], cwd=str(tmp_path), capture_output=True)
     return tmp_path
 
 
@@ -754,9 +743,7 @@ class TestPilotCommandSecrets:
     def test_secrets_envelope_has_distribution(self, tmp_path):
         _git_init(tmp_path)
         # Seed an AWS Access Key into a source file so `secrets` finds it.
-        (tmp_path / "app.py").write_text(
-            "API = 'AKIAIOSFODNN7TESTDATA'\n"
-        )
+        (tmp_path / "app.py").write_text("API = 'AKIAIOSFODNN7TESTDATA'\n")
         # Build a minimal index DB so ensure_index() and the file scan
         # path both work.
         db_path = tmp_path / ".roam" / "index.db"
@@ -836,17 +823,13 @@ class TestPilotCommandMissingIndex:
     def test_missing_index_classifier_medium(self):
         from roam.commands.cmd_missing_index import _missing_index_classify
 
-        conf, _r = _missing_index_classify(
-            {"confidence": "medium", "pattern_type": "orderby", "has_paginate": False}
-        )
+        conf, _r = _missing_index_classify({"confidence": "medium", "pattern_type": "orderby", "has_paginate": False})
         assert conf == "medium"
 
     def test_missing_index_classifier_low_composite(self):
         from roam.commands.cmd_missing_index import _missing_index_classify
 
-        conf, _r = _missing_index_classify(
-            {"confidence": "low", "pattern_type": "orderby_with_where"}
-        )
+        conf, _r = _missing_index_classify({"confidence": "low", "pattern_type": "orderby_with_where"})
         assert conf == "low"
 
 
@@ -856,18 +839,14 @@ class TestPilotCommandTaint:
     def test_taint_classifier_high_unsanitised(self):
         from roam.commands.cmd_taint import _taint_classify
 
-        conf, reason = _taint_classify(
-            {"severity": "error", "sanitizer_in_path": False, "path_length": 4}
-        )
+        conf, reason = _taint_classify({"severity": "error", "sanitizer_in_path": False, "path_length": 4})
         assert conf == "high"
         assert "no sanit" in reason.lower() or "direct" in reason.lower()
 
     def test_taint_classifier_medium_sanitised(self):
         from roam.commands.cmd_taint import _taint_classify
 
-        conf, _r = _taint_classify(
-            {"severity": "error", "sanitizer_in_path": True, "path_length": 3}
-        )
+        conf, _r = _taint_classify({"severity": "error", "sanitizer_in_path": True, "path_length": 3})
         assert conf == "medium"
 
     def test_taint_classifier_low_unknown(self):
@@ -1014,9 +993,7 @@ class TestPilotCommandConventions:
     def test_conventions_classifier_missing_pct_low(self):
         from roam.commands.cmd_conventions import _convention_classify
 
-        conf, _r = _convention_classify(
-            {"expected_style": "snake_case", "actual_style": "camelCase"}
-        )
+        conf, _r = _convention_classify({"expected_style": "snake_case", "actual_style": "camelCase"})
         # No pct → defaults to 0 → low
         assert conf == "low"
 
@@ -1027,27 +1004,21 @@ class TestPilotCommandDead:
     def test_dead_classifier_high_stable_unused(self):
         from roam.commands.cmd_dead import _dead_classify
 
-        conf, reason = _dead_classify(
-            {"action": "SAFE", "tested": False, "aging": {"age_days": 90}}
-        )
+        conf, reason = _dead_classify({"action": "SAFE", "tested": False, "aging": {"age_days": 90}})
         assert conf == "high"
         assert "90" in reason
 
     def test_dead_classifier_medium_recent_edit(self):
         from roam.commands.cmd_dead import _dead_classify
 
-        conf, _r = _dead_classify(
-            {"action": "SAFE", "tested": False, "aging": {"age_days": 5}}
-        )
+        conf, _r = _dead_classify({"action": "SAFE", "tested": False, "aging": {"age_days": 5}})
         assert conf == "medium"
 
     def test_dead_classifier_medium_tested(self):
         """SAFE-action but test-referenced → medium (downgrade from high)."""
         from roam.commands.cmd_dead import _dead_classify
 
-        conf, _r = _dead_classify(
-            {"action": "SAFE", "tested": True, "aging": {"age_days": 200}}
-        )
+        conf, _r = _dead_classify({"action": "SAFE", "tested": True, "aging": {"age_days": 200}})
         assert conf == "medium"
 
     def test_dead_classifier_low_intentional(self):

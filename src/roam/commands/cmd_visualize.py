@@ -1,4 +1,12 @@
-"""Generate Mermaid or DOT architecture diagrams from the codebase graph."""
+"""Generate Mermaid or DOT architecture diagrams from the codebase graph.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because visualize outputs are invocation-scoped topology
+visualization documents — not per-location violations. Editor consumers
+should use the JSON envelope directly. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket B propagation plan + W1148 audit
+memo.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +25,7 @@ from roam.graph.builder import build_file_graph, build_symbol_graph
 from roam.graph.clusters import detect_clusters, label_clusters
 from roam.graph.cycles import find_cycles
 from roam.graph.pagerank import compute_pagerank
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import json_envelope, resolution_disclosure, to_json
 
 # -- Node shape helpers -------------------------------------------------------
 
@@ -59,8 +67,17 @@ def _dot_node(node_id: int, label: str, kind: str, is_file: bool) -> str:
 # -- Subgraph filtering -------------------------------------------------------
 
 
-def _filter_by_focus(G: nx.DiGraph, conn, focus_name: str, depth: int) -> nx.DiGraph:
-    """BFS neighborhood around a focal symbol."""
+def _filter_by_focus(G: nx.DiGraph, conn, focus_name: str, depth: int) -> tuple[nx.DiGraph, str, str]:
+    """BFS neighborhood around a focal symbol.
+
+    W1245 Pattern-2 variant-D: returns ``(subG, resolution_tier,
+    resolved_target)`` so the caller can disclose which resolver tier
+    matched the focal symbol. ``resolution_tier`` is one of
+    ``{"symbol", "fuzzy"}``; ``resolved_target`` is the qualified name
+    the resolver actually landed on (may differ from the input on a
+    fuzzy LIKE-fallback). Unresolved focus still raises ClickException
+    so the caller can convert to a structured envelope.
+    """
     import networkx as nx
 
     sym = find_symbol(conn, focus_name)
@@ -74,7 +91,9 @@ def _filter_by_focus(G: nx.DiGraph, conn, focus_name: str, depth: int) -> nx.DiG
             f"Symbol '{focus_name}' (id={sid}) exists in the index but is not in the graph.\n"
             "  Tip: Run `roam index` to rebuild the graph."
         )
-    return nx.ego_graph(G, sid, radius=depth, undirected=True)
+    tier = sym.get("_resolution_tier", "symbol")
+    resolved_name = sym.get("qualified_name") or sym["name"]
+    return nx.ego_graph(G, sid, radius=depth, undirected=True), tier, resolved_name
 
 
 def _filter_by_pagerank(G: nx.DiGraph, limit: int) -> nx.DiGraph:
@@ -366,8 +385,40 @@ def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level)
             return
 
         # Filter
+        # W1245 Pattern-2 variant-D: track focal-symbol resolver tier so the
+        # envelope can disclose fuzzy-LIKE-fallback matches on --focus. The
+        # overview path (no --focus) skips find_symbol entirely so the tier
+        # stays "symbol" by default. An unresolved --focus is converted to
+        # a structured envelope in json_mode (text-mode keeps the legacy
+        # ClickException for stderr-shape compatibility).
+        resolution_tier = "symbol"
+        resolved_target = focus or None
         if focus:
-            subG = _filter_by_focus(G, conn, focus, depth)
+            try:
+                subG, resolution_tier, resolved_target = _filter_by_focus(G, conn, focus, depth)
+            except click.ClickException as exc:
+                if json_mode:
+                    unresolved_block = resolution_disclosure("unresolved", target=focus)
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "visualize",
+                                summary={
+                                    "verdict": f"Cannot visualize: {exc.message}",
+                                    "nodes": 0,
+                                    "edges": 0,
+                                    "format": fmt,
+                                    "focus": focus,
+                                    "error": exc.message,
+                                    **unresolved_block,
+                                },
+                                diagram="",
+                                **unresolved_block,
+                            )
+                        )
+                    )
+                    return
+                raise
         else:
             subG = _filter_by_pagerank(G, limit)
 
@@ -380,6 +431,11 @@ def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level)
             diagram = _generate_dot(subG, conn, use_clusters, file_level)
         else:
             diagram = _generate_mermaid(subG, conn, direction, use_clusters, file_level)
+
+        # W1245 disclosure block (only meaningful when --focus walked the
+        # resolver chain; otherwise it's the no-op ``symbol`` default).
+        resolution_block = resolution_disclosure(resolution_tier, target=resolved_target)
+        fuzzy_suffix = " [fuzzy resolution]" if focus and resolution_tier == "fuzzy" else ""
 
         # Output
         if json_mode:
@@ -394,18 +450,21 @@ def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level)
                                 f"visualize rendered {fmt} diagram with "
                                 f"{node_count} nodes and {edge_count} edges"
                                 + (f" focused on {focus}" if focus else "")
+                                + fuzzy_suffix
                             ),
                             "nodes": node_count,
                             "edges": edge_count,
                             "format": fmt,
                             "focus": focus or None,
+                            **resolution_block,
                         },
                         diagram=diagram,
+                        **resolution_block,
                     )
                 )
             )
         else:
             mode = f"focus={focus} depth={depth}" if focus else f"top-{min(limit, len(G))} by PageRank"
-            click.echo(f"VERDICT: OK -- {node_count} nodes, {edge_count} edges ({mode})")
+            click.echo(f"VERDICT: OK -- {node_count} nodes, {edge_count} edges ({mode}){fuzzy_suffix}")
             click.echo("")
             click.echo(diagram)

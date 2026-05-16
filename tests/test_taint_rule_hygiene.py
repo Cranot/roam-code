@@ -113,17 +113,14 @@ def test_load_rules_warns_on_bare_entry_under_qualified_only(tmp_path: Path) -> 
 
     messages = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
     assert any(
-        "test-bare-under-qualified" in m
-        and "qualified_only=true" in m
-        and "inputBare" in m
-        for m in messages
+        "test-bare-under-qualified" in m and "qualified_only=true" in m and "inputBare" in m for m in messages
     ), f"expected source warning, got: {messages!r}"
-    assert any(
-        "test-bare-under-qualified" in m and "bareSink" in m for m in messages
-    ), f"expected sink warning, got: {messages!r}"
-    assert any(
-        "test-bare-under-qualified" in m and "bareCleaner" in m for m in messages
-    ), f"expected sanitizer warning, got: {messages!r}"
+    assert any("test-bare-under-qualified" in m and "bareSink" in m for m in messages), (
+        f"expected sink warning, got: {messages!r}"
+    )
+    assert any("test-bare-under-qualified" in m and "bareCleaner" in m for m in messages), (
+        f"expected sanitizer warning, got: {messages!r}"
+    )
 
 
 def test_load_rules_silent_when_qualified_only_off(tmp_path: Path) -> None:
@@ -153,9 +150,7 @@ def test_load_rules_silent_when_qualified_only_off(tmp_path: Path) -> None:
         rules = load_rules(tmp_path)
 
     assert len(rules) == 1
-    qualified_only_warnings = [
-        w for w in caught if "qualified_only=true" in str(w.message)
-    ]
+    qualified_only_warnings = [w for w in caught if "qualified_only=true" in str(w.message)]
     assert not qualified_only_warnings, (
         "load_rules should not warn when qualified_only is unset / false: "
         f"{[str(w.message) for w in qualified_only_warnings]!r}"
@@ -189,12 +184,9 @@ def test_load_rules_silent_when_all_entries_dotted(tmp_path: Path) -> None:
 
     assert len(rules) == 1
     assert rules[0].qualified_only is True
-    qualified_only_warnings = [
-        w for w in caught if "qualified_only=true" in str(w.message)
-    ]
+    qualified_only_warnings = [w for w in caught if "qualified_only=true" in str(w.message)]
     assert not qualified_only_warnings, (
-        f"unexpected qualified_only warnings: "
-        f"{[str(w.message) for w in qualified_only_warnings]!r}"
+        f"unexpected qualified_only warnings: {[str(w.message) for w in qualified_only_warnings]!r}"
     )
 
 
@@ -213,13 +205,9 @@ def test_known_qualified_only_rules_intact(rule_id_with_qualified_only: str) -> 
         rules = load_rules(_TAINT_RULES_DIR)
     by_id = {r.rule_id: r for r in rules}
     rule = by_id.get(rule_id_with_qualified_only)
-    assert rule is not None, (
-        f"expected rule {rule_id_with_qualified_only!r} in shipped pack; "
-        f"have {sorted(by_id)!r}"
-    )
+    assert rule is not None, f"expected rule {rule_id_with_qualified_only!r} in shipped pack; have {sorted(by_id)!r}"
     assert rule.qualified_only is True, (
-        f"{rule_id_with_qualified_only}: qualified_only flipped to false — "
-        "intentional change requires test update"
+        f"{rule_id_with_qualified_only}: qualified_only flipped to false — intentional change requires test update"
     )
     for kind, entries in (
         ("sources", rule.sources),
@@ -229,6 +217,5 @@ def test_known_qualified_only_rules_intact(rule_id_with_qualified_only: str) -> 
         assert entries, f"{rule_id_with_qualified_only}: {kind} is empty"
         bare = _bare_entries(entries)
         assert not bare, (
-            f"{rule_id_with_qualified_only}: bare {kind}={bare!r} would be "
-            "no-ops under qualified_only=true"
+            f"{rule_id_with_qualified_only}: bare {kind}={bare!r} would be no-ops under qualified_only=true"
         )

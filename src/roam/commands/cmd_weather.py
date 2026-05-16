@@ -1,4 +1,11 @@
-"""Rank files by churn x complexity score (highest-leverage refactoring targets)."""
+"""Rank files by churn x complexity score (highest-leverage refactoring targets).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because weather outputs are invocation-scoped
+refactoring-target rankings — not per-location violations. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 

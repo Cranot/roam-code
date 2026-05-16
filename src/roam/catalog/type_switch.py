@@ -54,9 +54,7 @@ from __future__ import annotations
 
 import ast
 import logging
-import os
 import sqlite3
-from pathlib import Path
 
 from roam.catalog._shared import enclosing_symbol as _enclosing_symbol
 from roam.catalog._shared import find_workspace_root as _find_workspace_root
@@ -76,16 +74,49 @@ TYPE_SWITCH_DETECTOR_VERSION = 1
 # NOT OCP violations. ``isinstance(x, int)`` is a sentinel check, not
 # a switch on a subclass hierarchy. ``NoneType`` is treated via the
 # ``type(None)`` callsite shape — see ``_classname_from_node``.
-_PRIMITIVE_TYPES: frozenset[str] = frozenset({
-    "bool", "int", "float", "complex", "str", "bytes", "bytearray",
-    "list", "tuple", "dict", "set", "frozenset",
-    "object", "type", "None", "NoneType",
-    "Iterable", "Iterator", "Sequence", "Mapping", "MutableMapping",
-    "Set", "MutableSet", "Collection", "Container", "Sized", "Hashable",
-    "Callable", "Generator", "Coroutine", "AsyncIterable", "AsyncIterator",
-    "Number", "Real", "Integral", "Rational",
-    "Any", "Optional", "Union",
-})
+_PRIMITIVE_TYPES: frozenset[str] = frozenset(
+    {
+        "bool",
+        "int",
+        "float",
+        "complex",
+        "str",
+        "bytes",
+        "bytearray",
+        "list",
+        "tuple",
+        "dict",
+        "set",
+        "frozenset",
+        "object",
+        "type",
+        "None",
+        "NoneType",
+        "Iterable",
+        "Iterator",
+        "Sequence",
+        "Mapping",
+        "MutableMapping",
+        "Set",
+        "MutableSet",
+        "Collection",
+        "Container",
+        "Sized",
+        "Hashable",
+        "Callable",
+        "Generator",
+        "Coroutine",
+        "AsyncIterable",
+        "AsyncIterator",
+        "Number",
+        "Real",
+        "Integral",
+        "Rational",
+        "Any",
+        "Optional",
+        "Union",
+    }
+)
 
 
 def _classname_from_node(node: ast.AST) -> str | None:
@@ -254,9 +285,7 @@ def _module_has_singledispatch(tree: ast.AST) -> bool:
     return False
 
 
-def _function_has_dispatch_optout(
-    func: ast.AST, *, module_has_singledispatch: bool = False
-) -> bool:
+def _function_has_dispatch_optout(func: ast.AST, *, module_has_singledispatch: bool = False) -> bool:
     """Carve-out: the function explicitly uses a polymorphic alternative.
 
     Triggers when:
@@ -386,9 +415,7 @@ def detect_type_switch(
         crosses the threshold.
     """
     try:
-        files = conn.execute(
-            "SELECT id, path FROM files WHERE language = 'python'"
-        ).fetchall()
+        files = conn.execute("SELECT id, path FROM files WHERE language = 'python'").fetchall()
     except sqlite3.OperationalError:
         return []
 
@@ -401,9 +428,7 @@ def detect_type_switch(
         if _file_is_test(rel_path):
             continue
         try:
-            source = (workspace / rel_path).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
         except (OSError, ValueError):
             continue
         try:
@@ -416,9 +441,7 @@ def detect_type_switch(
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            if _function_has_dispatch_optout(
-                node, module_has_singledispatch=module_singledispatch
-            ):
+            if _function_has_dispatch_optout(node, module_has_singledispatch=module_singledispatch):
                 continue
 
             buckets = _collect_arms_for_function(node)
@@ -428,9 +451,7 @@ def detect_type_switch(
             # Emit one finding per (discriminator, check_kind) bucket
             # that crosses the threshold AFTER filtering out primitives.
             for (discriminator, check_kind), arm_set in buckets.items():
-                concrete_arms = sorted(
-                    a for a in arm_set if _is_concrete_class_name(a)
-                )
+                concrete_arms = sorted(a for a in arm_set if _is_concrete_class_name(a))
                 if len(concrete_arms) < min_class_arms:
                     continue
 
@@ -438,17 +459,16 @@ def detect_type_switch(
                 # Prefer the indexer's enclosing-symbol record (correct
                 # method-class name); fall back to the AST function
                 # name when the index hasn't catalogued it.
-                enc_name, enc_kind, _enc_line = _enclosing_symbol(
-                    conn, file_id, func_line
-                )
+                enc_name, enc_kind, _enc_line = _enclosing_symbol(conn, file_id, func_line)
                 func_name = node.name
-                func_kind = enc_kind if enc_name == func_name else (
-                    "method"
-                    if any(
-                        isinstance(a, ast.arg) and a.arg in {"self", "cls"}
-                        for a in node.args.args[:1]
+                func_kind = (
+                    enc_kind
+                    if enc_name == func_name
+                    else (
+                        "method"
+                        if any(isinstance(a, ast.arg) and a.arg in {"self", "cls"} for a in node.args.args[:1])
+                        else "function"
                     )
-                    else "function"
                 )
 
                 check_label = {

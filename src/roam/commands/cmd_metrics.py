@@ -3,6 +3,18 @@
 Consolidates complexity, fan-in/fan-out, PageRank, churn, test coverage,
 layer depth, dead-code risk, LOC, and co-change data into a single
 structured output.  All data is read from the existing SQLite index.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because metrics outputs are invocation-scoped per-file /
+per-symbol metric exports (complexity, fan-in/fan-out, PageRank,
+churn, LOC, co-change scalars) — not per-location code violations.
+The export describes neutral measurement data rather than defects at
+source coordinates; SARIF consumers scan for per-finding rule_id +
+region rows. When SARIF-shaped findings are needed, run the underlying
+detectors directly (``roam complexity --sarif``, ``roam dead --sarif``)
+— metrics aggregates them but does not produce novel per-finding rows.
+See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -19,6 +31,7 @@ from roam.output.formatter import (
     format_table,
     json_envelope,
     loc,
+    resolution_disclosure,
     to_json,
 )
 
@@ -526,12 +539,22 @@ def metrics(ctx, target):
         if target_type == "unknown":
             msg = f'Target not found: "{target}"'
             if json_mode:
+                # W1245 Pattern-2 variant-D: structured unresolved
+                # envelope so MCP consumers see the same shape as the
+                # resolved branches.
+                unresolved_disclosure = resolution_disclosure("unresolved", target=target)
                 click.echo(
                     to_json(
                         json_envelope(
                             "metrics",
-                            summary={"verdict": "not found", "target": target},
+                            summary={
+                                "verdict": "not found",
+                                "target": target,
+                                "state": "not_found",
+                                **unresolved_disclosure,
+                            },
                             error=msg,
+                            **unresolved_disclosure,
                         )
                     )
                 )
@@ -543,9 +566,15 @@ def metrics(ctx, target):
             raise SystemExit(1)
 
         if target_type == "file":
+            # W1245 Pattern-2 variant-D: file target succeeds through the
+            # file-path tier; surface as ``resolution=file`` so consumers
+            # can distinguish file vs symbol resolution paths.
             _output_file_metrics(conn, target_id, target, json_mode, token_budget)
         else:
-            _output_symbol_metrics(conn, target_id, target, json_mode, token_budget)
+            # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` stamps
+            # ``_resolution_tier`` (symbol|fuzzy) on the returned row.
+            resolution_tier = target_row.get("_resolution_tier", "symbol") if target_row else "symbol"
+            _output_symbol_metrics(conn, target_id, target, json_mode, token_budget, resolution_tier)
 
 
 # ---------------------------------------------------------------------------
@@ -553,8 +582,14 @@ def metrics(ctx, target):
 # ---------------------------------------------------------------------------
 
 
-def _output_symbol_metrics(conn, symbol_id, target, json_mode, budget):
-    """Produce output for a symbol target."""
+def _output_symbol_metrics(conn, symbol_id, target, json_mode, budget, resolution_tier="symbol"):
+    """Produce output for a symbol target.
+
+    W1245 Pattern-2 variant-D: ``resolution_tier`` ("symbol"|"fuzzy") tells
+    us whether the input string exact-matched a symbol or fell back to a
+    LIKE substring match -- agents must see the degradation on the
+    success envelope, not just an opaque verdict.
+    """
     sym_row = conn.execute(
         "SELECT s.id, s.name, s.kind, s.qualified_name, s.line_start, "
         "s.line_end, f.path AS file_path "
@@ -574,23 +609,29 @@ def _output_symbol_metrics(conn, symbol_id, target, json_mode, budget):
     location = loc(sym_row["file_path"], sym_row["line_start"])
 
     if json_mode:
+        verdict = f"{display_name}: health={health}"
+        if resolution_tier == "fuzzy":
+            verdict = f"{verdict} [fuzzy resolution]"
+        disclosure = resolution_disclosure(resolution_tier, target=display_name)
         click.echo(
             to_json(
                 json_envelope(
                     "metrics",
                     budget=budget,
                     summary={
-                        "verdict": f"{display_name}: health={health}",
+                        "verdict": verdict,
                         "target": display_name,
                         "target_type": "symbol",
                         "health": health,
                         "caller_metric_definition": "direct_in_degree (fan_in from graph_metrics.in_degree, raw_edge_rows fallback)",
+                        **disclosure,
                     },
                     target_type="symbol",
                     name=display_name,
                     kind=sym_row["kind"],
                     location=location,
                     metrics=sm,
+                    **disclosure,
                 )
             )
         )

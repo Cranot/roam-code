@@ -1,4 +1,11 @@
-"""Find all consumers of a symbol: callers, importers, inheritors."""
+"""Find all consumers of a symbol: callers, importers, inheritors.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because uses outputs are invocation-scoped consumer rankings —
+not per-location violations. Editor consumers should use the JSON
+envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -73,17 +80,18 @@ def _test_text_consumers(conn, name: str, existing_files: set[str]) -> list[dict
     stale_sensitive=True,
 )
 @click.command()
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL")
 @click.option("--full", is_flag=True, help="Show all results without truncation")
 @click.pass_context
 def uses(ctx, name, full):
-    """Show all consumers of a symbol: callers, importers, inheritors.
+    """Show all consumers of SYMBOL: callers, importers, inheritors.
 
-    Unlike ``impact`` (which computes transitive blast radius via graph
-    traversal), this command lists direct consumers grouped by relationship
-    type.
+    SYMBOL is a symbol identifier (bare name or qualified name). Unlike
+    ``impact`` (which computes transitive blast radius via graph
+    traversal), this command lists direct consumers grouped by
+    relationship type.
 
-    Also available as ``roam refs <name>`` — the grep-familiar alias.
+    Also available as ``roam refs <SYMBOL>`` — the grep-familiar alias.
 
     \b
     Examples:

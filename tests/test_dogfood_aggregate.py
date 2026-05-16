@@ -47,8 +47,7 @@ def _write_eval(
     if extra_frontmatter:
         fm_lines.append(extra_frontmatter)
     table_rows = [
-        f"| {i+1} | {sev} | {typ} | {obs} | suggestion {i+1} |"
-        for i, (sev, typ, obs) in enumerate(findings)
+        f"| {i + 1} | {sev} | {typ} | {obs} | suggestion {i + 1} |" for i, (sev, typ, obs) in enumerate(findings)
     ]
     lines = [
         "---",
@@ -300,9 +299,7 @@ def test_missing_evals_dir_emits_clean_envelope(tmp_path, cli_runner):
 # ── partial_success / state fields (W7.3 envelope-consistency fix) ───
 
 
-def test_envelope_includes_state_and_partial_success_on_ok_corpus(
-    evals_dir, cli_runner
-):
+def test_envelope_includes_state_and_partial_success_on_ok_corpus(evals_dir, cli_runner):
     """Healthy corpus must surface ``state=ok`` and ``partial_success=False``.
 
     The sprint-wide envelope convention (runs, next, memory, …) requires

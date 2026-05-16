@@ -68,7 +68,8 @@ from roam.graph.clone_detect import (
     _get_function_name,
 )
 
-
+# Slug uses underscores (matches the dataclass default); siblings use dashes — drift documented in W1138-followup
+RENAME_INVARIANT_CLONE_DETECTOR = "rename_invariant_clones"
 RENAME_INVARIANT_CLONE_DETECTOR_VERSION = "1.0.0"
 
 # Skip extremely small functions — their vectors are too short to be
@@ -324,9 +325,7 @@ def detect_rename_invariant_clones(
         # Row may be a sqlite3.Row or a tuple depending on conn factory.
         path = row["path"] if hasattr(row, "keys") else row[1]
         lang = row["language"] if hasattr(row, "keys") else row[2]
-        all_vectors.extend(
-            _extract_function_vectors(path, lang, project_root, min_lines)
-        )
+        all_vectors.extend(_extract_function_vectors(path, lang, project_root, min_lines))
 
     # Group by bucket key. Buckets isolate near-identical shapes so we
     # only pay O(n^2) within a small bucket, not over the whole corpus.
@@ -344,11 +343,7 @@ def detect_rename_invariant_clones(
                 a, b = members[i], members[j]
                 # Avoid pairing a function with itself (same file + same
                 # name + same start line is the indexer round-trip).
-                if (
-                    a.file_path == b.file_path
-                    and a.name == b.name
-                    and a.line_start == b.line_start
-                ):
+                if a.file_path == b.file_path and a.name == b.name and a.line_start == b.line_start:
                     continue
                 sim = _cosine(a, b)
                 if sim < similarity_threshold:
@@ -375,6 +370,14 @@ def detect_rename_invariant_clones(
     return pairs
 
 
+__all__ = [
+    "RENAME_INVARIANT_CLONE_DETECTOR",
+    "RENAME_INVARIANT_CLONE_DETECTOR_VERSION",
+    "RenameClonePair",
+    "detect_rename_invariant_clones",
+]
+
+
 # ---------------------------------------------------------------------------
 # Test helpers (importable so the test file can exercise the inner pieces
 # without going through the SQLite-backed entry point).
@@ -387,9 +390,9 @@ def _vectorise_source(source: str, language: str = "python") -> list[_FuncVector
     Used by the tests to exercise the vector / cosine layer without
     needing a full project + SQLite DB.
     """
-    from roam.index.parser import GRAMMAR_ALIASES
-
     from tree_sitter_language_pack import get_parser
+
+    from roam.index.parser import GRAMMAR_ALIASES
 
     grammar = GRAMMAR_ALIASES.get(language, language)
     parser = get_parser(grammar)

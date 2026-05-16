@@ -1856,14 +1856,14 @@ class Indexer:
     # vocabulary without parsing the human-facing label. Order matches the
     # ``_begin_phase`` call sequence in ``_do_run``.
     _PHASE_KEYS = (
-        "discover",         # git ls-files + change detection (implicit phase 0)
-        "parse_extract",    # phase 1: Parsing & extracting symbols
-        "resolve",          # phase 2: Resolving references
-        "graph_metrics",    # phase 3: Computing graph metrics
-        "git_analysis",     # phase 4: Analyzing git history
-        "effects_taint",    # phase 5: Computing effects & taint flow
-        "health_load",      # phase 6: Computing health & cognitive load
-        "search_indexes",   # phase 7: Building search indexes
+        "discover",  # git ls-files + change detection (implicit phase 0)
+        "parse_extract",  # phase 1: Parsing & extracting symbols
+        "resolve",  # phase 2: Resolving references
+        "graph_metrics",  # phase 3: Computing graph metrics
+        "git_analysis",  # phase 4: Analyzing git history
+        "effects_taint",  # phase 5: Computing effects & taint flow
+        "health_load",  # phase 6: Computing health & cognitive load
+        "search_indexes",  # phase 7: Building search indexes
     )
 
     def _begin_phase(self, n: int, label: str) -> None:

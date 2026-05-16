@@ -67,7 +67,9 @@ __all__ = [
 # ---------- shared write + sign core ----------
 
 
-def _serialize_cosign_result(cresult: Any, *, include_target_label: bool = False, target_label: str | None = None) -> dict[str, Any]:
+def _serialize_cosign_result(
+    cresult: Any, *, include_target_label: bool = False, target_label: str | None = None
+) -> dict[str, Any]:
     """Project a :class:`CosignResult` into the JSON-stable dict shape both
     callers expose on their envelopes.
 
@@ -180,17 +182,29 @@ def emit_pr_bundle_slsa_l3(
             commit_sha = _git_commit_sha(root)
         except Exception:  # pragma: no cover — defensive
             commit_sha = None
+    # W1279 — lift packet-side hashes from the active run's meta.json
+    # (when ROAM_RUN_ID is set) and recompute the on-disk hashes so the
+    # collector's W1253 drift detector can fire. Missing run / missing
+    # meta gracefully degrades to ``packet_config_hashes=None``; no
+    # exception is propagated up to abort the VSA emit.
+    try:
+        from roam.evidence.config_hashes_producer import gather_hash_kwargs
+
+        _vsa_run_id = os.environ.get("ROAM_RUN_ID", "").strip() or None
+        _hash_kwargs = gather_hash_kwargs(root, _vsa_run_id)
+    except Exception:  # noqa: BLE001 - never break VSA emit on hash wire-up
+        _hash_kwargs = {}
+
     try:
         change_evidence, warnings = collect_change_evidence(
             pr_bundle_envelope=envelope,
             repo_id=envelope.get("repo_id"),
             commit_sha=commit_sha,
+            **_hash_kwargs,
         )
         change_evidence = change_evidence.with_content_hash()
     except Exception as exc:
-        result["skipped_reasons"].append(
-            f"ChangeEvidence collection failed: {exc}"
-        )
+        result["skipped_reasons"].append(f"ChangeEvidence collection failed: {exc}")
         return result
     if warnings:
         result["collector_warnings"] = list(warnings)
@@ -216,29 +230,19 @@ def emit_pr_bundle_slsa_l3(
             run_stmt = build_run_ledger_root_statement(root, run_id)
         except Exception as exc:
             run_stmt = None
-            result["skipped_reasons"].append(
-                f"run-ledger root build failed: {exc}"
-            )
+            result["skipped_reasons"].append(f"run-ledger root build failed: {exc}")
         if run_stmt is None:
-            result["skipped_reasons"].append(
-                "run-ledger HMAC chain not signed (no final_signature on meta.json)"
-            )
+            result["skipped_reasons"].append("run-ledger HMAC chain not signed (no final_signature on meta.json)")
         else:
             run_path = out_dir / f"run-ledger-root-{run_id}.json"
             try:
-                atomic_write_text(
-                    run_path, serialize_statement(run_stmt) + "\n"
-                )
+                atomic_write_text(run_path, serialize_statement(run_stmt) + "\n")
                 result["run_ledger_root_path"] = str(run_path)
             except Exception as exc:
                 run_path = None
-                result["skipped_reasons"].append(
-                    f"run-ledger root write failed: {exc}"
-                )
+                result["skipped_reasons"].append(f"run-ledger root write failed: {exc}")
     else:
-        result["skipped_reasons"].append(
-            "ROAM_RUN_ID not set; run-ledger root attestation skipped"
-        )
+        result["skipped_reasons"].append("ROAM_RUN_ID not set; run-ledger root attestation skipped")
 
     # 4. Optional cosign signing of both statements.
     if sign:
@@ -298,8 +302,7 @@ def emit_cga_vsa_sibling(
     # went to stdout (-) or was suppressed (--no-write).
     if no_write or written_path is None or written_to == "stdout":
         result["skipped_reasons"].append(
-            "--also-vsa requires a written CGA statement file "
-            "(incompatible with --no-write and --output -)"
+            "--also-vsa requires a written CGA statement file (incompatible with --no-write and --output -)"
         )
         return result
 
@@ -330,18 +333,30 @@ def emit_cga_vsa_sibling(
         except Exception:  # pragma: no cover — defensive
             commit_sha = None
 
+    # W1279 — same producer-side hash wire-up as the pr-bundle path.
+    # ``project_root`` is the working directory the parent CGA was
+    # written under; reuse it for the on-disk hash computation. The
+    # run-id source is the same env var; missing -> packet_config_hashes
+    # is None and no drift flag is set.
+    try:
+        from roam.evidence.config_hashes_producer import gather_hash_kwargs
+
+        _vsa_run_id = os.environ.get("ROAM_RUN_ID", "").strip() or None
+        _hash_kwargs = gather_hash_kwargs(project_root, _vsa_run_id)
+    except Exception:  # noqa: BLE001 - never break VSA emit on hash wire-up
+        _hash_kwargs = {}
+
     # 3. Build the ChangeEvidence packet from the CGA we just emitted.
     try:
         change_evidence, warnings = collect_change_evidence(
             cga_envelopes=[statement],
             repo_id=repo_id,
             commit_sha=commit_sha,
+            **_hash_kwargs,
         )
         change_evidence = change_evidence.with_content_hash()
     except Exception as exc:
-        result["skipped_reasons"].append(
-            f"ChangeEvidence collection failed: {exc}"
-        )
+        result["skipped_reasons"].append(f"ChangeEvidence collection failed: {exc}")
         return result
     if warnings:
         result["collector_warnings"] = list(warnings)

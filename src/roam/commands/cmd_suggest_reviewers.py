@@ -1,4 +1,15 @@
-"""Suggest optimal code reviewers for changed files using multi-signal scoring."""
+"""Suggest optimal code reviewers for changed files using multi-signal scoring.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because suggest-reviewers outputs are invocation-scoped
+reviewer-attribution rankings (top-N authors per changed file scored
+by recency / overlap / domain knowledge) — not per-location code
+violations. Reviewer suggestions describe routing metadata for human
+PR workflow, not code analysis findings with source coordinates. See
+``cmd_codeowners`` for the parallel advisory-attribution disclosure
+pattern (W1197) + action.yml _SUPPORTED_SARIF allowlist + W1224-audit
+memo.
+"""
 
 from __future__ import annotations
 

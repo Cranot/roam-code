@@ -30,7 +30,6 @@ pytest.importorskip(
 from roam.mcp_server import (
     _apply_jq_projection,
     _handle_storage_dir,
-    _maybe_handle_off,
     fetch_handle,
 )
 

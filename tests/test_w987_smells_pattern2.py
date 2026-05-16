@@ -51,12 +51,8 @@ def _build_smelly_project(tmp_path: Path) -> Path:
     detector that fires is incidental.
     """
     subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True
-    )
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
     (tmp_path / "dummy.py").write_text("# dummy\n")
     subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
@@ -125,10 +121,7 @@ def _build_smelly_project(tmp_path: Path) -> Path:
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
         "VALUES (1, 1, 'process_everything', 'function', 10, 200, '(data, config, opts)')"
     )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-        "VALUES (1, 75, 6)"
-    )
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (1, 75, 6)")
     conn.commit()
     conn.close()
     return tmp_path
@@ -157,8 +150,7 @@ def test_registered_smell_kinds_matches_registry() -> None:
     helper = _registered_smell_kinds()
     canonical = frozenset(kind_to_confidence().keys())
     assert helper == canonical, (
-        f"_registered_smell_kinds drift: helper={sorted(helper)} "
-        f"vs canonical={sorted(canonical)}"
+        f"_registered_smell_kinds drift: helper={sorted(helper)} vs canonical={sorted(canonical)}"
     )
     # At least the known core detectors must be present (defensive
     # against an empty registry slipping through).
@@ -199,21 +191,12 @@ suppressions:
     assert entries[1]["kind"] == "shotgun-surgery"
 
     # Pattern 1: exactly one warning fires (the unknown kind).
-    assert len(warnings) == 1, (
-        f"Expected exactly one warning for the unknown kind, got: {warnings}"
-    )
+    assert len(warnings) == 1, f"Expected exactly one warning for the unknown kind, got: {warnings}"
     warning = warnings[0]
     # LAW 2 (imperative) + LAW 4 (concrete-noun anchored terminal).
-    assert warning.startswith("Edit "), (
-        f"Warning must lead with an imperative verb, got: {warning!r}"
-    )
-    assert "not-a-real-detector" in warning, (
-        f"Warning must name the offending kind, got: {warning!r}"
-    )
-    assert "symbol='foo'" in warning, (
-        f"Warning must name the suppression symbol for disambiguation, "
-        f"got: {warning!r}"
-    )
+    assert warning.startswith("Edit "), f"Warning must lead with an imperative verb, got: {warning!r}"
+    assert "not-a-real-detector" in warning, f"Warning must name the offending kind, got: {warning!r}"
+    assert "symbol='foo'" in warning, f"Warning must name the suppression symbol for disambiguation, got: {warning!r}"
     # Concrete-noun anchor: ends on 'kinds' (in _CONCRETE_NOUN_ANCHORS).
     last_token = warning.rstrip(".").rsplit(" ", 1)[-1].strip(".,")
     assert last_token == "kinds", (
@@ -282,20 +265,14 @@ suppressions:
     warnings: list[str] = []
     entries = load_smells_suppressions(tmp_path, warnings_out=warnings)
     assert len(entries) == 3
-    assert warnings == [], (
-        f"Valid kinds must not trigger any warning, got: {warnings}"
-    )
+    assert warnings == [], f"Valid kinds must not trigger any warning, got: {warnings}"
 
 
 def test_parse_smells_suppress_yaml_direct_invocation_warns() -> None:
     """W987 belt-and-braces: the parser, called directly, also surfaces
     unknown-kind warnings on ``warnings_out``. Library consumers that
     bypass the path-aware loader get the same signal."""
-    text = (
-        "suppressions:\n"
-        "  - kind: madeup-smell\n"
-        "    symbol: foo\n"
-    )
+    text = "suppressions:\n  - kind: madeup-smell\n    symbol: foo\n"
     warnings: list[str] = []
     parsed = _parse_smells_suppress_yaml(
         text,
@@ -320,8 +297,9 @@ def test_parse_smells_suppress_yaml_direct_invocation_warns() -> None:
 
 def test_smells_cli_unknown_kind_warns_not_raises(tmp_path):
     """W987 Pattern 2: ``--kind nonsense`` does NOT raise; it warns and
-    drops the value from the filter set. The envelope carries the warning
-    on ``warnings_out`` AND flips ``summary.partial_success=True``.
+    resolves to zero findings rather than widening to all smells. The
+    envelope carries the warning on ``warnings_out`` AND flips
+    ``summary.partial_success=True``.
     """
     project = _build_smelly_project(tmp_path)
     runner = CliRunner()
@@ -337,8 +315,7 @@ def test_smells_cli_unknown_kind_warns_not_raises(tmp_path):
 
     # Backward compat: the command exits cleanly even with a typo.
     assert result.exit_code == 0, (
-        f"--kind with unknown value must not raise; got exit={result.exit_code}\n"
-        f"stdout={result.stdout!r}"
+        f"--kind with unknown value must not raise; got exit={result.exit_code}\nstdout={result.stdout!r}"
     )
 
     payload = json.loads(result.stdout)
@@ -349,9 +326,7 @@ def test_smells_cli_unknown_kind_warns_not_raises(tmp_path):
     )
     warnings = payload["warnings_out"]
     assert isinstance(warnings, list)
-    assert len(warnings) >= 1, (
-        f"Expected at least one warning for the unknown --kind, got: {warnings}"
-    )
+    assert len(warnings) >= 1, f"Expected at least one warning for the unknown --kind, got: {warnings}"
     assert any("totally-not-a-real-kind" in w for w in warnings), (
         f"Warning must name the offending --kind value, got: {warnings}"
     )
@@ -359,8 +334,10 @@ def test_smells_cli_unknown_kind_warns_not_raises(tmp_path):
     # Pattern 1 envelope discipline: partial_success flips True on any warning.
     summary = payload.get("summary", {})
     assert summary.get("partial_success") is True, (
-        f"summary.partial_success must be True when warnings_out is non-empty, "
-        f"got summary={summary}"
+        f"summary.partial_success must be True when warnings_out is non-empty, got summary={summary}"
+    )
+    assert summary.get("total_smells") == 0, (
+        f"Unknown-only --kind filters must not silently widen to all smells; got summary={summary}"
     )
 
 
@@ -377,9 +354,7 @@ def test_smells_cli_valid_kind_no_warning(tmp_path):
     finally:
         os.chdir(old_cwd)
 
-    assert result.exit_code == 0, (
-        f"Valid --kind run failed: exit={result.exit_code} stdout={result.stdout!r}"
-    )
+    assert result.exit_code == 0, f"Valid --kind run failed: exit={result.exit_code} stdout={result.stdout!r}"
     payload = json.loads(result.stdout)
 
     warnings = payload.get("warnings_out", [])
@@ -397,3 +372,67 @@ def test_smells_cli_valid_kind_no_warning(tmp_path):
     if summary.get("partial_success") is True:
         # Re-assert no warning text named our kind.
         assert all("long-params" not in w for w in warnings)
+
+
+def test_smells_cli_unknown_kind_suggests_close_match(tmp_path):
+    """W1066: an unknown ``--kind`` within difflib cutoff 0.6 of a registered
+    smell id gets a ``Did you mean: 'X'?`` suffix appended to the warning.
+
+    Mirrors the W1064 ``--only/--exclude`` precedent on ``roam math`` and the
+    W1066 ``--detector`` treatment on ``roam findings list``. The closest-
+    match suggestion is additive: when no kind is within cutoff the warning
+    is byte-identical to the pre-W1066 string.
+    """
+    project = _build_smelly_project(tmp_path)
+    runner = CliRunner()
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(project))
+        # "long-prams" is one transposition from "long-params" — well inside
+        # cutoff 0.6.
+        result = runner.invoke(
+            cli,
+            ["--json", "smells", "--kind", "long-prams", "--detail"],
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert result.exit_code == 0, (
+        f"--kind with typo must not raise; got exit={result.exit_code}\nstdout={result.stdout!r}"
+    )
+    payload = json.loads(result.stdout)
+    warnings = payload.get("warnings_out", [])
+    matching = [w for w in warnings if "long-prams" in w]
+    assert matching, f"Expected a warning naming the unknown --kind, got: {warnings}"
+    assert any("Did you mean" in w and "long-params" in w for w in matching), (
+        f"Closest-match suggestion ('long-params') must appear in the warning text, got: {matching}"
+    )
+
+
+def test_smells_cli_unknown_kind_no_close_match_byte_identical(tmp_path):
+    """W1066: with no close match, the warning has no ``Did you mean`` suffix.
+
+    The pre-W1066 message is the byte-identical default — the suggestion
+    must NOT appear when difflib finds no candidate within cutoff 0.6.
+    """
+    project = _build_smelly_project(tmp_path)
+    runner = CliRunner()
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(project))
+        # "zzzzzzzz" is nowhere near any registered kind.
+        result = runner.invoke(
+            cli,
+            ["--json", "smells", "--kind", "zzzzzzzz", "--detail"],
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    warnings = payload.get("warnings_out", [])
+    matching = [w for w in warnings if "zzzzzzzz" in w]
+    assert matching, f"Expected a warning naming the unknown --kind, got: {warnings}"
+    assert not any("Did you mean" in w for w in matching), (
+        f"No close match → no 'Did you mean' suffix should appear, got: {matching}"
+    )

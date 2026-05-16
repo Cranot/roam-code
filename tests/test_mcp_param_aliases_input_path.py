@@ -28,7 +28,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-
 # ---------------------------------------------------------------------------
 # Direct unit tests on the helper for each W332 alias
 # ---------------------------------------------------------------------------
@@ -154,9 +153,7 @@ def test_param_aliases_table_has_input_path_canonical():
     assert "input_path" in _PARAM_ALIASES
     aliases = set(_PARAM_ALIASES["input_path"].keys())
     expected = {"rules_path", "rules_file", "statement_path", "envelope_path"}
-    assert expected.issubset(aliases), (
-        f"Expected {expected} in _PARAM_ALIASES['input_path'], got {aliases}"
-    )
+    assert expected.issubset(aliases), f"Expected {expected} in _PARAM_ALIASES['input_path'], got {aliases}"
 
 
 def test_param_aliases_emit_deprecation_warning():
@@ -180,6 +177,7 @@ def test_wrapper_synthesised_signature_exposes_w332_aliases():
     optional kwargs so FastMCP / Pydantic schema generation lists ALL
     accepted spellings on the public tool surface."""
     import inspect
+
     from roam.mcp_server import _wrap_with_alias_normalization
 
     def fake_tool(input_path: str = "", root: str = ".") -> dict:
@@ -213,6 +211,7 @@ def _ensure_aliased(tool_name: str, fn):
     the presence of ``input_path`` AND any alias on its synth signature.
     """
     import inspect
+
     from roam.mcp_server import _wrap_with_alias_normalization
 
     sig = inspect.signature(fn)
@@ -454,9 +453,7 @@ def test_audit_trail_conformance_check_accepts_legacy_rules_path_alias():
     legacy aliases works."""
     from roam.mcp_server import audit_trail_conformance_check
 
-    wrapped = _ensure_aliased(
-        "roam_audit_trail_conformance_check", audit_trail_conformance_check
-    )
+    wrapped = _ensure_aliased("roam_audit_trail_conformance_check", audit_trail_conformance_check)
     with patch("roam.mcp_server._run_roam") as mock:
         mock.return_value = {
             "command": "roam_audit_trail_conformance_check",

@@ -33,7 +33,6 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -123,7 +122,9 @@ def _synthetic_packet(
                 "extra": {},
                 "redactions": [],
             }
-        ] if include_context_refs else [],
+        ]
+        if include_context_refs
+        else [],
         "changed_subjects": [
             {
                 "kind": subject_kind,
@@ -131,7 +132,9 @@ def _synthetic_packet(
                 "repo_id": None,
                 "extra": {},
             }
-        ] if include_changed_subjects else [],
+        ]
+        if include_changed_subjects
+        else [],
         "findings": [
             {
                 "finding_id_str": "test::finding:1",
@@ -139,16 +142,10 @@ def _synthetic_packet(
                 "severity": "low",
             }
         ],
-        "policy_decisions": [
-            {"rule_id": "test:rule", "outcome": "allowed"}
-        ] if include_policy_decisions else [],
+        "policy_decisions": [{"rule_id": "test:rule", "outcome": "allowed"}] if include_policy_decisions else [],
         "tests_required": ["tests/test_foo.py::test_one"],
-        "tests_run": [
-            {"test_id": "tests/test_foo.py::test_one", "outcome": "passed"}
-        ] if include_tests_run else [],
-        "approvals": [
-            {"approval_id": "ap:1", "approver": "alice", "scope": "merge"}
-        ] if include_approvals else [],
+        "tests_run": [{"test_id": "tests/test_foo.py::test_one", "outcome": "passed"}] if include_tests_run else [],
+        "approvals": [{"approval_id": "ap:1", "approver": "alice", "scope": "merge"}] if include_approvals else [],
         "accepted_risks": [],
         "artifacts": [],
         "redactions": ["policy"] if include_redactions else [],
@@ -160,7 +157,9 @@ def _synthetic_packet(
                 "trust_tier": "self_reported_agent",
                 "extra": {},
             }
-        ] if include_actor_refs else [],
+        ]
+        if include_actor_refs
+        else [],
         "authority_refs": [
             {
                 "authority_id": "mode:safe_edit",
@@ -169,7 +168,9 @@ def _synthetic_packet(
                 "source": "mode",
                 "extra": {},
             }
-        ] if include_authority_refs else [],
+        ]
+        if include_authority_refs
+        else [],
         "environment_refs": [
             {
                 "env_id": "local",
@@ -483,10 +484,7 @@ def test_doctor_fails_on_invalid_trust_tier(tmp_path: Path) -> None:
     assert payload["summary"]["verdict"].startswith("FAIL"), payload["summary"]
     assert payload["summary"]["enum_violations"] >= 1
     violations = payload.get("enum_violations", [])
-    assert any(
-        "trust_tier" in v["field"] and v["value"] == "totally-fake"
-        for v in violations
-    ), violations
+    assert any("trust_tier" in v["field"] and v["value"] == "totally-fake" for v in violations), violations
 
 
 def test_doctor_trust_warnings_array_carries_actor_id(tmp_path: Path) -> None:
@@ -531,9 +529,7 @@ def test_doctor_trust_warnings_array_carries_actor_id(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _packet_with_inline_artifacts(
-    *, count: int, inline_size: int, stamp_hash: bool = True
-) -> dict:
+def _packet_with_inline_artifacts(*, count: int, inline_size: int, stamp_hash: bool = True) -> dict:
     """Build a packet with N inline artifacts each of size ``inline_size``.
 
     Used for the oversized-after-truncation test: the doctor reads a
@@ -611,9 +607,7 @@ def test_doctor_warns_on_oversized_after_truncation(tmp_path: Path) -> None:
     PASS); this test isolates the size signal.
     """
     # 40 artifacts * 8 KiB inline = ~320 KiB, comfortably over 256 KiB.
-    p = _packet_with_inline_artifacts(
-        count=40, inline_size=8 * 1024, stamp_hash=False
-    )
+    p = _packet_with_inline_artifacts(count=40, inline_size=8 * 1024, stamp_hash=False)
     # Upgrade the actor_ref's tier so size is the only WARN signal.
     p["actor_refs"] = [
         {

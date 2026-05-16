@@ -31,10 +31,8 @@ import asyncio
 import inspect
 import json
 import subprocess
-from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -85,12 +83,8 @@ def indexed_project(tmp_path, monkeypatch):
         capture_output=True,
         check=False,
     )
-    subprocess.run(
-        ["git", "add", "."], cwd=tmp_path, capture_output=True, check=False
-    )
-    subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=False
-    )
+    subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=False)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=False)
     # Build the index in-process.
     from click.testing import CliRunner
 
@@ -158,12 +152,8 @@ class TestPassThroughEndToEnd:
         # or 5).
         meta = result.get("_meta") or {}
         cli_exit = meta.get("cli_exit_code")
-        assert cli_exit is not None, (
-            f"cli_exit_code annotation missing: meta={meta}"
-        )
-        assert cli_exit not in (0, 5), (
-            f"doctor on fresh project should exit non-success: cli_exit_code={cli_exit}"
-        )
+        assert cli_exit is not None, f"cli_exit_code annotation missing: meta={meta}"
+        assert cli_exit not in (0, 5), f"doctor on fresh project should exit non-success: cli_exit_code={cli_exit}"
         assert result.get("isError") is True
 
     def test_stale_refs_exit_6_with_json_passes_through(self, indexed_project):
@@ -201,9 +191,7 @@ class TestPassThroughEndToEnd:
         meta = result.get("_meta") or {}
         cli_exit = meta.get("cli_exit_code")
         if cli_exit is not None:
-            assert cli_exit in (1, 6), (
-                f"stale-refs cli_exit_code unexpected: {cli_exit}"
-            )
+            assert cli_exit in (1, 6), f"stale-refs cli_exit_code unexpected: {cli_exit}"
             assert result.get("isError") is True
 
     def test_test_scaffold_unknown_symbol_passes_through(self, indexed_project):
@@ -217,16 +205,13 @@ class TestPassThroughEndToEnd:
 
         _ROAM_RESULT_CACHE.clear()
 
-        result = _run_roam_inprocess(
-            ["test-scaffold", "nonexistent_symbol_xyz_w325"]
-        )
+        result = _run_roam_inprocess(["test-scaffold", "nonexistent_symbol_xyz_w325"])
 
         assert isinstance(result, dict)
         # Pass-through annotation -- exit 1 surfaced + isError set.
         meta = result.get("_meta") or {}
         assert meta.get("cli_exit_code") == 1, (
-            f"test-scaffold did not pass through: keys={list(result.keys())}, "
-            f"meta={meta}"
+            f"test-scaffold did not pass through: keys={list(result.keys())}, meta={meta}"
         )
         assert result.get("isError") is True
         # The underlying symbol_not_found envelope structure survives --
@@ -259,19 +244,14 @@ class TestPassThroughEndToEnd:
 
         _ROAM_RESULT_CACHE.clear()
 
-        result = _run_roam_inprocess(
-            ["pytest-fixtures", "fake_symbol_does_not_exist_w354"]
-        )
+        result = _run_roam_inprocess(["pytest-fixtures", "fake_symbol_does_not_exist_w354"])
 
         assert isinstance(result, dict)
         # Exit 0 is in _SUCCESS_EXIT_CODES, so the W325 pass-through
         # MUST NOT have fired. Classic-success path delivers the
         # envelope without the cli_exit_code annotation.
         meta = result.get("_meta") or {}
-        assert "cli_exit_code" not in meta, (
-            "exit 0 must not trigger the W325 chokepoint annotation: "
-            f"meta={meta}"
-        )
+        assert "cli_exit_code" not in meta, f"exit 0 must not trigger the W325 chokepoint annotation: meta={meta}"
         # NOT an error envelope -- isError must not be set on success.
         assert result.get("isError") is not True, (
             f"pytest-fixtures unknown-symbol round-trip wrongly tagged as error: {result}"
@@ -312,10 +292,7 @@ class TestPassThroughEndToEnd:
         # specific to the pass-through annotation. (The classic envelope
         # uses ``exit_code`` at top level, not nested under ``_meta``.)
         meta = result.get("_meta") or {}
-        assert "cli_exit_code" not in meta, (
-            "pass-through must not fire on non-JSON output: "
-            f"meta={meta}, full={result}"
-        )
+        assert "cli_exit_code" not in meta, f"pass-through must not fire on non-JSON output: meta={meta}, full={result}"
 
 
 # ---------------------------------------------------------------------------
@@ -345,9 +322,7 @@ class TestHelperPureFunction:
         out = _maybe_pass_through_structured_json(json.dumps(inner), 1)
 
         assert isinstance(out, dict)
-        assert out["_meta"]["cli_exit_code"] == 42, (
-            "helper overwrote existing cli_exit_code"
-        )
+        assert out["_meta"]["cli_exit_code"] == 42, "helper overwrote existing cli_exit_code"
         assert out["_meta"]["custom"] == "keep"
 
     def test_helper_preserves_existing_isError(self):
@@ -387,14 +362,8 @@ class TestHelperPureFunction:
         from roam.mcp_server import _maybe_pass_through_structured_json
 
         # Stack trace / plaintext stderr -- must not be misinterpreted.
-        assert (
-            _maybe_pass_through_structured_json("Traceback (most recent call last):", 1)
-            is None
-        )
-        assert (
-            _maybe_pass_through_structured_json("Error: no such command 'foo'", 2)
-            is None
-        )
+        assert _maybe_pass_through_structured_json("Traceback (most recent call last):", 1) is None
+        assert _maybe_pass_through_structured_json("Error: no such command 'foo'", 2) is None
 
     def test_helper_returns_none_on_top_level_array(self):
         """Top-level JSON arrays are NOT envelopes -- the helper must
@@ -428,9 +397,7 @@ class TestSuccessExitCodesConstant:
         """
         from roam import mcp_server
 
-        assert hasattr(mcp_server, "_SUCCESS_EXIT_CODES"), (
-            "_SUCCESS_EXIT_CODES must be module-scope (W325 hoist)"
-        )
+        assert hasattr(mcp_server, "_SUCCESS_EXIT_CODES"), "_SUCCESS_EXIT_CODES must be module-scope (W325 hoist)"
         assert isinstance(mcp_server._SUCCESS_EXIT_CODES, frozenset)
         # Currently {0, 5} -- exit 0 (success) + exit 5 (gate failure).
         # Gate failure produces valid JSON so it's treated as success
@@ -456,10 +423,8 @@ class TestSuccessExitCodesConstant:
         src_sub = _inspect.getsource(_run_roam_subprocess)
 
         assert "_SUCCESS_EXIT_CODES" in src_in, (
-            "_run_roam_inprocess must reference the module-level "
-            "_SUCCESS_EXIT_CODES constant (W325)"
+            "_run_roam_inprocess must reference the module-level _SUCCESS_EXIT_CODES constant (W325)"
         )
         assert "_SUCCESS_EXIT_CODES" in src_sub, (
-            "_run_roam_subprocess must reference the module-level "
-            "_SUCCESS_EXIT_CODES constant (W325)"
+            "_run_roam_subprocess must reference the module-level _SUCCESS_EXIT_CODES constant (W325)"
         )

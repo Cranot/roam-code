@@ -46,7 +46,6 @@ from roam.catalog._shared import (
     make_smell_finding,
 )
 
-
 # ---------------------------------------------------------------------------
 # loc(path, line) -- W864
 # ---------------------------------------------------------------------------
@@ -183,8 +182,7 @@ def _build_symbols_fixture(conn: sqlite3.Connection) -> None:
     #   Cls.baz : lines 50..60 (kind='method')
     # plus one non-callable symbol that the SQL filter must exclude.
     conn.executemany(
-        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, ?, ?, ?, ?, ?)",
         [
             (1, 1, "foo", "function", 10, 20),
             (2, 1, "bar", "function", 25, 40),

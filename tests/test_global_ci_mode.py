@@ -30,7 +30,6 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process, parse_json_output  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
@@ -127,9 +126,7 @@ def bundle_project(tmp_path, monkeypatch):
     (proj / ".gitignore").write_text(".roam/\n")
     (proj / "main.py").write_text("def hello():\n    return 'hi'\n")
     git_init(proj)
-    subprocess.run(
-        ["git", "checkout", "-B", "test-branch"], cwd=proj, capture_output=True
-    )
+    subprocess.run(["git", "checkout", "-B", "test-branch"], cwd=proj, capture_output=True)
     monkeypatch.chdir(proj)
     return proj
 
@@ -155,9 +152,7 @@ def test_ci_mode_flag_recognized(cli_runner):
 # ---------------------------------------------------------------------------
 
 
-def test_ci_implies_leaks_only_for_over_fetch(
-    cli_runner, three_state_project, monkeypatch
-):
+def test_ci_implies_leaks_only_for_over_fetch(cli_runner, three_state_project, monkeypatch):
     """With --ci, over-fetch filters GUARDED_RELATION from findings list."""
     monkeypatch.chdir(three_state_project)
     result = _invoke(cli_runner, ["--ci", "--json", "over-fetch"])
@@ -172,9 +167,7 @@ def test_ci_implies_leaks_only_for_over_fetch(
     # And no GUARDED_RELATION should appear in the findings list
     eps = data.get("endpoint_findings", [])
     guarded = [e for e in eps if e.get("state") == "GUARDED_RELATION"]
-    assert guarded == [], (
-        f"GUARDED_RELATION must be suppressed under --ci, found: {guarded}"
-    )
+    assert guarded == [], f"GUARDED_RELATION must be suppressed under --ci, found: {guarded}"
     # But summary counts STILL reflect the full classification
     assert data["summary"]["guarded_relation_count"] == 1
 
@@ -193,8 +186,7 @@ def test_ci_implies_strict_for_pr_bundle_emit(cli_runner, bundle_project):
         ["--ci", "--json", "pr-bundle", "emit", "--no-auto-collect"],
     )
     assert result.exit_code == 5, (
-        f"expected exit 5 under --ci on incomplete bundle, "
-        f"got {result.exit_code}: {result.output}"
+        f"expected exit 5 under --ci on incomplete bundle, got {result.exit_code}: {result.output}"
     )
     # Envelope still echoed before the non-zero exit.
     raw = getattr(result, "stdout", None) or result.output
@@ -212,8 +204,7 @@ def test_ci_implies_strict_for_pr_bundle_validate(cli_runner, bundle_project):
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", ""])
     result = _invoke(cli_runner, ["--ci", "--json", "pr-bundle", "validate"])
     assert result.exit_code == 5, (
-        f"expected exit 5 under --ci on incomplete bundle, "
-        f"got {result.exit_code}: {result.output}"
+        f"expected exit 5 under --ci on incomplete bundle, got {result.exit_code}: {result.output}"
     )
 
 
@@ -222,21 +213,16 @@ def test_ci_implies_strict_for_pr_bundle_validate(cli_runner, bundle_project):
 # ---------------------------------------------------------------------------
 
 
-def test_explicit_no_leaks_only_overrides_ci(
-    cli_runner, three_state_project, monkeypatch
-):
+def test_explicit_no_leaks_only_overrides_ci(cli_runner, three_state_project, monkeypatch):
     """`--ci over-fetch --no-leaks-only` shows GUARDED_RELATION (explicit wins)."""
     monkeypatch.chdir(three_state_project)
-    result = _invoke(
-        cli_runner, ["--ci", "--json", "over-fetch", "--no-leaks-only"]
-    )
+    result = _invoke(cli_runner, ["--ci", "--json", "over-fetch", "--no-leaks-only"])
     assert result.exit_code == 0, result.output
     raw = getattr(result, "stdout", None) or result.output
     data = json.loads(raw)
     # Explicit --no-leaks-only must override --ci's implied True
     assert data["summary"]["leaks_only"] is False, (
-        f"explicit --no-leaks-only must beat --ci, got leaks_only="
-        f"{data['summary'].get('leaks_only')!r}"
+        f"explicit --no-leaks-only must beat --ci, got leaks_only={data['summary'].get('leaks_only')!r}"
     )
     # And GUARDED_RELATION should be back in the findings list
     eps = data.get("endpoint_findings", [])
@@ -244,19 +230,14 @@ def test_explicit_no_leaks_only_overrides_ci(
     assert guarded, "GUARDED_RELATION should appear when --no-leaks-only overrides --ci"
 
 
-def test_explicit_no_strict_overrides_ci_for_pr_bundle_validate(
-    cli_runner, bundle_project
-):
+def test_explicit_no_strict_overrides_ci_for_pr_bundle_validate(cli_runner, bundle_project):
     """`--ci pr-bundle validate --no-strict` exits 0 on incomplete (explicit wins)."""
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", ""])
     result = _invoke(
         cli_runner,
         ["--ci", "--json", "pr-bundle", "validate", "--no-strict"],
     )
-    assert result.exit_code == 0, (
-        f"explicit --no-strict must beat --ci, got exit {result.exit_code}: "
-        f"{result.output}"
-    )
+    assert result.exit_code == 0, f"explicit --no-strict must beat --ci, got exit {result.exit_code}: {result.output}"
 
 
 # ---------------------------------------------------------------------------
@@ -268,9 +249,7 @@ def test_ci_passthrough_to_non_ci_command(cli_runner, three_state_project, monke
     """`--ci health` runs fine; no behavior change for non-CI-aware commands."""
     monkeypatch.chdir(three_state_project)
     result = _invoke(cli_runner, ["--ci", "--json", "health"])
-    assert result.exit_code in (0, 5), (
-        f"`--ci health` should exit cleanly, got {result.exit_code}: {result.output}"
-    )
+    assert result.exit_code in (0, 5), f"`--ci health` should exit cleanly, got {result.exit_code}: {result.output}"
     # Health envelope is well-formed
     data = parse_json_output(result, command="health")
     assert "summary" in data
@@ -289,8 +268,7 @@ def test_roam_ci_env_var_implies_ci_mode(cli_runner, bundle_project, monkeypatch
     # No explicit --ci flag — but ROAM_CI=1 should still trigger --strict.
     result = _invoke(cli_runner, ["--json", "pr-bundle", "validate"])
     assert result.exit_code == 5, (
-        f"ROAM_CI=1 should imply --strict like --ci does, "
-        f"got exit {result.exit_code}: {result.output}"
+        f"ROAM_CI=1 should imply --strict like --ci does, got exit {result.exit_code}: {result.output}"
     )
 
 
@@ -318,14 +296,12 @@ def test_ci_implies_strict_resolved_for_pr_bundle_emit(cli_runner, bundle_projec
     # Bundle is incomplete -> --strict fires exit 5 (already covered by
     # test 3). The new assertion is that strict_resolved is also recorded.
     assert result.exit_code == 5, (
-        f"expected exit 5 under --ci on incomplete bundle, "
-        f"got {result.exit_code}: {result.output}"
+        f"expected exit 5 under --ci on incomplete bundle, got {result.exit_code}: {result.output}"
     )
     raw = getattr(result, "stdout", None) or result.output
     data = json.loads(raw)
     assert data["summary"]["strict_resolved"] is True, (
-        f"--ci should imply strict_resolved=True, got "
-        f"{data['summary'].get('strict_resolved')!r}"
+        f"--ci should imply strict_resolved=True, got {data['summary'].get('strict_resolved')!r}"
     )
 
 
@@ -334,20 +310,16 @@ def test_ci_implies_strict_resolved_for_pr_bundle_validate(cli_runner, bundle_pr
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", ""])
     result = _invoke(cli_runner, ["--ci", "--json", "pr-bundle", "validate"])
     assert result.exit_code == 5, (
-        f"expected exit 5 under --ci on incomplete bundle, "
-        f"got {result.exit_code}: {result.output}"
+        f"expected exit 5 under --ci on incomplete bundle, got {result.exit_code}: {result.output}"
     )
     raw = getattr(result, "stdout", None) or result.output
     data = json.loads(raw)
     assert data["summary"]["strict_resolved"] is True, (
-        f"--ci should imply strict_resolved=True for validate, got "
-        f"{data['summary'].get('strict_resolved')!r}"
+        f"--ci should imply strict_resolved=True for validate, got {data['summary'].get('strict_resolved')!r}"
     )
 
 
-def test_explicit_no_strict_resolved_overrides_ci_for_pr_bundle_emit(
-    cli_runner, bundle_project
-):
+def test_explicit_no_strict_resolved_overrides_ci_for_pr_bundle_emit(cli_runner, bundle_project):
     """`--ci pr-bundle emit --no-strict-resolved` records strict_resolved=False.
 
     Explicit user intent (LAW 11) MUST beat the --ci inference. The
@@ -372,6 +344,5 @@ def test_explicit_no_strict_resolved_overrides_ci_for_pr_bundle_emit(
     raw = getattr(result, "stdout", None) or result.output
     data = json.loads(raw)
     assert data["summary"]["strict_resolved"] is False, (
-        f"explicit --no-strict-resolved must beat --ci, got "
-        f"{data['summary'].get('strict_resolved')!r}"
+        f"explicit --no-strict-resolved must beat --ci, got {data['summary'].get('strict_resolved')!r}"
     )

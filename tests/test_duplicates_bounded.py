@@ -71,9 +71,7 @@ def _populate_duplicate_candidates(
             line_start = 10 + i * (line_count + 5)
             line_end = line_start + line_count - 1
             fn_rows.append((sid, 9999, name, name, "function", "", line_start, line_end))
-            metric_rows.append(
-                (sid, line_count, param_count, 1, 3, 1, 0, 0)
-            )
+            metric_rows.append((sid, line_count, param_count, 1, 3, 1, 0, 0))
         if other_rows:
             conn.executemany(
                 "INSERT OR IGNORE INTO symbols "
@@ -120,9 +118,7 @@ def large_dup_project(tmp_path, monkeypatch):
     _populate_duplicate_candidates(db_path, 18000, n_functions=3000)
     with open_db(readonly=True, project_root=proj) as conn:
         total = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-        fns = conn.execute(
-            "SELECT COUNT(*) FROM symbols WHERE kind IN ('function','method')"
-        ).fetchone()[0]
+        fns = conn.execute("SELECT COUNT(*) FROM symbols WHERE kind IN ('function','method')").fetchone()[0]
     assert total >= 18000, f"expected >=18000 total symbols, got {total}"
     assert fns >= 3000, f"expected >=3000 function candidates, got {fns}"
     return proj
@@ -181,9 +177,7 @@ def _invoke_duplicates(args, cwd, json_mode=True):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(cwd))
-        return runner.invoke(
-            duplicates, args, obj={"json": json_mode, "budget": 0}, catch_exceptions=False
-        )
+        return runner.invoke(duplicates, args, obj={"json": json_mode, "budget": 0}, catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
 

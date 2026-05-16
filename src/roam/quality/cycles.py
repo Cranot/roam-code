@@ -37,7 +37,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 # Single-line label that should appear in every envelope reporting a
 # cycle count, under the key ``cycles_definition``.
 DEFINITION = (

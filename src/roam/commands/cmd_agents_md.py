@@ -13,6 +13,13 @@ Implementation notes
   AGENTS.md generation event lands in the agent's replayable timeline.
 * No expensive shell-outs to sibling commands; danger zones use the
   same single SQL query as ``roam dashboard``.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because agents-md outputs are AGENTS.md documents — not
+per-location violations. SARIF is reserved for findings with file:line
+coordinates; agents-md's primary deliverable is the AGENTS.md document.
+See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket C
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -190,14 +197,10 @@ def agents_md_cmd(
     section_count = len(am.section_names())
     char_count = len(markdown)
     if wrote_to:
-        verdict = (
-            f"Generated AGENTS.md ({section_count} sections, {char_count} chars) "
-            f"-> {wrote_to}"
-        )
+        verdict = f"Generated AGENTS.md ({section_count} sections, {char_count} chars) -> {wrote_to}"
     else:
         verdict = (
-            f"Generated AGENTS.md ({section_count} sections, {char_count} chars) -- "
-            f"pass --out AGENTS.md to persist"
+            f"Generated AGENTS.md ({section_count} sections, {char_count} chars) -- pass --out AGENTS.md to persist"
         )
 
     envelope_kwargs: dict = {

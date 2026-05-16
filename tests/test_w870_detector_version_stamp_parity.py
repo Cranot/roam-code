@@ -73,20 +73,15 @@ def test_every_detector_has_a_version_source() -> None:
         f"required as the fallback for detectors without a per-id stamp."
     )
     assert _VERSION_RE.match(composite), (
-        f"{_COMPOSITE_NAME} = {composite!r} is not canonical semver "
-        f"(<major>.<minor>.<patch>)."
+        f"{_COMPOSITE_NAME} = {composite!r} is not canonical semver (<major>.<minor>.<patch>)."
     )
-    assert len(ALL_DETECTORS) > 0, (
-        "ALL_DETECTORS is empty — registry not loaded?"
-    )
+    assert len(ALL_DETECTORS) > 0, "ALL_DETECTORS is empty — registry not loaded?"
 
 
 def test_per_detector_version_constants_are_canonical() -> None:
     """Every ``<NAME>_DETECTOR_VERSION`` value matches semver ``<N>.<N>.<N>``."""
     constants = _detector_version_constants()
-    invalid = sorted(
-        (smell_id, v) for smell_id, v in constants.items() if not _VERSION_RE.match(v)
-    )
+    invalid = sorted((smell_id, v) for smell_id, v in constants.items() if not _VERSION_RE.match(v))
     if invalid:
         rows = "\n".join(f"    {smell_id!r}: {v!r}" for smell_id, v in invalid)
         raise AssertionError(

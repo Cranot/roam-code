@@ -140,12 +140,8 @@ def indexed_project(tmp_path_factory):
         "GIT_COMMITTER_EMAIL": "t@t.com",
     }
     subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "t@t.com"], cwd=str(proj), capture_output=True
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"], cwd=str(proj), capture_output=True
-    )
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(proj), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(proj), capture_output=True)
     subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "init"],

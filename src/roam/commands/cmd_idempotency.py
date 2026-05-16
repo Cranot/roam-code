@@ -13,6 +13,12 @@ Examples
     roam idempotency --kind non_idempotent         # filter
     roam idempotency --kind non_idempotent --top 20
     roam idempotency --json
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because idempotency outputs are invocation-scoped per-symbol
+classification rollups (idempotent / non_idempotent / unknown labels) —
+not per-location code violations. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH propagation plan + W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -131,24 +137,16 @@ def idempotency_cmd(ctx, symbol, kind, top):
     facts: list[str] = []
     worst = sorted_filtered[0] if sorted_filtered else None
     if worst is not None and worst.kind in ("non_idempotent", "unknown"):
-        facts.append(
-            f"{worst.symbol} classified {worst.kind} "
-            f"(confidence={worst.confidence})"
-        )
+        facts.append(f"{worst.symbol} classified {worst.kind} (confidence={worst.confidence})")
     if by_kind.get("non_idempotent", 0):
         facts.append(
             f"idempotency scan flagged {by_kind['non_idempotent']} non_idempotent "
             f"symbols out of {len(all_results)} analysed"
         )
     if by_kind.get("unknown", 0):
-        facts.append(
-            f"idempotency scan classified {by_kind['unknown']} symbols as unknown "
-            "(retry-risk indeterminate)"
-        )
+        facts.append(f"idempotency scan classified {by_kind['unknown']} symbols as unknown (retry-risk indeterminate)")
     if by_kind.get("idempotent", 0):
-        facts.append(
-            f"idempotency scan confirmed {by_kind['idempotent']} idempotent symbols"
-        )
+        facts.append(f"idempotency scan confirmed {by_kind['idempotent']} idempotent symbols")
     if not facts:
         facts.append("idempotency scan found no symbols to classify")
 
@@ -168,8 +166,7 @@ def idempotency_cmd(ctx, symbol, kind, top):
             "surfaced": len(surfaced),
             "filter_kind": kind,
             "kind_definition": (
-                "idempotent | non_idempotent | unknown — composes on "
-                "world_model.side_effects classification"
+                "idempotent | non_idempotent | unknown — composes on world_model.side_effects classification"
             ),
             "detector": "world_model.idempotency (heuristic)",
         },
@@ -192,12 +189,14 @@ def idempotency_cmd(ctx, symbol, kind, top):
         return
     rows = []
     for c in surfaced:
-        rows.append([
-            c.symbol[:42],
-            c.kind,
-            c.confidence,
-            (c.file or "")[-46:],
-        ])
+        rows.append(
+            [
+                c.symbol[:42],
+                c.kind,
+                c.confidence,
+                (c.file or "")[-46:],
+            ]
+        )
     click.echo(
         format_table(
             ["Symbol", "Idempotency", "Conf", "File"],

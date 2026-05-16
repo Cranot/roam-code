@@ -14,16 +14,13 @@ it fails fast (in CI, before deploy) on either side drifting.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
 from tests._helpers.repo_root import repo_root
 
 PROJECT_ROOT = repo_root()
-TROUBLESHOOTING_HTML = (
-    PROJECT_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "troubleshooting.html"
-)
+TROUBLESHOOTING_HTML = PROJECT_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "troubleshooting.html"
 
 
 @pytest.fixture(scope="module")
@@ -85,7 +82,6 @@ def test_all_doc_links_are_https_to_canonical_domain(doc_links):
     for code, url in doc_links.items():
         if not url.startswith("https://roam-code.com/"):
             bad.append((code, url))
-    assert not bad, (
-        "Some _DOC_LINKS values are not https://roam-code.com URLs:\n"
-        + "\n".join(f"  {c} -> {u}" for c, u in bad)
+    assert not bad, "Some _DOC_LINKS values are not https://roam-code.com URLs:\n" + "\n".join(
+        f"  {c} -> {u}" for c, u in bad
     )

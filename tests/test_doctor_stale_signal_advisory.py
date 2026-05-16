@@ -30,7 +30,6 @@ from roam.commands.cmd_doctor import (
     _check_stale_math_signal_column,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------
@@ -55,18 +54,12 @@ def _make_math_signals_db(tmp_path, *, with_column=True, rows=None, with_table=T
                 ")"
             )
         else:
-            conn.execute(
-                "CREATE TABLE math_signals ("
-                "  symbol_id INTEGER PRIMARY KEY, "
-                "  loop_depth INTEGER DEFAULT 0"
-                ")"
-            )
+            conn.execute("CREATE TABLE math_signals (  symbol_id INTEGER PRIMARY KEY,   loop_depth INTEGER DEFAULT 0)")
         if rows:
             if with_column:
                 for i, val in enumerate(rows, start=1):
                     conn.execute(
-                        "INSERT INTO math_signals (symbol_id, loop_eq_with_dependent_write) "
-                        "VALUES (?, ?)",
+                        "INSERT INTO math_signals (symbol_id, loop_eq_with_dependent_write) VALUES (?, ?)",
                         (i, val),
                     )
             else:

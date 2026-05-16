@@ -1,4 +1,11 @@
-"""Compute the minimal set of changes needed when modifying a symbol."""
+"""Compute the minimal set of changes needed when modifying a symbol.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because closure outputs are invocation-scoped change-closure
+envelopes — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +17,14 @@ from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file as _is_test_file
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 
 
 def _collect_closure(conn, sym, rename=None, delete=False):
@@ -188,15 +202,16 @@ def _closure_verdict(changes, sym_name):
     requires_index=True,
 )
 @click.command()
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL")
 @click.option("--rename", default=None, help="New name for rename closure")
 @click.option("--delete", "delete_mode", is_flag=True, help="Deletion closure")
 @click.pass_context
 def closure(ctx, name, rename, delete_mode):
-    """Compute the minimal set of changes needed when modifying a symbol.
+    """Compute the minimal set of changes needed when modifying SYMBOL.
 
-    Unlike ``impact`` (which shows what might break), this command computes
-    the minimal set of files and lines that must change when modifying a
+    SYMBOL is a symbol identifier (bare name or qualified name). Unlike
+    ``impact`` (which shows what might break), this command computes the
+    minimal set of files and lines that must change when modifying the
     symbol.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -205,8 +220,42 @@ def closure(ctx, name, rename, delete_mode):
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, name)
         if sym is None:
-            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
-            raise SystemExit(1)
+            # W1272 — Pattern-2c Convention (c): unresolved exits 0 with a
+            # resolution=unresolved + partial_success disclosure. A
+            # closure on a missing symbol is "I tried and there's
+            # nothing to change" (a valid no-op success), not a tool
+            # failure. Keep the FTS suggestion list in text mode.
+            unresolved_block = resolution_disclosure("unresolved", target=name or "")
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "closure",
+                            summary={
+                                "verdict": f"Symbol '{name}' not found",
+                                "partial_success": True,
+                                "state": "not_found",
+                                **unresolved_block,
+                            },
+                            symbol=name or "",
+                            **unresolved_block,
+                        )
+                    )
+                )
+            else:
+                click.echo(symbol_not_found(conn, name, json_mode=False))
+            return
+
+        # W1245 / W1249 — Pattern-2 variant-D: ``find_symbol`` stamps
+        # ``_resolution_tier`` on the returned row so a fuzzy-LIKE-fallback
+        # closure is distinguishable from an exact-symbol match. A fuzzy
+        # match still produces a valid change set, but for a symbol that
+        # may not be the one the caller intended — the disclosure tells
+        # the agent the input was degraded so it can re-confirm before
+        # editing.
+        resolution_tier = sym.get("_resolution_tier", "symbol")
+        resolved_target = sym["qualified_name"] or sym["name"]
+        resolution_block = resolution_disclosure(resolution_tier, target=resolved_target)
 
         changes = _collect_closure(conn, sym, rename=rename, delete=delete_mode)
         file_set = set(c["file"] for c in changes)
@@ -217,6 +266,8 @@ def closure(ctx, name, rename, delete_mode):
             by_type.setdefault(c["change_type"], []).append(c)
 
         verdict = _closure_verdict(changes, sym["name"])
+        if resolution_tier == "fuzzy":
+            verdict = f"{verdict} [fuzzy resolution -- target '{resolved_target}' may not be what you meant]"
         mode = "rename" if rename else ("delete" if delete_mode else "modify")
 
         if json_mode:
@@ -229,6 +280,7 @@ def closure(ctx, name, rename, delete_mode):
                             "total_changes": len(changes),
                             "files_affected": len(file_set),
                             "mode": mode,
+                            **resolution_block,
                         },
                         symbol=sym["qualified_name"] or sym["name"],
                         kind=sym["kind"],
@@ -260,6 +312,7 @@ def closure(ctx, name, rename, delete_mode):
                             ]
                             for ct, items in by_type.items()
                         },
+                        **resolution_block,
                     )
                 )
             )

@@ -29,7 +29,6 @@ from click.testing import CliRunner
 
 from tests.conftest import index_in_process
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

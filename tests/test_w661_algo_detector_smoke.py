@@ -123,9 +123,7 @@ class TestW661AlgoDetectorFailLoud:
         def _bad_detector(conn):
             raise NameError("name 'Counter' is not defined")
 
-        _patch_iter_registered(
-            monkeypatch, [("loop-allocation", "naive-prepend", _bad_detector)]
-        )
+        _patch_iter_registered(monkeypatch, [("loop-allocation", "naive-prepend", _bad_detector)])
 
         with pytest.raises(RuntimeError) as exc_info:
             detectors_mod.run_detectors(empty_db)
@@ -175,15 +173,14 @@ class TestW661AlgoDetectorFailLoud:
 
         # Bad detector was recorded in failed_detectors.
         assert meta["detectors_failed"] == 1
-        assert any(
-            fd["detector"] == "_bad_detector" for fd in meta["failed_detectors"]
-        ), f"expected failure record for _bad_detector; got: {meta['failed_detectors']}"
+        assert any(fd["detector"] == "_bad_detector" for fd in meta["failed_detectors"]), (
+            f"expected failure record for _bad_detector; got: {meta['failed_detectors']}"
+        )
 
         # Warning was logged for the bad detector.
-        assert any(
-            "sqlite error" in rec.message and "_bad_detector" in rec.message
-            for rec in caplog.records
-        ), f"expected sqlite-warning log; got: {[r.message for r in caplog.records]}"
+        assert any("sqlite error" in rec.message and "_bad_detector" in rec.message for rec in caplog.records), (
+            f"expected sqlite-warning log; got: {[r.message for r in caplog.records]}"
+        )
 
     def test_other_exception_still_buckets(self, empty_db, monkeypatch):
         """Non-programmer, non-sqlite exceptions (e.g. OSError from a
@@ -206,9 +203,7 @@ class TestW661AlgoDetectorFailLoud:
 
         findings, meta = detectors_mod.run_detectors(empty_db, return_meta=True)
         assert meta["detectors_failed"] == 1
-        assert any(
-            fd["detector"] == "_bad_detector" for fd in meta["failed_detectors"]
-        )
+        assert any(fd["detector"] == "_bad_detector" for fd in meta["failed_detectors"])
 
     def test_clean_run_unchanged(self, empty_db, monkeypatch):
         """Sanity: a clean detector that returns [] still produces an

@@ -5,14 +5,21 @@ Capability Registry — declarative manifest of public surface. Reads the in-pro
 decorators on commands as they're imported) and writes a manifest
 suitable for downstream consumers (Roam Review GitHub App, MCP server,
 documentation generators).
+
+Output formats: text (default), ``--json``, YAML.
+SARIF is deliberately NOT emitted because cmd_capabilities is a
+capability-registry manifest emitter — it dumps the catalog of
+registered roam capabilities (name, category, MCP exposure, preset
+membership) without per-location violations. The registry is
+invocation-scoped metadata, not a detector result. See action.yml
+_SUPPORTED_SARIF allowlist + W1214-audit memo.
 """
 
 from __future__ import annotations
 
 import click
 
-from roam.capability import roam_capability
-from roam.capability import REGISTRY, emit_yaml
+from roam.capability import REGISTRY, emit_yaml, roam_capability
 from roam.output.formatter import json_envelope, to_json
 
 
@@ -102,9 +109,7 @@ def capabilities_cmd(ctx, emit: str, category: str | None, ai_safe_only: bool) -
         # (in the LAW 4 noun set) so the runtime lint accepts it.
         explicit_facts = [verdict]
         if not ai_safe_only and len(items) > 0:
-            explicit_facts.append(
-                f"{ai_safe_count} of {len(items)} AI-safe capabilities"
-            )
+            explicit_facts.append(f"{ai_safe_count} of {len(items)} AI-safe capabilities")
         envelope = json_envelope(
             "capabilities",
             summary={

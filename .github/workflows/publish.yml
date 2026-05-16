@@ -27,8 +27,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -49,18 +52,36 @@ jobs:
         # Pre-12.50 wheels shipped to PyPI with no license metadata
         # because the build ran on setuptools < 77 (which silently
         # drops the license expression). Block any future regression.
+        #
+        # W1104: extract the wheel path to a variable + assert a single
+        # match. The build currently produces one py3-none-any wheel; if
+        # that ever changes (multi-arch, multi-py), the unquoted glob
+        # would have been a silent footgun. Fail fast instead.
         run: |
           set -e
-          unzip -p dist/*.whl '*/METADATA' \
+          wheels=(dist/*.whl)
+          if [ ${#wheels[@]} -ne 1 ]; then
+            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
+            exit 1
+          fi
+          wheel="${wheels[0]}"
+          unzip -p "$wheel" '*/METADATA' \
             | grep -q '^License-Expression: Apache-2.0$' \
             || (echo "::error::License-Expression missing — needs setuptools >= 77" && exit 1)
 
       - name: Verify wheel contains v2 commands
         # Belt-and-suspenders: if the wheel is missing a v2 command file
         # (because pyproject package-data drifted), fail before PyPI sees it.
+        # W1104: same single-wheel assertion as the PEP 639 step above.
         run: |
           set -e
-          unzip -l dist/*.whl | grep -E "(pr_analyze|metrics_push|audit_trail|rules_validate|dogfood)" | wc -l > .v2_count
+          wheels=(dist/*.whl)
+          if [ ${#wheels[@]} -ne 1 ]; then
+            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
+            exit 1
+          fi
+          wheel="${wheels[0]}"
+          unzip -l "$wheel" | grep -E "(pr_analyze|metrics_push|audit_trail|rules_validate|dogfood)" | wc -l > .v2_count
           count=$(cat .v2_count)
           if [ "$count" -lt "8" ]; then
             echo "::error::Expected at least 8 v2 command files in wheel, got $count"
@@ -86,10 +107,18 @@ jobs:
           set -e
           mkdir -p sbom
           version=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          # W1104: assert single wheel before passing to pip; mirrors the
+          # PEP 639 + v2-commands verification steps above.
+          wheels=(dist/*.whl)
+          if [ ${#wheels[@]} -ne 1 ]; then
+            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
+            exit 1
+          fi
+          wheel="${wheels[0]}"
           python -m venv /tmp/sbom-venv
           /tmp/sbom-venv/bin/pip install --quiet --upgrade pip
           /tmp/sbom-venv/bin/pip install --quiet cyclonedx-bom
-          /tmp/sbom-venv/bin/pip install --quiet dist/*.whl
+          /tmp/sbom-venv/bin/pip install --quiet "$wheel"
           /tmp/sbom-venv/bin/cyclonedx-py environment \
             /tmp/sbom-venv/bin/python \
             --of JSON \
@@ -117,6 +146,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: pypi          # optional: use a GitHub environment for approval
     permissions:
       id-token: write
@@ -234,8 +264,11 @@ jobs:
     # wrong file or a packaging error breaks ``pip install`` post-upload.
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:

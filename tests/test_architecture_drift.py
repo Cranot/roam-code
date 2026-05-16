@@ -85,9 +85,7 @@ class TestArchitectureDrift:
         ``state: insufficient_snapshots`` envelope (Pattern 1 + 2)."""
         monkeypatch.chdir(drift_project)
         runner = CliRunner()
-        result = invoke_cli(
-            runner, ["architecture-drift"], cwd=drift_project, json_mode=True
-        )
+        result = invoke_cli(runner, ["architecture-drift"], cwd=drift_project, json_mode=True)
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["command"] == "architecture-drift"
@@ -130,9 +128,7 @@ class TestArchitectureDrift:
                 "out_degree": 0,
             },
         }
-        _write_synthetic_snapshot(
-            drift_project, "s1", symbols=syms, edges=[], age_offset_s=10_800
-        )
+        _write_synthetic_snapshot(drift_project, "s1", symbols=syms, edges=[], age_offset_s=10_800)
         _write_synthetic_snapshot(
             drift_project,
             "s2",
@@ -208,9 +204,7 @@ class TestArchitectureDrift:
             cycles=[[a_key, b_key]],
             age_offset_s=7_200,
         )
-        _write_synthetic_snapshot(
-            drift_project, "s3", symbols=syms, cycles=[], age_offset_s=3_600
-        )
+        _write_synthetic_snapshot(drift_project, "s3", symbols=syms, cycles=[], age_offset_s=3_600)
 
         runner = CliRunner()
         result = invoke_cli(
@@ -252,9 +246,7 @@ class TestArchitectureDrift:
             },
         }
         # Cycles climbing 0 -> 1 -> 2.
-        _write_synthetic_snapshot(
-            drift_project, "s1", symbols=syms, cycles=[], age_offset_s=10_800
-        )
+        _write_synthetic_snapshot(drift_project, "s1", symbols=syms, cycles=[], age_offset_s=10_800)
         _write_synthetic_snapshot(
             drift_project,
             "s2",

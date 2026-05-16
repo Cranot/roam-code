@@ -82,7 +82,6 @@ from roam.evidence import (
     EvidenceSubject,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture directory and helpers
 # ---------------------------------------------------------------------------
@@ -172,13 +171,28 @@ def _load_packet(name: str) -> tuple[str, ChangeEvidence]:
 
     # Scalar string / None fields (the v0 / W182 / W210 supersets).
     _scalar_fields = (
-        "evidence_id", "schema_version", "repo_id", "git_range",
-        "commit_sha", "diff_hash", "agent_id", "human_actor", "mode",
-        "started_at", "completed_at", "verdict", "risk_level",
-        "content_hash", "signature_ref",
+        "evidence_id",
+        "schema_version",
+        "repo_id",
+        "git_range",
+        "commit_sha",
+        "diff_hash",
+        "agent_id",
+        "human_actor",
+        "mode",
+        "started_at",
+        "completed_at",
+        "verdict",
+        "risk_level",
+        "content_hash",
+        "signature_ref",
         # W210 time-aware + version-link scalars
-        "context_read_at", "edits_started_at", "edits_completed_at",
-        "roam_version", "rules_config_hash", "constitution_hash",
+        "context_read_at",
+        "edits_started_at",
+        "edits_completed_at",
+        "roam_version",
+        "rules_config_hash",
+        "constitution_hash",
         "control_map_hash",
     )
     for k in _scalar_fields:
@@ -196,8 +210,11 @@ def _load_packet(name: str) -> tuple[str, ChangeEvidence]:
 
     # Tuple-of-Mapping fields (preserved as-is for Phase 1).
     for k in (
-        "findings", "policy_decisions", "tests_run",
-        "approvals", "accepted_risks",
+        "findings",
+        "policy_decisions",
+        "tests_run",
+        "approvals",
+        "accepted_risks",
     ):
         if k in parsed:
             kwargs[k] = tuple(parsed[k])
@@ -243,9 +260,7 @@ def test_fixture_parses_into_change_evidence(name: str) -> None:
     assert isinstance(packet, ChangeEvidence)
     # And the parsed JSON keys include the mandatory evidence_id.
     parsed = json.loads(body)
-    assert parsed.get("evidence_id"), (
-        f"fixture {name!r} is missing the mandatory evidence_id field"
-    )
+    assert parsed.get("evidence_id"), f"fixture {name!r} is missing the mandatory evidence_id field"
 
 
 @pytest.mark.parametrize("name", ALL_FIXTURE_NAMES)
@@ -310,16 +325,10 @@ def test_v0_packet_hash_unchanged_when_loaded_in_v1_runtime() -> None:
 
     # Pre-W182 / pre-W210 shape: none of the new field keys are present.
     parsed = json.loads(body)
-    assert "actor_refs" not in parsed, (
-        "v0_minimal.json must not carry actor_refs - it's the pre-W182 "
-        "shape"
-    )
+    assert "actor_refs" not in parsed, "v0_minimal.json must not carry actor_refs - it's the pre-W182 shape"
     assert "authority_refs" not in parsed
     assert "environment_refs" not in parsed
-    assert "context_read_at" not in parsed, (
-        "v0_minimal.json must not carry context_read_at - it's the "
-        "pre-W210 shape"
-    )
+    assert "context_read_at" not in parsed, "v0_minimal.json must not carry context_read_at - it's the pre-W210 shape"
     assert "evidence_stale" not in parsed
     assert "roam_version" not in parsed
 
@@ -350,8 +359,7 @@ def test_v1_empty_refs_hashes_match_v0_minimal() -> None:
     body_v0 = _read_fixture_bytes("v0_minimal")
     body_v1_empty = _read_fixture_bytes("v1_empty_refs")
     assert body_v0 == body_v1_empty, (
-        "v0_minimal.json and v1_empty_refs.json must be byte-identical "
-        "canonical JSON (same logical packet)"
+        "v0_minimal.json and v1_empty_refs.json must be byte-identical canonical JSON (same logical packet)"
     )
 
 
@@ -382,9 +390,7 @@ def test_same_logical_packet_hashes_identically_across_machines() -> None:
         verdict="SAFE",
         risk_level="low",
         changed_subjects=(subj_order_a,),
-        findings=(
-            {"finding_id_str": "f1", "claim": "long-params", "kind": "smells"},
-        ),
+        findings=({"finding_id_str": "f1", "claim": "long-params", "kind": "smells"},),
     )
     p_b = ChangeEvidence(
         # Same field values, but constructed with kwargs in a
@@ -421,8 +427,7 @@ def test_w182_hash_compatibility_preserved_by_w210_defaults() -> None:
     a default value into the serialised bytes - a backward-compat break.
     """
     actor = ActorRef(actor_kind="agent", actor_id="agent:test")
-    auth = AuthorityRef(authority_kind="mode", authority_id="mode:safe_edit",
-                       source="mode")
+    auth = AuthorityRef(authority_kind="mode", authority_id="mode:safe_edit", source="mode")
 
     # Path A: W210 fields all at default by omission.
     p_implicit = ChangeEvidence(
@@ -463,9 +468,14 @@ def test_w182_hash_compatibility_preserved_by_w210_defaults() -> None:
     # NOT contain any W210 field keys at all.
     canon = p_implicit.to_canonical_json()
     for w210_field in (
-        "context_read_at", "edits_started_at", "edits_completed_at",
-        "evidence_stale", "stale_reasons",
-        "roam_version", "rules_config_hash", "constitution_hash",
+        "context_read_at",
+        "edits_started_at",
+        "edits_completed_at",
+        "evidence_stale",
+        "stale_reasons",
+        "roam_version",
+        "rules_config_hash",
+        "constitution_hash",
         "control_map_hash",
     ):
         assert f'"{w210_field}":' not in canon, (

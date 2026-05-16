@@ -66,16 +66,12 @@ def test_endpoints_empty_corpus_emits_pattern2_envelope(cli_runner, empty_corpus
     old_cwd = os.getcwd()
     try:
         os.chdir(str(empty_corpus))
-        result = cli_runner.invoke(
-            cli, ["--json", "endpoints"], catch_exceptions=False
-        )
+        result = cli_runner.invoke(cli, ["--json", "endpoints"], catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
 
     # Empty-corpus is a valid state — exit 0, not a failure.
-    assert result.exit_code == 0, (
-        f"empty-corpus endpoints exited {result.exit_code}: {result.output!r}"
-    )
+    assert result.exit_code == 0, f"empty-corpus endpoints exited {result.exit_code}: {result.output!r}"
 
     envelope = json.loads(result.output)
 
@@ -83,16 +79,13 @@ def test_endpoints_empty_corpus_emits_pattern2_envelope(cli_runner, empty_corpus
     assert envelope.get("command") == "endpoints"
     summary = envelope.get("summary") or {}
     verdict = summary.get("verdict", "")
-    assert isinstance(verdict, str) and verdict, (
-        f"missing summary.verdict in {envelope!r}"
-    )
+    assert isinstance(verdict, str) and verdict, f"missing summary.verdict in {envelope!r}"
 
     # --- Pattern 2: explicit empty disclosure, NOT default-success ---
     verdict_lc = verdict.lower()
-    assert any(
-        token in verdict_lc
-        for token in ("no endpoints", "0 endpoints", "empty", "no routes")
-    ), f"verdict does not disclose empty state: {verdict!r}"
+    assert any(token in verdict_lc for token in ("no endpoints", "0 endpoints", "empty", "no routes")), (
+        f"verdict does not disclose empty state: {verdict!r}"
+    )
 
     # Forbid default-success markers on an empty corpus.
     forbidden_markers = ("safe", "healthy", "passing", "all good")
@@ -101,12 +94,9 @@ def test_endpoints_empty_corpus_emits_pattern2_envelope(cli_runner, empty_corpus
     )
 
     # --- Count + framework axes are explicit ---
-    assert summary.get("count") == 0, (
-        f"summary.count must be 0 on empty corpus, got {summary.get('count')!r}"
-    )
+    assert summary.get("count") == 0, f"summary.count must be 0 on empty corpus, got {summary.get('count')!r}"
     assert summary.get("frameworks") == [], (
-        f"summary.frameworks must be [] on empty corpus, got "
-        f"{summary.get('frameworks')!r}"
+        f"summary.frameworks must be [] on empty corpus, got {summary.get('frameworks')!r}"
     )
     assert summary.get("framework_count") == 0
 
@@ -116,17 +106,11 @@ def test_endpoints_empty_corpus_emits_pattern2_envelope(cli_runner, empty_corpus
     # --- agent_contract.facts: non-empty, discloses empty state ---
     contract = envelope.get("agent_contract") or {}
     facts = contract.get("facts") or []
-    assert isinstance(facts, list) and len(facts) >= 1, (
-        f"agent_contract.facts must be non-empty: {contract!r}"
-    )
+    assert isinstance(facts, list) and len(facts) >= 1, f"agent_contract.facts must be non-empty: {contract!r}"
     joined = " ".join(str(f).lower() for f in facts)
-    assert "endpoint" in joined or "framework" in joined, (
-        f"facts must mention endpoints/frameworks: {facts!r}"
-    )
+    assert "endpoint" in joined or "framework" in joined, f"facts must mention endpoints/frameworks: {facts!r}"
     # The "0 endpoint(s) across 0 framework(s)" fact is explicit.
-    assert "0" in joined, (
-        f"facts must surface the empty count: {facts!r}"
-    )
+    assert "0" in joined, f"facts must surface the empty count: {facts!r}"
 
 
 def test_endpoints_empty_corpus_text_mode(cli_runner, empty_corpus):

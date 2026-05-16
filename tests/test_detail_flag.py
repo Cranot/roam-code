@@ -27,8 +27,7 @@ def test_detail_flag_documented_in_help():
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0, result.output
     assert "--detail" in result.output, (
-        "--detail must appear in `roam --help` output; "
-        "W19.2 flagged this as an undocumented but accepted flag."
+        "--detail must appear in `roam --help` output; W19.2 flagged this as an undocumented but accepted flag."
     )
 
 
@@ -52,8 +51,7 @@ def test_detail_flag_help_text_present():
     # Look for either "detailed output" or "compact summary" — the actual
     # phrasing in the panel — to ensure we documented WHAT the flag does.
     assert "detailed output" in lower or "compact summary" in lower, (
-        "--detail's help text should describe what it does (full vs summary), "
-        "not just list the flag name."
+        "--detail's help text should describe what it does (full vs summary), not just list the flag name."
     )
 
 

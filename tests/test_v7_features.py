@@ -734,9 +734,7 @@ class TestElifComplexityFix:
                 assert s.get("confidence") in ("high", "medium", "low")
                 break
 
-        assert classify is not None, (
-            f"classify not found in: {[s.get('value', s).get('name') for s in symbols]}"
-        )
+        assert classify is not None, f"classify not found in: {[s.get('value', s).get('name') for s in symbols]}"
         cc = classify.get("cognitive_complexity", 0)
         # Should be 4 (if+elif+elif+else), not 10+ (with nesting penalties)
         assert cc <= 6, f"elif chain complexity too high ({cc}), nesting penalty not removed"

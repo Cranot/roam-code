@@ -1,4 +1,15 @@
-"""Show code ownership: who owns a file or directory."""
+"""Show code ownership: who owns a file or directory.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because owner outputs are invocation-scoped ownership
+attribution rankings (top-N authors by commits / lines / recency) —
+not per-location code violations. Ownership describes who touched a
+file most recently, which is metadata about the change history, not
+a code analysis finding suitable for SARIF ``locations[]``. See
+``cmd_codeowners`` for the parallel advisory-attribution disclosure
+pattern (W1197) + action.yml _SUPPORTED_SARIF allowlist + W1224-audit
+memo.
+"""
 
 from __future__ import annotations
 

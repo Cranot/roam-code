@@ -15,6 +15,14 @@ specific release closed. Evals lacking a ``status:`` field are treated as
 
 Closes Gap C from ``internal/dogfood/DEEP-DIVE-2026-05-12.md`` — the resolution
 feedback loop. See ``internal/dogfood/IMPLEMENTATION-2026-05-12.md`` Task 3.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because dogfood-aggregate outputs are invocation-scoped
+eval-corpus summary records — not per-location violations.
+``dogfood-aggregate`` delegates SARIF emission to composed subcommands
+when their own ``--sarif`` flag fires directly. See action.yml
+_SUPPORTED_SARIF allowlist + W1145 / W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -44,16 +52,35 @@ _YAML_KV_RE = re.compile(r"^(\w[\w-]*)\s*:\s*(.+?)\s*$", re.MULTILINE)
 def _parse_frontmatter_yaml(text: str) -> dict[str, str]:
     """Tiny frontmatter parser — flat key:value pairs.
 
-    Try PyYAML first if present (handles quoted strings, escapes, etc.); fall
-    back to a regex sweep that handles the simple shape used in eval files.
+    Two-engine design: PyYAML first when importable (handles quoted strings,
+    escapes, anchors, etc.); fall back to a regex sweep that handles the
+    simple shape used in eval files when PyYAML is missing OR when PyYAML
+    rejects the input as malformed.
+
+    The fallback is intentional — eval files are hand-edited Markdown
+    frontmatter and a stray colon in an `observation:` line is common. The
+    regex engine extracts whatever flat-shape keys it can; the goal is
+    "best-effort, never crash" for a dev-facing triage tool.
+
+    Narrow exception set (W1053): we catch the PyYAML-specific failure
+    modes (ImportError when PyYAML is absent, YAMLError when content is
+    malformed, AttributeError as defence against trimmed PyYAML stubs)
+    but let process-control exceptions (KeyboardInterrupt, SystemExit,
+    MemoryError) propagate. The bare `except Exception` it replaced
+    swallowed those too.
     """
     try:  # PyYAML is in the mcp extras + commonly installed, but stay defensive.
         import yaml  # type: ignore
 
-        data = yaml.safe_load(text)
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError:
+            # Malformed YAML frontmatter — fall through to regex engine.
+            data = None
         if isinstance(data, dict):
             return {str(k): "" if v is None else str(v) for k, v in data.items()}
-    except Exception:
+    except (ImportError, AttributeError):
+        # PyYAML missing or its module-level symbols absent — fall through.
         pass
 
     result: dict[str, str] = {}
@@ -143,7 +170,7 @@ def _parse_eval_file(path: Path) -> dict | None:
     if not m:
         return None
     frontmatter = _parse_frontmatter_yaml(m.group(1))
-    body = text[m.end():]
+    body = text[m.end() :]
     findings = _parse_findings_table(body)
     return {
         "file": str(path),
@@ -210,9 +237,7 @@ def _aggregate(
 
     sev_total = Counter({"H": 0, "M": 0, "L": 0})
     per_command: Counter[str] = Counter()
-    per_command_sev: dict[str, Counter[str]] = defaultdict(
-        lambda: Counter({"H": 0, "M": 0, "L": 0})
-    )
+    per_command_sev: dict[str, Counter[str]] = defaultdict(lambda: Counter({"H": 0, "M": 0, "L": 0}))
     flat_findings: list[dict] = []
     filtered_evals = 0
 
@@ -226,8 +251,7 @@ def _aggregate(
         kept = [
             f
             for f in ev_findings
-            if _matches_severity(f["sev"], severity_filter)
-            and _matches_type(f["type"], type_filter)
+            if _matches_severity(f["sev"], severity_filter) and _matches_type(f["type"], type_filter)
         ]
         if not kept:
             # Still count the eval as visible (no findings, but in scope) — only
@@ -316,6 +340,16 @@ def _format_filter_label(
     destructive=False,
     stale_sensitive=False,
 )
+# W1004 (audit follow-up to W996): --severity uses click.Choice(["H","M","L"]) —
+# a small fixed closed enum. Unknown --severity raises a click usage error (exit 2).
+# --status and --type intentionally accept free strings: --status reflects whatever
+# values appear in eval frontmatter (open vocabulary authored by humans across
+# sprints), and --type is documented as a substring filter, not an exact-match
+# against a known type registry. Unknown --status / --type values therefore
+# silently filter to zero matching findings (the verdict shows "0 findings" with
+# the active filter label) rather than raising — same divergence rationale as
+# cmd_smells: registry-derived / open vocabularies stay permissive, fixed enums
+# hard-fail at parse.
 @click.command(name="dogfood-aggregate")
 @click.option(
     "--path",
@@ -468,16 +502,11 @@ def dogfood_aggregate(
 
     # Build the verdict line.
     sev_part = (
-        f"H:{agg['by_severity'].get('H', 0)} "
-        f"M:{agg['by_severity'].get('M', 0)} "
-        f"L:{agg['by_severity'].get('L', 0)}"
+        f"H:{agg['by_severity'].get('H', 0)} M:{agg['by_severity'].get('M', 0)} L:{agg['by_severity'].get('L', 0)}"
     )
-    by_status_part = " ".join(
-        f"{k}:{v}" for k, v in sorted(agg["by_status_all"].items())
-    ) or "(none)"
-    tail = (
-        f"showing: {showing_label}"
-        + (" (use --all for resolved findings)" if not show_all and not status_filter else "")
+    by_status_part = " ".join(f"{k}:{v}" for k, v in sorted(agg["by_status_all"].items())) or "(none)"
+    tail = f"showing: {showing_label}" + (
+        " (use --all for resolved findings)" if not show_all and not status_filter else ""
     )
     verdict = (
         f"{agg['findings_total']} {showing_label} findings "
@@ -492,10 +521,7 @@ def dogfood_aggregate(
         # next, memory): every dogfood-aggregate envelope carries both
         # ``state`` and ``partial_success`` so MCP consumers can branch
         # on completeness without having to inspect parse_failures.
-        "state": (
-            "partial_parse" if parse_failure_count > 0
-            else ("no_evals" if agg["evals_total"] == 0 else "ok")
-        ),
+        "state": ("partial_parse" if parse_failure_count > 0 else ("no_evals" if agg["evals_total"] == 0 else "ok")),
         "partial_success": parse_failure_count > 0 or agg["evals_total"] == 0,
         "evals_total": agg["evals_total"],
         "evals_in_view": agg["evals_in_view"],
@@ -540,10 +566,7 @@ def dogfood_aggregate(
     if agg["by_command_top"]:
         click.echo(f"Top {len(agg['by_command_top'])} commands by findings:")
         for row in agg["by_command_top"]:
-            click.echo(
-                f"  {row['command']:<32} {row['total']:>3}  "
-                f"H:{row['H']} M:{row['M']} L:{row['L']}"
-            )
+            click.echo(f"  {row['command']:<32} {row['total']:>3}  H:{row['H']} M:{row['M']} L:{row['L']}")
         click.echo()
 
     # Findings list (capped by --limit; 0 = unlimited).
@@ -555,10 +578,7 @@ def dogfood_aggregate(
             obs = f["observation"]
             if len(obs) > 90:
                 obs = obs[:87] + "..."
-            click.echo(
-                f"  [{f['sev']}] {f['command']:<24} {f['type']:<8} "
-                f"({f['status']}) {obs}"
-            )
+            click.echo(f"  [{f['sev']}] {f['command']:<24} {f['type']:<8} ({f['status']}) {obs}")
         if cap < len(findings):
             click.echo(f"  ... ({len(findings) - cap} more — use --json or --limit 0)")
     else:

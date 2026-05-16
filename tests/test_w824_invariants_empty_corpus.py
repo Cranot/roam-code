@@ -36,7 +36,6 @@ from conftest import (  # noqa: E402
     index_in_process,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture: an indexed project whose only Python source file is empty.
 # ---------------------------------------------------------------------------
@@ -97,9 +96,7 @@ def _run_invariants(proj, args, json_mode=True):
 def test_invariants_empty_corpus_exits_clean(empty_corpus_project):
     """Empty corpus + --public-api must exit 0 (no crash, no error path)."""
     result = _run_invariants(empty_corpus_project, ["--public-api"])
-    assert result.exit_code == 0, (
-        f"Expected exit 0 on empty corpus, got {result.exit_code}:\n{result.output}"
-    )
+    assert result.exit_code == 0, f"Expected exit 0 on empty corpus, got {result.exit_code}:\n{result.output}"
 
 
 def test_invariants_empty_corpus_emits_structured_envelope(empty_corpus_project):
@@ -114,9 +111,7 @@ def test_invariants_empty_corpus_emits_structured_envelope(empty_corpus_project)
     # absent — agents check len() not key presence.
     assert "symbols" in data, "envelope must carry 'symbols' key even when empty"
     assert isinstance(data["symbols"], list)
-    assert data["symbols"] == [], (
-        f"expected empty symbols list on empty corpus, got: {data['symbols']!r}"
-    )
+    assert data["symbols"] == [], f"expected empty symbols list on empty corpus, got: {data['symbols']!r}"
 
 
 def test_invariants_empty_corpus_verdict_mentions_empty(empty_corpus_project):
@@ -132,8 +127,7 @@ def test_invariants_empty_corpus_verdict_mentions_empty(empty_corpus_project):
     # silent success (Pattern 2).
     empty_markers = ("empty", "no symbols", "0 invariants", "0 symbols")
     assert any(m in verdict_l for m in empty_markers), (
-        f"verdict {verdict!r} must surface empty-state markers, "
-        f"one of: {empty_markers}"
+        f"verdict {verdict!r} must surface empty-state markers, one of: {empty_markers}"
     )
 
 
@@ -166,10 +160,7 @@ def test_invariants_empty_corpus_agent_contract_facts_nonempty(empty_corpus_proj
     contract = data.get("agent_contract") or {}
     facts = contract.get("facts") or []
     assert isinstance(facts, list)
-    assert len(facts) >= 1, (
-        f"agent_contract.facts must be non-empty even on empty corpus, "
-        f"got: {facts!r}"
-    )
+    assert len(facts) >= 1, f"agent_contract.facts must be non-empty even on empty corpus, got: {facts!r}"
     # Every fact should be a non-empty string anchored on a concrete
     # noun terminal (LAW 4). We don't re-run the full anchor lint here
     # (that's tests/test_law4_lint.py's job) — just ensure the strings

@@ -5,6 +5,12 @@ joins ``symbols`` (for the file id of a symbol) with
 (for author + timestamp + message) to give one tight view of "who has
 worked on this and when". Useful before refactoring a symbol — you see
 the active maintainers and the rate of change.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because timeline outputs are invocation-scoped chronological
+commit entries — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

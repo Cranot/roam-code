@@ -15,12 +15,8 @@ auto-count markers. These tests verify:
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 import sys
-from pathlib import Path
-
-import pytest
 
 from tests._helpers.repo_root import repo_root
 
@@ -64,10 +60,7 @@ def test_script_check_passes_at_head():
     forgot to re-run the script, this test will fail with rc=1.
     """
     proc = _run(["--check"])
-    assert proc.returncode == 0, (
-        f"--check failed (rc={proc.returncode}); "
-        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
-    )
+    assert proc.returncode == 0, f"--check failed (rc={proc.returncode}); stdout={proc.stdout!r} stderr={proc.stderr!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -110,17 +103,14 @@ def test_script_exits_nonzero_on_drift(tmp_path, monkeypatch):
         # --check must now exit 1.
         proc = _run(["--check"])
         assert proc.returncode == 1, (
-            f"--check should exit 1 on drift; got rc={proc.returncode} "
-            f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+            f"--check should exit 1 on drift; got rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}"
         )
         assert "DRIFT" in proc.stderr, f"stderr should mention DRIFT: {proc.stderr!r}"
 
         # --apply must fix it.
         proc = _run(["--apply"])
         assert proc.returncode == 0
-        assert README.read_text(encoding="utf-8") == backup, (
-            "--apply should restore README to the truth-aligned state"
-        )
+        assert README.read_text(encoding="utf-8") == backup, "--apply should restore README to the truth-aligned state"
     finally:
         # Always restore.
         README.write_text(backup, encoding="utf-8")
@@ -128,16 +118,16 @@ def test_script_exits_nonzero_on_drift(tmp_path, monkeypatch):
 
 def test_script_idempotent(tmp_path):
     """Running --apply twice produces identical bytes — no oscillation."""
-    snapshots_before = {p: p.read_text(encoding="utf-8") for p in (README, CLAUDE, LLMS, PUBLIC_CARD, BUNDLED_CARD) if p.exists()}
+    snapshots_before = {
+        p: p.read_text(encoding="utf-8") for p in (README, CLAUDE, LLMS, PUBLIC_CARD, BUNDLED_CARD) if p.exists()
+    }
     proc1 = _run(["--apply"])
     assert proc1.returncode == 0
     snapshots_after1 = {p: p.read_text(encoding="utf-8") for p in snapshots_before}
     proc2 = _run(["--apply"])
     assert proc2.returncode == 0
     snapshots_after2 = {p: p.read_text(encoding="utf-8") for p in snapshots_before}
-    assert snapshots_after1 == snapshots_after2, (
-        "script is not idempotent — second --apply changed bytes"
-    )
+    assert snapshots_after1 == snapshots_after2, "script is not idempotent — second --apply changed bytes"
     # Also: at HEAD steady-state, the first --apply should also not change.
     assert snapshots_after1 == snapshots_before, (
         "first --apply at HEAD changed bytes — drift exists without --check noticing"
@@ -193,8 +183,7 @@ def test_apply_preserves_non_marker_content():
     after = {p: _strip_blocks(p.read_text(encoding="utf-8")) for p in (README, CLAUDE, LLMS)}
     for p in before:
         assert before[p] == after[p], (
-            f"non-marker content of {p.name} changed across --apply — "
-            "script is touching bytes it shouldn't"
+            f"non-marker content of {p.name} changed across --apply — script is touching bytes it shouldn't"
         )
 
 
@@ -230,8 +219,7 @@ def test_card_bundled_and_public_stay_byte_identical():
     a = PUBLIC_CARD.read_text(encoding="utf-8")
     b = BUNDLED_CARD.read_text(encoding="utf-8")
     assert a == b, (
-        "public and bundled mcp-server-card.json must be byte-identical; "
-        "script wrote different bytes to each"
+        "public and bundled mcp-server-card.json must be byte-identical; script wrote different bytes to each"
     )
 
 

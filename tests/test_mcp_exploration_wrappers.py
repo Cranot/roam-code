@@ -33,6 +33,7 @@ def _disable_cold_start_guard(monkeypatch):
     monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
     yield
 
+
 # The 9 wrappers shipped by W299.
 W299_TOOL_NAMES: tuple[str, ...] = (
     "roam_grep",
@@ -73,8 +74,7 @@ class TestRegistryPresence:
 
         meta = _TOOL_METADATA[tool_name]
         assert meta.get("read_only", True) is True, (
-            f"{tool_name} must be read-only -- the exploration cluster "
-            f"only contains pure-query commands."
+            f"{tool_name} must be read-only -- the exploration cluster only contains pure-query commands."
         )
 
     @pytest.mark.parametrize("tool_name", W299_TOOL_NAMES)
@@ -95,8 +95,7 @@ class TestColdStartGuardWiring:
         from roam.mcp_extras.preflight import _NO_INDEX_NEEDED, needs_index
 
         assert tool_name not in _NO_INDEX_NEEDED, (
-            f"{tool_name} must NOT be in _NO_INDEX_NEEDED -- the "
-            f"exploration cluster reads the indexed symbol graph."
+            f"{tool_name} must NOT be in _NO_INDEX_NEEDED -- the exploration cluster reads the indexed symbol graph."
         )
         assert needs_index(tool_name) is True, (
             f"needs_index({tool_name!r}) must return True so the W296 "
@@ -105,17 +104,14 @@ class TestColdStartGuardWiring:
         )
 
     @pytest.mark.parametrize("tool_name", W299_TOOL_NAMES)
-    def test_wrapper_description_carries_cold_start_hint(
-        self, tool_name: str
-    ) -> None:
+    def test_wrapper_description_carries_cold_start_hint(self, tool_name: str) -> None:
         """W296 hint is auto-appended to every index-gated wrapper."""
         from roam.mcp_extras.preflight import INDEX_REQUIRED_HINT
         from roam.mcp_server import _TOOL_METADATA
 
         desc = _TOOL_METADATA[tool_name].get("description", "")
         assert INDEX_REQUIRED_HINT in desc, (
-            f"{tool_name} description must end with the W296 hint "
-            f"{INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
+            f"{tool_name} description must end with the W296 hint {INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
         )
 
 
@@ -170,18 +166,14 @@ class TestRoamHistoryGrepArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_history_grep(pattern="DATABASE_URL")
-            mock.assert_called_once_with(
-                ["history-grep", "DATABASE_URL"], "."
-            )
+            mock.assert_called_once_with(["history-grep", "DATABASE_URL"], ".")
 
     def test_since_and_polarity(self) -> None:
         from roam.mcp_server import roam_history_grep
 
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
-            roam_history_grep(
-                pattern="deprecated", since="2024-01-01", polarity=True
-            )
+            roam_history_grep(pattern="deprecated", since="2024-01-01", polarity=True)
             args = mock.call_args[0][0]
             assert "--since" in args and "2024-01-01" in args
             assert "--polarity" in args
@@ -194,9 +186,7 @@ class TestRoamRefsTextArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_refs_text(strings="DATABASE_URL")
-            mock.assert_called_once_with(
-                ["refs-text", "DATABASE_URL"], "."
-            )
+            mock.assert_called_once_with(["refs-text", "DATABASE_URL"], ".")
 
     def test_multiple_strings_with_reachable_from(self) -> None:
         from roam.mcp_server import roam_refs_text
@@ -222,9 +212,7 @@ class TestRoamFanArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_fan()
-            mock.assert_called_once_with(
-                ["fan", "symbol", "-n", "20"], "."
-            )
+            mock.assert_called_once_with(["fan", "symbol", "-n", "20"], ".")
 
     def test_file_mode_with_persist(self) -> None:
         from roam.mcp_server import roam_fan
@@ -265,9 +253,7 @@ class TestRoamFindingsListArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_findings_list()
-            mock.assert_called_once_with(
-                ["findings", "list", "--limit", "100"], "."
-            )
+            mock.assert_called_once_with(["findings", "list", "--limit", "100"], ".")
 
     def test_filtered_by_detector(self) -> None:
         from roam.mcp_server import roam_findings_list
@@ -288,9 +274,7 @@ class TestRoamFindingsShowArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_findings_show(finding_id_str="clones:sym:abcd")
-            mock.assert_called_once_with(
-                ["findings", "show", "clones:sym:abcd"], "."
-            )
+            mock.assert_called_once_with(["findings", "show", "clones:sym:abcd"], ".")
 
 
 class TestRoamFindingsCountArgShape:

@@ -1,4 +1,13 @@
-"""Delete the index DB and force a fresh reindex (recovery for AI agents)."""
+"""Delete the index DB and force a fresh reindex (recovery for AI agents).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam reset`` is a setup/bootstrap command — its
+output is human-facing setup status (index DB deleted and rebuilt from
+scratch), not analysis findings with file:line coordinates.
+SARIF is reserved for scanning results. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1148 audit memo.
+"""
 
 from __future__ import annotations
 

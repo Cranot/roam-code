@@ -1,4 +1,15 @@
-"""Detect common architectural patterns in the codebase symbol graph."""
+"""Detect common architectural patterns in the codebase symbol graph.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because patterns outputs are invocation-scoped design-pattern
+catalogs (Factory / Singleton / Observer / Strategy / etc. instances
+detected in the graph) — not per-location code violations. The output
+describes informational design-pattern occurrences rather than defects
+at source coordinates; identifying a Factory or Strategy instance is
+not a finding to remediate. SARIF audiences scan for per-finding
+rule_id + region rows. See action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH propagation plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

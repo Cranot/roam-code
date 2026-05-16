@@ -47,9 +47,7 @@ def _run_dead_detail(cli_runner, cwd):
         )
     finally:
         _os.chdir(old)
-    assert result.exit_code == 0, (
-        f"dead failed (exit {result.exit_code}):\n{result.output}"
-    )
+    assert result.exit_code == 0, f"dead failed (exit {result.exit_code}):\n{result.output}"
     raw = getattr(result, "stdout", None) or result.output
     # Strip preamble (indexer log lines) before the first {
     brace = raw.find("{")
@@ -102,21 +100,22 @@ def _dead_names(json_data) -> set[str]:
 
 def test_ts_function_consumed_by_vue_not_flagged_dead(project_factory, cli_runner):
     """Core regression: a TS export used inside a Vue ``<script setup>`` must NOT be flagged dead."""
-    proj = project_factory({
-        "utils.ts": (
-            "export function exportPrintPreview() { return 42; }\n"
-            "export function unused() { return 0; }\n"
-        ),
-        "PrintPreviewModal.vue": (
-            '<template><button @click="onClick">go</button></template>\n'
-            '<script setup lang="ts">\n'
-            'import { exportPrintPreview } from "./utils";\n'
-            "function onClick() {\n"
-            "  return exportPrintPreview();\n"
-            "}\n"
-            "</script>\n"
-        ),
-    })
+    proj = project_factory(
+        {
+            "utils.ts": (
+                "export function exportPrintPreview() { return 42; }\nexport function unused() { return 0; }\n"
+            ),
+            "PrintPreviewModal.vue": (
+                '<template><button @click="onClick">go</button></template>\n'
+                '<script setup lang="ts">\n'
+                'import { exportPrintPreview } from "./utils";\n'
+                "function onClick() {\n"
+                "  return exportPrintPreview();\n"
+                "}\n"
+                "</script>\n"
+            ),
+        }
+    )
 
     data = _run_dead_detail(cli_runner, proj)
 
@@ -146,19 +145,19 @@ def test_ts_function_consumed_only_by_vue_template_NOT_flagged(project_factory, 
     should NOT flag the symbol. (If we ever lose the import-edge as a
     consumer signal, this test fires.)
     """
-    proj = project_factory({
-        "utils.ts": (
-            "export function exportAnnualTrialBalanceExcel() { return 99; }\n"
-        ),
-        "ReportModal.vue": (
-            '<template>\n'
-            '  <button @click="exportAnnualTrialBalanceExcel()">Export</button>\n'
-            '</template>\n'
-            '<script setup lang="ts">\n'
-            'import { exportAnnualTrialBalanceExcel } from "./utils";\n'
-            "</script>\n"
-        ),
-    })
+    proj = project_factory(
+        {
+            "utils.ts": ("export function exportAnnualTrialBalanceExcel() { return 99; }\n"),
+            "ReportModal.vue": (
+                "<template>\n"
+                '  <button @click="exportAnnualTrialBalanceExcel()">Export</button>\n'
+                "</template>\n"
+                '<script setup lang="ts">\n'
+                'import { exportAnnualTrialBalanceExcel } from "./utils";\n'
+                "</script>\n"
+            ),
+        }
+    )
 
     data = _run_dead_detail(cli_runner, proj)
     dead_names = _dead_names(data)
@@ -177,18 +176,18 @@ def test_ts_function_consumed_only_by_vue_template_NOT_flagged(project_factory, 
 
 def test_ts_function_not_consumed_anywhere_still_flagged_dead(project_factory, cli_runner):
     """Negative control: a TS export with no consumers in any file must still be flagged dead."""
-    proj = project_factory({
-        "utils.ts": (
-            "export function deadFunction() { return 99; }\n"
-        ),
-        "PrintPreviewModal.vue": (
-            '<template><div>hello</div></template>\n'
-            '<script setup lang="ts">\n'
-            "// Note: deadFunction is NOT imported anywhere.\n"
-            "const x = 1;\n"
-            "</script>\n"
-        ),
-    })
+    proj = project_factory(
+        {
+            "utils.ts": ("export function deadFunction() { return 99; }\n"),
+            "PrintPreviewModal.vue": (
+                "<template><div>hello</div></template>\n"
+                '<script setup lang="ts">\n'
+                "// Note: deadFunction is NOT imported anywhere.\n"
+                "const x = 1;\n"
+                "</script>\n"
+            ),
+        }
+    )
 
     data = _run_dead_detail(cli_runner, proj)
     dead_names = _dead_names(data)
@@ -212,20 +211,19 @@ def test_vue_default_export_correctly_traced(project_factory, cli_runner):
     the .vue file. ``roam dead`` should see that edge and keep the
     component alive.
     """
-    proj = project_factory({
-        "ChildModal.vue": (
-            '<template><div>child</div></template>\n'
-            '<script setup lang="ts">\n'
-            "const childData = 1;\n"
-            "</script>\n"
-        ),
-        "ParentView.vue": (
-            '<template><ChildModal /></template>\n'
-            '<script setup lang="ts">\n'
-            'import ChildModal from "./ChildModal.vue";\n'
-            "</script>\n"
-        ),
-    })
+    proj = project_factory(
+        {
+            "ChildModal.vue": (
+                '<template><div>child</div></template>\n<script setup lang="ts">\nconst childData = 1;\n</script>\n'
+            ),
+            "ParentView.vue": (
+                "<template><ChildModal /></template>\n"
+                '<script setup lang="ts">\n'
+                'import ChildModal from "./ChildModal.vue";\n'
+                "</script>\n"
+            ),
+        }
+    )
 
     data = _run_dead_detail(cli_runner, proj)
     dead_names = _dead_names(data)
@@ -258,21 +256,17 @@ def test_vibe_check_and_dead_documented_divergence(project_factory, cli_runner):
     """
     # Pure-JS fixture (no Vue / TS / templates). One truly-dead symbol,
     # one used symbol, and a test-only consumer to force divergence.
-    proj = project_factory({
-        "lib.js": (
-            "export function used() { return 1; }\n"
-            "export function deadSymbol() { return 2; }\n"
-            "export function testOnly() { return 3; }\n"
-        ),
-        "app.js": (
-            'import { used } from "./lib.js";\n'
-            'export function main() { return used(); }\n'
-        ),
-        "lib.test.js": (
-            'import { testOnly } from "./lib.js";\n'
-            "test('testOnly works', () => { testOnly(); });\n"
-        ),
-    })
+    proj = project_factory(
+        {
+            "lib.js": (
+                "export function used() { return 1; }\n"
+                "export function deadSymbol() { return 2; }\n"
+                "export function testOnly() { return 3; }\n"
+            ),
+            "app.js": ('import { used } from "./lib.js";\nexport function main() { return used(); }\n'),
+            "lib.test.js": ("import { testOnly } from \"./lib.js\";\ntest('testOnly works', () => { testOnly(); });\n"),
+        }
+    )
 
     dead_data = _run_dead_detail(cli_runner, proj)
 
@@ -302,8 +296,7 @@ def test_vibe_check_and_dead_documented_divergence(project_factory, cli_runner):
     dead_pattern = next((p for p in patterns if p.get("name") == "dead_exports"), None)
     assert dead_pattern is not None, "vibe-check must surface a `dead_exports` pattern"
     assert "metric_definition" in dead_pattern, (
-        "vibe-check's dead_exports pattern entry must carry "
-        "`metric_definition` (CLAUDE.md Pattern 3)."
+        "vibe-check's dead_exports pattern entry must carry `metric_definition` (CLAUDE.md Pattern 3)."
     )
 
 
@@ -323,16 +316,18 @@ def test_dead_exports_includes_vue_file_role_in_consumer_summary(project_factory
     asserts the underlying file_edge row exists so future-tense changes
     to ``_dead_file_import_meta`` keep seeing it.
     """
-    proj = project_factory({
-        "utils.ts": "export function exportPrintPreview() { return 42; }\n",
-        "PrintPreviewModal.vue": (
-            '<template><div /></template>\n'
-            '<script setup lang="ts">\n'
-            'import { exportPrintPreview } from "./utils";\n'
-            "const r = exportPrintPreview();\n"
-            "</script>\n"
-        ),
-    })
+    proj = project_factory(
+        {
+            "utils.ts": "export function exportPrintPreview() { return 42; }\n",
+            "PrintPreviewModal.vue": (
+                "<template><div /></template>\n"
+                '<script setup lang="ts">\n'
+                'import { exportPrintPreview } from "./utils";\n'
+                "const r = exportPrintPreview();\n"
+                "</script>\n"
+            ),
+        }
+    )
 
     # Inspect the index DB directly: the file_edges table MUST have a
     # row from the .vue file to the .ts file.
@@ -352,6 +347,5 @@ def test_dead_exports_includes_vue_file_role_in_consumer_summary(project_factory
 
     edges = {(r["src"], r["tgt"]) for r in rows}
     assert any(s.endswith(".vue") and t.endswith(".ts") for (s, t) in edges), (
-        "Expected a vue->ts file_edge row but found none. Edges: "
-        f"{sorted(edges)}"
+        f"Expected a vue->ts file_edge row but found none. Edges: {sorted(edges)}"
     )

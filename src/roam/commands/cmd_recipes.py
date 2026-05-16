@@ -3,6 +3,12 @@
 sugar over ``roam ask --list`` for discoverability. Useful as
 the first thing an agent runs to see what natural-language tasks
 ``roam ask`` handles.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because recipes outputs are invocation-scoped ask-recipe
+enumerations (metadata registry) — not per-location violations. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

@@ -5,16 +5,14 @@ from __future__ import annotations
 import subprocess
 import time
 
-from roam.db.connection import find_project_root
-from roam.db.queries import TOP_BY_BETWEENNESS, TOP_BY_DEGREE, UNREFERENCED_EXPORTS
-
-
 # W886: delegate to the canonical commands-layer helper (W873 audit).
 # Previous narrow Python-only variant missed test files in non-Python
 # projects (Go ``*_test.go``, Java ``*Test.java``, JS ``*.spec.ts``,
 # etc.), which let their dead-export rows leak into the snapshot. The
 # canonical helper covers all of those.
 from roam.commands.changed_files import is_test_file as _is_test_path
+from roam.db.connection import find_project_root
+from roam.db.queries import TOP_BY_BETWEENNESS, TOP_BY_DEGREE, UNREFERENCED_EXPORTS
 
 
 def _compute_health_score(

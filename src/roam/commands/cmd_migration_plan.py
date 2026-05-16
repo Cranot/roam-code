@@ -22,6 +22,14 @@ Input: a target-architecture spec in YAML (or inline via flags). Examples:
 
 Output: ordered list of operations, each with blast-radius (caller count) and
 risk score (high if many callers / no test coverage / cross-layer breakage).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_migration_plan is a recipe generator — it produces
+an ordered plan (steps[] with risk + blast_radius metadata) for an
+agent to execute, not per-location violations. SARIF is reserved for
+scanning findings with file:line coordinates; planning recipes are
+operational guidance, not detector output. See action.yml
+_SUPPORTED_SARIF allowlist + W1198-audit memo.
 """
 
 from __future__ import annotations

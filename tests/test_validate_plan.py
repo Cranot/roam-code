@@ -11,12 +11,9 @@ import json
 
 import pytest
 
-pytest.importorskip(
-    "fastmcp", reason="MCP tool tests require fastmcp; mcp_server module won't import without it."
-)
+pytest.importorskip("fastmcp", reason="MCP tool tests require fastmcp; mcp_server module won't import without it.")
 
 from roam.mcp_server import _vp_check_target_file, validate_plan
-
 
 # ---------------------------------------------------------------------------
 # Helper-level
@@ -32,17 +29,13 @@ def test_vp_check_target_file_existing_file_blocks_add(tmp_path):
 
 
 def test_vp_check_target_file_missing_parent_blocks(tmp_path):
-    ok, reason = _vp_check_target_file(
-        "no/such/dir/file.txt", must_exist=False, root=str(tmp_path)
-    )
+    ok, reason = _vp_check_target_file("no/such/dir/file.txt", must_exist=False, root=str(tmp_path))
     assert ok is False
     assert "parent directory missing" in reason or "does not exist" in reason
 
 
 def test_vp_check_target_file_path_traversal_blocked(tmp_path):
-    ok, reason = _vp_check_target_file(
-        "../../../etc/passwd", must_exist=False, root=str(tmp_path)
-    )
+    ok, reason = _vp_check_target_file("../../../etc/passwd", must_exist=False, root=str(tmp_path))
     assert ok is False
     assert "escapes project root" in reason
 
@@ -98,16 +91,24 @@ def test_missing_new_name_for_rename_blocks():
 
 
 def test_unknown_symbol_blocks():
-    r = validate_plan(
-        operations=[{"kind": "modify", "symbol": "this_symbol_definitely_does_not_exist_123abc"}]
-    )
+    r = validate_plan(operations=[{"kind": "modify", "symbol": "this_symbol_definitely_does_not_exist_123abc"}])
     codes = {b["code"] for op in r["operations"] for b in op["blockers"]}
     assert "SYMBOL_NOT_FOUND" in codes
 
 
-def test_remove_with_callers_blocks():
+def test_remove_with_callers_blocks(monkeypatch):
     """``analyze_n1`` is called from cmd_n1 itself — has callers, must
-    be blocked from removal."""
+    be blocked from removal.
+
+    W1275: pin ``_vp_blast_radius`` to a deterministic value so this
+    test exercises the REMOVE_HAS_CALLERS path independent of dogfood
+    drift (the live count for ``analyze_n1`` was 5 at W1273 stub time
+    and 24+ today — both still > 0, but the future-proof move is the
+    same stub used by the other warning-band tests in this file).
+    """
+    import roam.mcp_server as mcp
+
+    monkeypatch.setattr(mcp, "_vp_blast_radius", lambda sym, root=".": 5)
     r = validate_plan(operations=[{"kind": "remove", "symbol": "analyze_n1"}])
     op = r["operations"][0]
     codes = {b["code"] for b in op["blockers"]}
@@ -118,9 +119,16 @@ def test_remove_with_callers_blocks():
 
 
 def test_add_existing_file_blocks(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    # W1273: pass ``root=str(tmp_path)`` explicitly instead of relying on
+    # ``monkeypatch.chdir`` — chdir-ing into a fresh tmp dir trips the
+    # W296 cold-start guard (no ``.roam/index.db`` in tmp), which short-
+    # circuits with an ``index_not_built`` envelope before the validator
+    # even runs. The env-var bypass keeps the guard out of the way; the
+    # explicit ``root`` makes ``_vp_check_target_file`` resolve under
+    # tmp_path where the fixture file lives.
+    monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
     (tmp_path / "exists.py").write_text("x = 1\n", encoding="utf-8")
-    r = validate_plan(operations=[{"kind": "add", "file": "exists.py"}])
+    r = validate_plan(operations=[{"kind": "add", "file": "exists.py"}], root=str(tmp_path))
     op = r["operations"][0]
     codes = {b["code"] for b in op["blockers"]}
     assert "INVALID_ADD_FILE" in codes
@@ -167,18 +175,20 @@ def test_plan_json_with_operations_wrapper():
 # pins the warning code AND the verdict so either drift fails the suite.
 
 
-def test_name_collision_warning_fires_when_new_name_exists():
+def test_name_collision_warning_fires_when_new_name_exists(monkeypatch):
     """Renaming `analyze_n1` to `loc` — both real symbols in this repo."""
-    # `analyze_n1` has only ~5 callers (below MEDIUM threshold) so the
-    # rename op produces NAME_COLLISION cleanly without a blast warning.
-    r = validate_plan(
-        operations=[{"kind": "rename", "symbol": "analyze_n1", "new_name": "loc"}]
-    )
+    # `analyze_n1` originally had only ~5 callers (below MEDIUM threshold).
+    # W1273: caller count drifted to 24+ on this repo, so we stub
+    # ``_vp_blast_radius`` to pin the fixture at 5 — the test's intent
+    # is NAME_COLLISION isolation, not live caller-count tracking.
+    import roam.mcp_server as mcp
+
+    monkeypatch.setattr(mcp, "_vp_blast_radius", lambda sym, root=".": 5)
+    r = validate_plan(operations=[{"kind": "rename", "symbol": "analyze_n1", "new_name": "loc"}])
     op = r["operations"][0]
     codes = {w["code"] for w in op["warnings"]}
     assert "NAME_COLLISION" in codes, (
-        f"NAME_COLLISION not raised when rename target collides with an existing "
-        f"symbol; warnings={op['warnings']}"
+        f"NAME_COLLISION not raised when rename target collides with an existing symbol; warnings={op['warnings']}"
     )
     # MEDIUM/HIGH must NOT fire on a 5-caller symbol
     assert "MEDIUM_BLAST_RADIUS" not in codes
@@ -207,36 +217,47 @@ def test_name_collision_silent_when_new_name_is_unique():
     assert op["facts"].get("new_name_collision") is False
 
 
-def test_medium_blast_radius_warning_fires_on_modest_caller_count():
-    """`_format_count` has ~11 callers — sits just inside the (10, 50] band."""
+def test_medium_blast_radius_warning_fires_on_modest_caller_count(monkeypatch):
+    """`_format_count` sits in the MEDIUM (10, 50] band by stub.
+
+    W1275: pin the caller count to 11 via ``_vp_blast_radius`` instead
+    of relying on the live dogfood index. Avoids the same drift class
+    that bit W1273 on ``analyze_n1`` (5 → 24).
+    """
+    import roam.mcp_server as mcp
+
+    monkeypatch.setattr(mcp, "_vp_blast_radius", lambda sym, root=".": 11)
     r = validate_plan(operations=[{"kind": "modify", "symbol": "_format_count"}])
     op = r["operations"][0]
     codes = {w["code"] for w in op["warnings"]}
     blast = op["facts"].get("blast_radius")
     assert isinstance(blast, int) and 10 < blast <= 50, (
-        f"_format_count blast moved out of MEDIUM band: {blast}. "
-        f"Pick a different fixture symbol."
+        f"_format_count blast moved out of MEDIUM band: {blast}. Pick a different fixture symbol."
     )
-    assert "MEDIUM_BLAST_RADIUS" in codes, (
-        f"MEDIUM_BLAST_RADIUS missing for blast={blast}; warnings={op['warnings']}"
-    )
+    assert "MEDIUM_BLAST_RADIUS" in codes, f"MEDIUM_BLAST_RADIUS missing for blast={blast}; warnings={op['warnings']}"
     assert "HIGH_BLAST_RADIUS" not in codes
     assert r["summary"]["verdict"] == "needs-review"
 
 
-def test_high_blast_radius_warning_fires_on_widely_used_symbol():
-    """`to_json` is called from hundreds of sites — must trip HIGH (not MEDIUM)."""
+def test_high_blast_radius_warning_fires_on_widely_used_symbol(monkeypatch):
+    """`to_json` trips HIGH (>50) by stub — not MEDIUM.
+
+    W1275: pin the caller count to 100 via ``_vp_blast_radius`` instead
+    of relying on the live dogfood index. The HIGH path uses ``if`` and
+    MEDIUM uses ``elif``, so the mutual-exclusion guard below still
+    pins the runtime branch order.
+    """
+    import roam.mcp_server as mcp
+
+    monkeypatch.setattr(mcp, "_vp_blast_radius", lambda sym, root=".": 100)
     r = validate_plan(operations=[{"kind": "modify", "symbol": "to_json"}])
     op = r["operations"][0]
     codes = {w["code"] for w in op["warnings"]}
     blast = op["facts"].get("blast_radius")
     assert isinstance(blast, int) and blast > 50, (
-        f"to_json blast dropped below HIGH threshold: {blast}. "
-        f"Pick a different fixture symbol."
+        f"to_json blast dropped below HIGH threshold: {blast}. Pick a different fixture symbol."
     )
-    assert "HIGH_BLAST_RADIUS" in codes, (
-        f"HIGH_BLAST_RADIUS missing for blast={blast}; warnings={op['warnings']}"
-    )
+    assert "HIGH_BLAST_RADIUS" in codes, f"HIGH_BLAST_RADIUS missing for blast={blast}; warnings={op['warnings']}"
     # Mutual-exclusion guard: HIGH path uses `if`, MEDIUM uses `elif` —
     # they must never both fire on the same op.
     assert "MEDIUM_BLAST_RADIUS" not in codes
@@ -279,8 +300,7 @@ def test_fitness_violations_warning_fires_when_preflight_summary_lists_them(monk
     op = r["operations"][0]
     codes = {w["code"] for w in op["warnings"]}
     assert "FITNESS_VIOLATIONS" in codes, (
-        f"FITNESS_VIOLATIONS not raised when preflight summary carries a "
-        f"violations list; warnings={op['warnings']}"
+        f"FITNESS_VIOLATIONS not raised when preflight summary carries a violations list; warnings={op['warnings']}"
     )
     # The detail message must mention the count we injected (2).
     fv_detail = next(w["detail"] for w in op["warnings"] if w["code"] == "FITNESS_VIOLATIONS")
@@ -308,8 +328,7 @@ def test_preflight_summary_carries_fitness_violations_list():
     # Field must exist and be a list (possibly empty if no rules
     # currently fail) — never absent, never an int.
     assert "fitness_violations" in summary, (
-        f"summary missing the 'fitness_violations' contract field; "
-        f"summary keys={list(summary.keys())}"
+        f"summary missing the 'fitness_violations' contract field; summary keys={list(summary.keys())}"
     )
     fv = summary["fitness_violations"]
     assert isinstance(fv, list), (
@@ -362,16 +381,11 @@ def test_invalid_target_file_blocker_for_path_traversal_move():
     """``move`` op pointing outside the project root must be blocked, not
     warned. `_vp_check_target_file` returns ``escapes project root`` and
     that branch escalates to ``INVALID_TARGET_FILE`` blocker."""
-    r = validate_plan(
-        operations=[
-            {"kind": "move", "symbol": "analyze_n1", "target_file": "../../etc/passwd"}
-        ]
-    )
+    r = validate_plan(operations=[{"kind": "move", "symbol": "analyze_n1", "target_file": "../../etc/passwd"}])
     op = r["operations"][0]
     codes = {b["code"] for b in op["blockers"]}
     assert "INVALID_TARGET_FILE" in codes, (
-        f"INVALID_TARGET_FILE not raised for path-traversal target_file; "
-        f"blockers={op['blockers']}"
+        f"INVALID_TARGET_FILE not raised for path-traversal target_file; blockers={op['blockers']}"
     )
     detail = next(b["detail"] for b in op["blockers"] if b["code"] == "INVALID_TARGET_FILE")
     assert "escapes project root" in detail
@@ -397,7 +411,7 @@ def test_invalid_target_file_blocker_for_missing_parent_dir():
     assert r["summary"]["verdict"] == "blocked"
 
 
-def test_multiple_warnings_aggregate_in_summary():
+def test_multiple_warnings_aggregate_in_summary(monkeypatch):
     """A 3-op plan, each producing at least one warning, must surface
     ``warnings_count >= 3`` and verdict ``needs-review`` (no blockers).
 
@@ -407,7 +421,20 @@ def test_multiple_warnings_aggregate_in_summary():
     pins the *required* warnings (NAME_COLLISION / blast-radius bands)
     and tolerates fitness add-ons whose presence depends on the live
     state of ``.roam/fitness.yaml`` for this repo.
+
+    W1273: live caller counts on this repo drifted (``analyze_n1`` is
+    now 24+, not 5). We stub ``_vp_blast_radius`` per symbol to pin the
+    fixture so the test exercises the verdict-aggregation logic
+    independent of live dogfood-index state.
     """
+    import roam.mcp_server as mcp
+
+    _blast_fixture = {"analyze_n1": 5, "_format_count": 11, "to_json": 100}
+    monkeypatch.setattr(
+        mcp,
+        "_vp_blast_radius",
+        lambda sym, root=".": _blast_fixture.get(sym, 0),
+    )
     r = validate_plan(
         operations=[
             # Op 0 — NAME_COLLISION (rename to a real symbol; analyze_n1 has
@@ -421,12 +448,10 @@ def test_multiple_warnings_aggregate_in_summary():
             {"kind": "modify", "symbol": "to_json"},
         ]
     )
-    assert r["summary"]["blockers_count"] == 0, (
-        f"unexpected blockers: { [op['blockers'] for op in r['operations']] }"
-    )
+    assert r["summary"]["blockers_count"] == 0, f"unexpected blockers: {[op['blockers'] for op in r['operations']]}"
     assert r["summary"]["warnings_count"] >= 3, (
-        f"expected >=3 warnings, got { r['summary']['warnings_count'] }; "
-        f"per-op: { [(op['kind'], [w['code'] for w in op['warnings']]) for op in r['operations']] }"
+        f"expected >=3 warnings, got {r['summary']['warnings_count']}; "
+        f"per-op: {[(op['kind'], [w['code'] for w in op['warnings']]) for op in r['operations']]}"
     )
     assert r["summary"]["verdict"] == "needs-review"
     # Per-op codes — required warnings pinned; FITNESS_VIOLATIONS may

@@ -20,12 +20,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (  # noqa: E402
-    git_commit,
     git_init,
     index_in_process,
     invoke_cli,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -46,11 +44,7 @@ def clean_indexed_project(tmp_path, monkeypatch):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
     (proj / "app.py").write_text(
-        "def greet(name):\n"
-        "    return f'hi {name}'\n"
-        "\n"
-        "def main():\n"
-        "    return greet('world')\n"
+        "def greet(name):\n    return f'hi {name}'\n\ndef main():\n    return greet('world')\n"
     )
     git_init(proj)
     monkeypatch.chdir(proj)

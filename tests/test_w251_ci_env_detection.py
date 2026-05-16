@@ -27,18 +27,23 @@ from __future__ import annotations
 
 import pytest
 
-
 # All CI env vars the collector probes - scrubbed from os.environ before
 # every test that exercises the no-arg path so the suite is deterministic
 # regardless of where it runs (developer laptop vs GitHub Actions vs CI).
 _CI_ENV_VARS_TO_SCRUB: tuple[str, ...] = (
     "CI",
-    "GITHUB_ACTIONS", "GITHUB_RUN_ID",
-    "GITLAB_CI", "CI_JOB_ID",
-    "BUILDKITE", "BUILDKITE_BUILD_ID",
-    "CIRCLECI", "CIRCLE_BUILD_NUM",
-    "JENKINS_URL", "BUILD_TAG",
-    "TF_BUILD", "BUILD_BUILDID",
+    "GITHUB_ACTIONS",
+    "GITHUB_RUN_ID",
+    "GITLAB_CI",
+    "CI_JOB_ID",
+    "BUILDKITE",
+    "BUILDKITE_BUILD_ID",
+    "CIRCLECI",
+    "CIRCLE_BUILD_NUM",
+    "JENKINS_URL",
+    "BUILD_TAG",
+    "TF_BUILD",
+    "BUILD_BUILDID",
 )
 
 
@@ -122,13 +127,9 @@ def test_ci_provider_detection(
     result = _detect_ci_env_id(env)
 
     if expected_env_id is None:
-        assert result is None, (
-            f"{name}: expected no CI detection, got {result!r}"
-        )
+        assert result is None, f"{name}: expected no CI detection, got {result!r}"
     else:
-        assert result == expected_env_id, (
-            f"{name}: expected env_id={expected_env_id!r}, got {result!r}"
-        )
+        assert result == expected_env_id, f"{name}: expected env_id={expected_env_id!r}, got {result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -149,9 +150,7 @@ def test_falsy_ci_value_treated_as_not_in_ci(monkeypatch) -> None:
     for value in ("false", "0", "", "False", "FALSE"):
         env = {"CI": value}
         result = _detect_ci_env_id(env)
-        assert result is None, (
-            f"CI={value!r} should not be detected as CI, got {result!r}"
-        )
+        assert result is None, f"CI={value!r} should not be detected as CI, got {result!r}"
 
 
 def test_provider_precedence_github_actions_over_generic_ci(monkeypatch) -> None:
@@ -172,9 +171,7 @@ def test_provider_precedence_github_actions_over_generic_ci(monkeypatch) -> None
         "CI_JOB_ID": "generic-42",
     }
     result = _detect_ci_env_id(env)
-    assert result == "gh-42", (
-        f"GitHub Actions should win over generic CI; got {result!r}"
-    )
+    assert result == "gh-42", f"GitHub Actions should win over generic CI; got {result!r}"
 
 
 def test_provider_with_missing_id_env_var_falls_back(monkeypatch) -> None:
@@ -191,18 +188,12 @@ def test_provider_with_missing_id_env_var_falls_back(monkeypatch) -> None:
 
     env = {"GITHUB_ACTIONS": "true"}  # GITHUB_RUN_ID deliberately absent
     result = _detect_ci_env_id(env)
-    assert result is not None, (
-        "Truthy provider probe should always yield a non-empty env_id"
-    )
-    assert isinstance(result, str) and result, (
-        f"env_id must be a non-empty string, got {result!r}"
-    )
+    assert result is not None, "Truthy provider probe should always yield a non-empty env_id"
+    assert isinstance(result, str) and result, f"env_id must be a non-empty string, got {result!r}"
     # The exact fallback shape is ``"<probe_var_lower>:unknown"`` -
     # pin it so producer-side EnvironmentRef stringification stays
     # stable across releases.
-    assert result == "github_actions:unknown", (
-        f"unexpected fallback shape: {result!r}"
-    )
+    assert result == "github_actions:unknown", f"unexpected fallback shape: {result!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +226,5 @@ def test_ci_provider_env_vars_registry_order() -> None:
         ("CI", "CI_JOB_ID"),
     )
     assert _CI_PROVIDER_ENV_VARS == expected, (
-        "CI provider registry drifted - update this test deliberately. "
-        f"got: {_CI_PROVIDER_ENV_VARS}"
+        f"CI provider registry drifted - update this test deliberately. got: {_CI_PROVIDER_ENV_VARS}"
     )

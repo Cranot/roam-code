@@ -136,37 +136,27 @@ def _directory_paths(data):
     return [d["directory"] for d in _directories(data)]
 
 
-def test_bus_factor_excludes_github_workflows_by_default(
-    cli_runner, project_with_github, monkeypatch
-):
+def test_bus_factor_excludes_github_workflows_by_default(cli_runner, project_with_github, monkeypatch):
     """Default bus-factor must not surface ``.github/workflows/`` as a risk."""
     monkeypatch.chdir(project_with_github)
-    result = invoke_cli(
-        cli_runner, ["bus-factor"], cwd=project_with_github, json_mode=True
-    )
+    result = invoke_cli(cli_runner, ["bus-factor"], cwd=project_with_github, json_mode=True)
     data = parse_json_output(result, "bus-factor")
 
     paths = _directory_paths(data)
     # No directory in the ranking should be under .github/
     github_dirs = [p for p in paths if ".github" in p]
     assert not github_dirs, (
-        f"Expected .github/ directories to be excluded by default, got: {github_dirs}\n"
-        f"All directories: {paths}"
+        f"Expected .github/ directories to be excluded by default, got: {github_dirs}\nAll directories: {paths}"
     )
 
     # And CiBot should not appear in any top_authors list since the
     # only file they touched lives under .github/workflows/.
     for d in _directories(data):
         names = [a.get("name") for a in d.get("top_authors", [])]
-        assert "CiBot" not in names, (
-            f"CiBot (CI-only author) leaked into top_authors of "
-            f"{d['directory']}: {names}"
-        )
+        assert "CiBot" not in names, f"CiBot (CI-only author) leaked into top_authors of {d['directory']}: {names}"
 
 
-def test_bus_factor_includes_excluded_with_flag(
-    cli_runner, project_with_github, monkeypatch
-):
+def test_bus_factor_includes_excluded_with_flag(cli_runner, project_with_github, monkeypatch):
     """``--include-excluded`` restores legacy scan-everything behaviour."""
     monkeypatch.chdir(project_with_github)
     result = invoke_cli(
@@ -180,10 +170,7 @@ def test_bus_factor_includes_excluded_with_flag(
     paths = _directory_paths(data)
     # With the override, the CI workflow's directory should be visible.
     github_dirs = [p for p in paths if ".github" in p]
-    assert github_dirs, (
-        f"Expected .github/ directories to appear with --include-excluded, "
-        f"all dirs: {paths}"
-    )
+    assert github_dirs, f"Expected .github/ directories to appear with --include-excluded, all dirs: {paths}"
 
     # And CiBot should now be a recognised contributor somewhere.
     found_cibot = False
@@ -197,44 +184,31 @@ def test_bus_factor_includes_excluded_with_flag(
     # Envelope reports the override too — empty list means "nothing filtered".
     summary = data.get("summary", {})
     assert summary.get("exclude_prefixes_active") == [], (
-        f"--include-excluded should clear exclude_prefixes_active, got: "
-        f"{summary.get('exclude_prefixes_active')}"
+        f"--include-excluded should clear exclude_prefixes_active, got: {summary.get('exclude_prefixes_active')}"
     )
     assert summary.get("excluded_files_count", 0) == 0, (
-        f"--include-excluded should report 0 excluded files, got: "
-        f"{summary.get('excluded_files_count')}"
+        f"--include-excluded should report 0 excluded files, got: {summary.get('excluded_files_count')}"
     )
 
 
-def test_bus_factor_envelope_reports_excluded_count(
-    cli_runner, project_with_github, monkeypatch
-):
+def test_bus_factor_envelope_reports_excluded_count(cli_runner, project_with_github, monkeypatch):
     """Default envelope exposes how many files were filtered and which
     prefixes were active so agents can see the gate's effect.
     """
     monkeypatch.chdir(project_with_github)
-    result = invoke_cli(
-        cli_runner, ["bus-factor"], cwd=project_with_github, json_mode=True
-    )
+    result = invoke_cli(cli_runner, ["bus-factor"], cwd=project_with_github, json_mode=True)
     data = parse_json_output(result, "bus-factor")
     summary = data.get("summary", {})
 
-    assert "excluded_files_count" in summary, (
-        f"summary missing excluded_files_count: keys={list(summary.keys())}"
-    )
-    assert "exclude_prefixes_active" in summary, (
-        f"summary missing exclude_prefixes_active: keys={list(summary.keys())}"
-    )
+    assert "excluded_files_count" in summary, f"summary missing excluded_files_count: keys={list(summary.keys())}"
+    assert "exclude_prefixes_active" in summary, f"summary missing exclude_prefixes_active: keys={list(summary.keys())}"
 
     excluded = summary["excluded_files_count"]
     assert isinstance(excluded, int)
     assert excluded > 0, (
-        f"Expected at least one excluded file (.github/workflows/ci.yml), "
-        f"got excluded_files_count={excluded}"
+        f"Expected at least one excluded file (.github/workflows/ci.yml), got excluded_files_count={excluded}"
     )
 
     active = summary["exclude_prefixes_active"]
     assert isinstance(active, list)
-    assert ".github/" in active, (
-        f"Expected '.github/' in exclude_prefixes_active, got: {active}"
-    )
+    assert ".github/" in active, f"Expected '.github/' in exclude_prefixes_active, got: {active}"

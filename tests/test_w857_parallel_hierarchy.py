@@ -18,7 +18,6 @@ from roam.catalog.parallel_hierarchy import (
     detect_parallel_hierarchy,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tiny in-memory schema — mirrors the subset used by ``tests/test_smells.py``
 # ---------------------------------------------------------------------------
@@ -75,8 +74,7 @@ def _add_class(
 ) -> int:
     sid = _next_id()
     conn.execute(
-        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-        "VALUES (?, ?, ?, 'class', ?, ?)",
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, ?, ?, 'class', ?, ?)",
         (sid, file_id, name, line, line + 10),
     )
     return sid

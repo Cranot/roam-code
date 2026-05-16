@@ -1,7 +1,7 @@
 """A.0.3 — seed inference for `roam retrieve`.
 
 When a user types a free-form task (or an MCP agent calls
-``retrieve_context(task=...)`` without ``--seed-files``), we still want
+``retrieve_context(task=...)`` without ``--seed-file``), we still want
 the structural reranker to bias toward query-relevant symbols. This
 module extracts symbol-shaped tokens from the task text and resolves
 them to symbol ids via FTS5, returning a weighted seed map suitable for

@@ -9,8 +9,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 from roam.catalog.smells import (
     ALL_DETECTORS,
     detect_speculative_generality,
@@ -68,8 +66,7 @@ def _add_sym(
     line_end: int = 10,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO symbols (file_id, name, kind, line_start, line_end) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO symbols (file_id, name, kind, line_start, line_end) VALUES (?, ?, ?, ?, ?)",
         (file_id, name, kind, line_start, line_end),
     )
     return cur.lastrowid

@@ -55,6 +55,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from roam.output.formatter import WarningsOut
 from roam.policy.suppression_v2 import KindSymbolSuppression
 
 DEFAULT_SUPPRESS_PATH = Path(".roam") / "smells.suppress.yml"
@@ -153,7 +154,7 @@ def _parse_smells_suppress_yaml_root_dict(text: str) -> dict:
 def _validate_smells_suppress_rows(
     rows: list[dict],
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
     source_path: str | None = None,
 ) -> list[dict]:
     """Apply W987 / W994 / W995 schema validation to parsed suppression rows.
@@ -240,7 +241,7 @@ def _validate_smells_suppress_rows(
 def _parse_smells_suppress_yaml(
     text: str,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
     source_path: str | None = None,
 ) -> list[dict]:
     """Parse a ``.roam/smells.suppress.yml`` file into a list of dicts.
@@ -260,9 +261,7 @@ def _parse_smells_suppress_yaml(
     """
     parsed = _parse_smells_suppress_yaml_root_dict(text)
     rows = parsed.get("suppressions", [])
-    return _validate_smells_suppress_rows(
-        rows, warnings_out=warnings_out, source_path=source_path
-    )
+    return _validate_smells_suppress_rows(rows, warnings_out=warnings_out, source_path=source_path)
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +272,7 @@ def _parse_smells_suppress_yaml(
 def load_smells_suppressions(
     project_root: str | Path,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> list[dict]:
     """Load suppressions from ``.roam/smells.suppress.yml`` under *project_root*.
 
@@ -323,15 +322,13 @@ def load_smells_suppressions(
     rows = data.get("suppressions", [])
     if not isinstance(rows, list):
         return []
-    return _validate_smells_suppress_rows(
-        rows, warnings_out=warnings_out, source_path=str(path)
-    )
+    return _validate_smells_suppress_rows(rows, warnings_out=warnings_out, source_path=str(path))
 
 
 def load_smells_suppressions_typed(
     project_root: str | Path,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> list[KindSymbolSuppression]:
     """Typed counterpart of :func:`load_smells_suppressions` (W692 Phase B-a).
 
@@ -349,8 +346,7 @@ def load_smells_suppressions_typed(
     surface to the CLI envelope. Same semantics as the dict-shaped loader.
     """
     return [
-        KindSymbolSuppression.from_dict(d)
-        for d in load_smells_suppressions(project_root, warnings_out=warnings_out)
+        KindSymbolSuppression.from_dict(d) for d in load_smells_suppressions(project_root, warnings_out=warnings_out)
     ]
 
 
@@ -358,7 +354,7 @@ def _is_expired(
     entry: dict,
     *,
     today: date | None = None,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
     source_path: str | None = None,
 ) -> bool:
     """Return True if the suppression's ``expires`` date is in the past.

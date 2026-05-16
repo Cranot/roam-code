@@ -1,4 +1,14 @@
-"""Show and validate the roam JSON envelope schema."""
+"""Show and validate the roam JSON envelope schema.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because schema outputs are invocation-scoped schema-structure
+enumerations (envelope shape metadata + per-envelope ``--validate``
+verdicts) — not per-location code violations. Validation results
+describe the JSON-envelope contract itself, not user source code. See
+``cmd_rules_validate`` for the parallel validator-not-detector
+disclosure pattern + action.yml _SUPPORTED_SARIF allowlist + W1192
+audit memo + W1221-audit memo.
+"""
 
 from __future__ import annotations
 

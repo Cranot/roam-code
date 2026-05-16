@@ -168,6 +168,43 @@ def invoke_cli(runner, args, cwd=None, json_mode=False):
 
 
 # ===========================================================================
+# PyYAML-missing fixture (W1027 — extracted from W1018 + W1019 fan-out)
+# ===========================================================================
+
+
+@pytest.fixture
+def no_pyyaml(monkeypatch):
+    """Simulate a PyYAML-missing environment for tiny-parser fallback tests.
+
+    Originally copy-pasted across 6 test files after W1018 / W1019 / W1051 /
+    W1052 each landed a no-PyYAML branch test. W1027 hoisted the canonical
+    shape (intercept-at-builtins + pop from ``sys.modules``) into this
+    fixture. The strictest variant wins: ``__import__`` interception blocks
+    fresh imports inside the helper, and ``sys.modules`` pop drops any cached
+    top-level ``yaml`` so the helper truly re-imports.
+
+    Usage::
+
+        def test_helper_falls_back_without_pyyaml(tmp_path, no_pyyaml):
+            ...
+    """
+    import builtins
+    import sys
+
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "yaml" or name.startswith("yaml."):
+            raise ImportError("W1027 fixture: PyYAML unavailable for test")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    monkeypatch.delitem(sys.modules, "yaml", raising=False)
+    yield
+    # monkeypatch auto-restores the patched __import__ and sys.modules entry.
+
+
+# ===========================================================================
 # JSON validation helpers
 # ===========================================================================
 

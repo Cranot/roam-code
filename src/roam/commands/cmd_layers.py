@@ -1,4 +1,11 @@
-"""Show topological layer detection and violations."""
+"""Show topological layer detection and violations.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because layers outputs are invocation-scoped layer assignments
+— not per-location violations. Multi-file expansion would distort SARIF
+semantics. See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH
+Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +14,7 @@ from collections import Counter
 import click
 import networkx as nx
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.graph.builder import build_symbol_graph
@@ -29,7 +37,6 @@ from roam.output.mermaid import (
 from roam.output.mermaid import (
     node as mnode,
 )
-from roam.capability import roam_capability
 from roam.output.mermaid import (
     subgraph as msubgraph,
 )

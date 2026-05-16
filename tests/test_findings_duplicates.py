@@ -42,7 +42,6 @@ import textwrap
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_duplicates import (
     DUPLICATES_DETECTOR_VERSION,
     _duplicates_cluster_finding_id,
@@ -51,8 +50,8 @@ from roam.commands.cmd_duplicates import (
     _role_bucket_for_files,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -104,9 +103,7 @@ def _persist_duplicates(proj, threshold: float = 0.50):
     """
     runner = CliRunner()
     assert runner.invoke(cli, ["index"]).exit_code == 0
-    result = runner.invoke(
-        cli, ["duplicates", "--threshold", str(threshold), "--persist"]
-    )
+    result = runner.invoke(cli, ["duplicates", "--threshold", str(threshold), "--persist"])
     assert result.exit_code == 0, result.output
     return result
 
@@ -130,9 +127,7 @@ def test_duplicates_emits_to_findings_registry(tmp_path):
                 "       subject_kind, confidence "
                 "FROM findings WHERE source_detector = 'duplicates'"
             ).fetchall()
-        assert len(rows) >= 1, (
-            "expected at least one duplicates-emitted finding row"
-        )
+        assert len(rows) >= 1, "expected at least one duplicates-emitted finding row"
         for r in rows:
             assert r["source_detector"] == "duplicates"
             assert r["source_version"] == DUPLICATES_DETECTOR_VERSION
@@ -159,30 +154,24 @@ def test_duplicates_finding_id_str_is_deterministic(tmp_path):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'duplicates'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'duplicates'"
                 ).fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'duplicates'"
-            ).fetchone()[0]
-        assert first_count == len(first_ids), (
-            "duplicate finding_id_str rows on first run"
-        )
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'duplicates'").fetchone()[
+                0
+            ]
+        assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same threshold, same hash inputs.
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["duplicates", "--threshold", "0.50", "--persist"]
-        )
+        result = runner.invoke(cli, ["duplicates", "--threshold", "0.50", "--persist"])
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'duplicates'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'duplicates'"
                 ).fetchall()
             }
             second_count = conn.execute(
@@ -214,8 +203,7 @@ def test_duplicates_finding_evidence_carries_members_and_similarity(tmp_path):
 
         with open_db(readonly=True) as conn:
             row = conn.execute(
-                "SELECT evidence_json, claim FROM findings "
-                "WHERE source_detector = 'duplicates' LIMIT 1"
+                "SELECT evidence_json, claim FROM findings WHERE source_detector = 'duplicates' LIMIT 1"
             ).fetchone()
             assert row is not None
             evidence = json.loads(row["evidence_json"])
@@ -244,15 +232,12 @@ def test_duplicates_finding_subject_link_when_resolved(tmp_path):
 
         with open_db(readonly=True) as conn:
             rows = conn.execute(
-                "SELECT subject_id FROM findings "
-                "WHERE source_detector = 'duplicates' "
-                "  AND subject_id IS NOT NULL"
+                "SELECT subject_id FROM findings WHERE source_detector = 'duplicates'   AND subject_id IS NOT NULL"
             ).fetchall()
             # subject_id population is best-effort (anchor PageRank pick);
             # it should land on at least one row given our fixture.
             assert len(rows) >= 1, (
-                "expected at least one duplicates finding with a "
-                "resolved subject_id (the cluster anchor)"
+                "expected at least one duplicates finding with a resolved subject_id (the cluster anchor)"
             )
             for r in rows:
                 sym = conn.execute(
@@ -284,19 +269,14 @@ def test_duplicates_and_clones_emit_under_distinct_source_detectors(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        assert runner.invoke(
-            cli, ["clones", "--threshold", "0.50", "--persist"]
-        ).exit_code == 0
-        assert runner.invoke(
-            cli, ["duplicates", "--threshold", "0.50", "--persist"]
-        ).exit_code == 0
+        assert runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"]).exit_code == 0
+        assert runner.invoke(cli, ["duplicates", "--threshold", "0.50", "--persist"]).exit_code == 0
 
         with open_db(readonly=True) as conn:
             detectors = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT DISTINCT source_detector FROM findings "
-                    "WHERE source_detector IN ('clones', 'duplicates')"
+                    "SELECT DISTINCT source_detector FROM findings WHERE source_detector IN ('clones', 'duplicates')"
                 ).fetchall()
             }
             # Both detectors must have produced at least one row each.
@@ -307,8 +287,7 @@ def test_duplicates_and_clones_emit_under_distinct_source_detectors(tmp_path):
             # ``clones:pair:...`` and duplicates uses
             # ``duplicates:cluster:...``.
             mixed = conn.execute(
-                "SELECT finding_id_str, source_detector FROM findings "
-                "WHERE source_detector IN ('clones', 'duplicates')"
+                "SELECT finding_id_str, source_detector FROM findings WHERE source_detector IN ('clones', 'duplicates')"
             ).fetchall()
             for r in mixed:
                 if r["source_detector"] == "clones":
@@ -333,18 +312,14 @@ def test_duplicates_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_duplicates(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "duplicates"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "duplicates"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "duplicates" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "duplicates" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "duplicates" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -384,9 +359,7 @@ def test_duplicates_no_findings_table_no_crash(tmp_path):
             conn.execute("DROP TABLE IF EXISTS findings")
             conn.commit()
 
-        result = runner.invoke(
-            cli, ["duplicates", "--threshold", "0.50", "--persist"]
-        )
+        result = runner.invoke(cli, ["duplicates", "--threshold", "0.50", "--persist"])
         # Must succeed despite the missing findings table.
         assert result.exit_code == 0, result.output
     finally:
@@ -406,16 +379,11 @@ def test_no_persist_does_not_emit_findings(tmp_path):
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
         # No --persist.
-        assert runner.invoke(
-            cli, ["duplicates", "--threshold", "0.50"]
-        ).exit_code == 0
+        assert runner.invoke(cli, ["duplicates", "--threshold", "0.50"]).exit_code == 0
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'duplicates'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'duplicates'").fetchone()[0]
             except sqlite3.OperationalError:
                 # findings table may not be present on every test env's
                 # schema flavour — that's still a "no findings emitted"
@@ -480,9 +448,7 @@ def test_emit_duplicates_findings_skips_short_clusters():
         "suggestion": "n/a",
         "total_pagerank": 0.1,
     }
-    written = _emit_duplicates_findings(
-        conn, [short_cluster], DUPLICATES_DETECTOR_VERSION
-    )
+    written = _emit_duplicates_findings(conn, [short_cluster], DUPLICATES_DETECTOR_VERSION)
     assert written == 0
     rows = conn.execute("SELECT COUNT(*) FROM findings").fetchone()
     assert rows[0] == 0
@@ -531,19 +497,13 @@ def _multi_role_dup_project(tmp_path, *, include_fixture: bool = False):
 
     tests_dir = proj / "tests"
     tests_dir.mkdir()
-    (tests_dir / "test_a.py").write_text(
-        body.format(name="process_orders_t") + "\n", encoding="utf-8"
-    )
-    (tests_dir / "test_b.py").write_text(
-        body.format(name="handle_invoices_t") + "\n", encoding="utf-8"
-    )
+    (tests_dir / "test_a.py").write_text(body.format(name="process_orders_t") + "\n", encoding="utf-8")
+    (tests_dir / "test_b.py").write_text(body.format(name="handle_invoices_t") + "\n", encoding="utf-8")
 
     if include_fixture:
         fix_dir = tests_dir / "fixtures"
         fix_dir.mkdir()
-        (fix_dir / "sample.py").write_text(
-            body.format(name="sample_fixture") + "\n", encoding="utf-8"
-        )
+        (fix_dir / "sample.py").write_text(body.format(name="sample_fixture") + "\n", encoding="utf-8")
 
     subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
     subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
@@ -579,16 +539,12 @@ def test_duplicates_emits_role_bucket_in_evidence(tmp_path):
         os.chdir(str(proj))
         _persist_duplicates(proj)
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'duplicates'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'duplicates'").fetchall()
         assert len(rows) >= 1, "expected at least one duplicates finding row"
         for r in rows:
             ev = json.loads(r["evidence_json"])
             assert "role_bucket" in ev, (
-                "role_bucket missing from duplicates evidence — W165 patch "
-                "didn't reach the emit path"
+                "role_bucket missing from duplicates evidence — W165 patch didn't reach the emit path"
             )
             assert ev["role_bucket"] == "production", (
                 f"src/-only cluster should be production, got {ev['role_bucket']!r}"
@@ -605,16 +561,11 @@ def test_duplicates_test_pair_marked_as_test_intentional(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        result = runner.invoke(
-            cli, ["duplicates", "--threshold", "0.50", "--persist"]
-        )
+        result = runner.invoke(cli, ["duplicates", "--threshold", "0.50", "--persist"])
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'duplicates'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'duplicates'").fetchall()
         counts = _dup_bucket_counts(rows)
         # The mixed-cluster Union-Find behaviour may pull every duplicate
         # into ONE big mixed cluster (4 functions across src/+tests/),
@@ -626,19 +577,16 @@ def test_duplicates_test_pair_marked_as_test_intentional(tmp_path):
         for r in rows:
             ev = json.loads(r["evidence_json"])
             files = [m["file"] for m in ev["members"]]
-            all_tests = all(
-                "tests/" in (f or "").replace("\\", "/") for f in files
-            )
+            all_tests = all("tests/" in (f or "").replace("\\", "/") for f in files)
             if all_tests:
                 assert ev["role_bucket"] == "test_intentional", (
-                    f"all-test cluster misclassified: {ev['role_bucket']!r} "
-                    f"for files {files}"
+                    f"all-test cluster misclassified: {ev['role_bucket']!r} for files {files}"
                 )
         # And the broader assertion: at least one row in a "test-touching"
         # bucket (test_intentional ∪ mixed) so the fixture proved out.
-        assert (
-            counts["test_intentional"] + counts["mixed"]
-        ) >= 1, f"no test-touching cluster surfaced; counts={counts}"
+        assert (counts["test_intentional"] + counts["mixed"]) >= 1, (
+            f"no test-touching cluster surfaced; counts={counts}"
+        )
     finally:
         os.chdir(old_cwd)
 
@@ -653,14 +601,11 @@ def test_duplicates_exclude_tests_flag_drops_test_findings(tmp_path):
         assert runner.invoke(cli, ["index"]).exit_code == 0
 
         # Baseline
-        baseline = runner.invoke(
-            cli, ["duplicates", "--threshold", "0.50", "--persist"]
-        )
+        baseline = runner.invoke(cli, ["duplicates", "--threshold", "0.50", "--persist"])
         assert baseline.exit_code == 0, baseline.output
         with open_db(readonly=True) as conn:
             base_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'duplicates'"
+                "SELECT evidence_json FROM findings WHERE source_detector = 'duplicates'"
             ).fetchall()
         baseline_total = len(base_rows)
 
@@ -678,20 +623,15 @@ def test_duplicates_exclude_tests_flag_drops_test_findings(tmp_path):
         assert filtered.exit_code == 0, filtered.output
         with open_db(readonly=True) as conn:
             filt_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'duplicates'"
+                "SELECT evidence_json FROM findings WHERE source_detector = 'duplicates'"
             ).fetchall()
         filt_counts = _dup_bucket_counts(filt_rows)
 
         # The flag must zero out test_intentional rows.
-        assert filt_counts["test_intentional"] == 0, (
-            f"--exclude-tests left test_intentional behind: {filt_counts}"
-        )
+        assert filt_counts["test_intentional"] == 0, f"--exclude-tests left test_intentional behind: {filt_counts}"
         # The filtered run should not be larger than baseline (it can be
         # equal when every cluster was mixed or production already).
-        assert len(filt_rows) <= baseline_total, (
-            "filtered run produced MORE rows than baseline — impossible"
-        )
+        assert len(filt_rows) <= baseline_total, "filtered run produced MORE rows than baseline — impossible"
     finally:
         os.chdir(old_cwd)
 
@@ -710,20 +650,12 @@ def test_duplicates_mixed_bucket_flagged_for_test_leakage(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        result = runner.invoke(
-            cli, ["duplicates", "--threshold", "0.50", "--persist"]
-        )
+        result = runner.invoke(cli, ["duplicates", "--threshold", "0.50", "--persist"])
         assert result.exit_code == 0, result.output
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'duplicates'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'duplicates'").fetchall()
         counts = _dup_bucket_counts(rows)
-        assert counts["mixed"] >= 1, (
-            f"expected at least one mixed-bucket duplicate cluster; "
-            f"counts={counts}"
-        )
+        assert counts["mixed"] >= 1, f"expected at least one mixed-bucket duplicate cluster; counts={counts}"
 
         # Mixed survives --exclude-tests (opinionated W165 decision).
         filtered = runner.invoke(
@@ -739,13 +671,10 @@ def test_duplicates_mixed_bucket_flagged_for_test_leakage(tmp_path):
         assert filtered.exit_code == 0, filtered.output
         with open_db(readonly=True) as conn:
             filt_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'duplicates'"
+                "SELECT evidence_json FROM findings WHERE source_detector = 'duplicates'"
             ).fetchall()
         filt_counts = _dup_bucket_counts(filt_rows)
-        assert filt_counts["mixed"] >= 1, (
-            f"--exclude-tests dropped the mixed bucket; counts={filt_counts}"
-        )
+        assert filt_counts["mixed"] >= 1, f"--exclude-tests dropped the mixed bucket; counts={filt_counts}"
     finally:
         os.chdir(old_cwd)
 
@@ -799,14 +728,11 @@ def test_duplicates_exclude_fixtures_drops_fixture_clusters(tmp_path):
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
 
-        baseline = runner.invoke(
-            cli, ["duplicates", "--threshold", "0.50", "--persist"]
-        )
+        baseline = runner.invoke(cli, ["duplicates", "--threshold", "0.50", "--persist"])
         assert baseline.exit_code == 0, baseline.output
         with open_db(readonly=True) as conn:
             base_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'duplicates'"
+                "SELECT evidence_json FROM findings WHERE source_detector = 'duplicates'"
             ).fetchall()
 
         # Baseline should include at least one fixture-touching cluster.
@@ -816,9 +742,7 @@ def test_duplicates_exclude_fixtures_drops_fixture_clusters(tmp_path):
             files = [m["file"] for m in ev["members"]]
             if any("/fixtures/" in (f or "").replace("\\", "/") for f in files):
                 base_fixture_rows.append(r)
-        assert len(base_fixture_rows) >= 1, (
-            "fixture must yield at least one fixture-touching cluster"
-        )
+        assert len(base_fixture_rows) >= 1, "fixture must yield at least one fixture-touching cluster"
 
         # Clear findings between runs so the filter behavior is tested in
         # isolation from stale-row carryover (findings upsert by id, so
@@ -840,8 +764,7 @@ def test_duplicates_exclude_fixtures_drops_fixture_clusters(tmp_path):
         assert filtered.exit_code == 0, filtered.output
         with open_db(readonly=True) as conn:
             filt_rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'duplicates'"
+                "SELECT evidence_json FROM findings WHERE source_detector = 'duplicates'"
             ).fetchall()
         for r in filt_rows:
             ev = json.loads(r["evidence_json"])
@@ -874,19 +797,9 @@ def test_is_fixture_path_recognises_common_layouts():
 def test_role_bucket_for_files_three_buckets():
     """All-test ⇒ test_intentional; all-source ⇒ production; mix ⇒ mixed."""
     assert _role_bucket_for_files(["src/a.py", "src/b.py"]) == "production"
-    assert (
-        _role_bucket_for_files(
-            ["tests/test_a.py", "tests/test_b.py"]
-        )
-        == "test_intentional"
-    )
+    assert _role_bucket_for_files(["tests/test_a.py", "tests/test_b.py"]) == "test_intentional"
     assert _role_bucket_for_files(["src/a.py", "tests/test_a.py"]) == "mixed"
     # Fixtures count as test-side too.
-    assert (
-        _role_bucket_for_files(
-            ["tests/fixtures/x.py", "tests/fixtures/y.py"]
-        )
-        == "test_intentional"
-    )
+    assert _role_bucket_for_files(["tests/fixtures/x.py", "tests/fixtures/y.py"]) == "test_intentional"
     # Empty list defaults to production (caller filters empty clusters).
     assert _role_bucket_for_files([]) == "production"

@@ -65,7 +65,6 @@ from roam.evidence._vocabulary import GITHUB_REVIEW_STATES
 from roam.evidence.approval import ApprovalRecord
 from roam.evidence.policy import PolicyDecision
 
-
 # Neutral reason string stamped on ApprovalRecord.reason. Deliberately
 # NOT the review body (which is the W247a "never store bodies" rule).
 _NEUTRAL_APPROVAL_REASON: str = "github_pr_approval"
@@ -115,18 +114,14 @@ def parse_github_reviews(
     """
     if not isinstance(reviews, list):
         raise ValueError(
-            "parse_github_reviews: 'reviews' must be a list of review "
-            "dicts (received {type})".format(type=type(reviews).__name__)
+            "parse_github_reviews: 'reviews' must be a list of review dicts (received {type})".format(
+                type=type(reviews).__name__
+            )
         )
     if not isinstance(head_commit_sha, str) or not head_commit_sha:
-        raise ValueError(
-            "parse_github_reviews: 'head_commit_sha' must be a non-empty "
-            "string"
-        )
+        raise ValueError("parse_github_reviews: 'head_commit_sha' must be a non-empty string")
     if not isinstance(pr_number, int):
-        raise ValueError(
-            "parse_github_reviews: 'pr_number' must be an int"
-        )
+        raise ValueError("parse_github_reviews: 'pr_number' must be an int")
 
     approvals: list[ApprovalRecord] = []
     policy_decisions: list[PolicyDecision] = []
@@ -136,8 +131,9 @@ def parse_github_reviews(
     for review in reviews:
         if not isinstance(review, Mapping):
             raise ValueError(
-                "parse_github_reviews: every review entry must be a "
-                "mapping (got {type})".format(type=type(review).__name__)
+                "parse_github_reviews: every review entry must be a mapping (got {type})".format(
+                    type=type(review).__name__
+                )
             )
         state = review.get("state")
         if state not in GITHUB_REVIEW_STATES:
@@ -171,8 +167,7 @@ def parse_github_reviews(
         review_id = review.get("id")
         reviewer = _safe_login(review)
         warnings.append(
-            f"filtered review id={review_id} state={state} reviewer={reviewer}"
-            " - not an approval and not a blocker"
+            f"filtered review id={review_id} state={state} reviewer={reviewer} - not an approval and not a blocker"
         )
 
     return tuple(approvals), tuple(policy_decisions), tuple(warnings)
@@ -206,8 +201,7 @@ def load_reviews_from_fixture(
     data = json.loads(text)
     if not isinstance(data, list):
         raise ValueError(
-            f"load_reviews_from_fixture: expected a JSON list at "
-            f"{fixture_path}, got {type(data).__name__}"
+            f"load_reviews_from_fixture: expected a JSON list at {fixture_path}, got {type(data).__name__}"
         )
     return data
 
@@ -261,8 +255,7 @@ def harvest_reviews_from_gh_cli(
         ) from exc
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(
-            f"harvest_reviews_from_gh_cli: gh invocation failed for "
-            f"{owner}/{repo}#{pr_number} ({exc})"
+            f"harvest_reviews_from_gh_cli: gh invocation failed for {owner}/{repo}#{pr_number} ({exc})"
         ) from exc
 
     if proc.returncode != 0:
@@ -275,10 +268,7 @@ def harvest_reviews_from_gh_cli(
     try:
         data = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"harvest_reviews_from_gh_cli: gh api response was not JSON "
-            f"for {endpoint} ({exc})"
-        ) from exc
+        raise RuntimeError(f"harvest_reviews_from_gh_cli: gh api response was not JSON for {endpoint} ({exc})") from exc
 
     if not isinstance(data, list):
         raise RuntimeError(
@@ -329,10 +319,7 @@ def _maybe_build_approval_record(
 
     submitted_at = review.get("submitted_at")
     if not isinstance(submitted_at, str) or not submitted_at:
-        raise ValueError(
-            f"parse_github_reviews: APPROVED review id={review_id} is "
-            f"missing 'submitted_at'"
-        )
+        raise ValueError(f"parse_github_reviews: APPROVED review id={review_id} is missing 'submitted_at'")
 
     extra: dict[str, Any] = {
         "commit_id": commit_id,
@@ -383,8 +370,10 @@ def _build_policy_decision(
     # avoid the indirect circular-import risk via local-scope import.
     try:
         from roam.evidence.provenance import provenance_label
+
         extra["provenance"] = provenance_label(
-            "producer_envelope", detail="github_review",
+            "producer_envelope",
+            detail="github_review",
         )
     except (ImportError, AttributeError):
         # W746: narrowed from bare Exception. The helper is a leaf

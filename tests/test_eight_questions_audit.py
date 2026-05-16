@@ -58,7 +58,6 @@ from roam.evidence import (
     EvidenceSubject,
 )
 
-
 # ---------------------------------------------------------------------------
 # The eight questions — the canonical Q-id ↔ rule mapping
 # ---------------------------------------------------------------------------
@@ -141,14 +140,10 @@ def populated_packet() -> ChangeEvidence:
             ),
         ),
         # Q4 complete: changed_subjects
-        changed_subjects=(
-            EvidenceSubject(kind="file", qualified_name="src/example.py"),
-        ),
+        changed_subjects=(EvidenceSubject(kind="file", qualified_name="src/example.py"),),
         findings=({"detector": "test", "severity": "low"},),
         # Q6 complete: policy_decisions
-        policy_decisions=(
-            {"rule_id": "test-rule-1", "outcome": "pass"},
-        ),
+        policy_decisions=({"rule_id": "test-rule-1", "outcome": "pass"},),
         tests_required=("test_example",),
         # Q7 complete: tests_run
         tests_run=({"name": "test_example", "result": "pass"},),
@@ -163,16 +158,10 @@ def populated_packet() -> ChangeEvidence:
             ),
         ),
         # Q1 complete: actor_refs
-        actor_refs=(
-            ActorRef(actor_kind="agent", actor_id="agent:test"),
-        ),
+        actor_refs=(ActorRef(actor_kind="agent", actor_id="agent:test"),),
         # Q2 complete: authority_refs
-        authority_refs=(
-            AuthorityRef(authority_kind="mode", authority_id="mode:safe_edit"),
-        ),
-        environment_refs=(
-            EnvironmentRef(env_kind="workspace", env_id="workspace:test"),
-        ),
+        authority_refs=(AuthorityRef(authority_kind="mode", authority_id="mode:safe_edit"),),
+        environment_refs=(EnvironmentRef(env_kind="workspace", env_id="workspace:test"),),
     )
 
 
@@ -182,9 +171,7 @@ def populated_packet() -> ChangeEvidence:
 
 
 @pytest.mark.parametrize("q_id,_rule", EIGHT_QUESTIONS)
-def test_minimal_packet_misses_all_8_questions(
-    minimal_packet: ChangeEvidence, q_id: str, _rule: str
-) -> None:
+def test_minimal_packet_misses_all_8_questions(minimal_packet: ChangeEvidence, q_id: str, _rule: str) -> None:
     """A minimal packet MUST score ``"missing"`` on every Q.
 
     This is the negative test: it proves the audit can detect empty
@@ -198,10 +185,7 @@ def test_minimal_packet_misses_all_8_questions(
     ``"missing"``, NOT ``"not_applicable"``.
     """
     scores = _score(minimal_packet)
-    assert scores[q_id] == "missing", (
-        f"{q_id}: minimal packet should miss this question; "
-        f"got {scores[q_id]!r}"
-    )
+    assert scores[q_id] == "missing", f"{q_id}: minimal packet should miss this question; got {scores[q_id]!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +194,7 @@ def test_minimal_packet_misses_all_8_questions(
 
 
 @pytest.mark.parametrize("q_id,_rule", EIGHT_QUESTIONS)
-def test_populated_packet_answers_all_8_questions(
-    populated_packet: ChangeEvidence, q_id: str, _rule: str
-) -> None:
+def test_populated_packet_answers_all_8_questions(populated_packet: ChangeEvidence, q_id: str, _rule: str) -> None:
     """A fully populated packet MUST score ``"complete"`` on every Q.
 
     This is the positive test: it proves the audit's ``"complete"``
@@ -222,10 +204,7 @@ def test_populated_packet_answers_all_8_questions(
     artifacts), this test will fail until the fixture is updated.
     """
     scores = _score(populated_packet)
-    assert scores[q_id] == "complete", (
-        f"{q_id}: populated packet should answer this question; "
-        f"got {scores[q_id]!r}"
-    )
+    assert scores[q_id] == "complete", f"{q_id}: populated packet should answer this question; got {scores[q_id]!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -244,9 +223,7 @@ def test_score_returns_exactly_eight_questions(
     """
     scores = _score(minimal_packet)
     expected = {f"Q{i}" for i in range(1, 9)}
-    assert set(scores.keys()) == expected, (
-        f"score keys drifted from Q1..Q8: got {sorted(scores.keys())}"
-    )
+    assert set(scores.keys()) == expected, f"score keys drifted from Q1..Q8: got {sorted(scores.keys())}"
 
 
 def test_totals_match_per_question_counts(
@@ -263,9 +240,7 @@ def test_totals_match_per_question_counts(
     assert full["complete"] == sum(1 for v in q_values if v == "complete")
     assert full["partial"] == sum(1 for v in q_values if v == "partial")
     assert full["missing"] == sum(1 for v in q_values if v == "missing")
-    assert full["not_applicable"] == sum(
-        1 for v in q_values if v == "not_applicable"
-    )
+    assert full["not_applicable"] == sum(1 for v in q_values if v == "not_applicable")
 
 
 def test_score_values_are_closed_enumeration(
@@ -283,9 +258,7 @@ def test_score_values_are_closed_enumeration(
     for packet in (minimal_packet, populated_packet):
         scores = _score(packet)
         for q_id, status in scores.items():
-            assert status in allowed, (
-                f"{q_id}={status!r} is not one of {sorted(allowed)}"
-            )
+            assert status in allowed, f"{q_id}={status!r} is not one of {sorted(allowed)}"
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +375,7 @@ def _packet_from_pr_replay_json(payload: dict) -> ChangeEvidence:
         )
         for a in payload.get("actor_refs", ())
     )
+
     # W246 - reconstruct context_refs so Q3 scores against the same
     # artifacts the on-disk packet carries. The pr-replay producer
     # populates them from git's changed-file list; the collector turns
@@ -441,12 +415,8 @@ def _packet_from_pr_replay_json(payload: dict) -> ChangeEvidence:
                 continue
         return out
 
-    context_refs_reconstructed = _reconstruct_artifacts(
-        payload.get("context_refs", ())
-    )
-    artifacts_reconstructed = _reconstruct_artifacts(
-        payload.get("artifacts", ())
-    )
+    context_refs_reconstructed = _reconstruct_artifacts(payload.get("context_refs", ()))
+    artifacts_reconstructed = _reconstruct_artifacts(payload.get("artifacts", ()))
     return ChangeEvidence(
         evidence_id=payload["evidence_id"],
         schema_version=payload.get("schema_version", "1.0.0"),
@@ -516,8 +486,7 @@ def test_current_roam_code_assurance_coverage(tmp_path: Path) -> None:
     )
     if result.exit_code != 0:
         pytest.skip(
-            f"pr-replay exited {result.exit_code}; "
-            f"likely a shallow checkout. Output head:\n{result.output[:200]}"
+            f"pr-replay exited {result.exit_code}; likely a shallow checkout. Output head:\n{result.output[:200]}"
         )
     assert target.exists(), "pr-replay reported success but wrote no file"
 

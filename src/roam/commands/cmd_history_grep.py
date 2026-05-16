@@ -7,6 +7,12 @@ auditing renames or deletions that no longer leave a trace in HEAD.
 
 Output is grouped per pattern; each commit row carries author + date +
 short SHA + summary. JSON envelope mirrors the text shape.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because history-grep outputs are invocation-scoped git-history
+commit rows (provenance + pickaxe trail) — not per-location violations.
+See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

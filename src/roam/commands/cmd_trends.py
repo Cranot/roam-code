@@ -3,6 +3,11 @@
 Unified command combining health-snapshot timeline, per-metric tracking,
 anomaly detection (Modified Z-Score, Theil-Sen, Western Electric), CI
 assertion gates, and AI-vs-human cohort analysis.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because trends outputs are invocation-scoped metric-trend
+rankings — not per-location violations. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

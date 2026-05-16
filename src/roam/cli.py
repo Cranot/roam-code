@@ -52,19 +52,42 @@ _ACTIVE_DEPRECATION_NOTICE: str | None = None
 # here AND in the consumer module — the test fails on either drift.
 # Per CLAUDE.md Constraint 8: closed enumeration over free string composition.
 _SARIF_CONSUMERS: tuple[str, ...] = (
+    "affected-tests",
     "algo",
     "audit-trail-conformance-check",
+    "auth-gaps",
+    "bus-factor",
     "check-rules",
+    "clones",
     "complexity",
+    "critique",
+    "dark-matter",
     "dead",
+    "delete-check",
+    "duplicates",
+    "fan",
+    "flag-dead",
     "health",
+    "hotspots",
+    "impact",
+    "laws",
+    "llm-smells",
+    "missing-index",
+    "n1",
+    "orphan-imports",
+    "orphan-routes",
+    "over-fetch",
+    "partition",
     "py-modern",
     "py-types",
     "rules",
     "secrets",
+    "smells",
     "stale-refs",
     "supply-chain",
     "taint",
+    "test-impact",
+    "verify-imports",
     "vulns",
 )
 
@@ -720,11 +743,7 @@ class LazyGroup(click.Group):
         while idx < len(after):
             token = after[idx]
             if token in self._GLOBAL_FLAGS:
-                if (
-                    token in _AMBIGUOUS_FLAG_VS_VALUE
-                    and idx + 1 < len(after)
-                    and not after[idx + 1].startswith("-")
-                ):
+                if token in _AMBIGUOUS_FLAG_VS_VALUE and idx + 1 < len(after) and not after[idx + 1].startswith("-"):
                     # Treat as subcommand-owned ``--agent VALUE`` and leave alone.
                     kept.append(token)
                     idx += 1
@@ -1087,8 +1106,7 @@ def _enforce_mode_gate(ctx: click.Context) -> None:
         except Exception:
             active_name = "<unknown>"
         click.echo(
-            f"WARNING: Mode enforcement overridden. "
-            f"Active mode: {active_name}. Command: {canonical}.",
+            f"WARNING: Mode enforcement overridden. Active mode: {active_name}. Command: {canonical}.",
             err=True,
         )
         # Opportunistically log the override into the active run so
@@ -1118,8 +1136,7 @@ def _enforce_mode_gate(ctx: click.Context) -> None:
 
     click.echo(f"BLOCKED: {reason}", err=True)
     click.echo(
-        "Pass `--override-mode` to bypass for this one call, or "
-        "`roam mode <name>` to switch modes.",
+        "Pass `--override-mode` to bypass for this one call, or `roam mode <name>` to switch modes.",
         err=True,
     )
     ctx.exit(EXIT_GATE_FAILURE)

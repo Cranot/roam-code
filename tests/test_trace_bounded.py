@@ -123,10 +123,7 @@ def test_trace_max_hops_default(cli_runner, long_chain_project, monkeypatch):
         cwd=long_chain_project,
         json_mode=True,
     )
-    assert far.exit_code == 0, (
-        f"trace beyond max-hops should NOT raise; got exit={far.exit_code}\n"
-        f"{far.output}"
-    )
+    assert far.exit_code == 0, f"trace beyond max-hops should NOT raise; got exit={far.exit_code}\n{far.output}"
     far_data = parse_json_output(far, "trace")
     assert far_data["summary"].get("state") == "no_path_within_hops"
     assert far_data["summary"].get("partial_success") is True
@@ -180,9 +177,7 @@ def test_trace_no_path_clean_envelope(cli_runner, disconnected_project, monkeypa
     )
 
     # Pattern 1 (no JSON-parse-on-empty-stdout): exit 0, parseable JSON.
-    assert result.exit_code == 0, (
-        f"trace with no path must exit 0; got {result.exit_code}\n{result.output}"
-    )
+    assert result.exit_code == 0, f"trace with no path must exit 0; got {result.exit_code}\n{result.output}"
     data = parse_json_output(result, "trace")
     summary = data["summary"]
 

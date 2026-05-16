@@ -38,6 +38,8 @@ from roam.commands.finding_suppress import (
 )
 from roam.commands.smells_suppress import (
     DEFAULT_SUPPRESS_PATH as SMELLS_SUPPRESS_PATH,
+)
+from roam.commands.smells_suppress import (
     load_smells_suppressions,
     load_smells_suppressions_typed,
 )
@@ -198,9 +200,7 @@ def test_w693_every_loader_is_importable_and_callable(tmp_path, monkeypatch):
     for module_path, func_name, _on_disk in _SUPPRESSION_LOADERS:
         mod = importlib.import_module(module_path)
         fn = getattr(mod, func_name, None)
-        assert fn is not None, (
-            f"W693: enumerated loader {module_path}.{func_name} not found"
-        )
+        assert fn is not None, f"W693: enumerated loader {module_path}.{func_name} not found"
         assert callable(fn), f"W693: {module_path}.{func_name} is not callable"
 
     # Empty project root -> every loader returns its empty form.
@@ -209,9 +209,7 @@ def test_w693_every_loader_is_importable_and_callable(tmp_path, monkeypatch):
     assert load_suppressions(tmp_path) == []
     assert load_smells_suppressions(tmp_path) == []
     assert _load_per_finding_suppressions(tmp_path / ".roam" / "suppressions.json") == {}
-    assert (
-        load_per_finding_suppressions_typed(tmp_path / ".roam" / "suppressions.json") == []
-    )
+    assert load_per_finding_suppressions_typed(tmp_path / ".roam" / "suppressions.json") == []
     # The SARIF loader is anchored to Path.cwd() — chdir above covers it.
     assert sarif_load_suppressions() == []
     assert sarif_load_suppressions_typed() == []
@@ -281,13 +279,10 @@ def test_w693_shared_file_canonical_shape_both_loaders_agree(tmp_path, monkeypat
     # sarif sees ONLY the entries that carry rule_id + location.
     sarif_keys = {(row["rule_id"], row["location"]) for row in sarif_view}
     expected_sarif_keys = {
-        (e["rule_id"], e["location"])
-        for e in canonical.values()
-        if e.get("rule_id") and e.get("location")
+        (e["rule_id"], e["location"]) for e in canonical.values() if e.get("rule_id") and e.get("location")
     }
     assert sarif_keys == expected_sarif_keys, (
-        "SARIF loader must surface every canonical entry that carries "
-        "rule_id+location, and only those"
+        "SARIF loader must surface every canonical entry that carries rule_id+location, and only those"
     )
 
     # The shared reason text must round-trip identically (no quoting /
@@ -369,13 +364,11 @@ def test_w693_enumerated_paths_match_default_constants():
     """
     by_func = {(m, f): p for (m, f, p) in _SUPPRESSION_LOADERS}
 
-    assert (
-        by_func[("roam.commands.finding_suppress", "_load_per_finding_suppressions")]
-        == str(DEFAULT_SUPPRESSIONS_PATH).replace("\\", "/")
-    )
-    assert (
-        by_func[("roam.commands.smells_suppress", "load_smells_suppressions")]
-        == str(SMELLS_SUPPRESS_PATH).replace("\\", "/")
+    assert by_func[("roam.commands.finding_suppress", "_load_per_finding_suppressions")] == str(
+        DEFAULT_SUPPRESSIONS_PATH
+    ).replace("\\", "/")
+    assert by_func[("roam.commands.smells_suppress", "load_smells_suppressions")] == str(SMELLS_SUPPRESS_PATH).replace(
+        "\\", "/"
     )
 
 
@@ -580,9 +573,7 @@ def test_w707_serialize_three_entries_round_trip():
 
     # Exactly one ``  - `` dash per entry.
     dash_count = sum(1 for line in out.splitlines() if line.startswith("  - "))
-    assert dash_count == len(data), (
-        f"W707: expected {len(data)} list-item dashes, got {dash_count}"
-    )
+    assert dash_count == len(data), f"W707: expected {len(data)} list-item dashes, got {dash_count}"
 
     # Round-trip: parsing the serialized output yields the same rows.
     from roam.commands.suppression import _parse_suppressions_yaml
@@ -591,9 +582,7 @@ def test_w707_serialize_three_entries_round_trip():
     assert len(parsed) == len(data)
     for original, reloaded in zip(data, parsed):
         for field in ("rule", "file", "reason", "status", "date"):
-            assert reloaded.get(field) == original.get(field), (
-                f"W707: field {field!r} did not round-trip"
-            )
+            assert reloaded.get(field) == original.get(field), f"W707: field {field!r} did not round-trip"
         if "line" in original:
             assert reloaded.get("line") == original["line"]
 
@@ -785,8 +774,7 @@ def test_w723_typed_sarif_loader_agrees_with_dict_loader(tmp_path, monkeypatch):
     dict_keys = {(row["rule_id"], row["location"]) for row in dict_rows}
     typed_keys = {(sup.rule_id, sup.location) for sup in typed_rows}
     assert dict_keys == typed_keys, (
-        "W723: SARIF typed view must project the same (rule_id, location) "
-        "identities as the dict-shaped view"
+        "W723: SARIF typed view must project the same (rule_id, location) identities as the dict-shaped view"
     )
 
     # The shared reason text must round-trip identically between the
@@ -1038,12 +1026,8 @@ suppressions:
     dict_input = _json.loads(_json.dumps(findings_fixture))
     typed_input = _json.loads(_json.dumps(findings_fixture))
 
-    dict_kept, dict_suppressed = apply_suppressions(
-        dict_input, dict_suppressions, today=today
-    )
-    typed_kept, typed_suppressed = apply_suppressions_typed(
-        typed_input, typed_suppressions, today=today
-    )
+    dict_kept, dict_suppressed = apply_suppressions(dict_input, dict_suppressions, today=today)
+    typed_kept, typed_suppressed = apply_suppressions_typed(typed_input, typed_suppressions, today=today)
 
     # Byte-identity on both halves of the partition. sort_keys + tight
     # separators pin any field-ordering drift; the appliers preserve

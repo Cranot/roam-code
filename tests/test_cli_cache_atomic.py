@@ -91,11 +91,7 @@ def test_run_check_cleans_up_temp_on_failure(tmp_cache_path, monkeypatch):
     cache_dir = Path(tmp_cache_path).parent
     assert cache_dir.exists()
     assert not Path(tmp_cache_path).exists(), "no partial cache file should survive"
-    leftovers = [
-        p
-        for p in cache_dir.iterdir()
-        if p.name.startswith("short-help.json.") and p.name.endswith(".tmp")
-    ]
+    leftovers = [p for p in cache_dir.iterdir() if p.name.startswith("short-help.json.") and p.name.endswith(".tmp")]
     assert leftovers == [], f"temp files leaked: {leftovers}"
 
 

@@ -35,8 +35,8 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.commands.cmd_health import (
-    HEALTH_DETECTOR_VERSION,
     _HEALTH_KIND_TO_CONFIDENCE,
+    HEALTH_DETECTOR_VERSION,
     _emit_health_findings,
     _health_bottleneck_finding_id,
     _health_cycle_finding_id,
@@ -45,7 +45,6 @@ from roam.commands.cmd_health import (
 )
 from roam.db.connection import open_db
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -104,10 +103,7 @@ def _synth_cycle(member_names, files, severity="warning", actionable=True):
     ``mark_actionable_cycles`` so the emit helper sees the same fields
     it would in production.
     """
-    symbols = [
-        {"id": None, "name": n, "kind": "function", "file_path": files[0]}
-        for n in member_names
-    ]
+    symbols = [{"id": None, "name": n, "kind": "function", "file_path": files[0]} for n in member_names]
     return {
         "symbols": symbols,
         "files": list(files),
@@ -207,9 +203,7 @@ def test_health_layer_violation_finding_id_keys_on_edge_endpoints():
     assert a == b
     assert a.startswith("health:arch.layer_violation:")
     # Different direction → different id (the edge is directional).
-    assert (
-        _health_layer_violation_finding_id("src/hi.py::hi", "src/lo.py::lo") != a
-    )
+    assert _health_layer_violation_finding_id("src/hi.py::hi", "src/lo.py::lo") != a
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +215,7 @@ def test_emit_health_cycle_emits_static_analysis_tier(tmp_path):
     """arch.cycle findings land at static_analysis confidence."""
     with _seed_for_emit_helper(tmp_path) as conn:
         cyc = _synth_cycle(["foo", "bar", "baz"], ["src/a.py", "src/b.py"])
-        written = _emit_health_findings(
-            conn, [cyc], [], [], [], HEALTH_DETECTOR_VERSION
-        )
+        written = _emit_health_findings(conn, [cyc], [], [], [], HEALTH_DETECTOR_VERSION)
         assert written == 1
         row = conn.execute(
             "SELECT subject_kind, confidence, evidence_json, claim, "
@@ -249,9 +241,7 @@ def test_emit_health_god_component_emits_static_analysis_tier(tmp_path):
     """arch.god_component findings land at static_analysis confidence."""
     with _seed_for_emit_helper(tmp_path) as conn:
         god = _synth_god("BigService", degree=80)
-        written = _emit_health_findings(
-            conn, [], [god], [], [], HEALTH_DETECTOR_VERSION
-        )
+        written = _emit_health_findings(conn, [], [god], [], [], HEALTH_DETECTOR_VERSION)
         assert written == 1
         row = conn.execute(
             "SELECT subject_kind, confidence, evidence_json, finding_id_str "
@@ -272,9 +262,7 @@ def test_emit_health_bottleneck_emits_structural_tier(tmp_path):
     """arch.bottleneck findings land at structural confidence."""
     with _seed_for_emit_helper(tmp_path) as conn:
         bn = _synth_bottleneck("dispatch", betweenness=250.0)
-        written = _emit_health_findings(
-            conn, [], [], [bn], [], HEALTH_DETECTOR_VERSION
-        )
+        written = _emit_health_findings(conn, [], [], [bn], [], HEALTH_DETECTOR_VERSION)
         assert written == 1
         row = conn.execute(
             "SELECT subject_kind, confidence, evidence_json, finding_id_str "
@@ -293,12 +281,8 @@ def test_emit_health_bottleneck_emits_structural_tier(tmp_path):
 def test_emit_health_layer_violation_uses_edge_subject_kind(tmp_path):
     """arch.layer_violation uses the new ``subject_kind='edge'`` vocabulary."""
     with _seed_for_emit_helper(tmp_path) as conn:
-        v, v_lookup = _synth_layer_violation(
-            source_name="low_level", target_name="high_level"
-        )
-        written = _emit_health_findings(
-            conn, [], [], [], [v], HEALTH_DETECTOR_VERSION, v_lookup=v_lookup
-        )
+        v, v_lookup = _synth_layer_violation(source_name="low_level", target_name="high_level")
+        written = _emit_health_findings(conn, [], [], [], [v], HEALTH_DETECTOR_VERSION, v_lookup=v_lookup)
         assert written == 1
         row = conn.execute(
             "SELECT subject_kind, subject_id, confidence, evidence_json, "
@@ -346,9 +330,7 @@ def test_emit_health_writes_all_four_kinds_in_one_pass(tmp_path):
         assert written == 4
         kinds = {
             row["finding_id_str"].split(":")[1]
-            for row in conn.execute(
-                "SELECT finding_id_str FROM findings WHERE source_detector = 'health'"
-            ).fetchall()
+            for row in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'health'").fetchall()
         }
         assert kinds == {
             "arch.cycle",
@@ -387,28 +369,18 @@ def test_emit_health_rerun_upserts_not_duplicates(tmp_path):
         god = _synth_god("BigService")
         bn = _synth_bottleneck("dispatch")
         v, v_lookup = _synth_layer_violation()
-        first = _emit_health_findings(
-            conn, [cyc], [god], [bn], [v], HEALTH_DETECTOR_VERSION, v_lookup=v_lookup
-        )
+        first = _emit_health_findings(conn, [cyc], [god], [bn], [v], HEALTH_DETECTOR_VERSION, v_lookup=v_lookup)
         first_ids = {
             r[0]
-            for r in conn.execute(
-                "SELECT finding_id_str FROM findings WHERE source_detector = 'health'"
-            ).fetchall()
+            for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'health'").fetchall()
         }
         # Second emit on identical inputs.
-        second = _emit_health_findings(
-            conn, [cyc], [god], [bn], [v], HEALTH_DETECTOR_VERSION, v_lookup=v_lookup
-        )
+        second = _emit_health_findings(conn, [cyc], [god], [bn], [v], HEALTH_DETECTOR_VERSION, v_lookup=v_lookup)
         second_ids = {
             r[0]
-            for r in conn.execute(
-                "SELECT finding_id_str FROM findings WHERE source_detector = 'health'"
-            ).fetchall()
+            for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'health'").fetchall()
         }
-        total = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'health'"
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'health'").fetchone()[0]
         assert first == 4
         assert second == 4
         assert total == 4, "rerun should upsert, not duplicate"
@@ -439,9 +411,7 @@ def test_health_persist_smoke_no_crash(tmp_path):
         # Whether or not findings were emitted is fixture-dependent,
         # but the table must exist and be queryable.
         with open_db(readonly=True) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'health'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'health'").fetchone()[0]
             assert count >= 0
     finally:
         os.chdir(old_cwd)
@@ -461,9 +431,7 @@ def test_health_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'health'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'health'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, "non-persist health still wrote to findings"
@@ -522,27 +490,21 @@ def test_health_findings_visible_via_cmd_findings_list_when_populated(tmp_path):
         god = _synth_god("BigService")
         bn = _synth_bottleneck("dispatch")
         v, v_lookup = _synth_layer_violation()
-        _emit_health_findings(
-            conn, [cyc], [god], [bn], [v], HEALTH_DETECTOR_VERSION, v_lookup=v_lookup
-        )
+        _emit_health_findings(conn, [cyc], [god], [bn], [v], HEALTH_DETECTOR_VERSION, v_lookup=v_lookup)
         conn.commit()
 
     old_cwd = os.getcwd()
     try:
         os.chdir(str(proj))
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "health"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "health"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 4
         assert "health" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "health" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "health" for r in envelope["findings"])
 
         result = runner.invoke(cli, ["--json", "findings", "count"])
         assert result.exit_code == 0, result.output

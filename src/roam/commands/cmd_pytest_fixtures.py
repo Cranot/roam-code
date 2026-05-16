@@ -6,6 +6,16 @@ is invisible to call-graph or import analysis, so a refactor that
 renames a low-level fixture can break tests several files away with no
 explicit edge to follow. Indexing materialises it as
 ``pytest_fixture_dep`` edges; this command surfaces them.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because pytest-fixtures outputs are invocation-scoped fixture-
+relationship catalogs (``pytest_fixture_dep`` edges from a fixture /
+test / project to its consumers and dependencies) — not per-location
+code violations. The catalog describes a normal architectural
+relationship (which fixture depends on which) rather than a defect at
+a source coordinate; SARIF audiences scan for per-finding rule_id +
+region rows. See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH
+propagation plan + W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -15,7 +25,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import json_envelope, resolution_disclosure, to_json
 
 
 def _fetch_chain(conn, symbol_id: int, max_depth: int = 6, reverse: bool = False) -> list[dict]:
@@ -274,6 +284,9 @@ def pytest_fixtures(ctx, symbol: str | None, max_depth: int, unused: bool, rever
             # failure. Emit a structured envelope with empty results and
             # exit 0 — Pattern-2 always-emit discipline. Concrete-noun
             # terminal "fixtures" anchors the verdict (LAW 4).
+            # W1245 Pattern-2 variant-D: disclose ``resolution=unresolved``
+            # so per-call shape stays uniform across resolved + unresolved.
+            unresolved_block = resolution_disclosure("unresolved", target=symbol)
             verdict = f"No pytest fixtures match {symbol!r} — no symbol indexed by that name"
             if json_mode:
                 click.echo(
@@ -286,10 +299,12 @@ def pytest_fixtures(ctx, symbol: str | None, max_depth: int, unused: bool, rever
                                 "resolved": False,
                                 "count": 0,
                                 "direction": "reverse" if reverse else "forward",
+                                **unresolved_block,
                             },
                             target=symbol,
                             fixtures=[],
                             chain=[],
+                            **{k: v for k, v in unresolved_block.items() if k != "target"},
                         )
                     )
                 )
@@ -316,18 +331,27 @@ def pytest_fixtures(ctx, symbol: str | None, max_depth: int, unused: bool, rever
         resolved_path = root_row["file_path"] if root_row else None
         resolved_line = sym["line_start"] if sym["line_start"] else None
 
+        # W1245 Pattern-2 variant-D: disclose which resolver tier matched
+        # so consumers see when ``sym`` came from a fuzzy-LIKE fallback
+        # rather than an exact name match.
+        resolution_tier = sym.get("_resolution_tier", "symbol")
+        resolution_block = resolution_disclosure(resolution_tier, target=sym["qualified_name"] or sym["name"])
+        fuzzy_suffix = " [fuzzy resolution]" if resolution_tier != "symbol" else ""
+
         # Phrasing depends on direction: forward chain = "depends on",
         # reverse chain = "has N dependents".
         if reverse:
             verdict_phrase = (
-                f"{sym['name']} has {len(chain)} dependent(s)" if chain else f"{sym['name']} has no dependents"
+                f"{sym['name']} has {len(chain)} dependent(s){fuzzy_suffix}"
+                if chain
+                else f"{sym['name']} has no dependents{fuzzy_suffix}"
             )
             chain_label = "Dependents of"
         else:
             verdict_phrase = (
-                f"{sym['name']} depends on {len(chain)} fixture(s)"
+                f"{sym['name']} depends on {len(chain)} fixture(s){fuzzy_suffix}"
                 if chain
-                else f"{sym['name']} has no fixture dependencies"
+                else f"{sym['name']} has no fixture dependencies{fuzzy_suffix}"
             )
             chain_label = "Fixture chain for"
 
@@ -347,8 +371,11 @@ def pytest_fixtures(ctx, symbol: str | None, max_depth: int, unused: bool, rever
                             "depth": max((r["depth"] for r in chain), default=0),
                             "count": len(chain),
                             "direction": "reverse" if reverse else "forward",
+                            # W1245 Pattern-2 variant-D resolution disclosure.
+                            **resolution_block,
                         },
                         chain=chain,
+                        **resolution_block,
                     )
                 )
             )

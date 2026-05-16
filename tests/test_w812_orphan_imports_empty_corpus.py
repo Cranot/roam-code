@@ -76,8 +76,7 @@ def test_w812_orphan_imports_empty_corpus_structured_envelope(tmp_path):
         os.chdir(cwd)
 
     assert result.exit_code == 0, (
-        f"orphan-imports crashed on empty corpus: exit={result.exit_code} "
-        f"output={result.output!r}"
+        f"orphan-imports crashed on empty corpus: exit={result.exit_code} output={result.output!r}"
     )
 
     # Envelope must be parseable JSON.
@@ -92,17 +91,14 @@ def test_w812_orphan_imports_empty_corpus_structured_envelope(tmp_path):
     assert isinstance(summary, dict), f"summary missing or not dict: {summary!r}"
 
     verdict = summary.get("verdict")
-    assert isinstance(verdict, str) and verdict, (
-        f"verdict missing/empty: summary={summary!r}"
-    )
+    assert isinstance(verdict, str) and verdict, f"verdict missing/empty: summary={summary!r}"
 
     # Empty-corpus verdict must reference the empty / zero-file state —
     # not a generic "completed" / "non-conformant" string (Pattern 2).
     verdict_lower = verdict.lower()
     empty_markers = ("0 file", "no orphan", "no imports", "empty", "zero")
     assert any(marker in verdict_lower for marker in empty_markers), (
-        f"verdict does not disclose empty state — expected one of "
-        f"{empty_markers!r} in {verdict!r}"
+        f"verdict does not disclose empty state — expected one of {empty_markers!r} in {verdict!r}"
     )
 
     # Counts: zero findings (the .py file is empty / has no imports).
@@ -138,6 +134,4 @@ def test_w812_orphan_imports_empty_corpus_partial_success_bool(tmp_path):
     envelope = json.loads(result.output)
     summary = envelope["summary"]
     assert "partial_success" in summary, f"missing partial_success: {summary!r}"
-    assert isinstance(summary["partial_success"], bool), (
-        f"partial_success not bool: {summary['partial_success']!r}"
-    )
+    assert isinstance(summary["partial_success"], bool), f"partial_success not bool: {summary['partial_success']!r}"

@@ -47,6 +47,18 @@ Output modes:
   when a partial / missing question has a producer hint.
 
 Reads from disk (or stdin via ``--stdin``); does NOT touch the index DB.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because evidence-doctor verifies ``ChangeEvidence`` PACKET
+INTEGRITY (closed-enum schema conformance, ``content_hash`` recompute,
+W259 completeness banner) — not per-location code violations in user
+source. The diagnostic findings describe the evidence-packet shape,
+which has no source coordinates to populate SARIF ``locations[]``.
+SARIF here would conflate validator-output (packet well-formed?) with
+code-analyzer-output (user code well-formed?). See
+``cmd_rules_validate`` for the parallel validator-not-detector
+disclosure pattern + action.yml _SUPPORTED_SARIF allowlist + W1192
+audit memo + W1224-audit memo.
 """
 
 from __future__ import annotations
@@ -59,8 +71,8 @@ from typing import Any, Mapping
 import click
 
 from roam.capability import roam_capability
+from roam.evidence.completeness_compat import classify_completeness
 from roam.output.formatter import format_table, json_envelope, to_json
-
 
 # ---------------------------------------------------------------------------
 # Verdict ladder
@@ -89,10 +101,12 @@ _TRUST_TIER_KEYS: tuple[str, ...] = (
 # means "identity surface present but not cryptographically attested" —
 # strong-coverage packets still get downgraded to WARN if any actor_ref
 # falls into one of these tiers.
-_TRUST_WARN_TIERS: frozenset[str] = frozenset({
-    "self_reported_agent",
-    "unknown",
-})
+_TRUST_WARN_TIERS: frozenset[str] = frozenset(
+    {
+        "self_reported_agent",
+        "unknown",
+    }
+)
 
 # Human-readable Q-labels so the text output is reviewer-friendly.
 _Q_LABELS: Mapping[str, str] = {
@@ -111,38 +125,14 @@ _Q_LABELS: Mapping[str, str] = {
 # fragments where a producer is wired today; questions without a known
 # producer surface a "real producer needed" note instead.
 _Q_NEXT_STEP_HINTS: Mapping[str, str] = {
-    "Q1": (
-        "attach actor_refs[] (human + agent identity) via pr-bundle "
-        "or set ROAM_AGENT_ID before producing"
-    ),
-    "Q2": (
-        "attach authority_refs[] (mode + permits + policy rules) via "
-        "roam mode + pr-bundle add-authority"
-    ),
-    "Q3": (
-        "attach context_refs[] (envelope hashes) via roam pr-bundle "
-        "add-context"
-    ),
-    "Q4": (
-        "stamp changed_subjects[] on the producer (pr-replay / "
-        "pr-bundle) — diff target may be empty"
-    ),
-    "Q5": (
-        "stamp risk_level on the producer envelope (preflight / "
-        "pr-risk emit a level today)"
-    ),
-    "Q6": (
-        "attach policy_decisions[] via roam rules-validate (rules "
-        "with decision rationale)"
-    ),
-    "Q7": (
-        "attach tests_run[] via roam pr-bundle add-tests (or wire a "
-        "tests harvester into the producer)"
-    ),
-    "Q8": (
-        "attach approvals[] or accepted_risks[] via roam pr-bundle "
-        "add-approval (real producer needed)"
-    ),
+    "Q1": ("attach actor_refs[] (human + agent identity) via pr-bundle or set ROAM_AGENT_ID before producing"),
+    "Q2": ("attach authority_refs[] (mode + permits + policy rules) via roam mode + pr-bundle add-authority"),
+    "Q3": ("attach context_refs[] (envelope hashes) via roam pr-bundle add-context"),
+    "Q4": ("stamp changed_subjects[] on the producer (pr-replay / pr-bundle) — diff target may be empty"),
+    "Q5": ("stamp risk_level on the producer envelope (preflight / pr-risk emit a level today)"),
+    "Q6": ("attach policy_decisions[] via roam rules-validate (rules with decision rationale)"),
+    "Q7": ("attach tests_run[] via roam pr-bundle add-tests (or wire a tests harvester into the producer)"),
+    "Q8": ("attach approvals[] or accepted_risks[] via roam pr-bundle add-approval (real producer needed)"),
 }
 
 
@@ -172,10 +162,7 @@ def _load_raw_packet(
     except json.JSONDecodeError as exc:
         return None, f"malformed JSON in {source_label!r}: {exc}"
     if not isinstance(payload, dict):
-        return None, (
-            f"packet at {source_label!r} is not a JSON object "
-            f"(got {type(payload).__name__})"
-        )
+        return None, (f"packet at {source_label!r} is not a JSON object (got {type(payload).__name__})")
     return payload, None
 
 
@@ -206,11 +193,13 @@ def _validate_closed_enums(
         if not isinstance(value, str):
             return  # type-shape errors surface elsewhere
         if value not in allowed:
-            violations.append({
-                "field": field,
-                "value": value,
-                "expected": ",".join(sorted(allowed)),
-            })
+            violations.append(
+                {
+                    "field": field,
+                    "value": value,
+                    "expected": ",".join(sorted(allowed)),
+                }
+            )
 
     # Top-level packet redactions
     for r in packet.get("redactions") or []:
@@ -327,95 +316,6 @@ def _recompute_content_hash(packet: dict[str, Any]) -> str | None:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _classify_completeness(
-    packet: dict[str, Any],
-) -> tuple[dict[str, str], dict[str, int]]:
-    """Per-question completeness + totals, mirroring W210.
-
-    Recomputed locally from the raw dict so the diagnostic works on
-    older packets that pre-date :meth:`evidence_completeness`. Mirrors
-    the algorithm in ``cmd_evidence_diff._compute_completeness``.
-    """
-    def _truthy_list(v: Any) -> bool:
-        return isinstance(v, list) and len(v) > 0
-
-    def _truthy_str(v: Any) -> bool:
-        return isinstance(v, str) and bool(v)
-
-    actor_refs = packet.get("actor_refs") or []
-    authority_refs = packet.get("authority_refs") or []
-    context_refs = packet.get("context_refs") or []
-    changed_subjects = packet.get("changed_subjects") or []
-    findings = packet.get("findings") or []
-    policy_decisions = packet.get("policy_decisions") or []
-    tests_required = packet.get("tests_required") or []
-    tests_run = packet.get("tests_run") or []
-    artifacts = packet.get("artifacts") or []
-    approvals = packet.get("approvals") or []
-    accepted_risks = packet.get("accepted_risks") or []
-    redactions = packet.get("redactions") or []
-
-    agent_id = packet.get("agent_id")
-    human_actor = packet.get("human_actor")
-    mode = packet.get("mode")
-    risk_level = packet.get("risk_level")
-    verdict = packet.get("verdict")
-
-    q: dict[str, str] = {}
-    if _truthy_list(actor_refs):
-        q["Q1"] = "complete"
-    elif _truthy_str(agent_id) or _truthy_str(human_actor):
-        q["Q1"] = "partial"
-    else:
-        q["Q1"] = "missing"
-
-    if _truthy_list(authority_refs):
-        q["Q2"] = "complete"
-    elif _truthy_str(mode):
-        q["Q2"] = "partial"
-    else:
-        q["Q2"] = "missing"
-
-    q["Q3"] = "complete" if _truthy_list(context_refs) else "missing"
-    q["Q4"] = "complete" if _truthy_list(changed_subjects) else "missing"
-
-    if _truthy_str(risk_level):
-        q["Q5"] = "complete"
-    elif verdict in ("SAFE", "PASS", "safe", "pass") and not _truthy_list(findings):
-        q["Q5"] = "not_applicable"
-    else:
-        q["Q5"] = "missing"
-
-    if _truthy_list(policy_decisions):
-        q["Q6"] = "complete"
-    elif _truthy_list(authority_refs):
-        q["Q6"] = "partial"
-    else:
-        q["Q6"] = "missing"
-
-    if _truthy_list(tests_run) or _truthy_list(artifacts):
-        q["Q7"] = "complete"
-    elif _truthy_list(tests_required):
-        q["Q7"] = "partial"
-    else:
-        q["Q7"] = "missing"
-
-    if _truthy_list(approvals) or _truthy_list(accepted_risks):
-        q["Q8"] = "complete"
-    elif _truthy_list(redactions):
-        q["Q8"] = "partial"
-    else:
-        q["Q8"] = "missing"
-
-    totals = {
-        "complete": sum(1 for v in q.values() if v == "complete"),
-        "partial": sum(1 for v in q.values() if v == "partial"),
-        "missing": sum(1 for v in q.values() if v == "missing"),
-        "not_applicable": sum(1 for v in q.values() if v == "not_applicable"),
-    }
-    return q, totals
-
-
 def _classify_banner(totals: Mapping[str, int]) -> tuple[str, str, str]:
     """Apply the W259 threshold table to per-question totals.
 
@@ -430,21 +330,18 @@ def _classify_banner(totals: Mapping[str, int]) -> tuple[str, str, str]:
         return (
             "strong",
             "Strong evidence coverage",
-            f"{complete} of 8 evidence questions answered; "
-            f"{missing} missing acknowledged below.",
+            f"{complete} of 8 evidence questions answered; {missing} missing acknowledged below.",
         )
     if (complete + partial) >= 5 and missing <= 3:
         return (
             "partial",
             "Partial coverage",
-            f"{complete + partial} of 8 evidence questions answered "
-            f"fully or partially; {missing} missing.",
+            f"{complete + partial} of 8 evidence questions answered fully or partially; {missing} missing.",
         )
     return (
         "insufficient",
         "Insufficient evidence",
-        f"{complete} of 8 evidence questions answered; "
-        f"do not publish as governance evidence.",
+        f"{complete} of 8 evidence questions answered; do not publish as governance evidence.",
     )
 
 
@@ -485,15 +382,14 @@ def _classify_trust_tiers(
                 if tier == "self_reported_agent"
                 else "no identity surface available; tier defaulted to unknown"
             )
-            warnings.append({
-                "actor_ref_index": i,
-                "actor_id": (
-                    ref.get("actor_id") if isinstance(ref.get("actor_id"), str)
-                    else ""
-                ),
-                "trust_tier": tier,
-                "rationale": rationale,
-            })
+            warnings.append(
+                {
+                    "actor_ref_index": i,
+                    "actor_id": (ref.get("actor_id") if isinstance(ref.get("actor_id"), str) else ""),
+                    "trust_tier": tier,
+                    "rationale": rationale,
+                }
+            )
     return counts, warnings
 
 
@@ -509,11 +405,13 @@ def _build_next_steps(q_results: Mapping[str, str]) -> list[dict[str, str]]:
         state = q_results.get(qk, "missing")
         if state in ("complete", "not_applicable"):
             continue
-        steps.append({
-            "q": qk,
-            "state": state,
-            "action": _Q_NEXT_STEP_HINTS.get(qk, "lift via real producer"),
-        })
+        steps.append(
+            {
+                "q": qk,
+                "state": state,
+                "action": _Q_NEXT_STEP_HINTS.get(qk, "lift via real producer"),
+            }
+        )
     return steps
 
 
@@ -590,10 +488,7 @@ def _build_verdict(
             budget_b = int(packet_budget_bytes or 0)
             return (
                 _VERDICT_WARN,
-                (
-                    f"WARN: PARTIAL coverage AND packet oversized "
-                    f"({size_b} bytes > {budget_b} budget bytes)"
-                ),
+                (f"WARN: PARTIAL coverage AND packet oversized ({size_b} bytes > {budget_b} budget bytes)"),
             )
         return (_VERDICT_WARN, "WARN: PARTIAL coverage; partial / missing questions remain")
     return (
@@ -670,13 +565,9 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     if not from_stdin and not packet_path:
-        raise click.UsageError(
-            "Provide a packet path or pass --stdin to read JSON from stdin."
-        )
+        raise click.UsageError("Provide a packet path or pass --stdin to read JSON from stdin.")
     if from_stdin and packet_path:
-        raise click.UsageError(
-            "Pass either a packet path or --stdin, not both."
-        )
+        raise click.UsageError("Pass either a packet path or --stdin, not both.")
 
     source_label = "<stdin>" if from_stdin else str(packet_path)
     payload, load_error = _load_raw_packet(packet_path, from_stdin=from_stdin)
@@ -690,6 +581,7 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         from roam.evidence.change_evidence import (
             PACKET_SIZE_BUDGET_BYTES as _PSBB,
         )
+
         summary = {
             "verdict": verdict_line,
             "partial_success": True,
@@ -705,6 +597,11 @@ def evidence_doctor(ctx, packet_path, from_stdin):
             # know whether the keys exist.
             "packet_size_bytes": 0,
             "budget_state": "within_budget",
+            # W1262: keep staleness keys stable on hard load failure.
+            # A failed-load packet is "not stale" by definition - we
+            # couldn't read its evidence_stale field.
+            "stale": False,
+            "stale_reasons_count": 0,
         }
         if json_mode:
             envelope = json_envelope(
@@ -725,6 +622,13 @@ def evidence_doctor(ctx, packet_path, from_stdin):
                     "bytes": 0,
                     "budget_bytes": _PSBB,
                     "budget_state": "within_budget",
+                },
+                # W1262: always-emit staleness block on the hard-load
+                # failure envelope too. Keeps the envelope shape stable
+                # across success / failure paths.
+                staleness={
+                    "stale": False,
+                    "stale_reasons": [],
                 },
                 agent_contract={
                     "facts": [
@@ -748,11 +652,7 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     # Recompute content_hash
     stamped_hash = payload.get("content_hash")
     recomputed_hash = _recompute_content_hash(payload)
-    hash_ok = (
-        isinstance(stamped_hash, str)
-        and isinstance(recomputed_hash, str)
-        and stamped_hash == recomputed_hash
-    )
+    hash_ok = isinstance(stamped_hash, str) and isinstance(recomputed_hash, str) and stamped_hash == recomputed_hash
     # If no content_hash is stamped, treat as "present but unverified" —
     # don't mark hash_ok True, but also don't FAIL on a packet that simply
     # never stamped one (older / partial packets).
@@ -766,9 +666,23 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     else:
         hash_state = "mismatch"
 
-    # Completeness + banner
-    q_results, totals = _classify_completeness(payload)
+    # Completeness + banner. W1266 - shared raw-dict helper applies the
+    # W1254 stale-demotion penalty so a stale-but-otherwise-complete
+    # packet drops from STRONG to PARTIAL via :func:`_classify_banner`.
+    q_results, totals = classify_completeness(payload)
     banner_tier, banner_label, banner_rationale = _classify_banner(totals)
+
+    # W1262: staleness signal from W1254 producer. Read ``evidence_stale``
+    # + ``stale_reasons`` directly from the packet dict so the doctor
+    # surfaces the W1234 producer wire-up alongside the coverage banner.
+    # Always-emit (Pattern-2): ``stale=False`` + empty reasons is a real
+    # signal, not a missing-data case.
+    raw_stale = payload.get("evidence_stale")
+    stale_flag = bool(raw_stale) if isinstance(raw_stale, bool) else False
+    raw_stale_reasons = payload.get("stale_reasons") or []
+    stale_reasons: list[str] = (
+        [r for r in raw_stale_reasons if isinstance(r, str)] if isinstance(raw_stale_reasons, list) else []
+    )
 
     # W281: actor-trust tier counts + WARN signals.
     trust_counts, trust_warnings = _classify_trust_tiers(payload)
@@ -782,6 +696,7 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         classify_packet_budget,
         packet_size_bytes,
     )
+
     pkt_size_bytes = packet_size_bytes(payload)
     pkt_budget_state = classify_packet_budget(pkt_size_bytes)
 
@@ -829,6 +744,11 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         # W281: count of actor_refs whose trust_tier contributed a WARN
         # signal (self_reported_agent / unknown).
         "trust_warnings_count": len(trust_warnings),
+        # W1262: surface the W1254 staleness signal so consumers reading
+        # only ``summary`` can detect the banner-demotion-to-stale state
+        # without re-parsing the packet.
+        "stale": stale_flag,
+        "stale_reasons_count": len(stale_reasons),
         # W280: canonical-JSON byte count + budget state. Always emitted
         # so consumers can rely on the keys being present (Pattern-2
         # always-emit). The "size_limit" entry in `redactions` is the
@@ -875,18 +795,19 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         # self_reported_agent / unknown counts conditionally — they only
         # add signal when non-zero. Terminal "flagged" / "scanned" anchor
         # via the analytical-verb path in tests/test_law4_lint.py.
-        facts.append(
-            f"{trust_counts['verified_ci']} verified_ci actor refs scanned"
-        )
+        facts.append(f"{trust_counts['verified_ci']} verified_ci actor refs scanned")
         if trust_counts["self_reported_agent"]:
-            facts.append(
-                f"{trust_counts['self_reported_agent']} self_reported_agent "
-                f"actor refs flagged"
-            )
+            facts.append(f"{trust_counts['self_reported_agent']} self_reported_agent actor refs flagged")
         if trust_counts["unknown"]:
-            facts.append(
-                f"{trust_counts['unknown']} unknown-tier actor refs flagged"
-            )
+            facts.append(f"{trust_counts['unknown']} unknown-tier actor refs flagged")
+        # W1262: staleness fact. Anchors on "flagged" (analytical verb in
+        # tests/test_law4_lint.py _ANALYTICAL_VERBS) when stale and on
+        # "scanned" (analytical verb) when fresh — so a zero-count fact
+        # still satisfies LAW 4.
+        if stale_flag:
+            facts.append(f"{len(stale_reasons)} stale reasons flagged")
+        else:
+            facts.append("0 stale reasons scanned")
 
         # next_commands — copy-paste-executable suggestions. For partial
         # / missing questions, prefer literal `roam pr-bundle <verb>`
@@ -900,24 +821,18 @@ def evidence_doctor(ctx, packet_path, from_stdin):
                 f"(allowed: {first_violation['expected']})"
             )
         if hash_state == "mismatch":
-            next_commands.append(
-                "# fix: content_hash drift — re-emit packet via "
-                "roam pr-replay or roam pr-bundle emit"
-            )
+            next_commands.append("# fix: content_hash drift — re-emit packet via roam pr-replay or roam pr-bundle emit")
         # W280: when the packet is oversized after truncation, suggest
         # the producer-side knobs that shrink the wire footprint.
         if pkt_budget_state == "oversized_after_truncation":
             next_commands.append(
-                "# fix: packet oversized — re-emit with fewer inlined "
-                "artifacts (path + content_hash for large blobs)"
+                "# fix: packet oversized — re-emit with fewer inlined artifacts (path + content_hash for large blobs)"
             )
         # W281: when self_reported_agent ActorRefs are present, suggest
         # the env-var path that lifts the tier to local_env (and longer
         # term to verified_ci via CI OIDC).
         if trust_counts["self_reported_agent"]:
-            next_commands.append(
-                "# set ROAM_AGENT_ID in CI environment to lift trust tier"
-            )
+            next_commands.append("# set ROAM_AGENT_ID in CI environment to lift trust tier")
         if trust_counts["unknown"]:
             next_commands.append(
                 "# attach actor_refs with explicit trust_tier (verified_ci "
@@ -928,18 +843,12 @@ def evidence_doctor(ctx, packet_path, from_stdin):
             # Map Q to a concrete producer command where one exists.
             if qk in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q7"):
                 # These lift via the producer-side recipes.
-                next_commands.append(
-                    f"# {qk} {step['state']}: {step['action']}"
-                )
+                next_commands.append(f"# {qk} {step['state']}: {step['action']}")
             elif qk == "Q6":
-                next_commands.append(
-                    f"# {qk} {step['state']}: {step['action']}"
-                )
+                next_commands.append(f"# {qk} {step['state']}: {step['action']}")
                 next_commands.append("roam rules-validate")
             elif qk == "Q8":
-                next_commands.append(
-                    f"# {qk} {step['state']}: {step['action']}"
-                )
+                next_commands.append(f"# {qk} {step['state']}: {step['action']}")
                 next_commands.append("roam pr-bundle add-approval")
 
         envelope = json_envelope(
@@ -982,6 +891,15 @@ def evidence_doctor(ctx, packet_path, from_stdin):
             # without re-walking actor_refs[].
             trust_tiers=trust_counts,
             trust_warnings=trust_warnings,
+            # W1262: top-level staleness block mirroring the W1254
+            # producer signal. ``stale`` + ``stale_reasons`` are always
+            # emitted (Pattern-2 always-emit) so JSON consumers don't
+            # branch on "did the doctor read evidence_stale?" - they
+            # always get the keys.
+            staleness={
+                "stale": stale_flag,
+                "stale_reasons": stale_reasons,
+            },
             next_steps=next_steps,
             agent_contract={
                 "facts": facts,
@@ -1016,6 +934,16 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         f"n/a={totals['not_applicable']}"
     )
 
+    # W1262: staleness banner. Emitted IMMEDIATELY after the coverage
+    # banner so reviewers see the W1254 producer signal alongside the
+    # Q-coverage table. ASCII-only per project conventions (no emoji).
+    # Skipped entirely when the packet is fresh - the existing banner
+    # is the load-bearing signal in that case.
+    if stale_flag:
+        click.echo(f"[STALE] EVIDENCE STALE: {len(stale_reasons)} reason(s)")
+        for reason in stale_reasons:
+            click.echo(f"  - {reason}")
+
     if enum_violations:
         click.echo("")
         click.echo(f"Closed-enum violations ({len(enum_violations)}):")
@@ -1040,10 +968,7 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     # show ``Size: N bytes (within_budget)``; oversized packets surface
     # how far over the budget they sit.
     if pkt_budget_state == "within_budget":
-        click.echo(
-            f"Size: {pkt_size_bytes} bytes / "
-            f"{PACKET_SIZE_BUDGET_BYTES} budget ({pkt_budget_state})"
-        )
+        click.echo(f"Size: {pkt_size_bytes} bytes / {PACKET_SIZE_BUDGET_BYTES} budget ({pkt_budget_state})")
     else:
         over_by = pkt_size_bytes - PACKET_SIZE_BUDGET_BYTES
         click.echo(
@@ -1055,17 +980,13 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     # W281: trust-tier readout. Always emit the line (Pattern-2: a
     # zero-count packet still surfaces the tier table) so reviewers see
     # the identity-provenance shape at a glance.
-    tier_pairs = ", ".join(
-        f"{k}={trust_counts[k]}" for k in _TRUST_TIER_KEYS
-    )
+    tier_pairs = ", ".join(f"{k}={trust_counts[k]}" for k in _TRUST_TIER_KEYS)
     click.echo(f"Trust tiers: {tier_pairs}")
     if trust_warnings:
         click.echo(f"Trust warnings ({len(trust_warnings)}):")
         for w in trust_warnings:
             actor_label = w.get("actor_id") or f"[index {w.get('actor_ref_index')}]"
-            click.echo(
-                f"  {actor_label}: {w['trust_tier']} — {w['rationale']}"
-            )
+            click.echo(f"  {actor_label}: {w['trust_tier']} — {w['rationale']}")
 
     # Per-question table
     click.echo("")

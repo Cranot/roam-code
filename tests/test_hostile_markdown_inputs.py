@@ -47,9 +47,6 @@ from __future__ import annotations
 import dataclasses
 import re
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -88,9 +85,7 @@ def _section(md: str, heading: str) -> str:
     """
     parts = md.split(f"## {heading}", 1)
     if len(parts) != 2:
-        raise AssertionError(
-            f"section '## {heading}' not found in rendered Markdown"
-        )
+        raise AssertionError(f"section '## {heading}' not found in rendered Markdown")
     # The slice from the heading up to the next "## " heading. Use a
     # regex so we don't accidentally split on a ``### `` subheading.
     rest = parts[1]
@@ -115,10 +110,7 @@ def _assert_table_columns_consistent(section: str, where: str) -> None:
     lines = _table_lines(section)
     assert lines, f"{where}: no table rows found in section"
     counts = [ln.count("|") for ln in lines]
-    assert len(set(counts)) == 1, (
-        f"{where}: hostile input broke table column count — "
-        f"counts={counts}, lines={lines}"
-    )
+    assert len(set(counts)) == 1, f"{where}: hostile input broke table column count — counts={counts}, lines={lines}"
 
 
 def _assert_section_intact(md: str, target: str, follower: str) -> None:
@@ -160,12 +152,8 @@ def test_hostile_pipes_in_actor_id_does_not_break_table():
     _assert_table_columns_consistent(section, where="Actors / hostile pipes")
     # Hostile literal pipes must NOT appear verbatim — the renderer
     # substitutes ``|`` -> ``/``.
-    assert "agent|admin|root" not in md, (
-        "Hostile pipes leaked unescaped into Actors section"
-    )
-    assert "Cursor | enterprise" not in md, (
-        "Hostile pipes in display_name leaked unescaped"
-    )
+    assert "agent|admin|root" not in md, "Hostile pipes leaked unescaped into Actors section"
+    assert "Cursor | enterprise" not in md, "Hostile pipes in display_name leaked unescaped"
     # And the next section is still where it should be.
     _assert_section_intact(md, target="Actors", follower="Authorities")
 
@@ -216,9 +204,7 @@ def test_hostile_pipes_in_findings_detector_does_not_break_table():
     """Pipes inside finding ``detector`` strings must not break the table."""
     packet = dataclasses.replace(
         _empty_packet(),
-        findings=(
-            {"detector": "evil|detector|name", "confidence": "high|inj", "total_findings": 1},
-        ),
+        findings=({"detector": "evil|detector|name", "confidence": "high|inj", "total_findings": 1},),
     )
     md = _render(packet)
     section = _section(md, "Findings")
@@ -233,15 +219,11 @@ def test_hostile_pipes_in_changed_subject_does_not_break_table():
 
     packet = dataclasses.replace(
         _empty_packet(),
-        changed_subjects=(
-            EvidenceSubject(kind="symbol", qualified_name="src|file.py::evil|sym"),
-        ),
+        changed_subjects=(EvidenceSubject(kind="symbol", qualified_name="src|file.py::evil|sym"),),
     )
     md = _render(packet)
     section = _section(md, "Changed subjects (top 20)")
-    _assert_table_columns_consistent(
-        section, where="Changed subjects / hostile pipes"
-    )
+    _assert_table_columns_consistent(section, where="Changed subjects / hostile pipes")
     assert "src|file.py::evil|sym" not in md
 
 
@@ -266,9 +248,7 @@ def test_hostile_newlines_in_actor_id_collapse_to_single_line():
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / hostile newlines"
-    )
+    _assert_table_columns_consistent(section, where="Actors / hostile newlines")
     # The literal multi-line value must NOT appear verbatim. We accept
     # any one-line collapse (space-joined is what the renderer does).
     assert "line1\nline2" not in md
@@ -280,15 +260,11 @@ def test_hostile_newlines_in_finding_detector_collapse():
     """``\\n`` in finding ``detector`` must collapse, not split the row."""
     packet = dataclasses.replace(
         _empty_packet(),
-        findings=(
-            {"detector": "evil\ndetector\nname", "confidence": "high", "total_findings": 1},
-        ),
+        findings=({"detector": "evil\ndetector\nname", "confidence": "high", "total_findings": 1},),
     )
     md = _render(packet)
     section = _section(md, "Findings")
-    _assert_table_columns_consistent(
-        section, where="Findings / hostile newlines"
-    )
+    _assert_table_columns_consistent(section, where="Findings / hostile newlines")
     assert "evil\ndetector" not in md
 
 
@@ -298,15 +274,11 @@ def test_hostile_newlines_in_changed_subject_collapse():
 
     packet = dataclasses.replace(
         _empty_packet(),
-        changed_subjects=(
-            EvidenceSubject(kind="symbol", qualified_name="src.py\n::evil_sym"),
-        ),
+        changed_subjects=(EvidenceSubject(kind="symbol", qualified_name="src.py\n::evil_sym"),),
     )
     md = _render(packet)
     section = _section(md, "Changed subjects (top 20)")
-    _assert_table_columns_consistent(
-        section, where="Changed subjects / hostile newlines"
-    )
+    _assert_table_columns_consistent(section, where="Changed subjects / hostile newlines")
     assert "src.py\n::evil_sym" not in md
 
 
@@ -339,9 +311,7 @@ def test_hostile_html_in_display_name_is_inert():
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / hostile HTML"
-    )
+    _assert_table_columns_consistent(section, where="Actors / hostile HTML")
     # The HTML must not have grown extra column dividers.
     # And no premature section break.
     _assert_section_intact(md, target="Actors", follower="Authorities")
@@ -351,9 +321,7 @@ def test_hostile_html_in_finding_detector_is_inert():
     """HTML tags inside finding ``detector`` field must not break the table."""
     packet = dataclasses.replace(
         _empty_packet(),
-        findings=(
-            {"detector": "<script>alert(1)</script>", "confidence": "high", "total_findings": 1},
-        ),
+        findings=({"detector": "<script>alert(1)</script>", "confidence": "high", "total_findings": 1},),
     )
     md = _render(packet)
     section = _section(md, "Findings")
@@ -381,15 +349,11 @@ def test_hostile_markdown_link_injection_is_neutralised():
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / hostile markdown link"
-    )
+    _assert_table_columns_consistent(section, where="Actors / hostile markdown link")
     # The raw bracket+paren syntax must be escaped or substituted —
     # the literal ``[click me](javascript:alert(1))`` must not appear
     # as a working Markdown link.
-    assert "[click me](javascript:alert(1))" not in md, (
-        "Markdown link injection survived unescaped"
-    )
+    assert "[click me](javascript:alert(1))" not in md, "Markdown link injection survived unescaped"
 
 
 def test_hostile_markdown_link_in_authority_granted_by_is_neutralised():
@@ -408,9 +372,7 @@ def test_hostile_markdown_link_in_authority_granted_by_is_neutralised():
     )
     md = _render(packet)
     section = _section(md, "Authorities")
-    _assert_table_columns_consistent(
-        section, where="Authorities / hostile markdown link"
-    )
+    _assert_table_columns_consistent(section, where="Authorities / hostile markdown link")
     assert "[redacted](https://evil.example)" not in md
 
 
@@ -427,15 +389,11 @@ def test_hostile_control_chars_in_actor_id_are_stripped():
     raw_id = "evil\x00\x01\x07\x08\x0cinj"
     packet = dataclasses.replace(
         _empty_packet(),
-        actor_refs=(
-            ActorRef(actor_kind="agent", actor_id=raw_id),
-        ),
+        actor_refs=(ActorRef(actor_kind="agent", actor_id=raw_id),),
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / control chars"
-    )
+    _assert_table_columns_consistent(section, where="Actors / control chars")
     # Control chars must not survive into the rendered output.
     for bad in ("\x00", "\x01", "\x07", "\x08", "\x0c"):
         assert bad not in md, f"control char {bad!r} leaked into output"
@@ -457,9 +415,7 @@ def test_hostile_ansi_escape_in_display_name_is_stripped():
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / ANSI escape"
-    )
+    _assert_table_columns_consistent(section, where="Actors / ANSI escape")
     # The ESC byte (\x1b) must not survive into a buyer-facing report.
     assert "\x1b" not in md, "ANSI escape byte leaked into rendered output"
 
@@ -494,9 +450,7 @@ def test_hostile_markdown_header_in_display_name_not_promoted():
     # etc. We don't want ``## Injected Header`` to appear in that list.
     real_headings = [ln for ln in md.splitlines() if ln.startswith("## ")]
     injected = [ln for ln in real_headings if "Injected Header" in ln]
-    assert not injected, (
-        f"Injected Markdown header was promoted to a real heading: {injected}"
-    )
+    assert not injected, f"Injected Markdown header was promoted to a real heading: {injected}"
     # And the structure is still intact.
     _assert_section_intact(md, target="Actors", follower="Authorities")
 
@@ -515,13 +469,9 @@ def test_hostile_markdown_header_in_finding_field_not_promoted():
     )
     md = _render(packet)
     section = _section(md, "Findings")
-    _assert_table_columns_consistent(
-        section, where="Findings / hostile markdown header"
-    )
+    _assert_table_columns_consistent(section, where="Findings / hostile markdown header")
     real_headings = [ln for ln in md.splitlines() if ln.startswith("## ")]
-    injected = [
-        ln for ln in real_headings if "This breaks the section" in ln
-    ]
+    injected = [ln for ln in real_headings if "This breaks the section" in ln]
     assert not injected
     _assert_section_intact(md, target="Findings", follower="Tests")
 
@@ -538,22 +488,16 @@ def test_hostile_overlong_actor_id_is_truncated():
     huge = "x" * 10_000
     packet = dataclasses.replace(
         _empty_packet(),
-        actor_refs=(
-            ActorRef(actor_kind="agent", actor_id=huge),
-        ),
+        actor_refs=(ActorRef(actor_kind="agent", actor_id=huge),),
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / overlong value"
-    )
+    _assert_table_columns_consistent(section, where="Actors / overlong value")
     # The rendered value must be truncated. Bounded by the helper's
     # _MAX_CELL_LEN constant (200); we check the section body never
     # contains a 1 000-char single run of x's.
     huge_run = "x" * 1_000
-    assert huge_run not in md, (
-        "Overlong actor_id was not truncated (long x-run survived)"
-    )
+    assert huge_run not in md, "Overlong actor_id was not truncated (long x-run survived)"
 
 
 # ---------------------------------------------------------------------------
@@ -586,14 +530,10 @@ def test_hostile_empty_string_renders_sentinel_not_blank_cell():
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / whitespace-only display"
-    )
+    _assert_table_columns_consistent(section, where="Actors / whitespace-only display")
     # The empty-cell sentinel must appear so the reviewer sees the
     # absence rather than a silently-blank cell.
-    assert "<empty>" in section, (
-        "Whitespace-only display_name should render an <empty> sentinel"
-    )
+    assert "<empty>" in section, "Whitespace-only display_name should render an <empty> sentinel"
 
 
 # ---------------------------------------------------------------------------
@@ -617,9 +557,7 @@ def test_hostile_trailing_pipe_does_not_change_column_count():
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / trailing pipe"
-    )
+    _assert_table_columns_consistent(section, where="Actors / trailing pipe")
     # The literal trailing pipe must NOT appear.
     assert "agent:X|" not in md
     assert "Y|" not in md.split("---")[0]  # ignore the closing template line
@@ -652,9 +590,7 @@ def test_hostile_backticks_in_actor_id_do_not_break_code_span():
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / hostile backticks"
-    )
+    _assert_table_columns_consistent(section, where="Actors / hostile backticks")
     # The literal unescaped triple-backtick must NOT appear in the
     # display name (a fenced-code-block opener would inject a code
     # block into the report body).
@@ -675,9 +611,7 @@ def test_hostile_triple_backtick_in_finding_does_not_open_code_block():
     )
     md = _render(packet)
     section = _section(md, "Findings")
-    _assert_table_columns_consistent(
-        section, where="Findings / triple backtick"
-    )
+    _assert_table_columns_consistent(section, where="Findings / triple backtick")
     # The unmodified injection block must NOT appear verbatim — at
     # minimum the newlines must collapse to spaces, breaking the
     # fenced code block.
@@ -711,18 +645,14 @@ def test_hostile_rtl_override_is_made_visible():
     )
     md = _render(packet)
     section = _section(md, "Actors")
-    _assert_table_columns_consistent(
-        section, where="Actors / BIDI override"
-    )
+    _assert_table_columns_consistent(section, where="Actors / BIDI override")
     # The raw ‮ / ​ bytes must NOT survive into the output.
     assert "‮" not in md, "RTL override survived raw into report"
     assert "​" not in md, "Zero-width space survived raw into report"
     # And the visible codepoint marker must appear — so the reviewer
     # has a chance to see the manipulation. The marker format is
     # ``<U+XXXX>`` per the renderer's _collapse_to_line.
-    assert "U+202E" in md, (
-        "RTL override should be made visible as a <U+202E> marker"
-    )
+    assert "U+202E" in md, "RTL override should be made visible as a <U+202E> marker"
 
 
 # ---------------------------------------------------------------------------
@@ -774,9 +704,7 @@ def test_compound_hostile_packet_renders_valid_markdown():
                 qualified_name="src/foo.py::bad|\nname",
             ),
         ),
-        findings=(
-            {"detector": "evil|\ndetector", "confidence": "high|x", "total_findings": 1},
-        ),
+        findings=({"detector": "evil|\ndetector", "confidence": "high|x", "total_findings": 1},),
     )
     md = _render(packet)
 
@@ -789,9 +717,7 @@ def test_compound_hostile_packet_renders_valid_markdown():
         "Findings",
     ):
         section = _section(md, heading)
-        _assert_table_columns_consistent(
-            section, where=f"compound packet / {heading}"
-        )
+        _assert_table_columns_consistent(section, where=f"compound packet / {heading}")
 
     # All section headings present, in expected order.
     headings_order = [
@@ -807,12 +733,8 @@ def test_compound_hostile_packet_renders_valid_markdown():
         "Evidence limitations",
     ]
     indices = [md.find(f"## {h}") for h in headings_order]
-    assert all(i >= 0 for i in indices), (
-        f"missing headings — indices={dict(zip(headings_order, indices))}"
-    )
-    assert indices == sorted(indices), (
-        f"section order is wrong — got {dict(zip(headings_order, indices))}"
-    )
+    assert all(i >= 0 for i in indices), f"missing headings — indices={dict(zip(headings_order, indices))}"
+    assert indices == sorted(indices), f"section order is wrong — got {dict(zip(headings_order, indices))}"
     # And no injected header was promoted.
     real_headings = [ln for ln in md.splitlines() if ln.startswith("## ")]
     assert not any("Inj" in ln and ln.startswith("## ") for ln in real_headings)

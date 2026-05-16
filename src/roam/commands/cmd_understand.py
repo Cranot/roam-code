@@ -4,6 +4,13 @@ Naming-conventions detection delegates to the canonical helper in
 ``roam.commands.conventions_helper`` so this command, ``roam describe``,
 ``roam minimap``, ``roam preflight``, and ``roam conventions`` all agree
 on the same codebase.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because understand outputs are invocation-scoped comprehensive
+architecture envelopes — not per-location violations. Underlying
+detectors (health, smells, vibe-check) emit their own SARIF where it
+fits. See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket
+B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

@@ -49,7 +49,6 @@ from roam.runs.signing import (  # noqa: E402
     verify_chain,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -101,8 +100,7 @@ def test_first_event_uses_seed_signature(signed_project):
     key = ensure_ledger_key(signed_project)
     expected = compute_event_signature(SEED_SIGNATURE, parsed, key)
     assert parsed["signature"] == expected, (
-        f"first event signature should be HMAC over seed; "
-        f"got {parsed['signature']}, expected {expected}"
+        f"first event signature should be HMAC over seed; got {parsed['signature']}, expected {expected}"
     )
 
 
@@ -280,9 +278,7 @@ def test_verify_all_summarizes_multiple_runs(cli_runner, signed_project, monkeyp
     log_event(signed_project, meta3.run_id, action="edit", target="c")
 
     # All three are valid chains.
-    result = invoke_cli(
-        cli_runner, ["runs", "verify", "--all"], cwd=signed_project, json_mode=True
-    )
+    result = invoke_cli(cli_runner, ["runs", "verify", "--all"], cwd=signed_project, json_mode=True)
     data = parse_json_output(result, "runs-verify")
     assert_json_envelope(data, "runs-verify")
     summary = data["summary"]
@@ -373,8 +369,42 @@ def test_end_run_stamps_final_signature(signed_project):
     assert len(closed.final_signature) == 64
 
     # And it's persisted to disk.
-    raw = json.loads(
-        (run_dir(signed_project, meta.run_id) / "meta.json").read_text(encoding="utf-8")
-    )
+    raw = json.loads((run_dir(signed_project, meta.run_id) / "meta.json").read_text(encoding="utf-8"))
     assert raw["final_signature"] == closed.final_signature
     assert raw["event_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 13. W1091: runs verify --all populates next_commands on unsigned state
+# ---------------------------------------------------------------------------
+
+
+def test_verify_all_populates_next_commands_on_unsigned(cli_runner, signed_project, monkeypatch):
+    """W1091: when ``runs verify --all`` reports state=unsigned, the
+    agent_contract.next_commands list MUST be non-empty (LAW 4 — an empty
+    list is worse than omitting; agents need an actionable next step).
+    """
+    monkeypatch.chdir(signed_project)
+
+    # Bootstrap a run, then overwrite its events.jsonl with legacy unsigned
+    # events (same technique as test 6).
+    meta = start_run(signed_project, agent="claude-code")
+    events_path = run_dir(signed_project, meta.run_id) / "events.jsonl"
+    legacy_events = [
+        {"ts": "2026-01-01T00:00:00Z", "seq": 1, "action": "preflight"},
+        {"ts": "2026-01-01T00:00:01Z", "seq": 2, "action": "commit"},
+    ]
+    with events_path.open("w", encoding="utf-8") as fh:
+        for ev in legacy_events:
+            fh.write(json.dumps(ev, ensure_ascii=False, sort_keys=True) + "\n")
+
+    result = invoke_cli(cli_runner, ["runs", "verify", "--all"], cwd=signed_project, json_mode=True)
+    data = parse_json_output(result, "runs-verify")
+    assert_json_envelope(data, "runs-verify")
+    assert data["summary"]["state"] == "unsigned"
+
+    next_commands = data["agent_contract"]["next_commands"]
+    assert next_commands, "W1091: unsigned --all path must populate next_commands"
+    assert next_commands[0].startswith("roam "), (
+        f"W1091: next_commands[0] must be a copy-pasteable roam command, got: {next_commands[0]!r}"
+    )

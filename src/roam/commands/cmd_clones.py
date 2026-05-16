@@ -32,7 +32,6 @@ from roam.output.formatter import (
     to_json,
 )
 
-
 # W165 — Test / fixture / production bucketing for clones findings.
 #
 # The 212-eval dogfood corpus surfaced that ~250+ of the 584 clone findings
@@ -106,9 +105,7 @@ def _role_bucket_for_cluster(files: list[str]) -> str:
     """
     if not files:
         return "production"
-    test_sides = [
-        bool(f and (_is_test(f) or _is_fixture_path(f))) for f in files
-    ]
+    test_sides = [bool(f and (_is_test(f) or _is_fixture_path(f))) for f in files]
     if all(test_sides):
         return "test_intentional"
     if any(test_sides):
@@ -131,10 +128,7 @@ def _enrich_clones_findings_with_role_bucket(conn) -> int:
     pre-W89 schemas (no ``findings`` table) — silently returns 0.
     """
     try:
-        rows = conn.execute(
-            "SELECT id, evidence_json FROM findings "
-            "WHERE source_detector = 'clones'"
-        ).fetchall()
+        rows = conn.execute("SELECT id, evidence_json FROM findings WHERE source_detector = 'clones'").fetchall()
     except _sqlite3.OperationalError:
         # No findings table — caller still wants the clone_pairs path to
         # work, which it does. Nothing to enrich.
@@ -282,6 +276,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
     backlog).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -305,9 +300,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
         if exclude_tests or exclude_fixtures:
             kept_pairs = []
             for p in pairs:
-                if exclude_fixtures and (
-                    _is_fixture_path(p.file_a) or _is_fixture_path(p.file_b)
-                ):
+                if exclude_fixtures and (_is_fixture_path(p.file_a) or _is_fixture_path(p.file_b)):
                     continue
                 if exclude_tests:
                     bucket = _role_bucket_for_pair(p.file_a, p.file_b)
@@ -315,18 +308,14 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                         continue
                 kept_pairs.append(p)
 
-            kept_pair_keys = {
-                tuple(sorted((p.qname_a, p.qname_b))) for p in kept_pairs
-            }
+            kept_pair_keys = {tuple(sorted((p.qname_a, p.qname_b))) for p in kept_pairs}
 
             # Rebuild clusters: keep only members that participate in at
             # least one surviving pair (size>=2 after the filter).
             kept_clusters = []
             for c in clusters:
                 member_files = [m.get("file") or "" for m in c.members]
-                if exclude_fixtures and any(
-                    _is_fixture_path(f) for f in member_files
-                ):
+                if exclude_fixtures and any(_is_fixture_path(f) for f in member_files):
                     continue
                 if exclude_tests:
                     bucket = _role_bucket_for_cluster(member_files)
@@ -383,6 +372,57 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
         else:
             verdict = "No structural clones detected"
 
+        # -- SARIF format -----------------------------------------------------
+        # W1172: SARIF projection for CI / GitHub Code Scanning integration.
+        # Branches BEFORE by_file / json / text paths so those legacy paths
+        # stay byte-identical to pre-W1172 output. ``--sarif --by-file`` and
+        # ``--sarif --json`` both resolve to SARIF (CI-format consumers want
+        # the SARIF document; the by-file aggregation is a human-readable
+        # view that does not project onto SARIF's per-finding model).
+        if sarif_mode:
+            from roam.output.sarif import clones_to_sarif, write_sarif
+
+            cluster_values = [
+                {
+                    "cluster_id": c.cluster_id,
+                    "avg_similarity": c.avg_similarity,
+                    "size": len(c.members),
+                    "members": c.members,
+                    "pattern": c.pattern,
+                    "suggestion": c.suggestion,
+                    "role_bucket": _role_bucket_for_cluster([m.get("file") or "" for m in c.members]),
+                }
+                for c in clusters
+            ]
+            # Match the JSON-mode pair cap (50) so the SARIF document stays
+            # bounded on pathological clone-heavy repos. The cap is
+            # deterministic across modes.
+            pair_values = [
+                {
+                    "file_a": p.file_a,
+                    "func_a": p.func_a,
+                    "line_a": p.line_a,
+                    "file_b": p.file_b,
+                    "func_b": p.func_b,
+                    "line_b": p.line_b,
+                    "similarity": p.similarity,
+                    "role_bucket": _role_bucket_for_pair(p.file_a, p.file_b),
+                }
+                for p in pairs[:50]
+            ]
+            envelope = json_envelope(
+                "clones",
+                summary={
+                    "verdict": verdict,
+                    "clusters": len(clusters),
+                    "clone_pairs": total_pairs,
+                },
+                clusters=cluster_values,
+                pairs=pair_values,
+            )
+            click.echo(write_sarif(clones_to_sarif(envelope)))
+            return
+
         # aggregate clone pairs into (file_a, file_b) coupling.
         if by_file:
             file_pair_counts: dict[tuple[str, str], int] = {}
@@ -434,9 +474,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                     # not just on persisted findings rows. Agents that
                     # consume the live envelope can filter without going
                     # through the registry.
-                    "role_bucket": _role_bucket_for_cluster(
-                        [m.get("file") or "" for m in c.members]
-                    ),
+                    "role_bucket": _role_bucket_for_cluster([m.get("file") or "" for m in c.members]),
                 }
                 for c in clusters
             ]
@@ -500,8 +538,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             files = [m.get("file") or "" for m in c.members]
             cluster_bucket = _role_bucket_for_cluster(files)
             click.echo(
-                f"CLUSTER {c.cluster_id} -- {sim_pct}% similarity, "
-                f"{len(c.members)} functions [{cluster_bucket}]:"
+                f"CLUSTER {c.cluster_id} -- {sim_pct}% similarity, {len(c.members)} functions [{cluster_bucket}]:"
             )
             for m in c.members:
                 lines = m["line_end"] - m["line_start"] + 1

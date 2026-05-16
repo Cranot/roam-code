@@ -1,4 +1,16 @@
-"""Find critical paths through the call graph that have zero test protection."""
+"""Find critical paths through the call graph that have zero test protection.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because path-coverage outputs are invocation-scoped untested-
+path enumerations (call-graph chains from entry points with zero
+tested-by edges) — not per-location code violations. The output
+describes "absence of test edges" along a path, not a defect at a
+source coordinate; SARIF audiences scan for per-finding rule_id +
+region rows rather than diff-scoped coverage rollups. See ``cmd_test_gaps``
+for the parallel absence-of-edge disclosure pattern (W1230) +
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -494,9 +506,7 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
             # contract violation we want to surface, not silently bucket
             # into a new dict slot that downstream verdict math ignores.
             if key not in counts:
-                raise ValueError(
-                    f"unknown risk label: {key!r} (expected one of {sorted(counts)})"
-                )
+                raise ValueError(f"unknown risk label: {key!r} (expected one of {sorted(counts)})")
             counts[key] += 1
 
         untested_paths_count = counts["critical"] + counts["high"]

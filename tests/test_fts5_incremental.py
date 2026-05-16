@@ -20,7 +20,6 @@ import sqlite3
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixture: a minimal in-memory DB matching the production schema enough to
 # exercise the FTS5 sync path. We don't need the full index because B7 only
@@ -70,6 +69,7 @@ def synthetic_db(monkeypatch):
     # Disable the optional pieces — they're tested elsewhere and unrelated to
     # the incremental-sync property we care about here.
     import roam.search.index_embeddings as ie
+
     monkeypatch.setattr(ie, "build_and_store_tfidf", lambda c: None)
     monkeypatch.setattr(ie, "build_and_store_onnx_embeddings", lambda *a, **kw: None)
 
@@ -114,8 +114,7 @@ def test_incremental_handles_inserts_and_deletes(synthetic_db):
     sym_rowids = {r[0] for r in synthetic_db.execute("SELECT id FROM symbols")}
     fts_rowids = {r[0] for r in synthetic_db.execute("SELECT rowid FROM symbol_fts")}
     assert sym_rowids == fts_rowids, (
-        f"FTS5 out of sync after incremental: "
-        f"missing={sym_rowids - fts_rowids}, stale={fts_rowids - sym_rowids}"
+        f"FTS5 out of sync after incremental: missing={sym_rowids - fts_rowids}, stale={fts_rowids - sym_rowids}"
     )
 
 
@@ -159,9 +158,8 @@ def test_noop_incremental_issues_no_fts_writes(synthetic_db):
     # Wrap connection for the second build — should be all SELECT.
     counting = _CountingConn(synthetic_db)
     build_fts_index(counting)
-    assert counting.fts_writes == [], (
-        "no-op incremental should issue 0 INSERT/DELETE on symbol_fts; got: "
-        + str(counting.fts_writes)
+    assert counting.fts_writes == [], "no-op incremental should issue 0 INSERT/DELETE on symbol_fts; got: " + str(
+        counting.fts_writes
     )
 
 

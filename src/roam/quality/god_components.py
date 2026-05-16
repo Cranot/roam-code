@@ -49,7 +49,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-
 # Single-line label that should appear in every envelope reporting a
 # god-component count, under the key ``god_components_definition``.
 DEFINITION = (

@@ -70,9 +70,7 @@ class MemoryEntry:
         if self.kind not in VALID_KINDS:
             raise ValueError(f"invalid kind {self.kind!r}; expected one of {sorted(VALID_KINDS)}")
         if self.confidence not in VALID_CONFIDENCES:
-            raise ValueError(
-                f"invalid confidence {self.confidence!r}; expected one of {sorted(VALID_CONFIDENCES)}"
-            )
+            raise ValueError(f"invalid confidence {self.confidence!r}; expected one of {sorted(VALID_CONFIDENCES)}")
         if not isinstance(self.tags, list):
             raise ValueError("tags must be a list of strings")
         # Normalise relevance_signals shape so consumers don't have to

@@ -22,7 +22,6 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-
 # Canonical core-preset tools used as anchors. Picked from the
 # ``core`` preset definition in ``src/roam/mcp_server.py`` and
 # stable across recent sprints (W695 + W712 timeframe). If any of
@@ -75,8 +74,7 @@ def test_list_tools_lists_canonical_core_tools():
     assert result.exit_code == 0, result.output
     for tool_name in _CANONICAL_CORE_TOOLS:
         assert tool_name in result.output, (
-            f"canonical core tool {tool_name!r} missing from --list-tools "
-            f"output. Sample:\n{result.output[:600]}"
+            f"canonical core tool {tool_name!r} missing from --list-tools output. Sample:\n{result.output[:600]}"
         )
 
 
@@ -95,10 +93,7 @@ def test_list_tools_advertises_presets():
     assert "available presets" in result.output
     # Every preset key from _PRESETS must appear on that line.
     for preset_name in _PRESETS:
-        assert preset_name in result.output, (
-            f"preset {preset_name!r} not advertised in --list-tools "
-            f"output"
-        )
+        assert preset_name in result.output, f"preset {preset_name!r} not advertised in --list-tools output"
 
 
 def test_list_tools_entries_are_sorted_unique():
@@ -120,9 +115,7 @@ def test_list_tools_entries_are_sorted_unique():
         for line in result.output.splitlines()
         if line.startswith("  ") and line.strip().startswith("roam_")
     ]
-    assert len(tool_lines) > 0, (
-        f"no tool entries parsed from output:\n{result.output[:600]}"
-    )
+    assert len(tool_lines) > 0, f"no tool entries parsed from output:\n{result.output[:600]}"
     assert tool_lines == sorted(tool_lines), "tool entries not sorted"
     assert len(tool_lines) == len(set(tool_lines)), "duplicate tool entries"
 

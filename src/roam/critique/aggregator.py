@@ -100,18 +100,12 @@ def aggregate(
                 parts.append(f"{skipped_count} skipped")
             if errored_count:
                 parts.append(f"{errored_count} errored")
-            verdict = (
-                f"0 concerns from {ran_count} of {total_checks} checks"
-                f" ({', '.join(parts)})"
-            )
+            verdict = f"0 concerns from {ran_count} of {total_checks} checks ({', '.join(parts)})"
         else:
             verdict = "No concerns from roam critique"
     else:
         sev_parts = [f"{n} {sev}" for sev, n in breakdown.items() if n > 0]
-        verdict = (
-            f"{len(sorted_findings)} finding{'s' if len(sorted_findings) != 1 else ''}"
-            f" ({', '.join(sev_parts)})"
-        )
+        verdict = f"{len(sorted_findings)} finding{'s' if len(sorted_findings) != 1 else ''} ({', '.join(sev_parts)})"
         # Findings PLUS a partial state — annotate so the consumer can
         # tell "3 findings, 1 check skipped" apart from "3 findings,
         # everything ran". Avoid clobbering the severity-breakdown

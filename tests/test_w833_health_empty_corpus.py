@@ -20,7 +20,6 @@ import pytest
 
 from tests.conftest import git_init, invoke_cli
 
-
 # ---------------------------------------------------------------------------
 # Fixture: a git-init'd project with an empty Python file (zero symbols).
 # ---------------------------------------------------------------------------
@@ -78,9 +77,7 @@ _REQUIRED_EMPTY_FRAGMENTS = (
 class TestHealthEmptyCorpus:
     """W833 — roam health on an empty corpus must not claim healthy."""
 
-    def test_envelope_shape_and_no_silent_healthy(
-        self, cli_runner, empty_corpus_project, monkeypatch
-    ):
+    def test_envelope_shape_and_no_silent_healthy(self, cli_runner, empty_corpus_project, monkeypatch):
         """The single high-leverage assertion bundle.
 
         Asserts:
@@ -97,22 +94,18 @@ class TestHealthEmptyCorpus:
         # init must succeed even on an empty corpus; if it fails the rest
         # of the test is moot.
         assert init_result.exit_code == 0, (
-            f"roam init failed on empty corpus (exit {init_result.exit_code}):\n"
-            f"{init_result.output}"
+            f"roam init failed on empty corpus (exit {init_result.exit_code}):\n{init_result.output}"
         )
 
         # 2) health --json
-        result = invoke_cli(
-            cli_runner, ["--json", "health"], cwd=empty_corpus_project
-        )
+        result = invoke_cli(cli_runner, ["--json", "health"], cwd=empty_corpus_project)
 
         # Exit code: 0 is the expected success path. If health on empty
         # corpus is treated as a gate-fail (non-zero exit), the structured
         # envelope must still parse — Pattern 1 variant B.
         # Tolerate either, but record the behavior for posterity.
         assert result.exit_code in (0, 1, 5), (
-            f"Unexpected exit code {result.exit_code} from health on empty corpus:\n"
-            f"{result.output}"
+            f"Unexpected exit code {result.exit_code} from health on empty corpus:\n{result.output}"
         )
 
         # Envelope must parse — Pattern 1 variant B/C: structured signal
@@ -121,26 +114,17 @@ class TestHealthEmptyCorpus:
         try:
             env = _json.loads(raw)
         except _json.JSONDecodeError as e:
-            pytest.fail(
-                f"health --json on empty corpus emitted non-JSON output: {e}\n"
-                f"First 500 chars:\n{raw[:500]}"
-            )
+            pytest.fail(f"health --json on empty corpus emitted non-JSON output: {e}\nFirst 500 chars:\n{raw[:500]}")
 
         # Envelope contract
         assert isinstance(env, dict), f"envelope must be dict, got {type(env)}"
-        assert env.get("command") == "health", (
-            f"command field should be 'health', got {env.get('command')!r}"
-        )
+        assert env.get("command") == "health", f"command field should be 'health', got {env.get('command')!r}"
         summary = env.get("summary")
-        assert isinstance(summary, dict), (
-            f"summary must be a dict, got {type(summary)}"
-        )
+        assert isinstance(summary, dict), f"summary must be a dict, got {type(summary)}"
 
         # --- Verdict assertions (the heart of W833) ---
         verdict = summary.get("verdict")
-        assert isinstance(verdict, str) and verdict, (
-            f"summary.verdict must be a non-empty string, got {verdict!r}"
-        )
+        assert isinstance(verdict, str) and verdict, f"summary.verdict must be a non-empty string, got {verdict!r}"
         verdict_lower = verdict.lower()
 
         # Pattern 2 forbidden-fragment blacklist — health MUST NOT claim
@@ -164,8 +148,7 @@ class TestHealthEmptyCorpus:
         score = summary.get("health_score")
         if score is not None:
             assert score < 80, (
-                f"health_score={score} on empty corpus is a Pattern 2 "
-                f"silent fallback (>=80 implies healthy)."
+                f"health_score={score} on empty corpus is a Pattern 2 silent fallback (>=80 implies healthy)."
             )
 
         # --- Severity counts present + consistent ---
@@ -173,9 +156,7 @@ class TestHealthEmptyCorpus:
         # on an empty corpus.
         severity = summary.get("severity")
         if severity is not None:
-            assert isinstance(severity, dict), (
-                f"summary.severity should be dict, got {type(severity)}"
-            )
+            assert isinstance(severity, dict), f"summary.severity should be dict, got {type(severity)}"
             total = sum(v for v in severity.values() if isinstance(v, int))
             assert total == 0, (
                 f"empty corpus has zero symbols; severity counts should "
@@ -193,8 +174,7 @@ class TestHealthEmptyCorpus:
                 "partial-success state for zero-symbol corpora)."
             )
         assert summary["partial_success"] is True, (
-            f"summary.partial_success should be True on empty corpus, "
-            f"got {summary['partial_success']!r}"
+            f"summary.partial_success should be True on empty corpus, got {summary['partial_success']!r}"
         )
 
         # --- facts / agent_contract non-empty ---
@@ -204,6 +184,5 @@ class TestHealthEmptyCorpus:
         if contract is not None:
             facts = contract.get("facts")
             assert isinstance(facts, list) and facts, (
-                f"agent_contract.facts must be a non-empty list on empty "
-                f"corpus, got {facts!r}"
+                f"agent_contract.facts must be a non-empty list on empty corpus, got {facts!r}"
             )

@@ -37,7 +37,6 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.index.parser import _preprocess_vue
 
-
 # ---------------------------------------------------------------------------
 # Test fixtures
 # ---------------------------------------------------------------------------
@@ -102,11 +101,7 @@ def vue_project(tmp_path):
 
     composables = src / "composables"
     composables.mkdir()
-    (composables / "useFoo.ts").write_text(
-        "export function useFoo(seed: number) {\n"
-        "  return { value: seed * 2 };\n"
-        "}\n"
-    )
+    (composables / "useFoo.ts").write_text("export function useFoo(seed: number) {\n  return { value: seed * 2 };\n}\n")
 
     components = src / "components"
     components.mkdir()
@@ -125,7 +120,7 @@ def vue_project(tmp_path):
     (components / "Foo.vue").write_text(
         "<template>\n"
         '  <div class="foo">\n'
-        "    <Bar :label=\"label\" />\n"
+        '    <Bar :label="label" />\n'
         "    <span>{{ doubled }}</span>\n"
         "  </div>\n"
         "</template>\n"
@@ -142,11 +137,7 @@ def vue_project(tmp_path):
     )
 
     # TemplateOnly.vue exercises the "no script block" path.
-    (components / "TemplateOnly.vue").write_text(
-        "<template>\n"
-        "  <p>no script here</p>\n"
-        "</template>\n"
-    )
+    (components / "TemplateOnly.vue").write_text("<template>\n  <p>no script here</p>\n</template>\n")
 
     _git_init(proj)
     result = _run_index(proj)
@@ -177,12 +168,7 @@ class TestVueScriptBlockExtraction:
         assert lang == "typescript"
 
     def test_classic_script_extracted(self):
-        source = (
-            b"<template><div /></template>\n"
-            b"<script>\n"
-            b"export default { name: 'X' }\n"
-            b"</script>\n"
-        )
+        source = b"<template><div /></template>\n<script>\nexport default { name: 'X' }\n</script>\n"
         processed, lang = _preprocess_vue(source)
         text = processed.decode("utf-8")
         assert "export default" in text
@@ -223,9 +209,7 @@ def test_vue_imports_indexed(vue_project):
         os.chdir(str(vue_project))
         with open_db(readonly=True) as conn:
             # Foo.vue file is in the index
-            row = conn.execute(
-                "SELECT path, language FROM files WHERE path LIKE '%Foo.vue'"
-            ).fetchone()
+            row = conn.execute("SELECT path, language FROM files WHERE path LIKE '%Foo.vue'").fetchone()
             assert row is not None, "Foo.vue not indexed"
             assert row["language"] == "vue"
 
@@ -266,6 +250,7 @@ def test_orphan_imports_no_longer_false_positive_on_vue_imports(vue_project):
     # No orphan should reference Bar.vue or useFoo (they both resolve).
     def _mod(o):
         return o.get("value", o).get("module", "")
+
     bad = [o for o in orphans if "Bar.vue" in _mod(o) or "useFoo" in _mod(o)]
     assert not bad, f"false-positive orphan(s) flagged for Vue imports: {bad}"
 
@@ -305,9 +290,7 @@ def test_vue_file_with_no_script_block_handled(vue_project):
     assert r2.exit_code == 0, f"verify-imports crashed: {r2.output}"
 
     # Double-check via parser API directly.
-    processed, lang = _preprocess_vue(
-        b"<template>\n  <p>no script</p>\n</template>\n"
-    )
+    processed, lang = _preprocess_vue(b"<template>\n  <p>no script</p>\n</template>\n")
     # No <script> content → processed body is just blanked-out template
     # lines and lang stays at the default 'javascript'.
     assert lang == "javascript"

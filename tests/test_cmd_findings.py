@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import os
 
-import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
@@ -46,13 +45,9 @@ def _seed_repo_and_index(tmp_path):
         cwd=str(proj),
         capture_output=True,
     )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"], cwd=str(proj), capture_output=True
-    )
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(proj), capture_output=True)
     subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=str(proj), capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(proj), capture_output=True)
 
     runner = CliRunner()
     old_cwd = os.getcwd()
@@ -174,13 +169,77 @@ def test_findings_list_filter_by_detector(tmp_path):
         )
         conn.commit()
 
-    result, parsed = _run(
-        ["--json", "findings", "list", "--detector", "alpha"], cwd=proj
-    )
+    result, parsed = _run(["--json", "findings", "list", "--detector", "alpha"], cwd=proj)
     assert result.exit_code == 0, result.output
     assert parsed is not None
     assert parsed["summary"]["total_findings"] == 1
     assert parsed["findings"][0]["source_detector"] == "alpha"
+
+
+def test_findings_list_unknown_detector_suggests_close_match_json(tmp_path):
+    """W1066: unknown --detector with a close match emits ``did_you_mean``.
+
+    Mirrors the W1064 ``--only/--exclude`` precedent on ``roam math``:
+    when a typo lands within difflib cutoff 0.6 of a registered detector,
+    the JSON envelope's summary carries a ``did_you_mean`` list AND
+    ``agent_contract.facts`` names the closest match.
+    """
+    proj = _seed_repo_and_index(tmp_path)
+    with open_db(readonly=False, project_root=proj) as conn:
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="clones:sym:1",
+                subject_kind="symbol",
+                claim="clones finding",
+                source_detector="clones",
+            ),
+        )
+        conn.commit()
+
+    # "cloens" is one transposition from "clones" — well inside cutoff 0.6.
+    result, parsed = _run(["--json", "findings", "list", "--detector", "cloens"], cwd=proj)
+    assert result.exit_code == 0, result.output
+    assert parsed is not None
+    summary = parsed["summary"]
+    assert summary["state"] == "unknown_detector"
+    assert summary["partial_success"] is True
+    assert "did_you_mean" in summary, summary
+    assert "clones" in summary["did_you_mean"]
+    # Closest-match also surfaces on the agent contract.
+    facts = parsed.get("agent_contract", {}).get("facts", [])
+    assert any("closest match" in f for f in facts), facts
+
+
+def test_findings_list_unknown_detector_no_close_match_omits_field(tmp_path):
+    """W1066: with no close match, the envelope stays byte-identical to pre-W1066.
+
+    ``did_you_mean`` MUST be absent (not present-and-empty) when no
+    registered detector is within cutoff 0.6 of the user input. The
+    facts list MUST NOT include a closest-match line.
+    """
+    proj = _seed_repo_and_index(tmp_path)
+    with open_db(readonly=False, project_root=proj) as conn:
+        emit_finding(
+            conn,
+            FindingRecord(
+                finding_id_str="clones:sym:1",
+                subject_kind="symbol",
+                claim="clones finding",
+                source_detector="clones",
+            ),
+        )
+        conn.commit()
+
+    # "zzzzzzzz" is nowhere near "clones" — well outside cutoff 0.6.
+    result, parsed = _run(["--json", "findings", "list", "--detector", "zzzzzzzz"], cwd=proj)
+    assert result.exit_code == 0, result.output
+    assert parsed is not None
+    summary = parsed["summary"]
+    assert summary["state"] == "unknown_detector"
+    assert "did_you_mean" not in summary, summary
+    facts = parsed.get("agent_contract", {}).get("facts", [])
+    assert not any("closest match" in f for f in facts), facts
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +250,7 @@ def test_findings_list_filter_by_detector(tmp_path):
 def test_findings_show_missing_id_json(tmp_path):
     """Unknown id under --json → envelope with state=unknown_finding, exit 2."""
     proj = _seed_repo_and_index(tmp_path)
-    result, parsed = _run(
-        ["--json", "findings", "show", "does-not-exist"], cwd=proj
-    )
+    result, parsed = _run(["--json", "findings", "show", "does-not-exist"], cwd=proj)
     assert result.exit_code == 2
     assert parsed is not None
     assert parsed["summary"]["state"] == "unknown_finding"
@@ -218,9 +275,7 @@ def test_findings_show_existing(tmp_path):
         )
         conn.commit()
 
-    result, parsed = _run(
-        ["--json", "findings", "show", "alpha:sym:abc"], cwd=proj
-    )
+    result, parsed = _run(["--json", "findings", "show", "alpha:sym:abc"], cwd=proj)
     assert result.exit_code == 0, result.output
     assert parsed is not None
     assert parsed["summary"]["state"] == "found"

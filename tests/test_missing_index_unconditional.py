@@ -157,13 +157,9 @@ def test_unconditional_wherein_leads(cli_runner, tmp_path, monkeypatch):
 
     f = composite[0]
     cols = f["columns"]
-    assert cols[0] == "employee_id", (
-        f"Expected employee_id (unconditional whereIn) to LEAD, got: {cols}"
-    )
+    assert cols[0] == "employee_id", f"Expected employee_id (unconditional whereIn) to LEAD, got: {cols}"
     # Conditional cols come after employee_id
-    assert set(cols) >= {"employee_id", "status", "form_type"}, (
-        f"Expected all three cols in suggestion, got: {cols}"
-    )
+    assert set(cols) >= {"employee_id", "status", "form_type"}, f"Expected all three cols in suggestion, got: {cols}"
     # Verify the classification of employee_id is 'unconditional'
     co = {entry["column"]: entry["classification"] for entry in f["column_ordering"]}
     assert co["employee_id"] == "unconditional", co
@@ -218,22 +214,16 @@ def test_unconditional_where_leads(cli_runner, tmp_path, monkeypatch):
 
     f = composite[0]
     cols = f["columns"]
-    assert cols[0] == "company_id", (
-        f"Expected company_id (unconditional where) to LEAD, got: {cols}"
-    )
+    assert cols[0] == "company_id", f"Expected company_id (unconditional where) to LEAD, got: {cols}"
     # due_date is the orderBy — must be last
-    assert cols[-1] == "due_date", (
-        f"Expected due_date (orderBy) to TRAIL, got: {cols}"
-    )
+    assert cols[-1] == "due_date", f"Expected due_date (orderBy) to TRAIL, got: {cols}"
     # Conditional columns sit between
     assert "status" in cols and "priority" in cols and "type" in cols, cols
     company_idx = cols.index("company_id")
     due_idx = cols.index("due_date")
     for cc in ("status", "priority", "type"):
         cidx = cols.index(cc)
-        assert company_idx < cidx < due_idx, (
-            f"Expected {cc} between company_id and due_date, got: {cols}"
-        )
+        assert company_idx < cidx < due_idx, f"Expected {cc} between company_id and due_date, got: {cols}"
 
 
 # ===========================================================================
@@ -325,9 +315,7 @@ def test_pure_conditional_query_ranks_as_before(cli_runner, tmp_path, monkeypatc
     f = composite[0]
     cols = f["columns"]
     # Source order is preserved within a single classification bucket.
-    assert cols == ["status", "form_type", "priority"], (
-        f"Expected source order for pure-conditional query, got: {cols}"
-    )
+    assert cols == ["status", "form_type", "priority"], f"Expected source order for pure-conditional query, got: {cols}"
     # All three classified as conditional.
     for entry in f["column_ordering"]:
         assert entry["classification"] == "conditional", entry
@@ -413,10 +401,7 @@ def test_recommendation_envelope_includes_rationale(cli_runner, tmp_path, monkey
     # "leading" (i.e., explain WHY it leads).
     first = co_list[0]
     assert first["column"] == "employee_id", first
-    assert (
-        "unconditional" in first["rationale"].lower()
-        or "leading" in first["rationale"].lower()
-    ), first
+    assert "unconditional" in first["rationale"].lower() or "leading" in first["rationale"].lower(), first
 
     # The ranking_explanation should mention every column in order.
     cols_in_order = [e["column"] for e in co_list]
@@ -424,7 +409,5 @@ def test_recommendation_envelope_includes_rationale(cli_runner, tmp_path, monkey
     last_pos = -1
     for c in cols_in_order:
         idx = expl.find(c)
-        assert idx > last_pos, (
-            f"Expected {c} to appear after the previous column in: {expl!r}"
-        )
+        assert idx > last_pos, f"Expected {c} to appear after the previous column in: {expl!r}"
         last_pos = idx

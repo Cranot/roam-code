@@ -42,9 +42,7 @@ def class_method_project(tmp_path):
     proj = tmp_path / "cmproj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "helpers.py").write_text(
-        "def emit(x):\n    return str(x)\n\ndef stamp():\n    return 1\n"
-    )
+    (proj / "helpers.py").write_text("def emit(x):\n    return str(x)\n\ndef stamp():\n    return 1\n")
     # Top-level helper BEFORE the class — this is the symbol that
     # ``syms[0]`` would mis-attribute to.
     (proj / "worker.py").write_text(
@@ -83,9 +81,7 @@ def test_method_call_edges_attributed_to_method_not_first_symbol(class_method_pr
             "WHERE f.path='worker.py' ORDER BY s.line_start"
         ).fetchall()
         by_name = {r["name"]: r for r in rows}
-        assert "_format" in by_name and "run" in by_name, (
-            f"expected both symbols indexed, got {sorted(by_name)}"
-        )
+        assert "_format" in by_name and "run" in by_name, f"expected both symbols indexed, got {sorted(by_name)}"
         run_sym = by_name["run"]
         format_sym = by_name["_format"]
 
@@ -94,27 +90,20 @@ def test_method_call_edges_attributed_to_method_not_first_symbol(class_method_pr
 
         # Count edges sourced from each.
         emit_to_run = conn.execute(
-            "SELECT COUNT(*) FROM edges e JOIN symbols t ON e.target_id=t.id "
-            "WHERE e.source_id=? AND t.name='emit'",
+            "SELECT COUNT(*) FROM edges e JOIN symbols t ON e.target_id=t.id WHERE e.source_id=? AND t.name='emit'",
             (run_sym["id"],),
         ).fetchone()[0]
         stamp_to_run = conn.execute(
-            "SELECT COUNT(*) FROM edges e JOIN symbols t ON e.target_id=t.id "
-            "WHERE e.source_id=? AND t.name='stamp'",
+            "SELECT COUNT(*) FROM edges e JOIN symbols t ON e.target_id=t.id WHERE e.source_id=? AND t.name='stamp'",
             (run_sym["id"],),
         ).fetchone()[0]
         # Pre-W708: these counts would be 0 (the edges go to _format instead).
-        assert emit_to_run >= 1, (
-            "Worker.run -> emit edge missing; pre-W708 it was mis-attributed to _format"
-        )
-        assert stamp_to_run >= 1, (
-            "Worker.run -> stamp edge missing; pre-W708 it was mis-attributed to _format"
-        )
+        assert emit_to_run >= 1, "Worker.run -> emit edge missing; pre-W708 it was mis-attributed to _format"
+        assert stamp_to_run >= 1, "Worker.run -> stamp edge missing; pre-W708 it was mis-attributed to _format"
 
         # _format should NOT have absorbed these edges.
         format_edges = conn.execute(
-            "SELECT t.name FROM edges e JOIN symbols t ON e.target_id=t.id "
-            "WHERE e.source_id=?",
+            "SELECT t.name FROM edges e JOIN symbols t ON e.target_id=t.id WHERE e.source_id=?",
             (format_sym["id"],),
         ).fetchall()
         format_targets = {r["name"] for r in format_edges}
@@ -155,12 +144,8 @@ def test_call_edges_originate_inside_symbol_body(class_method_project):
             """
         ).fetchall()
         # On this fixture there should be NO non-import violations.
-        assert not violations, (
-            "edge.line outside source-symbol body: "
-            + "; ".join(
-                f"{v['src']} L{v['ls']}-{v['le']} ref_line={v['rl']} kind={v['ek']} -> {v['tgt']}"
-                for v in violations
-            )
+        assert not violations, "edge.line outside source-symbol body: " + "; ".join(
+            f"{v['src']} L{v['ls']}-{v['le']} ref_line={v['rl']} kind={v['ek']} -> {v['tgt']}" for v in violations
         )
 
 
@@ -181,9 +166,7 @@ def test_module_scope_imports_not_attributed_to_first_symbol(tmp_path):
     proj = tmp_path / "w742_proj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "other.py").write_text(
-        "def callee():\n    return 42\n"
-    )
+    (proj / "other.py").write_text("def callee():\n    return 42\n")
     # Module-scope imports BEFORE the first function. Pre-W742 these
     # would attribute to ``_helper`` as syms[0].
     (proj / "main.py").write_text(
@@ -206,8 +189,7 @@ def test_module_scope_imports_not_attributed_to_first_symbol(tmp_path):
 
     with open_db(readonly=True, project_root=proj) as conn:
         helper = conn.execute(
-            "SELECT s.id FROM symbols s JOIN files f ON s.file_id=f.id "
-            "WHERE f.path='main.py' AND s.name='_helper'"
+            "SELECT s.id FROM symbols s JOIN files f ON s.file_id=f.id WHERE f.path='main.py' AND s.name='_helper'"
         ).fetchone()
         assert helper is not None, "expected _helper to be indexed"
 
@@ -218,8 +200,7 @@ def test_module_scope_imports_not_attributed_to_first_symbol(tmp_path):
             (helper["id"],),
         ).fetchone()[0]
         assert helper_imports == 0, (
-            f"_helper absorbed {helper_imports} phantom import edges; "
-            "this is the W742 mis-attribution regression."
+            f"_helper absorbed {helper_imports} phantom import edges; this is the W742 mis-attribution regression."
         )
 
 
@@ -234,9 +215,7 @@ def test_all_symbol_rows_carry_line_end(tmp_path):
     proj = tmp_path / "lineend_proj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "m.py").write_text(
-        "def a():\n    return 1\n\nclass C:\n    def b(self):\n        return 2\n"
-    )
+    (proj / "m.py").write_text("def a():\n    return 1\n\nclass C:\n    def b(self):\n        return 2\n")
     git_init(proj)
     out, rc = index_in_process(proj)
     assert rc == 0, out
@@ -249,13 +228,11 @@ def test_all_symbol_rows_carry_line_end(tmp_path):
 
     with open_db(readonly=True, project_root=proj) as conn:
         rows = conn.execute(
-            "SELECT name, kind, line_start, line_end FROM symbols "
-            "WHERE kind IN ('function','method')"
+            "SELECT name, kind, line_start, line_end FROM symbols WHERE kind IN ('function','method')"
         ).fetchall()
         for r in rows:
             assert r["line_end"] is not None, (
-                f"symbol {r['name']!r} ({r['kind']}) has NULL line_end; "
-                "the extractor should always populate it."
+                f"symbol {r['name']!r} ({r['kind']}) has NULL line_end; the extractor should always populate it."
             )
             assert r["line_end"] >= r["line_start"], (
                 f"symbol {r['name']!r} has line_end {r['line_end']} < line_start {r['line_start']}"

@@ -39,17 +39,11 @@ class EvidenceLink:
 
     def __post_init__(self) -> None:
         if self.kind not in LINK_KINDS:
-            raise ValueError(
-                f"EvidenceLink.kind={self.kind!r} is not in LINK_KINDS"
-            )
+            raise ValueError(f"EvidenceLink.kind={self.kind!r} is not in LINK_KINDS")
         if not isinstance(self.source, EvidenceSubject):
-            raise ValueError(
-                "EvidenceLink.source must be an EvidenceSubject"
-            )
+            raise ValueError("EvidenceLink.source must be an EvidenceSubject")
         if not isinstance(self.target, EvidenceSubject):
-            raise ValueError(
-                "EvidenceLink.target must be an EvidenceSubject"
-            )
+            raise ValueError("EvidenceLink.target must be an EvidenceSubject")
 
 
 __all__ = ["EvidenceLink"]

@@ -3,6 +3,12 @@
 Walks snapshot history and ranks snapshots by the magnitude of metric
 changes between consecutive snapshots. Identifies commits that caused
 the biggest structural regressions.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because bisect outputs are invocation-scoped commit rankings
+(time-series analysis) — not per-code-location violations. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1197-audit memo.
 """
 
 from __future__ import annotations

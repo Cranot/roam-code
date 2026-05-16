@@ -1,4 +1,16 @@
-"""Verify import statements against the indexed symbol table (hallucination firewall)."""
+"""Verify import statements against the indexed symbol table (hallucination firewall).
+
+W1229: SARIF is deliberately surfaced via the global ``--sarif`` flag.
+cmd_verify_imports emits per-import rows (each carrying ``file`` / ``line``
+/ ``name`` / ``status`` / ``suggestions``) which the
+:func:`roam.output.sarif.verify_imports_to_sarif` projection maps onto two
+closed-enum rule ids — ``invalid-import`` (unresolved with fuzzy-match
+candidates; warning band) and ``hallucination-import`` (unresolved with no
+candidates; error band — the canonical hallucination-firewall signal for
+LLM-generated code). See W1229 audit (Wave 15) + the SHIP path in
+:mod:`tests.test_sarif_disclosure_coverage` (cmd_verify_imports removed
+from ``_KNOWN_MISSING``).
+"""
 
 from __future__ import annotations
 
@@ -472,7 +484,14 @@ def verify_imports(
     requires_index=True,
 )
 @click.command("verify-imports")
-@click.option("--file", "file_path", default=None, help="Restrict verification to a single file path.")
+@click.option("--path", "file_path", default=None, help="Restrict verification to a single file path.")
+@click.option(
+    "--file",
+    "file_path",
+    default=None,
+    hidden=True,
+    help="Deprecated alias for --path. Retained for backward compatibility.",
+)
 @click.pass_context
 def verify_imports_cmd(ctx, file_path):
     """Validate import/require statements against the indexed symbol table.
@@ -486,6 +505,7 @@ def verify_imports_cmd(ctx, file_path):
     imports.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -493,6 +513,38 @@ def verify_imports_cmd(ctx, file_path):
 
     with open_db(readonly=True) as conn:
         result = verify_imports(conn, project_root, file_filter=file_path)
+
+        # --- SARIF output (W1229) ------------------------------------------
+        # SARIF surfaces the closed-enum classification rule catalogue
+        # (invalid-import / hallucination-import) even on a clean scan so
+        # CI consumers see the rule vocabulary regardless of whether any
+        # import fired. ``resolved`` rows are filtered upstream by
+        # ``verify_imports_to_sarif`` (not actionable). Language is
+        # stamped onto each row inside this branch so the SARIF message
+        # body can prefix the imported name with the producer's
+        # ``language`` column (the JSON envelope keeps the per-import
+        # record compact and elides the language field — only the SARIF
+        # branch consumes it).
+        if sarif_mode:
+            from roam.output.sarif import verify_imports_to_sarif, write_sarif
+
+            sarif_findings: list[dict] = []
+            for i in result["imports"]:
+                if i.get("status") != "unresolved":
+                    continue
+                lang = _get_file_language(conn, i["file"]) or ""
+                sarif_findings.append(
+                    {
+                        "file": i["file"],
+                        "line": i["line"],
+                        "name": i["name"],
+                        "status": i["status"],
+                        "language": lang,
+                        "suggestions": i.get("suggestions", []),
+                    }
+                )
+            click.echo(write_sarif(verify_imports_to_sarif(sarif_findings)))
+            return
 
     imports = result["imports"]
     total = result["total"]

@@ -268,8 +268,7 @@ class TestVerification:
         )
         # Path-segment with ``@`` (npm-style scoped package).
         assert (
-            _strip_url_credentials("https://registry.npmjs.org/@scope/pkg")
-            == "https://registry.npmjs.org/@scope/pkg"
+            _strip_url_credentials("https://registry.npmjs.org/@scope/pkg") == "https://registry.npmjs.org/@scope/pkg"
         )
         # Combined: real userinfo PLUS ``@`` later in path — strip
         # the userinfo only, leave the path alone.

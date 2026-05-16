@@ -25,7 +25,6 @@ These tests pin both invariants:
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Helper: parse Python source and extract symbols + references via the AST
 # ---------------------------------------------------------------------------
@@ -261,8 +260,8 @@ def test_orphan_imports_scanner_no_phantom_or_on_pytest_fixtures():
     ``src/roam/index/pytest_fixtures.py``, and assert no orphan
     has ``module == 'or'``.
     """
-    from pathlib import Path
     import sqlite3
+    from pathlib import Path
 
     repo_root = Path(__file__).resolve().parent.parent
     target = repo_root / "src" / "roam" / "index" / "pytest_fixtures.py"
@@ -293,12 +292,8 @@ def test_orphan_imports_scanner_no_phantom_or_on_pytest_fixtures():
         _os.chdir(cwd_before)
 
     flagged = [
-        (o.get("module"), o.get("line"))
-        for o in orphans
-        if (o.get("file") or "").endswith("pytest_fixtures.py")
+        (o.get("module"), o.get("line")) for o in orphans if (o.get("file") or "").endswith("pytest_fixtures.py")
     ]
     # W149 phantom MUST NOT appear.
     assert ("or", 5) not in flagged
-    assert all(m != "or" for m, _ln in flagged), (
-        f"phantom 'or' import still surfaced for pytest_fixtures.py: {flagged}"
-    )
+    assert all(m != "or" for m, _ln in flagged), f"phantom 'or' import still surfaced for pytest_fixtures.py: {flagged}"

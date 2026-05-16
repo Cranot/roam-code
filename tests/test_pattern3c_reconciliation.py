@@ -31,7 +31,6 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process, invoke_cli, parse_json_output
 
-
 # ===========================================================================
 # Fixtures
 # ===========================================================================
@@ -52,20 +51,8 @@ def cyclic_project(tmp_path):
     repo = tmp_path / "cycp"
     repo.mkdir()
     (repo / ".gitignore").write_text(".roam/\n")
-    (repo / "a.py").write_text(
-        "from b import beta\n"
-        "\n"
-        "\n"
-        "def alpha():\n"
-        "    return beta()\n"
-    )
-    (repo / "b.py").write_text(
-        "from a import alpha\n"
-        "\n"
-        "\n"
-        "def beta():\n"
-        "    return alpha()\n"
-    )
+    (repo / "a.py").write_text("from b import beta\n\n\ndef alpha():\n    return beta()\n")
+    (repo / "b.py").write_text("from a import alpha\n\n\ndef beta():\n    return alpha()\n")
     # A handful of "public" symbols so api and docs-coverage have content
     # to count without overflowing into noise.
     (repo / "api_mod.py").write_text(
@@ -101,9 +88,7 @@ def cyclic_project(tmp_path):
 
 
 class TestCyclesReconciliation:
-    def test_cycles_count_agrees_across_commands(
-        self, cli_runner, cyclic_project, monkeypatch
-    ):
+    def test_cycles_count_agrees_across_commands(self, cli_runner, cyclic_project, monkeypatch):
         """health, describe, agent-export must report the same canonical cycle counts."""
         monkeypatch.chdir(cyclic_project)
 
@@ -137,7 +122,7 @@ class TestCyclesReconciliation:
         d_total = d.get("cycles_total")
         d_actionable = d.get("cycles_actionable")
 
-        ae_health = (ae.get("health_summary") or {})
+        ae_health = ae.get("health_summary") or {}
         ae_total = ae_health.get("cycles_total")
         ae_actionable = ae_health.get("cycles_actionable")
 
@@ -149,21 +134,14 @@ class TestCyclesReconciliation:
 
         # Agreement (skip when describe couldn't compute, e.g. tiny graph).
         if isinstance(d_total, int):
-            assert d_total == h_total, (
-                f"describe.cycles_total={d_total} != health.total_cycles={h_total}"
-            )
+            assert d_total == h_total, f"describe.cycles_total={d_total} != health.total_cycles={h_total}"
             assert d_actionable == h_actionable, (
-                f"describe.cycles_actionable={d_actionable} != "
-                f"health.actionable_cycles={h_actionable}"
+                f"describe.cycles_actionable={d_actionable} != health.actionable_cycles={h_actionable}"
             )
-        assert ae_total == h_total, (
-            f"agent-export.cycles_total={ae_total} != health.total_cycles={h_total}"
-        )
+        assert ae_total == h_total, f"agent-export.cycles_total={ae_total} != health.total_cycles={h_total}"
         assert ae_actionable == h_actionable
 
-    def test_each_command_has_cycles_definition_label(
-        self, cli_runner, cyclic_project, monkeypatch
-    ):
+    def test_each_command_has_cycles_definition_label(self, cli_runner, cyclic_project, monkeypatch):
         """Pattern 3 label fix: every cycle-emitting envelope names what it measures."""
         monkeypatch.chdir(cyclic_project)
         h = parse_json_output(
@@ -189,9 +167,7 @@ class TestCyclesReconciliation:
             "agent-export",
         )
 
-        assert "cycles_definition" in h["summary"], (
-            "health summary missing cycles_definition"
-        )
+        assert "cycles_definition" in h["summary"], "health summary missing cycles_definition"
         # describe --agent-prompt spreads its data dict into the envelope
         # root, not the summary block.
         assert "cycles_definition" in d
@@ -207,9 +183,7 @@ class TestCyclesReconciliation:
         ]:
             defn = env["cycles_definition"]
             assert isinstance(defn, str) and len(defn) > 20
-            assert "roam health" in defn, (
-                f"{name} cycles_definition should name `roam health`: {defn[:120]}"
-            )
+            assert "roam health" in defn, f"{name} cycles_definition should name `roam health`: {defn[:120]}"
 
 
 # ===========================================================================
@@ -218,9 +192,7 @@ class TestCyclesReconciliation:
 
 
 class TestGodComponentsReconciliation:
-    def test_god_components_canonical_name_used(
-        self, cli_runner, cyclic_project, monkeypatch
-    ):
+    def test_god_components_canonical_name_used(self, cli_runner, cyclic_project, monkeypatch):
         """`god_components` (canonical name) appears in health + fingerprint envelopes."""
         monkeypatch.chdir(cyclic_project)
         h = parse_json_output(
@@ -228,9 +200,7 @@ class TestGodComponentsReconciliation:
             "health",
         )
         f = parse_json_output(
-            invoke_cli(
-                cli_runner, ["fingerprint"], cwd=cyclic_project, json_mode=True
-            ),
+            invoke_cli(cli_runner, ["fingerprint"], cwd=cyclic_project, json_mode=True),
             "fingerprint",
         )
 
@@ -239,18 +209,11 @@ class TestGodComponentsReconciliation:
         # Fingerprint: the new canonical key must be present even though
         # the legacy `god_objects` alias is kept for back-compat.
         anti = f.get("fingerprint", {}).get("antipatterns", {})
-        assert "god_components" in anti, (
-            f"fingerprint antipatterns missing `god_components`: {list(anti)}"
-        )
+        assert "god_components" in anti, f"fingerprint antipatterns missing `god_components`: {list(anti)}"
         # Legacy alias retained for back-compat.
-        assert (
-            "god_objects" in anti
-            or "god_components_legacy_god_objects" in anti
-        )
+        assert "god_objects" in anti or "god_components_legacy_god_objects" in anti
 
-    def test_god_components_count_agrees(
-        self, cli_runner, cyclic_project, monkeypatch
-    ):
+    def test_god_components_count_agrees(self, cli_runner, cyclic_project, monkeypatch):
         """health.god_components_total == fingerprint.antipatterns.god_components.
 
         Both must use the SAME canonical helper (degree-thresholded,
@@ -264,26 +227,19 @@ class TestGodComponentsReconciliation:
             "health",
         )
         f = parse_json_output(
-            invoke_cli(
-                cli_runner, ["fingerprint"], cwd=cyclic_project, json_mode=True
-            ),
+            invoke_cli(cli_runner, ["fingerprint"], cwd=cyclic_project, json_mode=True),
             "fingerprint",
         )
 
         # Health emits god_components as a list (each item) under the
         # top-level envelope key; count is the length.
         h_god_count = len(h.get("god_components", []) or [])
-        f_god_count = (
-            f.get("fingerprint", {}).get("antipatterns", {}).get("god_components")
-        )
+        f_god_count = f.get("fingerprint", {}).get("antipatterns", {}).get("god_components")
         assert h_god_count == f_god_count, (
-            f"health.god_components={h_god_count} != "
-            f"fingerprint.antipatterns.god_components={f_god_count}"
+            f"health.god_components={h_god_count} != fingerprint.antipatterns.god_components={f_god_count}"
         )
 
-    def test_god_components_definition_label_present(
-        self, cli_runner, cyclic_project, monkeypatch
-    ):
+    def test_god_components_definition_label_present(self, cli_runner, cyclic_project, monkeypatch):
         """Pattern 3 label: god_components_definition must appear on both consumers."""
         monkeypatch.chdir(cyclic_project)
         h = parse_json_output(
@@ -291,9 +247,7 @@ class TestGodComponentsReconciliation:
             "health",
         )
         f = parse_json_output(
-            invoke_cli(
-                cli_runner, ["fingerprint"], cwd=cyclic_project, json_mode=True
-            ),
+            invoke_cli(cli_runner, ["fingerprint"], cwd=cyclic_project, json_mode=True),
             "fingerprint",
         )
 
@@ -307,9 +261,7 @@ class TestGodComponentsReconciliation:
 
 
 class TestComplianceKindLabeling:
-    def test_compliance_kind_definition_present(
-        self, cli_runner, cyclic_project, monkeypatch
-    ):
+    def test_compliance_kind_definition_present(self, cli_runner, cyclic_project, monkeypatch):
         """Both compliance commands must publish compliance_kind_definition."""
         monkeypatch.chdir(cyclic_project)
         atc = parse_json_output(
@@ -334,13 +286,9 @@ class TestComplianceKindLabeling:
         assert "compliance_kind_definition" in atc["summary"], (
             "audit-trail-conformance-check missing compliance_kind_definition"
         )
-        assert "compliance_kind_definition" in a12["summary"], (
-            "article-12-check missing compliance_kind_definition"
-        )
+        assert "compliance_kind_definition" in a12["summary"], "article-12-check missing compliance_kind_definition"
 
-    def test_compliance_scores_have_distinct_kinds(
-        self, cli_runner, cyclic_project, monkeypatch
-    ):
+    def test_compliance_scores_have_distinct_kinds(self, cli_runner, cyclic_project, monkeypatch):
         """The two compliance commands measure DIFFERENT things — their
         ``compliance_kind`` identifiers must differ.
         """
@@ -368,9 +316,7 @@ class TestComplianceKindLabeling:
         a12_kind = a12["summary"].get("compliance_kind")
         assert atc_kind == "audit_trail_chain_integrity"
         assert a12_kind == "eu_ai_act_governance_readiness"
-        assert atc_kind != a12_kind, (
-            "compliance kinds must differ — these are distinct metrics"
-        )
+        assert atc_kind != a12_kind, "compliance kinds must differ — these are distinct metrics"
 
 
 # ===========================================================================
@@ -379,9 +325,7 @@ class TestComplianceKindLabeling:
 
 
 class TestPublicSymbolsLabeling:
-    def test_public_symbols_count_agrees_or_documented(
-        self, cli_runner, cyclic_project, monkeypatch
-    ):
+    def test_public_symbols_count_agrees_or_documented(self, cli_runner, cyclic_project, monkeypatch):
         """`api` and `docs-coverage` either agree on the count OR
         publish distinct inclusion criteria so the disagreement is
         explicit. Pattern 3c label-fix.
@@ -392,20 +336,14 @@ class TestPublicSymbolsLabeling:
             "api",
         )
         dc = parse_json_output(
-            invoke_cli(
-                cli_runner, ["docs-coverage"], cwd=cyclic_project, json_mode=True
-            ),
+            invoke_cli(cli_runner, ["docs-coverage"], cwd=cyclic_project, json_mode=True),
             "docs-coverage",
         )
 
         api_crit = api["summary"].get("public_symbols_inclusion_criterion")
         dc_crit = dc["summary"].get("public_symbols_inclusion_criterion")
-        assert api_crit == "no_underscore_prefix", (
-            f"api criterion expected `no_underscore_prefix`, got {api_crit}"
-        )
-        assert dc_crit == "has_export_marker", (
-            f"docs-coverage criterion expected `has_export_marker`, got {dc_crit}"
-        )
+        assert api_crit == "no_underscore_prefix", f"api criterion expected `no_underscore_prefix`, got {api_crit}"
+        assert dc_crit == "has_export_marker", f"docs-coverage criterion expected `has_export_marker`, got {dc_crit}"
 
         # Both envelopes must carry the public_symbols_definition label.
         assert "public_symbols_definition" in api["summary"]
@@ -418,24 +356,18 @@ class TestPublicSymbolsLabeling:
 
 
 class TestHealthLabelAxisLabeling:
-    def test_health_label_axis_definition_present(
-        self, cli_runner, cyclic_project, monkeypatch
-    ):
+    def test_health_label_axis_definition_present(self, cli_runner, cyclic_project, monkeypatch):
         """Dashboard and vibe-check use coinciding `HEALTHY` labels on
         different axes (project-health vs ai-rot). Both must publish
         ``label_axis_definition`` so agents never confuse them.
         """
         monkeypatch.chdir(cyclic_project)
         d = parse_json_output(
-            invoke_cli(
-                cli_runner, ["dashboard"], cwd=cyclic_project, json_mode=True
-            ),
+            invoke_cli(cli_runner, ["dashboard"], cwd=cyclic_project, json_mode=True),
             "dashboard",
         )
         v = parse_json_output(
-            invoke_cli(
-                cli_runner, ["vibe-check"], cwd=cyclic_project, json_mode=True
-            ),
+            invoke_cli(cli_runner, ["vibe-check"], cwd=cyclic_project, json_mode=True),
             "vibe-check",
         )
 

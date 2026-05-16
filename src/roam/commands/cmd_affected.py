@@ -4,6 +4,12 @@ Given changed files, walks forward through the dependency graph to find all
 transitively affected files, grouping them by impact depth (DIRECT, TRANSITIVE-1,
 TRANSITIVE-2+).  Also identifies affected test files and entry points that may
 need integration testing.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because affected outputs are invocation-scoped blast-radius
+graph rankings — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -13,12 +19,12 @@ from collections import defaultdict, deque
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.changed_files import (
     get_changed_files,
     is_test_file,
     resolve_changed_to_db,
 )
-from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json

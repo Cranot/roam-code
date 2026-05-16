@@ -151,9 +151,7 @@ _BEGIN_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     # to avoid matching `vector::begin()` / iterator `.begin()` in C++,
     # `re.compile(...).begin()` in regex code, etc.
     (
-        re.compile(
-            r"\b(?:db|conn|connection|engine|session|trans|tx|cnx|cur|cursor)\.begin\s*\(\s*\)"
-        ),
+        re.compile(r"\b(?:db|conn|connection|engine|session|trans|tx|cnx|cur|cursor)\.begin\s*\(\s*\)"),
         "db.begin()",
     ),
     # Raw SQL begin (most engines accept it)
@@ -176,9 +174,7 @@ _COMMIT_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     # avoid matching `git commit` strings in subprocess.run() args,
     # method names called `commit_changes`, etc.
     (
-        re.compile(
-            r"\b(?:db|conn|connection|engine|session|trans|tx|cnx|cur|cursor)\.commit\s*\(\s*\)"
-        ),
+        re.compile(r"\b(?:db|conn|connection|engine|session|trans|tx|cnx|cur|cursor)\.commit\s*\(\s*\)"),
         "db.commit()",
     ),
     (
@@ -195,9 +191,7 @@ _COMMIT_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
 
 _ROLLBACK_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     (
-        re.compile(
-            r"\b(?:db|conn|connection|engine|session|trans|tx|cnx|cur|cursor)\.rollback\s*\(\s*\)"
-        ),
+        re.compile(r"\b(?:db|conn|connection|engine|session|trans|tx|cnx|cur|cursor)\.rollback\s*\(\s*\)"),
         "db.rollback()",
     ),
     (
@@ -409,9 +403,7 @@ def _classify_one(
     # Fast path: pure or read-only with no body-level transaction markers ⇒
     # non_transactional. Avoids the per-line scan on the (large) majority
     # of pure helpers.
-    if kinds <= {"none", "io_read"} and (
-        not body_text or not _PRE_FILTER_RE.search(body_text)
-    ):
+    if kinds <= {"none", "io_read"} and (not body_text or not _PRE_FILTER_RE.search(body_text)):
         return TxBoundary(
             symbol=se.symbol,
             file=se.file,
@@ -435,11 +427,7 @@ def _classify_one(
             confidence="high" if not has_mutation_kind else "medium",
             mutations_inside=0,
             mutations_outside=1 if has_mutation_kind else 0,
-            issues=(
-                ["mutation detected without transaction marker"]
-                if cls == "unsafe_mutation"
-                else []
-            ),
+            issues=(["mutation detected without transaction marker"] if cls == "unsafe_mutation" else []),
             symbol_id=se.symbol_id,
             line_start=se.line_start,
             line_end=se.line_end,
@@ -454,7 +442,10 @@ def _classify_one(
     mutations_inside = scan["mutations_inside"]
     mutations_outside = scan["mutations_outside"]
     decorator_atomic = scan["decorator_atomic"]
-    unmatched_begin_depth = scan["unmatched_begin_depth"]
+    # unmatched_begin_depth is currently surfaced via scan[...] but not used
+    # in the verdict aggregation below. Kept extracted for future diagnostic
+    # output; suppress F841 rather than dropping the lookup.
+    _unmatched_begin_depth = scan["unmatched_begin_depth"]  # noqa: F841
 
     n_begin = len(begin_markers)
     n_close = len(commit_markers) + len(rollback_markers)
@@ -625,9 +616,7 @@ def _classify_one(
 # ---------------------------------------------------------------------------
 
 
-def _load_body_with_decorators(
-    repo_root: Path, rel_path: str, ls: int, le: int
-) -> tuple[str, int]:
+def _load_body_with_decorators(repo_root: Path, rel_path: str, ls: int, le: int) -> tuple[str, int]:
     """Read lines [ls..le] but rewind a few lines to capture decorators.
 
     Returns (body_text, effective_start_line_number).
@@ -675,9 +664,7 @@ def classify_tx_boundaries(
         symbol id (stable, mirrors ``classify_side_effects``).
     """
     if side_effects is None:
-        side_effects = classify_side_effects(
-            conn, symbol_name=symbol_name, limit=limit
-        )
+        side_effects = classify_side_effects(conn, symbol_name=symbol_name, limit=limit)
 
     try:
         repo_root = find_project_root()

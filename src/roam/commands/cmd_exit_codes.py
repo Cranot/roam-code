@@ -2,6 +2,12 @@
 
 replaces grepping the docs. Reads ``roam.exit_codes`` and
 emits a table that CI scripts and agents can use to branch.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because exit-codes outputs are invocation-scoped exit-code
+catalog entries — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

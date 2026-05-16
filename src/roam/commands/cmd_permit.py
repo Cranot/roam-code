@@ -64,6 +64,13 @@ answers "record that authority Z granted scope X to identity Y until
 expiry W". Both feed the agentic-assurance crosswalk's *authority*
 axis; the facade reports the structural-check verdict, the issuance
 records the human-or-policy override.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam permit`` operates on substrate state in ``.roam/``
+(permission records) — not code locations or per-location violations.
+The state is consumed by other roam commands + agent runtimes directly
+from disk; SARIF would be redundant. See action.yml _SUPPORTED_SARIF
+allowlist + W1181-audit memo.
 """
 
 from __future__ import annotations
@@ -89,7 +96,6 @@ from roam.permits import (
     read_permit,
 )
 from roam.runs.helpers import auto_log
-
 
 # ---------------------------------------------------------------------------
 # Verdict-facade helpers (unchanged from the pre-W198 facade)
@@ -323,13 +329,15 @@ def permit_cmd(
     # Stash the verdict-facade options on ctx so the default callback can
     # see them when no subcommand is invoked. Subcommands ignore them.
     ctx.obj.setdefault("_permit_facade_opts", {})
-    ctx.obj["_permit_facade_opts"].update({
-        "staged": staged,
-        "input_file": input_file,
-        "symbol": symbol,
-        "block_on_high_severity": block_on_high_severity,
-        "review_on_blast_radius": review_on_blast_radius,
-    })
+    ctx.obj["_permit_facade_opts"].update(
+        {
+            "staged": staged,
+            "input_file": input_file,
+            "symbol": symbol,
+            "block_on_high_severity": block_on_high_severity,
+            "review_on_blast_radius": review_on_blast_radius,
+        }
+    )
     if ctx.invoked_subcommand is not None:
         return
     # No subcommand -- run the verdict-facade engine.
@@ -705,11 +713,7 @@ def permit_list(ctx):
 
     permits = list_permits(root)
     total = len(permits)
-    verdict = (
-        f"{total} permit{'s' if total != 1 else ''}"
-        if total
-        else "no permits in this repo"
-    )
+    verdict = f"{total} permit{'s' if total != 1 else ''}" if total else "no permits in this repo"
     envelope = json_envelope(
         "permit-list",
         summary={
@@ -762,10 +766,7 @@ def permit_show(ctx, permit_id):
         click.echo(f"VERDICT: {verdict}")
         ctx.exit(EXIT_USAGE)
 
-    verdict = (
-        f"permit {rec.permit_id} scope={rec.scope} issued_to={rec.issued_to} "
-        f"expires {rec.expires_at}"
-    )
+    verdict = f"permit {rec.permit_id} scope={rec.scope} issued_to={rec.issued_to} expires {rec.expires_at}"
     envelope = json_envelope(
         "permit-show",
         summary={

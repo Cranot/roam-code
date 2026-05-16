@@ -341,8 +341,7 @@ def check_imports_from(
 
     # 1. file_edges table
     rows = conn.execute(
-        "SELECT f.path FROM file_edges fe JOIN files f ON fe.target_file_id = f.id "
-        "WHERE fe.source_file_id = ?",
+        "SELECT f.path FROM file_edges fe JOIN files f ON fe.target_file_id = f.id WHERE fe.source_file_id = ?",
         (file_id,),
     ).fetchall()
     matches: list[str] = []
@@ -485,8 +484,7 @@ def check_tested_by(
 
     # Find test files. Pattern may match either role or path glob.
     rows = conn.execute(
-        "SELECT id, path, file_role FROM files "
-        "WHERE file_role = 'test' OR path LIKE '%test%'",
+        "SELECT id, path, file_role FROM files WHERE file_role = 'test' OR path LIKE '%test%'",
     ).fetchall()
     test_files: list[tuple[int, str]] = []
     for r in rows:

@@ -26,6 +26,14 @@ Output:
       839abc1 fix: parse YAML — 2 high-severity (clones-not-edited)
       4c47862 feat(yaml): list-of-dicts shape — 1 medium (impact)
       ...
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because postmortem outputs are invocation-scoped historical
+detector-result replays — not per-location violations. ``postmortem``
+delegates SARIF emission to composed subcommands (``critique``, etc.)
+when their own ``--sarif`` flag fires directly. See action.yml
+_SUPPORTED_SARIF allowlist + W1145 / W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

@@ -12,9 +12,6 @@ Covers the five W211 directives layered onto ``src/roam/evidence/``:
 
 from __future__ import annotations
 
-import datetime as _dt
-from pathlib import Path
-
 import pytest
 
 from roam.evidence import (
@@ -27,7 +24,6 @@ from roam.evidence import (
     stale_accepted_risks,
 )
 from tests._helpers.repo_root import repo_root
-
 
 # ---------------------------------------------------------------------------
 # 1. ActorRef trust tier
@@ -288,9 +284,7 @@ def test_stale_accepted_risks_malformed_expiry_treated_as_stale() -> None:
     """Unparseable expiry surfaces as stale so producer notices."""
     packet = ChangeEvidence(
         evidence_id="ev_w211_bad",
-        accepted_risks=(
-            {"id": "r_bad", "expiry": "definitely-not-iso"},
-        ),
+        accepted_risks=({"id": "r_bad", "expiry": "definitely-not-iso"},),
     )
     stale = stale_accepted_risks(packet, now_iso="2026-05-14T00:00:00Z")
     assert len(stale) == 1

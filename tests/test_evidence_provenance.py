@@ -24,7 +24,6 @@ import pytest
 
 from roam.evidence import PROVENANCE_SOURCES, provenance_label
 
-
 # ---------------------------------------------------------------------------
 # Vocabulary drift guard
 # ---------------------------------------------------------------------------
@@ -39,18 +38,20 @@ def test_provenance_sources_drift_guard() -> None:
     """
     assert isinstance(PROVENANCE_SOURCES, frozenset)
     assert len(PROVENANCE_SOURCES) == 10
-    assert PROVENANCE_SOURCES == frozenset({
-        "ci_env_var",
-        "git_config",
-        "run_ledger",
-        "cli_flag",
-        "env_var",
-        "producer_envelope",
-        "audit_trail",
-        "mcp_receipt",
-        "inferred",
-        "unknown",
-    })
+    assert PROVENANCE_SOURCES == frozenset(
+        {
+            "ci_env_var",
+            "git_config",
+            "run_ledger",
+            "cli_flag",
+            "env_var",
+            "producer_envelope",
+            "audit_trail",
+            "mcp_receipt",
+            "inferred",
+            "unknown",
+        }
+    )
     # Drift guard: frozenset is immutable.
     with pytest.raises(AttributeError):
         PROVENANCE_SOURCES.add("rogue_source")  # type: ignore[attr-defined]
@@ -77,22 +78,10 @@ def test_provenance_label_returns_source_when_no_detail() -> None:
 
 def test_provenance_label_returns_compact_form_with_detail() -> None:
     """Compact form: ``"<source>(<detail>)"`` when detail is provided."""
-    assert (
-        provenance_label("git_config", detail="user.email")
-        == "git_config(user.email)"
-    )
-    assert (
-        provenance_label("ci_env_var", detail="GITHUB_ACTOR")
-        == "ci_env_var(GITHUB_ACTOR)"
-    )
-    assert (
-        provenance_label("env_var", detail="ROAM_AGENT_ID")
-        == "env_var(ROAM_AGENT_ID)"
-    )
-    assert (
-        provenance_label("cli_flag", detail="--agent")
-        == "cli_flag(--agent)"
-    )
+    assert provenance_label("git_config", detail="user.email") == "git_config(user.email)"
+    assert provenance_label("ci_env_var", detail="GITHUB_ACTOR") == "ci_env_var(GITHUB_ACTOR)"
+    assert provenance_label("env_var", detail="ROAM_AGENT_ID") == "env_var(ROAM_AGENT_ID)"
+    assert provenance_label("cli_flag", detail="--agent") == "cli_flag(--agent)"
 
 
 def test_provenance_label_raises_on_unknown_source() -> None:

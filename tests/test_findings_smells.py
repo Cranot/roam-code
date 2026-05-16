@@ -41,7 +41,6 @@ from roam.db.connection import open_db
 from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -158,13 +157,9 @@ def test_smells_rerun_upserts_not_duplicates(tmp_path):
         with open_db(readonly=True) as conn:
             first_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'smells'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'smells'").fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'smells'"
-            ).fetchone()[0]
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'smells'").fetchone()[0]
         assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same detector predicates → same ids.
@@ -175,13 +170,9 @@ def test_smells_rerun_upserts_not_duplicates(tmp_path):
         with open_db(readonly=True) as conn:
             second_ids = {
                 r[0]
-                for r in conn.execute(
-                    "SELECT finding_id_str FROM findings WHERE source_detector = 'smells'"
-                ).fetchall()
+                for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'smells'").fetchall()
             }
-            second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'smells'"
-            ).fetchone()[0]
+            second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'smells'").fetchone()[0]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
     finally:
@@ -198,9 +189,7 @@ def test_smells_finding_evidence_carries_smell_fields(tmp_path):
 
         with open_db(readonly=True) as conn:
             row = conn.execute(
-                "SELECT evidence_json, claim FROM findings "
-                "WHERE source_detector = 'smells' "
-                "ORDER BY id ASC LIMIT 1"
+                "SELECT evidence_json, claim FROM findings WHERE source_detector = 'smells' ORDER BY id ASC LIMIT 1"
             ).fetchone()
         assert row is not None
         evidence = json.loads(row["evidence_json"])
@@ -231,16 +220,11 @@ def test_smells_finding_subject_links_to_symbols_row(tmp_path):
 
         with open_db(readonly=True) as conn:
             rows = conn.execute(
-                "SELECT subject_id FROM findings "
-                "WHERE source_detector = 'smells' AND subject_id IS NOT NULL"
+                "SELECT subject_id FROM findings WHERE source_detector = 'smells' AND subject_id IS NOT NULL"
             ).fetchall()
-            assert len(rows) >= 1, (
-                "expected at least one smells finding with a resolved subject_id"
-            )
+            assert len(rows) >= 1, "expected at least one smells finding with a resolved subject_id"
             for r in rows:
-                sym = conn.execute(
-                    "SELECT id, name FROM symbols WHERE id = ?", (r["subject_id"],)
-                ).fetchone()
+                sym = conn.execute("SELECT id, name FROM symbols WHERE id = ?", (r["subject_id"],)).fetchone()
                 assert sym is not None, f"orphan subject_id {r['subject_id']}"
     finally:
         os.chdir(old_cwd)
@@ -322,15 +306,13 @@ def test_smell_kind_tier_mapping_static_analysis(tmp_path):
         written = _emit_smells_findings(conn, findings, SMELLS_DETECTOR_VERSION)
         assert written == len(findings)
         rows = conn.execute(
-            "SELECT evidence_json, confidence FROM findings "
-            "WHERE source_detector = 'smells'"
+            "SELECT evidence_json, confidence FROM findings WHERE source_detector = 'smells'"
         ).fetchall()
         assert len(rows) == len(findings)
         for r in rows:
             ev = json.loads(r["evidence_json"])
             assert r["confidence"] == "static_analysis", (
-                f"smell_id {ev['smell_id']!r} expected static_analysis, "
-                f"got {r['confidence']!r}"
+                f"smell_id {ev['smell_id']!r} expected static_analysis, got {r['confidence']!r}"
             )
 
 
@@ -392,15 +374,13 @@ def test_smell_kind_tier_mapping_structural(tmp_path):
         written = _emit_smells_findings(conn, findings, SMELLS_DETECTOR_VERSION)
         assert written == len(findings)
         rows = conn.execute(
-            "SELECT evidence_json, confidence FROM findings "
-            "WHERE source_detector = 'smells'"
+            "SELECT evidence_json, confidence FROM findings WHERE source_detector = 'smells'"
         ).fetchall()
         assert len(rows) == len(findings)
         for r in rows:
             ev = json.loads(r["evidence_json"])
             assert r["confidence"] == "structural", (
-                f"smell_id {ev['smell_id']!r} expected structural, "
-                f"got {r['confidence']!r}"
+                f"smell_id {ev['smell_id']!r} expected structural, got {r['confidence']!r}"
             )
 
 
@@ -421,9 +401,7 @@ def test_smell_kind_tier_mapping_heuristic(tmp_path):
         ]
         written = _emit_smells_findings(conn, findings, SMELLS_DETECTOR_VERSION)
         assert written == 1
-        row = conn.execute(
-            "SELECT confidence FROM findings WHERE source_detector = 'smells'"
-        ).fetchone()
+        row = conn.execute("SELECT confidence FROM findings WHERE source_detector = 'smells'").fetchone()
         assert row["confidence"] == "heuristic"
 
 
@@ -460,18 +438,14 @@ def test_smells_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_smells(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "smells"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "smells"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "smells" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "smells" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "smells" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -510,9 +484,7 @@ def test_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'smells'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'smells'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, "non-persist smells still wrote to findings"
@@ -563,6 +535,7 @@ def test_smells_persist_no_findings_table_no_crash(tmp_path):
 # guard asserting a *real* dead-param function (4+ unused params,
 # complexity <= 1, ordinary name) still trips the detector.
 
+
 def _run_dead_params_on_proj(proj):
     """Index ``proj``, then call ``detect_dead_params`` directly.
 
@@ -603,9 +576,7 @@ def test_init_method_not_flagged_as_dead_params(tmp_path):
         os.chdir(str(proj))
         findings = _run_dead_params_on_proj(proj)
         offenders = [f for f in findings if f["symbol_name"] == "__init__"]
-        assert not offenders, (
-            f"__init__ should be exempt from dead-params, got: {offenders}"
-        )
+        assert not offenders, f"__init__ should be exempt from dead-params, got: {offenders}"
     finally:
         os.chdir(old_cwd)
 
@@ -646,14 +617,8 @@ def test_dataclass_init_not_flagged(tmp_path):
         findings = _run_dead_params_on_proj(proj)
         # No dead-params from either the dataclass class itself or its
         # __post_init__.
-        offenders = [
-            f
-            for f in findings
-            if f["symbol_name"] in ("__init__", "__post_init__", "Big")
-        ]
-        assert not offenders, (
-            f"@dataclass methods should be exempt from dead-params, got: {offenders}"
-        )
+        offenders = [f for f in findings if f["symbol_name"] in ("__init__", "__post_init__", "Big")]
+        assert not offenders, f"@dataclass methods should be exempt from dead-params, got: {offenders}"
     finally:
         os.chdir(old_cwd)
 
@@ -679,10 +644,7 @@ def test_real_dead_params_still_flagged(tmp_path):
         os.chdir(str(proj))
         findings = _run_dead_params_on_proj(proj)
         hit = [f for f in findings if f["symbol_name"] == "actually_dead"]
-        assert hit, (
-            "real dead-params function should still be flagged after "
-            f"the W163 exemption — findings: {findings}"
-        )
+        assert hit, f"real dead-params function should still be flagged after the W163 exemption — findings: {findings}"
         assert hit[0]["smell_id"] == "dead-params"
     finally:
         os.chdir(old_cwd)
@@ -734,14 +696,7 @@ def test_setup_method_not_flagged(tmp_path):
     try:
         os.chdir(str(proj))
         findings = _run_dead_params_on_proj(proj)
-        offenders = [
-            f
-            for f in findings
-            if f["symbol_name"] in ("setUp", "setup_method", "tearDown")
-        ]
-        assert not offenders, (
-            f"setUp / setup_* / tearDown should be exempt from dead-params, "
-            f"got: {offenders}"
-        )
+        offenders = [f for f in findings if f["symbol_name"] in ("setUp", "setup_method", "tearDown")]
+        assert not offenders, f"setUp / setup_* / tearDown should be exempt from dead-params, got: {offenders}"
     finally:
         os.chdir(old_cwd)

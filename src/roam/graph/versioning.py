@@ -115,9 +115,7 @@ def snapshot_graph(conn: sqlite3.Connection) -> dict:
         }
 
     # Pull edges and accumulate per-symbol degree counts.
-    edge_rows = conn.execute(
-        "SELECT source_id, target_id, kind FROM edges ORDER BY source_id, target_id"
-    ).fetchall()
+    edge_rows = conn.execute("SELECT source_id, target_id, kind FROM edges ORDER BY source_id, target_id").fetchall()
     edges: list[dict] = []
     for er in edge_rows:
         src_id = er["source_id"]
@@ -210,9 +208,7 @@ def _edge_key(edge: dict) -> tuple[str, str, str]:
     return (edge.get("source", ""), edge.get("target", ""), edge.get("kind", ""))
 
 
-def _detect_degree_shifts(
-    before_syms: dict, after_syms: dict, attr: str
-) -> list[dict]:
+def _detect_degree_shifts(before_syms: dict, after_syms: dict, attr: str) -> list[dict]:
     """Symbols whose ``attr`` (in_degree / out_degree) shifted notably.
 
     Both absolute (>= ``DEGREE_SHIFT_ABS_MIN``) AND relative

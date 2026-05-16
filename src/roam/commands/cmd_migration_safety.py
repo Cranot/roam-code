@@ -33,6 +33,14 @@ Detection categories:
 
 All detections read the raw PHP source; no PHP parsing is performed —
 purely line-based regex analysis.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because migration-safety findings are heuristic confidence labels
+(high/medium/low) on per-location migration patterns — informational only,
+not CI-gating verdicts. Unlike cmd_delete_check (CI exit 5 on BREAK-RISK
+via W1192), migration-safety is designed for dashboards + post-hoc audits.
+Confidence labels are not actionable security/quality gates. See action.yml
+_SUPPORTED_SARIF allowlist + W1192 audit memo.
 """
 
 from __future__ import annotations

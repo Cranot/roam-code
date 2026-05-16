@@ -1,4 +1,11 @@
-"""Show file import/imported-by relationships."""
+"""Show file import/imported-by relationships.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because deps outputs are invocation-scoped import relationships
+— not per-location violations. Editor consumers should use the JSON
+envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 

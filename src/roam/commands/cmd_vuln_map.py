@@ -1,4 +1,16 @@
-"""Ingest vulnerability reports and match them to codebase symbols."""
+"""Ingest vulnerability reports and match them to codebase symbols.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam vuln-map`` is a state-mutating ingest +
+mapping command — its output is invocation-scoped mapping status
+(advisories ingested, packages matched, symbols linked), not per-
+location code violations. The downstream ``vuln-reach`` command
+projects vulnerable paths through the call graph; SARIF exposure
+belongs on the reachability projection, not the ingest step. See
+``cmd_ingest_trace`` for the parallel state-mutating disclosure
+pattern (W1180) + action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH propagation plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

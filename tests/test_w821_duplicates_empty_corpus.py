@@ -63,9 +63,7 @@ def empty_corpus_project(tmp_path, monkeypatch):
 def test_duplicates_empty_corpus_emits_envelope(empty_corpus_project, cli_runner):
     """Empty corpus must produce a parseable JSON envelope on exit 0."""
     result = invoke_cli(cli_runner, ["duplicates"], json_mode=True)
-    assert result.exit_code == 0, (
-        f"duplicates exited {result.exit_code}: {result.output}"
-    )
+    assert result.exit_code == 0, f"duplicates exited {result.exit_code}: {result.output}"
     assert result.output.strip(), "stdout must NOT be empty in --json mode"
 
     payload = _json.loads(result.output)
@@ -73,9 +71,7 @@ def test_duplicates_empty_corpus_emits_envelope(empty_corpus_project, cli_runner
     assert payload.get("command") == "duplicates"
 
 
-def test_duplicates_empty_corpus_verdict_mentions_empty(
-    empty_corpus_project, cli_runner
-):
+def test_duplicates_empty_corpus_verdict_mentions_empty(empty_corpus_project, cli_runner):
     """Verdict must acknowledge the empty / no-duplicates state in plain text."""
     result = invoke_cli(cli_runner, ["duplicates"], json_mode=True)
     assert result.exit_code == 0
@@ -94,9 +90,7 @@ def test_duplicates_empty_corpus_verdict_mentions_empty(
     assert summary.get("total_functions", -1) == 0
 
 
-def test_duplicates_empty_corpus_partial_success_present(
-    empty_corpus_project, cli_runner
-):
+def test_duplicates_empty_corpus_partial_success_present(empty_corpus_project, cli_runner):
     """``summary.partial_success`` key must be present on the empty branch.
 
     Pattern 2 (CLAUDE.md): empty / degraded outcomes must disclose their
@@ -115,9 +109,7 @@ def test_duplicates_empty_corpus_partial_success_present(
     )
 
 
-def test_duplicates_empty_corpus_facts_non_empty(
-    empty_corpus_project, cli_runner
-):
+def test_duplicates_empty_corpus_facts_non_empty(empty_corpus_project, cli_runner):
     """``agent_contract.facts`` must be non-empty even on the empty branch.
 
     LAW 4: empty corpus still produces a concrete-noun-anchored fact —
@@ -130,6 +122,4 @@ def test_duplicates_empty_corpus_facts_non_empty(
     contract = payload.get("agent_contract") or {}
     facts = contract.get("facts") or []
     assert isinstance(facts, list)
-    assert len(facts) >= 1, (
-        f"agent_contract.facts must be non-empty on empty corpus; got: {facts!r}"
-    )
+    assert len(facts) >= 1, f"agent_contract.facts must be non-empty on empty corpus; got: {facts!r}"

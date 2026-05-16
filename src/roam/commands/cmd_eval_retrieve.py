@@ -12,6 +12,13 @@ Examples
     # BEIR-style ctxs array) for public leaderboard submission.
     roam eval-retrieve --tasks <bench>.jsonl \\
         --emit-format coderag --emit-out runs/roam.jsonl
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because eval-retrieve outputs are invocation-scoped retrieval
+benchmark aggregates (recall@K / MRR / nDCG scores against a labeled
+task set) — not per-location code violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
 """
 
 from __future__ import annotations

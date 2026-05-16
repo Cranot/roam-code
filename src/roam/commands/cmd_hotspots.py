@@ -17,7 +17,6 @@ from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output._severity import severity_rank
 from roam.output.formatter import json_envelope, strip_list_payloads, to_json
 
-
 # W120 — hotspots is the fifth detector migrating onto the central
 # findings registry (after clones W95, dead W99, complexity W102,
 # bus-factor W115). Hotspots is the canonical *runtime* detector —
@@ -546,13 +545,9 @@ def _emit_hotspots_findings(conn, hotspots_data: list[dict], source_version: str
         # have to reason about the static-vs-runtime delta from
         # rank numbers alone (W120 disagree-with-static flag).
         if classification == "DOWNGRADE":
-            evidence["disagreement"] = (
-                "static rank ranked this symbol high but runtime traffic is low"
-            )
+            evidence["disagreement"] = "static rank ranked this symbol high but runtime traffic is low"
         elif classification == "UPGRADE":
-            evidence["disagreement"] = (
-                "runtime traffic ranks this symbol high but static analysis missed it"
-            )
+            evidence["disagreement"] = "runtime traffic ranks this symbol high but static analysis missed it"
 
         call_count = runtime_stats.get("call_count") or 0
         p99 = runtime_stats.get("p99_latency_ms")
@@ -654,6 +649,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
     (structural anti-patterns), and ``complexity`` (cognitive metrics).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     detail = ctx.obj.get("detail", False) if ctx.obj else False
     ensure_index()
@@ -670,8 +666,21 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
     # not yet migrated to the central registry.
     if persist and (security_mode or danger_mode):
         click.echo(
-            "--persist applies to the default (runtime) hotspots mode only; "
-            "not supported with --security or --danger"
+            "--persist applies to the default (runtime) hotspots mode only; not supported with --security or --danger"
+        )
+        raise SystemExit(1)
+    # W1210: SARIF emission mirrors the --persist discipline — only the
+    # default (runtime) mode projects onto the hotspots/* closed-enum
+    # rule catalogue. --security findings live at raw file/line with
+    # their own severity vocabulary (CRITICAL/HIGH/MEDIUM + reach
+    # status); --danger findings are file-level p75-band aggregates with
+    # a single danger_score. Both would dilute the hotspots-detector
+    # rule namespace if collapsed onto it. Fail loudly rather than emit
+    # an unrelated SARIF surface (closed-enum discipline per CLAUDE.md
+    # Constraint 8).
+    if sarif_mode and (security_mode or danger_mode):
+        click.echo(
+            "--sarif applies to the default (runtime) hotspots mode only; not supported with --security or --danger"
         )
         raise SystemExit(1)
 
@@ -769,6 +778,15 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
         try:
             conn.execute("SELECT COUNT(*) FROM runtime_stats")
         except Exception:
+            if sarif_mode:
+                # No runtime data → emit a valid SARIF doc with zero
+                # results so a CI gate consumer sees the rules catalogue
+                # even on a clean / no-trace-data run. Mirrors the
+                # cmd_bus_factor / cmd_over_fetch empty-input contract.
+                from roam.output.sarif import hotspots_to_sarif, write_sarif
+
+                click.echo(write_sarif(hotspots_to_sarif([])))
+                return
             if json_mode:
                 click.echo(
                     to_json(
@@ -804,6 +822,18 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+
+    # W1210: SARIF branch — mirrors the --persist discipline. The
+    # projection set is the FULL compute_hotspots return (the
+    # unfiltered classification ladder), independent of the
+    # --discrepancy / --runtime display filters below. A CI consumer
+    # gating off SARIF should see the same closed-enum rule catalogue
+    # regardless of which display flag the caller used.
+    if sarif_mode:
+        from roam.output.sarif import hotspots_to_sarif, write_sarif
+
+        click.echo(write_sarif(hotspots_to_sarif(items)))
+        return
 
     if discrepancy:
         items = [h for h in items if h["classification"] in ("UPGRADE", "DOWNGRADE")]

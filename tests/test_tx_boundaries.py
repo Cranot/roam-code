@@ -27,7 +27,7 @@ def test_transactional_classified_correctly(project_factory, monkeypatch):
                 "\n"
                 "def create_user(name):\n"
                 "    with db.transaction():\n"
-                "        db.execute(\"INSERT INTO users (name) VALUES (?)\", (name,))\n"
+                '        db.execute("INSERT INTO users (name) VALUES (?)", (name,))\n'
                 "        db.execute(\"INSERT INTO audit (action) VALUES ('create_user')\")\n"
                 "        db.commit()\n"
             ),
@@ -58,7 +58,7 @@ def test_unsafe_mutation_classified(project_factory, monkeypatch):
                 "import db\n"
                 "\n"
                 "def create_user_raw(name):\n"
-                "    db.execute(\"INSERT INTO users (name) VALUES (?)\", (name,))\n"
+                '    db.execute("INSERT INTO users (name) VALUES (?)", (name,))\n'
             ),
         }
     )
@@ -68,8 +68,7 @@ def test_unsafe_mutation_classified(project_factory, monkeypatch):
     assert results
     c = results[0]
     assert c.classification == "unsafe_mutation", (
-        f"Expected unsafe_mutation, got {c.classification} "
-        f"(mut_in={c.mutations_inside}, mut_out={c.mutations_outside})"
+        f"Expected unsafe_mutation, got {c.classification} (mut_in={c.mutations_inside}, mut_out={c.mutations_outside})"
     )
     assert c.mutations_outside >= 1
     assert c.issues, "Expected an issue noting mutations-outside-transaction"
@@ -84,7 +83,7 @@ def test_unmatched_begin_detected(project_factory, monkeypatch):
                 "\n"
                 "def leaky_save(name):\n"
                 "    db.begin()\n"
-                "    db.execute(\"INSERT INTO users (name) VALUES (?)\", (name,))\n"
+                '    db.execute("INSERT INTO users (name) VALUES (?)", (name,))\n'
                 "    return name\n"
             ),
         }
@@ -108,13 +107,7 @@ def test_unmatched_commit_detected(project_factory, monkeypatch):
     """`db.commit()` with no preceding begin → unmatched_commit."""
     proj = project_factory(
         {
-            "src/svc.py": (
-                "import db\n"
-                "\n"
-                "def stray_commit():\n"
-                "    db.commit()\n"
-                "    return True\n"
-            ),
+            "src/svc.py": ("import db\n\ndef stray_commit():\n    db.commit()\n    return True\n"),
         }
     )
     monkeypatch.chdir(proj)
@@ -123,8 +116,7 @@ def test_unmatched_commit_detected(project_factory, monkeypatch):
     assert results
     c = results[0]
     assert c.classification == "unmatched_commit", (
-        f"Expected unmatched_commit, got {c.classification} "
-        f"(begin={c.begin_markers}, commit={c.commit_markers})"
+        f"Expected unmatched_commit, got {c.classification} (begin={c.begin_markers}, commit={c.commit_markers})"
     )
     assert c.commit_markers, "Expected commit marker recorded"
     assert not c.begin_markers
@@ -140,7 +132,7 @@ def test_partial_transactional(project_factory, monkeypatch):
                 "def mixed_save(name):\n"
                 "    db.execute(\"INSERT INTO log (action) VALUES ('start')\")\n"
                 "    with db.transaction():\n"
-                "        db.execute(\"INSERT INTO users (name) VALUES (?)\", (name,))\n"
+                '        db.execute("INSERT INTO users (name) VALUES (?)", (name,))\n'
                 "        db.commit()\n"
             ),
         }
@@ -163,10 +155,7 @@ def test_non_transactional_pure_function(project_factory, monkeypatch):
     """A pure function with no mutations → non_transactional."""
     proj = project_factory(
         {
-            "src/pure.py": (
-                "def add(a, b):\n"
-                "    return a + b\n"
-            ),
+            "src/pure.py": ("def add(a, b):\n    return a + b\n"),
         }
     )
     monkeypatch.chdir(proj)
@@ -174,9 +163,7 @@ def test_non_transactional_pure_function(project_factory, monkeypatch):
 
     assert results
     c = results[0]
-    assert c.classification == "non_transactional", (
-        f"Expected non_transactional, got {c.classification}"
-    )
+    assert c.classification == "non_transactional", f"Expected non_transactional, got {c.classification}"
     assert c.mutations_inside == 0
     assert c.mutations_outside == 0
     assert not c.issues
@@ -192,8 +179,8 @@ def test_django_atomic_recognized(project_factory, monkeypatch):
                 "\n"
                 "@transaction.atomic\n"
                 "def save_user(name):\n"
-                "    db.execute(\"INSERT INTO users (name) VALUES (?)\", (name,))\n"
-                "    db.execute(\"UPDATE counters SET value = value + 1\")\n"
+                '    db.execute("INSERT INTO users (name) VALUES (?)", (name,))\n'
+                '    db.execute("UPDATE counters SET value = value + 1")\n'
             ),
         }
     )
@@ -203,8 +190,7 @@ def test_django_atomic_recognized(project_factory, monkeypatch):
     assert results
     c = results[0]
     assert c.classification == "transactional", (
-        f"Expected transactional via @transaction.atomic, got {c.classification} "
-        f"(begin={c.begin_markers})"
+        f"Expected transactional via @transaction.atomic, got {c.classification} (begin={c.begin_markers})"
     )
     assert any("atomic" in m.get("pattern", "") for m in c.begin_markers), (
         f"Expected @transaction.atomic marker in begin_markers={c.begin_markers}"
@@ -222,11 +208,11 @@ def test_envelope_includes_by_classification(project_factory, monkeypatch, cli_r
                 "    return a + b\n"
                 "\n"
                 "def unsafe_insert(name):\n"
-                "    db.execute(\"INSERT INTO users (name) VALUES (?)\", (name,))\n"
+                '    db.execute("INSERT INTO users (name) VALUES (?)", (name,))\n'
                 "\n"
                 "def proper_save(name):\n"
                 "    with db.transaction():\n"
-                "        db.execute(\"INSERT INTO users (name) VALUES (?)\", (name,))\n"
+                '        db.execute("INSERT INTO users (name) VALUES (?)", (name,))\n'
                 "        db.commit()\n"
                 "\n"
                 "def leaky():\n"
@@ -249,12 +235,8 @@ def test_envelope_includes_by_classification(project_factory, monkeypatch, cli_r
     assert "classification_definition" in summary
     by_cls = summary["by_classification"]
     # Expect at least one unsafe_mutation and one transactional.
-    assert by_cls.get("unsafe_mutation", 0) >= 1, (
-        f"Expected unsafe_mutation in by_classification={by_cls}"
-    )
-    assert by_cls.get("transactional", 0) >= 1, (
-        f"Expected transactional in by_classification={by_cls}"
-    )
+    assert by_cls.get("unsafe_mutation", 0) >= 1, f"Expected unsafe_mutation in by_classification={by_cls}"
+    assert by_cls.get("transactional", 0) >= 1, f"Expected transactional in by_classification={by_cls}"
 
     # boundaries list is non-empty and contains the structured shape.
     boundaries = data["boundaries"]

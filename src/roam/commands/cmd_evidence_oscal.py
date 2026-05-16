@@ -46,6 +46,14 @@ YAML lint already gates that field; the OSCAL emitter adds no new
 free-form prose to per-entry text. The document-level title and
 remarks are pinned to W184-compliant constants in
 ``roam.evidence.oscal``.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because evidence-oscal outputs are OSCAL compliance documents
+— not per-location violations. SARIF is reserved for findings with
+file:line coordinates; evidence-oscal's primary deliverable is the
+OSCAL v1.2 control-mapping or assessment-results document. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket C
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -132,10 +140,7 @@ def _default_control_map_path() -> Path:
 @roam_capability(
     name="evidence-oscal",
     category="review",
-    summary=(
-        "Emit OSCAL v1.2 Control Mapping (default) or Assessment "
-        "Results (--kind assessment-results) JSON."
-    ),
+    summary=("Emit OSCAL v1.2 Control Mapping (default) or Assessment Results (--kind assessment-results) JSON."),
     inputs=["control_map_path", "evidence_path"],
     outputs=[
         "OSCAL document",
@@ -147,8 +152,7 @@ def _default_control_map_path() -> Path:
         "roam evidence-oscal",
         "roam evidence-oscal --output .roam/oscal/control-mapping.json",
         "roam --json evidence-oscal",
-        "roam evidence-oscal --kind assessment-results --evidence "
-        ".roam/evidence/last.json",
+        "roam evidence-oscal --kind assessment-results --evidence .roam/evidence/last.json",
     ],
     tags=[
         "evidence",
@@ -201,10 +205,7 @@ def _default_control_map_path() -> Path:
     "evidence_path",
     type=click.Path(dir_okay=False, readable=True),
     default=None,
-    help=(
-        "Path to a ChangeEvidence JSON packet. Required when "
-        "--kind assessment-results."
-    ),
+    help=("Path to a ChangeEvidence JSON packet. Required when --kind assessment-results."),
 )
 @click.option(
     "--import-ap-ref",
@@ -236,10 +237,7 @@ def _default_control_map_path() -> Path:
     "output_path",
     type=click.Path(dir_okay=False, writable=True),
     default=None,
-    help=(
-        "Write OSCAL JSON to this path instead of stdout. Parent "
-        "directories are created if missing."
-    ),
+    help=("Write OSCAL JSON to this path instead of stdout. Parent directories are created if missing."),
 )
 @click.option(
     "--title",
@@ -257,9 +255,7 @@ def _default_control_map_path() -> Path:
     type=int,
     default=2,
     show_default=True,
-    help=(
-        "JSON indent for pretty-printing. Use 0 for compact output."
-    ),
+    help=("JSON indent for pretty-printing. Use 0 for compact output."),
 )
 @click.pass_context
 def evidence_oscal(
@@ -306,15 +302,10 @@ def evidence_oscal(
 
     if kind == _KIND_ASSESSMENT_RESULTS:
         if not evidence_path:
-            raise click.ClickException(
-                "--kind assessment-results requires --evidence "
-                "<path-to-ChangeEvidence.json>"
-            )
+            raise click.ClickException("--kind assessment-results requires --evidence <path-to-ChangeEvidence.json>")
         ev_path = Path(evidence_path)
         if not ev_path.exists():
-            raise click.ClickException(
-                f"evidence packet not found at {ev_path!s}"
-            )
+            raise click.ClickException(f"evidence packet not found at {ev_path!s}")
         # W559: parse via ChangeEvidence.from_canonical_json so closed-
         # enum validation runs at the CLI boundary. --strict surfaces
         # unknown vocabulary as a hard error; the default keeps W465's
@@ -327,15 +318,14 @@ def evidence_oscal(
         raw_text = ev_path.read_text(encoding="utf-8")
         try:
             evidence, dropped = ChangeEvidence.from_canonical_json_with_drops(
-                raw_text, strict=strict,
+                raw_text,
+                strict=strict,
             )
         except ValueError as exc:
             # ValueError covers malformed JSON, missing evidence_id,
             # and (with --strict) closed-enum violations. The
             # underlying message already names the failing field.
-            raise click.ClickException(
-                f"evidence packet failed validation: {exc}"
-            )
+            raise click.ClickException(f"evidence packet failed validation: {exc}")
 
         doc = build_oscal_assessment_results(
             evidence,
@@ -345,12 +335,8 @@ def evidence_oscal(
         ar = doc["assessment-results"]
         results = ar.get("results") or []
         result_count = len(results)
-        finding_count = sum(
-            len((r or {}).get("findings") or []) for r in results
-        )
-        observation_count = sum(
-            len((r or {}).get("observations") or []) for r in results
-        )
+        finding_count = sum(len((r or {}).get("findings") or []) for r in results)
+        observation_count = sum(len((r or {}).get("observations") or []) for r in results)
         framework_count = 0
         control_count = finding_count
         document_uuid = ar["uuid"]
@@ -411,8 +397,7 @@ def evidence_oscal(
     map_path = Path(control_map) if control_map else _default_control_map_path()
     if not map_path.exists():
         raise click.ClickException(
-            f"control map not found at {map_path!s}; pass --control-map to point "
-            "at an explicit file"
+            f"control map not found at {map_path!s}; pass --control-map to point at an explicit file"
         )
 
     try:
@@ -430,10 +415,7 @@ def evidence_oscal(
     framework_count = len(mappings)
     document_uuid = cm["uuid"]
 
-    verdict = (
-        f"emitted OSCAL v1.2 control-mapping with {control_count} "
-        f"controls across {framework_count} frameworks"
-    )
+    verdict = f"emitted OSCAL v1.2 control-mapping with {control_count} controls across {framework_count} frameworks"
 
     return _emit_doc(
         doc=doc,
@@ -524,13 +506,10 @@ def _emit_doc(
         else:
             if kind == _KIND_ASSESSMENT_RESULTS:
                 next_commands.append(
-                    "roam evidence-oscal --kind assessment-results "
-                    "--evidence <path> --output .roam/oscal/ar.json"
+                    "roam evidence-oscal --kind assessment-results --evidence <path> --output .roam/oscal/ar.json"
                 )
             else:
-                next_commands.append(
-                    "roam evidence-oscal --output .roam/oscal/control-mapping.json"
-                )
+                next_commands.append("roam evidence-oscal --output .roam/oscal/control-mapping.json")
 
         summary = {
             "verdict": verdict,

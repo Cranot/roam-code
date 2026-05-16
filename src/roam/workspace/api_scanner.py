@@ -342,8 +342,7 @@ def find_unmatched_calls(
             reason = "method_mismatch"
             method_list = ", ".join(backend_methods) if backend_methods else "?"
             reason_detail = (
-                f"backend route `{call['url_pattern']}` exists but accepts "
-                f"{method_list}, not {call_method or '?'}"
+                f"backend route `{call['url_pattern']}` exists but accepts {method_list}, not {call_method or '?'}"
             )
         else:
             # No exact / fuzzy URL match. Is there a sibling under the
@@ -361,10 +360,7 @@ def find_unmatched_calls(
                 )
             else:
                 reason = "unknown_path"
-                reason_detail = (
-                    f"no backend route matches `{call['url_pattern']}` for method "
-                    f"{call_method or '?'}"
-                )
+                reason_detail = f"no backend route matches `{call['url_pattern']}` for method {call_method or '?'}"
 
         unmatched.append(
             {

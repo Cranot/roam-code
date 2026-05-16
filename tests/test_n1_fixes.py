@@ -440,9 +440,7 @@ def test_bulk_fetch_methods_by_file_empty_input():
 
     real = sqlite3.connect(":memory:")
     real.row_factory = sqlite3.Row
-    real.executescript(
-        "CREATE TABLE symbols (id INTEGER, file_id INTEGER, name TEXT, kind TEXT, line_start INTEGER);"
-    )
+    real.executescript("CREATE TABLE symbols (id INTEGER, file_id INTEGER, name TEXT, kind TEXT, line_start INTEGER);")
     cc = CountingConn(real)
     try:
         assert cmd_n1._bulk_fetch_methods_by_file(cc, []) == {}
@@ -483,10 +481,7 @@ def test_candidate_filter_fallback_uses_bulk_fetch(monkeypatch):
     # Old code emitted 1-2 of these per gap-model (one for file_id
     # resolution if missing, plus the BETWEEN scan). After the fix the
     # bulk-by-file fetch happens once, in-memory filter takes over.
-    fallback_selects = [
-        q for q in fifty_queries
-        if "kind = 'method'" in q and "line_start >= ?" in q
-    ]
+    fallback_selects = [q for q in fifty_queries if "kind = 'method'" in q and "line_start >= ?" in q]
     assert len(fallback_selects) == 0, (
         f"Per-model file-range fallback SELECT fired {len(fallback_selects)} "
         f"times for 50 models — must be 0 (bulk-by-file owns this path now).\n"
@@ -1563,12 +1558,8 @@ def test_find_eager_loads_with_cache_does_not_read_disk(monkeypatch):
     )
 
     cache = {
-        "app/Http/Controllers/PostController.php": (
-            "<?php\nPost::with(['comments', 'author'])->get();\n"
-        ),
-        "app/Http/Controllers/CommentController.php": (
-            "<?php\nComment::with(['post'])->get();\n"
-        ),
+        "app/Http/Controllers/PostController.php": ("<?php\nPost::with(['comments', 'author'])->get();\n"),
+        "app/Http/Controllers/CommentController.php": ("<?php\nComment::with(['post'])->get();\n"),
     }
 
     try:
@@ -1856,7 +1847,8 @@ def test_find_eager_loads_with_bulk_with_sym_skips_per_model_query():
     cc = CountingConn(real)
     try:
         rels = cmd_n1._find_eager_loads(
-            cc, "Post",
+            cc,
+            "Post",
             controller_cache={},
             bulk_with_sym=pre_fetched_row,
             resource_config_contents=[],
@@ -1868,8 +1860,7 @@ def test_find_eager_loads_with_bulk_with_sym_skips_per_model_query():
     # No queries — every external read is mocked out by the bulk
     # parameters (with-sym, resource configs, controller cache).
     assert cc.execute_calls == 0, (
-        f"_find_eager_loads issued {cc.execute_calls} queries despite "
-        f"having all 3 caches pre-populated: {cc.queries}"
+        f"_find_eager_loads issued {cc.execute_calls} queries despite having all 3 caches pre-populated: {cc.queries}"
     )
     # The relationships from the pre-fetched $with were parsed correctly.
     assert rels == {"author", "tags"}
@@ -1906,7 +1897,8 @@ def test_find_eager_loads_falls_back_when_bulk_with_sym_is_sentinel():
     cc = CountingConn(real)
     try:
         rels = cmd_n1._find_eager_loads(
-            cc, "Post",
+            cc,
+            "Post",
             controller_cache={},
             resource_config_contents=[],
             # bulk_with_sym deliberately omitted → sentinel → fallback.
@@ -1922,13 +1914,8 @@ def test_find_eager_loads_falls_back_when_bulk_with_sym_is_sentinel():
     # CountingConn truncates SQL at 80 chars — match on the leading
     # SELECT shape rather than the WHERE clause, which lives past the
     # truncation boundary. ("FROM symbols" itself gets cut to "FROM symbo".)
-    has_with_query = any(
-        "default_value" in q and "line_start" in q and "FROM symbo" in q
-        for q in cc.queries
-    )
-    assert has_with_query, (
-        f"fallback SELECT missing; queries seen: {cc.queries}"
-    )
+    has_with_query = any("default_value" in q and "line_start" in q and "FROM symbo" in q for q in cc.queries)
+    assert has_with_query, f"fallback SELECT missing; queries seen: {cc.queries}"
     assert rels == {"author"}
 
 
@@ -1942,15 +1929,13 @@ def laravel_resource_config_dir(tmp_path):
     cfg_dir = proj / "config"
     cfg_dir.mkdir()
     (cfg_dir / "resources.php").write_text(
-        "<?php\nreturn [\n  Post::class => "
-        "(new Resource)->eagerLoad(['author', 'comments']),\n];",
+        "<?php\nreturn [\n  Post::class => (new Resource)->eagerLoad(['author', 'comments']),\n];",
         encoding="utf-8",
     )
     rdir = cfg_dir / "resources"
     rdir.mkdir()
     (rdir / "orders.php").write_text(
-        "<?php\nreturn [\n  Order::class => "
-        "(new Resource)->eagerLoad(['items', 'customer']),\n];",
+        "<?php\nreturn [\n  Order::class => (new Resource)->eagerLoad(['items', 'customer']),\n];",
         encoding="utf-8",
     )
     return proj
@@ -1970,10 +1955,7 @@ def test_build_resource_config_cache_reads_each_file_once(monkeypatch, laravel_r
     real = sqlite3.connect(":memory:")
     real.row_factory = sqlite3.Row
     real.executescript("CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);")
-    real.execute(
-        "INSERT INTO files (id, path) VALUES "
-        "(1, 'config/resources.php'), (2, 'config/resources/orders.php')"
-    )
+    real.execute("INSERT INTO files (id, path) VALUES (1, 'config/resources.php'), (2, 'config/resources/orders.php')")
     real.commit()
 
     read_calls: list[str] = []
@@ -2015,7 +1997,8 @@ def test_build_resource_config_cache_reads_each_file_once(monkeypatch, laravel_r
     try:
         for model in ("Post", "Order", "User", "Comment", "Tag"):
             cmd_n1._find_eager_loads(
-                conn2, model,
+                conn2,
+                model,
                 controller_cache={},
                 resource_config_contents=contents,
                 bulk_with_sym=None,
@@ -2054,11 +2037,20 @@ def test_analyze_n1_eager_loads_constant_query_count(monkeypatch):
         # for every model.
         monkeypatch.setattr(cmd_n1, "_find_appends_properties", lambda *a, **k: ["full_name"])
         monkeypatch.setattr(
-            cmd_n1, "_find_accessor_methods",
+            cmd_n1,
+            "_find_accessor_methods",
             lambda conn, mid, minfo, names, **kw: [
-                ({"id": 9000 + mid, "name": "getFullNameAttribute",
-                  "qualified_name": f"M{mid}::getFullNameAttribute",
-                  "file_path": minfo["file_path"], "line_start": 10, "line_end": 12}, "full_name"),
+                (
+                    {
+                        "id": 9000 + mid,
+                        "name": "getFullNameAttribute",
+                        "qualified_name": f"M{mid}::getFullNameAttribute",
+                        "file_path": minfo["file_path"],
+                        "line_start": 10,
+                        "line_end": 12,
+                    },
+                    "full_name",
+                ),
             ],
         )
         # Avoid touching the disk for resource configs.

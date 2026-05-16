@@ -31,6 +31,13 @@ The assessment is deliberately conservative: items that don't apply
 to a typical codebase get a "N/A — not classified as high-risk" tag
 instead of a "FAIL" so the readiness report doesn't false-alarm
 compliance teams.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because article-12-check outputs are compliance assessment
+reports — not per-location violations. article-12-check's primary
+deliverable is the 1-page Markdown / PDF readiness report. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket C
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

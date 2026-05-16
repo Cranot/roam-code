@@ -13,7 +13,6 @@ from __future__ import annotations
 import re
 import uuid
 
-
 # ── StaleRefs predicate-type emission + back-compat ──────────────────
 
 
@@ -31,10 +30,7 @@ def test_stale_refs_emits_com_iri(tmp_path):
     )
     assert statement["predicateType"] == "https://roam-code.com/StaleRefs/v1"
     # Embedded tool block carries the same IRI.
-    assert (
-        statement["predicate"]["tool"]["predicate_type"]
-        == "https://roam-code.com/StaleRefs/v1"
-    )
+    assert statement["predicate"]["tool"]["predicate_type"] == "https://roam-code.com/StaleRefs/v1"
     # No legacy .dev leakage in the emitted payload.
     assert "roam-code.dev" not in statement["predicateType"]
     assert "roam-code.dev" not in statement["predicate"]["tool"]["predicate_type"]

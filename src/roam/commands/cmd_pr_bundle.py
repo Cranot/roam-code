@@ -33,12 +33,21 @@ aggregate-data fields under ``summary`` (``side_effect_distribution``,
 ``risk_severity_distribution``, etc.). Zero external consumers were
 reading the top-level slot at ship time — the move resolves a Pattern 3
 split-brain documented in CLAUDE.md.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because pr-bundle findings are invocation-scoped proofs
+(affected symbols, risks, test coverage) gathered during a single PR
+preparation -- not per-location violations. The bundle demonstrates
+completeness of proof, not code defects at specific locations.
+Multi-location expansion would distort SARIF semantics ("bundle
+complete with 3 affected symbols" is not a per-location rule
+violation). See action.yml line 401 _SUPPORTED_SARIF allowlist and
+W1149 audit memo.
 """
 
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -46,12 +55,16 @@ from typing import Any
 import click
 
 from roam.capability import roam_capability
-from roam.commands.git_helpers import git_actor, git_branch
+from roam.commands.git_helpers import git_branch
 from roam.db.connection import find_project_root, open_db
 from roam.output.confidence import confidence_level_rank
-from roam.output.formatter import WarningsOut, json_envelope, to_json
+from roam.output.formatter import (
+    WarningsOut,
+    json_envelope,
+    resolution_disclosure,
+    to_json,
+)
 from roam.runs.helpers import auto_log
-
 
 # ---------------------------------------------------------------------------
 # W236a / W232 secret-redaction at the producer boundary
@@ -77,11 +90,11 @@ from roam.runs.helpers import auto_log
 # thin re-export aliases for any pre-W364 test or call site that
 # reaches in by attribute name.
 from roam.security.redact import (
-    SECRET_PATTERNS as _SECRET_PATTERNS,
     redact_secrets as _redact_secrets,
+)
+from roam.security.redact import (
     scrub_actor_block as _scrub_actor_block,
 )
-
 
 # ---------------------------------------------------------------------------
 # Storage layout
@@ -141,6 +154,8 @@ _MODE_RESTRICTED_STATE = "mode_restricted"
 # that adds per-tool-call MCP receipts.
 from roam.commands.actor_helpers import (
     resolve_actor_block as _resolve_actor_block_impl,
+)
+from roam.commands.actor_helpers import (
     resolve_actor_kind as _resolve_actor_kind_impl,
 )
 
@@ -373,6 +388,7 @@ def _merge_dict_list(target: list, additions: list, key_fields: tuple[str, ...])
     A dict already present in target (same values for all `key_fields`)
     is not re-added. Non-dicts are skipped. Returns count added.
     """
+
     def key(d: dict) -> tuple:
         return tuple(d.get(k, "") for k in key_fields)
 
@@ -429,9 +445,7 @@ def _harvest_envelope(bundle: dict, envelope: dict) -> dict:
                         "blast_radius": s.get("blast_radius", 0),
                     }
                 )
-        counts["affected_symbols"] += _merge_dict_list(
-            bundle["affected_symbols"], normalized, ("name", "file")
-        )
+        counts["affected_symbols"] += _merge_dict_list(bundle["affected_symbols"], normalized, ("name", "file"))
 
     # 2. risks -- agent_contract.risks OR top-level risks.
     risks_payload = envelope.get("risks")
@@ -444,17 +458,13 @@ def _harvest_envelope(bundle: dict, envelope: dict) -> dict:
         normalized = []
         for r in risks_payload:
             if isinstance(r, str):
-                normalized.append(
-                    {"id": "", "severity": "M", "description": r, "source_command": source_cmd}
-                )
+                normalized.append({"id": "", "severity": "M", "description": r, "source_command": source_cmd})
             elif isinstance(r, dict):
                 normalized.append(
                     {
                         "id": r.get("id", ""),
                         "severity": r.get("severity", "M"),
-                        "description": r.get("description")
-                        or r.get("message")
-                        or r.get("detail", ""),
+                        "description": r.get("description") or r.get("message") or r.get("detail", ""),
                         "source_command": r.get("source_command", source_cmd),
                     }
                 )
@@ -474,9 +484,7 @@ def _harvest_envelope(bundle: dict, envelope: dict) -> dict:
                         "reason": t.get("reason", ""),
                     }
                 )
-        counts["tests_required"] += _merge_dict_list(
-            bundle["tests_required"], normalized, ("test_file",)
-        )
+        counts["tests_required"] += _merge_dict_list(bundle["tests_required"], normalized, ("test_file",))
 
     # 4. summary.next_commands may include "run pytest tests/X.py" hints we
     # can lift as tests_required. Best-effort: only entries that look like
@@ -501,9 +509,7 @@ def _harvest_envelope(bundle: dict, envelope: dict) -> dict:
                             )
                             break
             if normalized:
-                counts["tests_required"] += _merge_dict_list(
-                    bundle["tests_required"], normalized, ("test_file",)
-                )
+                counts["tests_required"] += _merge_dict_list(bundle["tests_required"], normalized, ("test_file",))
 
     return counts
 
@@ -618,8 +624,21 @@ def _resolve_symbol_in_index(symbol_name: str) -> tuple[dict | None, str]:
         return None, "lookup_failed"
     if row is None:
         return None, "not_found"
-    # sqlite3.Row -> plain dict so the caller can read keys cleanly.
+    # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` already returns
+    # a dict (post-W1249 _stamp_tier widening), and stamps
+    # ``_resolution_tier`` on it. Map ``fuzzy`` -> ``fuzzy_resolution``
+    # state so the caller can flip partial_success and surface a fuzzy
+    # warning the same way it does for ``not_found`` ghosts -- agents
+    # adding a fuzzily-matched symbol to a bundle would otherwise
+    # accumulate silent mis-matches.
     try:
+        if isinstance(row, dict):
+            tier = row.get("_resolution_tier", "symbol")
+        else:
+            # Defensive: pre-W1249 row-like objects fall back to ``symbol``.
+            tier = "symbol"
+        if tier == "fuzzy":
+            return dict(row), "fuzzy_resolution"
         return dict(row), "ok"
     except Exception:
         return None, "lookup_failed"
@@ -659,8 +678,8 @@ def _classify_world_model_for_symbol(symbol_name: str) -> dict:
     if not symbol_name or not isinstance(symbol_name, str):
         return fallback
     try:
-        from roam.world_model.side_effects import classify_side_effects
         from roam.world_model.idempotency import classify_idempotency
+        from roam.world_model.side_effects import classify_side_effects
     except Exception:
         return fallback
     try:
@@ -669,9 +688,7 @@ def _classify_world_model_for_symbol(symbol_name: str) -> dict:
             if not se_list:
                 return fallback
             # classify_idempotency reuses the side-effects pass.
-            idem_list = classify_idempotency(
-                conn, symbol_name=symbol_name, side_effects=se_list
-            )
+            idem_list = classify_idempotency(conn, symbol_name=symbol_name, side_effects=se_list)
     except Exception:
         return fallback
     se = se_list[0]
@@ -700,9 +717,7 @@ def _classify_world_model_for_symbol(symbol_name: str) -> dict:
     }
 
 
-def _derive_world_model_severity(
-    side_effect_kinds: list, idempotency_kind: str
-) -> str | None:
+def _derive_world_model_severity(side_effect_kinds: list, idempotency_kind: str) -> str | None:
     """Derive the severity tag for an auto-added world-model risk.
 
     Returns ``None`` when no risk should be added (pure / unknown symbols).
@@ -776,15 +791,10 @@ def _has_existing_risk_for_symbol(bundle: dict, symbol_name: str) -> bool:
         rid = r.get("id") or ""
         if rid in needles:
             return True
-        if isinstance(rid, str) and (
-            rid.startswith(causal_added_prefix)
-            or rid.startswith(causal_removed_prefix)
-        ):
+        if isinstance(rid, str) and (rid.startswith(causal_added_prefix) or rid.startswith(causal_removed_prefix)):
             return True
         desc = r.get("description") or ""
-        if isinstance(desc, str) and (
-            desc.startswith(desc_word_prefix) or desc.startswith(desc_colon_prefix)
-        ):
+        if isinstance(desc, str) and (desc.startswith(desc_word_prefix) or desc.startswith(desc_colon_prefix)):
             return True
     return False
 
@@ -848,17 +858,13 @@ def _classify_and_annotate_affected(bundle: dict, symbol_name: str) -> None:
 
     # 2. Maybe add a derived risk (dedup by id + by symbol-prefixed
     # description).
-    severity = _derive_world_model_severity(
-        wm["side_effect_kinds"], wm["idempotency_kind"]
-    )
+    severity = _derive_world_model_severity(wm["side_effect_kinds"], wm["idempotency_kind"])
     if severity is None:
         return
     if _has_existing_risk_for_symbol(bundle, symbol_name):
         return
     kinds_str = ",".join(wm["side_effect_kinds"]) or "no-effect"
-    description = (
-        f"{symbol_name} performs {kinds_str} ({wm['idempotency_kind']})"
-    )
+    description = f"{symbol_name} performs {kinds_str} ({wm['idempotency_kind']})"
     bundle.setdefault("risks", []).append(
         {
             "id": _world_model_risk_id(symbol_name),
@@ -1044,9 +1050,7 @@ def _edge_key(edge: dict) -> tuple[str, str, str]:
     )
 
 
-def _diff_causal_edges(
-    snapshot_edges: list, current_edges: list
-) -> tuple[list[dict], list[dict]]:
+def _diff_causal_edges(snapshot_edges: list, current_edges: list) -> tuple[list[dict], list[dict]]:
     """Return ``(added, removed)`` edges.
 
     ``added`` = in ``current`` but not in ``snapshot``.
@@ -1059,12 +1063,8 @@ def _diff_causal_edges(
         snapshot_edges = []
     if not isinstance(current_edges, list):
         current_edges = []
-    snap_set = {
-        _edge_key(e) for e in snapshot_edges if isinstance(e, dict)
-    }
-    curr_set = {
-        _edge_key(e) for e in current_edges if isinstance(e, dict)
-    }
+    snap_set = {_edge_key(e) for e in snapshot_edges if isinstance(e, dict)}
+    curr_set = {_edge_key(e) for e in current_edges if isinstance(e, dict)}
     added_keys = curr_set - snap_set
     removed_keys = snap_set - curr_set
     added = [e for e in current_edges if isinstance(e, dict) and _edge_key(e) in added_keys]
@@ -1083,9 +1083,7 @@ def _causal_sink_kind(sink: str) -> str:
     return sink.split(":", 1)[0]
 
 
-def _causal_diff_risk_id(
-    direction: str, symbol_name: str, edge: dict
-) -> str:
+def _causal_diff_risk_id(direction: str, symbol_name: str, edge: dict) -> str:
     """Canonical id for an auto-added causal-diff risk.
 
     ``direction`` is ``"added"`` or ``"removed"``. The id includes source +
@@ -1113,9 +1111,7 @@ def _slug_edge_for_description(edge: dict) -> tuple[str, str]:
     return param_label, sink_label
 
 
-def _derive_causal_diff_risks(
-    symbol_name: str, added: list, removed: list
-) -> list[dict]:
+def _derive_causal_diff_risks(symbol_name: str, added: list, removed: list) -> list[dict]:
     """Build risk records for added / removed causal edges.
 
     Rules:
@@ -1149,8 +1145,7 @@ def _derive_causal_diff_risks(
             continue
         param_label, sink_label = _slug_edge_for_description(e)
         description = (
-            f"{symbol_name}: new {sink_kind} path '{param_label}' "
-            f"-> {sink_label} introduced since bundle init"
+            f"{symbol_name}: new {sink_kind} path '{param_label}' -> {sink_label} introduced since bundle init"
         )
         out.append(
             {
@@ -1168,24 +1163,15 @@ def _derive_causal_diff_risks(
         if kind not in _CAUSAL_DIFF_REMOVAL_SIGNIFICANT_KINDS:
             continue
         # Only surface io_write effect removals + raise removals.
-        is_effect_removal = (
-            kind in ("param_to_effect", "global_to_effect", "env_to_effect")
-            and sink_kind == "io_write"
-        )
+        is_effect_removal = kind in ("param_to_effect", "global_to_effect", "env_to_effect") and sink_kind == "io_write"
         is_raise_removal = kind == "param_to_raise"
         if not (is_effect_removal or is_raise_removal):
             continue
         param_label, sink_label = _slug_edge_for_description(e)
         if is_raise_removal:
-            description = (
-                f"{symbol_name}: validation 'raise on {param_label}' "
-                f"({sink_label}) REMOVED since bundle init"
-            )
+            description = f"{symbol_name}: validation 'raise on {param_label}' ({sink_label}) REMOVED since bundle init"
         else:
-            description = (
-                f"{symbol_name}: io_write path '{param_label}' "
-                f"-> {sink_label} REMOVED since bundle init"
-            )
+            description = f"{symbol_name}: io_write path '{param_label}' -> {sink_label} REMOVED since bundle init"
         out.append(
             {
                 "id": _causal_diff_risk_id("removed", symbol_name, e),
@@ -1267,9 +1253,7 @@ def _run_causal_diff_pass(bundle: dict) -> dict:
         if current.get("state") != "captured" or snap_state != "captured":
             # Either the original snapshot was lost or we can't re-snapshot
             # now (e.g. file deleted). Explicit state, no risks.
-            rec["causal_diff_state"] = (
-                "snapshot_lost" if snap_state != "captured" else "rescan_failed"
-            )
+            rec["causal_diff_state"] = "snapshot_lost" if snap_state != "captured" else "rescan_failed"
             continue
         added, removed = _diff_causal_edges(snap_edges, current.get("edges") or [])
         rec["causal_diff_added"] = added
@@ -1300,10 +1284,7 @@ def _run_causal_diff_pass(bundle: dict) -> dict:
             label = f"removed.{kind}->{sink_kind}" if sink_kind else f"removed.{kind}"
             counts["by_kind"][label] = counts["by_kind"].get(label, 0) + 1
             if kind in _CAUSAL_DIFF_REMOVAL_SIGNIFICANT_KINDS:
-                is_effect = (
-                    kind in ("param_to_effect", "global_to_effect", "env_to_effect")
-                    and sink_kind == "io_write"
-                )
+                is_effect = kind in ("param_to_effect", "global_to_effect", "env_to_effect") and sink_kind == "io_write"
                 if is_effect or kind == "param_to_raise":
                     counts["high_severity_count"] += 1
         # Build and dedup-append risks. Dedup rule (refines the spec):
@@ -1329,9 +1310,7 @@ def _run_causal_diff_pass(bundle: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _validate_bundle(
-    bundle: dict, *, strict_resolved: bool = False
-) -> tuple[list[str], str]:
+def _validate_bundle(bundle: dict, *, strict_resolved: bool = False) -> tuple[list[str], str]:
     """Return ``(missing_proofs, state)``.
 
     ``state`` is ``"complete"`` or ``"incomplete"``. ``missing_proofs`` is
@@ -1352,32 +1331,22 @@ def _validate_bundle(
 
     affected = bundle.get("affected_symbols") or []
     if not affected:
-        missing.append(
-            "affected_symbols (run: roam pr-bundle add affected <sym>, or run roam diff first)"
-        )
+        missing.append("affected_symbols (run: roam pr-bundle add affected <sym>, or run roam diff first)")
 
     context = bundle.get("context_read") or {}
     commands_run = context.get("commands_run") if isinstance(context, dict) else []
     if not isinstance(commands_run, list):
         commands_run = []
     has_context_cmd = any(
-        isinstance(c, str)
-        and any(probe in c for probe in _CONTEXT_READING_COMMANDS)
-        for c in commands_run
+        isinstance(c, str) and any(probe in c for probe in _CONTEXT_READING_COMMANDS) for c in commands_run
     )
     if not has_context_cmd:
-        missing.append(
-            "context_read.commands_run (must include one of: "
-            + ", ".join(_CONTEXT_READING_COMMANDS)
-            + ")"
-        )
+        missing.append("context_read.commands_run (must include one of: " + ", ".join(_CONTEXT_READING_COMMANDS) + ")")
 
     tests_required = bundle.get("tests_required") or []
     tests_run = bundle.get("tests_run") or []
     if tests_required and not tests_run:
-        missing.append(
-            f"tests_run ({len(tests_required)} required test(s) declared but none recorded)"
-        )
+        missing.append(f"tests_run ({len(tests_required)} required test(s) declared but none recorded)")
 
     roam_verdict = bundle.get("roam_verdict") or {}
     has_signal = False
@@ -1397,9 +1366,7 @@ def _validate_bundle(
                 has_signal = True
                 break
     if not has_signal:
-        missing.append(
-            "roam_verdict (no signal -- run roam preflight / roam diff to populate)"
-        )
+        missing.append("roam_verdict (no signal -- run roam preflight / roam diff to populate)")
 
     # W21.4: opt-in stricter gate -- when an agent passes --strict-resolved,
     # ghost symbols (resolution_state in _UNRESOLVED_STATES) count as a
@@ -1407,9 +1374,7 @@ def _validate_bundle(
     # verdict and unresolved_affected_symbols_count, but do not block the
     # strict gate (preserves W21.3 behavior).
     if strict_resolved:
-        n_unresolved = sum(
-            1 for rec in affected if _affected_record_is_unresolved(rec)
-        )
+        n_unresolved = sum(1 for rec in affected if _affected_record_is_unresolved(rec))
         if n_unresolved > 0:
             missing.append(
                 f"unresolved_affected_symbols "
@@ -1479,7 +1444,7 @@ def _load_permits_from_disk(
 
 def _load_leases_from_disk(
     repo_root: Path | None,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> list[dict]:
     """Scan ``.roam/leases/*.json`` and return one dict per readable file.
 
@@ -1600,24 +1565,14 @@ def _build_envelope(
     # the headline finding without needing the full envelope. Also mention
     # causal-diff additions when present (LAW 4 — concrete-noun anchor:
     # "1 io_write path added since init").
-    io_write_phrase = (
-        f" · {io_write_count} io_write symbol(s) auto-flagged"
-        if io_write_count
-        else ""
-    )
+    io_write_phrase = f" · {io_write_count} io_write symbol(s) auto-flagged" if io_write_count else ""
     cd_phrase = ""
     if cd_high:
-        cd_phrase = (
-            f" · {cd_high} io_write path(s) changed since init"
-        )
+        cd_phrase = f" · {cd_high} io_write path(s) changed since init"
     # W20.5: surface unresolved-symbol count in the verdict so an agent
     # reading only the verdict sees the ghost-symbol warning. Empty
     # string when zero unresolved -- LAW 6 (verdict is standalone).
-    unresolved_phrase = (
-        f" · {n_unresolved} affected symbol(s) NOT in index"
-        if n_unresolved
-        else ""
-    )
+    unresolved_phrase = f" · {n_unresolved} affected symbol(s) NOT in index" if n_unresolved else ""
     if state == "complete":
         verdict = (
             f"PR proof bundle complete ({n_aff} affected · "
@@ -1637,10 +1592,7 @@ def _build_envelope(
             # Prepend the unresolved warning so agents see it before the
             # missing-proofs list (which can be long).
             prefix = unresolved_phrase.lstrip(" ·").strip() + "; " + prefix
-        verdict = (
-            f"PR proof bundle incomplete -- {prefix}missing: "
-            f"{', '.join(missing)}"
-        )
+        verdict = f"PR proof bundle incomplete -- {prefix}missing: {', '.join(missing)}"
 
     summary = {
         "verdict": verdict,
@@ -1741,20 +1693,12 @@ def _build_envelope(
         if isinstance(inspected, list):
             for entry in inspected:
                 if isinstance(entry, str) and entry:
-                    context_files_out.append(
-                        {"path": entry, "content_hash": None}
-                    )
+                    context_files_out.append({"path": entry, "content_hash": None})
                 elif isinstance(entry, dict):
                     path_value = entry.get("path") or entry.get("file") or ""
-                    hash_value = (
-                        entry.get("content_hash")
-                        or entry.get("sha256")
-                        or None
-                    )
+                    hash_value = entry.get("content_hash") or entry.get("sha256") or None
                     if path_value:
-                        context_files_out.append(
-                            {"path": path_value, "content_hash": hash_value}
-                        )
+                        context_files_out.append({"path": path_value, "content_hash": hash_value})
 
     # W266 - materialise EnvironmentRef rows on the pr-bundle envelope.
     # The collector at ``src/roam/evidence/collector.py`` already
@@ -1803,10 +1747,7 @@ def _build_envelope(
             commit_range=commit_range_for_env,
             workspace_root=str(ws_root) if ws_root else None,
         )
-        environment_refs_out: list[dict] = [
-            {"env_kind": r.env_kind, "env_id": r.env_id}
-            for r in env_refs_tuple
-        ]
+        environment_refs_out: list[dict] = [{"env_kind": r.env_kind, "env_id": r.env_id} for r in env_refs_tuple]
     except Exception:
         # Best-effort - never block emit on env-ref construction.
         environment_refs_out = []
@@ -1992,10 +1933,7 @@ def _require_bundle(ctx, path: Path) -> dict:
     if bundle is not None:
         return bundle
     json_mode = ctx.obj.get("json") if ctx.obj else False
-    verdict = (
-        "no bundle on this branch -- run "
-        "`roam pr-bundle init --intent <text>` first"
-    )
+    verdict = "no bundle on this branch -- run `roam pr-bundle init --intent <text>` first"
     env = json_envelope(
         "pr-bundle",
         summary={
@@ -2241,12 +2179,15 @@ def pr_bundle_add_affected(ctx, symbol, kind, file_path, blast_radius):
             "lookup_failed": "symbol lookup crashed -- index may be corrupt",
         }.get(resolution_state, "symbol could not be resolved")
         env["summary"]["verdict"] = (
-            f"WARNING: symbol '{symbol}' not in index ({resolution_state}); "
-            "recorded but unresolved"
+            f"WARNING: symbol '{symbol}' not in index ({resolution_state}); recorded but unresolved"
         )
         env["summary"]["partial_success"] = True
         env["summary"]["unresolved_affected_symbol"] = symbol
         env["summary"]["unresolved_affected_state"] = resolution_state
+        # W1245 Pattern-2 variant-D: structured unresolved disclosure.
+        unresolved_disclosure = resolution_disclosure("unresolved", target=symbol)
+        env["summary"].update(unresolved_disclosure)
+        env.update(unresolved_disclosure)
         next_cmds = [f"roam search-symbol {symbol}"]
         if resolution_state == "no_db":
             next_cmds.append("roam init")
@@ -2255,12 +2196,44 @@ def pr_bundle_add_affected(ctx, symbol, kind, file_path, blast_radius):
         env["agent_contract"] = {
             "facts": [
                 f"symbol '{symbol}' is not in the indexed symbol table ({reason})",
-                "Record was written to the bundle anyway; downstream world-model "
-                "classifiers will skip it",
+                "Record was written to the bundle anyway; downstream world-model classifiers will skip it",
                 f"Verify the symbol name with `roam search-symbol {symbol}` OR "
                 "refresh the index with `roam init --force`",
             ],
             "next_commands": next_cmds,
+        }
+    elif resolution_state == "fuzzy_resolution":
+        # W1245 Pattern-2 variant-D: the symbol resolved via the LIKE-
+        # fallback tier rather than an exact-name match. The record is
+        # still written (the resolved row is real), but agents need to
+        # see the disclosure so they can verify the resolver landed on
+        # the intended symbol -- a refactor plan or PR bundle built on
+        # a wrongly-resolved symbol is the canonical silent-fallback
+        # anti-pattern.
+        resolved_name = ""
+        if resolved is not None:
+            resolved_name = str(resolved.get("qualified_name") or resolved.get("name") or symbol)
+        env["summary"]["verdict"] = (
+            f"WARNING: symbol '{symbol}' fuzzy-matched to '{resolved_name}'; "
+            "recorded but resolution degraded [fuzzy resolution]"
+        )
+        env["summary"]["partial_success"] = True
+        fuzzy_disclosure = resolution_disclosure("fuzzy", target=resolved_name or symbol)
+        env["summary"].update(fuzzy_disclosure)
+        env.update(fuzzy_disclosure)
+        env["agent_contract"] = {
+            "facts": [
+                f"symbol '{symbol}' did not exact-match; resolver fell back to "
+                f"LIKE substring tier and landed on '{resolved_name}'",
+                "Record was written with the resolved symbol's metadata; verify "
+                "the match before relying on the bundle's blast radius",
+                f"Re-issue with a fully-qualified name OR run "
+                f"`roam search-symbol {symbol}` to inspect the candidate set",
+            ],
+            "next_commands": [
+                f"roam search-symbol {symbol}",
+                f"roam diagnose {resolved_name}" if resolved_name else "roam diagnose <name>",
+            ],
         }
     _emit_envelope_and_log(env, json_mode, target=symbol)
 
@@ -2475,6 +2448,7 @@ def pr_bundle_add_approval(ctx, approver, scope, reason, expiry, approval_id):
     }
     try:
         from roam.evidence.provenance import provenance_label
+
         record["provenance"] = provenance_label("cli_flag")
     except Exception:  # noqa: BLE001 - helper is supposed to never fail
         pass
@@ -2549,9 +2523,7 @@ def pr_bundle_add_accepted_risk(ctx, reviewer, scope, reason, expiry, risk_id):
     bundle.setdefault("accepted_risks", [])
     _merge_dict_list(bundle["accepted_risks"], [record], ("risk_id",))
     _atomic_write_bundle(path, bundle)
-    env = _build_envelope(
-        bundle, command_label="pr-bundle-add-accepted-risk"
-    )
+    env = _build_envelope(bundle, command_label="pr-bundle-add-accepted-risk")
     env["bundle_path"] = str(path)
     _emit_envelope_and_log(env, json_mode, target=f"{reviewer}:{scope}")
 
@@ -2652,7 +2624,9 @@ def pr_bundle_add_accepted_risk(ctx, reviewer, scope, reason, expiry, risk_id):
     ),
 )
 @click.pass_context
-def pr_bundle_emit(ctx, auto_collect, strict, strict_resolved, agent_id, human_actor, slsa_l3, sign, sign_key, sign_keyless):
+def pr_bundle_emit(
+    ctx, auto_collect, strict, strict_resolved, agent_id, human_actor, slsa_l3, sign, sign_key, sign_keyless
+):
     """Finalise + print the bundle envelope.
 
     With ``--auto-collect`` (default), any envelopes generated since
@@ -2715,10 +2689,7 @@ def pr_bundle_emit(ctx, auto_collect, strict, strict_resolved, agent_id, human_a
     # agent sees exactly what to run next (LAWs 6 + 12, Pattern 2).
     blocked, active_mode, upgrade_to = _mode_blocks_emit(root)
     if blocked:
-        verdict = (
-            f"pr-bundle emit blocked: active mode is {active_mode}; "
-            f"run `roam mode {upgrade_to}` to enable"
-        )
+        verdict = f"pr-bundle emit blocked: active mode is {active_mode}; run `roam mode {upgrade_to}` to enable"
         env = json_envelope(
             "pr-bundle",
             summary={
@@ -2911,10 +2882,7 @@ def pr_bundle_validate(ctx, strict, strict_resolved):
     # state is preserved; exit code 5 fires only with --strict.
     blocked, active_mode, upgrade_to = _mode_blocks_emit(root)
     if blocked:
-        verdict = (
-            f"pr-bundle validate blocked: active mode is {active_mode}; "
-            f"run `roam mode {upgrade_to}` to enable"
-        )
+        verdict = f"pr-bundle validate blocked: active mode is {active_mode}; run `roam mode {upgrade_to}` to enable"
         env = json_envelope(
             "pr-bundle-validate",
             summary={

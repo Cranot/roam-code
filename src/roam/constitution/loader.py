@@ -449,7 +449,7 @@ def _default_modes() -> dict[str, list[str]]:
     is the cumulative union per ``VALID_MODES`` order, sorted for
     deterministic YAML output.
     """
-    from roam.modes.policy import VALID_MODES, _MODE_EXTRAS
+    from roam.modes.policy import _MODE_EXTRAS, VALID_MODES
 
     out: dict[str, list[str]] = {}
     cumulative: set[str] = set()
@@ -508,9 +508,7 @@ def init_constitution(
     repo_root = Path(repo_root).resolve()
     path = constitution_path(repo_root)
     if path.exists() and not force:
-        raise FileExistsError(
-            f"constitution already exists at {path}; pass force=True to overwrite"
-        )
+        raise FileExistsError(f"constitution already exists at {path}; pass force=True to overwrite")
 
     sources: dict[str, str] = {}
 
@@ -534,9 +532,7 @@ def init_constitution(
     if memory:
         sources["memory"] = f"./{memory}"
 
-    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
-    )
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     doc: dict[str, Any] = {
         "version": CONSTITUTION_SCHEMA_VERSION,
@@ -611,11 +607,7 @@ def load_constitution(repo_root: Path) -> Optional[Constitution]:
     return Constitution(
         version=int(data.get("version") or CONSTITUTION_SCHEMA_VERSION),
         metadata=_as_dict(data.get("metadata")),
-        sources={
-            str(k): str(v)
-            for k, v in _as_dict(data.get("sources")).items()
-            if isinstance(v, (str, int))
-        },
+        sources={str(k): str(v) for k, v in _as_dict(data.get("sources")).items() if isinstance(v, (str, int))},
         required_checks=required_checks,
         modes=modes,
         policy=_as_dict(data.get("policy")),
@@ -788,9 +780,7 @@ def check_constitution(repo_root: Path, constitution: Constitution) -> CheckRepo
     n_deprecated_cmds = sum(1 for c in commands_out if c.state == "deprecated_command")
     n_mode_issues = len(mode_issues)
 
-    issues_total = (
-        n_missing_sources + n_unparseable + n_unknown_cmds + n_mode_issues
-    )
+    issues_total = n_missing_sources + n_unparseable + n_unknown_cmds + n_mode_issues
 
     if n_unparseable:
         state = "missing"
@@ -990,18 +980,14 @@ def apply_constitution(
 
     if failed == 0 and passed == total - skipped:
         state = "ok"
-        verdict = (
-            f"{gate} gate: {passed}/{total} passed"
-            + (f" ({skipped} skipped)" if skipped else "")
-        )
+        verdict = f"{gate} gate: {passed}/{total} passed" + (f" ({skipped} skipped)" if skipped else "")
     elif passed == 0 and failed == total - skipped:
         state = "failed"
         # Surface the first failing command in the verdict.
         first_fail = next((r for r in results if not r.passed and not r.skipped), None)
         if first_fail is not None:
             verdict = (
-                f"{gate} gate: 0/{total} passed; first failure: "
-                f"{first_fail.command} (exit={first_fail.exit_code})"
+                f"{gate} gate: 0/{total} passed; first failure: {first_fail.command} (exit={first_fail.exit_code})"
             )
         else:
             verdict = f"{gate} gate: all checks failed"
@@ -1009,10 +995,7 @@ def apply_constitution(
         state = "partial"
         first_fail = next((r for r in results if not r.passed and not r.skipped), None)
         if first_fail is not None:
-            verdict = (
-                f"{gate} gate: {passed} passed / {failed} failed"
-                f" (first failure: {first_fail.command})"
-            )
+            verdict = f"{gate} gate: {passed} passed / {failed} failed (first failure: {first_fail.command})"
         else:
             verdict = f"{gate} gate: {passed} passed / {failed} failed"
 

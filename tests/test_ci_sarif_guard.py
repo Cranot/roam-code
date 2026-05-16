@@ -6,7 +6,6 @@ import importlib.util
 import json
 import sys
 from copy import deepcopy
-from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
 

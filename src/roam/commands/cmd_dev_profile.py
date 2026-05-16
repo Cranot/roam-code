@@ -1,4 +1,12 @@
-"""Analyze developer commit patterns and behavioral metrics for PR risk scoring."""
+"""Analyze developer commit patterns and behavioral metrics for PR risk scoring.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because dev-profile outputs are invocation-scoped per-author
+commit-behavior aggregates (burst frequency, time-of-day distribution,
+file-touch breadth) — not per-location code violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
+"""
 
 from __future__ import annotations
 

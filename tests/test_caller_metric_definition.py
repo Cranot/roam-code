@@ -45,9 +45,7 @@ CALLER_METRIC_LABELS = {
 
 def _parse_json(result, command: str) -> dict:
     """Parse JSON output from a CliRunner result with helpful diagnostics."""
-    assert result.exit_code == 0, (
-        f"Command {command} failed (exit {result.exit_code}):\n{result.output}"
-    )
+    assert result.exit_code == 0, f"Command {command} failed (exit {result.exit_code}):\n{result.output}"
     try:
         return json.loads(result.output)
     except json.JSONDecodeError as exc:
@@ -58,16 +56,13 @@ def _assert_label(summary: dict, expected_prefix: str, command: str) -> None:
     """Assert ``caller_metric_definition`` is present and matches the expected
     canonical label (prefix-match so trailing field qualifiers are allowed).
     """
-    assert "caller_metric_definition" in summary, (
-        f"{command} summary missing 'caller_metric_definition': {summary!r}"
-    )
+    assert "caller_metric_definition" in summary, f"{command} summary missing 'caller_metric_definition': {summary!r}"
     value = summary["caller_metric_definition"]
     assert isinstance(value, str), (
         f"{command}.summary.caller_metric_definition should be str, got {type(value).__name__}"
     )
     assert value.startswith(expected_prefix), (
-        f"{command}: expected caller_metric_definition starting with "
-        f"{expected_prefix!r}, got {value!r}"
+        f"{command}: expected caller_metric_definition starting with {expected_prefix!r}, got {value!r}"
     )
 
 
@@ -85,9 +80,7 @@ class TestCallerMetricLabels:
         _assert_label(data["summary"], "raw_edge_rows", "uses")
 
     def test_context_single_emits_raw_edge_rows(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["context", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["context", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "context")
         _assert_label(data["summary"], "raw_edge_rows", "context")
 
@@ -102,9 +95,7 @@ class TestCallerMetricLabels:
         _assert_label(data["summary"], "raw_edge_rows", "context --for-file")
 
     def test_diagnose_emits_transitive_upstream_bfs(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["diagnose", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["diagnose", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "diagnose")
         _assert_label(data["summary"], "transitive_upstream_bfs", "diagnose")
 
@@ -131,14 +122,10 @@ class TestCallerMetricLabels:
             json_mode=True,
         )
         data = _parse_json(result, "oracle is-reachable-from-entry")
-        _assert_label(
-            data["summary"], "transitive_bfs_from_entry", "oracle is-reachable-from-entry"
-        )
+        _assert_label(data["summary"], "transitive_bfs_from_entry", "oracle is-reachable-from-entry")
 
     def test_deps_emits_raw_edge_rows(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["deps", "src/service.py"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["deps", "src/service.py"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "deps")
         _assert_label(data["summary"], "raw_edge_rows", "deps")
 
@@ -152,23 +139,17 @@ class TestCallerMetricLabels:
             _assert_label(data["summary"], "direct_in_degree", "fan symbol")
 
     def test_symbol_emits_direct_in_degree(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["symbol", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["symbol", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "symbol")
         _assert_label(data["summary"], "direct_in_degree", "symbol")
 
     def test_metrics_symbol_emits_direct_in_degree(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["metrics", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["metrics", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "metrics (symbol)")
         _assert_label(data["summary"], "direct_in_degree", "metrics (symbol)")
 
     def test_metrics_file_emits_direct_in_degree(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["metrics", "src/service.py"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["metrics", "src/service.py"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "metrics (file)")
         _assert_label(data["summary"], "direct_in_degree", "metrics (file)")
 
@@ -268,10 +249,7 @@ def test_required_files_have_caller_metric_definition() -> None:
         text = path.read_text(encoding="utf-8")
         if not _file_has_caller_metric_definition(text):
             missing.append(f"{fname}: no 'caller_metric_definition' in source")
-    assert not missing, (
-        "Fix C requires these files to emit caller_metric_definition:\n  "
-        + "\n  ".join(missing)
-    )
+    assert not missing, "Fix C requires these files to emit caller_metric_definition:\n  " + "\n  ".join(missing)
 
 
 def test_no_new_commands_forget_caller_metric_definition() -> None:
@@ -297,6 +275,5 @@ def test_no_new_commands_forget_caller_metric_definition() -> None:
         "summary block but never label it with caller_metric_definition.\n"
         "Either add the label (see docs/concepts/caller-metrics.md) or add "
         "the file to _KNOWN_EXEMPT_FILES in this test with a comment "
-        "explaining why it doesn't apply.\n  Offenders: "
-        + ", ".join(offenders)
+        "explaining why it doesn't apply.\n  Offenders: " + ", ".join(offenders)
     )

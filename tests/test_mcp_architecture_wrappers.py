@@ -75,8 +75,7 @@ class TestRegistryPresence:
 
         meta = _TOOL_METADATA[tool_name]
         assert meta.get("read_only", True) is True, (
-            f"{tool_name} must be read-only -- the architecture cluster "
-            f"only contains pure-query commands."
+            f"{tool_name} must be read-only -- the architecture cluster only contains pure-query commands."
         )
 
     @pytest.mark.parametrize("tool_name", W300_TOOL_NAMES)
@@ -97,8 +96,7 @@ class TestColdStartGuardWiring:
         from roam.mcp_extras.preflight import _NO_INDEX_NEEDED, needs_index
 
         assert tool_name not in _NO_INDEX_NEEDED, (
-            f"{tool_name} must NOT be in _NO_INDEX_NEEDED -- the "
-            f"architecture cluster reads the indexed symbol graph."
+            f"{tool_name} must NOT be in _NO_INDEX_NEEDED -- the architecture cluster reads the indexed symbol graph."
         )
         assert needs_index(tool_name) is True, (
             f"needs_index({tool_name!r}) must return True so the W296 "
@@ -107,17 +105,14 @@ class TestColdStartGuardWiring:
         )
 
     @pytest.mark.parametrize("tool_name", W300_TOOL_NAMES)
-    def test_wrapper_description_carries_cold_start_hint(
-        self, tool_name: str
-    ) -> None:
+    def test_wrapper_description_carries_cold_start_hint(self, tool_name: str) -> None:
         """W296 hint is auto-appended to every index-gated wrapper."""
         from roam.mcp_extras.preflight import INDEX_REQUIRED_HINT
         from roam.mcp_server import _TOOL_METADATA
 
         desc = _TOOL_METADATA[tool_name].get("description", "")
         assert INDEX_REQUIRED_HINT in desc, (
-            f"{tool_name} description must end with the W296 hint "
-            f"{INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
+            f"{tool_name} description must end with the W296 hint {INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
         )
 
 
@@ -203,9 +198,7 @@ class TestRoamFnCouplingArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_fn_coupling()
-            mock.assert_called_once_with(
-                ["fn-coupling", "--min-count", "3", "-n", "20"], "."
-            )
+            mock.assert_called_once_with(["fn-coupling", "--min-count", "3", "-n", "20"], ".")
 
     def test_full_flags(self) -> None:
         from roam.mcp_server import roam_fn_coupling
@@ -285,9 +278,7 @@ class TestRoamEntryPointsArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_entry_points()
-            mock.assert_called_once_with(
-                ["entry-points", "--limit", "50"], "."
-            )
+            mock.assert_called_once_with(["entry-points", "--limit", "50"], ".")
 
     def test_protocol_filter(self) -> None:
         from roam.mcp_server import roam_entry_points

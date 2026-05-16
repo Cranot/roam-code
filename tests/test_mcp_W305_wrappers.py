@@ -121,17 +121,14 @@ class TestColdStartGuardWiring:
         )
 
     @pytest.mark.parametrize("tool_name", W305_TOOL_NAMES)
-    def test_wrapper_description_carries_cold_start_hint(
-        self, tool_name: str
-    ) -> None:
+    def test_wrapper_description_carries_cold_start_hint(self, tool_name: str) -> None:
         """W296 hint is auto-appended to every index-gated wrapper."""
         from roam.mcp_extras.preflight import INDEX_REQUIRED_HINT
         from roam.mcp_server import _TOOL_METADATA
 
         desc = _TOOL_METADATA[tool_name].get("description", "")
         assert INDEX_REQUIRED_HINT in desc, (
-            f"{tool_name} description must end with the W296 hint "
-            f"{INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
+            f"{tool_name} description must end with the W296 hint {INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
         )
 
 
@@ -321,9 +318,7 @@ class TestRoamOracleSymbolExistsArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_oracle_symbol_exists(symbol="handleSave")
-            mock.assert_called_once_with(
-                ["oracle", "symbol-exists", "handleSave"], "."
-            )
+            mock.assert_called_once_with(["oracle", "symbol-exists", "handleSave"], ".")
 
 
 class TestRoamOracleRouteExistsArgShape:
@@ -333,9 +328,7 @@ class TestRoamOracleRouteExistsArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_oracle_route_exists(route_path="/api/users/:id")
-            mock.assert_called_once_with(
-                ["oracle", "route-exists", "/api/users/:id"], "."
-            )
+            mock.assert_called_once_with(["oracle", "route-exists", "/api/users/:id"], ".")
 
 
 class TestRoamOracleIsTestOnlyArgShape:
@@ -345,9 +338,7 @@ class TestRoamOracleIsTestOnlyArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_oracle_is_test_only(symbol="_test_helper")
-            mock.assert_called_once_with(
-                ["oracle", "is-test-only", "_test_helper"], "."
-            )
+            mock.assert_called_once_with(["oracle", "is-test-only", "_test_helper"], ".")
 
 
 class TestRoamOracleIsReachableFromEntryArgShape:
@@ -387,6 +378,4 @@ class TestRoamOracleIsCloneOfArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_oracle_is_clone_of(symbol="validate_input")
-            mock.assert_called_once_with(
-                ["oracle", "is-clone-of", "validate_input"], "."
-            )
+            mock.assert_called_once_with(["oracle", "is-clone-of", "validate_input"], ".")

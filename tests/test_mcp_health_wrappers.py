@@ -110,17 +110,14 @@ class TestColdStartGuardWiring:
         )
 
     @pytest.mark.parametrize("tool_name", W301_TOOL_NAMES)
-    def test_wrapper_description_carries_cold_start_hint(
-        self, tool_name: str
-    ) -> None:
+    def test_wrapper_description_carries_cold_start_hint(self, tool_name: str) -> None:
         """W296 hint is auto-appended to every index-gated wrapper."""
         from roam.mcp_extras.preflight import INDEX_REQUIRED_HINT
         from roam.mcp_server import _TOOL_METADATA
 
         desc = _TOOL_METADATA[tool_name].get("description", "")
         assert INDEX_REQUIRED_HINT in desc, (
-            f"{tool_name} description must end with the W296 hint "
-            f"{INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
+            f"{tool_name} description must end with the W296 hint {INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
         )
 
 
@@ -198,9 +195,7 @@ class TestRoamBusFactorArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_bus_factor()
-            mock.assert_called_once_with(
-                ["bus-factor", "--limit", "20", "--stale-months", "6"], "."
-            )
+            mock.assert_called_once_with(["bus-factor", "--limit", "20", "--stale-months", "6"], ".")
 
     def test_brain_methods_and_team_mode(self) -> None:
         from roam.mcp_server import roam_bus_factor
@@ -286,9 +281,7 @@ class TestRoamEvalRetrieveArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_eval_retrieve()
-            mock.assert_called_once_with(
-                ["eval-retrieve", "--rerank", "fast"], "."
-            )
+            mock.assert_called_once_with(["eval-retrieve", "--rerank", "fast"], ".")
 
     def test_input_path_tasks(self) -> None:
         """W332 canonical ``input_path`` -- tasks JSONL."""
@@ -350,9 +343,7 @@ class TestRoamDocStalenessArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_doc_staleness()
-            mock.assert_called_once_with(
-                ["doc-staleness", "--limit", "20", "--days", "90"], "."
-            )
+            mock.assert_called_once_with(["doc-staleness", "--limit", "20", "--days", "90"], ".")
 
     def test_prose_drift(self) -> None:
         from roam.mcp_server import roam_doc_staleness

@@ -1,4 +1,12 @@
-"""Generate test file skeletons from indexed symbol data."""
+"""Generate test file skeletons from indexed symbol data.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because test-scaffold outputs are generated test skeletons
+(boilerplate test code) — a refactoring aid, not an analysis result.
+SARIF is reserved for scanning findings (defects, violations); codegen
+artifacts have no file:line "findings" semantics. See action.yml
+_SUPPORTED_SARIF allowlist and W1170 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +20,14 @@ from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.index.test_conventions import find_test_candidates
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
+from roam.output.structured_unknowns import structured_unknown_filter
 from roam.refactor.codegen import _python_module_path
 
 # ---------------------------------------------------------------------------
@@ -571,7 +586,7 @@ def _find_already_tested(conn, symbols, test_file_path):
     requires_index=True,
 )
 @click.command("test-scaffold")
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL_OR_PATH")
 @click.option("--write", is_flag=True, help="Write the scaffold to disk (default: dry-run)")
 @click.option(
     "--framework",
@@ -582,7 +597,7 @@ def _find_already_tested(conn, symbols, test_file_path):
 def test_scaffold(ctx, name, write, framework):
     """Generate test file skeletons from indexed symbols.
 
-    Accepts a symbol name or file path.  Looks up testable symbols
+    Accepts a symbol identifier or file path.  Looks up testable symbols
     (functions, classes, methods) and generates a test file skeleton
     with proper imports and stubs.  If the test file already exists,
     only adds stubs for untested symbols.
@@ -611,6 +626,12 @@ def test_scaffold(ctx, name, write, framework):
         target_symbols = []
         source_path = None
         language = None
+        # W1245 Pattern-2 variant-D resolution-state tracking. File-target
+        # branch stays implicit ``symbol`` (file-path is the user's
+        # intended primary type, not a fallback); symbol branch reads
+        # the ``_resolution_tier`` stamp post-W1249.
+        resolution_tier: str = "symbol"
+        resolved_target_label: str | None = None
 
         # Try file lookup first (if has slash or common extension)
         if "/" in name_norm or "." in name_norm:
@@ -649,6 +670,13 @@ def test_scaffold(ctx, name, write, framework):
                 click.echo(symbol_not_found(conn, name, json_mode=json_mode))
                 raise SystemExit(1)
 
+            # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` stamps
+            # ``_resolution_tier`` on the returned row so the scaffold
+            # envelope can disclose when the input string fell back to
+            # the LIKE substring tier rather than exact-matching the
+            # symbol the user typed.
+            resolution_tier = sym.get("_resolution_tier", "symbol")
+            resolved_target_label = sym["qualified_name"] or sym["name"]
             source_path = sym["file_path"]
             # Look up language from the file
             frow = conn.execute("SELECT language FROM files WHERE path = ?", (source_path,)).fetchone()
@@ -672,15 +700,64 @@ def test_scaffold(ctx, name, write, framework):
                 click.echo(f"VERDICT: {msg}")
             return
 
-        # Validate framework choice
+        # W1070 (sibling of W1063/W1068/W1069): when ``--framework`` is
+        # supplied, validate against the closed per-language vocabulary
+        # BEFORE generating the scaffold. Unknown framework names
+        # previously emitted only a text-mode "Warning:" line and silently
+        # generated a stub with the default layout — invisible in JSON
+        # mode and indistinguishable from a successful override
+        # (Pattern-1D silent-success on degraded filter resolution).
         if framework:
             valid_frameworks = _FRAMEWORKS.get(language, [])
-            # Allow any framework, but warn if not in the known list
+            # ``generic`` is the universal fallback and always permitted.
             if valid_frameworks and framework not in valid_frameworks and framework != "generic":
-                click.echo(
-                    f"Warning: '{framework}' is not a standard framework for {language}. "
-                    f"Known: {', '.join(valid_frameworks)}"
+                # W1082: migrated to the shared ``structured_unknown_filter``
+                # helper. Helper defaults render the second-fact wording
+                # ``"'X' not in known frameworks"`` which matches the
+                # pre-migration string exactly. LAW 4 anchor ``frameworks``
+                # preserved on every fact terminal.
+                frag_fw = structured_unknown_filter(
+                    requested=framework,
+                    known=valid_frameworks,
+                    state="unknown_framework",
+                    requested_field="requested_framework",
+                    known_field="known_frameworks",
+                    fact_anchor="frameworks",
+                    did_you_mean_omit_when_empty=True,
                 )
+                assert frag_fw is not None  # outer guard rules out membership
+                verdict_unknown = (
+                    f"unknown framework {framework!r} for {language} "
+                    f"({len(valid_frameworks)} known)"
+                    f"{frag_fw['verdict_suffix']}"
+                )
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "test-scaffold",
+                                summary={
+                                    "verdict": verdict_unknown,
+                                    "partial_success": frag_fw["partial_success"],
+                                    "state": frag_fw["state"],
+                                    "scaffolded": 0,
+                                    "language": language,
+                                    "requested_framework": frag_fw["requested_framework"],
+                                    "known_frameworks": frag_fw["known_frameworks"],
+                                },
+                                source_path=source_path,
+                                agent_contract={
+                                    "facts": frag_fw["facts"],
+                                    "next_commands": ["roam test-scaffold --help"],
+                                },
+                            )
+                        )
+                    )
+                    return
+                click.echo(f"VERDICT: {verdict_unknown}")
+                click.echo()
+                click.echo("Known frameworks: " + ", ".join(sorted(valid_frameworks)))
+                return
 
         # Generate scaffold
         lines, test_path = _generate_scaffold(target_symbols, source_path, language, framework=framework)
@@ -732,6 +809,15 @@ def test_scaffold(ctx, name, write, framework):
             if scaffolded > 0
             else f"No new symbols to scaffold for {source_path}"
         )
+        # W1245 Pattern-2 variant-D: suffix the verdict when the symbol-
+        # target resolver succeeded through a degraded tier so LAW-6
+        # single-line consumers still see the disclosure.
+        if resolution_tier == "fuzzy":
+            verdict = f"{verdict} [fuzzy resolution]"
+        disclosure = resolution_disclosure(
+            resolution_tier,
+            target=resolved_target_label if resolved_target_label is not None else (source_path or name),
+        )
 
         # --- JSON output ---
         if json_mode:
@@ -759,12 +845,15 @@ def test_scaffold(ctx, name, write, framework):
                             "framework": framework or _default_framework(language),
                             "test_file_exists": test_file_exists,
                             "written": write,
+                            # W1245 Pattern-2 variant-D resolution disclosure.
+                            **disclosure,
                         },
                         source_path=source_path,
                         test_path=test_path,
                         symbols=symbols_data,
                         kinds=testable_kinds,
                         scaffold=scaffold_text,
+                        **disclosure,
                     )
                 )
             )

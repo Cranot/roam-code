@@ -328,15 +328,27 @@ def _results_to_sarif(results: list[dict]) -> dict:
     return rules_to_sarif(sarif_results)
 
 
-def _evaluate_custom_rules(conn, rule_filter: str | None, severity_filter: str | None) -> list[dict]:
-    """Evaluate custom `.roam/rules` rules and adapt to check-rules result shape."""
+def _evaluate_custom_rules(
+    conn,
+    rule_filter: str | None,
+    severity_filter: str | None,
+    *,
+    warnings_out: list[str] | None = None,
+) -> list[dict]:
+    """Evaluate custom `.roam/rules` rules and adapt to check-rules result shape.
+
+    W1036: ``warnings_out`` plumbs through to the engine's YAML loader so
+    malformed rule files surface as actionable warnings on the
+    check-rules envelope (sibling of the W1019d ``.roam-rules.yml``
+    loader warnings).
+    """
     from roam.rules.engine import evaluate_all
 
     rules_dir = find_project_root() / ".roam" / "rules"
     if not rules_dir.is_dir():
         return []
 
-    raw_results = evaluate_all(rules_dir, conn)
+    raw_results = evaluate_all(rules_dir, conn, warnings_out=warnings_out)
     adapted: list[dict] = []
     for item in raw_results:
         name = item.get("name", "unnamed")
@@ -565,7 +577,16 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
             )
 
         # Evaluate custom rules from .roam/rules
-        results.extend(_evaluate_custom_rules(conn, rule_filter, severity_filter))
+        # W1036: plumb the same accumulator through so per-rule-file
+        # parse failures appear alongside the .roam-rules.yml warnings.
+        results.extend(
+            _evaluate_custom_rules(
+                conn,
+                rule_filter,
+                severity_filter,
+                warnings_out=check_rules_warnings,
+            )
+        )
 
     # W1019d: dedup warnings while preserving insertion order. The two
     # sub-loaders both call _load_raw_config, so a file-level malformation

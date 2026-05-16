@@ -4,6 +4,12 @@ Given a symbol suspected to be involved in a bug, ranks likely root
 causes by combining four signals no other tool brings together:
 (1) call graph proximity, (2) git churn, (3) cognitive complexity,
 (4) co-change history with the failing symbol.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because diagnose outputs are invocation-scoped root-cause rankings
+(upstream[], downstream[], cochange_partners) tied to a target — not
+per-location violations. Ranked suspect lists do not map to file:line
+SARIF results. See action.yml _SUPPORTED_SARIF allowlist and W1154 audit memo.
 """
 
 from __future__ import annotations
@@ -15,7 +21,14 @@ from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, find_symbol_with_alternatives, symbol_not_found
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
-from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 
 
 def _get_symbol_metrics(conn, sym_id):
@@ -198,7 +211,7 @@ def _recent_changes(conn, file_id, limit=5):
     requires_index=True,
 )
 @click.command()
-@click.argument("name", required=False, default=None)
+@click.argument("name", required=False, default=None, metavar="[SYMBOL]")
 @click.option("--depth", default=2, help="How many hops to analyze (default 2)")
 @click.option(
     "--batch",
@@ -209,11 +222,13 @@ def _recent_changes(conn, file_id, limit=5):
 )
 @click.pass_context
 def diagnose(ctx, name, depth, batch_input):
-    """Root cause analysis for a failing symbol.
+    """Root cause analysis for a failing SYMBOL.
 
-    Unlike ``why`` (which explains a symbol's architectural role), this
-    command ranks upstream and downstream symbols by risk score to find
-    likely root causes of failures.
+    SYMBOL is a symbol identifier (bare name or qualified name); omit it
+    when using ``--batch`` to read identifiers from a file. Unlike
+    ``why`` (which explains a symbol's architectural role), this command
+    ranks upstream and downstream symbols by risk score to find likely
+    root causes of failures.
 
     Given a symbol suspected of causing a bug, ranks upstream callers
     and downstream callees by a composite risk score combining:
@@ -251,15 +266,35 @@ def diagnose(ctx, name, depth, batch_input):
             if close_on_exit:
                 stream.close()
         results = []
+        any_degraded = False
         with open_db(readonly=True) as conn:
             for nm in names:
                 sym, _alts = find_symbol_with_alternatives(conn, nm)
                 if sym is None:
-                    results.append({"name": nm, "error": "symbol not found"})
+                    # W1244 Pattern-2 variant-D: disclose ``resolution=unresolved``
+                    # so per-item shape stays uniform across resolved + failed entries.
+                    unresolved_block = resolution_disclosure("unresolved", target=nm)
+                    any_degraded = True
+                    results.append(
+                        {
+                            "name": nm,
+                            "error": "symbol not found",
+                            **unresolved_block,
+                        }
+                    )
                     continue
                 metrics = _get_symbol_metrics(conn, sym["id"])
                 dist = _build_distribution_stats(conn)
                 risk = _risk_score(metrics, dist)
+                # W1244 / W1249 Pattern-2 variant-D: ``find_symbol_with_alternatives``
+                # stamps ``_resolution_tier`` on each returned row; we read it
+                # straight off and merge the disclosure into each result entry
+                # so consumers can distinguish exact-match successes from
+                # fuzzy-fallback ones.
+                tier = sym.get("_resolution_tier", "symbol")
+                if tier != "symbol":
+                    any_degraded = True
+                disclosure = resolution_disclosure(tier, target=sym["qualified_name"] or sym["name"])
                 results.append(
                     {
                         "name": nm,
@@ -267,9 +302,14 @@ def diagnose(ctx, name, depth, batch_input):
                         "kind": sym["kind"],
                         "file": sym["file_path"],
                         "line": sym["line_start"],
+                        **disclosure,
                     }
                 )
         if json_mode:
+            # W1244: top-level partial_success flips true when ANY per-item
+            # entry resolved non-exactly (fuzzy or unresolved). Per the W324
+            # cmd_annotate template -- the underlying ranking may still be
+            # valid but the success verdict must reflect the degradation.
             click.echo(
                 to_json(
                     json_envelope(
@@ -277,8 +317,10 @@ def diagnose(ctx, name, depth, batch_input):
                         summary={
                             "verdict": f"{len(results)} symbol(s) diagnosed",
                             "count": len(results),
+                            "partial_success": any_degraded,
                         },
                         results=results,
+                        partial_success=any_degraded,
                     )
                 )
             )
@@ -302,10 +344,41 @@ def diagnose(ctx, name, depth, batch_input):
     with open_db(readonly=True) as conn:
         sym, alternatives = find_symbol_with_alternatives(conn, name)
         if sym is None:
-            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
-            raise SystemExit(1)
+            # W1272 — Pattern-2c Convention (c): unresolved exits 0 with a
+            # resolution=unresolved + partial_success disclosure so agents
+            # can distinguish a name-typo from a tool/IO failure. Text
+            # mode keeps the suggestion list (most useful next step for a
+            # human staring at a typo).
+            unresolved_block = resolution_disclosure("unresolved", target=name or "")
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "diagnose",
+                            summary={
+                                "verdict": f"Symbol '{name}' not found",
+                                "partial_success": True,
+                                "state": "not_found",
+                                **unresolved_block,
+                            },
+                            symbol=name or "",
+                            **unresolved_block,
+                        )
+                    )
+                )
+            else:
+                click.echo(symbol_not_found(conn, name, json_mode=False))
+            return
 
         sym_id = sym["id"]
+        # W1244 / W1249 Pattern-2 variant-D: ``find_symbol_with_alternatives``
+        # stamps ``_resolution_tier`` on the returned row so the envelope can
+        # distinguish a fully-resolved success from a degraded fuzzy-match
+        # success that may have landed on a different target -- root-cause
+        # ranking on the wrong target is exactly the silent-fallback anti-
+        # pattern this disclosure exists to prevent.
+        resolution_tier = sym.get("_resolution_tier", "symbol")
+        resolution_block = resolution_disclosure(resolution_tier, target=sym["qualified_name"] or sym["name"])
         did_you_mean = [
             {
                 "name": (alt["qualified_name"] or alt["name"]),
@@ -404,6 +477,14 @@ def diagnose(ctx, name, depth, batch_input):
             )
         else:
             verdict = "No upstream/downstream symbols found within depth range."
+        # W1244 Pattern-2 variant-D: suffix the verdict when resolution was
+        # degraded so a single-line verdict consumer (LAW 6) still sees the
+        # disclosure even without the full envelope.
+        if resolution_tier != "symbol":
+            verdict = (
+                f"{verdict} [fuzzy resolution -- target "
+                f"'{sym['qualified_name'] or sym['name']}' may not be what you meant]"
+            )
 
         _target_name = sym["qualified_name"] or sym["name"]
         _top_suspect = all_suspects[0]["name"] if all_suspects else ""
@@ -432,6 +513,10 @@ def diagnose(ctx, name, depth, batch_input):
                     "downstream_count": len(downstream_ranked),
                     "ambiguous": bool(did_you_mean),
                     "caller_metric_definition": "transitive_upstream_bfs",
+                    # W1244 Pattern-2 variant-D resolution disclosure --
+                    # the partial_success polarity flips True for any
+                    # non-``symbol`` tier per resolution_disclosure().
+                    **resolution_block,
                 },
                 target_metrics=target_metrics,
                 upstream=upstream_ranked[:15],
@@ -440,6 +525,7 @@ def diagnose(ctx, name, depth, batch_input):
                 recent_commits=recent,
                 did_you_mean=did_you_mean,
                 next_steps=_next_steps,
+                **resolution_block,
             )
             if index_status_payload is not None:
                 envelope["index_status"] = index_status_payload

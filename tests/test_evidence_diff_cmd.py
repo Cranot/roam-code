@@ -24,7 +24,6 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -125,12 +124,8 @@ def test_evidence_diff_identical_packets_returns_no_drift(tmp_path):
 
 def test_evidence_diff_detects_hash_drift(tmp_path):
     """A different ``content_hash`` triggers ``hash_drift``."""
-    old = _write_packet(
-        tmp_path / "old.json", _base_packet(content_hash="a" * 64)
-    )
-    new = _write_packet(
-        tmp_path / "new.json", _base_packet(content_hash="b" * 64)
-    )
+    old = _write_packet(tmp_path / "old.json", _base_packet(content_hash="a" * 64))
+    new = _write_packet(tmp_path / "new.json", _base_packet(content_hash="b" * 64))
 
     code, out = _invoke(str(old), str(new), json_mode=True)
     assert code == 0, out
@@ -146,12 +141,8 @@ def test_evidence_diff_detects_hash_drift(tmp_path):
 
 def test_evidence_diff_detects_schema_drift(tmp_path):
     """A bumped ``schema_version`` lands in the schema_drift block."""
-    old = _write_packet(
-        tmp_path / "old.json", _base_packet(schema_version="1.0.0")
-    )
-    new = _write_packet(
-        tmp_path / "new.json", _base_packet(schema_version="1.1.0")
-    )
+    old = _write_packet(tmp_path / "old.json", _base_packet(schema_version="1.0.0"))
+    new = _write_packet(tmp_path / "new.json", _base_packet(schema_version="1.1.0"))
 
     code, out = _invoke(str(old), str(new), json_mode=True)
     assert code == 0, out
@@ -198,9 +189,7 @@ def test_evidence_diff_finds_added_refs(tmp_path):
     env = _json.loads(out)
     assert env["summary"]["added_refs_total"] == 2
     assert len(env["added_refs"]["actor_refs"]) == 1
-    assert env["added_refs"]["actor_refs"][0]["actor_id"] == (
-        "human:alice@example.com"
-    )
+    assert env["added_refs"]["actor_refs"][0]["actor_id"] == ("human:alice@example.com")
     assert len(env["added_refs"]["authority_refs"]) == 1
     assert env["added_refs"]["environment_refs"] == []
 
@@ -219,9 +208,7 @@ def test_evidence_diff_finds_removed_refs(tmp_path):
         "trust_tier": "unknown",
         "extra": {},
     }
-    old = _write_packet(
-        tmp_path / "old.json", _base_packet(actor_refs=[actor])
-    )
+    old = _write_packet(tmp_path / "old.json", _base_packet(actor_refs=[actor]))
     new = _write_packet(tmp_path / "new.json", _base_packet())
 
     code, out = _invoke(str(old), str(new), json_mode=True)
@@ -252,9 +239,7 @@ def test_evidence_diff_classifies_completeness_regression(tmp_path):
         "byte_size": 7,
         "redactions": [],
     }
-    old = _write_packet(
-        tmp_path / "old.json", _base_packet(context_refs=[context_ref])
-    )
+    old = _write_packet(tmp_path / "old.json", _base_packet(context_refs=[context_ref]))
     new = _write_packet(tmp_path / "new.json", _base_packet(context_refs=[]))
 
     code, out = _invoke(str(old), str(new), json_mode=True)
@@ -280,9 +265,7 @@ def test_evidence_diff_classifies_completeness_improvement(tmp_path):
     OLD has only ``agent_id`` (Q1 = partial). NEW adds an ``actor_refs``
     entry (Q1 = complete). That's an improvement up the ladder.
     """
-    old = _write_packet(
-        tmp_path / "old.json", _base_packet(actor_refs=[])
-    )
+    old = _write_packet(tmp_path / "old.json", _base_packet(actor_refs=[]))
     new = _write_packet(
         tmp_path / "new.json",
         _base_packet(
@@ -316,9 +299,7 @@ def test_evidence_diff_classifies_completeness_improvement(tmp_path):
 
 def test_evidence_diff_detects_changed_verdict(tmp_path):
     """A verdict change is surfaced in ``changed_verdicts``."""
-    old = _write_packet(
-        tmp_path / "old.json", _base_packet(verdict="SAFE", risk_level=None)
-    )
+    old = _write_packet(tmp_path / "old.json", _base_packet(verdict="SAFE", risk_level=None))
     new = _write_packet(
         tmp_path / "new.json",
         _base_packet(verdict="REVIEW", risk_level="medium"),
@@ -379,19 +360,21 @@ def test_evidence_diff_handles_v0_packet_without_w210_fields(tmp_path):
     }
     # NEW packet adds W210 fields plus an actor ref.
     new_packet = dict(pre_w210)
-    new_packet.update({
-        "actor_refs": [
-            {
-                "actor_kind": "agent",
-                "actor_id": "agent:claude",
-                "display_name": None,
-                "trust_tier": "unknown",
-                "extra": {},
-            }
-        ],
-        "edits_started_at": "2026-05-14T10:00:00Z",
-        "content_hash": "y" * 64,
-    })
+    new_packet.update(
+        {
+            "actor_refs": [
+                {
+                    "actor_kind": "agent",
+                    "actor_id": "agent:claude",
+                    "display_name": None,
+                    "trust_tier": "unknown",
+                    "extra": {},
+                }
+            ],
+            "edits_started_at": "2026-05-14T10:00:00Z",
+            "content_hash": "y" * 64,
+        }
+    )
 
     old = _write_packet(tmp_path / "old.json", pre_w210)
     new = _write_packet(tmp_path / "new.json", new_packet)

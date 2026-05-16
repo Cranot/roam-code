@@ -141,6 +141,4 @@ class TestOwnerUnknownPathEmitsStructuredEnvelope:
         assert res.exit_code == 0, res.output
         payload = json.loads(res.output)
         verdict = payload["summary"]["verdict"]
-        assert _is_concrete_anchored(verdict), (
-            f"W362 unknown-path verdict regressed LAW 4: {verdict!r}"
-        )
+        assert _is_concrete_anchored(verdict), f"W362 unknown-path verdict regressed LAW 4: {verdict!r}"

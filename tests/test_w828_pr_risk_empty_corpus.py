@@ -31,7 +31,6 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import index_in_process  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
@@ -103,9 +102,7 @@ def test_pr_risk_empty_corpus_emits_structured_envelope(empty_corpus_repo):
     result = runner.invoke(cli, ["--json", "pr-risk"], catch_exceptions=False)
 
     # Exit code 0 - the empty branch is a normal success, not an error.
-    assert result.exit_code == 0, (
-        f"pr-risk exited {result.exit_code} on empty corpus:\n{result.output}"
-    )
+    assert result.exit_code == 0, f"pr-risk exited {result.exit_code} on empty corpus:\n{result.output}"
 
     # Stdout must be non-empty and JSON-parseable (Pattern 1 variant C).
     raw = getattr(result, "stdout", None) or result.output
@@ -118,17 +115,13 @@ def test_pr_risk_empty_corpus_emits_structured_envelope(empty_corpus_repo):
 
     # Verdict mentions empty state (not the default "low risk" fallback).
     verdict = summary.get("verdict") or ""
-    assert isinstance(verdict, str) and verdict, (
-        f"summary.verdict must be a non-empty string, got: {verdict!r}"
-    )
+    assert isinstance(verdict, str) and verdict, f"summary.verdict must be a non-empty string, got: {verdict!r}"
     verdict_lc = verdict.lower()
     # The empty-state verdict must explicitly disclose the empty corpus
     # rather than re-using the "low risk" / "safe" framing reserved for
     # graded risk scores on real changes.
     empty_markers = ("no-changes", "no changes", "empty", "no diff")
-    assert any(m in verdict_lc for m in empty_markers), (
-        f"verdict must mention empty state, got: {verdict!r}"
-    )
+    assert any(m in verdict_lc for m in empty_markers), f"verdict must mention empty state, got: {verdict!r}"
     # Pattern 2 anti-pattern: the empty branch must not silently emit a
     # graded-risk verdict ("Low risk", "SAFE", etc.) that pretends the
     # analysis ran on real changes.
@@ -141,8 +134,7 @@ def test_pr_risk_empty_corpus_emits_structured_envelope(empty_corpus_repo):
     # acceptable - it means "scanned cleanly", which is distinguishable
     # from "absent key" = "didn't run").
     assert "partial_success" in summary, (
-        f"summary.partial_success must be present on empty corpus, got summary keys: "
-        f"{sorted(summary.keys())}"
+        f"summary.partial_success must be present on empty corpus, got summary keys: {sorted(summary.keys())}"
     )
 
     # Auto-derived agent_contract.facts must be non-empty so agents
@@ -150,6 +142,4 @@ def test_pr_risk_empty_corpus_emits_structured_envelope(empty_corpus_repo):
     # concrete-noun fact to act on.
     contract = env.get("agent_contract") or {}
     facts = contract.get("facts") or []
-    assert isinstance(facts, list) and len(facts) > 0, (
-        f"agent_contract.facts must be non-empty, got: {facts!r}"
-    )
+    assert isinstance(facts, list) and len(facts) > 0, f"agent_contract.facts must be non-empty, got: {facts!r}"

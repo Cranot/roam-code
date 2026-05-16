@@ -43,7 +43,6 @@ from roam.commands.smells_suppress import (
     load_smells_suppressions_typed,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -100,14 +99,9 @@ suppressions:
 
     # W994: exactly one warning fires for the unparseable expires.
     matching = [w for w in warnings if "expires" in w and "tomorrow" in w]
-    assert len(matching) == 1, (
-        f"Expected exactly one warning about the unparseable expires, "
-        f"got: {warnings}"
-    )
+    assert len(matching) == 1, f"Expected exactly one warning about the unparseable expires, got: {warnings}"
     warning = matching[0]
-    assert "never-expires" in warning, (
-        f"Warning must disclose the silent default explicitly, got: {warning!r}"
-    )
+    assert "never-expires" in warning, f"Warning must disclose the silent default explicitly, got: {warning!r}"
 
 
 def test_unparseable_expires_invalid_month_also_warns(tmp_path: Path) -> None:
@@ -167,24 +161,15 @@ suppressions:
     warnings: list[str] = []
     entries = load_smells_suppressions(tmp_path, warnings_out=warnings)
     assert len(entries) == 1
-    assert all("expires" not in w for w in warnings), (
-        f"Missing expires must trigger no warning, got: {warnings}"
-    )
+    assert all("expires" not in w for w in warnings), f"Missing expires must trigger no warning, got: {warnings}"
 
 
 def test_expires_warning_text_actionable() -> None:
     """LAW 2 (imperative) + LAW 4 (concrete-noun terminal) on the W994
     warning text. Pinned so a future rewording stays compliant."""
-    text = (
-        "suppressions:\n"
-        "  - kind: shotgun-surgery\n"
-        "    symbol: hub\n"
-        "    expires: yesterday\n"
-    )
+    text = "suppressions:\n  - kind: shotgun-surgery\n    symbol: hub\n    expires: yesterday\n"
     warnings: list[str] = []
-    parsed = _parse_smells_suppress_yaml(
-        text, warnings_out=warnings, source_path="custom/path.yml"
-    )
+    parsed = _parse_smells_suppress_yaml(text, warnings_out=warnings, source_path="custom/path.yml")
     assert len(parsed) == 1
 
     matching = [w for w in warnings if "yesterday" in w]
@@ -192,13 +177,9 @@ def test_expires_warning_text_actionable() -> None:
     warning = matching[0]
 
     # LAW 2: imperative lead-in (Edit ...).
-    assert warning.startswith("Edit "), (
-        f"W994 warning must lead with an imperative verb, got: {warning!r}"
-    )
+    assert warning.startswith("Edit "), f"W994 warning must lead with an imperative verb, got: {warning!r}"
     # The source path plumbs through.
-    assert "custom/path.yml" in warning, (
-        f"Warning must name the offending file, got: {warning!r}"
-    )
+    assert "custom/path.yml" in warning, f"Warning must name the offending file, got: {warning!r}"
     # The expected format constant is exposed in the message.
     assert EXPIRES_FMT in warning or "%Y-%m-%d" in warning, (
         f"Warning must reference the expected date format, got: {warning!r}"
@@ -272,13 +253,9 @@ suppressions:
     # W995: one warning naming the dropped row's 1-based index + the
     # missing field 'kind'.
     matching = [w for w in warnings if "dropped" in w and "#1" in w]
-    assert len(matching) == 1, (
-        f"Expected one dropped-row warning at index #1, got: {warnings}"
-    )
+    assert len(matching) == 1, f"Expected one dropped-row warning at index #1, got: {warnings}"
     warning = matching[0]
-    assert "'kind'" in warning, (
-        f"Warning must name the missing field 'kind', got: {warning!r}"
-    )
+    assert "'kind'" in warning, f"Warning must name the missing field 'kind', got: {warning!r}"
 
 
 def test_missing_symbol_field_warns_and_drops(tmp_path: Path) -> None:
@@ -299,9 +276,7 @@ suppressions:
 
     assert [e["symbol"] for e in entries] == ["ok"]
     matching = [w for w in warnings if "dropped" in w and "#2" in w]
-    assert len(matching) == 1, (
-        f"Expected one dropped-row warning at index #2, got: {warnings}"
-    )
+    assert len(matching) == 1, f"Expected one dropped-row warning at index #2, got: {warnings}"
     assert "'symbol'" in matching[0]
 
 
@@ -332,18 +307,14 @@ suppressions:
     dropped_indices = [w for w in warnings if "dropped" in w and "#" in w]
     # Each indexed dropped row is one line, plus the roll-up count line.
     per_row = [w for w in dropped_indices if "missing" in w]
-    assert len(per_row) == 3, (
-        f"Expected three indexed dropped-row warnings, got: {warnings}"
-    )
+    assert len(per_row) == 3, f"Expected three indexed dropped-row warnings, got: {warnings}"
     assert any("#1" in w for w in per_row)
     assert any("#2" in w for w in per_row)
     assert any("#4" in w for w in per_row)
 
     # Roll-up count line lists 3 dropped.
     roll_up = [w for w in warnings if "dropped 3" in w and "total" in w]
-    assert len(roll_up) == 1, (
-        f"Expected one roll-up count line for >1 dropped rows, got: {warnings}"
-    )
+    assert len(roll_up) == 1, f"Expected one roll-up count line for >1 dropped rows, got: {warnings}"
 
 
 def test_single_dropped_row_omits_roll_up(tmp_path: Path) -> None:
@@ -363,9 +334,7 @@ suppressions:
     entries = load_smells_suppressions(tmp_path, warnings_out=warnings)
     assert [e["symbol"] for e in entries] == ["hub"]
     roll_up = [w for w in warnings if "total" in w and "dropped" in w]
-    assert roll_up == [], (
-        f"Single drop must omit the roll-up line, got: {warnings}"
-    )
+    assert roll_up == [], f"Single drop must omit the roll-up line, got: {warnings}"
 
 
 def test_dropped_warning_text_is_actionable(tmp_path: Path) -> None:
@@ -384,9 +353,7 @@ suppressions:
     matching = [w for w in warnings if "dropped" in w]
     assert len(matching) == 1
     warning = matching[0]
-    assert warning.startswith("Edit "), (
-        f"W995 warning must lead with an imperative verb, got: {warning!r}"
-    )
+    assert warning.startswith("Edit "), f"W995 warning must lead with an imperative verb, got: {warning!r}"
     terminal = _terminal_token(warning)
     assert terminal in _CONCRETE_NOUN_TERMINALS, (
         f"LAW 4: terminal token {terminal!r} not in concrete-noun anchor "
@@ -445,12 +412,8 @@ suppressions:
 def _build_smelly_project(tmp_path: Path) -> Path:
     """Minimal git + DB fixture mirroring test_w987_smells_pattern2.py."""
     subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True
-    )
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
     (tmp_path / "dummy.py").write_text("# dummy\n")
     subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
@@ -519,10 +482,7 @@ def _build_smelly_project(tmp_path: Path) -> Path:
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
         "VALUES (1, 1, 'process_everything', 'function', 10, 200, '(data, config, opts)')"
     )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-        "VALUES (1, 75, 6)"
-    )
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (1, 75, 6)")
     conn.commit()
     conn.close()
     return tmp_path
@@ -558,8 +518,7 @@ suppressions:
         os.chdir(old_cwd)
 
     assert result.exit_code == 0, (
-        f"smells with W994/W995 fixture must not raise; got exit={result.exit_code}\n"
-        f"stdout={result.stdout!r}"
+        f"smells with W994/W995 fixture must not raise; got exit={result.exit_code}\nstdout={result.stdout!r}"
     )
     payload = json.loads(result.stdout)
     warnings = payload.get("warnings_out", [])
@@ -576,6 +535,5 @@ suppressions:
     # Pattern 1 envelope discipline: partial_success flips True on any warning.
     summary = payload.get("summary", {})
     assert summary.get("partial_success") is True, (
-        f"summary.partial_success must be True when warnings_out is non-empty, "
-        f"got summary={summary}"
+        f"summary.partial_success must be True when warnings_out is non-empty, got summary={summary}"
     )

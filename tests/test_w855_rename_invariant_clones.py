@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import os
 import textwrap
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -35,7 +34,6 @@ from roam.catalog.clones_rename_invariant import (
 from roam.cli import cli
 from roam.db.connection import open_db
 from tests.conftest import make_src_project
-
 
 # ---------------------------------------------------------------------------
 # Pure-vector tests (no SQLite, no filesystem)
@@ -104,9 +102,7 @@ class TestVectorAndCosine:
         vectors = _vectorise_source(src, language="python")
         assert len(vectors) == 2
         sim = _cosine(vectors[0], vectors[1])
-        assert sim == pytest.approx(1.0, abs=1e-9), (
-            f"verbatim copy must score 1.0; got {sim}"
-        )
+        assert sim == pytest.approx(1.0, abs=1e-9), f"verbatim copy must score 1.0; got {sim}"
 
     def test_different_operations_distinct_vectors(self):
         """Two functions doing genuinely different operations score below
@@ -144,8 +140,7 @@ class TestVectorAndCosine:
         # `identifier`, `assignment`) but the count distribution differs
         # enough that they fall below the strict threshold.
         assert sim < 0.95, (
-            f"distinct-operation functions must score < 0.95 to avoid "
-            f"flooding the findings; got {sim:.4f}"
+            f"distinct-operation functions must score < 0.95 to avoid flooding the findings; got {sim:.4f}"
         )
 
     def test_commutative_operand_swap_documented(self):
@@ -178,8 +173,7 @@ class TestVectorAndCosine:
         sim = _cosine(vectors[0], vectors[1])
         # Identical node-type frequency -> exact cosine match.
         assert sim == pytest.approx(1.0, abs=1e-9), (
-            f"commutative-swap pair must score 1.0 under a frequency-only "
-            f"vector; got {sim}"
+            f"commutative-swap pair must score 1.0 under a frequency-only vector; got {sim}"
         )
 
 
@@ -246,15 +240,11 @@ class TestDetectRenameInvariantClones:
             # function might bucket with one of the others on small
             # samples — but the alpha-renamed pair MUST appear.
             assert len(pairs) >= 1, "expected at least one clone pair"
-            names = {(p.func_a, p.func_b) for p in pairs} | {
-                (p.func_b, p.func_a) for p in pairs
-            }
+            names = {(p.func_a, p.func_b) for p in pairs} | {(p.func_b, p.func_a) for p in pairs}
             assert ("process_orders", "handle_invoices") in names or (
                 "handle_invoices",
                 "process_orders",
-            ) in names, (
-                f"alpha-renamed pair must appear in findings; got {names}"
-            )
+            ) in names, f"alpha-renamed pair must appear in findings; got {names}"
             # Confidence tier is the structural marker called out in the
             # CLAUDE.md confidence-tier vocabulary.
             assert all(p.confidence == "structural" for p in pairs)

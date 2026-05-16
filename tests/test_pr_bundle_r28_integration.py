@@ -36,8 +36,7 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, parse_json_output  # noqa: E402
-
+from conftest import parse_json_output  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixture: project_factory creates an INDEXED git repo; we tack on the
@@ -79,16 +78,12 @@ def _read_bundle_file(proj: Path, branch: str = "wm-branch") -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_add_affected_classifies_side_effects(
-    project_factory, cli_runner, monkeypatch
-):
+def test_add_affected_classifies_side_effects(project_factory, cli_runner, monkeypatch):
     """`add affected <writer>` stamps side_effect_kinds=['io_write']."""
     proj = project_factory(
         {
             "src/writer.py": (
-                "def dump_state(path, content):\n"
-                "    with open(path, 'w') as f:\n"
-                "        f.write(content)\n"
+                "def dump_state(path, content):\n    with open(path, 'w') as f:\n        f.write(content)\n"
             ),
         }
     )
@@ -111,16 +106,11 @@ def test_add_affected_classifies_side_effects(
 # ---------------------------------------------------------------------------
 
 
-def test_add_affected_pure_function_no_auto_risk(
-    project_factory, cli_runner, monkeypatch
-):
+def test_add_affected_pure_function_no_auto_risk(project_factory, cli_runner, monkeypatch):
     """`add affected <pure>` annotates kinds=['none'] and does NOT add a risk."""
     proj = project_factory(
         {
-            "src/pure.py": (
-                "def add(a, b):\n"
-                "    return a + b\n"
-            ),
+            "src/pure.py": ("def add(a, b):\n    return a + b\n"),
         }
     )
     _pin_branch(proj)
@@ -147,9 +137,7 @@ def test_add_affected_pure_function_no_auto_risk(
 # ---------------------------------------------------------------------------
 
 
-def test_add_affected_io_write_creates_risk(
-    project_factory, cli_runner, monkeypatch
-):
+def test_add_affected_io_write_creates_risk(project_factory, cli_runner, monkeypatch):
     """`open(path, 'w')` is io_write; classifier surfaces a risk.
 
     Severity is M (io_write XOR non_idempotent) OR H (io_write AND
@@ -158,11 +146,7 @@ def test_add_affected_io_write_creates_risk(
     """
     proj = project_factory(
         {
-            "src/io.py": (
-                "def write_file(p, c):\n"
-                "    with open(p, 'w') as f:\n"
-                "        f.write(c)\n"
-            ),
+            "src/io.py": ("def write_file(p, c):\n    with open(p, 'w') as f:\n        f.write(c)\n"),
         }
     )
     _pin_branch(proj)
@@ -186,9 +170,7 @@ def test_add_affected_io_write_creates_risk(
 # ---------------------------------------------------------------------------
 
 
-def test_add_affected_io_write_non_idempotent_creates_high_severity_risk(
-    project_factory, cli_runner, monkeypatch
-):
+def test_add_affected_io_write_non_idempotent_creates_high_severity_risk(project_factory, cli_runner, monkeypatch):
     """Naive write with no check-first pattern -> H severity.
 
     The R28 idempotency detector classifies naive `open(path, 'w')`
@@ -197,11 +179,7 @@ def test_add_affected_io_write_non_idempotent_creates_high_severity_risk(
     """
     proj = project_factory(
         {
-            "src/naive.py": (
-                "def append_log(line):\n"
-                "    with open('out.log', 'a') as f:\n"
-                "        f.write(line)\n"
-            ),
+            "src/naive.py": ("def append_log(line):\n    with open('out.log', 'a') as f:\n        f.write(line)\n"),
         }
     )
     _pin_branch(proj)
@@ -215,9 +193,7 @@ def test_add_affected_io_write_non_idempotent_creates_high_severity_risk(
     # The append-mode open is io_write AND non_idempotent.
     assert "io_write" in rec.get("side_effect_kinds", []), rec
     assert rec.get("idempotency_kind") == "non_idempotent", rec
-    auto_risks = [
-        r for r in bundle["risks"] if r.get("id") == "side_effect_append_log"
-    ]
+    auto_risks = [r for r in bundle["risks"] if r.get("id") == "side_effect_append_log"]
     assert len(auto_risks) == 1, bundle["risks"]
     assert auto_risks[0]["severity"] == "H", auto_risks[0]
 
@@ -227,9 +203,7 @@ def test_add_affected_io_write_non_idempotent_creates_high_severity_risk(
 # ---------------------------------------------------------------------------
 
 
-def test_emit_auto_collect_runs_classifier_on_legacy_entries(
-    project_factory, cli_runner, monkeypatch
-):
+def test_emit_auto_collect_runs_classifier_on_legacy_entries(project_factory, cli_runner, monkeypatch):
     """A bundle written before this wiring shipped has no world-model fields.
 
     On `emit --auto-collect`, those entries get classified retroactively.
@@ -237,9 +211,7 @@ def test_emit_auto_collect_runs_classifier_on_legacy_entries(
     proj = project_factory(
         {
             "src/legacy.py": (
-                "def save_record(path, content):\n"
-                "    with open(path, 'w') as f:\n"
-                "        f.write(content)\n"
+                "def save_record(path, content):\n    with open(path, 'w') as f:\n        f.write(content)\n"
             ),
         }
     )
@@ -268,9 +240,7 @@ def test_emit_auto_collect_runs_classifier_on_legacy_entries(
     assert r.exit_code == 0, r.output
 
     bundle = _read_bundle_file(proj)
-    rec = next(
-        s for s in bundle["affected_symbols"] if s["name"] == "save_record"
-    )
+    rec = next(s for s in bundle["affected_symbols"] if s["name"] == "save_record")
     # The legacy entry should now carry world-model fields.
     assert "side_effect_kinds" in rec, rec
     assert "io_write" in rec["side_effect_kinds"], rec
@@ -292,11 +262,7 @@ def test_dedup_prevents_double_risk(project_factory, cli_runner, monkeypatch):
     """
     proj = project_factory(
         {
-            "src/io.py": (
-                "def write_file(p, c):\n"
-                "    with open(p, 'w') as f:\n"
-                "        f.write(c)\n"
-            ),
+            "src/io.py": ("def write_file(p, c):\n    with open(p, 'w') as f:\n        f.write(c)\n"),
         }
     )
     _pin_branch(proj)
@@ -322,9 +288,9 @@ def test_dedup_prevents_double_risk(project_factory, cli_runner, monkeypatch):
     bundle = _read_bundle_file(proj)
     # Exactly one risk that mentions write_file.
     write_risks = [
-        r for r in bundle["risks"]
-        if "write_file" in (r.get("description") or "")
-        or r.get("id") == "side_effect_write_file"
+        r
+        for r in bundle["risks"]
+        if "write_file" in (r.get("description") or "") or r.get("id") == "side_effect_write_file"
     ]
     assert len(write_risks) == 1, write_risks
 
@@ -334,11 +300,7 @@ def test_dedup_by_id_prevents_double_risk(project_factory, cli_runner, monkeypat
     on second add but doesn't double-add the risk."""
     proj = project_factory(
         {
-            "src/io.py": (
-                "def write_file(p, c):\n"
-                "    with open(p, 'w') as f:\n"
-                "        f.write(c)\n"
-            ),
+            "src/io.py": ("def write_file(p, c):\n    with open(p, 'w') as f:\n        f.write(c)\n"),
         }
     )
     _pin_branch(proj)
@@ -351,9 +313,7 @@ def test_dedup_by_id_prevents_double_risk(project_factory, cli_runner, monkeypat
     _invoke(cli_runner, ["pr-bundle", "add", "affected", "write_file"])
 
     bundle = _read_bundle_file(proj)
-    auto_risks = [
-        r for r in bundle["risks"] if r.get("id") == "side_effect_write_file"
-    ]
+    auto_risks = [r for r in bundle["risks"] if r.get("id") == "side_effect_write_file"]
     assert len(auto_risks) == 1, auto_risks
 
 
@@ -362,9 +322,7 @@ def test_dedup_by_id_prevents_double_risk(project_factory, cli_runner, monkeypat
 # ---------------------------------------------------------------------------
 
 
-def test_envelope_includes_side_effect_distribution(
-    project_factory, cli_runner, monkeypatch
-):
+def test_envelope_includes_side_effect_distribution(project_factory, cli_runner, monkeypatch):
     """Emit envelope surfaces side_effect_distribution / idempotency / severity."""
     proj = project_factory(
         {
@@ -403,9 +361,7 @@ def test_envelope_includes_side_effect_distribution(
 # ---------------------------------------------------------------------------
 
 
-def test_envelope_verdict_mentions_io_write_count(
-    project_factory, cli_runner, monkeypatch
-):
+def test_envelope_verdict_mentions_io_write_count(project_factory, cli_runner, monkeypatch):
     """When io_write is auto-flagged, the verdict says so (LAW 6).
 
     A verdict line that works without the rest of the envelope is the
@@ -414,11 +370,7 @@ def test_envelope_verdict_mentions_io_write_count(
     """
     proj = project_factory(
         {
-            "src/io.py": (
-                "def write_file(p, c):\n"
-                "    with open(p, 'w') as f:\n"
-                "        f.write(c)\n"
-            ),
+            "src/io.py": ("def write_file(p, c):\n    with open(p, 'w') as f:\n        f.write(c)\n"),
         }
     )
     _pin_branch(proj)
@@ -444,9 +396,7 @@ def test_envelope_verdict_mentions_io_write_count(
 # ---------------------------------------------------------------------------
 
 
-def test_add_affected_unknown_symbol_does_not_fail(
-    project_factory, cli_runner, monkeypatch
-):
+def test_add_affected_unknown_symbol_does_not_fail(project_factory, cli_runner, monkeypatch):
     """Adding a symbol the indexer doesn't know about must not crash.
 
     The classifier silent-fallback stamps confidence='unknown' and skips
@@ -461,15 +411,10 @@ def test_add_affected_unknown_symbol_does_not_fail(
     monkeypatch.chdir(proj)
 
     _invoke(cli_runner, ["pr-bundle", "init", "--intent", "wire ghost"])
-    r = _invoke(
-        cli_runner, ["pr-bundle", "add", "affected", "nonexistentGhostSymbol"]
-    )
+    r = _invoke(cli_runner, ["pr-bundle", "add", "affected", "nonexistentGhostSymbol"])
     assert r.exit_code == 0, r.output
     bundle = _read_bundle_file(proj)
-    rec = next(
-        s for s in bundle["affected_symbols"]
-        if s["name"] == "nonexistentGhostSymbol"
-    )
+    rec = next(s for s in bundle["affected_symbols"] if s["name"] == "nonexistentGhostSymbol")
     # Either the field is absent (fallback path didn't stamp) or it's
     # explicitly 'unknown'.
     confidence = rec.get("world_model_confidence", "unknown")

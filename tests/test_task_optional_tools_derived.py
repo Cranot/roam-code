@@ -37,9 +37,7 @@ def test_task_optional_tools_is_derived_from_metadata() -> None:
     """
     from roam.mcp_server import _TASK_OPTIONAL_TOOLS, _TOOL_METADATA
 
-    expected = frozenset(
-        name for name, meta in _TOOL_METADATA.items() if meta.get("task_optional", False)
-    )
+    expected = frozenset(name for name, meta in _TOOL_METADATA.items() if meta.get("task_optional", False))
     assert _TASK_OPTIONAL_TOOLS == expected, (
         "_TASK_OPTIONAL_TOOLS is no longer derived from _TOOL_METADATA. "
         "If you added an optional-task tool, set task_optional=True on its "
@@ -55,8 +53,7 @@ def test_task_optional_tools_is_frozenset() -> None:
     from roam.mcp_server import _TASK_OPTIONAL_TOOLS
 
     assert isinstance(_TASK_OPTIONAL_TOOLS, frozenset), (
-        f"_TASK_OPTIONAL_TOOLS must be a frozenset, got "
-        f"{type(_TASK_OPTIONAL_TOOLS).__name__}"
+        f"_TASK_OPTIONAL_TOOLS must be a frozenset, got {type(_TASK_OPTIONAL_TOOLS).__name__}"
     )
 
 
@@ -297,9 +294,7 @@ def test_mixing_task_mode_with_legacy_bools_warns() -> None:
             def _stub() -> dict:  # pragma: no cover - never invoked
                 return {}
 
-        deprecation_warnings = [
-            w for w in caught if issubclass(w.category, DeprecationWarning)
-        ]
+        deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert deprecation_warnings, (
             "mixing task_mode=... with legacy task_required/task_optional must "
             "issue a DeprecationWarning; none was raised."
@@ -328,9 +323,7 @@ def test_default_task_mode_is_none() -> None:
 
         meta = mcp._TOOL_METADATA.get(sentinel)
         assert meta is not None
-        assert meta.get("task_mode") is None, (
-            f"default task_mode must be None; got {meta.get('task_mode')!r}"
-        )
+        assert meta.get("task_mode") is None, f"default task_mode must be None; got {meta.get('task_mode')!r}"
         assert meta.get("task_required") is False
         assert meta.get("task_optional") is False
     finally:

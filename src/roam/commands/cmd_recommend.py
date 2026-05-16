@@ -9,6 +9,13 @@ three signal sources combined:
 Each candidate gets a score that's the sum of normalised contributions
 from each signal. Lets agents see "what else should I look at when
 touching this symbol".
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because recommend outputs are invocation-scoped suggestion
+enumerations (related symbols ranked by neighbour + co-change + clone
+signals) — not per-location code violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1221-audit memo.
 """
 
 from __future__ import annotations

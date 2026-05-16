@@ -8,6 +8,14 @@ companion to ``roam doctor``. Reports:
   * MCP-level result cache size + hit-rate (if anything cached this session)
   * recent ``busy_responses_total`` count
   * watcher status (if ROAM_MCP_WATCH=1)
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam mcp-status`` is a setup/bootstrap command — its
+output is human-facing setup status (MCP server preset, tool counts,
+backpressure limits, cache stats), not analysis findings with
+file:line coordinates. SARIF is reserved for scanning results. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1148 audit memo.
 """
 
 from __future__ import annotations

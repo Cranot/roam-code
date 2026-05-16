@@ -415,10 +415,22 @@ def test_build_review_suggestions_emits_block_when_recurring_detector_present():
         {"detector": "intent", "total_findings": 1, "commits_with_finding": 1},
     ]
     commits = [
-        {"short_sha": "abc1234", "date": "2026-05-01", "subject": "Fix X",
-         "high": 2, "medium": 1, "kinds": ["clones-not-edited x2", "impact x1"]},
-        {"short_sha": "def5678", "date": "2026-05-02", "subject": "Refactor Y",
-         "high": 0, "medium": 2, "kinds": ["intent x2"]},
+        {
+            "short_sha": "abc1234",
+            "date": "2026-05-01",
+            "subject": "Fix X",
+            "high": 2,
+            "medium": 1,
+            "kinds": ["clones-not-edited x2", "impact x1"],
+        },
+        {
+            "short_sha": "def5678",
+            "date": "2026-05-02",
+            "subject": "Refactor Y",
+            "high": 0,
+            "medium": 2,
+            "kinds": ["intent x2"],
+        },
     ]
     out = _build_review_suggestions(by_detector=by_detector, commits=commits, tier="team")
     assert out is not None, "non-empty replay must return suggestions dict"
@@ -474,9 +486,7 @@ def test_build_review_suggestions_omits_yaml_when_no_template_match():
     assert out is not None  # the unknown detector IS still recurring
     assert out["recurring_risk_classes"][0]["class"] == "novel-unknown-detector-xyz"
     # But we don't fabricate a rule for it
-    assert "suggested_roam_rules_yml" not in out, (
-        "must NOT generate a YAML rule for an unmapped detector — Pattern 1"
-    )
+    assert "suggested_roam_rules_yml" not in out, "must NOT generate a YAML rule for an unmapped detector — Pattern 1"
 
 
 def test_pr_replay_envelope_omits_review_suggestions_when_no_findings():
@@ -489,8 +499,13 @@ def test_pr_replay_envelope_omits_review_suggestions_when_no_findings():
 
     def _empty_postmortem(commit_range, *, limit):
         return {
-            "summary": {"verdict": "no findings", "commits_scanned": 0,
-                        "commits_with_findings": 0, "total_high": 0, "total_medium": 0},
+            "summary": {
+                "verdict": "no findings",
+                "commits_scanned": 0,
+                "commits_with_findings": 0,
+                "total_high": 0,
+                "total_medium": 0,
+            },
             "commits": [],
         }
 
@@ -503,9 +518,7 @@ def test_pr_replay_envelope_omits_review_suggestions_when_no_findings():
 
     envelope = _json.loads(out[out.find("{") :])
     # The key MUST be absent — not an empty object, not null.
-    assert "review_suggestions" not in envelope, (
-        "Pattern 1: empty replay must omit the key entirely, not emit {}"
-    )
+    assert "review_suggestions" not in envelope, "Pattern 1: empty replay must omit the key entirely, not emit {}"
     # Summary boolean reflects absence
     assert envelope["summary"]["review_suggestions_present"] is False
 
@@ -527,21 +540,27 @@ def test_pr_replay_envelope_emits_review_suggestions_when_data_present():
             },
             "commits": [
                 {
-                    "short_sha": "abc1234", "date": "2026-05-01",
+                    "short_sha": "abc1234",
+                    "date": "2026-05-01",
                     "subject": "Touch many things",
-                    "high": 2, "medium": 1,
+                    "high": 2,
+                    "medium": 1,
                     "kinds": ["clones-not-edited x2", "impact x1"],
                 },
                 {
-                    "short_sha": "def5678", "date": "2026-05-02",
+                    "short_sha": "def5678",
+                    "date": "2026-05-02",
                     "subject": "Refactor a layer",
-                    "high": 1, "medium": 0,
+                    "high": 1,
+                    "medium": 0,
                     "kinds": ["layer-violation x1"],
                 },
                 {
-                    "short_sha": "ff09abc", "date": "2026-05-03",
+                    "short_sha": "ff09abc",
+                    "date": "2026-05-03",
                     "subject": "Add clone",
-                    "high": 0, "medium": 2,
+                    "high": 0,
+                    "medium": 2,
                     "kinds": ["clones-not-edited x2"],
                 },
             ],
@@ -555,9 +574,7 @@ def test_pr_replay_envelope_emits_review_suggestions_when_data_present():
     assert code == 0
 
     envelope = _json.loads(out[out.find("{") :])
-    assert "review_suggestions" in envelope, (
-        "non-empty replay must surface review_suggestions block"
-    )
+    assert "review_suggestions" in envelope, "non-empty replay must surface review_suggestions block"
     assert envelope["summary"]["review_suggestions_present"] is True
 
     block = envelope["review_suggestions"]
@@ -591,14 +608,17 @@ def test_review_suggestions_bounded_to_at_most_ten_items():
     from roam.commands.cmd_pr_replay import _build_review_suggestions
 
     # 15 recurring detector classes (well over the cap)
-    by_detector = [
-        {"detector": f"detector-{i}", "total_findings": 5, "commits_with_finding": 3}
-        for i in range(15)
-    ]
+    by_detector = [{"detector": f"detector-{i}", "total_findings": 5, "commits_with_finding": 3} for i in range(15)]
     # 15 high-severity commits
     commits = [
-        {"short_sha": f"sha{i:04d}", "date": "2026-05-01", "subject": f"PR {i}",
-         "high": 1, "medium": 0, "kinds": [f"detector-{i} x1"]}
+        {
+            "short_sha": f"sha{i:04d}",
+            "date": "2026-05-01",
+            "subject": f"PR {i}",
+            "high": 1,
+            "medium": 0,
+            "kinds": [f"detector-{i} x1"],
+        }
         for i in range(15)
     ]
     out = _build_review_suggestions(by_detector=by_detector, commits=commits, tier="deep")

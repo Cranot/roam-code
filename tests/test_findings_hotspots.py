@@ -26,13 +26,12 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_hotspots import (
     HOTSPOTS_DETECTOR_VERSION,
     _hotspots_finding_id,
 )
 from roam.db.connection import open_db
-
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -170,16 +169,11 @@ def test_hotspots_rerun_upserts_not_duplicates(runtime_project, generic_trace):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'hotspots'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'hotspots'"
                 ).fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'hotspots'"
-            ).fetchone()[0]
-        assert first_count == len(first_ids), (
-            "duplicate finding_id_str rows on first run"
-        )
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'hotspots'").fetchone()[0]
+        assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
         assert first_count >= 1
 
         # Second run — same trace, same code, same hash inputs.
@@ -191,22 +185,19 @@ def test_hotspots_rerun_upserts_not_duplicates(runtime_project, generic_trace):
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'hotspots'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'hotspots'"
                 ).fetchall()
             }
-            second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'hotspots'"
-            ).fetchone()[0]
+            second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'hotspots'").fetchone()[
+                0
+            ]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
     finally:
         os.chdir(old_cwd)
 
 
-def test_hotspots_finding_evidence_carries_runtime_and_static_stats(
-    runtime_project, generic_trace
-):
+def test_hotspots_finding_evidence_carries_runtime_and_static_stats(runtime_project, generic_trace):
     """Evidence JSON carries the runtime + static rank pair and stats blocks."""
     old_cwd = os.getcwd()
     try:
@@ -240,14 +231,11 @@ def test_hotspots_finding_evidence_carries_runtime_and_static_stats(
         assert "runtime hotspot" in claim_lower
         assert "runtime_rank" in claim_lower
 
-
     finally:
         os.chdir(old_cwd)
 
 
-def test_hotspots_downgrade_carries_disagreement_flag(
-    runtime_project, tmp_path
-):
+def test_hotspots_downgrade_carries_disagreement_flag(runtime_project, tmp_path):
     """DOWNGRADE rows include an explicit static-vs-runtime disagreement note.
 
     We craft a trace where one symbol (``helper``) has very low traffic
@@ -261,12 +249,16 @@ def test_hotspots_downgrade_carries_disagreement_flag(
     # detector may or may not produce a DOWNGRADE row. Either way, when
     # DOWNGRADE rows DO appear, the disagreement key must be present.
     trace = [
-        {"function": "handle", "file": "api.py", "call_count": 10_000,
-         "p50_ms": 10, "p99_ms": 100, "error_rate": 0.0},
-        {"function": "process", "file": "service.py", "call_count": 9_500,
-         "p50_ms": 8, "p99_ms": 80, "error_rate": 0.0},
-        {"function": "helper", "file": "utils.py", "call_count": 5,
-         "p50_ms": 1, "p99_ms": 2, "error_rate": 0.0},
+        {"function": "handle", "file": "api.py", "call_count": 10_000, "p50_ms": 10, "p99_ms": 100, "error_rate": 0.0},
+        {
+            "function": "process",
+            "file": "service.py",
+            "call_count": 9_500,
+            "p50_ms": 8,
+            "p99_ms": 80,
+            "error_rate": 0.0,
+        },
+        {"function": "helper", "file": "utils.py", "call_count": 5, "p50_ms": 1, "p99_ms": 2, "error_rate": 0.0},
     ]
     p = tmp_path / "trace.json"
     p.write_text(json.dumps(trace))
@@ -277,17 +269,12 @@ def test_hotspots_downgrade_carries_disagreement_flag(
         _ingest_and_persist(runtime_project, str(p))
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings "
-                "WHERE source_detector = 'hotspots'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'hotspots'").fetchall()
         for r in rows:
             evidence = json.loads(r["evidence_json"])
             if evidence["classification"] in ("UPGRADE", "DOWNGRADE"):
                 # Discrepancy buckets must carry the explanation flag.
-                assert "disagreement" in evidence, (
-                    f"{evidence['classification']} row missing disagreement key"
-                )
+                assert "disagreement" in evidence, f"{evidence['classification']} row missing disagreement key"
     finally:
         os.chdir(old_cwd)
 
@@ -297,9 +284,7 @@ def test_hotspots_downgrade_carries_disagreement_flag(
 # ---------------------------------------------------------------------------
 
 
-def test_hotspots_findings_visible_via_cmd_findings_list(
-    runtime_project, generic_trace
-):
+def test_hotspots_findings_visible_via_cmd_findings_list(runtime_project, generic_trace):
     """`roam findings list --detector hotspots` returns rows after migration."""
     old_cwd = os.getcwd()
     try:
@@ -307,25 +292,19 @@ def test_hotspots_findings_visible_via_cmd_findings_list(
         _ingest_and_persist(runtime_project, generic_trace)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "hotspots"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "hotspots"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "hotspots" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "hotspots" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "hotspots" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
 
-def test_hotspots_findings_visible_via_cmd_findings_count(
-    runtime_project, generic_trace
-):
+def test_hotspots_findings_visible_via_cmd_findings_count(runtime_project, generic_trace):
     """`roam findings count` includes a non-zero entry for hotspots."""
     old_cwd = os.getcwd()
     try:
@@ -358,10 +337,7 @@ def test_no_persist_does_not_emit_findings(runtime_project, generic_trace):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'hotspots'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'hotspots'").fetchone()[0]
             except sqlite3.OperationalError:
                 # findings table may not be present on every test env's
                 # schema flavour — that's still a "no findings emitted"
@@ -388,22 +364,15 @@ def test_hotspots_persist_no_traces_emits_nothing(runtime_project):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'hotspots'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'hotspots'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
-        assert count == 0, (
-            "hotspots --persist wrote findings without runtime data"
-        )
+        assert count == 0, "hotspots --persist wrote findings without runtime data"
     finally:
         os.chdir(old_cwd)
 
 
-def test_hotspots_persist_no_findings_table_no_crash(
-    runtime_project, generic_trace
-):
+def test_hotspots_persist_no_findings_table_no_crash(runtime_project, generic_trace):
     """``hotspots --persist`` degrades cleanly when the findings table is absent.
 
     Simulates the pre-W89 schema by DROP-ing ``findings`` after the

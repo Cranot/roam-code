@@ -58,7 +58,6 @@ from roam.evidence.oscal import (
     build_oscal_assessment_results,
     synthesize_stub_assessment_plan,
 )
-
 from tests._helpers.repo_root import repo_root
 
 # ---------------------------------------------------------------------------
@@ -67,12 +66,8 @@ from tests._helpers.repo_root import repo_root
 
 
 ROOT = repo_root()
-EVIDENCE_FIXTURE = (
-    ROOT / "tests" / "fixtures" / "evidence" / "v1_with_refs.json"
-)
-AR_FIXTURE = (
-    ROOT / "tests" / "fixtures" / "oscal" / "sample-assessment-results.json"
-)
+EVIDENCE_FIXTURE = ROOT / "tests" / "fixtures" / "evidence" / "v1_with_refs.json"
+AR_FIXTURE = ROOT / "tests" / "fixtures" / "oscal" / "sample-assessment-results.json"
 FIXED_CLOCK = datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc)
 
 
@@ -123,9 +118,7 @@ def _ns_props(props):
 def test_ar_document_has_v12_shape():
     """The emitted AR must carry the v1.2 required scaffolding."""
     doc = _build_ar()
-    assert "assessment-results" in doc, (
-        "missing required top-level assessment-results element"
-    )
+    assert "assessment-results" in doc, "missing required top-level assessment-results element"
     ar = doc["assessment-results"]
     assert isinstance(ar.get("uuid"), str) and len(ar["uuid"]) == 36
 
@@ -160,20 +153,14 @@ def test_ar_synthesizes_stub_ap_when_no_ref_given():
 
     # import-ap href must be a urn:uuid: reference (not a path).
     href = ar["import-ap"]["href"]
-    assert href.startswith("urn:uuid:"), (
-        f"expected urn:uuid: import-ap href; got {href!r}"
-    )
+    assert href.startswith("urn:uuid:"), f"expected urn:uuid: import-ap href; got {href!r}"
 
     # The stub AP must be embedded in back-matter.resources[].
     resources = (ar.get("back-matter") or {}).get("resources") or []
     stub_resources = [
-        r for r in resources
-        if _ns_props(r.get("props") or []).get("roam_resource_kind")
-        == ["stub_assessment_plan"]
+        r for r in resources if _ns_props(r.get("props") or []).get("roam_resource_kind") == ["stub_assessment_plan"]
     ]
-    assert len(stub_resources) == 1, (
-        f"expected exactly one stub AP resource; got {len(stub_resources)}"
-    )
+    assert len(stub_resources) == 1, f"expected exactly one stub AP resource; got {len(stub_resources)}"
     # The stub resource's uuid must match the import-ap href.
     stub_uuid = stub_resources[0]["uuid"]
     assert href == f"urn:uuid:{stub_uuid}"
@@ -192,13 +179,9 @@ def test_ar_honours_explicit_import_ap_ref():
     # No stub_assessment_plan resource should be present.
     resources = (ar.get("back-matter") or {}).get("resources") or []
     stub_resources = [
-        r for r in resources
-        if _ns_props(r.get("props") or []).get("roam_resource_kind")
-        == ["stub_assessment_plan"]
+        r for r in resources if _ns_props(r.get("props") or []).get("roam_resource_kind") == ["stub_assessment_plan"]
     ]
-    assert stub_resources == [], (
-        "stub AP must not be emitted when import_ap_ref is set"
-    )
+    assert stub_resources == [], "stub AP must not be emitted when import_ap_ref is set"
 
 
 def test_ar_props_carry_authority_refs_and_redaction_extensions():
@@ -221,14 +204,10 @@ def test_ar_props_carry_authority_refs_and_redaction_extensions():
     # the source packet has authority_refs (fixture has mode:safe_edit).
     r0 = ar["results"][0]
     result_props = _ns_props(r0.get("props") or [])
-    assert "authority-ref" in result_props, (
-        f"missing authority-ref prop on results[0]; got {sorted(result_props)}"
-    )
+    assert "authority-ref" in result_props, f"missing authority-ref prop on results[0]; got {sorted(result_props)}"
     # The fixture carries authority_kind=mode, authority_id=mode:safe_edit
     # which composes to "mode:mode:safe_edit".
-    assert any(
-        v.startswith("mode:") for v in result_props["authority-ref"]
-    )
+    assert any(v.startswith("mode:") for v in result_props["authority-ref"])
 
     # Parties (actor_refs) must surface with their trust_tier prop.
     parties = ar["metadata"].get("parties") or []
@@ -261,8 +240,7 @@ def _scan_for_overclaims(text: str, *, location: str) -> None:
     if violations:
         word, window = violations[0]
         raise AssertionError(
-            f"compliance overclaim at {location} ({word!r}): "
-            f"...{window}... (full text: {text[:120]!r})"
+            f"compliance overclaim at {location} ({word!r}): ...{window}... (full text: {text[:120]!r})"
         )
 
 
@@ -337,9 +315,7 @@ def test_ar_uuids_are_uuidv5_form():
     for u in uuids:
         parsed = _uuid.UUID(u)
         assert parsed.variant == _uuid.RFC_4122, f"non-RFC4122 uuid: {u}"
-        assert parsed.version == 5, (
-            f"expected UUIDv5, got v{parsed.version}: {u}"
-        )
+        assert parsed.version == 5, f"expected UUIDv5, got v{parsed.version}: {u}"
 
 
 def test_ar_fixture_matches_built_document():
@@ -357,7 +333,7 @@ def test_ar_fixture_matches_built_document():
     canon_a = _json.dumps(actual, sort_keys=True, separators=(",", ":"))
     assert canon_e == canon_a, (
         "AR fixture drift detected; regenerate with:\n"
-        ".venv/Scripts/python.exe -c \"import json; "
+        '.venv/Scripts/python.exe -c "import json; '
         "from datetime import datetime, timezone; "
         "from roam.evidence.oscal import build_oscal_assessment_results; "
         "ev = json.loads(open('tests/fixtures/evidence/v1_with_refs.json').read()); "
@@ -400,10 +376,12 @@ def test_stub_ap_is_deterministic_per_repo_id():
     byte-identical, so consumers can dedupe them by uuid.
     """
     a = synthesize_stub_assessment_plan(
-        repo_id="github.com/x/y", now=FIXED_CLOCK,
+        repo_id="github.com/x/y",
+        now=FIXED_CLOCK,
     )
     b = synthesize_stub_assessment_plan(
-        repo_id="github.com/x/y", now=FIXED_CLOCK,
+        repo_id="github.com/x/y",
+        now=FIXED_CLOCK,
     )
     assert _json.dumps(a, sort_keys=True) == _json.dumps(b, sort_keys=True)
 
@@ -543,10 +521,7 @@ def test_ar_cli_strict_rejects_unknown_enum(tmp_path):
         str(packet_path),
         "--strict",
     )
-    assert code != 0, (
-        "expected non-zero exit on closed-enum violation under --strict; "
-        f"got code={code} out={out!r}"
-    )
+    assert code != 0, f"expected non-zero exit on closed-enum violation under --strict; got code={code} out={out!r}"
     # The error message should make the failure mode visible.
     assert "validation" in out.lower() or "actor_kind" in out.lower(), out
 
@@ -584,9 +559,9 @@ def test_ar_cli_non_strict_drops_unknown_enum_and_emits(tmp_path):
     # The poisoned row dropped; the surviving "human:alice@example.com"
     # row should still surface as a party.
     names = {p.get("name") for p in parties}
-    assert "Alice" in names or any(
-        "alice" in (n or "").lower() for n in names
-    ), f"surviving actor row not emitted: parties={parties!r}"
+    assert "Alice" in names or any("alice" in (n or "").lower() for n in names), (
+        f"surviving actor row not emitted: parties={parties!r}"
+    )
 
 
 def test_ar_builder_accepts_change_evidence_instance():
@@ -602,18 +577,21 @@ def test_ar_builder_accepts_change_evidence_instance():
     packet = ChangeEvidence.from_canonical_json(raw)
 
     from_dict = build_oscal_assessment_results(
-        _json.loads(raw), now=FIXED_CLOCK,
+        _json.loads(raw),
+        now=FIXED_CLOCK,
     )
     from_dataclass = build_oscal_assessment_results(
-        packet, now=FIXED_CLOCK,
+        packet,
+        now=FIXED_CLOCK,
     )
     canon_dict = _json.dumps(from_dict, sort_keys=True, separators=(",", ":"))
     canon_dc = _json.dumps(
-        from_dataclass, sort_keys=True, separators=(",", ":"),
+        from_dataclass,
+        sort_keys=True,
+        separators=(",", ":"),
     )
     assert canon_dict == canon_dc, (
-        "AR byte drift between dict-input and ChangeEvidence-input "
-        "paths: the projection must be input-shape-agnostic."
+        "AR byte drift between dict-input and ChangeEvidence-input paths: the projection must be input-shape-agnostic."
     )
 
 
@@ -681,10 +659,7 @@ def test_ar_envelope_dropped_enum_rows_disclosed(tmp_path):
     assert "dropped_reasons" in summary
     assert isinstance(summary["dropped_reasons"], list)
     assert len(summary["dropped_reasons"]) <= 5
-    assert all(
-        "actor_ref" in r or "actor_kind" in r
-        for r in summary["dropped_reasons"]
-    )
+    assert all("actor_ref" in r or "actor_kind" in r for r in summary["dropped_reasons"])
     # Verdict discloses the drop.
     assert "dropped enum rows" in summary["verdict"], summary["verdict"]
     # Facts string surfaces the drop with LAW-4 ``rows`` terminal.

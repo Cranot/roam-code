@@ -2277,6 +2277,5 @@ class TestExtractorRegistryDriftGuard:
         for lang, factory in _LANGUAGE_EXTRACTORS.items():
             inst = factory()
             assert isinstance(inst, LanguageExtractor), (
-                f"_LANGUAGE_EXTRACTORS[{lang!r}] returned non-LanguageExtractor: "
-                f"{type(inst).__name__}"
+                f"_LANGUAGE_EXTRACTORS[{lang!r}] returned non-LanguageExtractor: {type(inst).__name__}"
             )
