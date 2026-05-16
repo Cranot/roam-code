@@ -493,6 +493,10 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
                                 "partial_success": True,
                                 "rules": len(rules),
                                 "findings": 0,
+                                # Keep the distribution shape consistent with the
+                                # populated-corpus branch (line 611) so consumers
+                                # don't have to special-case empty_corpus.
+                                "findings_confidence_distribution": {"high": 0, "medium": 0, "low": 0},
                             },
                             rules_dir=str(rules_path),
                             rule_ids=[r.rule_id for r in rules],
