@@ -44,6 +44,8 @@ roam preflight <symbol>               # 4. blast radius + tests + complexity + a
 
 Requires Python 3.10+. `pipx install roam-code` and `uv tool install roam-code` work too. Drop `[mcp]` if you only want the CLI.
 
+**Want to see it before installing?** [`docs/fresh-install-smoke.md`](docs/fresh-install-smoke.md) is a verbatim transcript of these four commands run against a clean venv and a three-file synthetic project — copy-paste reproducible, no synthetic output.
+
 ---
 
 ## What's next
