@@ -315,7 +315,7 @@ def test_w332_deprecated_set_matches_module_constant():
 _PRE_W332_EXEMPT: dict[tuple[str, str], str] = {
     # Semantically-distinct ``target`` — git ref / non-symbol identifier.
     ("roam_breaking_changes", "target"): "git ref, not a symbol id",
-    # redacted renamed the 9 ``target``-as-symbol declarations
+    # An earlier sweep renamed the 9 ``target``-as-symbol declarations
     # (roam_prepare_change / roam_trace / roam_affected_tests /
     # roam_annotate_symbol / roam_get_annotations / roam_generate_plan /
     # roam_get_invariants / roam_why_fail / roam_metrics) to the
