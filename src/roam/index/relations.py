@@ -37,16 +37,16 @@ import re
 _RX_IMPORT_LINE = re.compile(
     r"^[ \t]*"
     r"(?:"
-    r"import\b"          # python / java / scala / kotlin / typescript / swift
-    r"|from\s+\S+\s+import\b"   # python
-    r"|use\b"            # rust / php / scala
-    r"|using\b"          # c# / c++
-    r"|require\b"        # ruby / php / node
+    r"import\b"  # python / java / scala / kotlin / typescript / swift
+    r"|from\s+\S+\s+import\b"  # python
+    r"|use\b"  # rust / php / scala
+    r"|using\b"  # c# / c++
+    r"|require\b"  # ruby / php / node
     r"|require_relative\b"
-    r"|include\b"        # ruby / php / perl
-    r"|#\s*include\b"    # c / c++
-    r"|@import\b"        # objective-c / css
-    r"|package\b"        # go
+    r"|include\b"  # ruby / php / perl
+    r"|#\s*include\b"  # c / c++
+    r"|@import\b"  # objective-c / css
+    r"|package\b"  # go
     r")"
     r"([^\n]*)",
     re.MULTILINE,
@@ -115,9 +115,7 @@ def _mask_strings_and_comments(text: str) -> str:
         # prefix letters (they're part of the source code), but we need
         # to skip past them so the next iteration sees the quote.
         # Triple-quoted ``"""..."""`` or ``'''...'''``
-        if (ch == '"' and nxt == '"' and nxt2 == '"') or (
-            ch == "'" and nxt == "'" and nxt2 == "'"
-        ):
+        if (ch == '"' and nxt == '"' and nxt2 == '"') or (ch == "'" and nxt == "'" and nxt2 == "'"):
             quote = ch * 3
             j = text.find(quote, i + 3)
             if j == -1:
@@ -128,7 +126,7 @@ def _mask_strings_and_comments(text: str) -> str:
             i = j
             continue
         # Single-line ``"..."`` / ``'...'`` / ``\`...\```
-        if ch in '"\'`':
+        if ch in "\"'`":
             quote = ch
             j = i + 1
             while j < n and text[j] != quote and text[j] != "\n":
@@ -192,8 +190,7 @@ def _extract_imported_names(source_text: str) -> set[str]:
             block_text = rest
             cursor = line_end
         for token in _RX_NAME_TOKEN.findall(block_text):
-            if token in {"as", "from", "import", "use", "using", "require",
-                         "require_relative", "include", "package"}:
+            if token in {"as", "from", "import", "use", "using", "require", "require_relative", "include", "package"}:
                 continue
             names.add(token)
         pos = cursor
@@ -239,14 +236,13 @@ def _verify_import_edges(
             verified.append(edge)
         else:
             dropped += 1
-    # Additive (not overwriting): the W181 import-filter in
-    # ``_resolve_standard`` may have already incremented this key for
-    # phantom edges it caught pre-edge-emission. Both layers detect
-    # the same phantom-edge class, so a single combined counter is
-    # the right telemetry shape.
-    drop_counter["dropped_import_edges"] = (
-        drop_counter.get("dropped_import_edges", 0) + dropped
-    )
+    # Additive (not overwriting): the counter key may have been
+    # touched by a previous resolve_references call that shared the
+    # same drop_stats dict. W167 is the sole writer of this key —
+    # W181's pre-filter in ``_resolve_standard`` deliberately does
+    # NOT increment it (W1260): "dropped" means "edge was emitted
+    # then dropped", and W181 rejects candidates pre-emission.
+    drop_counter["dropped_import_edges"] = drop_counter.get("dropped_import_edges", 0) + dropped
     return verified
 
 
@@ -646,14 +642,15 @@ def _resolve_standard(
 ):
     """Standard multi-strategy resolution: qualified -> simple -> case-insensitive.
 
-    ``drop_counter`` is optional. When provided and the W181 import-filter
-    short-circuits an ``import`` ref to ``None`` (every candidate dropped
-    as a fabricated import target), the resolver increments
-    ``drop_counter["dropped_import_edges"]`` so the call-site can report
-    the same telemetry the W167 verification pass produces. The two
-    counters share a key because they detect the same class of phantom
-    edge at different stages (W181 = pre-edge filtering; W167 = post-edge
-    text verification).
+    ``drop_counter`` is accepted for signature symmetry with the
+    W167 verification pass (``_verify_import_edges``) but is NOT
+    written by this function. The counter ``dropped_import_edges``
+    is owned by W167 and tracks edges that were emitted then
+    dropped at the post-verification stage. W181's pre-filter (the
+    ``kind == "import"`` branch below) rejects candidates BEFORE
+    any edge is emitted, so its rejections are a different
+    concept from "dropped" and do not increment the counter
+    (W1260 / W1257-audit).
     """
     # W181: for ``kind='import'`` resolution, pre-filter the candidate
     # set to drop kinds that are never legitimate import targets
@@ -670,17 +667,21 @@ def _resolve_standard(
         # the import-filter emptied them" (which IS a phantom drop and
         # should be counted).
         raw_qn_candidates = symbols_by_qualified.get(target_name, [])
-        raw_simple_candidates = symbols_by_name.get(target_name, [])
-        raw_lower_candidates = symbols_by_name_lower.get(target_name.lower(), [])
-        any_raw_candidates = bool(
-            raw_qn_candidates or raw_simple_candidates or raw_lower_candidates
-        )
+        # W1260 removed the `any_raw_candidates = bool(...)` roll-up that
+        # also looked at symbols_by_name + symbols_by_name_lower; with the
+        # W181 counter increment gone, only the qualified-name list is
+        # still consumed (see line ~687 below). The simple/lower lookups
+        # are obsolete; restore them if a future detector needs the bool.
 
         view_by_name = _filter_symbols_for_import(
-            symbols_by_name, target_name, source_file,
+            symbols_by_name,
+            target_name,
+            source_file,
         )
         view_by_name_lower = _filter_symbols_for_import(
-            symbols_by_name_lower, target_name.lower(), source_file,
+            symbols_by_name_lower,
+            target_name.lower(),
+            source_file,
         )
         qn_candidates = _filter_import_candidates(raw_qn_candidates, source_file)
         # If qualified-name filtering produced an empty list but the raw
@@ -690,13 +691,15 @@ def _resolve_standard(
         candidates_for_simple = view_by_name.get(target_name, [])
         candidates_for_lower = view_by_name_lower.get(target_name.lower(), [])
         if not qn_candidates and not candidates_for_simple and not candidates_for_lower:
-            if any_raw_candidates and drop_counter is not None:
-                # Record the phantom drop so callers see consistent
-                # telemetry regardless of whether the filter (W181) or
-                # the verifier (W167) caught the edge.
-                drop_counter["dropped_import_edges"] = (
-                    drop_counter.get("dropped_import_edges", 0) + 1
-                )
+            # W1260: do NOT increment ``dropped_import_edges`` here.
+            # The counter is owned by W167's post-verification path
+            # (``_verify_import_edges``) and its semantic is "an edge
+            # was emitted, then dropped". W181 is a *pre-filter* — it
+            # rejects candidates BEFORE any edge is emitted, so no
+            # edge exists to be "dropped". Conflating the two stages
+            # in one counter inflates the W167 telemetry with W181
+            # rejections that are a different concept (see W1257
+            # audit + W181-vs-W167 distinction in CLAUDE.md).
             return None
     else:
         view_by_name = symbols_by_name

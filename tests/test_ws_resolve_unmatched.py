@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Unit tests — find_unmatched_calls helper
 # ---------------------------------------------------------------------------
@@ -177,31 +176,29 @@ def _build_workspace(tmp_path: Path, *, full_match: bool) -> Path:
     # always produce a target-name edge to `fetch` after indexing.
     if full_match:
         (fe / "src" / "client.ts").write_text(
-            'async function loadUsers() {\n'
-            '  return await api.get("/api/users");\n'
-            '}\n',
+            'async function loadUsers() {\n  return await api.get("/api/users");\n}\n',
             encoding="utf-8",
         )
     else:
         (fe / "src" / "client.ts").write_text(
-            'async function loadUsers() {\n'
+            "async function loadUsers() {\n"
             '  return await api.get("/api/users");\n'
-            '}\n'
-            'async function loadGhost() {\n'
+            "}\n"
+            "async function loadGhost() {\n"
             '  return await api.get("/api/legacy/ghost");\n'
-            '}\n'
-            'async function postUsers() {\n'
+            "}\n"
+            "async function postUsers() {\n"
             '  return await api.post("/api/users");\n'
-            '}\n',
+            "}\n",
             encoding="utf-8",
         )
 
     # Backend exposes only GET /api/users.
     (be / "src" / "routes.ts").write_text(
-        'const router = {\n'
-        '  get(path, handler) {},\n'
-        '  post(path, handler) {},\n'
-        '};\n'
+        "const router = {\n"
+        "  get(path, handler) {},\n"
+        "  post(path, handler) {},\n"
+        "};\n"
         'router.get("/api/users", () => ({ users: [] }));\n',
         encoding="utf-8",
     )
@@ -224,9 +221,7 @@ def _build_workspace(tmp_path: Path, *, full_match: bool) -> Path:
             {"path": str(fe), "name": "frontend", "role": "frontend"},
             {"path": str(be), "name": "backend", "role": "backend"},
         ],
-        "connections": [
-            {"type": "rest-api", "frontend": "frontend", "backend": "backend"}
-        ],
+        "connections": [{"type": "rest-api", "frontend": "frontend", "backend": "backend"}],
     }
     (ws / ".roam-workspace.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     return ws

@@ -20,6 +20,13 @@ Usage::
     roam mode --check attest        # query: is attest allowed right now?
     roam mode --list                # list all valid modes + counts
     roam mode --json                # JSON envelope
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam mode`` operates on substrate state in ``.roam/``
+(the active-mode marker) — not code locations or per-location violations.
+The state is consumed by other roam commands + agent runtimes directly
+from disk; SARIF would be redundant. See action.yml _SUPPORTED_SARIF
+allowlist + W1181-audit memo.
 """
 
 from __future__ import annotations
@@ -104,13 +111,10 @@ def _build_envelope(
                 modes=modes_view,
                 agent_contract={
                     "facts": [
-                        f"{name} mode allows {len(policies[name].allowed_commands)} commands"
-                        for name in VALID_MODES
+                        f"{name} mode allows {len(policies[name].allowed_commands)} commands" for name in VALID_MODES
                     ],
                     "next_commands": [
-                        f"roam mode {name}  # switch to {name}"
-                        for name in VALID_MODES
-                        if name != active.name
+                        f"roam mode {name}  # switch to {name}" for name in VALID_MODES if name != active.name
                     ],
                 },
             ),
@@ -121,15 +125,9 @@ def _build_envelope(
     if check_arg:
         active = resolve_mode(repo_root)
         allowed, reason = check_command_allowed(repo_root, check_arg, active)
-        verdict = (
-            f"'{check_arg}' allowed in {active.name} mode"
-            if allowed
-            else f"BLOCKED: {reason}"
-        )
+        verdict = f"'{check_arg}' allowed in {active.name} mode" if allowed else f"BLOCKED: {reason}"
         # Find which modes allow it (for next_commands).
-        modes_allowing = [
-            m for m in VALID_MODES if check_arg in policies[m].allowed_commands
-        ]
+        modes_allowing = [m for m in VALID_MODES if check_arg in policies[m].allowed_commands]
         return (
             json_envelope(
                 "mode",
@@ -156,9 +154,7 @@ def _build_envelope(
                     "next_commands": (
                         []
                         if allowed
-                        else [
-                            f"roam mode {modes_allowing[0]}  # to unlock '{check_arg}'"
-                        ]
+                        else [f"roam mode {modes_allowing[0]}  # to unlock '{check_arg}'"]
                         if modes_allowing
                         else []
                     ),
@@ -174,10 +170,7 @@ def _build_envelope(
                 json_envelope(
                     "mode",
                     summary={
-                        "verdict": (
-                            f"unknown mode '{mode_arg}' "
-                            f"(valid: {', '.join(VALID_MODES)})"
-                        ),
+                        "verdict": (f"unknown mode '{mode_arg}' (valid: {', '.join(VALID_MODES)})"),
                         "state": "error",
                         "partial_success": True,
                         "active_mode": resolve_mode(repo_root).name,
@@ -189,19 +182,14 @@ def _build_envelope(
                             f"requested mode '{mode_arg}' is not a valid mode",
                             f"valid modes: {', '.join(VALID_MODES)}",
                         ],
-                        "next_commands": [
-                            f"roam mode {name}" for name in VALID_MODES
-                        ],
+                        "next_commands": [f"roam mode {name}" for name in VALID_MODES],
                     },
                 ),
                 EXIT_USAGE,
             )
         set_active_mode(repo_root, mode_arg)
         policy = resolve_mode(repo_root, mode_name=mode_arg)
-        verdict = (
-            f"active mode: {policy.name} "
-            f"({len(policy.allowed_commands)} allowed commands)"
-        )
+        verdict = f"active mode: {policy.name} ({len(policy.allowed_commands)} allowed commands)"
         return (
             json_envelope(
                 "mode",
@@ -217,8 +205,7 @@ def _build_envelope(
                 },
                 allowed_commands=sorted(policy.allowed_commands),
                 denied_commands=sorted(
-                    {c for p in policies.values() for c in p.allowed_commands}
-                    - policy.allowed_commands
+                    {c for p in policies.values() for c in p.allowed_commands} - policy.allowed_commands
                 ),
                 agent_contract={
                     "facts": [
@@ -238,10 +225,7 @@ def _build_envelope(
     # ---- default: show active mode
     active = resolve_mode(repo_root)
     stale_raw = _detect_stale_active_mode(repo_root)
-    verdict = (
-        f"active mode: {active.name} "
-        f"({len(active.allowed_commands)} allowed commands)"
-    )
+    verdict = f"active mode: {active.name} ({len(active.allowed_commands)} allowed commands)"
     facts = [
         f"active mode is {active.name}",
         f"{active.name} mode allows {len(active.allowed_commands)} of {total_commands} unique commands across all modes",
@@ -270,8 +254,7 @@ def _build_envelope(
             summary=summary,
             allowed_commands=sorted(active.allowed_commands),
             denied_commands=sorted(
-                {c for p in policies.values() for c in p.allowed_commands}
-                - active.allowed_commands
+                {c for p in policies.values() for c in p.allowed_commands} - active.allowed_commands
             ),
             agent_contract={
                 "facts": facts,
@@ -280,11 +263,7 @@ def _build_envelope(
                     if stale_raw is not None
                     else []
                 )
-                + [
-                    f"roam mode {name}  # switch to {name}"
-                    for name in VALID_MODES
-                    if name != active.name
-                ],
+                + [f"roam mode {name}  # switch to {name}" for name in VALID_MODES if name != active.name],
             },
         ),
         EXIT_SUCCESS,
@@ -293,10 +272,7 @@ def _build_envelope(
 
 @roam_capability(
     category="agent-os",
-    summary=(
-        "Read/switch the active agent mode and query mode-gated commands. "
-        "Substrate for R16 agent-mode policy."
-    ),
+    summary=("Read/switch the active agent mode and query mode-gated commands. Substrate for R16 agent-mode policy."),
     inputs=["mode_name", "command_to_check"],
     outputs=["active_mode", "allowed_commands", "denied_commands", "verdict"],
     examples=[
@@ -420,20 +396,14 @@ def mode_cmd(
 
     if list_flag:
         for m in envelope.get("modes", []):
-            click.echo(
-                f"  {m['mode']:<14}  "
-                f"{m['allowed_count']:>4} allowed  "
-                f"(source: {m['source']})"
-            )
+            click.echo(f"  {m['mode']:<14}  {m['allowed_count']:>4} allowed  (source: {m['source']})")
     elif check_cmd:
         click.echo(f"  active mode:     {summary.get('active_mode')}")
         click.echo(f"  checked:         {summary.get('checked_command')}")
         click.echo(f"  allowed:         {summary.get('allowed')}")
         click.echo(f"  reason:          {summary.get('reason')}")
         if summary.get("modes_allowing"):
-            click.echo(
-                f"  allowed in:      {', '.join(summary['modes_allowing'])}"
-            )
+            click.echo(f"  allowed in:      {', '.join(summary['modes_allowing'])}")
     else:
         click.echo(f"  active mode:     {summary.get('active_mode')}")
         click.echo(f"  allowed count:   {summary.get('allowed_count')}")

@@ -81,11 +81,13 @@ EVIDENCE_SCHEMA_VERSION: str = "1.0.0"
 # unconditionally (including when empty) because their absence-as-empty
 # is part of the v0 contract that downstream consumers may already
 # read.
-_W182_OMIT_WHEN_EMPTY_FIELDS: frozenset[str] = frozenset({
-    "actor_refs",
-    "authority_refs",
-    "environment_refs",
-})
+_W182_OMIT_WHEN_EMPTY_FIELDS: frozenset[str] = frozenset(
+    {
+        "actor_refs",
+        "authority_refs",
+        "environment_refs",
+    }
+)
 
 # Field-name -> default-value-sentinel map for the W210 additions.
 # Same backward-compat discipline as ``_W182_OMIT_WHEN_EMPTY_FIELDS``,
@@ -351,22 +353,27 @@ class ChangeEvidence:
 
     def __post_init__(self) -> None:
         if not isinstance(self.evidence_id, str) or not self.evidence_id:
-            raise ValueError(
-                "ChangeEvidence.evidence_id must be a non-empty string"
-            )
+            raise ValueError("ChangeEvidence.evidence_id must be a non-empty string")
         if not isinstance(self.schema_version, str) or not self.schema_version:
-            raise ValueError(
-                "ChangeEvidence.schema_version must be a non-empty string"
-            )
+            raise ValueError("ChangeEvidence.schema_version must be a non-empty string")
         # Coerce mutable inputs to tuples so consumers handing in lists
         # by accident still produce a hashable packet. Use object.__setattr__
         # because the dataclass is frozen.
         for field_name in (
-            "run_ids", "context_refs", "changed_subjects", "findings",
-            "policy_decisions", "tests_required", "tests_run", "approvals",
-            "accepted_risks", "artifacts",
+            "run_ids",
+            "context_refs",
+            "changed_subjects",
+            "findings",
+            "policy_decisions",
+            "tests_required",
+            "tests_run",
+            "approvals",
+            "accepted_risks",
+            "artifacts",
             # W182 agentic-assurance refs:
-            "actor_refs", "authority_refs", "environment_refs",
+            "actor_refs",
+            "authority_refs",
+            "environment_refs",
             "redactions",
             # W210 stale-evidence tuple field:
             "stale_reasons",
@@ -378,11 +385,10 @@ class ChangeEvidence:
         # Validate redaction reasons (same closed enumeration as
         # EvidenceArtifact; reuses the import-level constant).
         from roam.evidence._vocabulary import REDACTION_REASONS
+
         for reason in self.redactions:
             if reason not in REDACTION_REASONS:
-                raise ValueError(
-                    f"ChangeEvidence.redactions: unknown reason {reason!r}"
-                )
+                raise ValueError(f"ChangeEvidence.redactions: unknown reason {reason!r}")
 
         # W279: normalise policy_decisions rows. Conforming dict rows
         # (carrying ``rule_id`` + ``decision``) flow through
@@ -492,13 +498,11 @@ class ChangeEvidence:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ValueError(
-                f"ChangeEvidence.from_canonical_json: malformed JSON "
-                f"({exc.msg} at line {exc.lineno} col {exc.colno})"
+                f"ChangeEvidence.from_canonical_json: malformed JSON ({exc.msg} at line {exc.lineno} col {exc.colno})"
             ) from exc
         if not isinstance(parsed, dict):
             raise ValueError(
-                f"ChangeEvidence.from_canonical_json: expected a JSON "
-                f"object at top level, got {type(parsed).__name__}"
+                f"ChangeEvidence.from_canonical_json: expected a JSON object at top level, got {type(parsed).__name__}"
             )
         return _build_change_evidence(parsed, strict=strict)
 
@@ -541,13 +545,11 @@ class ChangeEvidence:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ValueError(
-                f"ChangeEvidence.from_canonical_json: malformed JSON "
-                f"({exc.msg} at line {exc.lineno} col {exc.colno})"
+                f"ChangeEvidence.from_canonical_json: malformed JSON ({exc.msg} at line {exc.lineno} col {exc.colno})"
             ) from exc
         if not isinstance(parsed, dict):
             raise ValueError(
-                f"ChangeEvidence.from_canonical_json: expected a JSON "
-                f"object at top level, got {type(parsed).__name__}"
+                f"ChangeEvidence.from_canonical_json: expected a JSON object at top level, got {type(parsed).__name__}"
             )
         drops: list[str] = []
         packet = _build_change_evidence(parsed, strict=strict, drops=drops)
@@ -737,9 +739,32 @@ class ChangeEvidence:
                                  ``authority_refs`` entry.
 
         Returns:
-            ``{"passes": bool, "missing": tuple[str, ...]}`` - the
-            ``missing`` tuple is in declared-check order so consumers
-            can render it as a checklist.
+            ``{"passes": bool, "missing": tuple[str, ...],
+              "stale": bool, "stale_reasons": tuple[str, ...]}``
+            - the ``missing`` tuple is in declared-check order so
+            consumers can render it as a checklist; ``stale`` mirrors
+            :attr:`evidence_stale` and ``stale_reasons`` mirrors
+            :attr:`stale_reasons` so a consumer can decide whether to
+            attest at the MVA level reported by ``passes`` (W1254).
+
+        W1254 design choice (additive, NOT integrated). Staleness is a
+        distinct quality axis from MVA-floor coverage: a packet can be
+        MVA-complete AND stale (six axes covered, but the context-read
+        post-dates edits), or MVA-incomplete AND fresh. Conflating the
+        two would erode actionable signal — a stale-but-complete packet
+        should still report ``passes=True`` so the verifier knows the
+        floor was met, while the new ``stale`` field warns that
+        downstream consumers SHOULD treat the verdict with caution.
+        :func:`roam.attest.vsa._verified_levels` and
+        :func:`roam.attest.vsa._verification_result` are the canonical
+        downstream readers. ``_verified_levels`` consumes only
+        ``passes`` and ``missing``; ``_verification_result``
+        additionally consumes ``stale`` to downgrade stale-but-MVA-
+        complete packets to ``FAILED`` per W1261. The additive shape
+        keeps both readers green and lets the attestation boundary
+        refuse silent-success on degraded resolution (Pattern-2
+        discipline). ``stale_reasons`` is exposed for non-VSA
+        consumers (e.g. report banners) that want to render the cause.
 
         This is a computed read; it does NOT modify the packet and does
         NOT participate in the canonical-JSON / content-hash contract.
@@ -768,11 +793,7 @@ class ChangeEvidence:
         # signalled by a non-empty ``redactions`` tuple (the producer
         # named the gap) OR by a non-empty ``accepted_risks`` collection
         # (the gap was acknowledged).
-        verification_ok = (
-            bool(self.tests_run)
-            or bool(self.redactions)
-            or bool(self.accepted_risks)
-        )
+        verification_ok = bool(self.tests_run) or bool(self.redactions) or bool(self.accepted_risks)
         if not verification_ok:
             missing.append("verification")
 
@@ -786,6 +807,11 @@ class ChangeEvidence:
         return {
             "passes": not missing,
             "missing": tuple(missing),
+            # W1254 - additive staleness signal. ``stale`` is a
+            # SEPARATE axis from ``passes``; consumers that care MUST
+            # gate on both.
+            "stale": bool(self.evidence_stale),
+            "stale_reasons": tuple(self.stale_reasons),
         }
 
     # ------------------------------------------------------------------
@@ -815,14 +841,33 @@ class ChangeEvidence:
 
         ``partial`` is reserved for cases where a field carries weak
         signal but the corroborating structured field is absent - e.g.
-        Q1 with only ``agent_id`` set but no ``actor_refs``. The single
+        Q1 with only ``actor_id`` set but no ``actor_refs``. The single
         ``not_applicable`` path today is Q5 when ``verdict`` is "SAFE"
         / "PASS" AND there are no findings (no risk to claim).
+
+        W1254 staleness penalty (integrated). When
+        :attr:`evidence_stale` is ``True``, every ``"complete"`` Q is
+        demoted to ``"partial"`` and a ``stale`` flag plus
+        ``stale_reasons`` tuple are included in the returned dict so a
+        consumer can detect the demotion and surface a "stale evidence"
+        warning without re-reading the underlying field. The demote-
+        not-discard choice (``complete`` -> ``partial`` rather than
+        ``complete`` -> ``missing``) is principled: the structured data
+        IS present, it is just no-longer-trustworthy as a "complete"
+        signal. ``partial`` accurately conveys that erosion of trust
+        while preserving the invariant ``complete + partial + missing
+        + not_applicable == 8`` that downstream consumers
+        (``banner.py``, ``cmd_evidence_doctor``) already rely on. A
+        stale-but-otherwise-fully-complete packet ends up classified as
+        PARTIAL by ``banner.classify_evidence_coverage`` (it would have
+        been STRONG when fresh) — the exact penalty the W1234 producer
+        wire-up was meant to surface.
 
         Returns:
             ``{"Q1": "...", ..., "Q8": "...",
               "complete": N, "partial": N, "missing": N,
-              "not_applicable": N}``
+              "not_applicable": N,
+              "stale": bool, "stale_reasons": tuple[str, ...]}``
 
         This is a computed read; it does NOT modify the packet and does
         NOT participate in the canonical-JSON / content-hash contract.
@@ -863,10 +908,7 @@ class ChangeEvidence:
         # SAFE/PASS with no findings; missing otherwise.
         if self.risk_level:
             result["Q5"] = "complete"
-        elif (
-            self.verdict in ("SAFE", "PASS", "safe", "pass")
-            and not self.findings
-        ):
+        elif self.verdict in ("SAFE", "PASS", "safe", "pass") and not self.findings:
             result["Q5"] = "not_applicable"
         else:
             result["Q5"] = "missing"
@@ -908,15 +950,35 @@ class ChangeEvidence:
         else:
             result["Q8"] = "missing"
 
+        # W1254 - staleness demotion. When the packet is stale, every
+        # ``complete`` Q is demoted to ``partial``. The structured data
+        # is still present (so ``missing`` would be a lie) but it is
+        # no-longer-trustworthy as a "complete" signal (so leaving it
+        # as ``complete`` would also be a lie). ``partial`` is the
+        # honest middle ground; the eight-Q invariant
+        # (``complete + partial + missing + not_applicable == 8``)
+        # is preserved. ``not_applicable`` is NOT demoted — a question
+        # that does not apply remains inapplicable regardless of how
+        # stale the rest of the packet is.
+        if self.evidence_stale:
+            for q_key in ("Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"):
+                if result[q_key] == "complete":
+                    result[q_key] = "partial"
+
         # Totals - count over only the Q1..Q8 entries (not the totals
         # themselves).
         q_values = [result[f"Q{i}"] for i in range(1, 9)]
         result["complete"] = sum(1 for v in q_values if v == "complete")
         result["partial"] = sum(1 for v in q_values if v == "partial")
         result["missing"] = sum(1 for v in q_values if v == "missing")
-        result["not_applicable"] = sum(
-            1 for v in q_values if v == "not_applicable"
-        )
+        result["not_applicable"] = sum(1 for v in q_values if v == "not_applicable")
+        # W1254 - expose the staleness signal alongside the table so a
+        # consumer that reads ONLY the dict (no access to the packet)
+        # can detect the demotion. ``stale_reasons`` mirrors the
+        # field so the consumer can render the WHY without re-reading
+        # ``self``.
+        result["stale"] = bool(self.evidence_stale)
+        result["stale_reasons"] = tuple(self.stale_reasons)
         return result
 
 
@@ -925,7 +987,7 @@ class ChangeEvidence:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_roam_version() -> str:
+def resolve_roam_version() -> str:
     """Return the installed ``roam-code`` package version, or ``"unknown"``.
 
     W287 directive. Producers that build a :class:`ChangeEvidence`
@@ -955,7 +1017,7 @@ def _resolve_roam_version() -> str:
 
         packet = ChangeEvidence(
             evidence_id="...",
-            roam_version=_resolve_roam_version(),
+            roam_version=resolve_roam_version(),
             ...
         )
     """
@@ -1087,8 +1149,7 @@ def _build_subject(
         )
     except (KeyError, ValueError) as exc:
         _warn_or_raise(
-            f"ChangeEvidence.from_canonical_json: dropped "
-            f"changed_subject row {dict(d)!r}: {exc}",
+            f"ChangeEvidence.from_canonical_json: dropped changed_subject row {dict(d)!r}: {exc}",
             strict=strict,
             exc=exc,
             drops=drops,
@@ -1128,8 +1189,7 @@ def _build_artifact(
         return EvidenceArtifact(**kwargs)
     except (KeyError, ValueError) as exc:
         _warn_or_raise(
-            f"ChangeEvidence.from_canonical_json: dropped artifact row "
-            f"{dict(d)!r}: {exc}",
+            f"ChangeEvidence.from_canonical_json: dropped artifact row {dict(d)!r}: {exc}",
             strict=strict,
             exc=exc,
             drops=drops,
@@ -1155,8 +1215,7 @@ def _build_actor(
         )
     except (KeyError, ValueError) as exc:
         _warn_or_raise(
-            f"ChangeEvidence.from_canonical_json: dropped actor_ref row "
-            f"{dict(d)!r}: {exc}",
+            f"ChangeEvidence.from_canonical_json: dropped actor_ref row {dict(d)!r}: {exc}",
             strict=strict,
             exc=exc,
             drops=drops,
@@ -1182,8 +1241,7 @@ def _build_authority(
         )
     except (KeyError, ValueError) as exc:
         _warn_or_raise(
-            f"ChangeEvidence.from_canonical_json: dropped authority_ref "
-            f"row {dict(d)!r}: {exc}",
+            f"ChangeEvidence.from_canonical_json: dropped authority_ref row {dict(d)!r}: {exc}",
             strict=strict,
             exc=exc,
             drops=drops,
@@ -1207,8 +1265,7 @@ def _build_environment(
         )
     except (KeyError, ValueError) as exc:
         _warn_or_raise(
-            f"ChangeEvidence.from_canonical_json: dropped environment_ref "
-            f"row {dict(d)!r}: {exc}",
+            f"ChangeEvidence.from_canonical_json: dropped environment_ref row {dict(d)!r}: {exc}",
             strict=strict,
             exc=exc,
             drops=drops,
@@ -1249,8 +1306,7 @@ def _build_change_evidence(
             if not isinstance(value, list):
                 if strict:
                     raise ValueError(
-                        f"ChangeEvidence.from_canonical_json: {k!r} must "
-                        f"be a JSON array, got {type(value).__name__}"
+                        f"ChangeEvidence.from_canonical_json: {k!r} must be a JSON array, got {type(value).__name__}"
                     )
                 continue
             kwargs[k] = tuple(value)
@@ -1262,8 +1318,7 @@ def _build_change_evidence(
             if not isinstance(value, list):
                 if strict:
                     raise ValueError(
-                        f"ChangeEvidence.from_canonical_json: {k!r} must "
-                        f"be a JSON array, got {type(value).__name__}"
+                        f"ChangeEvidence.from_canonical_json: {k!r} must be a JSON array, got {type(value).__name__}"
                     )
                 continue
             kwargs[k] = tuple(value)
@@ -1271,44 +1326,26 @@ def _build_change_evidence(
     # Nested-dataclass tuple fields.
     if "context_refs" in parsed and isinstance(parsed["context_refs"], list):
         rows = [
-            _build_artifact(r, strict=strict, drops=drops)
-            for r in parsed["context_refs"]
-            if isinstance(r, Mapping)
+            _build_artifact(r, strict=strict, drops=drops) for r in parsed["context_refs"] if isinstance(r, Mapping)
         ]
         kwargs["context_refs"] = tuple(r for r in rows if r is not None)
     if "artifacts" in parsed and isinstance(parsed["artifacts"], list):
-        rows = [
-            _build_artifact(r, strict=strict, drops=drops)
-            for r in parsed["artifacts"]
-            if isinstance(r, Mapping)
-        ]
+        rows = [_build_artifact(r, strict=strict, drops=drops) for r in parsed["artifacts"] if isinstance(r, Mapping)]
         kwargs["artifacts"] = tuple(r for r in rows if r is not None)
-    if "changed_subjects" in parsed and isinstance(
-        parsed["changed_subjects"], list
-    ):
+    if "changed_subjects" in parsed and isinstance(parsed["changed_subjects"], list):
         rows = [
-            _build_subject(r, strict=strict, drops=drops)
-            for r in parsed["changed_subjects"]
-            if isinstance(r, Mapping)
+            _build_subject(r, strict=strict, drops=drops) for r in parsed["changed_subjects"] if isinstance(r, Mapping)
         ]
         kwargs["changed_subjects"] = tuple(r for r in rows if r is not None)
     if "actor_refs" in parsed and isinstance(parsed["actor_refs"], list):
-        rows = [
-            _build_actor(r, strict=strict, drops=drops)
-            for r in parsed["actor_refs"]
-            if isinstance(r, Mapping)
-        ]
+        rows = [_build_actor(r, strict=strict, drops=drops) for r in parsed["actor_refs"] if isinstance(r, Mapping)]
         kwargs["actor_refs"] = tuple(r for r in rows if r is not None)
     if "authority_refs" in parsed and isinstance(parsed["authority_refs"], list):
         rows = [
-            _build_authority(r, strict=strict, drops=drops)
-            for r in parsed["authority_refs"]
-            if isinstance(r, Mapping)
+            _build_authority(r, strict=strict, drops=drops) for r in parsed["authority_refs"] if isinstance(r, Mapping)
         ]
         kwargs["authority_refs"] = tuple(r for r in rows if r is not None)
-    if "environment_refs" in parsed and isinstance(
-        parsed["environment_refs"], list
-    ):
+    if "environment_refs" in parsed and isinstance(parsed["environment_refs"], list):
         rows = [
             _build_environment(r, strict=strict, drops=drops)
             for r in parsed["environment_refs"]
@@ -1364,10 +1401,7 @@ def _to_canonical_obj(value: Any) -> Any:
         # the PolicyDecision branch). Using ``dataclasses.asdict`` here
         # would eagerly flatten nested dataclasses BEFORE recursion,
         # bypassing the W279 hook above.
-        return {
-            f.name: _to_canonical_obj(getattr(value, f.name))
-            for f in dataclasses.fields(value)
-        }
+        return {f.name: _to_canonical_obj(getattr(value, f.name)) for f in dataclasses.fields(value)}
     if isinstance(value, Mapping):
         return {str(k): _to_canonical_obj(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -1460,10 +1494,7 @@ def _step_drop_artifact_content_inline(
     if not any(a.content_inline is not None for a in packet.artifacts):
         return packet, False
     new_artifacts = tuple(
-        dataclasses.replace(a, content_inline=None)
-        if a.content_inline is not None
-        else a
-        for a in packet.artifacts
+        dataclasses.replace(a, content_inline=None) if a.content_inline is not None else a for a in packet.artifacts
     )
     return dataclasses.replace(packet, artifacts=new_artifacts), True
 
@@ -1475,10 +1506,7 @@ def _step_drop_context_ref_content_inline(
     if not any(c.content_inline is not None for c in packet.context_refs):
         return packet, False
     new_refs = tuple(
-        dataclasses.replace(c, content_inline=None)
-        if c.content_inline is not None
-        else c
-        for c in packet.context_refs
+        dataclasses.replace(c, content_inline=None) if c.content_inline is not None else c for c in packet.context_refs
     )
     return dataclasses.replace(packet, context_refs=new_refs), True
 
@@ -1536,19 +1564,14 @@ def _step_drop_actor_ref_extra(
     """Clear the ``extra`` mapping on every ActorRef that has one populated."""
     if not any(bool(a.extra) for a in packet.actor_refs):
         return packet, False
-    new_refs = tuple(
-        dataclasses.replace(a, extra={}) if a.extra else a
-        for a in packet.actor_refs
-    )
+    new_refs = tuple(dataclasses.replace(a, extra={}) if a.extra else a for a in packet.actor_refs)
     return dataclasses.replace(packet, actor_refs=new_refs), True
 
 
 #: Frozen tuple of truncation steps. Order is the W280 contract;
 #: re-ordering is a breaking change for any consumer relying on the
 #: documented dropping sequence.
-_BUDGET_TRUNCATION_STEPS: tuple[
-    Any, ...
-] = (
+_BUDGET_TRUNCATION_STEPS: tuple[Any, ...] = (
     _step_drop_artifact_content_inline,
     _step_drop_context_ref_content_inline,
     _step_drop_policy_decision_extra,
@@ -1627,7 +1650,7 @@ __all__ = [
     "EVIDENCE_SCHEMA_VERSION",
     "PACKET_SIZE_BUDGET_BYTES",
     "PACKET_BUDGET_STATES",
-    "_resolve_roam_version",
+    "resolve_roam_version",
     "classify_packet_budget",
     "packet_size_bytes",
     "stale_accepted_risks",

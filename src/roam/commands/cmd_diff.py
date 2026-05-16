@@ -1,4 +1,11 @@
-"""Show blast radius of uncommitted changes."""
+"""Show blast radius of uncommitted changes.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because diff outputs are invocation-scoped change impact
+summaries — not per-location violations. Editor consumers should use
+the JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -451,8 +458,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 blast_radius=[],
                 files_not_in_index=len(changed),
                 message=(
-                    f"Changed files not found in index ({len(changed)} files changed). "
-                    "Try running `roam index` first."
+                    f"Changed files not found in index ({len(changed)} files changed). Try running `roam index` first."
                 ),
             )
             auto_log(_stale_envelope, action="diff", target=label, repo_root=root)

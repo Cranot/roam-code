@@ -1,24 +1,32 @@
-"""Central findings registry — substrate for cross-detector dedup, SARIF
-emit, and the queued WorkflowRun substrate (CODE-BACKLOG D1).
+"""Central findings registry — the denormalised cross-detector surface.
 
-Detectors continue to write to their detector-specific tables
-(``math_signals``, ``taint_findings``, ``clone_pairs``, etc.). They ALSO
-emit a row to the ``findings`` table. That table is the denormalised
-cross-detector surface a consumer (``roam findings``, central SARIF
-emit, suppression management UI) can query without joining N detector
-tables.
+Detectors continue to write to their own tables (``math_signals``,
+``taint_findings``, ``clone_pairs``, etc.) AND emit a row to the
+``findings`` table. Consumers (``roam findings list/show/count``, central
+SARIF emit, the suppression CLI) query this table directly instead of
+joining ~20 detector-specific tables.
 
-The contract intentionally stays small in this wave:
+Substrate population as of W146: ~20 detectors persist findings (clones,
+dead, complexity, smells, n1, missing-index, over-fetch, bus-factor,
+auth-gaps, vulns, invariants, hotspots, taint, vibe-check, orphan-imports,
+conventions, pr-risk, duplicates, audit-trail-conformance,
+audit-trail-verify) — ~7900+ rows on roam-code itself. The historical
+"deferred to follow-up waves" framing is retired; the per-detector
+catalog is enumerated in the ``source_detector`` field comment below.
+
+Core API:
 
 * ``emit_finding`` upserts on ``finding_id_str``; re-running a detector
   refreshes evidence in place without duplicating rows.
-* ``list_findings`` is the read-side query helper; the eventual
-  ``roam findings --filter`` command sits on top of it.
+* ``list_findings`` is the read-side query helper backing
+  ``roam findings list --filter``.
 * ``supersede_finding`` lets a detector mark a prior finding obsolete
   while preserving the audit trail (``supersedes_id`` chain).
+* ``make_finding_id`` produces the canonical
+  ``"<prefix>:<subject>:<digest12>"`` id used across every detector.
 
-W90 lands the substrate only — migrating each existing detector to
-ALSO emit here is per-detector work and deferred to follow-up waves.
+See CLAUDE.md §"Agent OS substrate" for the wider registry framing and
+the confidence-tier / subject-kind vocabulary discipline.
 """
 
 from __future__ import annotations
@@ -28,16 +36,25 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Optional
 
-
 # Confidence vocabulary — kept as plain strings for now to avoid an
 # enum import dance at hot-path emit sites. The values below are the
 # accepted enumeration; new detectors should reuse one of these rather
 # than minting their own. A future wave can promote to an Enum once
 # the consumer surface stabilises.
-CONFIDENCE_HEURISTIC = "heuristic"            # pattern-match / regex / signal threshold
-CONFIDENCE_STRUCTURAL = "structural"          # AST / graph evidence
+#
+# CONFIDENCE_* — registry confidence-tier vocabulary (4-tier:
+# heuristic / structural / static_analysis / runtime).
+# Names the DETECTION METHOD a detector used to surface this finding.
+#
+# NOT the same as evidence-level CLAIM_CONFIDENCES (direct / derived /
+# inferred / legacy_fallback in roam.evidence._vocabulary), which
+# names the PRODUCER/COLLECTOR LEVEL the evidence packet derived from.
+# Both 4-tier axes share the "confidence" name but are ORTHOGONAL.
+# See CLAUDE.md §"Confidence-tier vocabulary" for the canonical split.
+CONFIDENCE_HEURISTIC = "heuristic"  # pattern-match / regex / signal threshold
+CONFIDENCE_STRUCTURAL = "structural"  # AST / graph evidence
 CONFIDENCE_STATIC_ANALYSIS = "static_analysis"  # taint / dataflow / type analysis
-CONFIDENCE_RUNTIME = "runtime"                # observed at runtime (OTel / coverage)
+CONFIDENCE_RUNTIME = "runtime"  # observed at runtime (OTel / coverage)
 
 
 # Finding ID derivation -----------------------------------------------------
@@ -76,6 +93,11 @@ def make_finding_id(prefix: str, subject: str, *raw_parts: object) -> str:
     return f"{prefix}:{subject}:{digest}"
 
 
+# The findings registry intentionally has NO severity column. Severity
+# vocabulary lives in evidence_json per-detector — the canonical 5-tier
+# alphabet is roam.evidence._vocabulary.CLAIM_SEVERITIES (critical /
+# high / medium / low / info). See output/_severity.py for the
+# SARIF-projection 4-tier (W547/W564 canonical).
 @dataclass(frozen=True)
 class FindingRecord:
     """One detector finding, denormalised for cross-detector queries.
@@ -90,22 +112,53 @@ class FindingRecord:
 
     ``evidence_json`` is the detector-specific payload — schema is owned
     by the detector, not by this registry. Keep it small (< 4 KB) and
-    intern long strings via shared keys when possible.
+    intern long strings via shared keys when possible. The < 4 KB target
+    is GUIDANCE, not enforced: there is no current lint or schema check
+    that fails an over-budget row. A future closure could add one as
+    ``tests/test_findings_evidence_size_lint.py`` (per-detector p95 size
+    + hard ceiling); leaving unwritten until a real regression motivates it.
 
     ``source_version`` is the stamp reserved by W81 / ROADMAP A6. Detectors
     populate it from their own ``VERSION`` class attribute so a consumer
-    can spot rows produced under a stale detector shape.
+    can spot rows produced under a stale detector shape. Convention: each
+    detector owns a ``<DETECTOR>_DETECTOR_VERSION`` module constant at its
+    call-site (see the ``source_detector`` field comment below) — NOT in
+    ``src/roam/catalog/versions.py`` which is reserved for the
+    task_id-keyed algorithm-catalog registry.
     """
 
     finding_id_str: str
+    # subject_kind — narrower than evidence-level SUBJECT_KINDS by design.
+    # Registry rows must map to a concrete graph identity (symbols.id or NULL),
+    # so this column excludes the 7 evidence-only kinds: rule, control, run,
+    # bundle, finding, test, artifact. Those live ONLY in ChangeEvidence
+    # packets, not in the findings table. See roam.evidence._vocabulary.SUBJECT_KINDS
+    # for the full 20-kind vocabulary + CLAUDE.md §"Evidence compiler layer"
+    # for the layered design rationale.
     subject_kind: str
     claim: str
+    # source_detector — free-form string today; the canonical persisting
+    # detectors (~20 as of W146 per CLAUDE.md) are: clones (W95), dead (W99),
+    # complexity (W102), smells (W109), n1 (W110), missing-index (W111),
+    # over-fetch (W114), bus-factor (W115), auth-gaps (W116), vulns (W117),
+    # invariants (W119), hotspots (W120), taint (W122), vibe-check (W125),
+    # orphan-imports (W132), conventions (W133), pr-risk (W134),
+    # duplicates (W136), audit-trail-conformance (W145), audit-trail-verify
+    # (W146). Closed-set validation is intentionally NOT enforced here —
+    # new detectors must extend by adding a `<DETECTOR>_DETECTOR_VERSION`
+    # module constant at their call-site per W81.
     source_detector: str
     subject_id: Optional[int] = None
     evidence_json: str = "{}"
     confidence: str = CONFIDENCE_HEURISTIC
     source_version: Optional[str] = None
     supersedes_id: Optional[int] = None
+    # suppressions_json — JSON array of suppression-id strings that gag this
+    # finding for downstream consumers (SARIF emit, ``roam findings list``,
+    # CI gate). Default ``"[]"`` means no suppressions. Suppression id format
+    # and lifecycle are documented in ``src/roam/commands/suppression.py``;
+    # this column is intentionally append-only at the registry layer — the
+    # suppression CLI is the only writer that adds/removes entries.
     suppressions_json: str = "[]"
 
 
@@ -221,9 +274,7 @@ def count_by_detector(conn: sqlite3.Connection) -> dict[str, int]:
     have produced findings + how many"). Returns an empty dict when
     the table is empty.
     """
-    rows = conn.execute(
-        "SELECT source_detector, COUNT(*) FROM findings GROUP BY source_detector"
-    ).fetchall()
+    rows = conn.execute("SELECT source_detector, COUNT(*) FROM findings GROUP BY source_detector").fetchall()
     return {str(name): int(count) for name, count in rows}
 
 
@@ -246,9 +297,7 @@ def supersede_finding(
         (old_finding_id_str,),
     ).fetchone()
     if old_row is None:
-        raise ValueError(
-            f"supersede_finding: no existing finding with id {old_finding_id_str!r}"
-        )
+        raise ValueError(f"supersede_finding: no existing finding with id {old_finding_id_str!r}")
     old_id = int(old_row[0])
     # Rebuild the record with supersedes_id pointing at the old row.
     # dataclass is frozen, so use a fresh instance instead of mutating.

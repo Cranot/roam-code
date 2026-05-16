@@ -63,12 +63,29 @@ def _changed_files(commit_range: str | None) -> list[str]:
 def test_impact(ctx, commit_range, max_hops, limit) -> None:
     """List tests transitively reachable from symbols changed in <range>."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
     files = _changed_files(commit_range)
     files = [f for f in files if not is_test(f)]
     if not files:
         verdict = f"no non-test source files changed in {commit_range or 'working tree'}"
+        if sarif_mode:
+            from roam.output.sarif import test_impact_to_sarif, write_sarif
+
+            click.echo(
+                write_sarif(
+                    test_impact_to_sarif(
+                        {
+                            "command": "test-impact",
+                            "summary": {"verdict": verdict, "count": 0},
+                            "changed_files": [],
+                            "tests": [],
+                        }
+                    )
+                )
+            )
+            return
         if json_mode:
             click.echo(
                 to_json(
@@ -101,6 +118,22 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
 
         if not seed_ids:
             verdict = "changed files have no indexed symbols"
+            if sarif_mode:
+                from roam.output.sarif import test_impact_to_sarif, write_sarif
+
+                click.echo(
+                    write_sarif(
+                        test_impact_to_sarif(
+                            {
+                                "command": "test-impact",
+                                "summary": {"verdict": verdict, "count": 0},
+                                "changed_files": files,
+                                "tests": [],
+                            }
+                        )
+                    )
+                )
+                return
             if json_mode:
                 click.echo(to_json(json_envelope("test-impact", summary={"verdict": verdict, "count": 0}, tests=[])))
             else:
@@ -136,6 +169,26 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
         if test_hits
         else f"no tests reach the {len(files)} changed file(s) within {max_hops} hop(s)"
     )
+
+    if sarif_mode:
+        # W1203: SARIF projection for CI / GitHub Code Scanning. Branches
+        # BEFORE json/text so the pre-existing paths stay byte-identical
+        # to pre-W1203.
+        from roam.output.sarif import test_impact_to_sarif, write_sarif
+
+        click.echo(
+            write_sarif(
+                test_impact_to_sarif(
+                    {
+                        "command": "test-impact",
+                        "summary": {"verdict": verdict, "count": len(test_hits)},
+                        "changed_files": files,
+                        "tests": items,
+                    }
+                )
+            )
+        )
+        return
 
     if json_mode:
         click.echo(

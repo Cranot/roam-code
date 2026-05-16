@@ -57,7 +57,6 @@ if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
 
 from roam.cli import _COMMANDS  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Exempt list — commands whose JSON envelope is intrinsically small.
 #
@@ -69,109 +68,109 @@ from roam.cli import _COMMANDS  # noqa: E402
 _BUDGET_EXEMPT: frozenset[str] = frozenset(
     {
         # --- Static / fixed-shape responses ----------------------------------
-        "version",          # single string (CLI version)
-        "exit-codes",       # ~50-line enum
-        "surface",          # registry index (already capped by inventory)
-        "capabilities",     # fixed capability registry
-        "recipes",          # static recipe list
-        "schema",           # schema metadata
+        "version",  # single string (CLI version)
+        "exit-codes",  # ~50-line enum
+        "surface",  # registry index (already capped by inventory)
+        "capabilities",  # fixed capability registry
+        "recipes",  # static recipe list
+        "schema",  # schema metadata
         "explain-command",  # single command card
-        "complete",         # FTS prefix completion (already capped)
-        "disambiguate",     # single-record output
-        "help-search",      # tiny match list (search inside help text)
-        "hover",            # single-symbol hover card
-        "symbol",           # single-symbol metadata
+        "complete",  # FTS prefix completion (already capped)
+        "disambiguate",  # single-record output
+        "help-search",  # tiny match list (search inside help text)
+        "hover",  # single-symbol hover card
+        "symbol",  # single-symbol metadata
         # --- Setup / config / housekeeping (single-record envelopes) ---------
-        "init",             # one-shot indexer summary
-        "reset",            # one-shot status
-        "clean",            # one-shot orphan-cleanup status
-        "index",            # indexer run summary
-        "index-stats",      # table-of-counts envelope
-        "index-export",     # manifest + signature
-        "index-import",     # manifest + signature
-        "ci-setup",         # template emit status
-        "mcp-setup",        # platform-list emit status
-        "mcp-status",       # backpressure snapshot
-        "hooks",            # hook install/list status
-        "db-check",         # schema-validation status
-        "pre-commit",       # commit-hook script emit
-        "telemetry",        # tiny recent/slow snapshot
-        "stats",            # by_kind / by_language summary
-        "plugins",          # plugin registry snapshot
-        "config",           # config dump (env vars + known keys)
+        "init",  # one-shot indexer summary
+        "reset",  # one-shot status
+        "clean",  # one-shot orphan-cleanup status
+        "index",  # indexer run summary
+        "index-stats",  # table-of-counts envelope
+        "index-export",  # manifest + signature
+        "index-import",  # manifest + signature
+        "ci-setup",  # template emit status
+        "mcp-setup",  # platform-list emit status
+        "mcp-status",  # backpressure snapshot
+        "hooks",  # hook install/list status
+        "db-check",  # schema-validation status
+        "pre-commit",  # commit-hook script emit
+        "telemetry",  # tiny recent/slow snapshot
+        "stats",  # by_kind / by_language summary
+        "plugins",  # plugin registry snapshot
+        "config",  # config dump (env vars + known keys)
         # --- Agent-OS substrate, single-record status responses --------------
-        "agent-context",    # active-context emit
-        "agents-md",        # AGENTS.md emit + preview
-        "annotate",         # single annotation write
-        "annotations",      # single record alias
-        "audit-trail-export",          # manifest emit
-        "audit-trail-verify",          # single verdict
+        "agent-context",  # active-context emit
+        "agents-md",  # AGENTS.md emit + preview
+        "annotate",  # single annotation write
+        "annotations",  # single record alias
+        "audit-trail-export",  # manifest emit
+        "audit-trail-verify",  # single verdict
         "audit-trail-conformance-check",  # checks list (fixed shape)
-        "mode",             # active-mode emit
-        "permit",           # permit decision
-        "intent-check",     # single verdict
-        "intent",           # intent summary
-        "next",             # next-step suggestion
-        "brief",            # brief summary (small composite)
-        "report",           # preset dispatch (small composite)
-        "workflow",         # recipe dispatch
-        "recommend",        # short recommendation list
-        "suppress",         # single suppression op
+        "mode",  # active-mode emit
+        "permit",  # permit decision
+        "intent-check",  # single verdict
+        "intent",  # intent summary
+        "next",  # next-step suggestion
+        "brief",  # brief summary (small composite)
+        "report",  # preset dispatch (small composite)
+        "workflow",  # recipe dispatch
+        "recommend",  # short recommendation list
+        "suppress",  # single suppression op
         # --- Compound recipes (delegate budget downstream) -------------------
-        "ask",              # router — delegates downstream
-        "pr-prep",          # compound recipe
-        "audit",            # compound recipe
-        "dogfood",          # dogfood snapshot
+        "ask",  # router — delegates downstream
+        "pr-prep",  # compound recipe
+        "audit",  # compound recipe
+        "dogfood",  # dogfood snapshot
         # --- Single-symbol / single-target outputs ---------------------------
-        "vuln-map",         # tiny vulnerability list (mapped to symbols)
-        "vuln-reach",       # reachability triple per vuln (small)
-        "ingest-trace",     # span ingestion status
-        "test-pyramid",     # bucket counts
-        "test-impact",      # small changed-files set
+        "vuln-map",  # tiny vulnerability list (mapped to symbols)
+        "vuln-reach",  # reachability triple per vuln (small)
+        "ingest-trace",  # span ingestion status
+        "test-pyramid",  # bucket counts
+        "test-impact",  # small changed-files set
         "search-semantic",  # ranked list within top-k (already capped)
-        "batch-search",     # parallel-search summary
-        "graph-export",     # writes to disk + tiny envelope
-        "graph-stats",      # summary + top-N inbound list
-        "fingerprint",      # topology fingerprint (compact)
-        "side-effects",     # classifications dict (small)
-        "idempotency",      # classifications dict (small)
-        "tx-boundaries",    # boundary list (small)
-        "causal-graph",     # single-symbol causal graph
-        "effects",          # single-symbol effect dump
-        "closure",          # changeset closure (small)
-        "cut",              # boundary/leak edges (small per-symbol)
-        "safe-delete",      # single-symbol decision
-        "safe-zones",       # zone decomposition (small)
-        "compare",          # two-tree diff (counts only)
-        "module",           # single-module card
-        "file",             # single-file card
-        "sketch",           # directory sketch (small)
-        "bisect",           # bisect run summary
-        "simulate",         # what-if metrics (small)
-        "mutate",           # transform changes (small)
-        "orchestrate",      # agent partitioning (small composite)
-        "x-lang",           # bridge link sample
-        "eval-retrieve",    # eval summary
-        "py-types",         # type-coverage summary
-        "py-modern",        # modernization summary
-        "metrics-push",     # push response excerpt
-        "trace",            # k-shortest-paths (already capped by k)
-        "why",              # single-symbol explanation
-        "why-fail",         # short suspect list
-        "why-slow",         # short hotspot list
-        "churn",            # weather alias (small)
-        "weather",          # short hotspots list
-        "timeline",         # tiny commit window
-        "postmortem",       # finding list (capped per-incident)
-        "migration-plan",   # step list (small)
-        "changelog",        # commit buckets (small window)
-        "breaking",         # removed/renamed/changed (small)
-        "pr-comment-render",   # markdown emit (one composite blob)
+        "batch-search",  # parallel-search summary
+        "graph-export",  # writes to disk + tiny envelope
+        "graph-stats",  # summary + top-N inbound list
+        "fingerprint",  # topology fingerprint (compact)
+        "side-effects",  # classifications dict (small)
+        "idempotency",  # classifications dict (small)
+        "tx-boundaries",  # boundary list (small)
+        "causal-graph",  # single-symbol causal graph
+        "effects",  # single-symbol effect dump
+        "closure",  # changeset closure (small)
+        "cut",  # boundary/leak edges (small per-symbol)
+        "safe-delete",  # single-symbol decision
+        "safe-zones",  # zone decomposition (small)
+        "compare",  # two-tree diff (counts only)
+        "module",  # single-module card
+        "file",  # single-file card
+        "sketch",  # directory sketch (small)
+        "bisect",  # bisect run summary
+        "simulate",  # what-if metrics (small)
+        "mutate",  # transform changes (small)
+        "orchestrate",  # agent partitioning (small composite)
+        "x-lang",  # bridge link sample
+        "eval-retrieve",  # eval summary
+        "py-types",  # type-coverage summary
+        "py-modern",  # modernization summary
+        "metrics-push",  # push response excerpt
+        "trace",  # k-shortest-paths (already capped by k)
+        "why",  # single-symbol explanation
+        "why-fail",  # short suspect list
+        "why-slow",  # short hotspot list
+        "churn",  # weather alias (small)
+        "weather",  # short hotspots list
+        "timeline",  # tiny commit window
+        "postmortem",  # finding list (capped per-incident)
+        "migration-plan",  # step list (small)
+        "changelog",  # commit buckets (small window)
+        "breaking",  # removed/renamed/changed (small)
+        "pr-comment-render",  # markdown emit (one composite blob)
         # --- Servers / generators (no JSON envelope at all) ------------------
-        "lsp",              # server entry point
-        "mcp",              # server entry point
-        "skill-generate",   # scaffolds a skill file (no envelope)
-        "watch",            # watcher entry point
+        "lsp",  # server entry point
+        "mcp",  # server entry point
+        "skill-generate",  # scaffolds a skill file (no envelope)
+        "watch",  # watcher entry point
     }
 )
 
@@ -193,67 +192,68 @@ _BUDGET_GAP_KNOWN: frozenset[str] = frozenset(
         # W25.2 promoted these out of the gap (wired --budget):
         #   tour, digest/snapshot/trend/trends (shared),
         #   onboard/understand (shared), stale-refs, pr-analyze.
-        "describe",              # files + symbols + hotspots (markdown)
-        "doctor",                # checks list (large in some repos)
-        "pr-bundle",             # affected_symbols + edges
-        "n1",                    # findings (huge in N+1-heavy repos)
-        "missing-index",         # findings (huge in schema-heavy repos)
-        "over-fetch",            # endpoint_findings + findings
+        "describe",  # files + symbols + hotspots (markdown)
+        "doctor",  # checks list (large in some repos)
+        "pr-bundle",  # affected_symbols + edges
+        "n1",  # findings (huge in N+1-heavy repos)
+        "missing-index",  # findings (huge in schema-heavy repos)
+        "over-fetch",  # endpoint_findings + findings
         # --- High impact -----------------------------------------------------
-        "partition",             # nodes + files + dependencies
-        "debt",                  # items + files
-        "alerts",                # alerts list
-        "algo", "math",          # findings list (math is algo alias)
-        "api-drift",             # findings + matches + unmatched
-        "auth-gaps",             # controller_gaps + route_gaps
-        "dogfood-aggregate",     # findings + parse_failures
-        "fitness",               # violations list
-        "fn-coupling",           # pairs list
-        "graph-diff",            # in_degree_shifts + layer_changes + moves
-        "minimap",               # content blob
-        "oracle",                # results list
-        "orphan-imports",        # orphans list
-        "orphan-routes",         # orphans + unrouted_methods
-        "preflight",             # violations + multi-section envelope
-        "pr-replay",             # commits + by_detector
-        "pr-risk",               # full risk envelope
-        "pytest-fixtures",       # chain + top + unused
-        "relate",                # distance_matrix + shared_*
-        "risk",                  # items list
-        "rules-validate",        # dry_run_violations + errors + warnings
-        "sbom",                  # dependencies list
-        "semantic-diff",         # symbols_added/modified/removed
-        "simulate-departure",    # affected_modules + key_symbols
-        "suggest-refactoring",   # recommendations + smells
-        "suggest-reviewers",     # reviewers + coverage + files
-        "syntax-check",          # files list
-        "taint",                 # findings + warnings + errors
-        "test-scaffold",         # symbols + scaffold body
-        "verify",                # categories + violations
-        "visualize",             # diagram blob
-        "ws",                    # cross-repo matches + edges
+        "partition",  # nodes + files + dependencies
+        "debt",  # items + files
+        "alerts",  # alerts list
+        "algo",
+        "math",  # findings list (math is algo alias)
+        "api-drift",  # findings + matches + unmatched
+        "auth-gaps",  # controller_gaps + route_gaps
+        "dogfood-aggregate",  # findings + parse_failures
+        "fitness",  # violations list
+        "fn-coupling",  # pairs list
+        "graph-diff",  # in_degree_shifts + layer_changes + moves
+        "minimap",  # content blob
+        "oracle",  # results list
+        "orphan-imports",  # orphans list
+        "orphan-routes",  # orphans + unrouted_methods
+        "preflight",  # violations + multi-section envelope
+        "pr-replay",  # commits + by_detector
+        "pr-risk",  # full risk envelope
+        "pytest-fixtures",  # chain + top + unused
+        "relate",  # distance_matrix + shared_*
+        "risk",  # items list
+        "rules-validate",  # dry_run_violations + errors + warnings
+        "sbom",  # dependencies list
+        "semantic-diff",  # symbols_added/modified/removed
+        "simulate-departure",  # affected_modules + key_symbols
+        "suggest-refactoring",  # recommendations + smells
+        "suggest-reviewers",  # reviewers + coverage + files
+        "syntax-check",  # files list
+        "taint",  # findings + warnings + errors
+        "test-scaffold",  # symbols + scaffold body
+        "verify",  # categories + violations
+        "visualize",  # diagram blob
+        "ws",  # cross-repo matches + edges
         # --- Medium impact (smaller but still unbounded) ---------------------
-        "adrs",                  # ADR list
-        "agent-export",          # symbols + edges + files
-        "agent-plan",            # tasks + handoffs
-        "ai-ratio",              # top_ai_files + signals
-        "api",                   # api summary (can grow on big surfaces)
-        "architecture-drift",    # biggest_movers + pair_diffs
-        "article-12-check",      # items list
-        "attest",                # evidence + violations
-        "bus-factor",            # owner list
-        "budget",                # rules list
-        "coverage-gaps",         # gate violations
-        "dev-profile",           # profiles + files
-        "diagnose",              # downstream + recent_commits + results
-        "doc-staleness",         # stale list
-        "docs-coverage",         # missing_docs + stale_docs
-        "invariants",            # symbol invariants
-        "map",                   # node/edge list
-        "migration-safety",      # findings list
-        "pr-diff",               # changed_files + edge_analysis
-        "rules",                 # rule results
-        "test-map",              # callers + convention_tests
+        "adrs",  # ADR list
+        "agent-export",  # symbols + edges + files
+        "agent-plan",  # tasks + handoffs
+        "ai-ratio",  # top_ai_files + signals
+        "api",  # api summary (can grow on big surfaces)
+        "architecture-drift",  # biggest_movers + pair_diffs
+        "article-12-check",  # items list
+        "attest",  # evidence + violations
+        "bus-factor",  # owner list
+        "budget",  # rules list
+        "coverage-gaps",  # gate violations
+        "dev-profile",  # profiles + files
+        "diagnose",  # downstream + recent_commits + results
+        "doc-staleness",  # stale list
+        "docs-coverage",  # missing_docs + stale_docs
+        "invariants",  # symbol invariants
+        "map",  # node/edge list
+        "migration-safety",  # findings list
+        "pr-diff",  # changed_files + edge_analysis
+        "rules",  # rule results
+        "test-map",  # callers + convention_tests
     }
 )
 
@@ -291,11 +291,7 @@ def _forwards_budget(src: str) -> bool:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        name = (
-            func.attr if isinstance(func, ast.Attribute)
-            else func.id if isinstance(func, ast.Name)
-            else None
-        )
+        name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
         if name == "json_envelope":
             for kw in node.keywords:
                 if kw.arg == "budget":
@@ -368,9 +364,7 @@ def test_budget_coverage_survey_classifies_all_commands() -> None:
 
     classified = forwards | reads_only | no_envelope
     missing = set(_COMMANDS) - classified
-    assert not missing, (
-        f"{len(missing)} commands escaped classification: {sorted(missing)}"
-    )
+    assert not missing, f"{len(missing)} commands escaped classification: {sorted(missing)}"
 
 
 def test_budget_real_gap_under_threshold() -> None:
@@ -389,8 +383,7 @@ def test_budget_real_gap_under_threshold() -> None:
         f"Either wire ``budget=token_budget`` into the new command's "
         f"``json_envelope(...)`` call, or add it to ``_BUDGET_EXEMPT`` "
         f"with a one-line rationale.\n"
-        f"Current gap commands:\n  "
-        + "\n  ".join(sorted(real_gap))
+        f"Current gap commands:\n  " + "\n  ".join(sorted(real_gap))
     )
 
 
@@ -427,8 +420,7 @@ def test_budget_gap_known_subset_of_reads_only() -> None:
     forwards_overlap = classified_elsewhere & forwards
     assert not forwards_overlap, (
         "These commands are now forwarding budget — promote them out of "
-        "``_BUDGET_GAP_KNOWN`` and lower ``_REAL_GAP_THRESHOLD``:\n  "
-        + "\n  ".join(sorted(forwards_overlap))
+        "``_BUDGET_GAP_KNOWN`` and lower ``_REAL_GAP_THRESHOLD``:\n  " + "\n  ".join(sorted(forwards_overlap))
     )
 
 
@@ -489,10 +481,7 @@ def test_budget_empirical_tour_under_loose_cap() -> None:
         pytest.skip("roam tour timed out — index may be cold")
         return
     if completed.returncode not in (0, 5):
-        pytest.skip(
-            f"roam tour exited {completed.returncode}; "
-            f"empirical check skipped (index may not be initialized)"
-        )
+        pytest.skip(f"roam tour exited {completed.returncode}; empirical check skipped (index may not be initialized)")
         return
     assert len(completed.stdout) < 50_000, (
         f"roam --json --budget 100 tour produced "

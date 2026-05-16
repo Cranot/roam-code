@@ -8,6 +8,12 @@ This command is kept as a standalone entry point because it accepts a
 positional ``directory`` argument and supports a ``--full`` flag to include
 non-exported symbols, neither of which is exposed by ``understand
 --skeleton``.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because sketch outputs are invocation-scoped directory-skeleton
++ API-surface summaries — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

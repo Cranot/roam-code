@@ -21,10 +21,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from pathlib import Path
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Anchor mirror -- kept inline to avoid a hard import dependency on
@@ -76,8 +74,11 @@ def _run_maybe_async(fn, /, **kwargs):
     """Invoke ``fn(**kwargs)``, awaiting if it's a coroutine."""
     result = fn(**kwargs)
     if inspect.iscoroutine(result):
-        return asyncio.get_event_loop().run_until_complete(result) \
-            if not asyncio.iscoroutine(result) else asyncio.run(result)
+        return (
+            asyncio.get_event_loop().run_until_complete(result)
+            if not asyncio.iscoroutine(result)
+            else asyncio.run(result)
+        )
     return result
 
 
@@ -100,8 +101,7 @@ class TestPreflightHelpers:
         from roam.mcp_extras.preflight import _NO_INDEX_NEEDED
 
         assert isinstance(_NO_INDEX_NEEDED, frozenset), (
-            "_NO_INDEX_NEEDED must be a frozenset for immutability + O(1) "
-            "membership checks"
+            "_NO_INDEX_NEEDED must be a frozenset for immutability + O(1) membership checks"
         )
         # Closed enumeration -- exact membership pinned. Extending requires
         # a deliberate source-code edit (and updating this test).
@@ -171,9 +171,7 @@ class TestPreflightHelpers:
         facts = env["agent_contract"]["facts"]
         assert isinstance(facts, list)
         assert all(isinstance(f, str) for f in facts)
-        assert any("roam init" in f for f in facts) or any(
-            "prerequisite" in f for f in facts
-        )
+        assert any("roam init" in f for f in facts) or any("prerequisite" in f for f in facts)
         # next_commands present and starts with the same command as
         # next_command (no string-vs-list drift).
         next_cmds = env["agent_contract"]["next_commands"]
@@ -276,20 +274,17 @@ class TestColdStartGuardWiring:
 
     def test_dead_code_also_returns_cold_start_envelope(self, fresh_project):
         """The other tool from the original user report (``roam_dead``)."""
-        from roam.mcp_server import _TOOL_METADATA
-
         # ``roam_dead_code`` is registered via ``@_tool``; resolve via the
         # registered-attribute name in the module rather than guessing.
         import roam.mcp_server as m
+        from roam.mcp_server import _TOOL_METADATA
 
         # The function name inside the module may differ from the tool
         # name. Look it up from the module's __dict__ via attribute walk.
         fn = None
         for attr in dir(m):
             obj = getattr(m, attr)
-            if callable(obj) and getattr(obj, "__name__", "").endswith(
-                ("dead_code", "roam_dead_code")
-            ):
+            if callable(obj) and getattr(obj, "__name__", "").endswith(("dead_code", "roam_dead_code")):
                 # Confirm metadata is registered for the tool.
                 if "roam_dead_code" in _TOOL_METADATA:
                     fn = obj
@@ -367,9 +362,7 @@ class TestColdStartGuardWiring:
 
         # Assert no hang. Doctor on a fresh project runs ~20 environment
         # checks; 30s is generous and only catches a true hang.
-        assert elapsed < 30.0, (
-            f"roam_doctor took {elapsed:.1f}s on fresh repo (should be fast)"
-        )
+        assert elapsed < 30.0, f"roam_doctor took {elapsed:.1f}s on fresh repo (should be fast)"
 
         # Assert NOT cold-start envelope (since doctor is in
         # ``_NO_INDEX_NEEDED`` it must produce a real diagnostic).
@@ -385,6 +378,5 @@ class TestColdStartGuardWiring:
         # to a USAGE_ERROR envelope.
         summary = result.get("summary") or {}
         assert "verdict" in summary or "checks" in result, (
-            f"roam_doctor returned no structured diagnostic on fresh repo: "
-            f"keys={list(result.keys())}"
+            f"roam_doctor returned no structured diagnostic on fresh repo: keys={list(result.keys())}"
         )

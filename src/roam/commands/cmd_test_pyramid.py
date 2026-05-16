@@ -4,6 +4,16 @@ Surfaces the ``classify_test_kind`` helper at the CLI level.
 A healthy pyramid has many unit tests, fewer integration tests, and a
 small e2e cap. When ``e2e + integration > unit``, you're paying for
 slow CI. We surface that via VERDICT.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because test-pyramid outputs are invocation-scoped test-kind
+rollups (counts per kind: unit / integration / e2e / smoke / unknown
++ inverted-pyramid verdict) — not per-location code violations. The
+output describes the shape of the test suite at the workspace level,
+not a defect at a source coordinate. See ``cmd_test_gaps`` for the
+parallel coverage-aggregate disclosure pattern + action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
 """
 
 from __future__ import annotations

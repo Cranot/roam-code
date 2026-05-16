@@ -28,7 +28,6 @@ from conftest import (  # noqa: E402  — relative-to-tests-dir import after sys
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Click 8.2+ removed CliRunner(mix_stderr=...) — mirror the override the
 # main exploration tests use so stdout-only assertions still parse cleanly.
@@ -68,10 +67,7 @@ def high_fan_in_project(tmp_path):
     (callers_dir / "__init__.py").write_text("")
     for i in range(100):
         (callers_dir / f"caller_{i:03d}.py").write_text(
-            "from hub import hub\n"
-            "\n"
-            f"def caller_{i:03d}():\n"
-            "    return hub()\n"
+            f"from hub import hub\n\ndef caller_{i:03d}():\n    return hub()\n"
         )
 
     git_init(proj)
@@ -141,8 +137,7 @@ def test_impact_respects_max_callers(cli_runner, high_fan_in_project, monkeypatc
 
     # The cap is on dependents (BFS frontier nodes). 10 must hold.
     assert summary["affected_symbols"] <= 10, (
-        f"Expected <=10 affected symbols under --max-callers 10, "
-        f"got {summary['affected_symbols']}"
+        f"Expected <=10 affected symbols under --max-callers 10, got {summary['affected_symbols']}"
     )
     # Truncation flags must fire — there are 100 real callers, far more
     # than the cap.
@@ -185,15 +180,11 @@ def test_impact_depth_limit(cli_runner, deep_chain_project, monkeypatch):
         f"got {full_count}. Adjust the fixture if the parser changed."
     )
     # Bounded reach must respect depth=2 — at most 2 hops of dependents.
-    assert bounded_count <= 2, (
-        f"Expected <=2 dependents at --depth 2, got {bounded_count}"
-    )
+    assert bounded_count <= 2, f"Expected <=2 dependents at --depth 2, got {bounded_count}"
     assert bounded_count < full_count
 
 
-def test_weighted_impact_not_truncated_to_zero_on_real_data(
-    cli_runner, high_fan_in_project, monkeypatch
-):
+def test_weighted_impact_not_truncated_to_zero_on_real_data(cli_runner, high_fan_in_project, monkeypatch):
     """W336 — ``weighted_impact`` must be > 0 whenever there are real
     affected symbols.
 
@@ -225,9 +216,7 @@ def test_weighted_impact_not_truncated_to_zero_on_real_data(
 
     # Sanity: there must actually be dependents — the fixture has 100
     # callers, so this fails fast if the index is broken.
-    assert summary["affected_symbols"] > 0, (
-        f"Expected affected_symbols > 0 in high-fan-in fixture, got {summary}"
-    )
+    assert summary["affected_symbols"] > 0, f"Expected affected_symbols > 0 in high-fan-in fixture, got {summary}"
 
     # The bug — weighted_impact stayed 0 even with 100 affected symbols.
     assert summary["weighted_impact"] > 0, (
@@ -241,15 +230,12 @@ def test_weighted_impact_not_truncated_to_zero_on_real_data(
 
     # The mirror at top-level must agree.
     assert data["weighted_impact"] > 0, (
-        "Top-level weighted_impact mirror must also be > 0; got "
-        f"{data['weighted_impact']!r}"
+        f"Top-level weighted_impact mirror must also be > 0; got {data['weighted_impact']!r}"
     )
 
     # Definition sidecar must still be stamped (regression guard for the
     # W331 sidecar wiring, which the round-precision fix is paired with).
-    assert summary.get("weighted_impact_definition"), (
-        "weighted_impact_definition sidecar missing from summary"
-    )
+    assert summary.get("weighted_impact_definition"), "weighted_impact_definition sidecar missing from summary"
 
 
 def test_impact_truncation_flag(cli_runner, high_fan_in_project, monkeypatch):

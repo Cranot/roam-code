@@ -1,4 +1,13 @@
-"""Syntax-less agentic editing -- move, rename, add-call, extract symbols."""
+"""Syntax-less agentic editing -- move, rename, add-call, extract symbols.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam mutate`` is a state-mutating code-transform
+command — its output is invocation-scoped transform results (files
+written, symbols moved/renamed, AST edits applied), not analysis
+findings with file:line coordinates. SARIF is reserved for scanning
+results. See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH
+propagation plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

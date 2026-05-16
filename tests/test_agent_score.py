@@ -23,7 +23,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, invoke_cli, parse_json_output  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -209,9 +208,7 @@ def test_agent_score_partial_success_lowers_score(score_project, cli_runner):
     agents = _agents_map(data)
     clean_score = agents["clean-agent"]["score"]
     dirty_score = agents["dirty-agent"]["score"]
-    assert clean_score > dirty_score, (
-        f"expected clean ({clean_score}) > dirty ({dirty_score})"
-    )
+    assert clean_score > dirty_score, f"expected clean ({clean_score}) > dirty ({dirty_score})"
     # The gap should be roughly the 20-point clean_signal weight.
     assert (clean_score - dirty_score) >= 15.0
 

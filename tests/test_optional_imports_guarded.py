@@ -35,7 +35,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fix 1 — LanguageConfig.load() install-hint path
 # ---------------------------------------------------------------------------
@@ -74,11 +73,7 @@ def test_yaml_available_path_works(tmp_path):
 
     yaml_path = tmp_path / "tiny.yaml"
     yaml_path.write_text(
-        "language: tiny\n"
-        "extensions: [.tiny]\n"
-        "symbols:\n"
-        "  - query: '(x) @def'\n"
-        "    kind: function\n",
+        "language: tiny\nextensions: [.tiny]\nsymbols:\n  - query: '(x) @def'\n    kind: function\n",
         encoding="utf-8",
     )
 
@@ -174,11 +169,7 @@ def _collect_module_level_imports(tree: ast.AST) -> list[ast.stmt]:
     """
     if not isinstance(tree, ast.Module):
         return []
-    return [
-        node
-        for node in tree.body
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-    ]
+    return [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
 
 
 def _collect_unguarded_imports_anywhere(tree: ast.AST) -> list[ast.stmt]:
@@ -344,11 +335,7 @@ def test_scan_helpers_detect_known_optional_modules():
 
 def test_unguarded_anywhere_scan_finds_function_level_imports():
     """The anywhere-scan must catch the W168 bug class: function-level imports."""
-    src = (
-        "def f():\n"
-        "    import yaml\n"
-        "    return yaml.safe_load('')\n"
-    )
+    src = "def f():\n    import yaml\n    return yaml.safe_load('')\n"
     tree = ast.parse(src)
     found = _collect_unguarded_imports_anywhere(tree)
     assert len(found) == 1
@@ -356,16 +343,9 @@ def test_unguarded_anywhere_scan_finds_function_level_imports():
 
     # And the guarded variant inside a function is NOT flagged.
     guarded_src = (
-        "def f():\n"
-        "    try:\n"
-        "        import yaml\n"
-        "    except ImportError:\n"
-        "        yaml = None\n"
-        "    return yaml\n"
+        "def f():\n    try:\n        import yaml\n    except ImportError:\n        yaml = None\n    return yaml\n"
     )
     found_guarded = _collect_unguarded_imports_anywhere(ast.parse(guarded_src))
     assert _references_optional_module(found_guarded[0]) is None if found_guarded else True
     # Stronger: among optional-module imports, the count is zero.
-    assert [
-        n for n in found_guarded if _references_optional_module(n) is not None
-    ] == []
+    assert [n for n in found_guarded if _references_optional_module(n) is not None] == []

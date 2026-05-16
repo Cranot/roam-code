@@ -6,7 +6,7 @@ import json as _json
 import os
 import time
 from datetime import datetime, timezone
-from typing import TypeAlias
+from typing import Any, Literal, Mapping, TypeAlias
 
 # Envelope schema versioning (semver: major.minor.patch)
 # bumped to 1.1.0 to signal additive enhancements:
@@ -659,6 +659,7 @@ def _humanize_summary_fact(key: str, value: int | float) -> str:
         "leaks",
         "gaps",
         "movers",
+        "kinds",
         # Past-participle / state qualifiers used as terminal tokens
         # (``files_passed`` / ``symbols_failed`` / ``runs_skipped``).
         # The preceding noun is the analytical subject; appending
@@ -734,9 +735,7 @@ def _derive_agent_contract(out: dict, summary: dict) -> dict:
         if key.endswith("_definition") or key.endswith("_distribution"):
             continue
         if isinstance(value, (int, float)):
-            facts.append(
-                _humanize_summary_fact(key, value)[:_AGENT_CONTRACT_STR_TRUNCATE]
-            )
+            facts.append(_humanize_summary_fact(key, value)[:_AGENT_CONTRACT_STR_TRUNCATE])
             if len(facts) >= _AGENT_CONTRACT_MAX_FACTS:
                 break
 
@@ -859,16 +858,12 @@ def _write_response_to_responses_dir(envelope: dict) -> None:
         # Content-hash the envelope so re-running the same command with the
         # same inputs dedupes naturally (the bundle's auto-collect should not
         # see N copies of the same `roam health` run).
-        h = hashlib.sha256(
-            _json.dumps(envelope, sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()[:12]
+        h = hashlib.sha256(_json.dumps(envelope, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
         # Sanitise command for filename use (slashes / spaces would be odd
         # but we have e.g. "pr-bundle-emit" already — slugify defensively).
         safe_cmd = "".join(c if (c.isalnum() or c in "-_") else "_" for c in command)
         out_path = responses_dir / f"{safe_cmd}_{h}.json"
-        out_path.write_text(
-            _json.dumps(envelope, indent=2, default=str), encoding="utf-8"
-        )
+        out_path.write_text(_json.dumps(envelope, indent=2, default=str), encoding="utf-8")
     except Exception:
         # Best-effort. Never break the parent command.
         return
@@ -977,10 +972,7 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
             for k, v in explicit_contract.items():
                 if v is not None:
                     merged[k] = v
-            if (
-                "next_commands" not in explicit_contract
-                and auto_contract.get("next_commands")
-            ):
+            if "next_commands" not in explicit_contract and auto_contract.get("next_commands"):
                 merged["next_commands"] = auto_contract["next_commands"]
             out["agent_contract"] = merged
         else:
@@ -1121,11 +1113,13 @@ def ws_json_envelope(command: str, workspace: str, summary: dict | None = None, 
 #   * ``enum_violations`` / ``trust_warnings`` / ``bundle_warnings`` —
 #     belong to ``evidence-doctor`` / ``pr-bundle``, neither of which
 #     calls ``strip_list_payloads``. Re-audit if that changes.
-_ALWAYS_PRESERVED_LIST_FIELDS = frozenset({
-    "warnings_out",
-    "errors",
-    "redactions",
-})
+_ALWAYS_PRESERVED_LIST_FIELDS = frozenset(
+    {
+        "warnings_out",
+        "errors",
+        "redactions",
+    }
+)
 
 # When a preserved list exceeds this length we keep the first N entries
 # and emit a sibling ``<field>_truncated: <int>`` naming how many were
@@ -1228,3 +1222,204 @@ def format_table_compact(headers: list[str], rows: list[list[str]], budget: int 
     if budget and len(rows) > budget:
         lines.append(f"(+{len(rows) - budget} more)")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# W1241 / Pattern-2 variant D: resolution-state disclosure helper.
+#
+# W324's cmd_annotate template established the canonical fix for the
+# "silent success on degraded resolution" anti-pattern: any command that
+# calls ``resolve.find_symbol()`` (or any other resolver with implicit
+# fuzzy-match fallback) must surface WHICH tier of the lookup chain
+# succeeded — agents otherwise can't tell an exact-symbol-match success
+# from a fuzzy-LIKE-fallback "success" that landed on a different target.
+#
+# The W1233 audit found 38 sites repeating the same resolver-fallback
+# shape; only cmd_annotate disclosed `resolution`. This helper is the
+# shared substrate for W1242/W1243/W1244 flagship fixes + W1245 bulk
+# adoption — one source of truth so the closed enum can't drift.
+# ---------------------------------------------------------------------------
+
+#: Closed enumeration of resolution-chain outcomes. Frozen so a drift-guard
+#: test (`tests/test_resolution_disclosure.py`) can lock the membership;
+#: extending requires a deliberate source edit there + here.
+_RESOLUTION_KINDS: frozenset[str] = frozenset(
+    {
+        "symbol",  # found via qualified-name OR simple-name match (exact)
+        "file",  # resolved by file-path fallback (target was a path, not a symbol)
+        "fuzzy",  # found via LIKE / FTS fallback — likely-but-not-exact match
+        "unresolved",  # nothing matched; downstream may store a dangling name
+    }
+)
+
+
+def resolution_disclosure(
+    resolution: Literal["symbol", "file", "fuzzy", "unresolved"],
+    *,
+    target: str | None = None,
+    detail: Mapping[str, Any] | None = None,
+    warnings_out: WarningsOut = None,
+) -> dict[str, Any]:
+    """Return the canonical Pattern-2 variant-D resolution-state disclosure.
+
+    W324 cmd_annotate template: every command that calls ``find_symbol()``
+    with an implicit fallback chain must surface which tier of the resolver
+    succeeded so agents can distinguish an exact-symbol-match success from
+    a fuzzy-LIKE-fallback or file-path-fallback "success". The
+    ``partial_success`` flag is True for any non-``symbol`` resolution —
+    the underlying action may still be valid (e.g., annotations relink on
+    reindex), but the success verdict must reflect the degradation.
+
+    Pattern-2c ``partial_success`` collision discipline (W1250):
+        The helper sets ``partial_success = resolution != "symbol"``. When the
+        caller's envelope ALSO carries a pre-existing ``partial_success`` flag
+        (for orthogonal degradation reasons — truncation, timeout, no-path,
+        etc.), callers MUST avoid clobbering one signal with the other:
+
+        1. Filter the helper's ``partial_success`` key out of the merge so the
+           pre-existing flag is not overwritten by a direct ``dict.update()``;
+           OR
+        2. OR-combine the two signals so the envelope flags partial-success
+           when EITHER condition holds:
+           ``partial_success = (existing_partial or (resolution != "symbol"))``.
+
+        Reference adopters:
+
+        - ``cmd_impact`` (W1242): pre-existing truncation flag → OR-combine.
+        - ``cmd_trace`` (W1248): pre-existing no_path flag → OR-combine.
+        - ``cmd_preflight`` (W1243): pre-existing error-path flag only → no
+          conflict (the two flags do not co-occur on the success envelope).
+        - ``cmd_diagnose`` (W1244): no pre-existing flag → direct merge.
+
+    W1270 — reserved-key collision disclosure:
+        Pre-W1270 the reserved-key filter silently dropped any
+        ``resolution`` / ``partial_success`` / ``target`` entry supplied
+        via ``detail``. That's a Pattern-2 silent-fallback: the helper
+        claims to merge ``detail`` but quietly filters keys without
+        telling the caller. ``warnings_out`` opts the call into structured
+        disclosure — when a reserved key is dropped, the helper appends a
+        canonical warning naming the dropped key + the recommended fix
+        (OR-combine BEFORE calling). ``warnings_out=None`` (default)
+        preserves byte-identical legacy behaviour.
+
+    Args:
+        resolution: One of ``{"symbol", "file", "fuzzy", "unresolved"}``.
+            Must match a member of ``_RESOLUTION_KINDS``; unknown values
+            raise ``ValueError`` so silent typos can't drift past lint.
+        target: Optional resolved target string (qualified name, file path,
+            or original input when unresolved). Echoed verbatim into the
+            output dict when provided.
+        detail: Optional extra fields to merge into the disclosure.
+            ``resolution``, ``partial_success``, and ``target`` are
+            reserved and cannot be overridden.
+        warnings_out: Optional Pattern-2 warnings accumulator (``list[str]``
+            or ``None``). When a non-None list is supplied AND ``detail``
+            contains one or more reserved keys, the helper appends a
+            structured warning per dropped key so the caller can surface
+            the silent drop to agents. ``None`` (default) preserves the
+            pre-W1270 silent-drop behaviour for legacy callers.
+
+    Returns:
+        A fresh dict (callers may mutate freely) with at minimum
+        ``{"resolution": <kind>, "partial_success": <bool>}``, plus any
+        non-reserved keys from ``detail`` and ``target`` when supplied.
+
+    Raises:
+        ValueError: If ``resolution`` is not in ``_RESOLUTION_KINDS``.
+    """
+    if resolution not in _RESOLUTION_KINDS:
+        raise ValueError(f"resolution must be one of {sorted(_RESOLUTION_KINDS)}, got {resolution!r}")
+    out: dict[str, Any] = {
+        "resolution": resolution,
+        "partial_success": resolution != "symbol",
+    }
+    if target is not None:
+        out["target"] = target
+    if detail:
+        # Reserved keys cannot be overridden — keeps the closed-enum contract
+        # tight and prevents accidental disclosure-shape drift at call sites.
+        reserved = {"resolution", "partial_success", "target"}
+        for k, v in detail.items():
+            if k in reserved:
+                # W1270: surface the silent drop via warnings_out when the
+                # caller opted in. The legacy None-default path stays
+                # byte-identical (silent drop) so existing adopters don't
+                # regress.
+                if warnings_out is not None:
+                    warnings_out.append(
+                        f"resolution_disclosure: detail contained reserved key "
+                        f"{k!r}; dropped (use OR-combine BEFORE calling helper)"
+                    )
+                continue
+            out[k] = v
+    return out
+
+
+# W1235: closed-vocabulary registry for "prerequisite missing" states.
+# Pattern-2 memo G3 — Pattern-3a vocabulary fragmentation layered on
+# Pattern-2 silent-fallback. Seven synonyms surfaced across substrate
+# commands for the same underlying state ("the thing this command needs
+# was never initialised"):
+#
+#   not_initialized  -- cmd_constitution.py (4 sites), cmd_laws.py (3 sites),
+#                       cmd_pr_bundle.py (1 site)
+#   uninitialized    -- cmd_audit_trail_verify.py (2 sites), cmd_next.py
+#                       (2 sites)
+#   no_trail         -- cmd_audit_trail_conformance.py (1 site)
+#   no_scan          -- cmd_vulns.py (2 sites)
+#   no_migrations    -- cmd_missing_index.py (1 site)
+#   no_index         -- cmd_brief.py, cmd_doctor.py (4 sites),
+#                       cmd_next.py, cmd_pr_bundle.py (4 sites)
+#   no_data          -- cmd_agent_score.py (2 sites), cmd_causal_graph.py,
+#                       cmd_doctor.py (7 sites), cmd_idempotency.py,
+#                       cmd_side_effects.py, cmd_tx_boundaries.py (2 sites)
+#
+# Agents that branch on ``state == "not_initialized"`` silent-fail across
+# the other 6 spellings today; mirrors the Pattern-3b _PARAM_ALIASES
+# fix shape in ``src/roam/mcp_server.py``.
+#
+# This wave SHIPS the substrate only. Producer sites continue to emit
+# their existing spellings until the bulk adoption wave migrates them
+# through ``canonicalize_state()``. Adding the helper first lets the
+# adoption sites land incrementally without breaking the lint contract.
+_STATE_FAMILY_ALIASES: Mapping[str, str] = {
+    "not_initialized": "not_initialized",  # canonical (self-map)
+    "uninitialized": "not_initialized",
+    "no_trail": "not_initialized",
+    "no_scan": "not_initialized",
+    "no_migrations": "not_initialized",
+    "no_index": "not_initialized",
+    "no_data": "not_initialized",
+}
+
+# Drift-guard set: every value in ``_STATE_FAMILY_ALIASES`` must appear
+# here. The test ``test_state_family_aliases.py`` asserts the invariant
+# so a future entry that introduces an unannounced canonical fails the
+# lint instead of silently widening the vocabulary.
+_STATE_FAMILY_CANONICALS: frozenset[str] = frozenset({"not_initialized"})
+
+
+def canonicalize_state(state: str) -> str:
+    """Map a state-family alias to its canonical form.
+
+    Pattern-3a (vocabulary mismatch) normalization layered on Pattern-2
+    (silent fallback). Producer sites emit one of the seven historical
+    spellings in ``_STATE_FAMILY_ALIASES``; consumers that route on
+    ``state`` should call this helper to collapse them onto the
+    canonical ``"not_initialized"`` spelling.
+
+    Unknown inputs (including the empty string) pass through unchanged
+    so the helper composes safely with state vocabularies that have NOT
+    been folded into this registry. The substrate is closed-vocabulary
+    by design — extending the canonical set is a deliberate source edit,
+    NOT a runtime hack.
+
+    Args:
+        state: The state string to canonicalize. May be any value; only
+            entries in ``_STATE_FAMILY_ALIASES`` are rewritten.
+
+    Returns:
+        The canonical state name when ``state`` is a known alias, else
+        the original ``state`` unchanged.
+    """
+    return _STATE_FAMILY_ALIASES.get(state, state)

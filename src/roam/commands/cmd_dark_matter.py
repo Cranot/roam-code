@@ -14,7 +14,6 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
-
 # W154 (W93 follow-up): dark-matter is the Nth detector migrating onto the
 # central findings registry (after ``clones`` in W95, ``dead`` in W99,
 # ``complexity`` in W102, ``smells`` in W109, ``bus-factor`` in W115,
@@ -223,6 +222,7 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist)
     hypothesized reasons for each coupling.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
@@ -236,7 +236,10 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist)
         # --persist always classifies so the confidence tier is computed
         # for every row written into the registry; otherwise we only pay
         # the classification cost when the human-facing output needs it.
-        need_hypotheses = explain or category or json_mode or persist
+        # ``sarif_mode`` joins the set so the SARIF projection's
+        # severity (structural -> warning, heuristic -> note) reflects
+        # the engine's typed-vs-untyped split, not the default fallback.
+        need_hypotheses = explain or category or json_mode or persist or sarif_mode
         if need_hypotheses and pairs:
             root = find_project_root()
             engine = HypothesisEngine(root)
@@ -255,6 +258,33 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist)
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+
+        # --- SARIF output (W1211) ---
+        # Branches BEFORE json/text so the pre-existing paths stay
+        # byte-identical to pre-W1211. The SARIF projection mirrors the
+        # displayed slice — ``pairs`` here has already been capped by
+        # ``-n``, so a CI gate sees the same evidence the human / agent
+        # sees. Hypotheses are guaranteed-resolved on this path
+        # (``sarif_mode`` joins ``need_hypotheses`` above) so the SARIF
+        # severity tracks the W154 confidence tier (structural ->
+        # warning; heuristic -> note).
+        if sarif_mode:
+            from roam.output.sarif import dark_matter_to_sarif, write_sarif
+
+            sarif_findings = [
+                {
+                    "file_a": p["path_a"],
+                    "file_b": p["path_b"],
+                    "npmi": p.get("npmi"),
+                    "lift": p.get("lift"),
+                    "strength": p.get("strength"),
+                    "cochange_count": p.get("cochange_count"),
+                    "hypothesis": p.get("hypothesis"),
+                }
+                for p in pairs
+            ]
+            click.echo(write_sarif(dark_matter_to_sarif(sarif_findings)))
+            return
 
         if json_mode:
             by_cat: dict[str, int] = Counter()

@@ -2,9 +2,9 @@
 
 Six subcommands:
 
-  - ``roam runs start --agent NAME``     -- create a new run directory
-  - ``roam runs log --action X ...``     -- append an event to a run
-  - ``roam runs end [--run-id ID]``      -- stamp ended_at + final status
+  - ``roam runs start --agent <name>``     -- create a new run directory
+  - ``roam runs log --action <action> ...``     -- append an event to a run
+  - ``roam runs end [--run-id <id>]``    -- stamp ended_at + final status
   - ``roam runs list [filters]``         -- stream run metadata
   - ``roam runs show <run_id>``          -- dump events for a run
   - ``roam runs verify [run_id|--all]``  -- verify the HMAC signing chain
@@ -15,6 +15,13 @@ CGA signing, replay, agent-score and audit-trail features build on top.
 
 The CLI mirrors the API in :mod:`roam.runs.ledger`; agents that prefer a
 programmatic interface can call that directly.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam runs`` operates on substrate state in ``.roam/``
+(ledger entries) — not code locations or per-location violations.
+The state is consumed by other roam commands + agent runtimes directly
+from disk; SARIF would be redundant. See action.yml _SUPPORTED_SARIF
+allowlist + W1181-audit memo.
 """  # W20.6 docstring: added verify subcommand to keep doc accurate
 
 from __future__ import annotations
@@ -217,7 +224,7 @@ def runs_log(
         # exactly what to do next.
         active = latest_in_progress_run(root)
         if active is None:
-            verdict = "no active run -- run `roam runs start --agent NAME` first"  # W20.6 error-msg consistency
+            verdict = "no active run -- run `roam runs start --agent <name>` first"  # W20.6 error-msg consistency
             if json_mode:
                 click.echo(
                     to_json(
@@ -232,7 +239,7 @@ def runs_log(
                             # W20.6 error-msg consistency
                             agent_contract={
                                 "facts": ["no in-progress run exists for this repo"],
-                                "next_commands": ["roam runs start --agent NAME"],
+                                "next_commands": ["roam runs start --agent <name>"],
                             },
                         )
                     )
@@ -260,7 +267,7 @@ def runs_log(
                         # W20.6 error-msg consistency
                         agent_contract={
                             "facts": [f"no run named {run_id} in this repo"],
-                            "next_commands": ["roam runs list", "roam runs start --agent NAME"],
+                            "next_commands": ["roam runs list", "roam runs start --agent <name>"],
                         },
                     )
                 )
@@ -365,7 +372,7 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
     if not run_id:
         active = latest_in_progress_run(root)
         if active is None:
-            verdict = "no active run to end -- run `roam runs start --agent NAME` first"
+            verdict = "no active run to end -- run `roam runs start --agent <name>` first"
             if json_mode:
                 click.echo(
                     to_json(
@@ -380,7 +387,7 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
                             # W20.6 error-msg consistency
                             agent_contract={
                                 "facts": ["no in-progress run exists for this repo"],
-                                "next_commands": ["roam runs start --agent NAME"],
+                                "next_commands": ["roam runs start --agent <name>"],
                             },
                         )
                     )
@@ -419,9 +426,7 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
     pr_bundle_state: str | None = None
     pr_bundle_partial = False
     if with_pr_bundle_emit:
-        pr_bundle_emitted, pr_bundle_state, pr_bundle_partial = _emit_pr_bundle_for_end(
-            ctx, root
-        )
+        pr_bundle_emitted, pr_bundle_state, pr_bundle_partial = _emit_pr_bundle_for_end(ctx, root)
 
     verdict = f"ended run {meta.run_id} (status={meta.status})"
     if with_pr_bundle_emit:
@@ -431,13 +436,9 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
         if pr_bundle_state == "no_active_bundle_to_emit":
             verdict = f"{verdict} + no pr-bundle to emit (no active bundle)"
         elif pr_bundle_emitted is not None:
-            bundle_verdict = (pr_bundle_emitted.get("summary") or {}).get(
-                "verdict", ""
-            )
+            bundle_verdict = (pr_bundle_emitted.get("summary") or {}).get("verdict", "")
             if bundle_verdict:
-                verdict = (
-                    f"{verdict} + emitted pr-bundle (verdict: {bundle_verdict})"
-                )
+                verdict = f"{verdict} + emitted pr-bundle (verdict: {bundle_verdict})"
             else:
                 verdict = f"{verdict} + pr-bundle emit attempted"
         elif pr_bundle_state == "emit_failed":
@@ -592,7 +593,7 @@ def runs_list(ctx, agent, since, status, top):
     rroot = runs_root(root)
 
     if not rroot.exists():
-        verdict = "no runs yet -- run `roam runs start --agent NAME` to open one"  # W20.6 error-msg consistency
+        verdict = "no runs yet -- run `roam runs start --agent <name>` to open one"  # W20.6 error-msg consistency
         if json_mode:
             click.echo(
                 to_json(
@@ -902,9 +903,7 @@ def runs_verify(ctx, run_id, verify_all):
                 f"{'s' if events_verified != 1 else ''}, all signatures match)"
             )
         elif state == "tampered":
-            verdict = (
-                f"TAMPER DETECTED at seq={first_tamper}; chain breaks here"
-            )
+            verdict = f"TAMPER DETECTED at seq={first_tamper}; chain breaks here"
         elif state == "unsigned":
             verdict = (
                 f"run {run_id} has {events_verified} unsigned event"
@@ -927,8 +926,7 @@ def runs_verify(ctx, run_id, verify_all):
             summary["final_signature"] = result["final_signature"]
 
         facts = [
-            f"run {run_id} has {events_verified} signed event"
-            f"{'s' if events_verified != 1 else ''}",
+            f"run {run_id} has {events_verified} signed event{'s' if events_verified != 1 else ''}",
             f"chain integrity: {state}",
         ]
         if state == "tampered" and first_tamper is not None:
@@ -941,7 +939,7 @@ def runs_verify(ctx, run_id, verify_all):
         elif state == "unsigned":
             next_commands = [f"roam runs show {run_id} (chain cannot be verified)"]
         elif state == "key_missing":
-            next_commands = ["roam runs start --agent NAME (re-creates the ledger key)"]
+            next_commands = ["roam runs start --agent <name>"]
 
         if json_mode:
             click.echo(
@@ -1013,18 +1011,13 @@ def runs_verify(ctx, run_id, verify_all):
 
     if tampered:
         state = "tampered"
-        verdict = (
-            f"TAMPER DETECTED in {tampered}/{total} run"
-            f"{'s' if total != 1 else ''}"
-        )
+        verdict = f"TAMPER DETECTED in {tampered}/{total} run{'s' if total != 1 else ''}"
     elif key_missing:
         state = "key_missing"
         verdict = f"ledger key missing for {key_missing}/{total} run(s)"
     elif unsigned:
         state = "unsigned" if ok == 0 else "ok"
-        verdict = (
-            f"verified {total} run(s): {ok} ok, {unsigned} unsigned (legacy)"
-        )
+        verdict = f"verified {total} run(s): {ok} ok, {unsigned} unsigned (legacy)"
     else:
         state = "ok"
         verdict = f"verified {total} run(s), all signatures match"
@@ -1051,11 +1044,15 @@ def runs_verify(ctx, run_id, verify_all):
     if tampered:
         first_bad = next((r for r in results if r["state"] == "tampered"), None)
         if first_bad is not None:
-            next_commands.append(
-                f"roam runs verify {first_bad['run_id']} to see the broken chain"
-            )
+            next_commands.append(f"roam runs verify {first_bad['run_id']} to see the broken chain")
     elif state == "ok":
         next_commands.append("roam runs list to inspect run metadata")
+    elif state == "unsigned":
+        # W1091: populate next_commands on every state branch (LAW 4)
+        next_commands.append("roam runs list --detail")
+    elif state == "key_missing":
+        # W1091: populate next_commands on every state branch (LAW 4)
+        next_commands.append("roam runs start --agent <name>")
 
     if json_mode:
         click.echo(

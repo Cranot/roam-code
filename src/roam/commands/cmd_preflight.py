@@ -8,6 +8,15 @@ Naming-conventions detection delegates to the canonical helper in
 ``roam.commands.conventions_helper`` so preflight, describe, understand,
 minimap, and the standalone conventions command all agree on what
 violates a convention.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because preflight findings are invocation-scoped verdicts
+(CRITICAL/HIGH/MEDIUM/LOW) tied to a single target at invocation time --
+not per-location violations. The gate is informational-only (preflight
+does not block PRs; ``health`` is the gate-failing signal). Multi-file
+location expansion would distort SARIF semantics ("target has HIGH risk"
+is not a per-location rule violation). See action.yml line 401
+_SUPPORTED_SARIF allowlist and W1149 audit memo.
 """
 
 from __future__ import annotations
@@ -33,6 +42,7 @@ from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
     json_envelope,
     loc,
+    resolution_disclosure,
     to_json,
 )
 from roam.output.metric_definitions import (
@@ -453,9 +463,7 @@ def _check_conventions(conn, sym_ids, min_majority_pct: float = 70.0):
     # majority crosses the threshold. Kinds without a strong majority
     # (e.g. 55% methods snake_case) don't contribute violations — there
     # is no real convention to violate.
-    expected_by_kind: dict[str, str] = {
-        kind: info["style"] for kind, info in by_kind.items() if info["has_majority"]
-    }
+    expected_by_kind: dict[str, str] = {kind: info["style"] for kind, info in by_kind.items() if info["has_majority"]}
 
     ph = ",".join("?" for _ in sym_ids)
     target_syms = conn.execute(
@@ -595,13 +603,20 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
 
 
 def _resolve_targets(conn, target, staged, root):
-    """Resolve CLI arguments into (sym_ids, file_paths, file_ids, label).
+    """Resolve CLI arguments into (sym_ids, file_paths, file_ids, label, resolution).
 
     Returns a tuple of:
     - sym_ids: set of symbol IDs
     - file_paths: set of file paths (str)
     - file_ids: list of file IDs (int)
     - label: human-readable label for the target
+    - resolution: W1241 Pattern-2 variant-D state — one of
+      ``{"symbol", "file", "fuzzy", "unresolved", "staged"}``. The
+      ``"staged"`` value is preflight-specific (not in the canonical
+      ``_RESOLUTION_KINDS`` enum) and signals that the caller should
+      omit the W1241 disclosure block — preflight on staged changes
+      isn't a single-target resolution. The other four pass through to
+      ``resolution_disclosure()`` directly.
     """
     sym_ids = set()
     file_paths = set()
@@ -611,23 +626,24 @@ def _resolve_targets(conn, target, staged, root):
     if staged:
         changed = get_changed_files(root, staged=True)
         if not changed:
-            return sym_ids, file_paths, file_ids, "staged (no changes)"
+            return sym_ids, file_paths, file_ids, "staged (no changes)", "staged"
         file_map = resolve_changed_to_db(conn, changed)
         if not file_map:
-            return sym_ids, file_paths, file_ids, "staged (not in index)"
+            return sym_ids, file_paths, file_ids, "staged (not in index)", "staged"
         for path, fid in file_map.items():
             file_paths.add(path)
             file_ids.append(fid)
             syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
             sym_ids.update(s["id"] for s in syms)
         label = f"staged changes ({len(file_map)} files)"
+        return sym_ids, file_paths, file_ids, label, "staged"
 
     if target:
         target_norm = target.replace("\\", "/")
         if _looks_like_file(target_norm):
             sids, fpaths = _resolve_file_symbols(conn, target_norm)
             if not sids:
-                return sym_ids, file_paths, file_ids, f"{target} (not found)"
+                return sym_ids, file_paths, file_ids, f"{target} (not found)", "unresolved"
             sym_ids.update(sids)
             file_paths.update(fpaths)
             # Get file IDs for the resolved paths
@@ -636,19 +652,30 @@ def _resolve_targets(conn, target, staged, root):
                 if row:
                     file_ids.append(row["id"])
             label = target_norm
-        else:
-            sym = find_symbol(conn, target)
-            if sym is None:
-                return sym_ids, file_paths, file_ids, f"{target} (not found)"
-            sym_ids.add(sym["id"])
-            file_paths.add(sym["file_path"])
-            # Get file ID
-            row = conn.execute("SELECT id FROM files WHERE path = ?", (sym["file_path"],)).fetchone()
-            if row:
-                file_ids.append(row["id"])
-            label = f"{sym['name']} ({loc(sym['file_path'], sym['line_start'])})"
+            return sym_ids, file_paths, file_ids, label, "file"
+        sym = find_symbol(conn, target)
+        if sym is None:
+            return sym_ids, file_paths, file_ids, f"{target} (not found)", "unresolved"
+        sym_ids.add(sym["id"])
+        file_paths.add(sym["file_path"])
+        # Get file ID
+        row = conn.execute("SELECT id FROM files WHERE path = ?", (sym["file_path"],)).fetchone()
+        if row:
+            file_ids.append(row["id"])
+        label = f"{sym['name']} ({loc(sym['file_path'], sym['line_start'])})"
+        # W1243 / W1249 — Pattern-2 variant-D resolution disclosure.
+        # ``find_symbol`` stamps ``_resolution_tier`` on the returned row
+        # (``"symbol"`` for exact-name rungs, ``"fuzzy"`` for the LIKE
+        # fallback); read it straight off the row instead of re-deriving by
+        # string-comparing name / qualified_name against the input.
+        resolution = sym.get("_resolution_tier", "symbol")
+        return sym_ids, file_paths, file_ids, label, resolution
 
-    return sym_ids, file_paths, file_ids, label
+    # No target and not staged — caller's preflight() function already
+    # guards this case with a SystemExit(1) before we're called, so this
+    # branch is unreachable in practice. Default to "unresolved" so the
+    # tuple shape stays stable for any future caller.
+    return sym_ids, file_paths, file_ids, label, "unresolved"
 
 
 # ---------------------------------------------------------------------------
@@ -714,7 +741,7 @@ def preflight(ctx, target, staged):
 
     with open_db(readonly=True) as conn:
         # Resolve targets
-        sym_ids, file_paths, file_ids, label = _resolve_targets(
+        sym_ids, file_paths, file_ids, label, resolution = _resolve_targets(
             conn,
             target,
             staged,
@@ -726,15 +753,30 @@ def preflight(ctx, target, staged):
             # so the verdict / next-step hint show the bare query text.
             display_label = label.removesuffix(" (not found)")
             verdict = f"target not found — `{display_label}` is not in the index"
+            # W1243 — Pattern-2 variant-D disclosure on the unresolved
+            # path. ``_resolve_targets`` stamps ``"unresolved"`` for the
+            # symbol-not-found and file-not-found branches, and
+            # ``"staged"`` for the staged-but-empty branches; only emit
+            # the canonical W1241 disclosure for the four enum kinds.
+            disclosure = (
+                resolution_disclosure("unresolved", target=display_label) if resolution == "unresolved" else None
+            )
+            not_found_summary = {
+                "verdict": verdict,
+                "target": display_label,
+                "risk_level": "UNKNOWN",
+                "partial_success": True,
+                "error": "No symbols found",
+            }
+            if disclosure is not None:
+                not_found_summary["resolution"] = disclosure["resolution"]
+            not_found_envelope_kwargs: dict = {"summary": not_found_summary}
+            if disclosure is not None:
+                not_found_envelope_kwargs["resolution"] = disclosure["resolution"]
+                not_found_envelope_kwargs["partial_success"] = disclosure["partial_success"]
             not_found_envelope = json_envelope(
                 "preflight",
-                summary={
-                    "verdict": verdict,
-                    "target": display_label,
-                    "risk_level": "UNKNOWN",
-                    "partial_success": True,
-                    "error": "No symbols found",
-                },
+                **not_found_envelope_kwargs,
             )
             auto_log(not_found_envelope, action="preflight", target=display_label, repo_root=root)
             if json_mode:
@@ -774,6 +816,29 @@ def preflight(ctx, target, staged):
         else:
             verdict = f"Significant risk — {risk}, {blast['affected_symbols']} symbols in blast radius"
 
+        # W1243 — Pattern-2 variant-D suffix on the verdict when the
+        # resolver succeeded through a degraded tier. The underlying
+        # check is still valid (the symbol set we built is real), but
+        # the success verdict must reflect that the input string did
+        # not exact-match a single symbol — agents need to know to
+        # re-issue with a qualified name.
+        if resolution == "fuzzy":
+            verdict = f"{verdict} [fuzzy resolution]"
+        elif resolution == "file":
+            verdict = f"{verdict} [file fallback]"
+
+        # Build the W1241 disclosure block. ``staged`` resolutions are
+        # multi-target and don't map onto the four-kind enum — omit the
+        # disclosure rather than lie about which tier fired.
+        if resolution in {"symbol", "file", "fuzzy"}:
+            target_for_disclosure = label if target else (target or "")
+            disclosure = resolution_disclosure(
+                resolution,  # type: ignore[arg-type]
+                target=target_for_disclosure,
+            )
+        else:
+            disclosure = None
+
         # Build a flat list of fitness violations for the summary so
         # downstream contracts (e.g. ``roam_validate_plan``'s
         # FITNESS_VIOLATIONS warning, which reads
@@ -794,21 +859,27 @@ def preflight(ctx, target, staged):
         ]
 
         # Build the envelope once — used for JSON output and auto-log.
-        preflight_envelope = json_envelope(
-            "preflight",
-            summary={
-                "verdict": verdict,
-                "target": label,
-                "risk_level": risk,
-                "symbols_checked": len(sym_ids),
-                "files_checked": len(file_paths),
-                "fitness_violations": fitness_violations_list,
-                # W331: preflight aggregates 6 dimensions into one
-                # CRITICAL/HIGH/MEDIUM/LOW verdict. Name the rollup so
-                # agents don't conflate it with a per-dimension severity.
-                "risk_level_definition": PREFLIGHT_RISK_LEVEL_DEFINITION,
-            },
-            blast_radius={
+        # W1243 — Pattern-2 variant-D disclosure: when ``resolution`` is
+        # a degraded tier (file / fuzzy), the verdict already carries
+        # the suffix; the structured ``resolution`` + ``partial_success``
+        # fields go on both ``summary`` (so agents reading only the
+        # summary see them) and at the envelope top level (so the
+        # canonical envelope shape lives alongside risk_level).
+        summary_dict: dict = {
+            "verdict": verdict,
+            "target": label,
+            "risk_level": risk,
+            "symbols_checked": len(sym_ids),
+            "files_checked": len(file_paths),
+            "fitness_violations": fitness_violations_list,
+            # W331: preflight aggregates 6 dimensions into one
+            # CRITICAL/HIGH/MEDIUM/LOW verdict. Name the rollup so
+            # agents don't conflate it with a per-dimension severity.
+            "risk_level_definition": PREFLIGHT_RISK_LEVEL_DEFINITION,
+        }
+        envelope_kwargs: dict = {
+            "summary": summary_dict,
+            "blast_radius": {
                 "affected_symbols": blast["affected_symbols"],
                 "affected_files": blast["affected_files"],
                 "affected_file_list": blast["affected_file_list"],
@@ -818,7 +889,7 @@ def preflight(ctx, target, staged):
                 "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
                 "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
             },
-            tests={
+            "tests": {
                 "direct": tests["direct"],
                 "transitive": tests["transitive"],
                 "colocated": tests["colocated"],
@@ -827,7 +898,7 @@ def preflight(ctx, target, staged):
                 "pytest_command": tests["pytest_command"],
                 "severity": tests["severity"],
             },
-            complexity={
+            "complexity": {
                 "max_cognitive_complexity": compl["max_cognitive_complexity"],
                 "max_nesting_depth": compl["max_nesting_depth"],
                 "high_complexity_symbols": compl["high_complexity_symbols"],
@@ -835,19 +906,19 @@ def preflight(ctx, target, staged):
                 # W331: same canonical definition as cmd_complexity.
                 "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
             },
-            coupling={
+            "coupling": {
                 "coupled_files": coupl["coupled_files"],
                 "missing_partners": coupl["missing_partners"],
                 "severity": coupl["severity"],
             },
-            conventions={
+            "conventions": {
                 "violation_count": convs["violation_count"],
                 "violations": convs["violations"],
                 "severity": convs["severity"],
                 "majority_threshold_pct": convs.get("majority_threshold_pct"),
                 "kinds_with_majority": convs.get("kinds_with_majority"),
             },
-            fitness={
+            "fitness": {
                 "rules_checked": fitns["rules_checked"],
                 "rules_failed": fitns["rules_failed"],
                 "total_violations": fitns["total_violations"],
@@ -855,7 +926,13 @@ def preflight(ctx, target, staged):
                 "rule_details": fitns["rule_details"],
                 "severity": fitns["severity"],
             },
-        )
+        }
+        if disclosure is not None:
+            summary_dict["resolution"] = disclosure["resolution"]
+            summary_dict["partial_success"] = disclosure["partial_success"]
+            envelope_kwargs["resolution"] = disclosure["resolution"]
+            envelope_kwargs["partial_success"] = disclosure["partial_success"]
+        preflight_envelope = json_envelope("preflight", **envelope_kwargs)
 
         # Auto-log into the active run (silent no-op if no run is active).
         # Strip the "(file:line)" suffix the resolver appends so the

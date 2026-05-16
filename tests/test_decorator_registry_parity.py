@@ -88,7 +88,7 @@ def test_registry_equals_hand_rolled_detectors() -> None:
             f"   Fix: every entry in ALL_DETECTORS must have a matching "
             f"@detector(...) decoration in src/roam/catalog/smells.py. "
             f"For out-of-file detectors (imported helpers), call "
-            f"detector(\"<smell_id>\", confidence=<TIER>)(fn) directly "
+            f'detector("<smell_id>", confidence=<TIER>)(fn) directly '
             f"after the imports."
         )
 
@@ -142,7 +142,7 @@ def test_poc_detectors_present_in_registry() -> None:
     assert "temporal-coupling-cluster" in registry_confidence_ids, (
         "temporal-coupling-cluster (the W647 rollup) is missing from "
         "the decorator-driven registry. Restore the "
-        "rollup_kinds={\"cluster\": CONFIDENCE_STRUCTURAL} kwarg on the "
-        "@detector(\"temporal-coupling\", ...) declaration in "
+        'rollup_kinds={"cluster": CONFIDENCE_STRUCTURAL} kwarg on the '
+        '@detector("temporal-coupling", ...) declaration in '
         "src/roam/catalog/smells.py."
     )

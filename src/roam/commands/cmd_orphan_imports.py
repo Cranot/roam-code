@@ -24,6 +24,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.languages import JS_FAMILY_LANGUAGES
@@ -32,9 +33,7 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
-
 
 # W132 (W93 follow-up): orphan-imports is the fifth detector migrating
 # onto the central findings registry (after ``clones`` in W95, ``dead``
@@ -85,9 +84,7 @@ def _orphan_finding_id(language: str, file_path: str, module: str, line: int | N
     """
     from roam.db.findings import make_finding_id
 
-    return make_finding_id(
-        "orphan-imports", language, language, file_path, module, int(line or 0)
-    )
+    return make_finding_id("orphan-imports", language, language, file_path, module, int(line or 0))
 
 
 def _resolve_orphan_subject_id(conn: sqlite3.Connection, file_path: str) -> int | None:
@@ -149,8 +146,7 @@ def _emit_orphan_imports_findings(
             "hint": hint,
         }
         claim = (
-            f"orphan-import ({kind}): {language} module {module!r} "
-            f"in {file_path}:{line} — {hint or 'no resolution'}"
+            f"orphan-import ({kind}): {language} module {module!r} in {file_path}:{line} — {hint or 'no resolution'}"
         )
         confidence = _ORPHAN_KIND_TO_CONFIDENCE.get(kind, _ORPHAN_DEFAULT_CONFIDENCE)
         emit_finding(
@@ -213,6 +209,7 @@ def _orphan_classify(o: dict) -> tuple[str, str]:
         reason = f"{lang}: unknown orphan kind '{kind}'"
     return conf, reason
 
+
 # Python ----------------------------------------------------------------------
 
 _PY_IMPORT_RE = re.compile(
@@ -261,6 +258,7 @@ def _mask_python_strings_and_comments(text: str) -> str:
     masked = _PY_TRIPLE_QUOTED_RE.sub(_blank_preserving_newlines, text)
     masked = _PY_LINE_COMMENT_RE.sub(_blank_preserving_newlines, masked)
     return masked
+
 
 # JS/TS — capture the bare module specifier in any of the four shapes:
 #   import x from 'pkg';        import 'pkg';          import * as a from "pkg";
@@ -601,10 +599,7 @@ def _optional_import_line_set(source: str) -> set[int]:
             return h.type.id in _OPTIONAL_NAMES
         # ``except (ImportError, ModuleNotFoundError):`` etc.
         if isinstance(h.type, ast.Tuple):
-            return any(
-                isinstance(e, ast.Name) and e.id in _OPTIONAL_NAMES
-                for e in h.type.elts
-            )
+            return any(isinstance(e, ast.Name) and e.id in _OPTIONAL_NAMES for e in h.type.elts)
         return False
 
     for node in ast.walk(tree):
@@ -623,9 +618,7 @@ def _optional_import_line_set(source: str) -> set[int]:
     return optional_lines
 
 
-def _resolve_relative_import(
-    dotted: str, importing_file: Path, project_root: Path
-) -> Path | None:
+def _resolve_relative_import(dotted: str, importing_file: Path, project_root: Path) -> Path | None:
     """Resolve a dotted relative import (``.base``, ``..commands.resolve``).
 
     The current regex-based scanner ALREADY skips ``from .x import y``
@@ -898,6 +891,7 @@ def orphan_imports(ctx, lang, persist) -> None:
     ``--lang`` to limit the scan.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
     targets = ["python", "javascript", "go"] if lang.lower() == "all" else [lang.lower()]
     all_orphans: list[dict] = []
@@ -917,9 +911,7 @@ def orphan_imports(ctx, lang, persist) -> None:
         # particular invocation slices the view.
         if persist:
             try:
-                _emit_orphan_imports_findings(
-                    conn, all_orphans, ORPHAN_IMPORTS_DETECTOR_VERSION
-                )
+                _emit_orphan_imports_findings(conn, all_orphans, ORPHAN_IMPORTS_DETECTOR_VERSION)
                 conn.commit()
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
@@ -930,6 +922,18 @@ def orphan_imports(ctx, lang, persist) -> None:
         if not all_orphans
         else f"{len(all_orphans)} orphan import(s) across {files_scanned} file(s)"
     )
+
+    # --- SARIF output (W1218) ---
+    # Branches BEFORE json/text so the pre-existing paths stay
+    # byte-identical to pre-W1218. The SARIF projection mirrors the
+    # full orphan list (NOT the 200-item display cap applied in
+    # json_mode below) so a CI gate sees every detected orphan, not a
+    # truncated slice.
+    if sarif_mode:
+        from roam.output.sarif import orphan_imports_to_sarif, write_sarif
+
+        click.echo(write_sarif(orphan_imports_to_sarif(all_orphans)))
+        return
 
     if json_mode:
         # R22: wrap each orphan in {value, confidence, reason}.

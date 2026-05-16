@@ -9,13 +9,9 @@ flagship-command verdict. This test pins the disclosure contract.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli

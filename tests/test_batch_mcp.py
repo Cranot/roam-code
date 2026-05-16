@@ -22,6 +22,25 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _disable_cold_start_guard(monkeypatch):
+    """W1281 root-cause fix: tests mock open_db / db_exists via _patch_db,
+    but the @_tool cold-start guard reads ``roam.db.connection.db_exists``
+    independently (via ``mcp_extras.preflight.index_is_built``). When a
+    project's ``.roam/index.db`` is missing -- which is the default on CI
+    Linux runners -- the guard returns an ``index_not_built`` envelope
+    BEFORE the inner function runs, so the test sees a different summary
+    shape (no ``queries_executed`` / ``symbols_resolved`` field).
+
+    Mirrors the same fixture in ``test_mcp_refactoring_wrappers.py`` etc.
+    ``ROAM_MCP_DISABLE_COLD_START_GUARD`` flips the guard to a no-op for
+    the duration of each test (see
+    ``roam.mcp_extras.preflight.maybe_cold_start_envelope``).
+    """
+    monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    yield
+
+
 @pytest.fixture()
 def tmp_db(tmp_path):
     """Create a minimal in-memory-style SQLite DB with required tables."""
@@ -543,8 +562,7 @@ class TestBatchSearch:
         assert "errors" in result
         assert "bad_query" in result["errors"]
         assert "_fatal" not in result["errors"], (
-            "raised exception in one query incorrectly triggered batch-wide fatal: "
-            + repr(result["errors"])
+            "raised exception in one query incorrectly triggered batch-wide fatal: " + repr(result["errors"])
         )
         # All 3 queries should have been attempted
         assert call_count[0] == 3, f"only {call_count[0]} of 3 queries attempted"
@@ -741,8 +759,7 @@ class TestBatchGet:
         assert "errors" in result
         assert "bad_sym" in result["errors"]
         assert "_fatal" not in result["errors"], (
-            "raised exception in one symbol incorrectly triggered batch-wide fatal: "
-            + repr(result["errors"])
+            "raised exception in one symbol incorrectly triggered batch-wide fatal: " + repr(result["errors"])
         )
         # All 3 symbols should have been attempted
         assert call_count[0] == 3, f"only {call_count[0]} of 3 symbols attempted"

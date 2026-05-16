@@ -1,4 +1,11 @@
-"""Link documentation to code -- find what docs describe what code."""
+"""Link documentation to code -- find what docs describe what code.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because intent outputs are invocation-scoped doc-to-code
+linkage rankings — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
+"""
 
 from __future__ import annotations
 

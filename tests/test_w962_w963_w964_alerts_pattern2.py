@@ -73,15 +73,9 @@ def test_w962_invalid_op_in_yaml_emits_warning(tmp_path: Path) -> None:
     # LAW 4 + LAW 2: names the metric, names the operator, points at the
     # config file, ends on an imperative next step.
     assert "cycles" in warning, f"Warning must name the metric, got: {warning!r}"
-    assert "!=" in warning, (
-        f"Warning must name the offending operator, got: {warning!r}"
-    )
-    assert ".roam/alerts.yaml" in warning, (
-        f"Warning must point at the config file, got: {warning!r}"
-    )
-    assert "Edit" in warning or "edit" in warning, (
-        f"Warning must end on an imperative next step, got: {warning!r}"
-    )
+    assert "!=" in warning, f"Warning must name the offending operator, got: {warning!r}"
+    assert ".roam/alerts.yaml" in warning, f"Warning must point at the config file, got: {warning!r}"
+    assert "Edit" in warning or "edit" in warning, f"Warning must end on an imperative next step, got: {warning!r}"
     # Cycle's rule still parsed (warning fires, rule survives) so the
     # parsed dict shape is stable for downstream consumers.
     assert "thresholds" in cfg
@@ -100,9 +94,7 @@ def test_w962_valid_op_emits_no_warning(tmp_path: Path) -> None:
     warnings: list[str] = []
     cfg = _load_alerts_config(project_root=tmp_path, warnings_out=warnings)
 
-    assert warnings == [], (
-        f"Valid op '>=' must not trigger a W962 warning, got: {warnings}"
-    )
+    assert warnings == [], f"Valid op '>=' must not trigger a W962 warning, got: {warnings}"
     assert cfg["thresholds"]["cycles"]["op"] == ">="
 
 
@@ -111,10 +103,7 @@ def test_w962_parse_alerts_yaml_direct_invocation(tmp_path: Path) -> None:
     appends to ``warnings_out`` on invalid ops. Belt-and-braces against
     environments without PyYAML installed.
     """
-    yaml_text = (
-        "thresholds:\n"
-        "  health_score: { op: 'maybe', value: 60, level: critical }\n"
-    )
+    yaml_text = "thresholds:\n  health_score: { op: 'maybe', value: 60, level: critical }\n"
     warnings: list[str] = []
     parsed = _parse_alerts_yaml(yaml_text, warnings_out=warnings)
 
@@ -149,9 +138,7 @@ def test_w963_unknown_op_at_check_time_emits_warning() -> None:
     warnings: list[str] = []
     alerts = _check_thresholds(current, bad_rule, warnings_out=warnings)
 
-    assert alerts == [], (
-        f"Unknown-op rule must be skipped (no alert emitted), got: {alerts}"
-    )
+    assert alerts == [], f"Unknown-op rule must be skipped (no alert emitted), got: {alerts}"
     assert warnings, "Check-time must surface the invalid op"
     assert "cycles" in warnings[0]
     assert "!=" in warnings[0]
@@ -184,9 +171,7 @@ def test_w963_known_ops_still_work_unchanged() -> None:
     alerts = _check_thresholds(current, rules, warnings_out=warnings)
 
     assert len(alerts) == 2
-    assert warnings == [], (
-        f"Valid ops must not surface check-time warnings, got: {warnings}"
-    )
+    assert warnings == [], f"Valid ops must not surface check-time warnings, got: {warnings}"
 
 
 def test_w963_resolver_threshold_warning_flows_to_check_when_op_invalid(
@@ -217,15 +202,12 @@ def test_w963_resolver_threshold_warning_flows_to_check_when_op_invalid(
     assert resolved["cycles"]["op"] == "!="
 
     check_warnings: list[str] = []
-    alerts = _check_thresholds(
-        {"cycles": 100}, resolved, warnings_out=check_warnings
-    )
+    alerts = _check_thresholds({"cycles": 100}, resolved, warnings_out=check_warnings)
     assert alerts == [] or all(a["metric"] != "cycles" for a in alerts), (
         f"Invalid-op cycles rule must not emit an alert, got: {alerts}"
     )
     assert any("cycles" in w and "!=" in w for w in check_warnings), (
-        f"W963 check-time warning must surface invalid op, got: "
-        f"{check_warnings}"
+        f"W963 check-time warning must surface invalid op, got: {check_warnings}"
     )
 
 
@@ -239,9 +221,7 @@ def test_w964_bool_true_passes_through_silently() -> None:
     preserved.
     """
     warnings: list[str] = []
-    out = _coerce_bool(
-        True, default=False, field_name="delta_alerts", warnings_out=warnings
-    )
+    out = _coerce_bool(True, default=False, field_name="delta_alerts", warnings_out=warnings)
     assert out is True
     assert warnings == []
 
@@ -249,9 +229,7 @@ def test_w964_bool_true_passes_through_silently() -> None:
 def test_w964_bool_false_passes_through_silently() -> None:
     """W964: bool ``False`` round-trips unchanged. Happy path."""
     warnings: list[str] = []
-    out = _coerce_bool(
-        False, default=True, field_name="delta_alerts", warnings_out=warnings
-    )
+    out = _coerce_bool(False, default=True, field_name="delta_alerts", warnings_out=warnings)
     assert out is False
     assert warnings == []
 
@@ -268,10 +246,7 @@ def test_w964_yes_string_coerced_silently() -> None:
         warnings_out=warnings,
     )
     assert out is True
-    assert warnings == [], (
-        f"'yes' is unambiguous YAML truthy; no warning expected, "
-        f"got: {warnings}"
-    )
+    assert warnings == [], f"'yes' is unambiguous YAML truthy; no warning expected, got: {warnings}"
 
 
 def test_w964_no_string_coerced_silently() -> None:
@@ -302,12 +277,8 @@ def test_w964_int_truthy_emits_warning_and_uses_default() -> None:
     assert out is True, "Default is True; int 1 falls back to it"
     assert warnings, "Non-bool, non-truthy-string must surface a warning"
     warning = warnings[0]
-    assert "delta_alerts" in warning, (
-        f"Warning must name the offending field, got: {warning!r}"
-    )
-    assert ".roam/alerts.yaml" in warning, (
-        f"Warning must point at the config file, got: {warning!r}"
-    )
+    assert "delta_alerts" in warning, f"Warning must name the offending field, got: {warning!r}"
+    assert ".roam/alerts.yaml" in warning, f"Warning must point at the config file, got: {warning!r}"
     assert "true" in warning.lower() and "false" in warning.lower(), (
         f"Warning must name the valid bool spellings, got: {warning!r}"
     )
@@ -388,14 +359,12 @@ def test_w964_end_to_end_yaml_non_bool_triggers_warning(
         ("true", True),
         ("false", False),
         ("yes", "yes"),  # _coerce_scalar leaves YAML-truthy strings alone;
-        ("no", "no"),    # _coerce_bool at the CLI boundary handles them.
+        ("no", "no"),  # _coerce_bool at the CLI boundary handles them.
         ("True", True),
         ("False", False),
     ],
 )
-def test_w967_top_level_scalar_field_parses_correctly(
-    raw_value: str, expected: object
-) -> None:
+def test_w967_top_level_scalar_field_parses_correctly(raw_value: str, expected: object) -> None:
     """W967: the tiny YAML parser preserves flush-left scalar values
     on top-level fields. Pre-W967 the line ``delta_alerts: true`` parsed
     as ``{'delta_alerts: true': {}}`` (empty dict, falsy under
@@ -403,17 +372,12 @@ def test_w967_top_level_scalar_field_parses_correctly(
     for every user without PyYAML installed.
     """
     parsed = _parse_alerts_yaml(f"delta_alerts: {raw_value}")
-    assert "delta_alerts" in parsed, (
-        f"Expected ``delta_alerts`` as a top-level key, got: {parsed!r}"
-    )
+    assert "delta_alerts" in parsed, f"Expected ``delta_alerts`` as a top-level key, got: {parsed!r}"
     assert parsed["delta_alerts"] == expected, (
-        f"Expected ``delta_alerts={expected!r}``, got: "
-        f"{parsed['delta_alerts']!r}"
+        f"Expected ``delta_alerts={expected!r}``, got: {parsed['delta_alerts']!r}"
     )
     # Crucially: the value is NOT an empty dict.
-    assert parsed["delta_alerts"] != {}, (
-        "Pre-W967 regression — value collapsed to empty dict (silent disable)"
-    )
+    assert parsed["delta_alerts"] != {}, "Pre-W967 regression — value collapsed to empty dict (silent disable)"
 
 
 def test_w967_empty_value_still_treated_as_section_header() -> None:
@@ -440,11 +404,7 @@ def test_w967_mixed_scalar_and_section(tmp_path: Path) -> None:
     scalar parses every field correctly when only the tiny parser is
     available.
     """
-    yaml_text = (
-        "thresholds:\n"
-        "  cycles: { op: '>', value: 10, level: warning }\n"
-        "delta_alerts: true\n"
-    )
+    yaml_text = "thresholds:\n  cycles: { op: '>', value: 10, level: warning }\ndelta_alerts: true\n"
     parsed = _parse_alerts_yaml(yaml_text)
     assert parsed["delta_alerts"] is True
     assert parsed["thresholds"]["cycles"]["op"] == ">"
@@ -518,10 +478,7 @@ def test_w969_canonical_lowercase_level_passes_silently() -> None:
             warnings_out=warnings,
         )
         assert out == level
-        assert warnings == [], (
-            f"Canonical level {level!r} must not surface a warning, "
-            f"got: {warnings}"
-        )
+        assert warnings == [], f"Canonical level {level!r} must not surface a warning, got: {warnings}"
 
 
 def test_w969_uppercase_level_is_normalized_silently() -> None:
@@ -537,10 +494,7 @@ def test_w969_uppercase_level_is_normalized_silently() -> None:
         warnings_out=warnings,
     )
     assert out == "warning"
-    assert warnings == [], (
-        f"Pre-W649 UPPER-cased level must normalize silently, "
-        f"got: {warnings}"
-    )
+    assert warnings == [], f"Pre-W649 UPPER-cased level must normalize silently, got: {warnings}"
 
 
 def test_w969_mixed_case_level_is_normalized_silently() -> None:
@@ -574,20 +528,12 @@ def test_w969_unknown_level_warns_and_defaults() -> None:
     assert warnings, "Unknown level must surface a Pattern 2 warning"
     warning = warnings[0]
     # LAW 2 + LAW 4: imperative + concrete-noun anchors.
-    assert "fatal" in warning, (
-        f"Warning must name the offending value, got: {warning!r}"
-    )
-    assert "thresholds.cycles.level" in warning, (
-        f"Warning must name the offending field, got: {warning!r}"
-    )
-    assert ".roam/alerts.yaml" in warning, (
-        f"Warning must point at the config file, got: {warning!r}"
-    )
+    assert "fatal" in warning, f"Warning must name the offending value, got: {warning!r}"
+    assert "thresholds.cycles.level" in warning, f"Warning must name the offending field, got: {warning!r}"
+    assert ".roam/alerts.yaml" in warning, f"Warning must point at the config file, got: {warning!r}"
     # Names the canonical set so the user knows the valid spellings.
     for level in _CANONICAL_LEVELS:
-        assert level in warning, (
-            f"Warning must name canonical level {level!r}, got: {warning!r}"
-        )
+        assert level in warning, f"Warning must name canonical level {level!r}, got: {warning!r}"
 
 
 def test_w969_non_string_level_warns_and_defaults() -> None:
@@ -604,9 +550,7 @@ def test_w969_non_string_level_warns_and_defaults() -> None:
             warnings_out=warnings,
         )
         assert out == "warning"
-        assert warnings, (
-            f"Non-string level {bad_value!r} must surface a warning"
-        )
+        assert warnings, f"Non-string level {bad_value!r} must surface a warning"
 
 
 def test_w969_unknown_level_in_yaml_warns_and_defaults(tmp_path: Path) -> None:
@@ -615,20 +559,15 @@ def test_w969_unknown_level_in_yaml_warns_and_defaults(tmp_path: Path) -> None:
     safe default level so downstream consumers cannot KeyError.
     """
     _make_alerts_yaml(
-        "thresholds:\n"
-        "  cycles: { op: '>', value: 10, level: fatal }\n",
+        "thresholds:\n  cycles: { op: '>', value: 10, level: fatal }\n",
         tmp_path,
     )
 
     warnings: list[str] = []
     cfg = _load_alerts_config(project_root=tmp_path, warnings_out=warnings)
 
-    assert warnings, (
-        "Expected at least one warning for invalid level 'fatal'"
-    )
-    assert any("fatal" in w for w in warnings), (
-        f"Warning must name the offending value, got: {warnings}"
-    )
+    assert warnings, "Expected at least one warning for invalid level 'fatal'"
+    assert any("fatal" in w for w in warnings), f"Warning must name the offending value, got: {warnings}"
     # The rule survives but with the safe default.
     assert cfg["thresholds"]["cycles"]["level"] == "warning"
 
@@ -677,14 +616,10 @@ def test_w969_resolved_thresholds_in_process_fatal_level_emits_warning(
     )
 
     warnings: list[str] = []
-    resolved = _resolved_thresholds(
-        project_root=tmp_path, warnings_out=warnings
-    )
+    resolved = _resolved_thresholds(project_root=tmp_path, warnings_out=warnings)
 
     # Warning fired at SOME point in the load -> merge pipeline.
-    assert any("fatal" in w for w in warnings), (
-        f"Expected fatal-level warning, got: {warnings}"
-    )
+    assert any("fatal" in w for w in warnings), f"Expected fatal-level warning, got: {warnings}"
     # And the resolved rule carries the safe default.
     assert resolved["cycles"]["level"] == "warning"
 
@@ -726,15 +661,9 @@ def test_yaml_root_non_dict_warns(tmp_path: Path) -> None:
     assert warnings, "Non-dict YAML root must surface a Pattern 2 warning"
     warning = warnings[0]
     # LAW 2 + LAW 4: imperative + concrete-noun anchors.
-    assert "list" in warning, (
-        f"Warning must name the offending root type, got: {warning!r}"
-    )
-    assert ".roam/alerts.yaml" in warning, (
-        f"Warning must point at the config file, got: {warning!r}"
-    )
-    assert "Edit" in warning or "edit" in warning, (
-        f"Warning must end on an imperative next step, got: {warning!r}"
-    )
+    assert "list" in warning, f"Warning must name the offending root type, got: {warning!r}"
+    assert ".roam/alerts.yaml" in warning, f"Warning must point at the config file, got: {warning!r}"
+    assert "Edit" in warning or "edit" in warning, f"Warning must end on an imperative next step, got: {warning!r}"
 
 
 def test_yaml_root_scalar_string_warns(tmp_path: Path) -> None:
@@ -755,9 +684,7 @@ def test_yaml_root_scalar_string_warns(tmp_path: Path) -> None:
 
     assert cfg == {}, f"Non-dict root must fall back to empty config, got: {cfg!r}"
     assert warnings, "Scalar-root YAML must surface a Pattern 2 warning"
-    assert "str" in warnings[0], (
-        f"Warning must name the offending root type, got: {warnings[0]!r}"
-    )
+    assert "str" in warnings[0], f"Warning must name the offending root type, got: {warnings[0]!r}"
 
 
 def test_yaml_root_valid_dict_no_warning(tmp_path: Path) -> None:
@@ -774,9 +701,7 @@ def test_yaml_root_valid_dict_no_warning(tmp_path: Path) -> None:
 
     assert cfg, "Valid mapping root must parse non-empty"
     # No W972-class warning surfaces (warning text mentions "root is a").
-    assert not any("root is a" in w for w in warnings), (
-        f"Mapping root must not surface a W972 warning, got: {warnings}"
-    )
+    assert not any("root is a" in w for w in warnings), f"Mapping root must not surface a W972 warning, got: {warnings}"
 
 
 # ---------------------------------------------------------------------------
@@ -799,9 +724,7 @@ def test_make_alert_rejects_non_canonical_level() -> None:
             current_value=100,
         )
     # Error message must name the offending value AND the valid set.
-    assert "fatal" in str(exc_info.value), (
-        f"Assertion message must name the offending level, got: {exc_info.value!r}"
-    )
+    assert "fatal" in str(exc_info.value), f"Assertion message must name the offending level, got: {exc_info.value!r}"
     assert "critical" in str(exc_info.value), (
         f"Assertion message must name canonical 'critical', got: {exc_info.value!r}"
     )
@@ -951,17 +874,12 @@ def test_thresholds_section_scalar_warns(tmp_path: Path) -> None:
 
     # The section is coerced to {} so downstream code doesn't crash.
     assert cfg.get("thresholds") == {}, (
-        f"Non-dict thresholds section must coerce to empty mapping, "
-        f"got: {cfg.get('thresholds')!r}"
+        f"Non-dict thresholds section must coerce to empty mapping, got: {cfg.get('thresholds')!r}"
     )
     # The silent state is made explicit.
     assert warnings, "Non-dict thresholds section must surface a Pattern 2 warning"
-    assert any("thresholds:" in w for w in warnings), (
-        f"Warning must name the offending section, got: {warnings}"
-    )
-    assert any("int" in w for w in warnings), (
-        f"Warning must name the offending value type, got: {warnings}"
-    )
+    assert any("thresholds:" in w for w in warnings), f"Warning must name the offending section, got: {warnings}"
+    assert any("int" in w for w in warnings), f"Warning must name the offending value type, got: {warnings}"
 
     # And ``_resolved_thresholds`` doesn't crash — defaults survive.
     warnings = []
@@ -987,16 +905,11 @@ def test_thresholds_section_list_warns(tmp_path: Path) -> None:
 
     # The section is coerced to {} so downstream code doesn't crash.
     assert cfg.get("thresholds") == {}, (
-        f"List thresholds section must coerce to empty mapping, "
-        f"got: {cfg.get('thresholds')!r}"
+        f"List thresholds section must coerce to empty mapping, got: {cfg.get('thresholds')!r}"
     )
     assert warnings, "List thresholds section must surface a Pattern 2 warning"
-    assert any("thresholds:" in w for w in warnings), (
-        f"Warning must name the offending section, got: {warnings}"
-    )
-    assert any("list" in w for w in warnings), (
-        f"Warning must name the offending value type, got: {warnings}"
-    )
+    assert any("thresholds:" in w for w in warnings), f"Warning must name the offending section, got: {warnings}"
+    assert any("list" in w for w in warnings), f"Warning must name the offending value type, got: {warnings}"
 
     # And ``_resolved_thresholds`` doesn't crash — defaults survive.
     warnings = []

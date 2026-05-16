@@ -2,6 +2,12 @@
 
 Uses Theil-Sen regression on snapshot history for aggregate metric forecasting
 and ranks symbols by cognitive complexity * churn rate for per-symbol risk.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because forecast outputs are invocation-scoped trend predictions
+— not per-location violations. Editor consumers should use the JSON
+envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -332,8 +338,7 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
                             verdict,
                             f"forecast scope: {n_snapshots} snapshot(s) available, "
                             f"{metrics_trending} metric(s) trending",
-                            f"forecast risk: {symbols_at_risk} symbol(s) approaching "
-                            "complexity / churn thresholds",
+                            f"forecast risk: {symbols_at_risk} symbol(s) approaching complexity / churn thresholds",
                         ],
                     },
                     budget=token_budget,

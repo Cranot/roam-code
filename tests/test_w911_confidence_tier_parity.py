@@ -28,7 +28,6 @@ from roam.db.findings import (
     CONFIDENCE_STRUCTURAL,
 )
 
-
 _CANONICAL_TIERS = frozenset(
     {
         CONFIDENCE_HEURISTIC,

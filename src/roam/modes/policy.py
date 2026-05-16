@@ -96,6 +96,14 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # `describe` / `fan` — belongs at read_only, not safe_edit.
         "findings",
         "x-lang",
+        # W1288 — all three are read-only:
+        #   `why-fail` / `why-slow` open the DB with readonly=True for
+        #   diagnostic narration of test failures / slow tests.
+        #   `workflow` enumerates ask-workflow recipes (pure metadata,
+        #   no DB touch — composes other commands without executing them).
+        "why-fail",
+        "why-slow",
+        "workflow",
     },
     "safe_edit": {
         "diff",
@@ -322,9 +330,7 @@ def set_active_mode(repo_root: Path, mode_name: str) -> Path:
     Returns the path written.
     """
     if mode_name not in VALID_MODES:
-        raise ValueError(
-            f"unknown mode '{mode_name}' (valid: {', '.join(VALID_MODES)})"
-        )
+        raise ValueError(f"unknown mode '{mode_name}' (valid: {', '.join(VALID_MODES)})")
     path = _active_mode_file(repo_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(mode_name + "\n", encoding="utf-8")
@@ -413,10 +419,7 @@ def check_command_allowed(
     if upgrade_to:
         return (
             False,
-            (
-                f"'{bare}' not allowed in {mode.name} mode; "
-                f"run `roam mode {upgrade_to}` to enable it"
-            ),
+            (f"'{bare}' not allowed in {mode.name} mode; run `roam mode {upgrade_to}` to enable it"),
         )
     return (
         False,

@@ -107,9 +107,7 @@ def mcp_tool_names() -> list[str]:
                         names.append(kw.value.value)
     duplicates = sorted(name for name, c in Counter(names).items() if c > 1)
     if duplicates:
-        raise ValueError(
-            f"duplicate @_tool(name=...) decorations in mcp_server.py: {duplicates}"
-        )
+        raise ValueError(f"duplicate @_tool(name=...) decorations in mcp_server.py: {duplicates}")
     return sorted(names)
 
 
@@ -186,9 +184,7 @@ def mcp_tool_decorations() -> list[tuple[str, str, int]]:
             for kw in decorator.keywords:
                 if kw.arg == "name" and isinstance(kw.value, ast.Constant):
                     if isinstance(kw.value.value, str):
-                        decorations.append(
-                            (kw.value.value, node.name, node.lineno)
-                        )
+                        decorations.append((kw.value.value, node.name, node.lineno))
     return decorations
 
 

@@ -515,7 +515,10 @@ class TestTextOutput:
         state, not the silent-fallback "No vulnerabilities" phrasing.
         """
         result = _invoke(["vulns"], empty_project)
-        assert "no vulnerability scan available" in result.output or "No vulnerability scan has been imported yet." in result.output
+        assert (
+            "no vulnerability scan available" in result.output
+            or "No vulnerability scan has been imported yet." in result.output
+        )
 
     def test_import_count_shown(self, vuln_project, generic_report):
         result = _invoke(["vulns", "--import-file", generic_report], vuln_project)
@@ -644,10 +647,7 @@ class TestMatchedFiles:
         data = json.loads(result.output)
         # merge_data matches a symbol in utils.py
         # R22 confidence triple shape — read package via .value
-        merge_vulns = [
-            v for v in data.get("vulnerabilities", [])
-            if v["value"]["package"] == "merge_data"
-        ]
+        merge_vulns = [v for v in data.get("vulnerabilities", []) if v["value"]["package"] == "merge_data"]
         if merge_vulns:
             assert merge_vulns[0]["value"].get("matched_file") is not None
 
@@ -655,9 +655,6 @@ class TestMatchedFiles:
         result = _invoke(["vulns", "--import-file", generic_report], vuln_project, json_mode=True)
         data = json.loads(result.output)
         # R22 confidence triple shape — read package via .value
-        unmatched = [
-            v for v in data.get("vulnerabilities", [])
-            if v["value"]["package"] == "nonexistent_pkg"
-        ]
+        unmatched = [v for v in data.get("vulnerabilities", []) if v["value"]["package"] == "nonexistent_pkg"]
         if unmatched:
             assert unmatched[0]["value"].get("matched_file") is None

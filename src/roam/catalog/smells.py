@@ -38,7 +38,6 @@ import sqlite3
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 from roam.catalog._shared import find_workspace_root as _find_workspace_root
 from roam.catalog._shared import loc as _loc
@@ -682,14 +681,10 @@ _PY_EXCEPT_HEADER = re.compile(r"^([ \t]*)except\b[^\n:]*:\s*(?:#.*)?$", re.MULT
 # Locate ``catch (...)`` openings for brace languages (JS/TS/Java/C#/Kotlin/Swift).
 # The ``(?<!\.)`` guard avoids Promise ``.catch(...)`` fallbacks like
 # ``response.json().catch(() => ({}))``.
-_BRACE_CATCH_HEADER = re.compile(
-    r"(?<![A-Za-z0-9_.])catch\s*(?:\([^)]*\)\s*)?\{", re.MULTILINE
-)
+_BRACE_CATCH_HEADER = re.compile(r"(?<![A-Za-z0-9_.])catch\s*(?:\([^)]*\)\s*)?\{", re.MULTILINE)
 
 # Languages whose catch syntax is brace-delimited.
-_BRACE_LANGS: frozenset[str] = frozenset(
-    {"javascript", "typescript", "java", "c_sharp", "kotlin", "swift", "scala"}
-)
+_BRACE_LANGS: frozenset[str] = frozenset({"javascript", "typescript", "java", "c_sharp", "kotlin", "swift", "scala"})
 
 
 def _strip_comments_and_blanks(body: str, lang: str) -> str:
@@ -843,9 +838,7 @@ def _extract_brace_handlers(source: str) -> list[tuple[int, str]]:
     return handlers
 
 
-def _enclosing_symbol(
-    conn: sqlite3.Connection, file_id: int, line: int
-) -> tuple[str, str, int]:
+def _enclosing_symbol(conn: sqlite3.Connection, file_id: int, line: int) -> tuple[str, str, int]:
     """Return (symbol_name, kind, line_start) for the enclosing function.
 
     Falls back to (``"<module>"``, ``"file"``, ``line``) when no enclosing
@@ -905,9 +898,7 @@ def detect_empty_catch(conn: sqlite3.Connection) -> list[dict]:
         # Best-effort source read. Skip files we can't open (deleted,
         # binary, permission errors).
         try:
-            source = (workspace / rel_path).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
         except (OSError, ValueError):
             continue
 
@@ -923,9 +914,7 @@ def detect_empty_catch(conn: sqlite3.Connection) -> list[dict]:
         for line_no, body in handlers:
             if not _is_trivial_body(body, lang):
                 continue
-            symbol_name, kind, _line_start = _enclosing_symbol(
-                conn, file_id, line_no
-            )
+            symbol_name, kind, _line_start = _enclosing_symbol(conn, file_id, line_no)
             results.append(
                 _finding(
                     "empty-catch",
@@ -935,8 +924,7 @@ def detect_empty_catch(conn: sqlite3.Connection) -> list[dict]:
                     _loc(rel_path, line_no),
                     1,
                     0,
-                    f"Empty exception handler at {rel_path}:{line_no} "
-                    f"(body has no recovery and does not re-raise)",
+                    f"Empty exception handler at {rel_path}:{line_no} (body has no recovery and does not re-raise)",
                 )
             )
     return results
@@ -1052,9 +1040,7 @@ def detect_message_chain(conn: sqlite3.Connection) -> list[dict]:
 # explicitly refusing this method" signatures.
 _REFUSAL_RAISE_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"^\s*raise\s+NotImplementedError\s*(?:\(.*\))?\s*$"),
-    re.compile(
-        r"^\s*throw\s+new\s+(?:UnsupportedOperationException|NotImplementedException)\s*\(.*\)\s*;?\s*$"
-    ),
+    re.compile(r"^\s*throw\s+new\s+(?:UnsupportedOperationException|NotImplementedException)\s*\(.*\)\s*;?\s*$"),
 )
 
 
@@ -1156,9 +1142,9 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
         # Load the child source.
         if row["child_file_id"] not in source_cache:
             try:
-                source_cache[row["child_file_id"]] = (
-                    workspace / child_path
-                ).read_text(encoding="utf-8", errors="replace")
+                source_cache[row["child_file_id"]] = (workspace / child_path).read_text(
+                    encoding="utf-8", errors="replace"
+                )
             except (OSError, ValueError):
                 source_cache[row["child_file_id"]] = None
         source = source_cache[row["child_file_id"]]
@@ -1183,15 +1169,12 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
         # Parent method names (so we only count overrides, not new methods).
         try:
             parent_method_names_rows = conn.execute(
-                "SELECT name FROM symbols "
-                "WHERE kind = 'method' AND parent_id = ?",
+                "SELECT name FROM symbols WHERE kind = 'method' AND parent_id = ?",
                 (row["parent_id"],),
             ).fetchall()
         except sqlite3.OperationalError:
             parent_method_names_rows = []
-        parent_method_names: set[str] = {
-            r["name"] for r in parent_method_names_rows if r["name"]
-        }
+        parent_method_names: set[str] = {r["name"] for r in parent_method_names_rows if r["name"]}
         # If parent has no known methods (e.g. it's a stdlib base class
         # we didn't index), we can't tell what's an override vs a new
         # method. Fall back to "every trivial method on the child is a
@@ -1213,9 +1196,7 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
         if len(trivial_overrides) >= 2:
             child_line = int(row["child_line_start"] or 1)
             loc_str = _loc(child_path, child_line)
-            method_summary = ", ".join(
-                f"{name}()" for name, _ in trivial_overrides[:5]
-            )
+            method_summary = ", ".join(f"{name}()" for name, _ in trivial_overrides[:5])
             if len(trivial_overrides) > 5:
                 method_summary += f", +{len(trivial_overrides) - 5} more"
             results.append(
@@ -1262,16 +1243,46 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
 _PRIMITIVE_TYPE_NAMES: frozenset[str] = frozenset(
     {
         # Python
-        "int", "str", "float", "bool", "bytes", "bytearray", "complex",
-        "none", "nonetype",
+        "int",
+        "str",
+        "float",
+        "bool",
+        "bytes",
+        "bytearray",
+        "complex",
+        "none",
+        "nonetype",
         # JS / TS
-        "string", "number", "boolean", "bigint", "symbol", "undefined", "null",
+        "string",
+        "number",
+        "boolean",
+        "bigint",
+        "symbol",
+        "undefined",
+        "null",
         # Java / C# / Kotlin / Swift / Scala
-        "integer", "long", "short", "byte", "char", "character", "double",
-        "decimal", "object",
+        "integer",
+        "long",
+        "short",
+        "byte",
+        "char",
+        "character",
+        "double",
+        "decimal",
+        "object",
         # Go
-        "int8", "int16", "int32", "int64", "uint", "uint8", "uint16",
-        "uint32", "uint64", "rune", "float32", "float64",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "rune",
+        "float32",
+        "float64",
     }
 )
 
@@ -1304,9 +1315,7 @@ def _is_primitive_annotation(annotation: str | None) -> bool:
     # X | None / None | X -> X
     if "|" in s:
         parts = [p.strip() for p in s.split("|")]
-        non_none = [
-            p for p in parts if p.lower() not in ("none", "nonetype", "null")
-        ]
+        non_none = [p for p in parts if p.lower() not in ("none", "nonetype", "null")]
         if len(non_none) == 1:
             return _is_primitive_annotation(non_none[0])
         # Union of multiple non-None types: only primitive if EVERY arm is
@@ -1316,10 +1325,28 @@ def _is_primitive_annotation(annotation: str | None) -> bool:
         return all(_is_primitive_annotation(p) for p in non_none)
     # Collection types are NOT primitive -- they package the data.
     lower = s.lower()
-    if lower.startswith(("list[", "list ", "tuple[", "tuple ", "dict[",
-                          "dict ", "set[", "set ", "frozenset[", "iterable[",
-                          "sequence[", "mapping[", "callable[", "type[",
-                          "list<", "array<", "map<", "set<")):
+    if lower.startswith(
+        (
+            "list[",
+            "list ",
+            "tuple[",
+            "tuple ",
+            "dict[",
+            "dict ",
+            "set[",
+            "set ",
+            "frozenset[",
+            "iterable[",
+            "sequence[",
+            "mapping[",
+            "callable[",
+            "type[",
+            "list<",
+            "array<",
+            "map<",
+            "set<",
+        )
+    ):
         return False
     # Bare primitive name match (case-insensitive).
     # Strip any trailing generic / nullable markers that survived.
@@ -1687,9 +1714,7 @@ def _extract_brace_if_predicates(source: str) -> list[tuple[int, str]]:
     return out
 
 
-def _scope_for_line(
-    scope_ranges: list[tuple[int, int, str, str, int]], line: int
-) -> tuple[str, str, int]:
+def _scope_for_line(scope_ranges: list[tuple[int, int, str, str, int]], line: int) -> tuple[str, str, int]:
     """Find the innermost enclosing (name, kind, line_start) for *line*.
 
     ``scope_ranges`` is a pre-sorted list of (line_start, line_end, name,
@@ -1753,9 +1778,7 @@ def detect_duplicate_conditionals(conn: sqlite3.Connection) -> list[dict]:
         rel_path = f["path"]
         lang = f["language"]
         try:
-            source = (workspace / rel_path).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
         except (OSError, ValueError):
             continue
 
@@ -1801,9 +1824,7 @@ def detect_duplicate_conditionals(conn: sqlite3.Connection) -> list[dict]:
         buckets: dict[tuple[str, int, str], list[int]] = defaultdict(list)
         scope_meta: dict[tuple[str, int], tuple[str, str, int]] = {}
         for line_no, predicate in predicates:
-            scope_name, scope_kind, scope_line = _scope_for_line(
-                scope_ranges, line_no
-            )
+            scope_name, scope_kind, scope_line = _scope_for_line(scope_ranges, line_no)
             scope_key = (scope_name, scope_line)
             scope_meta[scope_key] = (scope_name, scope_kind, scope_line)
             buckets[(scope_name, scope_line, predicate)].append(line_no)
@@ -1811,9 +1832,7 @@ def detect_duplicate_conditionals(conn: sqlite3.Connection) -> list[dict]:
         for (scope_name, scope_line, predicate), lines in buckets.items():
             if len(lines) < 3:
                 continue
-            scope_name_out, scope_kind_out, _ = scope_meta[
-                (scope_name, scope_line)
-            ]
+            scope_name_out, scope_kind_out, _ = scope_meta[(scope_name, scope_line)]
             # Use the FIRST occurrence as the canonical location -- it's
             # where a developer naturally lands when investigating the
             # duplicate-predicate cluster.
@@ -1908,7 +1927,7 @@ def _collect_numeric_literals_in_function(
         if type(v) is int or type(v) is float:
             counts[v] += 1
         return False  # still recurse: a Constant has no children but the
-                      # call is cheap and keeps the dispatch table uniform.
+        # call is cheap and keeps the dispatch table uniform.
 
     def _on_unaryop(child: ast.AST) -> bool:
         # Fold ``-N`` into a single literal so ``-1`` is exempted. Only
@@ -1979,9 +1998,7 @@ def detect_magic_numbers(conn: sqlite3.Connection) -> list[dict]:
     """
     results: list[dict] = []
     try:
-        files = conn.execute(
-            "SELECT id, path, language FROM files WHERE language = 'python'"
-        ).fetchall()
+        files = conn.execute("SELECT id, path, language FROM files WHERE language = 'python'").fetchall()
     except sqlite3.OperationalError:
         return []
 
@@ -1990,9 +2007,7 @@ def detect_magic_numbers(conn: sqlite3.Connection) -> list[dict]:
     for f in files:
         rel_path = f["path"]
         try:
-            source = (workspace / rel_path).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
         except (OSError, ValueError):
             continue
         try:
@@ -2086,9 +2101,7 @@ def detect_boolean_parameter(conn: sqlite3.Connection) -> list[dict]:
     """
     results: list[dict] = []
     try:
-        files = conn.execute(
-            "SELECT id, path, language FROM files WHERE language = 'python'"
-        ).fetchall()
+        files = conn.execute("SELECT id, path, language FROM files WHERE language = 'python'").fetchall()
     except sqlite3.OperationalError:
         return []
 
@@ -2098,9 +2111,7 @@ def detect_boolean_parameter(conn: sqlite3.Connection) -> list[dict]:
         file_id = f["id"]
         rel_path = f["path"]
         try:
-            source = (workspace / rel_path).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
         except (OSError, ValueError):
             continue
         try:
@@ -2137,11 +2148,7 @@ def detect_boolean_parameter(conn: sqlite3.Connection) -> list[dict]:
             # and ``Constant(value=False)`` -- explicit ``type() is bool``
             # check because Python's ``True`` / ``False`` are ``int``
             # subclasses and we MUST NOT collapse them with ``1`` / ``0``.
-            bool_args = sum(
-                1
-                for a in node.args
-                if isinstance(a, ast.Constant) and type(a.value) is bool
-            )
+            bool_args = sum(1 for a in node.args if isinstance(a, ast.Constant) and type(a.value) is bool)
             if bool_args < _BOOLEAN_PARAMETER_THRESHOLD:
                 continue
             # Best-effort call-name rendering for the description. Plain
@@ -2150,9 +2157,7 @@ def detect_boolean_parameter(conn: sqlite3.Connection) -> list[dict]:
             # collapses to ``<call>`` so the description stays compact.
             call_name = _render_call_name(node.func)
             # Attribute to enclosing function/method scope.
-            scope_name, scope_kind, _ = _scope_for_line(
-                scope_ranges, node.lineno
-            )
+            scope_name, scope_kind, _ = _scope_for_line(scope_ranges, node.lineno)
             results.append(
                 _finding(
                     "boolean-parameter",
@@ -2277,9 +2282,7 @@ def detect_switch_statement(conn: sqlite3.Connection) -> list[dict]:
     """
     results: list[dict] = []
     try:
-        files = conn.execute(
-            "SELECT id, path, language FROM files WHERE language = 'python'"
-        ).fetchall()
+        files = conn.execute("SELECT id, path, language FROM files WHERE language = 'python'").fetchall()
     except sqlite3.OperationalError:
         return []
 
@@ -2289,9 +2292,7 @@ def detect_switch_statement(conn: sqlite3.Connection) -> list[dict]:
         file_id = f["id"]
         rel_path = f["path"]
         try:
-            source = (workspace / rel_path).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
         except (OSError, ValueError):
             continue
         try:
@@ -2305,9 +2306,7 @@ def detect_switch_statement(conn: sqlite3.Connection) -> list[dict]:
         # exactly once at its head ``If``.
         elif_nodes: set[int] = set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.If) and len(node.orelse) == 1 and isinstance(
-                node.orelse[0], ast.If
-            ):
+            if isinstance(node, ast.If) and len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
                 elif_nodes.add(id(node.orelse[0]))
 
         for node in ast.walk(tree):
@@ -2318,9 +2317,7 @@ def detect_switch_statement(conn: sqlite3.Connection) -> list[dict]:
                 if len(node.cases) < _SWITCH_STATEMENT_THRESHOLD:
                     continue
                 discriminator = node.subject.id
-                scope_name, scope_kind, _ = _enclosing_symbol(
-                    conn, file_id, node.lineno
-                )
+                scope_name, scope_kind, _ = _enclosing_symbol(conn, file_id, node.lineno)
                 results.append(
                     _finding(
                         "switch-statement",
@@ -2365,9 +2362,7 @@ def detect_switch_statement(conn: sqlite3.Connection) -> list[dict]:
             if head is None or any(d != head for d in chain_discs):
                 continue
 
-            scope_name, scope_kind, _ = _enclosing_symbol(
-                conn, file_id, node.lineno
-            )
+            scope_name, scope_kind, _ = _enclosing_symbol(conn, file_id, node.lineno)
             results.append(
                 _finding(
                     "switch-statement",
@@ -2605,9 +2600,7 @@ def detect_temporal_coupling(conn: sqlite3.Connection) -> list[dict]:
             continue
         # Highest co-change in the cluster -- the cluster's "strength".
         max_cc = max(cc for _pn, _pp, cc in partners)
-        partners_render = ", ".join(
-            f"{pn} ({pp})" for pn, pp in unique_partners
-        )
+        partners_render = ", ".join(f"{pn} ({pp})" for pn, pp in unique_partners)
         results.append(
             _finding(
                 "temporal-coupling-cluster",
@@ -2667,6 +2660,7 @@ def detect_temporal_coupling(conn: sqlite3.Connection) -> list[dict]:
 _COMMENT_DENSITY_MIN_MARKERS: int = 3
 _COMMENT_DENSITY_MIN_RATE: float = 0.05
 
+
 # W705 -- unified per-language comment syntax record. One row per
 # language gives ``detect_comment_density`` a single lookup table for
 # both the line-comment pass (W605) and the block-comment pass (W650).
@@ -2702,49 +2696,49 @@ class _CommentSyntax:
 
 _COMMENT_SYNTAX_BY_LANG: dict[str, _CommentSyntax] = {
     # Hash-line only.
-    "python":     _CommentSyntax(line=("#",)),
-    "ruby":       _CommentSyntax(line=("#",)),
-    "bash":       _CommentSyntax(line=("#",)),
-    "yaml":       _CommentSyntax(line=("#",)),
+    "python": _CommentSyntax(line=("#",)),
+    "ruby": _CommentSyntax(line=("#",)),
+    "bash": _CommentSyntax(line=("#",)),
+    "yaml": _CommentSyntax(line=("#",)),
     # C-family: ``//`` line + ``/* */`` block.
     "javascript": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
     "typescript": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "java":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "c":          _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "cpp":        _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "c_sharp":    _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "go":         _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "rust":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "kotlin":     _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "swift":      _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "scala":      _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "dart":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "java": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "c": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "cpp": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "c_sharp": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "go": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "rust": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "kotlin": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "swift": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "scala": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "dart": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
     # PHP honours both ``//`` and ``#`` line comments.
-    "php":        _CommentSyntax(line=("//", "#"), block=(("/*", "*/"),)),
+    "php": _CommentSyntax(line=("//", "#"), block=(("/*", "*/"),)),
     # Block-only.
-    "css":        _CommentSyntax(block=(("/*", "*/"),)),
-    "scss":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "css": _CommentSyntax(block=(("/*", "*/"),)),
+    "scss": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
     # HTML-family: ``<!-- -->`` only.
-    "html":       _CommentSyntax(block=(("<!--", "-->"),)),
+    "html": _CommentSyntax(block=(("<!--", "-->"),)),
     # SQL: ``--`` line + ``/* */`` block.
-    "sql":        _CommentSyntax(line=("--",), block=(("/*", "*/"),)),
+    "sql": _CommentSyntax(line=("--",), block=(("/*", "*/"),)),
     # HCL/Terraform: ``#`` and ``//`` line + ``/* */`` block.
-    "hcl":        _CommentSyntax(line=("#", "//"), block=(("/*", "*/"),)),
+    "hcl": _CommentSyntax(line=("#", "//"), block=(("/*", "*/"),)),
     # Apex (Salesforce): ``//`` line + ``/* */`` block.
-    "apex":       _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "apex": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
     # W703: round out the canonical 28-language coverage. ``tsx`` and
     # ``jsonc`` are pure C-family. Vue / Svelte single-file components
     # carry a ``<script>`` block (C-family) AND an HTML template region
     # (``<!-- -->``); union the markers so both halves are scanned. The
     # Salesforce metadata languages (sfxml / aura / visualforce) are XML
     # so only ``<!-- -->`` applies.
-    "tsx":          _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "jsonc":        _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
-    "vue":          _CommentSyntax(line=("//",), block=(("/*", "*/"), ("<!--", "-->"))),
-    "svelte":       _CommentSyntax(line=("//",), block=(("/*", "*/"), ("<!--", "-->"))),
-    "sfxml":        _CommentSyntax(block=(("<!--", "-->"),)),
-    "aura":         _CommentSyntax(block=(("<!--", "-->"),)),
-    "visualforce":  _CommentSyntax(block=(("<!--", "-->"),)),
+    "tsx": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "jsonc": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    "vue": _CommentSyntax(line=("//",), block=(("/*", "*/"), ("<!--", "-->"))),
+    "svelte": _CommentSyntax(line=("//",), block=(("/*", "*/"), ("<!--", "-->"))),
+    "sfxml": _CommentSyntax(block=(("<!--", "-->"),)),
+    "aura": _CommentSyntax(block=(("<!--", "-->"),)),
+    "visualforce": _CommentSyntax(block=(("<!--", "-->"),)),
 }
 
 
@@ -2753,19 +2747,21 @@ _COMMENT_SYNTAX_BY_LANG: dict[str, _CommentSyntax] = {
 # in-line; the drift-guard test in tests/test_w703_comment_syntax_coverage.py
 # asserts every canonical language is either in ``_COMMENT_SYNTAX_BY_LANG``
 # OR here -- no silent omission (Pattern 2 fallback).
-_COMMENT_DENSITY_NO_SUPPORT: frozenset[str] = frozenset({
-    # FoxPro uses ``*`` at line-start and ``&&`` end-of-line markers.
-    # The current detector models neither (``*`` collides with VFP's
-    # multiplication operator if mid-line; ``&&`` overlaps with logical
-    # AND in other languages). Legacy tier-2 corpus is small enough
-    # that the cost of a dedicated branch outweighs the signal.
-    "foxpro",
-    # MDX is Markdown + JSX. Markdown uses ``<!-- -->``; JSX uses
-    # ``{/* */}`` which is neither a plain block nor a plain line
-    # syntax. No canonical single comment vocabulary, so we skip
-    # rather than guess and emit noisy heuristics.
-    "mdx",
-})
+_COMMENT_DENSITY_NO_SUPPORT: frozenset[str] = frozenset(
+    {
+        # FoxPro uses ``*`` at line-start and ``&&`` end-of-line markers.
+        # The current detector models neither (``*`` collides with VFP's
+        # multiplication operator if mid-line; ``&&`` overlaps with logical
+        # AND in other languages). Legacy tier-2 corpus is small enough
+        # that the cost of a dedicated branch outweighs the signal.
+        "foxpro",
+        # MDX is Markdown + JSX. Markdown uses ``<!-- -->``; JSX uses
+        # ``{/* */}`` which is neither a plain block nor a plain line
+        # syntax. No canonical single comment vocabulary, so we skip
+        # rather than guess and emit noisy heuristics.
+        "mdx",
+    }
+)
 
 # Word-boundary match: ``\b(TODO|FIXME|XXX|HACK)\b``. Pre-compile because the
 # detector walks every file row and re-compiling per call is wasteful.
@@ -2784,9 +2780,7 @@ def _block_re(open_delim: str, close_delim: str) -> re.Pattern[str]:
     key = (open_delim, close_delim)
     pat = _COMMENT_BLOCK_RE_CACHE.get(key)
     if pat is None:
-        pat = re.compile(
-            re.escape(open_delim) + r"[\s\S]*?" + re.escape(close_delim)
-        )
+        pat = re.compile(re.escape(open_delim) + r"[\s\S]*?" + re.escape(close_delim))
         _COMMENT_BLOCK_RE_CACHE[key] = pat
     return pat
 
@@ -2825,10 +2819,7 @@ def detect_comment_density(conn: sqlite3.Connection) -> list[dict]:
     """
     results: list[dict] = []
     try:
-        files = conn.execute(
-            "SELECT id, path, language FROM files "
-            "WHERE language IS NOT NULL"
-        ).fetchall()
+        files = conn.execute("SELECT id, path, language FROM files WHERE language IS NOT NULL").fetchall()
     except sqlite3.OperationalError:
         return []
 
@@ -2851,9 +2842,7 @@ def detect_comment_density(conn: sqlite3.Connection) -> list[dict]:
 
         rel_path = f["path"]
         try:
-            source = (workspace / rel_path).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            source = (workspace / rel_path).read_text(encoding="utf-8", errors="replace")
         except (OSError, ValueError):
             continue
 
@@ -2875,17 +2864,14 @@ def detect_comment_density(conn: sqlite3.Connection) -> list[dict]:
                 matched_prefix: str | None = None
                 for prefix in syntax.line:
                     if stripped.startswith(prefix):
-                        if (
-                            matched_prefix is None
-                            or len(prefix) > len(matched_prefix)
-                        ):
+                        if matched_prefix is None or len(prefix) > len(matched_prefix):
                             matched_prefix = prefix
                 if matched_prefix is None:
                     continue
                 # Strip the comment prefix before regex match so a token
                 # like ``//TODO`` (no whitespace) still hits the
                 # word-boundary at the START of the comment body.
-                body = stripped[len(matched_prefix):]
+                body = stripped[len(matched_prefix) :]
                 if _COMMENT_DENSITY_MARKER_RE.search(body):
                     marker_count += 1
 

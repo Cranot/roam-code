@@ -39,7 +39,6 @@ from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
 from roam.runs.helpers import auto_log
 
-
 # W153 — critique is the SEVENTH detector migrating onto the central
 # findings registry (after clones W95, dead W99, complexity W102,
 # smells W109, bus-factor W115, pr-risk W134). Like pr-risk, critique is
@@ -116,10 +115,7 @@ def _diff_sha(
     more changed file — produces a fresh sha so the prior finding stays
     as an audit-trail row.
     """
-    raw = (
-        f"{label}|range={intent_text or ''}|staged=0|"
-        f"files={','.join(sorted(file_paths))}"
-    )
+    raw = f"{label}|range={intent_text or ''}|staged=0|files={','.join(sorted(file_paths))}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -232,7 +228,7 @@ def _emit_critique_findings(
             # intent label (instead of the full file list joined) keeps
             # the evidence_json bounded — a 200-file diff would
             # otherwise produce a multi-KB qualified_name string.
-            intent_label = (evidence.get("intent_label") or "intent")
+            intent_label = evidence.get("intent_label") or "intent"
             region_qname = f"<diff>:{intent_label}:0-0"
             affected_symbol_id = None
 
@@ -264,6 +260,7 @@ def _emit_critique_findings(
         )
         written += 1
     return written
+
 
 # Hot-path → bench command. When a diff touches any of these path
 # prefixes, the default critique rules can pass while the change
@@ -457,9 +454,7 @@ def _run_checks_with_status(
         status["intent"] = "skipped:no_changed_symbols"
     else:
         try:
-            findings.extend(
-                check_intent_alignment(effective_intent, changed_symbols, regions)
-            )
+            findings.extend(check_intent_alignment(effective_intent, changed_symbols, regions))
             status["intent"] = "ran"
         except Exception as exc:  # noqa: BLE001
             status["intent"] = f"errored:{type(exc).__name__}:{exc}"
@@ -642,7 +637,7 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
         "consumers can distinguish fresh rows from rows tied to a "
         "since-merged PR. Reruns on the same diff upsert in place; reruns "
         "on a different diff insert fresh rows (older rows stay as audit "
-        "trail). Each finding uses subject_kind=\"diff_region\" with "
+        'trail). Each finding uses subject_kind="diff_region" with '
         "subject_id=NULL; the resolvable symbol id (when one edit covers "
         "exactly one function) lives in evidence_json.affected_symbol_id."
     ),
@@ -672,6 +667,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     ``rules`` (gate-style policy checks).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     if batch_dir:
@@ -803,11 +799,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
         # ``all_checks_ran`` | ``partial_critique``.
         "check_status": result.get("check_status", {}),
         "partial_success": result.get("partial_success", False),
-        "state": (
-            "partial_critique"
-            if result.get("partial_success")
-            else "all_checks_ran"
-        ),
+        "state": ("partial_critique" if result.get("partial_success") else "all_checks_ran"),
     }
 
     critique_envelope = json_envelope(
@@ -837,7 +829,18 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     _critique_target = effective_intent or (input_path or "")
     auto_log(critique_envelope, action="critique", target=_critique_target)
 
-    if json_mode:
+    if sarif_mode:
+        # W1146: SARIF projection for CI / GitHub Code Scanning integration.
+        # The auto_log call above + the exit-5 gate below stay identical to
+        # the JSON / text paths so the audit ledger and CI behaviour are
+        # invariant across output formats. The --text / --json paths are
+        # byte-identical to pre-W1146 (this branch short-circuits before
+        # the legacy branches; nothing above it changed shape).
+        from roam.output.sarif import critique_to_sarif, write_sarif
+
+        sarif = critique_to_sarif(result["findings"])
+        click.echo(write_sarif(sarif))
+    elif json_mode:
         click.echo(to_json(critique_envelope))
     else:
         click.echo(f"VERDICT: {result['verdict']}")

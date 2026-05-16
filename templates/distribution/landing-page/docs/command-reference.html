@@ -72,7 +72,7 @@
     <p class="eyebrow">Reference</p>
     <h1>Command Reference</h1>
     <p class="subtitle">
-      The five core verbs that cover ~80% of agent workflows, plus the most-used commands grouped by intent. Run <code>roam --help</code> for the full 205-command surface; <code>roam &lt;cmd&gt; --help</code> for any command's flags.
+      The five core verbs that cover ~80% of agent workflows, plus the most-used commands grouped by intent. Run <code>roam --help</code> for the full 238-command surface; <code>roam &lt;cmd&gt; --help</code> for any command's flags.
     </p>
     <div class="callout">
       Every command supports <code>--json</code> for machine output and (where applicable) <code>--sarif</code> for CI Code Scanning. Verdicts use <code>VERDICT:</code> first-line convention.
@@ -207,7 +207,7 @@
           <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 58 core tools; 145 in <code>full</code>)</td></tr>
           <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Gemini, Codex</td></tr>
           <tr><td><code>roam fleet plan</code></td><td>Partition work across N agents (Louvain + co-change + PageRank)</td></tr>
-          <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with zero-conflict guarantees</td></tr>
+          <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with conflict-aware partitions</td></tr>
           <tr><td><code>roam skill-generate</code></td><td>Emit a SKILL.md file from the Capability Registry</td></tr>
         </tbody>
       </table>

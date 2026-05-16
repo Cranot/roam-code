@@ -31,7 +31,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -39,9 +38,7 @@ from conftest import invoke_cli  # noqa: E402
 
 def _parse_json(result, command: str) -> dict:
     """Parse JSON output from a CliRunner result with helpful diagnostics."""
-    assert result.exit_code == 0, (
-        f"Command {command} failed (exit {result.exit_code}):\n{result.output}"
-    )
+    assert result.exit_code == 0, f"Command {command} failed (exit {result.exit_code}):\n{result.output}"
     raw = getattr(result, "stdout", None) or result.output
     try:
         return json.loads(raw)
@@ -52,13 +49,10 @@ def _parse_json(result, command: str) -> dict:
 def _assert_definition_field(summary: dict, key: str, command: str) -> None:
     """Assert ``summary[key]`` is a present, non-empty string."""
     assert key in summary, (
-        f"{command}: summary missing definition sidecar '{key}'.\n"
-        f"  summary keys: {sorted(summary.keys())}"
+        f"{command}: summary missing definition sidecar '{key}'.\n  summary keys: {sorted(summary.keys())}"
     )
     value = summary[key]
-    assert isinstance(value, str), (
-        f"{command}.summary.{key} should be str, got {type(value).__name__}"
-    )
+    assert isinstance(value, str), f"{command}.summary.{key} should be str, got {type(value).__name__}"
     assert value.strip(), f"{command}.summary.{key} is empty"
 
 
@@ -71,30 +65,22 @@ class TestImpactDefinitions:
     """`roam impact` stamps 4 blast-radius definitions in summary."""
 
     def test_impact_emits_affected_symbols_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["impact", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["impact", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "impact")
         _assert_definition_field(data["summary"], "affected_symbols_definition", "impact")
 
     def test_impact_emits_affected_files_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["impact", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["impact", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "impact")
         _assert_definition_field(data["summary"], "affected_files_definition", "impact")
 
     def test_impact_emits_weighted_impact_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["impact", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["impact", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "impact")
         _assert_definition_field(data["summary"], "weighted_impact_definition", "impact")
 
     def test_impact_emits_reach_pct_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["impact", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["impact", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "impact")
         _assert_definition_field(data["summary"], "reach_pct_definition", "impact")
 
@@ -126,16 +112,12 @@ class TestPreflightDefinitions:
     """`roam preflight` stamps risk_level + sub-block definitions."""
 
     def test_preflight_emits_risk_level_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["preflight", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["preflight", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "preflight")
         _assert_definition_field(data["summary"], "risk_level_definition", "preflight")
 
     def test_preflight_blast_radius_block_has_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["preflight", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["preflight", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "preflight")
         blast = data.get("blast_radius") or {}
         # Sub-blocks use the same _definition pattern but they live
@@ -144,9 +126,7 @@ class TestPreflightDefinitions:
         _assert_definition_field(blast, "affected_symbols_definition", "preflight.blast_radius")
 
     def test_preflight_complexity_block_has_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["preflight", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["preflight", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "preflight")
         compl = data.get("complexity") or {}
         _assert_definition_field(compl, "complexity_definition", "preflight.complexity")
@@ -170,16 +150,12 @@ class TestInvariantsDefinitions:
     """`roam invariants` stamps invariants_definition + breaking_risk_definition."""
 
     def test_invariants_emits_invariants_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["invariants", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["invariants", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "invariants")
         _assert_definition_field(data["summary"], "invariants_definition", "invariants")
 
     def test_invariants_emits_breaking_risk_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["invariants", "create_user"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["invariants", "create_user"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "invariants")
         _assert_definition_field(data["summary"], "breaking_risk_definition", "invariants")
 
@@ -205,17 +181,13 @@ class TestCoverageGapsDefinitions:
             json_mode=True,
         )
         data = _parse_json(result, "coverage-gaps")
-        _assert_definition_field(
-            data["summary"], "coverage_pct_definition", "coverage-gaps"
-        )
+        _assert_definition_field(data["summary"], "coverage_pct_definition", "coverage-gaps")
 
 
 class TestAuditTrailConformanceDefinitions:
     """`roam audit-trail-conformance-check` stamps chain_compliance_score_definition."""
 
-    def test_audit_trail_conformance_emits_score_definition(
-        self, cli_runner, indexed_project
-    ):
+    def test_audit_trail_conformance_emits_score_definition(self, cli_runner, indexed_project):
         # The fixture project has no audit trail, so the command emits
         # the explicit `no_trail` envelope. That envelope MUST still
         # carry chain_compliance_score_definition so consumers reading a
@@ -238,9 +210,7 @@ class TestArticle12CheckDefinitions:
     """`roam article-12-check` stamps governance_compliance_score_definition."""
 
     def test_article_12_check_emits_score_definition(self, cli_runner, indexed_project):
-        result = invoke_cli(
-            cli_runner, ["article-12-check"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["article-12-check"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "article-12-check")
         _assert_definition_field(
             data["summary"],
@@ -248,28 +218,21 @@ class TestArticle12CheckDefinitions:
             "article-12-check",
         )
 
-    def test_article_12_definition_uses_assurance_safe_wording(
-        self, cli_runner, indexed_project
-    ):
+    def test_article_12_definition_uses_assurance_safe_wording(self, cli_runner, indexed_project):
         """The article-12-check definition must use "maps to" / "supports
         evidence for" wording per CLAUDE.md agentic-assurance guardrails
         — never "certifies" / "makes compliant".
         """
-        result = invoke_cli(
-            cli_runner, ["article-12-check"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["article-12-check"], cwd=indexed_project, json_mode=True)
         data = _parse_json(result, "article-12-check")
         value = data["summary"]["governance_compliance_score_definition"].lower()
         forbidden = ("certifies", "certified", "makes compliant", "is compliant")
         for term in forbidden:
-            assert term not in value, (
-                f"article-12-check definition contains forbidden wording {term!r}: {value!r}"
-            )
+            assert term not in value, f"article-12-check definition contains forbidden wording {term!r}: {value!r}"
         # At least ONE of the assurance-safe phrasings must be present.
         approved = ("maps to", "supports evidence", "readiness")
         assert any(phrase in value for phrase in approved), (
-            f"article-12-check definition lacks assurance-safe wording "
-            f"(expected one of {approved}): {value!r}"
+            f"article-12-check definition lacks assurance-safe wording (expected one of {approved}): {value!r}"
         )
 
 
@@ -303,10 +266,7 @@ def test_metric_definitions_have_no_byte_identical_collisions() -> None:
         if value in seen:
             collisions.append(f"{name} == {seen[value]} ({value!r})")
         seen[value] = name
-    assert not collisions, (
-        "Byte-identical metric definitions found — deduplicate:\n  "
-        + "\n  ".join(collisions)
-    )
+    assert not collisions, "Byte-identical metric definitions found — deduplicate:\n  " + "\n  ".join(collisions)
 
 
 def test_metric_definitions_module_is_importable() -> None:

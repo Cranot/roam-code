@@ -35,7 +35,6 @@ import pytest
 import roam.db.connection as conn_mod
 from roam.db.connection import get_connection, open_db
 
-
 # ---------------------------------------------------------------------------
 # mmap_size — 1 GB declared ceiling
 # ---------------------------------------------------------------------------

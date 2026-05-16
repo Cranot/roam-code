@@ -44,7 +44,6 @@ from __future__ import annotations
 
 import ast
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -73,31 +72,120 @@ _CONCRETE_NOUN_ANCHORS: frozenset[str] = frozenset(
     {
         # Mirrored from formatter.py — `_humanize_summary_fact`'s
         # `concrete_plural_terminals`. Keep these two lists in sync.
-        "findings", "symbols", "files", "edges", "nodes", "cycles",
-        "clusters", "layers", "smells", "snapshots", "hotspots", "secrets",
-        "endpoints", "agents", "rules", "commits", "tests", "dependencies",
-        "modules", "directories", "patterns", "alerts", "issues",
-        "violations", "warnings", "errors", "matches", "effects", "events",
-        "queries", "shifts", "moves", "imports", "callers", "callees",
-        "branches", "paths", "routes", "annotations", "types", "languages",
-        "owners", "users", "frameworks", "vulnerabilities", "challenges",
-        "keys", "values", "chars", "characters", "lines", "tokens", "bytes",
-        "items", "entries", "records", "fields", "options", "flags",
+        "findings",
+        "symbols",
+        "files",
+        "edges",
+        "nodes",
+        "cycles",
+        "clusters",
+        "layers",
+        "smells",
+        "snapshots",
+        "hotspots",
+        "secrets",
+        "endpoints",
+        "agents",
+        "rules",
+        "commits",
+        "tests",
+        "dependencies",
+        "modules",
+        "directories",
+        "patterns",
+        "alerts",
+        "issues",
+        "violations",
+        "warnings",
+        "errors",
+        "matches",
+        "effects",
+        "events",
+        "queries",
+        "shifts",
+        "moves",
+        "imports",
+        "callers",
+        "callees",
+        "branches",
+        "paths",
+        "routes",
+        "annotations",
+        "types",
+        "languages",
+        "owners",
+        "users",
+        "frameworks",
+        "vulnerabilities",
+        "challenges",
+        "keys",
+        "values",
+        "chars",
+        "characters",
+        "lines",
+        "tokens",
+        "bytes",
+        "items",
+        "entries",
+        "records",
+        "fields",
+        "options",
+        "flags",
         "literals",
         "markers",
-        "subcommands", "scenarios", "actions", "exits", "leaks", "gaps",
-        "movers", "passed", "failed", "scanned", "checked", "owned",
-        "analysed", "analyzed", "removed", "added", "skipped", "affected",
-        "available", "trending", "scored", "confirmed", "upgrades",
-        "downgrades", "days", "weeks", "months", "years", "hours",
-        "minutes", "seconds", "milliseconds",
+        "subcommands",
+        "scenarios",
+        "actions",
+        "exits",
+        "leaks",
+        "gaps",
+        "movers",
+        "kinds",
+        "passed",
+        "failed",
+        "scanned",
+        "checked",
+        "owned",
+        "analysed",
+        "analyzed",
+        "removed",
+        "added",
+        "skipped",
+        "affected",
+        "available",
+        "trending",
+        "scored",
+        "confirmed",
+        "upgrades",
+        "downgrades",
+        "days",
+        "weeks",
+        "months",
+        "years",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
         # SBOM W18.2 bucketing additions.
-        "packages", "phantom", "reachable", "heuristic", "direct",
+        "packages",
+        "phantom",
+        "reachable",
+        "heuristic",
+        "direct",
         # Commonly-emitted fact terminals from the existing fixed commands.
-        "total", "logged", "reached",
+        "total",
+        "logged",
+        "reached",
         # Roam-domain nouns surfaced in the registry / capability commands.
-        "capabilities", "commands", "checks", "checks-passed", "checks-failed",
-        "schemas", "presets", "tools", "diagnostics",
+        "capabilities",
+        "commands",
+        "checks",
+        "checks-passed",
+        "checks-failed",
+        "schemas",
+        "presets",
+        "tools",
+        "diagnostics",
     }
 )
 
@@ -106,10 +194,29 @@ _CONCRETE_NOUN_ANCHORS: frozenset[str] = frozenset(
 # Mirrors the W12.3 / W17.3 fixes which standardised on analytical verbs.
 _ANALYTICAL_VERBS: frozenset[str] = frozenset(
     {
-        "classified", "flagged", "found", "detected", "introduced",
-        "removed", "added", "scanned", "scored", "computed", "reached",
-        "logged", "ran", "emitted", "reported", "surfaced", "confirmed",
-        "rendered", "blocked", "passed", "failed", "skipped", "verified",
+        "classified",
+        "flagged",
+        "found",
+        "detected",
+        "introduced",
+        "removed",
+        "added",
+        "scanned",
+        "scored",
+        "computed",
+        "reached",
+        "logged",
+        "ran",
+        "emitted",
+        "reported",
+        "surfaced",
+        "confirmed",
+        "rendered",
+        "blocked",
+        "passed",
+        "failed",
+        "skipped",
+        "verified",
         "rejected",
     }
 )
@@ -117,8 +224,20 @@ _ANALYTICAL_VERBS: frozenset[str] = frozenset(
 
 _MEASUREMENT_SUFFIXES: frozenset[str] = frozenset(
     {
-        "score", "count", "total", "size", "depth", "ratio", "rate",
-        "pct", "percent", "percentage", "ms", "bytes", "kb", "mb",
+        "score",
+        "count",
+        "total",
+        "size",
+        "depth",
+        "ratio",
+        "rate",
+        "pct",
+        "percent",
+        "percentage",
+        "ms",
+        "bytes",
+        "kb",
+        "mb",
     }
 )
 
@@ -244,10 +363,7 @@ def _find_fact_strings(tree: ast.AST) -> list[tuple[int, str]]:
             ):
                 for arg in node.args:
                     out.extend(_collect_strings(arg))
-            if (
-                isinstance(node.func, ast.Name)
-                and node.func.id == "dict"
-            ):
+            if isinstance(node.func, ast.Name) and node.func.id == "dict":
                 for kw in node.keywords:
                     if kw.arg == "facts":
                         out.extend(_collect_strings(kw.value))
@@ -348,9 +464,7 @@ def test_static_scan_clean_on_canonical_commands():
         if not path.exists():
             pytest.skip(f"canonical file missing: {fname}")
         v = _scan_command_file(path)
-        assert not v, (
-            f"{fname}: re-introduced weak LAW 4 facts: {v}"
-        )
+        assert not v, f"{fname}: re-introduced weak LAW 4 facts: {v}"
 
 
 def test_static_scan_full_sweep_under_threshold():
@@ -368,8 +482,7 @@ def test_static_scan_full_sweep_under_threshold():
     # Currently 0; W17.3 lint catches future regressions.
     assert len(all_violations) < 50, (
         f"LAW 4 lint: {len(all_violations)} weak facts found "
-        f"(threshold 50). Top 10:\n"
-        + "\n".join(f"  {n}:{l}: {s!r}" for n, l, s in all_violations[:10])
+        f"(threshold 50). Top 10:\n" + "\n".join(f"  {n}:{l}: {s!r}" for n, l, s in all_violations[:10])
     )
 
 
@@ -438,11 +551,7 @@ def test_runtime_scan_health_produces_strong_facts():
         pytest.skip("roam --json health did not return a parseable envelope")
     facts = env.get("agent_contract", {}).get("facts", [])
     assert facts, "health produced no facts"
-    weak = [
-        f for f in facts
-        if not _is_concrete_anchored(f)
-        and f not in _WEAK_RUNTIME_FACTS_ALLOWLIST
-    ]
+    weak = [f for f in facts if not _is_concrete_anchored(f) and f not in _WEAK_RUNTIME_FACTS_ALLOWLIST]
     assert not weak, f"health emitted weak facts (LAW 4): {weak}"
 
 
@@ -458,11 +567,7 @@ def test_runtime_scan_constitution_produces_strong_facts():
     facts = env.get("agent_contract", {}).get("facts", [])
     # Constitution may report 'state: not_initialized' with no extra facts;
     # that's fine — the verdict carries the analytical subject.
-    weak = [
-        f for f in facts
-        if not _is_concrete_anchored(f)
-        and f not in _WEAK_RUNTIME_FACTS_ALLOWLIST
-    ]
+    weak = [f for f in facts if not _is_concrete_anchored(f) and f not in _WEAK_RUNTIME_FACTS_ALLOWLIST]
     assert not weak, f"constitution emitted weak facts (LAW 4): {weak}"
 
 
@@ -486,10 +591,8 @@ def test_runtime_scan_representative_sweep():
             if f in _WEAK_RUNTIME_FACTS_ALLOWLIST:
                 continue
             aggregate_weak.append((label, f))
-    assert not aggregate_weak, (
-        f"LAW 4 runtime sweep: {len(aggregate_weak)} weak facts. "
-        f"Top 10:\n"
-        + "\n".join(f"  {l}: {f!r}" for l, f in aggregate_weak[:10])
+    assert not aggregate_weak, f"LAW 4 runtime sweep: {len(aggregate_weak)} weak facts. Top 10:\n" + "\n".join(
+        f"  {l}: {f!r}" for l, f in aggregate_weak[:10]
     )
 
 
@@ -532,9 +635,7 @@ def test_is_concrete_anchored_helper_pure_unit():
     assert _is_concrete_anchored("useThemeClasses classified hot")
     assert _is_concrete_anchored("idempotency scan flagged 2 non-idempotent")
     # PASS: long sentence with non-numeric lead self-anchors.
-    assert _is_concrete_anchored(
-        "Run roam preflight handleSave before editing"
-    )
+    assert _is_concrete_anchored("Run roam preflight handleSave before editing")
     # FAIL: bare digit + non-anchor word.
     assert not _is_concrete_anchored("5 critical")
     # FAIL: known-abstract verdicts.

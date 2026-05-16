@@ -5,6 +5,16 @@ fragmentation heuristic (free_pages / page_count). When fragmentation
 exceeds ~25%, suggest ``VACUUM`` (or ``roam reset`` for a full
 rebuild). Useful when an index has grown after a long-lived dev
 session and the user wonders if it's bloated.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because index-stats outputs are invocation-scoped index-
+artifact metadata (DB file size, row counts per table, SQLite
+fragmentation percentage) — not per-location code violations in
+user source. The output describes roam's own index artifact, which
+has no source coordinates to populate SARIF ``locations[]``. See
+``cmd_index`` / ``cmd_index_bundle`` for the parallel setup/state
+disclosure pattern (W1224) + action.yml _SUPPORTED_SARIF allowlist +
+W1175-RESEARCH propagation plan + W1224-audit memo.
 """
 
 from __future__ import annotations

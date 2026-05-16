@@ -430,9 +430,7 @@ class TestJsonEnvelopeAgentContract:
         assert "fact1" in env["agent_contract"]["facts"]
         assert "fact2" in env["agent_contract"]["facts"]
         # next_commands still auto-derived from summary:
-        assert any(
-            "roam y" in nc for nc in env["agent_contract"].get("next_commands", [])
-        )
+        assert any("roam y" in nc for nc in env["agent_contract"].get("next_commands", []))
 
     def test_json_envelope_explicit_next_commands_wins(self):
         env = json_envelope(

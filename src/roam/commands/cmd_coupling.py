@@ -1,4 +1,12 @@
-"""Show temporal coupling: files that change together."""
+"""Show temporal coupling: files that change together.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because coupling outputs are invocation-scoped temporal
+co-change rankings — not per-location violations. Multi-file expansion
+would distort SARIF semantics. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket B propagation plan + W1148 audit
+memo.
+"""
 
 from __future__ import annotations
 

@@ -42,7 +42,6 @@ from roam.security.taint_engine import (
     vex_justification_for,
 )
 
-
 # W122: taint is the fifth detector migrating onto the central findings
 # registry (after `clones` W95, `dead` W99, `complexity` W102, `n1`
 # W110). The shape mirrors those — a stable detector version stamp and
@@ -138,8 +137,7 @@ def _classify_flow_shape(conn, path_ids: list[int], path_truncated: bool) -> str
     # Check every consecutive pair has a directed call/reference edge.
     for src, tgt in zip(path_ids, path_ids[1:]):
         row = conn.execute(
-            f"SELECT 1 FROM edges WHERE source_id = ? AND target_id = ? "
-            f"AND {call_or_ref_in_clause()} LIMIT 1",
+            f"SELECT 1 FROM edges WHERE source_id = ? AND target_id = ? AND {call_or_ref_in_clause()} LIMIT 1",
             (src, tgt),
         ).fetchone()
         if row is None:
@@ -495,6 +493,10 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
                                 "partial_success": True,
                                 "rules": len(rules),
                                 "findings": 0,
+                                # Keep the distribution shape consistent with the
+                                # populated-corpus branch (line 611) so consumers
+                                # don't have to special-case empty_corpus.
+                                "findings_confidence_distribution": {"high": 0, "medium": 0, "low": 0},
                             },
                             rules_dir=str(rules_path),
                             rule_ids=[r.rule_id for r in rules],

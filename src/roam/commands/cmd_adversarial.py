@@ -4,6 +4,12 @@ Acts as a 'Dungeon Master' for code changes: generates targeted architectural
 challenges based on graph topology. Composes existing tools (diff, cycles,
 clusters, detectors, layers) to find structural issues and frames them as
 adversarial questions the developer must address.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because adversarial outputs are invocation-scoped architectural
+challenges — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -698,22 +704,13 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                     f"architectural challenges across {len(file_map)} changed files"
                 )
             if high:
-                facts.append(
-                    f"adversarial review flagged {high} HIGH-severity challenges"
-                )
+                facts.append(f"adversarial review flagged {high} HIGH-severity challenges")
             if warning:
-                facts.append(
-                    f"adversarial review surfaced {warning} warning(s)"
-                )
+                facts.append(f"adversarial review surfaced {warning} warning(s)")
             if challenges:
                 top = challenges[0]
-                top_title = (
-                    top.get("title") or top.get("message") or top.get("category") or "?"
-                )
-                facts.append(
-                    f"highest-priority challenge: [{top.get('severity', '?')}] "
-                    f"{top_title}"
-                )
+                top_title = top.get("title") or top.get("message") or top.get("category") or "?"
+                facts.append(f"highest-priority challenge: [{top.get('severity', '?')}] {top_title}")
             next_commands: list[str] = ["roam preflight", "roam critique"]
             if critical:
                 next_commands.insert(0, "roam diff")

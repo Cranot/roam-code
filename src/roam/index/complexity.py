@@ -934,15 +934,9 @@ def _extract_loop_vars(loop_node, source: bytes) -> set[str]:
                         name_node = sub
                         break
             if name_node is not None:
-                result.add(
-                    source[name_node.start_byte : name_node.end_byte].decode(
-                        "utf-8", errors="replace"
-                    )
-                )
+                result.add(source[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace"))
             else:
-                raw = source[child.start_byte : child.end_byte].decode(
-                    "utf-8", errors="replace"
-                )
+                raw = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
                 result.add(raw.lstrip("$"))
         # Python pattern_list / tuple: for x, y in ...
         elif child.type in ("pattern_list", "tuple_pattern", "pair"):
@@ -1070,9 +1064,7 @@ def _equality_operands(cmp_node, source: bytes):
     named = [c for c in cmp_node.children if c.is_named]
     # Find the operator token among the unnamed children.
     op_tokens = [
-        source[c.start_byte : c.end_byte].decode("utf-8", errors="replace")
-        for c in cmp_node.children
-        if not c.is_named
+        source[c.start_byte : c.end_byte].decode("utf-8", errors="replace") for c in cmp_node.children if not c.is_named
     ]
     has_eq = any(t in _EQ_OPS for t in op_tokens)
     if not has_eq:
@@ -1126,7 +1118,10 @@ def _if_condition_node(if_node):
     if cond is None:
         return None
     # Unwrap parenthesized_expression / parenthesized_expression-like wrappers.
-    if cond.type in ("parenthesized_expression", "parenthesized_expression",):
+    if cond.type in (
+        "parenthesized_expression",
+        "parenthesized_expression",
+    ):
         for c in cond.children:
             if c.is_named:
                 return c
@@ -1177,9 +1172,7 @@ def _branch_has_dependent_write(branch_node, source: bytes, vars_of_interest: se
     return False
 
 
-def _check_equality_with_dependent_write(
-    if_node, source: bytes, loop_vars: set[str], state: _MathSignalState
-) -> None:
+def _check_equality_with_dependent_write(if_node, source: bytes, loop_vars: set[str], state: _MathSignalState) -> None:
     """If ``if_node`` is an if-statement whose condition compares two
     different per-iteration variables for equality AND whose then-branch
     writes to one of them, set the discriminator flag on ``state``."""

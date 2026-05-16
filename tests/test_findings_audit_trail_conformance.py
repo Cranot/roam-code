@@ -35,16 +35,15 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_audit_trail_conformance import (
-    AUDIT_TRAIL_CONFORMANCE_DETECTOR_VERSION,
     _AUDIT_TRAIL_CONFORMANCE_KIND_TO_CONFIDENCE,
+    AUDIT_TRAIL_CONFORMANCE_DETECTOR_VERSION,
     _audit_trail_conformance_finding_id,
     _emit_audit_trail_conformance_findings,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -96,9 +95,7 @@ def _now_iso():
 
 
 def _old_iso(days):
-    return (
-        _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
-    ).isoformat().replace("+00:00", "Z")
+    return (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat().replace("+00:00", "Z")
 
 
 def _failing_project(tmp_path):
@@ -206,9 +203,7 @@ def test_audit_trail_conformance_emits_to_findings_registry(tmp_path):
                 "       subject_kind, subject_id, confidence "
                 "FROM findings WHERE source_detector = 'audit-trail-conformance'"
             ).fetchall()
-        assert len(rows) >= 1, (
-            "expected at least one audit-trail-conformance finding row"
-        )
+        assert len(rows) >= 1, "expected at least one audit-trail-conformance finding row"
         kinds_seen = set()
         for r in rows:
             assert r["source_detector"] == "audit-trail-conformance"
@@ -234,27 +229,15 @@ def test_audit_trail_conformance_emits_to_findings_registry(tmp_path):
 
 def test_audit_trail_conformance_finding_id_is_deterministic():
     """_audit_trail_conformance_finding_id returns the same id for the same input."""
-    a = _audit_trail_conformance_finding_id(
-        "chain_integrity", ".roam/audit-trail.jsonl"
-    )
-    b = _audit_trail_conformance_finding_id(
-        "chain_integrity", ".roam/audit-trail.jsonl"
-    )
+    a = _audit_trail_conformance_finding_id("chain_integrity", ".roam/audit-trail.jsonl")
+    b = _audit_trail_conformance_finding_id("chain_integrity", ".roam/audit-trail.jsonl")
     assert a == b
     assert a.startswith("audit-trail-conformance:chain_integrity:")
     # Different check_id → different id.
-    assert (
-        _audit_trail_conformance_finding_id("retention", ".roam/audit-trail.jsonl")
-        != a
-    )
+    assert _audit_trail_conformance_finding_id("retention", ".roam/audit-trail.jsonl") != a
     # Different audit_trail_path → different id (so two repos with
     # both failing the same check get distinct registry rows).
-    assert (
-        _audit_trail_conformance_finding_id(
-            "chain_integrity", ".roam/other-trail.jsonl"
-        )
-        != a
-    )
+    assert _audit_trail_conformance_finding_id("chain_integrity", ".roam/other-trail.jsonl") != a
 
 
 def test_audit_trail_conformance_rerun_upserts_not_duplicates(tmp_path):
@@ -269,17 +252,13 @@ def test_audit_trail_conformance_rerun_upserts_not_duplicates(tmp_path):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'audit-trail-conformance'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'audit-trail-conformance'"
                 ).fetchall()
             }
             first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'audit-trail-conformance'"
+                "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-conformance'"
             ).fetchone()[0]
-        assert first_count == len(first_ids), (
-            "duplicate finding_id_str rows on first run"
-        )
+        assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same fixture, same predicates → same ids.
         runner = CliRunner()
@@ -298,13 +277,11 @@ def test_audit_trail_conformance_rerun_upserts_not_duplicates(tmp_path):
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'audit-trail-conformance'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'audit-trail-conformance'"
                 ).fetchall()
             }
             second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'audit-trail-conformance'"
+                "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-conformance'"
             ).fetchone()[0]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
@@ -401,15 +378,13 @@ def test_audit_trail_conformance_kind_tier_mapping_static_analysis(tmp_path):
         )
         assert written == len(checks)
         rows = conn.execute(
-            "SELECT evidence_json, confidence FROM findings "
-            "WHERE source_detector = 'audit-trail-conformance'"
+            "SELECT evidence_json, confidence FROM findings WHERE source_detector = 'audit-trail-conformance'"
         ).fetchall()
         assert len(rows) == len(checks)
         for r in rows:
             ev = json.loads(r["evidence_json"])
             assert r["confidence"] == "static_analysis", (
-                f"check_id {ev['check_id']!r} expected static_analysis, "
-                f"got {r['confidence']!r}"
+                f"check_id {ev['check_id']!r} expected static_analysis, got {r['confidence']!r}"
             )
 
 
@@ -432,8 +407,7 @@ def test_audit_trail_conformance_kind_tier_mapping_heuristic(tmp_path):
         )
         assert written == 1
         row = conn.execute(
-            "SELECT confidence FROM findings "
-            "WHERE source_detector = 'audit-trail-conformance'"
+            "SELECT confidence FROM findings WHERE source_detector = 'audit-trail-conformance'"
         ).fetchone()
         assert row["confidence"] == "heuristic"
 
@@ -462,8 +436,7 @@ def test_audit_trail_conformance_kind_tier_fallback_is_heuristic(tmp_path):
         )
         assert written == 1
         row = conn.execute(
-            "SELECT confidence FROM findings "
-            "WHERE source_detector = 'audit-trail-conformance'"
+            "SELECT confidence FROM findings WHERE source_detector = 'audit-trail-conformance'"
         ).fetchone()
         assert row["confidence"] == "heuristic"
 
@@ -488,8 +461,7 @@ def test_audit_trail_conformance_kind_mapping_covers_all_six_checks():
     mapped_kinds = set(_AUDIT_TRAIL_CONFORMANCE_KIND_TO_CONFIDENCE.keys())
     missing = expected_kinds - mapped_kinds
     assert not missing, (
-        f"checks emitted by the scorer but missing from "
-        f"_AUDIT_TRAIL_CONFORMANCE_KIND_TO_CONFIDENCE: {sorted(missing)}"
+        f"checks emitted by the scorer but missing from _AUDIT_TRAIL_CONFORMANCE_KIND_TO_CONFIDENCE: {sorted(missing)}"
     )
 
 
@@ -513,12 +485,9 @@ def test_audit_trail_conformance_passing_checks_do_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'audit-trail-conformance'"
+                "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-conformance'"
             ).fetchone()[0]
-        assert count == 0, (
-            f"expected 0 findings on a conformant trail, got {count}"
-        )
+        assert count == 0, f"expected 0 findings on a conformant trail, got {count}"
     finally:
         os.chdir(old_cwd)
 
@@ -548,8 +517,7 @@ def test_audit_trail_conformance_emit_helper_skips_passed_checks(tmp_path):
         )
         assert written == 1, "only the failing retention check should be emitted"
         rows = conn.execute(
-            "SELECT finding_id_str FROM findings "
-            "WHERE source_detector = 'audit-trail-conformance'"
+            "SELECT finding_id_str FROM findings WHERE source_detector = 'audit-trail-conformance'"
         ).fetchall()
         assert len(rows) == 1
         assert rows[0][0].startswith("audit-trail-conformance:retention:")
@@ -587,8 +555,7 @@ def test_audit_trail_conformance_emit_helper_skips_not_run_state(tmp_path):
         )
         assert written == 0, "not_run checks must not become findings"
         rows = conn.execute(
-            "SELECT COUNT(*) FROM findings "
-            "WHERE source_detector = 'audit-trail-conformance'"
+            "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-conformance'"
         ).fetchone()
         assert rows[0] == 0
 
@@ -623,10 +590,7 @@ def test_audit_trail_conformance_findings_visible_via_cmd_findings_list(tmp_path
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "audit-trail-conformance" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "audit-trail-conformance"
-            for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "audit-trail-conformance" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -675,14 +639,11 @@ def test_no_persist_does_not_emit_findings(tmp_path):
         with open_db(readonly=True) as conn:
             try:
                 count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'audit-trail-conformance'"
+                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-conformance'"
                 ).fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
-        assert count == 0, (
-            "non-persist audit-trail-conformance still wrote to findings"
-        )
+        assert count == 0, "non-persist audit-trail-conformance still wrote to findings"
     finally:
         os.chdir(old_cwd)
 
@@ -753,11 +714,8 @@ def test_audit_trail_conformance_persist_no_trail_no_crash(tmp_path):
 
         with open_db(readonly=True) as conn:
             count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'audit-trail-conformance'"
+                "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-conformance'"
             ).fetchone()[0]
-        assert count == 0, (
-            "absent-trail persist branch must not fabricate findings"
-        )
+        assert count == 0, "absent-trail persist branch must not fabricate findings"
     finally:
         os.chdir(old_cwd)

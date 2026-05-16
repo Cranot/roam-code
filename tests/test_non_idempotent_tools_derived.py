@@ -24,7 +24,6 @@ collapse has regressed.
 
 from __future__ import annotations
 
-
 # The pre-collapse hardcoded set. Before W113, ``_NON_IDEMPOTENT_TOOLS``
 # was a ``.copy()`` of ``_NON_READ_ONLY_TOOLS`` (W108) — same 6 tools.
 # Treat this as the regression floor.
@@ -46,8 +45,7 @@ def test_non_idempotent_tools_is_frozenset() -> None:
     from roam.mcp_server import _NON_IDEMPOTENT_TOOLS
 
     assert isinstance(_NON_IDEMPOTENT_TOOLS, frozenset), (
-        f"_NON_IDEMPOTENT_TOOLS must be a frozenset, got "
-        f"{type(_NON_IDEMPOTENT_TOOLS).__name__}"
+        f"_NON_IDEMPOTENT_TOOLS must be a frozenset, got {type(_NON_IDEMPOTENT_TOOLS).__name__}"
     )
 
 
@@ -58,9 +56,7 @@ def test_non_idempotent_tools_derived_from_metadata() -> None:
     """
     from roam.mcp_server import _NON_IDEMPOTENT_TOOLS, _TOOL_METADATA
 
-    expected = frozenset(
-        name for name, meta in _TOOL_METADATA.items() if not meta.get("idempotent", True)
-    )
+    expected = frozenset(name for name, meta in _TOOL_METADATA.items() if not meta.get("idempotent", True))
     assert _NON_IDEMPOTENT_TOOLS == expected, (
         "_NON_IDEMPOTENT_TOOLS is no longer derived from _TOOL_METADATA. "
         "If you added a non-idempotent tool, set idempotent=False on its "
@@ -139,8 +135,7 @@ def test_default_idempotent_is_true() -> None:
         "so a missing entry indicates the decorator path is broken."
     )
     assert meta.get("idempotent") is True, (
-        "roam_health metadata lacks idempotent=True. The @_tool default "
-        "kwarg failed to propagate to _TOOL_METADATA."
+        "roam_health metadata lacks idempotent=True. The @_tool default kwarg failed to propagate to _TOOL_METADATA."
     )
 
 
@@ -154,9 +149,7 @@ def test_idempotent_decorator_kwarg_propagates_to_metadata() -> None:
 
     for name in PRE_COLLAPSE_NON_IDEMPOTENT:
         meta = mcp._TOOL_METADATA.get(name)
-        assert meta is not None, (
-            f"_TOOL_METADATA missing {name!r} — decorator did not register it."
-        )
+        assert meta is not None, f"_TOOL_METADATA missing {name!r} — decorator did not register it."
         assert meta.get("idempotent") is False, (
             f"{name} metadata has idempotent={meta.get('idempotent')!r}, "
             f"expected False. The @_tool(idempotent=False) kwarg failed to "
@@ -209,12 +202,8 @@ def test_idempotent_axis_independent_of_read_only() -> None:
     import roam.mcp_server as mcp
 
     sig = inspect.signature(mcp._tool)
-    assert "read_only" in sig.parameters, (
-        "_tool decorator is missing the read_only kwarg — W108 regressed."
-    )
-    assert "idempotent" in sig.parameters, (
-        "_tool decorator is missing the idempotent kwarg — W113 regressed."
-    )
+    assert "read_only" in sig.parameters, "_tool decorator is missing the read_only kwarg — W108 regressed."
+    assert "idempotent" in sig.parameters, "_tool decorator is missing the idempotent kwarg — W113 regressed."
 
     # Both kwargs default to True (the safe assumption). The defaults
     # being identical is incidental — the kwargs are still independent.
@@ -225,12 +214,8 @@ def test_idempotent_axis_independent_of_read_only() -> None:
     # We pick a sample tool and assert both keys exist (regardless of value).
     meta = mcp._TOOL_METADATA.get("roam_health")
     assert meta is not None
-    assert "read_only" in meta, (
-        "_TOOL_METADATA missing read_only slot — W108 regressed."
-    )
-    assert "idempotent" in meta, (
-        "_TOOL_METADATA missing idempotent slot — W113 regressed."
-    )
+    assert "read_only" in meta, "_TOOL_METADATA missing read_only slot — W108 regressed."
+    assert "idempotent" in meta, "_TOOL_METADATA missing idempotent slot — W113 regressed."
 
     # Document the current coincidence in a soft assertion: today, the
     # two derived views are equal. If a future tool intentionally breaks

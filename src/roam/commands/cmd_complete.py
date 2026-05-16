@@ -6,6 +6,12 @@ semantics. Critical contract: the ``prefix`` argument means **literal
 left-anchored prefix match**, not substring or fuzzy. ``use`` matches
 ``useFoo`` and ``useBar`` but NOT ``MyUseFoo`` — the previous behaviour
 mismatched that promise and returned substring hits.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because complete outputs are invocation-scoped prefix-match
+enumerations — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

@@ -167,9 +167,7 @@ def test_autodetect_consults_plugin_detector_when_core_misses(monkeypatch, tmp_p
         from roam.catalog.detectors import autodetect_framework_profile
 
         result = autodetect_framework_profile()
-        assert result == "plugin-rails", (
-            f"expected plugin detector to fire after core misses, got {result!r}"
-        )
+        assert result == "plugin-rails", f"expected plugin detector to fire after core misses, got {result!r}"
     finally:
         plugins._reset_plugin_state_for_tests()
         sys.modules.pop(PLUGIN_MODULE, None)
@@ -196,9 +194,7 @@ def test_rails_detected_with_plugin(monkeypatch, tmp_path):
         from roam.catalog.detectors import autodetect_framework_profile
 
         result = autodetect_framework_profile()
-        assert result == "rails", (
-            f"expected plugin detector to resolve Gemfile to 'rails', got {result!r}"
-        )
+        assert result == "rails", f"expected plugin detector to resolve Gemfile to 'rails', got {result!r}"
     finally:
         plugins._reset_plugin_state_for_tests()
         sys.modules.pop(PLUGIN_MODULE, None)
@@ -228,9 +224,7 @@ def test_rails_not_detected_without_plugin(monkeypatch, tmp_path):
         from roam.catalog.detectors import autodetect_framework_profile
 
         result = autodetect_framework_profile()
-        assert result is None, (
-            f"core should be silent on Rails without the plugin; got {result!r}"
-        )
+        assert result is None, f"core should be silent on Rails without the plugin; got {result!r}"
     finally:
         plugins._reset_plugin_state_for_tests()
         sys.modules.pop(PLUGIN_MODULE, None)
@@ -257,9 +251,7 @@ def _roam_available() -> bool:
     in-process discovery tests above.
     """
     try:
-        result = subprocess.run(
-            ["roam", "--version"], capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run(["roam", "--version"], capture_output=True, text=True, timeout=10)
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False

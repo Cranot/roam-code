@@ -25,7 +25,6 @@ from roam.evidence import (
     PolicyDecision,
 )
 
-
 # ---------------------------------------------------------------------------
 # Construction-time validation
 # ---------------------------------------------------------------------------
@@ -98,12 +97,14 @@ def test_policy_decision_from_dict_requires_decision() -> None:
 
 def test_policy_decision_from_dict_stuffs_unknown_keys_into_extra() -> None:
     """Producer rows carry many free-form keys; they end up in ``extra``."""
-    pd = PolicyDecision.from_dict({
-        "rule_id": "constitution:before_edit",
-        "decision": "not_evaluated",
-        "evidence_ref": "constitution:before_edit",
-        "command_count": 3,
-    })
+    pd = PolicyDecision.from_dict(
+        {
+            "rule_id": "constitution:before_edit",
+            "decision": "not_evaluated",
+            "evidence_ref": "constitution:before_edit",
+            "command_count": 3,
+        }
+    )
     assert pd.rule_id == "constitution:before_edit"
     assert pd.decision == "not_evaluated"
     assert pd.evidence_ref == "constitution:before_edit"
@@ -226,20 +227,11 @@ def test_change_evidence_accepts_dict_rows_for_policy_decisions() -> None:
 
     # Internal normalisation kicked in - dict rows became typed
     # PolicyDecisions on the dict-rows packet.
-    assert all(
-        isinstance(pd, PolicyDecision)
-        for pd in pkt_from_dicts.policy_decisions
-    )
+    assert all(isinstance(pd, PolicyDecision) for pd in pkt_from_dicts.policy_decisions)
 
     # Canonical-JSON bytes match - the content_hash is therefore equal.
-    assert (
-        pkt_from_dicts.to_canonical_json()
-        == pkt_from_objects.to_canonical_json()
-    )
-    assert (
-        pkt_from_dicts.compute_content_hash()
-        == pkt_from_objects.compute_content_hash()
-    )
+    assert pkt_from_dicts.to_canonical_json() == pkt_from_objects.to_canonical_json()
+    assert pkt_from_dicts.compute_content_hash() == pkt_from_objects.compute_content_hash()
 
 
 def test_change_evidence_preserves_non_conforming_rows() -> None:
@@ -267,12 +259,14 @@ def test_change_evidence_canonical_json_contains_flat_keys() -> None:
     pkt = ChangeEvidence(
         evidence_id="ev_w279_canonical",
         policy_decisions=(
-            PolicyDecision.from_dict({
-                "rule_id": "rule_a",
-                "decision": "pass",
-                "evidence_ref": "rule:rule_a",
-                "severity": "low",
-            }),
+            PolicyDecision.from_dict(
+                {
+                    "rule_id": "rule_a",
+                    "decision": "pass",
+                    "evidence_ref": "rule:rule_a",
+                    "severity": "low",
+                }
+            ),
         ),
     )
     payload = json.loads(pkt.to_canonical_json())
@@ -306,6 +300,7 @@ def test_change_evidence_round_trip_via_canonical_json() -> None:
     # Rebuild from the canonical JSON dict-row shape (simulates a
     # consumer that parsed the packet off the wire).
     import json
+
     payload = json.loads(pkt.to_canonical_json())
     rebuilt_rows = payload["policy_decisions"]
     rebuilt = ChangeEvidence(
@@ -370,11 +365,10 @@ def test_change_evidence_preserves_legacy_dict_when_decision_missing() -> None:
     # shape that the v0_full golden fixture relies on.
     packet2 = ChangeEvidence(
         evidence_id="ev_w279b_legacy2",
-        policy_decisions=(
-            {"rule": "no_unguarded_io", "decision": "allow"},
-        ),
+        policy_decisions=({"rule": "no_unguarded_io", "decision": "allow"},),
     )
     assert len(packet2.policy_decisions) == 1
     assert packet2.policy_decisions[0] == {
-        "rule": "no_unguarded_io", "decision": "allow",
+        "rule": "no_unguarded_io",
+        "decision": "allow",
     }

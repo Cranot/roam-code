@@ -652,9 +652,7 @@ _DEV_FILE_MARKERS = frozenset(
 )
 
 
-_SUBDIR_DEP_FILES: frozenset[str] = frozenset(
-    {"composer.json", "package.json", "go.mod", "Cargo.toml", "Gemfile"}
-)
+_SUBDIR_DEP_FILES: frozenset[str] = frozenset({"composer.json", "package.json", "go.mod", "Cargo.toml", "Gemfile"})
 
 _SUBDIR_SKIP: frozenset[str] = frozenset(
     {"node_modules", ".git", ".roam", "vendor", "dist", "build", "out", "coverage"}

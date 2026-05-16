@@ -273,10 +273,7 @@ def verify_chain(events: list[dict], key: bytes) -> dict:
                 "first_tamper_at_seq": seq,
                 "partial_success": False,
                 "final_signature": last_good_sig,
-                "details": (
-                    f"event seq={seq} is missing the 'signature' field "
-                    f"after a signed prefix"
-                ),
+                "details": (f"event seq={seq} is missing the 'signature' field after a signed prefix"),
             }
         expected = compute_event_signature(prev_sig, event, key)
         if not hmac.compare_digest(expected, stored):
@@ -286,9 +283,7 @@ def verify_chain(events: list[dict], key: bytes) -> dict:
                 "first_tamper_at_seq": seq,
                 "partial_success": False,
                 "final_signature": last_good_sig,
-                "details": (
-                    f"signature mismatch at seq={seq}: chain breaks here"
-                ),
+                "details": (f"signature mismatch at seq={seq}: chain breaks here"),
             }
         prev_sig = stored
         last_good_sig = stored

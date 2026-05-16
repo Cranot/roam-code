@@ -18,7 +18,6 @@ command emits: ``queries``, ``indexes``, ``findings``, ``markers``.
 from __future__ import annotations
 
 import json as _json
-import os
 import sys
 from pathlib import Path
 
@@ -29,9 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process  # noqa: E402
 
 
-def test_w807_missing_index_empty_corpus_emits_no_migrations_envelope(
-    tmp_path, monkeypatch
-):
+def test_w807_missing_index_empty_corpus_emits_no_migrations_envelope(tmp_path, monkeypatch):
     """Empty-corpus smoke: a project with only a Python file (zero PHP
     migrations) must yield a structured ``missing-index`` envelope whose
     verdict mentions the absent-migrations state, NOT a default success.
@@ -64,9 +61,7 @@ def test_w807_missing_index_empty_corpus_emits_no_migrations_envelope(
     result = runner.invoke(cli, ["--json", "missing-index"])
 
     # Exit 0 — the command ran cleanly even with an empty corpus.
-    assert result.exit_code == 0, (
-        f"missing-index exited {result.exit_code}; output={result.output!r}"
-    )
+    assert result.exit_code == 0, f"missing-index exited {result.exit_code}; output={result.output!r}"
 
     # Structured envelope parses.
     env = _json.loads(result.output)
@@ -88,30 +83,23 @@ def test_w807_missing_index_empty_corpus_emits_no_migrations_envelope(
         "no migration files",
     )
     assert any(m in lowered for m in empty_markers), (
-        "verdict must disclose empty-corpus state; "
-        f"got {verdict!r}, expected one of {empty_markers}"
+        f"verdict must disclose empty-corpus state; got {verdict!r}, expected one of {empty_markers}"
     )
     # The default-success string is a silent-fallback failure mode.
     assert "no missing indexes detected" not in lowered, (
-        "verdict must NOT emit the default success string on empty corpus; "
-        f"got {verdict!r}"
+        f"verdict must NOT emit the default success string on empty corpus; got {verdict!r}"
     )
 
     # partial_success — xfail-strict if the field is missing entirely
     # (the canonical Pattern-2 envelope MUST carry it).
     if "partial_success" not in summary:
-        pytest.xfail(
-            "summary.partial_success missing — required by Pattern 2 "
-            "empty-state framing contract"
-        )
+        pytest.xfail("summary.partial_success missing — required by Pattern 2 empty-state framing contract")
     assert summary["partial_success"] is False or summary["partial_success"] is True, (
         f"partial_success must be a bool; got {summary['partial_success']!r}"
     )
 
     # state field — confirm it's the structured no_migrations marker.
-    assert summary.get("state") == "no_migrations", (
-        f"state must be 'no_migrations'; got {summary.get('state')!r}"
-    )
+    assert summary.get("state") == "no_migrations", f"state must be 'no_migrations'; got {summary.get('state')!r}"
     assert summary.get("migrations_scanned") == 0
     assert summary.get("total") == 0
 
@@ -119,9 +107,5 @@ def test_w807_missing_index_empty_corpus_emits_no_migrations_envelope(
     # facts must reach the consumer in the empty case too).
     agent_contract = env.get("agent_contract") or {}
     facts = agent_contract.get("facts") or []
-    assert isinstance(facts, list) and len(facts) > 0, (
-        f"agent_contract.facts must be non-empty; got {facts!r}"
-    )
-    assert all(isinstance(f, str) and f for f in facts), (
-        f"each fact must be a non-empty string; got {facts!r}"
-    )
+    assert isinstance(facts, list) and len(facts) > 0, f"agent_contract.facts must be non-empty; got {facts!r}"
+    assert all(isinstance(f, str) and f for f in facts), f"each fact must be a non-empty string; got {facts!r}"

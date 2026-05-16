@@ -26,10 +26,8 @@ Scope:
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
-
 
 REPO_ROOT = repo_root()
 _SRC_DIR = REPO_ROOT / "src"
@@ -50,17 +48,11 @@ def test_bus_factor_renamed_field_produces_clean_fact():
     Verifies both the source-level rename and the auto-derived fact
     string produced by the formatter for the new key.
     """
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_bus_factor.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_bus_factor.py").read_text(encoding="utf-8")
     # The new key MUST appear at least twice (no-data envelope + main envelope):
-    assert src.count('"directories_analyzed"') >= 2, (
-        "Both bus-factor envelopes must use the renamed field"
-    )
+    assert src.count('"directories_analyzed"') >= 2, "Both bus-factor envelopes must use the renamed field"
     # The old key MUST be gone from the envelope-assembly code:
-    assert '"directory_count":' not in src, (
-        "Old ``directory_count`` field name must be removed from envelope assembly"
-    )
+    assert '"directory_count":' not in src, "Old ``directory_count`` field name must be removed from envelope assembly"
 
     # And the formatter humanizer must render the new key cleanly.
     from roam.output.formatter import json_envelope
@@ -92,22 +84,16 @@ def test_auth_gaps_zero_count_suppressed():
     facts list must omit those zero buckets entirely. Pre-W21.7 the
     auto-derive emitted three lines of ``"0 X findings"`` noise.
     """
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_auth_gaps.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_auth_gaps.py").read_text(encoding="utf-8")
     # The fix uses an explicit-facts loop that only appends non-zero
     # severities. The construct should be present in source so future
     # edits can't silently revert to auto-derive.
-    assert "explicit_facts" in src, (
-        "auth-gaps must build an explicit_facts list for the agent_contract"
-    )
+    assert "explicit_facts" in src, "auth-gaps must build an explicit_facts list for the agent_contract"
     assert 'agent_contract={"facts": explicit_facts}' in src, (
         "auth-gaps must pin the explicit facts onto agent_contract"
     )
     # The zero-skip guard:
-    assert "if n > 0" in src, (
-        "auth-gaps must skip zero-severity rows from the facts list"
-    )
+    assert "if n > 0" in src, "auth-gaps must skip zero-severity rows from the facts list"
 
     # Verify the resulting envelope shape with a synthesized summary —
     # mirrors what the command emits when total == 0.
@@ -179,16 +165,12 @@ def test_hotspots_zero_total_explicit_fact():
     ``"no security hotspots above threshold"`` fact replaces the
     auto-derived ``"0 total findings"`` noise.
     """
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_hotspots.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_hotspots.py").read_text(encoding="utf-8")
     # Source-level: the explicit-facts branch must exist.
     assert "no security hotspots above threshold" in src, (
         "hotspots must pin an explicit healthy-codebase fact when total == 0"
     )
-    assert "if total == 0" in src, (
-        "hotspots must explicitly key off the zero-total case"
-    )
+    assert "if total == 0" in src, "hotspots must explicitly key off the zero-total case"
 
     # Envelope construction — synthesise the zero-hotspots payload and
     # verify the facts list contains the explicit anchor.
@@ -234,16 +216,10 @@ def test_capabilities_no_redundant_count_fact():
     redundant ``"count N"`` auto-derived fact (the verdict already
     names the count) is suppressed.
     """
-    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_capabilities.py").read_text(
-        encoding="utf-8"
-    )
+    src = (REPO_ROOT / "src" / "roam" / "commands" / "cmd_capabilities.py").read_text(encoding="utf-8")
     # The explicit-facts construct must be present.
-    assert "explicit_facts" in src, (
-        "capabilities must build an explicit_facts list"
-    )
-    assert "agent_contract={" in src, (
-        "capabilities must pin agent_contract on the envelope"
-    )
+    assert "explicit_facts" in src, "capabilities must build an explicit_facts list"
+    assert "agent_contract={" in src, "capabilities must pin agent_contract on the envelope"
 
     # Envelope construction — emulate the command's verdict + explicit
     # facts and verify the facts list does NOT include "count 10".

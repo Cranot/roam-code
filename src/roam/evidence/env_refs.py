@@ -148,9 +148,7 @@ def build_environment_refs(
         refs.append(EnvironmentRef(env_kind="workspace", env_id=workspace_id))
 
     if isinstance(commit_range, str) and commit_range:
-        refs.append(
-            EnvironmentRef(env_kind="branch_range", env_id=commit_range)
-        )
+        refs.append(EnvironmentRef(env_kind="branch_range", env_id=commit_range))
 
     if ci_env_id is None:
         try:

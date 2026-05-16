@@ -39,7 +39,6 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
-
 # ---------------------------------------------------------------------------
 # Drift 1a: pr-risk envelope carries both author and actor
 # ---------------------------------------------------------------------------
@@ -92,17 +91,14 @@ def test_pr_risk_envelope_carries_both_author_and_actor(indexed_project):
 
         # Both keys present at the top level of the envelope.
         assert "author" in payload, (
-            "pr-risk envelope is missing the git-blame ``author`` field "
-            "(W198 back-compat surface)"
+            "pr-risk envelope is missing the git-blame ``author`` field (W198 back-compat surface)"
         )
         assert "actor" in payload, (
-            "pr-risk envelope is missing the ``actor`` field "
-            "(W198 / W182 ActorRef crosswalk vocabulary)"
+            "pr-risk envelope is missing the ``actor`` field (W198 / W182 ActorRef crosswalk vocabulary)"
         )
         # Same identity — they're two names for one value.
         assert payload["author"] == payload["actor"], (
-            "pr-risk ``author`` and ``actor`` should hold the same "
-            "value; got author={!r} actor={!r}".format(
+            "pr-risk ``author`` and ``actor`` should hold the same value; got author={!r} actor={!r}".format(
                 payload["author"], payload["actor"]
             )
         )
@@ -127,17 +123,9 @@ def test_pr_risk_suggested_reviewers_carry_both_author_and_actor(indexed_project
         # that's a valid envelope state. Only enforce the contract on
         # rows that exist.
         for row in reviewers:
-            assert "author" in row, (
-                "suggested_reviewers row missing ``author`` (git-blame): "
-                f"{row!r}"
-            )
-            assert "actor" in row, (
-                "suggested_reviewers row missing ``actor`` (crosswalk): "
-                f"{row!r}"
-            )
-            assert row["author"] == row["actor"], (
-                f"suggested_reviewers row drift: {row!r}"
-            )
+            assert "author" in row, f"suggested_reviewers row missing ``author`` (git-blame): {row!r}"
+            assert "actor" in row, f"suggested_reviewers row missing ``actor`` (crosswalk): {row!r}"
+            assert row["author"] == row["actor"], f"suggested_reviewers row drift: {row!r}"
     finally:
         os.chdir(old_cwd)
 
@@ -158,9 +146,7 @@ def test_bus_factor_envelope_carries_both_author_and_actor(indexed_project):
         os.chdir(str(indexed_project))
         # ``--force-team-mode`` keeps the full ranking surface even on a
         # single-author fixture so the directories[] array isn't empty.
-        result = runner.invoke(
-            cli, ["--json", "bus-factor", "--force-team-mode"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["--json", "bus-factor", "--force-team-mode"], catch_exceptions=False)
         assert result.exit_code == 0, result.output
 
         payload = json.loads(result.output)
@@ -176,12 +162,10 @@ def test_bus_factor_envelope_carries_both_author_and_actor(indexed_project):
 
         for row in directories:
             assert "primary_author" in row, (
-                "bus-factor directory row missing ``primary_author`` "
-                f"(git-blame back-compat): {row!r}"
+                f"bus-factor directory row missing ``primary_author`` (git-blame back-compat): {row!r}"
             )
             assert "primary_actor" in row, (
-                "bus-factor directory row missing ``primary_actor`` "
-                f"(W198 / W182 crosswalk vocabulary): {row!r}"
+                f"bus-factor directory row missing ``primary_actor`` (W198 / W182 crosswalk vocabulary): {row!r}"
             )
             assert row["primary_author"] == row["primary_actor"], (
                 f"bus-factor primary_author/primary_actor drift: {row!r}"
@@ -190,15 +174,9 @@ def test_bus_factor_envelope_carries_both_author_and_actor(indexed_project):
             # ``top_authors`` rows keep ``name`` (existing) and add
             # ``actor`` (W198 crosswalk alias of ``name``).
             for a in row.get("top_authors") or []:
-                assert "name" in a, (
-                    f"top_authors row missing ``name``: {a!r}"
-                )
-                assert "actor" in a, (
-                    f"top_authors row missing W198 ``actor`` alias: {a!r}"
-                )
-                assert a["name"] == a["actor"], (
-                    f"top_authors name/actor drift: {a!r}"
-                )
+                assert "name" in a, f"top_authors row missing ``name``: {a!r}"
+                assert "actor" in a, f"top_authors row missing W198 ``actor`` alias: {a!r}"
+                assert a["name"] == a["actor"], f"top_authors name/actor drift: {a!r}"
     finally:
         os.chdir(old_cwd)
 
@@ -222,12 +200,10 @@ def test_permit_command_docstring_warns_about_facade_state():
     # Module-level docstring must surface both the facade framing and
     # the explicit "no permit_id" gap.
     assert "verdict facade" in module_doc.lower(), (
-        "cmd_permit module docstring should call out the verdict-facade "
-        "framing per W198 audit finding"
+        "cmd_permit module docstring should call out the verdict-facade framing per W198 audit finding"
     )
     assert "permit_id" in module_doc.lower() or "permit identity" in module_doc.lower(), (
-        "cmd_permit module docstring should explicitly note that no "
-        "permit_id is persisted (W198 audit finding)"
+        "cmd_permit module docstring should explicitly note that no permit_id is persisted (W198 audit finding)"
     )
 
     # The click command's own docstring should ALSO call out the gap so
@@ -240,8 +216,7 @@ def test_permit_command_docstring_warns_about_facade_state():
         "verdict-facade framing (visible via ``roam permit --help``)"
     )
     assert "permit_id" in help_text.lower(), (
-        "cmd_permit's click-command docstring should explicitly note "
-        "that no permit_id is persisted"
+        "cmd_permit's click-command docstring should explicitly note that no permit_id is persisted"
     )
 
 
@@ -263,23 +238,19 @@ def test_authority_kinds_permit_docstring_warns_about_facade():
     # at the point of definition.
     perm_idx = source.find("``permit``")
     assert perm_idx != -1, (
-        "AUTHORITY_KINDS docstring should reference ``permit`` so the "
-        "W198 explainer has a stable anchor"
+        "AUTHORITY_KINDS docstring should reference ``permit`` so the W198 explainer has a stable anchor"
     )
     # Pull a window of text around the permit entry — large enough to
     # span the multi-line comment block.
     window = source[perm_idx : perm_idx + 1500]
     assert "W198" in window, (
-        "AUTHORITY_KINDS[permit] comment should reference W198 (the "
-        "audit finding that surfaced the facade gap)"
+        "AUTHORITY_KINDS[permit] comment should reference W198 (the audit finding that surfaced the facade gap)"
     )
     assert "verdict-only facade" in window or "verdict facade" in window, (
-        "AUTHORITY_KINDS[permit] comment should call out the verdict-"
-        "only facade state"
+        "AUTHORITY_KINDS[permit] comment should call out the verdict-only facade state"
     )
     assert "permit_id" in window, (
-        "AUTHORITY_KINDS[permit] comment should explicitly note that no "
-        "permit_id is persisted today"
+        "AUTHORITY_KINDS[permit] comment should explicitly note that no permit_id is persisted today"
     )
 
 
@@ -304,16 +275,12 @@ def test_run_meta_agent_field_has_w198_explainer_comment():
     # The explainer comment must mention W198 (the wave) and reference
     # both the agent_id alias and the collector mapping site so a
     # future reader has a stable anchor.
-    assert "W198" in source, (
-        "runs/ledger.py should reference W198 in the vocabulary-note "
-        "comment near RunMeta.agent"
-    )
+    assert "W198" in source, "runs/ledger.py should reference W198 in the vocabulary-note comment near RunMeta.agent"
     assert "agent_id" in source, (
         "runs/ledger.py W198 comment should mention the crosswalk "
         "``agent_id`` name so the mapping is visible at the data "
         "definition"
     )
     assert "_build_actor_refs" in source, (
-        "runs/ledger.py W198 comment should point at the "
-        "evidence/collector.py:_build_actor_refs mapping site"
+        "runs/ledger.py W198 comment should point at the evidence/collector.py:_build_actor_refs mapping site"
     )

@@ -315,10 +315,7 @@ def detect_parallel_hierarchy(
                 "jaccard": round(similarity, 4),
                 "jaccard_threshold": jaccard_threshold,
                 "cochange_confirmed": None,  # corroboration step deferred
-                "matched_pairs": [
-                    {"a": a, "b": b, "shared": sh}
-                    for (a, b, sh) in matched_pairs
-                ],
+                "matched_pairs": [{"a": a, "b": b, "shared": sh} for (a, b, sh) in matched_pairs],
             }
 
             findings.append(

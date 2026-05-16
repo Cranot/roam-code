@@ -174,9 +174,7 @@ def test_core_tools_vs_capability_preset_asymmetric_diff() -> None:
     from roam.mcp_server import _CORE_TOOLS
 
     core_tools_cli = {_resolve_mcp_to_capability_name(t) for t in _CORE_TOOLS}
-    cap_preset_core = {
-        c.name for c in REGISTRY.items.values() if "core" in c.mcp_preset
-    }
+    cap_preset_core = {c.name for c in REGISTRY.items.values() if "core" in c.mcp_preset}
 
     in_core_not_cap = core_tools_cli - cap_preset_core
     in_cap_not_core = cap_preset_core - core_tools_cli

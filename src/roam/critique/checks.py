@@ -400,8 +400,7 @@ def check_impact(
         # the plural-only filter matched 0 of 14,949 caller edges on roam-code
         # itself, silently no-op'ing the entire impact check.
         caller_rows = conn.execute(
-            f"SELECT source_id FROM edges WHERE target_id = ? "
-            f"AND {call_or_ref_in_clause()}",
+            f"SELECT source_id FROM edges WHERE target_id = ? AND {call_or_ref_in_clause()}",
             (sym.symbol_id,),
         ).fetchall()
         callers = len(caller_rows)

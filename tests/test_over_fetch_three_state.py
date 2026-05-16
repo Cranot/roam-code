@@ -22,7 +22,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers — synthesize minimal Laravel projects with a single controller
 # ---------------------------------------------------------------------------
@@ -247,9 +246,7 @@ class TestThreeStateClassification:
         assert unguarded[0]["severity"] == "H"
         assert "manager" in unguarded[0]["evidence"]
 
-    def test_multiple_with_clauses_classified_individually(
-        self, cli_runner, mixed_with_project, monkeypatch
-    ):
+    def test_multiple_with_clauses_classified_individually(self, cli_runner, mixed_with_project, monkeypatch):
         """`with('a:cols', 'b')` should record both: 1 guarded + 1 unguarded relation."""
         data = _endpoint_findings(cli_runner, mixed_with_project, monkeypatch)
         eps = data.get("endpoint_findings", [])
@@ -263,18 +260,14 @@ class TestThreeStateClassification:
         assert "manager" in guarded_rels
         assert "department" in unguarded_rels
 
-    def test_api_resource_wrapped_not_flagged(
-        self, cli_runner, api_resource_project, monkeypatch
-    ):
+    def test_api_resource_wrapped_not_flagged(self, cli_runner, api_resource_project, monkeypatch):
         """EmployeeResource::collection(...) shapes output → no endpoint finding."""
         data = _endpoint_findings(cli_runner, api_resource_project, monkeypatch)
         eps = data.get("endpoint_findings", [])
         # The ResourceController body has a *Resource::collection( pattern,
         # which is in _BODY_SHAPING_PATTERNS → the body is treated as filtered.
         from_resource_ctrl = [e for e in eps if "ResourceController" in e["endpoint"]]
-        assert from_resource_ctrl == [], (
-            f"Resource-wrapped endpoint should NOT be flagged, got {from_resource_ctrl}"
-        )
+        assert from_resource_ctrl == [], f"Resource-wrapped endpoint should NOT be flagged, got {from_resource_ctrl}"
 
     def test_envelope_has_three_state_counts(self, cli_runner, workload_like_project, monkeypatch):
         data = _endpoint_findings(cli_runner, workload_like_project, monkeypatch)
@@ -290,21 +283,15 @@ class TestThreeStateClassification:
         # Real-leak count tracks BARE + UNGUARDED
         assert summary["real_leak_count"] == 2
 
-    def test_verdict_mentions_three_states_distinctly(
-        self, cli_runner, workload_like_project, monkeypatch
-    ):
+    def test_verdict_mentions_three_states_distinctly(self, cli_runner, workload_like_project, monkeypatch):
         data = _endpoint_findings(cli_runner, workload_like_project, monkeypatch)
         verdict = data["summary"]["verdict"]
         # The verdict must distinguish all three buckets (LAW 4: concrete nouns)
         assert "BARE" in verdict, f"verdict missing BARE: {verdict!r}"
         assert "GUARDED_RELATION" in verdict, f"verdict missing GUARDED_RELATION: {verdict!r}"
-        assert "UNGUARDED_RELATION" in verdict, (
-            f"verdict missing UNGUARDED_RELATION: {verdict!r}"
-        )
+        assert "UNGUARDED_RELATION" in verdict, f"verdict missing UNGUARDED_RELATION: {verdict!r}"
 
-    def test_partial_success_flag_when_real_leak(
-        self, cli_runner, workload_like_project, monkeypatch
-    ):
+    def test_partial_success_flag_when_real_leak(self, cli_runner, workload_like_project, monkeypatch):
         """summary.partial_success must be true when ANY real leak (BARE or UNGUARDED) is found."""
         data = _endpoint_findings(cli_runner, workload_like_project, monkeypatch)
         summary = data["summary"]
@@ -335,39 +322,29 @@ class TestLeaksOnlyFlag:
     not on already-partially-guarded advisory findings.
     """
 
-    def test_leaks_only_filters_guarded_relation(
-        self, cli_runner, workload_like_project, monkeypatch
-    ):
+    def test_leaks_only_filters_guarded_relation(self, cli_runner, workload_like_project, monkeypatch):
         """Union-like fixture has 1 BARE + 1 UNGUARDED + 3 GUARDED.
 
         With --leaks-only, the findings list should contain only the 2 real
         leaks; the 3 GUARDED_RELATION entries are suppressed.
         """
-        data = _endpoint_findings_with_args(
-            cli_runner, workload_like_project, monkeypatch, ["--leaks-only"]
-        )
+        data = _endpoint_findings_with_args(cli_runner, workload_like_project, monkeypatch, ["--leaks-only"])
         eps = data.get("endpoint_findings", [])
         # 1 BARE + 1 UNGUARDED = 2 entries; zero GUARDED_RELATION in list
         assert len(eps) == 2, f"Expected 2 entries with --leaks-only, got {len(eps)}: {eps}"
         states = sorted(e["state"] for e in eps)
-        assert states == ["BARE", "UNGUARDED_RELATION"], (
-            f"Expected exactly [BARE, UNGUARDED_RELATION], got {states}"
-        )
+        assert states == ["BARE", "UNGUARDED_RELATION"], f"Expected exactly [BARE, UNGUARDED_RELATION], got {states}"
         # And no GUARDED_RELATION entries leaked through
         guarded = [e for e in eps if e["state"] == "GUARDED_RELATION"]
         assert guarded == [], f"GUARDED_RELATION must be filtered, found: {guarded}"
 
-    def test_leaks_only_preserves_summary_counts(
-        self, cli_runner, workload_like_project, monkeypatch
-    ):
+    def test_leaks_only_preserves_summary_counts(self, cli_runner, workload_like_project, monkeypatch):
         """summary tells the truth: all 3 counts present regardless of --leaks-only.
 
         The flag filters the FINDINGS list, not the SUMMARY. CI consumers
         can still see the suppressed count in summary.guarded_relation_count.
         """
-        data = _endpoint_findings_with_args(
-            cli_runner, workload_like_project, monkeypatch, ["--leaks-only"]
-        )
+        data = _endpoint_findings_with_args(cli_runner, workload_like_project, monkeypatch, ["--leaks-only"])
         summary = data["summary"]
         assert summary["bare_count"] == 1
         assert summary["guarded_relation_count"] == 3, (
@@ -380,30 +357,20 @@ class TestLeaksOnlyFlag:
         # And the flag is recorded so consumers know the list was filtered
         assert summary["leaks_only"] is True
 
-    def test_leaks_only_verdict_explains_suppression(
-        self, cli_runner, workload_like_project, monkeypatch
-    ):
+    def test_leaks_only_verdict_explains_suppression(self, cli_runner, workload_like_project, monkeypatch):
         """Verdict must name the suppressed count so the absence is explicit (Pattern 2)."""
-        data = _endpoint_findings_with_args(
-            cli_runner, workload_like_project, monkeypatch, ["--leaks-only"]
-        )
+        data = _endpoint_findings_with_args(cli_runner, workload_like_project, monkeypatch, ["--leaks-only"])
         verdict = data["summary"]["verdict"]
         # The suppression note must be visible in the one-line verdict
-        assert "suppressed" in verdict.lower(), (
-            f"verdict must mention suppression, got: {verdict!r}"
-        )
-        assert "--leaks-only" in verdict, (
-            f"verdict must name the flag that caused suppression, got: {verdict!r}"
-        )
+        assert "suppressed" in verdict.lower(), f"verdict must mention suppression, got: {verdict!r}"
+        assert "--leaks-only" in verdict, f"verdict must name the flag that caused suppression, got: {verdict!r}"
         # The suppressed count (3) must appear
         assert "3" in verdict, f"verdict must mention the 3 suppressed findings: {verdict!r}"
         # And the real-leak counts are still surfaced
         assert "BARE" in verdict
         assert "UNGUARDED_RELATION" in verdict
 
-    def test_leaks_only_default_off_preserves_existing_behavior(
-        self, cli_runner, workload_like_project, monkeypatch
-    ):
+    def test_leaks_only_default_off_preserves_existing_behavior(self, cli_runner, workload_like_project, monkeypatch):
         """Without --leaks-only, ALL three states surface in endpoint_findings (backward compat)."""
         data = _endpoint_findings_with_args(cli_runner, workload_like_project, monkeypatch, [])
         eps = data.get("endpoint_findings", [])

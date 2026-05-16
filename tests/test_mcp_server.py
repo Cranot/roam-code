@@ -168,8 +168,9 @@ class TestRunRoam:
         # W839 (W791 follow-up): pin a non-stale index so `_annotate_stale`
         # doesn't decorate the envelope with `_meta.stale_index` + a verdict
         # banner, which would break the success-path equality assertion.
-        with patch("click.testing.CliRunner.invoke", return_value=mock_result), patch(
-            "roam.mcp_server._check_stale_with_cache", return_value=(False, None)
+        with (
+            patch("click.testing.CliRunner.invoke", return_value=mock_result),
+            patch("roam.mcp_server._check_stale_with_cache", return_value=(False, None)),
         ):
             result = _run_roam(["health"], ".")
             assert result == payload
@@ -210,8 +211,9 @@ class TestRunRoam:
         # W839 (W791 follow-up): mirror the inprocess-success test —
         # pin non-stale so `_annotate_stale` is a no-op on the parsed
         # subprocess JSON, preserving the equality assertion's intent.
-        with patch("subprocess.run") as mock, patch(
-            "roam.mcp_server._check_stale_with_cache", return_value=(False, None)
+        with (
+            patch("subprocess.run") as mock,
+            patch("roam.mcp_server._check_stale_with_cache", return_value=(False, None)),
         ):
             mock.return_value = MagicMock(
                 returncode=0,
@@ -665,13 +667,10 @@ class TestMcpCmd:
         ``click.echo`` (which re-adds a trailing newline), so we compare
         against the bundled file's content with the same rstrip.
         """
+        from roam.mcp_server import mcp_cmd
         from tests._helpers.repo_root import repo_root
 
-        from roam.mcp_server import mcp_cmd
-
-        bundled = (repo_root() / "src" / "roam" / "mcp-server-card.json").read_text(
-            encoding="utf-8"
-        )
+        bundled = (repo_root() / "src" / "roam" / "mcp-server-card.json").read_text(encoding="utf-8")
 
         runner = CliRunner()
         result = runner.invoke(mcp_cmd, ["--card"])

@@ -32,7 +32,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-
 _LINE_END_INFINITY = 10**9  # sentinel for "extends to end of file"
 
 
@@ -68,9 +67,7 @@ def build_file_symbol_ranges(
         line_end = r["line_end"]
         if line_end is None or line_end < line_start:
             line_end = _LINE_END_INFINITY
-        out.setdefault(r["file_id"], []).append(
-            (int(line_start), int(line_end), int(r["id"]))
-        )
+        out.setdefault(r["file_id"], []).append((int(line_start), int(line_end), int(r["id"])))
     for file_id in out:
         out[file_id].sort(key=lambda t: t[0])
     return out

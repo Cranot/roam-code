@@ -35,7 +35,6 @@ from roam.evidence.feedback import (
     persist_feedback,
 )
 
-
 # ---------------------------------------------------------------------------
 # Construction-time validation
 # ---------------------------------------------------------------------------
@@ -181,9 +180,7 @@ def test_persist_feedback_handles_permission_error_on_windows(tmp_path: Path, mo
     def _raise_permission(*_a, **_kw):
         raise PermissionError("simulated readonly volume")
 
-    monkeypatch.setattr(
-        "roam.evidence.feedback.atomic_write_json", _raise_permission
-    )
+    monkeypatch.setattr("roam.evidence.feedback.atomic_write_json", _raise_permission)
 
     result = persist_feedback(fb, feedback_dir=tmp_path / "fb")
     assert result == ""
@@ -251,17 +248,11 @@ def test_load_feedback_skips_malformed_json_with_warning(tmp_path: Path) -> None
     fb_dir.mkdir()
 
     # Drop in a malformed JSON file directly.
-    (fb_dir / "broken__2026-05-14T12_00_00Z.json").write_text(
-        "{not valid json", encoding="utf-8"
-    )
+    (fb_dir / "broken__2026-05-14T12_00_00Z.json").write_text("{not valid json", encoding="utf-8")
     # Drop in a non-object JSON file (valid JSON, wrong shape).
-    (fb_dir / "wrongshape__2026-05-14T12_00_00Z.json").write_text(
-        "[1, 2, 3]", encoding="utf-8"
-    )
+    (fb_dir / "wrongshape__2026-05-14T12_00_00Z.json").write_text("[1, 2, 3]", encoding="utf-8")
     # Drop in a valid-object JSON file missing required keys.
-    (fb_dir / "incomplete__2026-05-14T12_00_00Z.json").write_text(
-        json.dumps({"finding_id_str": "x"}), encoding="utf-8"
-    )
+    (fb_dir / "incomplete__2026-05-14T12_00_00Z.json").write_text(json.dumps({"finding_id_str": "x"}), encoding="utf-8")
 
     # Drop in a real valid record so we can confirm load continues
     # past the malformed entries.
@@ -303,10 +294,10 @@ def test_aggregate_dismissal_reasons_counts_correctly(tmp_path: Path) -> None:
         # 6 visitor-pattern dismissals on the smells detector
         ("smells:visitor:1", "dismissed_false_positive", "visitor-pattern"),
         ("smells:visitor:2", "dismissed_false_positive", "visitor-pattern"),
-        ("smells:visitor:3", "dismissed_by_design",      "visitor-pattern"),
+        ("smells:visitor:3", "dismissed_by_design", "visitor-pattern"),
         ("smells:visitor:4", "dismissed_false_positive", "visitor-pattern"),
-        ("smells:visitor:5", "dismissed_test_fixture",   "visitor-pattern"),
-        ("smells:visitor:6", "dismissed_by_design",      "visitor-pattern"),
+        ("smells:visitor:5", "dismissed_test_fixture", "visitor-pattern"),
+        ("smells:visitor:6", "dismissed_by_design", "visitor-pattern"),
         # 2 third-party-code dismissals on smells
         ("smells:thirdparty:1", "dismissed_by_design", "third-party-code"),
         ("smells:thirdparty:2", "dismissed_by_design", "third-party-code"),
@@ -334,15 +325,11 @@ def test_aggregate_dismissal_reasons_counts_correctly(tmp_path: Path) -> None:
     assert list(counts.keys())[0] == "visitor-pattern"
 
     # Clones detector seen separately.
-    clones_counts = aggregate_dismissal_reasons(
-        detector="clones", feedback_dir=fb_dir
-    )
+    clones_counts = aggregate_dismissal_reasons(detector="clones", feedback_dir=fb_dir)
     assert clones_counts == {"test-fixture": 1}
 
     # Detector with no dismissals returns empty.
-    empty_counts = aggregate_dismissal_reasons(
-        detector="nonexistent", feedback_dir=fb_dir
-    )
+    empty_counts = aggregate_dismissal_reasons(detector="nonexistent", feedback_dir=fb_dir)
     assert empty_counts == {}
 
     # Bad input rejected.

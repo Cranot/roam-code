@@ -17,8 +17,6 @@ correctly.
 
 from __future__ import annotations
 
-import json
-import os
 import subprocess
 import sys
 import time
@@ -34,7 +32,6 @@ from conftest import (  # noqa: E402
     invoke_cli,
     parse_json_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -367,6 +364,7 @@ def test_agents_md_public_section_helpers_importable():
         _section_laws,
         _section_stack,
     )
+
     assert _section_stack is section_stack
     assert _section_danger_zones is section_danger_zones
     assert _section_laws is section_laws

@@ -30,17 +30,16 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_fan import (
+    _FAN_FLAG_TO_CONFIDENCE,
+    _FAN_FLAG_TO_KIND,
     FAN_DETECTOR_VERSION,
     _emit_fan_findings,
     _fan_finding_id,
-    _FAN_FLAG_TO_KIND,
-    _FAN_FLAG_TO_CONFIDENCE,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -197,15 +196,11 @@ def test_fan_flag_tier_mapping_all_structural(tmp_path):
         )
         assert written == 3
         rows = conn.execute(
-            "SELECT confidence, claim FROM findings "
-            "WHERE source_detector = 'fan-symbol' "
-            "ORDER BY id ASC"
+            "SELECT confidence, claim FROM findings WHERE source_detector = 'fan-symbol' ORDER BY id ASC"
         ).fetchall()
         assert len(rows) == 3
         for r in rows:
-            assert r["confidence"] == "structural", (
-                f"expected structural for {r['claim']!r}, got {r['confidence']!r}"
-            )
+            assert r["confidence"] == "structural", f"expected structural for {r['claim']!r}, got {r['confidence']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -246,23 +241,22 @@ def test_fan_symbol_vs_fan_file_source_detector(tmp_path):
         ]
         _emit_fan_findings(
             conn,
-            {"summary": {"caller_metric_definition": "direct_in_degree"},
-             "items": symbol_items},
+            {"summary": {"caller_metric_definition": "direct_in_degree"}, "items": symbol_items},
             mode="symbol",
             source_version=FAN_DETECTOR_VERSION,
         )
         _emit_fan_findings(
             conn,
-            {"summary": {"caller_metric_definition":
-                         "direct_in_degree (file-level: distinct source files)"},
-             "items": file_items},
+            {
+                "summary": {"caller_metric_definition": "direct_in_degree (file-level: distinct source files)"},
+                "items": file_items,
+            },
             mode="file",
             source_version=FAN_DETECTOR_VERSION,
         )
 
         rows = conn.execute(
-            "SELECT source_detector, subject_kind FROM findings "
-            "WHERE source_detector LIKE 'fan-%' ORDER BY id ASC"
+            "SELECT source_detector, subject_kind FROM findings WHERE source_detector LIKE 'fan-%' ORDER BY id ASC"
         ).fetchall()
         assert len(rows) == 2
         by_detector = {r["source_detector"]: r["subject_kind"] for r in rows}
@@ -310,8 +304,7 @@ def test_fan_evidence_preserves_caller_metric_definition(tmp_path):
         _emit_fan_findings(
             conn,
             {
-                "summary": {"caller_metric_definition":
-                            "direct_in_degree (file-level: distinct source files)"},
+                "summary": {"caller_metric_definition": "direct_in_degree (file-level: distinct source files)"},
                 "items": [
                     {
                         "path": "src/hub_file.py",
@@ -327,22 +320,18 @@ def test_fan_evidence_preserves_caller_metric_definition(tmp_path):
         )
 
         rows = conn.execute(
-            "SELECT source_detector, evidence_json FROM findings "
-            "WHERE source_detector LIKE 'fan-%' ORDER BY id ASC"
+            "SELECT source_detector, evidence_json FROM findings WHERE source_detector LIKE 'fan-%' ORDER BY id ASC"
         ).fetchall()
         assert len(rows) == 2
         defs_by_detector: dict[str, str] = {}
         for r in rows:
             ev = json.loads(r["evidence_json"])
             assert "caller_metric_definition" in ev, (
-                f"{r['source_detector']} evidence missing "
-                "caller_metric_definition (Pattern 3 regression)"
+                f"{r['source_detector']} evidence missing caller_metric_definition (Pattern 3 regression)"
             )
             defs_by_detector[r["source_detector"]] = ev["caller_metric_definition"]
         assert defs_by_detector["fan-symbol"] == "direct_in_degree"
-        assert defs_by_detector["fan-file"] == (
-            "direct_in_degree (file-level: distinct source files)"
-        )
+        assert defs_by_detector["fan-file"] == ("direct_in_degree (file-level: distinct source files)")
 
 
 # ---------------------------------------------------------------------------
@@ -407,16 +396,13 @@ def test_fan_skips_local_hub_and_local_spreader(tmp_path):
         ]
         written = _emit_fan_findings(
             conn,
-            {"summary": {"caller_metric_definition": "direct_in_degree"},
-             "items": items},
+            {"summary": {"caller_metric_definition": "direct_in_degree"}, "items": items},
             mode="symbol",
             source_version=FAN_DETECTOR_VERSION,
         )
         # Only the cross-file `hub` flag should land in the registry.
         assert written == 1
-        rows = conn.execute(
-            "SELECT evidence_json FROM findings WHERE source_detector = 'fan-symbol'"
-        ).fetchall()
+        rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'fan-symbol'").fetchall()
         assert len(rows) == 1
         ev = json.loads(rows[0]["evidence_json"])
         assert ev["flag"] == "hub"
@@ -448,29 +434,21 @@ def test_fan_rerun_upserts_not_duplicates(tmp_path):
             "summary": {"caller_metric_definition": "direct_in_degree"},
             "items": items,
         }
-        _emit_fan_findings(conn, payload, mode="symbol",
-                           source_version=FAN_DETECTOR_VERSION)
+        _emit_fan_findings(conn, payload, mode="symbol", source_version=FAN_DETECTOR_VERSION)
         first_ids = {
-            r[0] for r in conn.execute(
-                "SELECT finding_id_str FROM findings WHERE source_detector = 'fan-symbol'"
-            ).fetchall()
+            r[0]
+            for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'fan-symbol'").fetchall()
         }
-        first_count = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'fan-symbol'"
-        ).fetchone()[0]
+        first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'fan-symbol'").fetchone()[0]
         assert first_count == 1
 
         # Re-run — same payload, same ids, same row count.
-        _emit_fan_findings(conn, payload, mode="symbol",
-                           source_version=FAN_DETECTOR_VERSION)
+        _emit_fan_findings(conn, payload, mode="symbol", source_version=FAN_DETECTOR_VERSION)
         second_ids = {
-            r[0] for r in conn.execute(
-                "SELECT finding_id_str FROM findings WHERE source_detector = 'fan-symbol'"
-            ).fetchall()
+            r[0]
+            for r in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'fan-symbol'").fetchall()
         }
-        second_count = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'fan-symbol'"
-        ).fetchone()[0]
+        second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'fan-symbol'").fetchone()[0]
         assert second_count == first_count
         assert second_ids == first_ids
 
@@ -499,10 +477,7 @@ def test_fan_persist_e2e_emits_hub_symbol(tmp_path):
                 "       source_detector, source_version, subject_kind "
                 "FROM findings WHERE source_detector = 'fan-symbol'"
             ).fetchall()
-        assert len(rows) >= 1, (
-            "expected at least one fan-symbol finding for the cross-file "
-            "hub fixture; got 0"
-        )
+        assert len(rows) >= 1, "expected at least one fan-symbol finding for the cross-file hub fixture; got 0"
         flags_seen = set()
         for r in rows:
             assert r["source_detector"] == "fan-symbol"
@@ -515,9 +490,7 @@ def test_fan_persist_e2e_emits_hub_symbol(tmp_path):
             # Evidence must carry the metric provenance field.
             assert ev.get("caller_metric_definition") == "direct_in_degree"
         # `hub` is the flag fired by 6 cross-file callers + zero outbound.
-        assert "hub" in flags_seen, (
-            f"expected a 'hub' flag among the persisted findings; got {flags_seen}"
-        )
+        assert "hub" in flags_seen, f"expected a 'hub' flag among the persisted findings; got {flags_seen}"
     finally:
         os.chdir(old_cwd)
 
@@ -536,8 +509,7 @@ def test_fan_persist_no_persist_does_not_emit(tmp_path):
         with open_db(readonly=True) as conn:
             try:
                 count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector IN ('fan-symbol', 'fan-file')"
+                    "SELECT COUNT(*) FROM findings WHERE source_detector IN ('fan-symbol', 'fan-file')"
                 ).fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
@@ -560,18 +532,14 @@ def test_fan_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_fan(mode="symbol")
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "fan-symbol"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "fan-symbol"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "fan-symbol" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "fan-symbol" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "fan-symbol" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 

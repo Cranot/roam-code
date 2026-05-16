@@ -20,6 +20,12 @@ Filters:
 Display:
   * --rank-by importance    sort by enclosing-symbol PageRank desc
   * --group-by symbol       collapse hits inside the same symbol
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because grep outputs are invocation-scoped annotated text match
+enumerations — not per-location violations. Editor consumers should use
+the JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

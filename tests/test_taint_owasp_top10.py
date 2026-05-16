@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
@@ -31,7 +29,6 @@ from roam.output.sarif import taint_to_sarif
 from roam.security.taint_engine import load_rules
 from tests._helpers.repo_root import repo_root
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # 1. TaintRule loads owasp_top10 off the YAML
@@ -104,18 +101,14 @@ def test_builtin_pack_carries_owasp_top10_on_known_rules():
     # Software and Data Integrity Failures mappings.
     assert rules["java-sqli"].owasp_top10 == "A03:2021_Injection"
     assert rules["python-ssti"].owasp_top10 == "A03:2021_Injection"
-    assert (
-        rules["java-deserialization"].owasp_top10
-        == "A08:2021_Software_and_Data_Integrity_Failures"
-    )
+    assert rules["java-deserialization"].owasp_top10 == "A08:2021_Software_and_Data_Integrity_Failures"
     # W532 stamp — python-command-injection now also resolves to A03.
     assert rules["python-command-injection"].owasp_top10 == "A03:2021_Injection"
     # Every shipped rule MUST declare an owasp_top10 mapping; an empty
     # value is a regression (Pattern 3a: cross-command claim integrity).
     untagged = sorted(rid for rid, r in rules.items() if not r.owasp_top10)
     assert not untagged, (
-        f"shipped taint rules missing owasp_top10: {untagged!r}; every rule "
-        "must declare an OWASP 2021 category (W532)"
+        f"shipped taint rules missing owasp_top10: {untagged!r}; every rule must declare an OWASP 2021 category (W532)"
     )
 
 
@@ -302,9 +295,7 @@ def test_taint_finding_evidence_json_carries_owasp_when_rule_tagged(tmp_path):
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT evidence_json FROM findings WHERE source_detector = 'taint'"
-            ).fetchall()
+            rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'taint'").fetchall()
             assert rows, "expected at least one taint finding to persist"
             for row in rows:
                 evidence = json.loads(row[0])

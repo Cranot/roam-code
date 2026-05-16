@@ -1,4 +1,13 @@
-"""Git hook integration for automatic re-indexing after git operations."""
+"""Git hook integration for automatic re-indexing after git operations.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam hooks`` is a setup/bootstrap command — its
+output is human-facing setup status (hooks installed/uninstalled into
+``.git/hooks``), not analysis findings with file:line coordinates.
+SARIF is reserved for scanning results. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1148 audit memo.
+"""
 
 from __future__ import annotations
 

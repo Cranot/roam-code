@@ -26,7 +26,6 @@ from roam.db.connection import (
     get_db_path,
 )
 
-
 # ---------------------------------------------------------------------------
 # Test fixtures
 # ---------------------------------------------------------------------------
@@ -48,9 +47,7 @@ def _make_project(tmp_path: Path, config: dict | None = None) -> Path:
     if config is not None:
         roam_dir = proj / ".roam"
         roam_dir.mkdir()
-        (roam_dir / "config.json").write_text(
-            json.dumps(config), encoding="utf-8"
-        )
+        (roam_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
     return proj
 
 
@@ -82,9 +79,7 @@ class TestSafeMkdir:
         assert isinstance(result, Path)
         assert result.exists()
 
-    def test_safe_mkdir_raises_stale_db_dir_error_on_permission_error(
-        self, tmp_path, monkeypatch
-    ):
+    def test_safe_mkdir_raises_stale_db_dir_error_on_permission_error(self, tmp_path, monkeypatch):
         """Simulate a Windows ACL denial: monkeypatch Path.mkdir to raise.
 
         We don't rely on actual ACLs because they're not portable to the
@@ -112,9 +107,7 @@ class TestSafeMkdir:
         assert "roam config db-dir --reset" in msg
         assert "[WinError 5] Access denied" in msg
 
-    def test_safe_mkdir_raises_stale_db_dir_error_on_os_error(
-        self, tmp_path, monkeypatch
-    ):
+    def test_safe_mkdir_raises_stale_db_dir_error_on_os_error(self, tmp_path, monkeypatch):
         """Non-permission OSError (e.g. invalid path) must also wrap."""
         target = tmp_path / "bogus"
 
@@ -151,9 +144,7 @@ class TestSafeMkdir:
 
 
 class TestGetDbPath:
-    def test_get_db_path_no_config_falls_back_to_project_default(
-        self, tmp_path, monkeypatch
-    ):
+    def test_get_db_path_no_config_falls_back_to_project_default(self, tmp_path, monkeypatch):
         """No ``.roam/config.json`` → db lives under ``<project>/.roam/``."""
         proj = _make_project(tmp_path)
         # Don't write any config — exercise the bare fallback branch.
@@ -162,18 +153,14 @@ class TestGetDbPath:
         assert db_path == proj / ".roam" / "index.db"
         assert (proj / ".roam").exists()
 
-    def test_get_db_path_empty_config_falls_back_to_project_default(
-        self, tmp_path, monkeypatch
-    ):
+    def test_get_db_path_empty_config_falls_back_to_project_default(self, tmp_path, monkeypatch):
         """Empty ``{}`` config (no ``db_dir`` key) → project default."""
         proj = _make_project(tmp_path, config={})
         monkeypatch.chdir(proj)
         db_path = get_db_path(project_root=proj)
         assert db_path == proj / ".roam" / "index.db"
 
-    def test_get_db_path_raises_stale_db_dir_error_on_stale_config(
-        self, tmp_path, monkeypatch
-    ):
+    def test_get_db_path_raises_stale_db_dir_error_on_stale_config(self, tmp_path, monkeypatch):
         """Stale ``db_dir`` in ``.roam/config.json`` → StaleDbDirError."""
         stale = tmp_path / "stale-other-user-path"
         proj = _make_project(tmp_path, config={"db_dir": str(stale)})
@@ -195,9 +182,7 @@ class TestGetDbPath:
         assert err.db_dir == str(stale)
         assert "roam config db-dir --reset" in str(err)
 
-    def test_get_db_path_raises_stale_db_dir_error_on_stale_env(
-        self, tmp_path, monkeypatch
-    ):
+    def test_get_db_path_raises_stale_db_dir_error_on_stale_env(self, tmp_path, monkeypatch):
         """Stale ``ROAM_DB_DIR`` env override → StaleDbDirError with env
         as the source label (so the remediation hint points the user at
         the env var, not the config file)."""

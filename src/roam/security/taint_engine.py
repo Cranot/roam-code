@@ -413,8 +413,7 @@ def _bfs_path(
         # W512: edge-kind vocabulary lives in roam.db.edge_kinds. W79 fix
         # surfaced by W78.
         rows = conn.execute(
-            f"SELECT target_id FROM edges WHERE source_id = ? "
-            f"AND {call_or_ref_in_clause()} LIMIT ?",
+            f"SELECT target_id FROM edges WHERE source_id = ? AND {call_or_ref_in_clause()} LIMIT ?",
             (node, _BFS_FAN_OUT_LIMIT),
         ).fetchall()
         if len(rows) >= _BFS_FAN_OUT_LIMIT:
@@ -503,15 +502,9 @@ def run_taint(
     """
     findings: list[TaintFinding] = []
     for rule in rules:
-        sources = _symbols_matching(
-            conn, rule.sources, rule.languages, qualified_only=rule.qualified_only
-        )
-        sinks = _symbols_matching(
-            conn, rule.sinks, rule.languages, qualified_only=rule.qualified_only
-        )
-        sanitizers = _symbols_matching(
-            conn, rule.sanitizers, rule.languages, qualified_only=rule.qualified_only
-        )
+        sources = _symbols_matching(conn, rule.sources, rule.languages, qualified_only=rule.qualified_only)
+        sinks = _symbols_matching(conn, rule.sinks, rule.languages, qualified_only=rule.qualified_only)
+        sanitizers = _symbols_matching(conn, rule.sanitizers, rule.languages, qualified_only=rule.qualified_only)
         if not sources or not sinks:
             continue
         source_ids = {s["id"] for s in sources}

@@ -1,4 +1,12 @@
-"""Minimum cut analysis — find fragile domain boundaries."""
+"""Minimum cut analysis — find fragile domain boundaries.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cut outputs are invocation-scoped graph-partition
+boundary enumerations (candidate edge cuts ranked by separation
+quality) — not per-location code violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
+"""
 
 from __future__ import annotations
 

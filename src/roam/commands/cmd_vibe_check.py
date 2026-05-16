@@ -39,6 +39,14 @@ indexed languages. For a Python-only, function-level, actionable list
 of any specific anti-pattern, use ``roam math --task py-except-pass``
 (or the equivalent task slug). The two numbers will not match by
 design — vibe-check is a coarse health signal.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because vibe-check outputs are invocation-scoped aggregate AI-rot
+scores (composite 0-100 + per-pattern rates) — not per-location findings.
+Individual per-pattern findings DO persist to the findings registry per
+W125 and are queryable via ``roam findings list --detector vibe-check``;
+that path is orthogonal to vibe-check's CLI rollup output. See action.yml
+_SUPPORTED_SARIF allowlist and W1170 audit memo.
 """
 
 from __future__ import annotations
@@ -63,7 +71,51 @@ from roam.quality.ai_rot import DEFINITION as AI_ROT_DEFINITION
 # meaningfully. Re-using the W81 module-level pattern (DEAD_DETECTOR_VERSION,
 # CLONES_DETECTOR_VERSION) so consumers can ``import VIBE_CHECK_DETECTOR_VERSION``
 # the same way.
+#
+# W1256: kept as the "composite" stamp (legacy). External consumers that
+# import this constant continue to read a single string; new emits use the
+# per-pattern stamps below so an FP-rate fix on one pattern can bump that
+# pattern's version without ripple to the other nine.
 VIBE_CHECK_DETECTOR_VERSION: str = "1.0.0"
+
+# W1256: per-pattern version stamps. Bump the pattern's stamp (not the
+# composite) when its predicate / threshold / claim shape / evidence shape
+# changes. Mirrors cmd_smells.py's per-kind constants (REFUSED_BEQUEST_*,
+# PRIMITIVE_OBSESSION_*, ...). Same call-site discipline as W81 — the
+# stamps live alongside the call site, NOT in src/roam/catalog/versions.py
+# (which is reserved for the task_id-keyed algorithm-catalog registry).
+#
+# All ten initial stamps are "1.0.0" so the persist rows stay byte-identical
+# to pre-W1256 emits (the existing tests/test_findings_vibe_check.py
+# regression assertion ``source_version == VIBE_CHECK_DETECTOR_VERSION``
+# continues to hold until the first divergence).
+DEAD_EXPORTS_DETECTOR_VERSION: str = "1.0.0"
+SHORT_CHURN_DETECTOR_VERSION: str = "1.0.0"
+EMPTY_HANDLERS_DETECTOR_VERSION: str = "1.0.0"
+ABANDONED_STUBS_DETECTOR_VERSION: str = "1.0.0"
+HALLUCINATED_IMPORTS_DETECTOR_VERSION: str = "1.0.0"
+ERROR_INCONSISTENCY_DETECTOR_VERSION: str = "1.0.0"
+COMMENT_ANOMALIES_DETECTOR_VERSION: str = "1.0.0"
+COPY_PASTE_DETECTOR_VERSION: str = "1.0.0"
+# W371 informational patterns (do not contribute to AI rot score).
+MODULAR_MIRAGE_DETECTOR_VERSION: str = "1.0.0"
+BOILERPLATE_INFLATION_DETECTOR_VERSION: str = "1.0.0"
+
+# W1256: lookup table consumed by ``_emit_vibe_check_findings`` so each
+# finding row stamps its pattern's own version. Unknown kinds fall back to
+# the composite (defensive — same behaviour as ``_vibe_check_tier``).
+_VIBE_KIND_TO_VERSION: dict[str, str] = {
+    "dead_exports": DEAD_EXPORTS_DETECTOR_VERSION,
+    "short_churn": SHORT_CHURN_DETECTOR_VERSION,
+    "empty_handlers": EMPTY_HANDLERS_DETECTOR_VERSION,
+    "abandoned_stubs": ABANDONED_STUBS_DETECTOR_VERSION,
+    "hallucinated_imports": HALLUCINATED_IMPORTS_DETECTOR_VERSION,
+    "error_inconsistency": ERROR_INCONSISTENCY_DETECTOR_VERSION,
+    "comment_anomalies": COMMENT_ANOMALIES_DETECTOR_VERSION,
+    "copy_paste": COPY_PASTE_DETECTOR_VERSION,
+    "modular_mirage": MODULAR_MIRAGE_DETECTOR_VERSION,
+    "boilerplate_inflation": BOILERPLATE_INFLATION_DETECTOR_VERSION,
+}
 
 # ---------------------------------------------------------------------------
 # Severity labels
@@ -983,8 +1035,7 @@ _COMMENT_CODE_PATTERNS = {
 # code line below, case-insensitively. Pure boolean substring matching
 # is too lossy ("Save the file" vs ``save_file()`` — both should match).
 _RESTATE_TOLERATED: frozenset[str] = frozenset(
-    {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for",
-     "with", "this", "that", "if", "is", "are"}
+    {"the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "this", "that", "if", "is", "are"}
 )
 
 
@@ -1017,10 +1068,7 @@ def _comment_restates_code(comment_text: str, code_line: str) -> bool:
     all_words = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", comment_text)
     if len(all_words) > 10:
         return False
-    content_tokens = [
-        t.lower() for t in all_words
-        if len(t) >= 3 and t.lower() not in _RESTATE_TOLERATED
-    ]
+    content_tokens = [t.lower() for t in all_words if len(t) >= 3 and t.lower() not in _RESTATE_TOLERATED]
     if not content_tokens:
         return False
     matched_count = sum(1 for t in content_tokens if t in code_lower)
@@ -1052,9 +1100,7 @@ _SHALLOW_WRAPPER_PY = re.compile(
 )
 
 
-def _detect_boilerplate_inflation(
-    conn, project_root: Path
-) -> tuple[int, int, list[dict]]:
+def _detect_boilerplate_inflation(conn, project_root: Path) -> tuple[int, int, list[dict]]:
     """Scan source files for boilerplate-inflation occurrences.
 
     Returns (found, total_files_scanned, details). ``details`` is one
@@ -1063,9 +1109,7 @@ def _detect_boilerplate_inflation(
     (per-occurrence line/kind/snippet payload). Per-occurrence detail
     is kept so the finding emit can produce one row per location.
     """
-    files = conn.execute(
-        "SELECT id, path, language FROM files WHERE language IS NOT NULL"
-    ).fetchall()
+    files = conn.execute("SELECT id, path, language FROM files WHERE language IS NOT NULL").fetchall()
 
     found = 0
     total_files_scanned = 0
@@ -1112,9 +1156,7 @@ def _detect_boilerplate_inflation(
                 comment_text = m.group(1).strip()
                 code_line = m.group(2).strip()
                 # Ignore special markers and section dividers.
-                if not comment_text or comment_text.startswith(
-                    ("---", "===", "***", "TODO", "FIXME", "NOTE", "XXX")
-                ):
+                if not comment_text or comment_text.startswith(("---", "===", "***", "TODO", "FIXME", "NOTE", "XXX")):
                     continue
                 if not code_line or code_line.startswith(("#", "//")):
                     continue
@@ -1166,7 +1208,7 @@ def _detect_boilerplate_inflation(
                         "line": line_no,
                         "subkind": "shallow_wrapper",
                         "name": name,
-                        "snippet": f"def {name}(...): \"\"\"{doc[:60]}...\"\"\" + 1 stmt",
+                        "snippet": f'def {name}(...): """{doc[:60]}...""" + 1 stmt',
                     }
                 )
 
@@ -1457,9 +1499,7 @@ def _collect_copy_paste_findings(conn, project_root: Path) -> list[dict]:
     for file_path, fns in by_file.items():
         full_path = project_root / file_path
         try:
-            source_lines = full_path.read_text(
-                encoding="utf-8", errors="replace"
-            ).split("\n")
+            source_lines = full_path.read_text(encoding="utf-8", errors="replace").split("\n")
         except OSError:
             continue
         for fn in fns:
@@ -1484,10 +1524,7 @@ def _collect_copy_paste_findings(conn, project_root: Path) -> list[dict]:
     records: list[dict] = []
     for h, group in body_hashes.items():
         if len(group) >= 3:
-            group_members = [
-                {"name": m["name"], "file": m["file_path"], "line": m["line_start"]}
-                for m in group
-            ]
+            group_members = [{"name": m["name"], "file": m["file_path"], "line": m["line_start"]} for m in group]
             for m in group:
                 rec = dict(m)
                 rec["group_size"] = len(group)
@@ -1511,12 +1548,21 @@ def _emit_vibe_check_findings(
     Returns the number of rows emitted. Wrapped by the caller in a
     defensive try/except so a pre-W89 DB (no ``findings`` table) silently
     no-ops rather than crashing the standard vibe-check command.
+
+    W1256: each finding row stamps the per-pattern detector version
+    (``_VIBE_KIND_TO_VERSION[kind]``) rather than the composite. The
+    ``source_version`` parameter is retained as the fallback for unknown
+    kinds so a future pattern lands here cleanly without a parallel edit
+    to the lookup table.
     """
     from roam.db.findings import FindingRecord, emit_finding
 
     emitted = 0
     for kind, records in findings_by_kind.items():
         tier = _vibe_check_tier(kind)
+        # W1256: per-pattern version stamp; falls back to composite for
+        # any future kind that isn't yet in the lookup table.
+        kind_version = _VIBE_KIND_TO_VERSION.get(kind, source_version)
         for rec in records:
             # Per-kind subject + claim shape.
             if kind == "dead_exports":
@@ -1524,9 +1570,7 @@ def _emit_vibe_check_findings(
                 subject_id = rec.get("symbol_id")
                 file_path = rec.get("file_path") or ""
                 line_start = rec.get("line_start")
-                finding_id = _vibe_finding_id(
-                    kind, f"{file_path}:{rec.get('name')}", line_start
-                )
+                finding_id = _vibe_finding_id(kind, f"{file_path}:{rec.get('name')}", line_start)
                 claim = (
                     f"AI-rot dead-export: {rec.get('name')} ({rec.get('kind')}) at "
                     f"{file_path}:{line_start} — zero incoming edges"
@@ -1547,10 +1591,7 @@ def _emit_vibe_check_findings(
                 subject_id = None
                 file_path = rec.get("file") or ""
                 finding_id = _vibe_finding_id(kind, file_path, None)
-                claim = (
-                    f"AI-rot short-churn: {file_path} — "
-                    f"{rec.get('commits')} commits over {rec.get('span_days')}d"
-                )
+                claim = f"AI-rot short-churn: {file_path} — {rec.get('commits')} commits over {rec.get('span_days')}d"
                 evidence = {
                     "file_path": file_path,
                     "commits": rec.get("commits"),
@@ -1563,10 +1604,7 @@ def _emit_vibe_check_findings(
                 file_path = rec.get("file") or ""
                 finding_id = _vibe_finding_id(kind, file_path, None)
                 count = rec.get("count", 0)
-                claim = (
-                    f"AI-rot empty-handlers: {file_path} — "
-                    f"{count} empty error handler(s)"
-                )
+                claim = f"AI-rot empty-handlers: {file_path} — {count} empty error handler(s)"
                 evidence = {
                     "file_path": file_path,
                     "count": count,
@@ -1578,10 +1616,7 @@ def _emit_vibe_check_findings(
                 file_path = rec.get("file") or ""
                 finding_id = _vibe_finding_id(kind, file_path, None)
                 count = rec.get("count", 0)
-                claim = (
-                    f"AI-rot abandoned-stubs: {file_path} — "
-                    f"{count} stub function(s)"
-                )
+                claim = f"AI-rot abandoned-stubs: {file_path} — {count} stub function(s)"
                 evidence = {
                     "file_path": file_path,
                     "count": count,
@@ -1593,10 +1628,7 @@ def _emit_vibe_check_findings(
                 file_path = rec.get("file") or ""
                 finding_id = _vibe_finding_id(kind, file_path, None)
                 count = rec.get("count", 0)
-                claim = (
-                    f"AI-rot hallucinated-imports: {file_path} — "
-                    f"{count} unresolvable import(s)"
-                )
+                claim = f"AI-rot hallucinated-imports: {file_path} — {count} unresolvable import(s)"
                 evidence = {
                     "file_path": file_path,
                     "count": count,
@@ -1608,10 +1640,7 @@ def _emit_vibe_check_findings(
                 file_path = rec.get("file") or ""
                 finding_id = _vibe_finding_id(kind, file_path, None)
                 patterns = rec.get("patterns", [])
-                claim = (
-                    f"AI-rot error-inconsistency: {file_path} — "
-                    f"{len(patterns)} distinct error patterns mixed"
-                )
+                claim = f"AI-rot error-inconsistency: {file_path} — {len(patterns)} distinct error patterns mixed"
                 evidence = {
                     "file_path": file_path,
                     "patterns": list(patterns),
@@ -1626,10 +1655,7 @@ def _emit_vibe_check_findings(
                 direction = rec.get("direction", "")
                 ratio = rec.get("comment_ratio")
                 z = rec.get("z_score")
-                claim = (
-                    f"AI-rot comment-anomaly: {file_path} — "
-                    f"{direction} comments (ratio={ratio}, z={z})"
-                )
+                claim = f"AI-rot comment-anomaly: {file_path} — {direction} comments (ratio={ratio}, z={z})"
                 evidence = {
                     "file_path": file_path,
                     "comment_ratio": ratio,
@@ -1669,9 +1695,7 @@ def _emit_vibe_check_findings(
                 subject_id = rec.get("symbol_id")
                 file_path = rec.get("file_path") or ""
                 line_start = rec.get("line_start")
-                finding_id = _vibe_finding_id(
-                    kind, f"{file_path}:{rec.get('name')}", line_start
-                )
+                finding_id = _vibe_finding_id(kind, f"{file_path}:{rec.get('name')}", line_start)
                 caller_file = rec.get("caller_file") or ""
                 claim = (
                     f"AI-rot modular-mirage: {rec.get('name')} ({rec.get('kind')}) "
@@ -1699,14 +1723,9 @@ def _emit_vibe_check_findings(
                 file_path = rec.get("file_path") or rec.get("file") or ""
                 line_start = rec.get("line")
                 subkind = rec.get("subkind", "boilerplate_inflation")
-                finding_id = _vibe_finding_id(
-                    kind, f"{file_path}:{subkind}", line_start
-                )
+                finding_id = _vibe_finding_id(kind, f"{file_path}:{subkind}", line_start)
                 snippet = rec.get("snippet", "")
-                claim = (
-                    f"AI-rot boilerplate-inflation ({subkind}): {file_path}:"
-                    f"{line_start} — {snippet[:80]}"
-                )
+                claim = f"AI-rot boilerplate-inflation ({subkind}): {file_path}:{line_start} — {snippet[:80]}"
                 evidence = {
                     "file_path": file_path,
                     "line": line_start,
@@ -1730,7 +1749,11 @@ def _emit_vibe_check_findings(
                     evidence_json=json.dumps(evidence, sort_keys=True),
                     confidence=tier,
                     source_detector="vibe-check",
-                    source_version=source_version,
+                    # W1256: per-pattern stamp (kind_version), not the
+                    # composite (source_version). Falls back to the
+                    # composite for any kind not yet in
+                    # _VIBE_KIND_TO_VERSION (defensive forward-compat).
+                    source_version=kind_version,
                 ),
             )
             emitted += 1
@@ -1801,9 +1824,7 @@ def vibe_check(ctx, threshold, persist):
         # the 8 detectors above, so downstream consumers see the same
         # number pre- and post-W371.
         p9_found, p9_total, p9_details = _detect_modular_mirage(conn)
-        p10_found, p10_total, p10_details = _detect_boilerplate_inflation(
-            conn, project_root
-        )
+        p10_found, p10_total, p10_details = _detect_boilerplate_inflation(conn, project_root)
 
         # --- W125: mirror into the central findings registry ---
         # Detector-specific output below is untouched; the registry rows
@@ -2039,11 +2060,7 @@ def vibe_check(ctx, threshold, persist):
                         # Per-pattern definition: only ``dead_exports``
                         # has a documented W19 divergence right now;
                         # others may follow as we surface them.
-                        **(
-                            {"metric_definition": _DEAD_EXPORTS_DEFINITION}
-                            if key == "dead_exports"
-                            else {}
-                        ),
+                        **({"metric_definition": _DEAD_EXPORTS_DEFINITION} if key == "dead_exports" else {}),
                     }
                     for key, pdata in patterns.items()
                 ],

@@ -23,7 +23,6 @@ from roam.output.confidence import (
 )
 from roam.output.formatter import format_table, json_envelope, to_json
 
-
 # W117 — vulns is the fourth detector migrating onto the central findings
 # registry (after clones in W95, dead in W99, complexity in W102). The
 # shape mirrors those three: a stable detector version stamp and a
@@ -229,6 +228,7 @@ def _vuln_classify(v: dict) -> tuple[str, str]:
         reason = f"source={source}; reachability not analyzed"
     return final, reason
 
+
 # ---------------------------------------------------------------------------
 # Format auto-detection
 # ---------------------------------------------------------------------------
@@ -325,6 +325,7 @@ def _ingest_report(conn: sqlite3.Connection, report_path: str, fmt: str) -> list
 # ---------------------------------------------------------------------------
 # Severity helpers
 # ---------------------------------------------------------------------------
+
 
 # W564: severity ordering now sourced from
 # roam.output._severity.severity_rank — canonical, shared across all

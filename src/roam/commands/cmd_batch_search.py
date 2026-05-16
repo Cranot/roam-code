@@ -8,6 +8,12 @@ matched file paths as well, so a query like ``useAccountBalance`` would
 return ``setup`` from ``tests/composables/account/useAccountBalance.test.ts``
 because the path matches. Opt back into the old behaviour with
 ``--include-paths`` for users who want a wider net.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because batch-search outputs are invocation-scoped symbol-name
+match enumerations — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

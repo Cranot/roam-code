@@ -120,17 +120,14 @@ class TestColdStartGuardWiring:
         )
 
     @pytest.mark.parametrize("tool_name", W302_TOOL_NAMES)
-    def test_wrapper_description_carries_cold_start_hint(
-        self, tool_name: str
-    ) -> None:
+    def test_wrapper_description_carries_cold_start_hint(self, tool_name: str) -> None:
         """W296 hint is auto-appended to every index-gated wrapper."""
         from roam.mcp_extras.preflight import INDEX_REQUIRED_HINT
         from roam.mcp_server import _TOOL_METADATA
 
         desc = _TOOL_METADATA[tool_name].get("description", "")
         assert INDEX_REQUIRED_HINT in desc, (
-            f"{tool_name} description must end with the W296 hint "
-            f"{INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
+            f"{tool_name} description must end with the W296 hint {INDEX_REQUIRED_HINT!r}; actual description: {desc!r}"
         )
 
 
@@ -154,9 +151,7 @@ class TestRoamSafeDeleteArgShape:
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
             roam_safe_delete(symbol="MyClass.method", root="/repo/x")
-            mock.assert_called_once_with(
-                ["safe-delete", "MyClass.method"], "/repo/x"
-            )
+            mock.assert_called_once_with(["safe-delete", "MyClass.method"], "/repo/x")
 
 
 class TestRoamSafeZonesArgShape:
@@ -167,9 +162,7 @@ class TestRoamSafeZonesArgShape:
             mock.return_value = {"ok": True}
             # Default depth=5 mirrors the CLI default per LAW 11.
             roam_safe_zones("src/roam/cli.py")
-            mock.assert_called_once_with(
-                ["safe-zones", "src/roam/cli.py", "--depth", "5"], "."
-            )
+            mock.assert_called_once_with(["safe-zones", "src/roam/cli.py", "--depth", "5"], ".")
 
     def test_custom_depth(self) -> None:
         from roam.mcp_server import roam_safe_zones
@@ -291,9 +284,7 @@ class TestRoamSplitArgShape:
             mock.return_value = {"ok": True}
             # Default min_group=2 mirrors the CLI default per LAW 11.
             roam_split("src/roam/cli.py")
-            mock.assert_called_once_with(
-                ["split", "src/roam/cli.py", "--min-group", "2"], "."
-            )
+            mock.assert_called_once_with(["split", "src/roam/cli.py", "--min-group", "2"], ".")
 
     def test_custom_min_group(self) -> None:
         from roam.mcp_server import roam_split
@@ -350,9 +341,7 @@ class TestRoamTestScaffoldArgShape:
             mock.return_value = {"ok": True}
             # Default write=False keeps dry-run per LAW 11.
             roam_test_scaffold("src/roam/cli.py")
-            mock.assert_called_once_with(
-                ["test-scaffold", "src/roam/cli.py"], "."
-            )
+            mock.assert_called_once_with(["test-scaffold", "src/roam/cli.py"], ".")
 
     def test_write_flag(self) -> None:
         from roam.mcp_server import roam_test_scaffold
@@ -369,9 +358,7 @@ class TestRoamTestScaffoldArgShape:
 
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = {"ok": True}
-            roam_test_scaffold(
-                symbol="src/utils.py", framework="unittest"
-            )
+            roam_test_scaffold(symbol="src/utils.py", framework="unittest")
             args = mock.call_args[0][0]
             assert args[:2] == ["test-scaffold", "src/utils.py"]
             assert "--framework" in args and "unittest" in args

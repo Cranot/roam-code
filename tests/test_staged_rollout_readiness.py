@@ -17,6 +17,7 @@ Sources of failure (in priority order):
 
 Refresh this test if the fixture set changes (add new tests to _SWEPT_FILES below).
 """
+
 from __future__ import annotations
 
 import os
@@ -56,7 +57,5 @@ def test_staged_rollout_enforcement_green():
         text=True,
     )
     assert result.returncode == 0, (
-        f"Staged rollout enforcement test failed.\n"
-        f"STDOUT:\n{result.stdout[-2000:]}\n"
-        f"STDERR:\n{result.stderr[-500:]}"
+        f"Staged rollout enforcement test failed.\nSTDOUT:\n{result.stdout[-2000:]}\nSTDERR:\n{result.stderr[-500:]}"
     )

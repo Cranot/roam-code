@@ -3,6 +3,14 @@
 generates a hook that runs ``git diff --cached | roam critique``
 on staged changes, exiting non-zero on high-severity findings. Idempotent:
 installing twice is a no-op (rewrites the same content).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam pre-commit`` is a setup/bootstrap command — its
+output is human-facing setup status (pre-commit hook installed into
+``.git/hooks``), not analysis findings with file:line coordinates.
+SARIF is reserved for scanning results. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1148 audit memo.
 """
 
 from __future__ import annotations

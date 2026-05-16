@@ -47,20 +47,13 @@ def empty_corpus_project(tmp_path):
 class TestAuthGapsEmptyCorpus:
     def test_exits_zero(self, cli_runner, empty_corpus_project, monkeypatch):
         monkeypatch.chdir(empty_corpus_project)
-        result = invoke_cli(
-            cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True
-        )
-        assert result.exit_code == 0, (
-            f"auth-gaps must exit 0 on empty corpus, got {result.exit_code}:\n"
-            f"{result.output}"
-        )
+        result = invoke_cli(cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True)
+        assert result.exit_code == 0, f"auth-gaps must exit 0 on empty corpus, got {result.exit_code}:\n{result.output}"
 
     def test_structured_envelope(self, cli_runner, empty_corpus_project, monkeypatch):
         """Envelope must parse + carry command/version/summary contract."""
         monkeypatch.chdir(empty_corpus_project)
-        result = invoke_cli(
-            cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True)
         data = parse_json_output(result, "auth-gaps")
         assert_json_envelope(data, "auth-gaps")
         # Structural fields the empty-corpus envelope must still expose.
@@ -73,26 +66,21 @@ class TestAuthGapsEmptyCorpus:
         assert data["route_gaps"] == []
         assert data["controller_gaps"] == []
 
-    def test_verdict_mentions_empty_not_default_success(
-        self, cli_runner, empty_corpus_project, monkeypatch
-    ):
+    def test_verdict_mentions_empty_not_default_success(self, cli_runner, empty_corpus_project, monkeypatch):
         """Pattern 2 guard: verdict must reflect the zero-finding state
         explicitly (a concrete count), not a silent SAFE / completed
         default. ``"0 auth gap(s) found"`` qualifies; ``"PASSED"`` /
         ``"SAFE"`` / ``"completed"`` would NOT.
         """
         monkeypatch.chdir(empty_corpus_project)
-        result = invoke_cli(
-            cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True)
         data = parse_json_output(result, "auth-gaps")
         verdict = data["summary"]["verdict"]
         assert isinstance(verdict, str) and verdict, "verdict must be a non-empty string"
         verdict_lower = verdict.lower()
         # The verdict must name the zero-count outcome (concrete signal).
         assert "0" in verdict or "no " in verdict_lower or "empty" in verdict_lower, (
-            f"verdict {verdict!r} must reflect empty-corpus state; "
-            "must not silently default to a success word"
+            f"verdict {verdict!r} must reflect empty-corpus state; must not silently default to a success word"
         )
         # Explicit Pattern-2 blocklist: no default-success vocabulary.
         for forbidden in ("safe", "passed", "completed", "all clear", "ok"):
@@ -114,33 +102,23 @@ class TestAuthGapsEmptyCorpus:
         the auth-gaps verdict anchors on ``gap(s) found``.
         """
         monkeypatch.chdir(empty_corpus_project)
-        result = invoke_cli(
-            cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True)
         data = parse_json_output(result, "auth-gaps")
         agent_contract = data.get("agent_contract")
         assert agent_contract is not None, "envelope must include agent_contract"
         facts = agent_contract.get("facts")
         assert isinstance(facts, list), f"facts must be a list, got {type(facts)}"
         assert len(facts) >= 1, "facts must be non-empty (verdict at minimum)"
-        assert all(isinstance(f, str) and f for f in facts), (
-            "every fact must be a non-empty string"
-        )
+        assert all(isinstance(f, str) and f for f in facts), "every fact must be a non-empty string"
 
-    def test_summary_partial_success_present_as_bool(
-        self, cli_runner, empty_corpus_project, monkeypatch
-    ):
+    def test_summary_partial_success_present_as_bool(self, cli_runner, empty_corpus_project, monkeypatch):
         monkeypatch.chdir(empty_corpus_project)
-        result = invoke_cli(
-            cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["auth-gaps"], cwd=empty_corpus_project, json_mode=True)
         data = parse_json_output(result, "auth-gaps")
         summary = data["summary"]
         assert "partial_success" in summary, (
-            "summary.partial_success must be present so agents can "
-            "distinguish empty-corpus from confirmed-clean states"
+            "summary.partial_success must be present so agents can distinguish empty-corpus from confirmed-clean states"
         )
         assert isinstance(summary["partial_success"], bool), (
-            f"summary.partial_success must be bool, got "
-            f"{type(summary['partial_success']).__name__}"
+            f"summary.partial_success must be bool, got {type(summary['partial_success']).__name__}"
         )

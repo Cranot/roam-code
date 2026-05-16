@@ -14,6 +14,13 @@ Examples
     roam cga emit --output - >cga.json       # stdout
     roam cga verify .roam/attestations/<sha>.intoto.json
     roam --json cga emit --no-write          # for piping
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cga outputs are code-graph attestation Statements — not
+per-location violations. SARIF is reserved for findings with file:line
+coordinates; cga's primary deliverable is the in-toto v1 Statement. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket C
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

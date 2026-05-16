@@ -32,7 +32,6 @@ from roam.runs.ledger import (  # noqa: E402
     start_run,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -227,9 +226,7 @@ def test_impact_auto_logs_to_active_run(
 
     events = list(read_run_events(Path(indexed_project), meta.run_id))
     impact_events = [e for e in events if e.get("action") == "impact"]
-    assert impact_events, (
-        f"no impact event found — W15.2 auto-log wiring broken; events: {events}"
-    )
+    assert impact_events, f"no impact event found — W15.2 auto-log wiring broken; events: {events}"
 
     ev = impact_events[0]
     assert ev["envelope_command"] == "impact"
@@ -238,34 +235,52 @@ def test_impact_auto_logs_to_active_run(
     assert ev.get("summary_verdict"), f"empty verdict in impact event: {ev}"
 
 
-def test_impact_auto_logs_not_found_path(
+def test_impact_does_not_auto_log_on_not_found(
     cli_runner,
     indexed_project,
     monkeypatch,
 ):
-    """``roam impact <missing>`` should still auto-log a not-found event.
+    """``roam impact <missing>`` is Convention (c): exit 0, envelope, no auto_log.
 
-    The not-found path is a real decision boundary (the agent tried to
-    probe a symbol that doesn't exist) and must surface in the replay
-    timeline so the agent's misstep is visible.
+    W1272 standardised the not-found branch to Pattern-2c Convention (c):
+    unresolved is a real success of "I tried and there's nothing to
+    analyze". The envelope discloses ``resolution=unresolved`` +
+    ``partial_success=true`` so downstream agents see the degraded
+    outcome, but the exit code stays 0 so CI doesn't conflate a
+    name-typo with a tool/IO failure.
+
+    Per the W1268 audit, ``auto_log`` is reserved for SUCCESS-PATH
+    blast-radius events; the not-found branch deliberately does NOT
+    call ``auto_log``. This test (W1276) pins down the new contract so
+    a future refactor can't silently re-add the auto-log and undo the
+    Convention (c) standardisation.
+
+    See also: ``cmd_dead --extinction`` for the canonical Convention (c)
+    shape, and W1242/W1249 for the resolution-disclosure mechanism.
     """
     meta = start_run(Path(indexed_project), agent="test-agent")
     monkeypatch.setenv("ROAM_RUN_ID", meta.run_id)
 
     result = invoke_cli(
-        cli_runner, ["impact", "DefinitelyDoesNotExist_xyzzy"],
-        cwd=indexed_project, json_mode=True,
+        cli_runner,
+        ["impact", "DefinitelyDoesNotExist_xyzzy"],
+        cwd=indexed_project,
+        json_mode=True,
     )
-    # Exit 1 is expected on not-found — that's fine.
-    assert result.exit_code in (0, 1), result.output
+    # W1272 — Convention (c): exit 0 on unresolved (not a tool failure).
+    assert result.exit_code == 0, result.output
 
+    # Envelope discloses the degraded outcome explicitly.
+    envelope = json.loads(result.output)
+    assert envelope.get("resolution") == "unresolved", envelope
+    assert envelope["summary"].get("partial_success") is True, envelope
+    assert "not found" in envelope["summary"].get("verdict", "").lower(), envelope
+
+    # W1276 — no auto_log on the not-found path. The run ledger should
+    # contain zero ``impact`` events for this invocation.
     events = list(read_run_events(Path(indexed_project), meta.run_id))
     impact_events = [e for e in events if e.get("action") == "impact"]
-    assert impact_events, (
-        f"impact not-found path failed to auto-log; events: {events}"
-    )
-    ev = impact_events[0]
-    assert "not found" in (ev.get("summary_verdict") or "").lower(), ev
+    assert not impact_events, f"not-found path must not auto-log (W1272/W1276); got events: {impact_events}"
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +319,4 @@ def test_preflight_emits_auto_log_event_when_run_active(
     assert verdict, f"empty verdict in event: {ev}"
     # The auto-log target should match the resolved symbol name (no
     # "(file:line)" suffix from the resolver label).
-    assert "(" not in ev.get("target", ""), (
-        f"target should not contain resolver suffix; got {ev.get('target')!r}"
-    )
+    assert "(" not in ev.get("target", ""), f"target should not contain resolver suffix; got {ev.get('target')!r}"

@@ -8,6 +8,13 @@ GitHub Copilot CLI ``/fleet``, raw JSON for custom runtimes).
 ``roam fleet verify <manifest>`` is a v12.1 stub that re-runs the
 blast-radius check against the live index and reports residual
 cross-task overlap.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because fleet outputs are invocation-scoped agent-orchestration
+metadata (agent task assignments, conflict_hotspots, conflict probability)
+designed for external multi-agent orchestrators — not per-location code
+findings. Output is manifest-shaped, not defect-shaped. See action.yml
+_SUPPORTED_SARIF allowlist and W1155 audit memo.
 """
 
 from __future__ import annotations

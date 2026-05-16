@@ -133,8 +133,7 @@ def test_metadata_row_shape_is_canonical() -> None:
 
     if invalid:
         rows = "\n".join(
-            f"    {task_id!r}: missing={sorted(missing)}, extra={sorted(extra)}"
-            for task_id, missing, extra in invalid
+            f"    {task_id!r}: missing={sorted(missing)}, extra={sorted(extra)}" for task_id, missing, extra in invalid
         )
         raise AssertionError(
             f"_DETECTOR_METADATA has {len(invalid)} row(s) with "
@@ -192,12 +191,9 @@ def test_finding_dicts_carry_detector_version() -> None:
         "``roam.catalog.versions.detector_version(task_id)``."
     )
     dv = finding["detector_version"]
-    assert isinstance(dv, str), (
-        f"detector_version must be a string, got {type(dv).__name__}"
-    )
+    assert isinstance(dv, str), f"detector_version must be a string, got {type(dv).__name__}"
     assert _SEMVER_RE.match(dv), (
-        f"detector_version {dv!r} is not semver-shaped "
-        f"(MAJOR.MINOR.PATCH with optional pre-release/build tag)."
+        f"detector_version {dv!r} is not semver-shaped (MAJOR.MINOR.PATCH with optional pre-release/build tag)."
     )
 
 

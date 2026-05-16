@@ -17,10 +17,6 @@ make ``roam doctor`` more discoverable from environmental errors:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
-
-import click
-import pytest
 
 _HINT = "roam doctor"
 
@@ -34,9 +30,7 @@ def test_index_missing_error_includes_doctor_hint():
     from roam.exit_codes import IndexMissingError
 
     exc = IndexMissingError()
-    assert _HINT in exc.message, (
-        f"IndexMissingError default message should mention `roam doctor`, got:\n{exc.message}"
-    )
+    assert _HINT in exc.message, f"IndexMissingError default message should mention `roam doctor`, got:\n{exc.message}"
 
 
 def test_stale_db_dir_error_includes_doctor_hint():
@@ -52,9 +46,7 @@ def test_stale_db_dir_error_includes_doctor_hint():
         "ROAM_DB_DIR env",
         PermissionError("simulated permission denied"),
     )
-    assert _HINT in str(exc), (
-        f"StaleDbDirError message should mention `roam doctor`, got:\n{exc}"
-    )
+    assert _HINT in str(exc), f"StaleDbDirError message should mention `roam doctor`, got:\n{exc}"
 
 
 def test_ensure_index_no_index_notice_includes_doctor_hint(tmp_path, monkeypatch, capsys):
@@ -78,9 +70,7 @@ def test_ensure_index_no_index_notice_includes_doctor_hint(tmp_path, monkeypatch
     resolve_mod.ensure_index(quiet=False)
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert _HINT in combined, (
-        f"ensure_index first-run notice should mention `roam doctor`, got:\n{combined}"
-    )
+    assert _HINT in combined, f"ensure_index first-run notice should mention `roam doctor`, got:\n{combined}"
 
 
 def test_init_outside_git_repo_includes_doctor_hint(tmp_path):
@@ -95,9 +85,7 @@ def test_init_outside_git_repo_includes_doctor_hint(tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli, ["init", "--root", str(tmp_path)], catch_exceptions=False)
     assert result.exit_code != 0
-    assert _HINT in result.output, (
-        f"`roam init` outside a git repo should mention `roam doctor`, got:\n{result.output}"
-    )
+    assert _HINT in result.output, f"`roam init` outside a git repo should mention `roam doctor`, got:\n{result.output}"
 
 
 def test_bundle_extract_failure_includes_doctor_hint(monkeypatch):
@@ -150,9 +138,7 @@ def test_bundle_extract_failure_includes_doctor_hint(monkeypatch):
             catch_exceptions=False,
         )
     assert result.exit_code != 0
-    assert _HINT in result.output, (
-        f"index-import extract failure should mention `roam doctor`, got:\n{result.output}"
-    )
+    assert _HINT in result.output, f"index-import extract failure should mention `roam doctor`, got:\n{result.output}"
 
 
 def test_breadcrumb_wording_is_consistent():
@@ -167,7 +153,5 @@ def test_breadcrumb_wording_is_consistent():
     from roam.db.connection import StaleDbDirError
     from roam.exit_codes import IndexMissingError
 
-    assert canonical in str(
-        StaleDbDirError("/x", "test", PermissionError("denied"))
-    )
+    assert canonical in str(StaleDbDirError("/x", "test", PermissionError("denied")))
     assert canonical in IndexMissingError().message

@@ -35,13 +35,11 @@ import sys
 import textwrap
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count  # noqa: E402
 from roam.commands.cmd_critique import (  # noqa: E402
     _CHECK_TO_KIND,
     _CRITIQUE_KIND_TO_CONFIDENCE,
@@ -51,8 +49,7 @@ from roam.commands.cmd_critique import (  # noqa: E402
     _emit_critique_findings,
 )
 from roam.db.connection import open_db  # noqa: E402
-from tests.conftest import make_src_project as _make_project  # noqa: E402
-
+from tests._findings_helpers import assert_detector_visible_in_findings_count  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Unit tests on the deterministic helpers (no DB / no CLI invocation)
@@ -123,10 +120,7 @@ def test_diff_sha_matches_pr_risk_shape():
     label = "stdin"
     intent = "fix"
     files = ["src/x.py", "src/y.py"]
-    expected_raw = (
-        f"{label}|range={intent or ''}|staged=0|"
-        f"files={','.join(sorted(files))}"
-    )
+    expected_raw = f"{label}|range={intent or ''}|staged=0|files={','.join(sorted(files))}"
     expected = hashlib.sha1(expected_raw.encode("utf-8")).hexdigest()[:12]
     assert _diff_sha(label=label, intent_text=intent, file_paths=files) == expected
 
@@ -158,9 +152,7 @@ def test_confidence_tier_table_covers_emitted_kinds():
     }
     assert expected_kinds <= set(_CRITIQUE_KIND_TO_CONFIDENCE.keys())
     # clone_pairs table is deterministic AST/structural -> static_analysis.
-    assert (
-        _CRITIQUE_KIND_TO_CONFIDENCE["patch.clone_not_edited"] == "static_analysis"
-    )
+    assert _CRITIQUE_KIND_TO_CONFIDENCE["patch.clone_not_edited"] == "static_analysis"
     # Caller count is a raw graph edge count -> structural.
     assert _CRITIQUE_KIND_TO_CONFIDENCE["patch.high_blast"] == "structural"
     # NLP-style title parse against the diff shape -> heuristic.
@@ -356,9 +348,7 @@ def test_emit_helper_handles_empty_findings(indexed_project):
     assert written == 0
 
     with open_db(readonly=True) as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'critique'"
-        ).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'critique'").fetchone()[0]
     assert count == 0
 
 
@@ -379,10 +369,7 @@ def test_emit_helper_rerun_upserts_in_place(indexed_project):
 
         first_ids = {
             row[0]
-            for row in conn.execute(
-                "SELECT finding_id_str FROM findings "
-                "WHERE source_detector = 'critique'"
-            ).fetchall()
+            for row in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'critique'").fetchall()
         }
         first_count = len(first_ids)
         assert first_count == 2
@@ -398,10 +385,7 @@ def test_emit_helper_rerun_upserts_in_place(indexed_project):
 
         second_ids = {
             row[0]
-            for row in conn.execute(
-                "SELECT finding_id_str FROM findings "
-                "WHERE source_detector = 'critique'"
-            ).fetchall()
+            for row in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'critique'").fetchall()
         }
     assert second_ids == first_ids
     assert len(second_ids) == 2
@@ -452,9 +436,7 @@ def test_emit_helper_different_diff_inserts_fresh_rows(indexed_project):
     # The first diff's id must still be present (audit trail), and a
     # second, distinct row must have been inserted.
     ids = [r[0] for r in rows]
-    assert len(set(ids)) == 2, (
-        f"expected two distinct high_blast ids across diffs, got {ids}"
-    )
+    assert len(set(ids)) == 2, f"expected two distinct high_blast ids across diffs, got {ids}"
 
 
 def test_emit_helper_skips_unknown_check(indexed_project):
@@ -579,10 +561,7 @@ def test_critique_persist_rerun_upserts_not_duplicates(indexed_project):
     with open_db(readonly=True) as conn:
         first_ids = {
             row[0]
-            for row in conn.execute(
-                "SELECT finding_id_str FROM findings "
-                "WHERE source_detector = 'critique'"
-            ).fetchall()
+            for row in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'critique'").fetchall()
         }
         first_count = len(first_ids)
     assert first_count >= 1
@@ -600,10 +579,7 @@ def test_critique_persist_rerun_upserts_not_duplicates(indexed_project):
     with open_db(readonly=True) as conn:
         second_ids = {
             row[0]
-            for row in conn.execute(
-                "SELECT finding_id_str FROM findings "
-                "WHERE source_detector = 'critique'"
-            ).fetchall()
+            for row in conn.execute("SELECT finding_id_str FROM findings WHERE source_detector = 'critique'").fetchall()
         }
         second_count = len(second_ids)
     assert second_count == first_count, "row count drifted across reruns"
@@ -636,10 +612,7 @@ def test_critique_no_persist_does_not_emit_findings(indexed_project):
 
     with open_db(readonly=True) as conn:
         try:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'critique'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'critique'").fetchone()[0]
         except sqlite3.OperationalError:
             count = 0
     assert count == 0, "non-persist critique still wrote to findings"
@@ -695,9 +668,7 @@ def test_critique_different_diff_gets_fresh_finding_id(indexed_project):
     assert r1.exit_code in (0, 5), r1.output
 
     with open_db(readonly=True) as conn:
-        first_count = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'critique'"
-        ).fetchone()[0]
+        first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'critique'").fetchone()[0]
     assert first_count >= 1
 
     # Second diff: touch a different file (utils.py instead).
@@ -724,20 +695,12 @@ def test_critique_different_diff_gets_fresh_finding_id(indexed_project):
     assert r2.exit_code in (0, 5), r2.output
 
     with open_db(readonly=True) as conn:
-        second_count = conn.execute(
-            "SELECT COUNT(*) FROM findings WHERE source_detector = 'critique'"
-        ).fetchone()[0]
+        second_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'critique'").fetchone()[0]
         # Distinct diff_sha values across all rows -> at least 2.
-        rows = conn.execute(
-            "SELECT evidence_json FROM findings WHERE source_detector = 'critique'"
-        ).fetchall()
-    assert second_count > first_count, (
-        "expected the second diff to insert fresh rows on top of the first"
-    )
+        rows = conn.execute("SELECT evidence_json FROM findings WHERE source_detector = 'critique'").fetchall()
+    assert second_count > first_count, "expected the second diff to insert fresh rows on top of the first"
     diff_shas = {json.loads(r[0]).get("diff_sha") for r in rows}
-    assert len(diff_shas) >= 2, (
-        f"expected at least two distinct diff_sha values, got {diff_shas}"
-    )
+    assert len(diff_shas) >= 2, f"expected at least two distinct diff_sha values, got {diff_shas}"
 
 
 # ---------------------------------------------------------------------------
@@ -761,9 +724,7 @@ def test_critique_findings_visible_via_cmd_findings_list(indexed_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(indexed_project))
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "critique"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "critique"])
     finally:
         os.chdir(old_cwd)
     assert result.exit_code == 0, result.output
@@ -772,9 +733,7 @@ def test_critique_findings_visible_via_cmd_findings_list(indexed_project):
     assert envelope["summary"]["state"] == "populated"
     assert envelope["summary"]["total_findings"] >= 1
     assert "critique" in envelope["summary"]["detectors"]
-    assert all(
-        r["source_detector"] == "critique" for r in envelope["findings"]
-    )
+    assert all(r["source_detector"] == "critique" for r in envelope["findings"])
 
 
 def test_critique_findings_visible_via_cmd_findings_count(indexed_project):

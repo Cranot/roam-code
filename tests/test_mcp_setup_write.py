@@ -21,7 +21,6 @@ import json
 import os
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from roam.commands.cmd_mcp_setup import (
@@ -30,7 +29,6 @@ from roam.commands.cmd_mcp_setup import (
     _write_config,
     mcp_setup,
 )
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for the small helpers

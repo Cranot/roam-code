@@ -2,6 +2,16 @@
 
 list slowest and most recent commands recorded under
 ``ROAM_TELEMETRY_LOCAL=1``. Strictly local; no network egress.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because telemetry outputs surface a state-mutating ring
+buffer (opt-in local command-timing log) — its rows describe
+roam's own command-invocation performance, not per-location code
+violations in the indexed workspace. SARIF audiences scan for code
+findings rather than tool-performance metrics. See ``cmd_mutate``
+for the parallel state-mutating disclosure pattern (W1180) +
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1224-audit memo.
 """
 
 from __future__ import annotations

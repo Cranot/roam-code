@@ -18,6 +18,13 @@ migration is a separate per-wave effort, so until detectors are migrated
 the registry will be empty on most repos. The command handles that
 empty state explicitly — never emits empty stdout (Pattern 1 from the
 CLAUDE.md anti-pattern catalogue).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because findings outputs are invocation-scoped registry-query
+rows — not per-location violations (per-detector ``--sarif`` carriers
+upstream of the registry handle SARIF emission). See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.db.findings import count_by_detector, get_finding, list_findings
 from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.structured_unknowns import structured_unknown_filter
 
 # ---------------------------------------------------------------------------
 # Click group
@@ -108,6 +116,83 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
     ensure_index()
 
     with open_db(readonly=True) as conn:
+        # W1063 (sibling of W1057): when ``--detector`` is supplied,
+        # validate against the registry's known-detectors set BEFORE
+        # querying. Unknown names previously fell into the generic
+        # "registry empty or filters too narrow" branch — indistinguishable
+        # from a clean codebase. Pattern-1D silent-success on degraded
+        # filter resolution. W1080: delegated to the shared
+        # ``structured_unknown_filter`` helper.
+        known_detectors = count_by_detector(conn)
+        frag = (
+            structured_unknown_filter(
+                requested=detector,
+                known=known_detectors,
+                state="unknown_detector",
+                requested_field="requested_detector",
+                known_field="known_detectors",
+                fact_anchor="detectors",
+                did_you_mean_omit_when_empty=True,
+            )
+            if detector is not None
+            else None
+        )
+        if frag is not None:
+            # W1082: ``did_you_mean_omit_when_empty=True`` makes the helper
+            # omit the field when empty so the splice stays unconditional.
+            # The verdict still deliberately does NOT carry the
+            # "Did you mean: …?" suffix for findings (it is emitted only
+            # as a separate ``click.echo`` text line + as a summary
+            # ``did_you_mean`` field) — leave ``frag['verdict_suffix']``
+            # unused here.
+            verdict_unknown = f"unknown detector {detector!r} ({len(known_detectors)} known)"
+            close_matches = frag.get("did_you_mean", [])
+            if json_mode:
+                summary_payload: dict[str, object] = {
+                    "verdict": verdict_unknown,
+                    "partial_success": frag["partial_success"],
+                    "state": frag["state"],
+                    "total_findings": 0,
+                    "requested_detector": frag["requested_detector"],
+                    "known_detectors": frag["known_detectors"],
+                    "filters": {
+                        "detector": detector,
+                        "subject_kind": subject_kind,
+                        "subject_id": subject_id,
+                    },
+                }
+                # W1082: helper now controls presence via
+                # ``did_you_mean_omit_when_empty``; splice the field across
+                # unconditionally when present.
+                if "did_you_mean" in frag:
+                    summary_payload["did_you_mean"] = frag["did_you_mean"]
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "findings-list",
+                            summary=summary_payload,
+                            budget=token_budget,
+                            findings=[],
+                            agent_contract={
+                                # LAW 4: helper emits facts anchored on
+                                # ``detectors`` (in the formatter set).
+                                "facts": frag["facts"],
+                                "next_commands": ["roam findings count"],
+                            },
+                        )
+                    )
+                )
+                return
+            click.echo(f"VERDICT: {verdict_unknown}")
+            if close_matches:
+                quoted = " or ".join(f"'{m}'" for m in close_matches)
+                click.echo(f"Did you mean: {quoted}?")
+            if known_detectors:
+                click.echo("Known detectors: " + ", ".join(sorted(known_detectors)))
+            else:
+                click.echo("Registry is empty (no detectors have emitted yet).")
+            return
+
         rows = list_findings(
             conn,
             detector=detector,
@@ -121,10 +206,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
     # every row. The verdict names both possibilities so the agent can
     # tell which.
     if not rows:
-        verdict_empty = (
-            "no findings registered "
-            "(registry empty or filters too narrow)"
-        )
+        verdict_empty = "no findings registered (registry empty or filters too narrow)"
         if json_mode:
             click.echo(
                 to_json(
@@ -156,9 +238,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
 
     # Populated path.
     detectors_present = sorted({r["source_detector"] for r in rows})
-    verdict = (
-        f"{len(rows)} findings from {len(detectors_present)} detectors"
-    )
+    verdict = f"{len(rows)} findings from {len(detectors_present)} detectors"
 
     if json_mode:
         click.echo(
@@ -181,9 +261,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
                     findings=rows,
                     agent_contract={
                         "facts": [f"{len(rows)} findings"],
-                        "next_commands": [
-                            f"roam findings show {rows[0]['finding_id_str']}"
-                        ],
+                        "next_commands": [f"roam findings show {rows[0]['finding_id_str']}"],
                     },
                 )
             )
@@ -234,10 +312,7 @@ def findings_show(ctx, finding_id_str):
         record = get_finding(conn, finding_id_str)
 
     if record is None:
-        verdict_missing = (
-            f"finding id {finding_id_str!r} not found "
-            "(run `roam findings list` to discover valid ids)"
-        )
+        verdict_missing = f"finding id {finding_id_str!r} not found (run `roam findings list` to discover valid ids)"
         if json_mode:
             click.echo(
                 to_json(
@@ -253,9 +328,7 @@ def findings_show(ctx, finding_id_str):
                         budget=token_budget,
                         finding=None,
                         agent_contract={
-                            "facts": [
-                                f"no finding with id {finding_id_str}"
-                            ],
+                            "facts": [f"no finding with id {finding_id_str}"],
                             "next_commands": ["roam findings list"],
                         },
                     )
@@ -265,10 +338,7 @@ def findings_show(ctx, finding_id_str):
         click.echo(f"VERDICT: {verdict_missing}")
         ctx.exit(2)
 
-    verdict = (
-        f"finding {record['finding_id_str']} from "
-        f"{record['source_detector']} ({record['confidence']})"
-    )
+    verdict = f"finding {record['finding_id_str']} from {record['source_detector']} ({record['confidence']})"
 
     if json_mode:
         click.echo(
@@ -333,10 +403,7 @@ def findings_count(ctx):
     detector_count = len(counts)
 
     if total == 0:
-        verdict_empty = (
-            "no findings registered "
-            "(no detector has emitted to the registry yet)"
-        )
+        verdict_empty = "no findings registered (no detector has emitted to the registry yet)"
         if json_mode:
             click.echo(
                 to_json(
@@ -391,8 +458,5 @@ def findings_count(ctx):
         return
 
     click.echo(f"VERDICT: {verdict}\n")
-    table_rows = [
-        [det, str(n)]
-        for det, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    ]
+    table_rows = [[det, str(n)] for det, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
     click.echo(format_table(["Detector", "Findings"], table_rows, budget=0))

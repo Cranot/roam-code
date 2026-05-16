@@ -3,6 +3,15 @@
 with ``--check``, also queries PyPI (with a tight timeout) to
 report whether a newer version is available. Offline-friendly: when
 PyPI is unreachable, just prints the local version. No nag.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam version`` prints invocation-scoped tool-
+identity metadata (installed roam-code version string + optional
+PyPI-latest comparison) — not per-location code violations in any
+indexed workspace. SARIF is reserved for scanning results. See
+``cmd_surface`` / ``cmd_capabilities`` for the parallel meta-
+registry disclosure pattern + action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH propagation plan + W1224-audit memo.
 """
 
 from __future__ import annotations

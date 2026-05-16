@@ -62,7 +62,6 @@ from roam.commands.stale_refs_anchors import (
     slugify,
 )
 
-
 # ---------------------------------------------------------------------------
 # Bug 2 — extractor / resolver invariants
 # ---------------------------------------------------------------------------
@@ -97,12 +96,8 @@ class TestStaleRefsUsesUrlNotDisplay:
         target.write_text("# 16-X\n")
         (tmp_path / "docs" / "legacy" / "reports").mkdir(parents=True)
         source_rel = "docs/legacy/reports/some-doc.md"
-        (tmp_path / source_rel).write_text(
-            "See [`code-map/16-X.md`](../code-map/16-X.md) for details.\n"
-        )
-        resolved = _resolve_target(
-            "../code-map/16-X.md", source_rel, tmp_path
-        )
+        (tmp_path / source_rel).write_text("See [`code-map/16-X.md`](../code-map/16-X.md) for details.\n")
+        resolved = _resolve_target("../code-map/16-X.md", source_rel, tmp_path)
         assert resolved is not None
         assert resolved.exists()
         assert resolved.resolve() == target.resolve()
@@ -112,8 +107,7 @@ class TestStaleRefsUsesUrlNotDisplay:
         not filesystem-path references. By default they're invisible to
         the scanner."""
         content = (
-            "Look at the `MyDataController.php` which handles the workflow.\n"
-            "The `process()` helper does the work.\n"
+            "Look at the `MyDataController.php` which handles the workflow.\nThe `process()` helper does the work.\n"
         )
         refs = _extract_refs(content, prose_mode=True)
         # Nothing — bare backticks in prose are inline code, not links.
@@ -137,9 +131,7 @@ class TestStaleRefsFixSafetyAgainstDoublePrefix:
         file's directory, would land on a path that doesn't exist (the
         signature of a double-prefix rewrite), the rewrite is refused."""
         (tmp_path / "docs" / "legacy" / "code-map").mkdir(parents=True)
-        (tmp_path / "docs" / "legacy" / "code-map" / "16-X.md").write_text(
-            "ok\n"
-        )
+        (tmp_path / "docs" / "legacy" / "code-map" / "16-X.md").write_text("ok\n")
         (tmp_path / "docs" / "legacy" / "reports").mkdir(parents=True)
         source_rel = "docs/legacy/reports/some-doc.md"
         (tmp_path / source_rel).write_text("[`x`](../code-map/16-X.md)\n")
@@ -163,9 +155,7 @@ class TestStaleRefsFixSafetyAgainstDoublePrefix:
         """Guard 1: if the ORIGINAL URL already resolves to a live
         file, no rewrite is acceptable — the link was always fine."""
         (tmp_path / "docs" / "legacy" / "code-map").mkdir(parents=True)
-        (tmp_path / "docs" / "legacy" / "code-map" / "16-X.md").write_text(
-            "ok\n"
-        )
+        (tmp_path / "docs" / "legacy" / "code-map" / "16-X.md").write_text("ok\n")
         (tmp_path / "docs" / "legacy" / "reports").mkdir(parents=True)
         source_rel = "docs/legacy/reports/some-doc.md"
         (tmp_path / source_rel).write_text("[`x`](../code-map/16-X.md)\n")

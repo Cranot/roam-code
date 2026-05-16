@@ -176,9 +176,7 @@ def _process_assign_node(
     # type-switch finding while preserving the exact original semantics.
     def _resolve_dict_value(v: ast.AST) -> int | None:
         # Shape A: ``_NAME = {"key": ("module.path", "fn_name"), ...}``.
-        return _resolve_string_pair_tuple(
-            v, package_prefix, by_module_dotted, by_qualified
-        )
+        return _resolve_string_pair_tuple(v, package_prefix, by_module_dotted, by_qualified)
 
     def _resolve_list_or_tuple_value(v: ast.AST) -> int | None:
         # Shape B: ``_NAME = [(..., fn_ref), ...]`` — same-file Name reference.

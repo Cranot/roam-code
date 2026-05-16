@@ -1,4 +1,11 @@
-"""Show structural change summary: symbols added/removed/modified, changed imports."""
+"""Show structural change summary: symbols added/removed/modified, changed imports.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because semantic-diff outputs are invocation-scoped structural
+changes — not per-location violations. Editor consumers should use the
+JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 

@@ -29,7 +29,6 @@ from roam.commands.cmd_check_rules import (
     _load_user_config,
 )
 
-
 # ---------------------------------------------------------------------------
 # _load_raw_config — direct loader behaviour
 # ---------------------------------------------------------------------------
@@ -53,12 +52,7 @@ def test_raw_none_path_no_warning() -> None:
 
 def test_raw_valid_yaml_no_warning(tmp_path: Path) -> None:
     """Happy path: well-formed file, no warnings emitted."""
-    body = (
-        "profile: strict-security\n"
-        "rules:\n"
-        "  - id: max-fan-out\n"
-        "    threshold: 5\n"
-    )
+    body = "profile: strict-security\nrules:\n  - id: max-fan-out\n    threshold: 5\n"
     p = tmp_path / ".roam-rules.yml"
     p.write_text(body, encoding="utf-8")
     warnings_out: list[str] = []
@@ -117,13 +111,7 @@ def test_user_missing_file_no_warning(tmp_path: Path) -> None:
 
 
 def test_user_valid_rules_no_warning(tmp_path: Path) -> None:
-    body = (
-        "rules:\n"
-        "  - id: max-fan-out\n"
-        "    threshold: 5\n"
-        "  - id: test-file-exists\n"
-        "    enabled: false\n"
-    )
+    body = "rules:\n  - id: max-fan-out\n    threshold: 5\n  - id: test-file-exists\n    enabled: false\n"
     p = tmp_path / ".roam-rules.yml"
     p.write_text(body, encoding="utf-8")
     warnings_out: list[str] = []
@@ -266,9 +254,7 @@ def test_envelope_surfaces_warnings_on_malformed_config(tmp_path: Path) -> None:
         # Minimal Python source so init has something to index.
         (cwd_p / "sample.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
         # Malformed config — non-list rules.
-        (cwd_p / ".roam-rules.yml").write_text(
-            "rules:\n  id: not-a-list\n", encoding="utf-8"
-        )
+        (cwd_p / ".roam-rules.yml").write_text("rules:\n  id: not-a-list\n", encoding="utf-8")
         _git_add_commit(cwd_p)
         runner.invoke(roam_cli, ["init"])
         result = runner.invoke(roam_cli, ["--json", "check-rules"])
@@ -288,9 +274,7 @@ def test_envelope_clean_on_well_formed_config(tmp_path: Path) -> None:
         cwd_p = Path(cwd)
         _setup_git_repo(cwd_p)
         (cwd_p / "sample.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
-        (cwd_p / ".roam-rules.yml").write_text(
-            "rules:\n  - id: max-fan-out\n    threshold: 5\n", encoding="utf-8"
-        )
+        (cwd_p / ".roam-rules.yml").write_text("rules:\n  - id: max-fan-out\n    threshold: 5\n", encoding="utf-8")
         _git_add_commit(cwd_p)
         runner.invoke(roam_cli, ["init"])
         result = runner.invoke(roam_cli, ["--json", "check-rules"])

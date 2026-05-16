@@ -1,4 +1,10 @@
-"""Detect health degradation trends and generate actionable alerts."""
+"""Detect health degradation trends and generate actionable alerts.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because alerts outputs are invocation-scoped health-degradation
+alerts — not per-location violations. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -331,12 +337,7 @@ def _parse_alerts_yaml(
             # of comparators ``_check_thresholds`` actually evaluates.
             # Only validate when this row sits under ``thresholds:`` —
             # other sections (e.g. ``delta_alerts``) do not carry ops.
-            if (
-                warnings_out is not None
-                and current_section == "thresholds"
-                and "op" in d
-                and d["op"] not in _VALID_OPS
-            ):
+            if warnings_out is not None and current_section == "thresholds" and "op" in d and d["op"] not in _VALID_OPS:
                 warnings_out.append(
                     f"Metric {key!r} has invalid op {d['op']!r} (must be "
                     f"one of {sorted(_VALID_OPS)}); skipping this "
@@ -405,9 +406,7 @@ def _load_alerts_config(
             # below covers ``thresholds: 42`` / ``thresholds: [a, b]``
             # in the no-PyYAML environment.
             raw_thresholds = data.get("thresholds")
-            if raw_thresholds is not None and not isinstance(
-                raw_thresholds, dict
-            ):
+            if raw_thresholds is not None and not isinstance(raw_thresholds, dict):
                 if warnings_out is not None:
                     warnings_out.append(
                         f".roam/alerts.yaml 'thresholds:' section is a "
@@ -423,11 +422,7 @@ def _load_alerts_config(
                 for metric, rule in thresholds.items():
                     if not isinstance(rule, dict):
                         continue
-                    if (
-                        warnings_out is not None
-                        and "op" in rule
-                        and rule["op"] not in _VALID_OPS
-                    ):
+                    if warnings_out is not None and "op" in rule and rule["op"] not in _VALID_OPS:
                         warnings_out.append(
                             f"Metric {metric!r} has invalid op "
                             f"{rule['op']!r} (must be one of "
@@ -458,9 +453,7 @@ def _load_alerts_config(
         # backend.
         if isinstance(data, dict):
             raw_thresholds = data.get("thresholds")
-            if raw_thresholds is not None and not isinstance(
-                raw_thresholds, dict
-            ):
+            if raw_thresholds is not None and not isinstance(raw_thresholds, dict):
                 if warnings_out is not None:
                     warnings_out.append(
                         f".roam/alerts.yaml 'thresholds:' section is a "
@@ -539,9 +532,7 @@ def _resolved_thresholds(
         # warning text reflects what the user actually wrote, not the
         # post-merge papered-over state.
         if warnings_out is not None and metric not in _DEFAULT_THRESHOLDS:
-            missing_fields = [
-                field for field in ("op", "value", "level") if field not in rule
-            ]
+            missing_fields = [field for field in ("op", "value", "level") if field not in rule]
             if missing_fields:
                 warnings_out.append(
                     f"Metric {metric!r} has no threshold defined in alerts "
@@ -663,10 +654,7 @@ def _make_alert(
     # downstream ``counts[a["level"]] += 1`` KeyError. Sibling of W969
     # which guards the YAML-parse-time path; this guards the
     # in-process-construction path.
-    assert level in _CANONICAL_LEVELS, (
-        f"_make_alert level {level!r} must be canonical "
-        f"({sorted(_CANONICAL_LEVELS)})"
-    )
+    assert level in _CANONICAL_LEVELS, f"_make_alert level {level!r} must be canonical ({sorted(_CANONICAL_LEVELS)})"
     # W959: cast-narrow ``level`` from ``str`` to the canonical Literal
     # AFTER the assert has proven membership in ``_CANONICAL_LEVELS``. Same
     # discipline as ``_resolved_thresholds`` etc — runtime checks gate the
@@ -1023,32 +1011,22 @@ def _emit_alerts_json(
     facts: list[str] = [verdict]
     if counts.get(CRITICAL):
         facts.append(
-            f"alerts scan flagged {counts[CRITICAL]} critical health degradations "
-            f"across {snapshots_analyzed} snapshots"
+            f"alerts scan flagged {counts[CRITICAL]} critical health degradations across {snapshots_analyzed} snapshots"
         )
     if counts.get(WARNING):
-        facts.append(
-            f"alerts scan flagged {counts[WARNING]} warning-level health trends"
-        )
+        facts.append(f"alerts scan flagged {counts[WARNING]} warning-level health trends")
     if counts.get(INFO):
-        facts.append(
-            f"alerts scan emitted {counts[INFO]} info-level observations"
-        )
+        facts.append(f"alerts scan emitted {counts[INFO]} info-level observations")
     if all_alerts:
         top = all_alerts[0]
-        facts.append(
-            f"highest-priority alert: [{top.get('level', '?')}] "
-            f"{top.get('message', '?')}"
-        )
+        facts.append(f"highest-priority alert: [{top.get('level', '?')}] {top.get('message', '?')}")
     # W918 (Pattern 2): if the alerts config triggered any silent-fallback
     # warnings (unknown user-supplied metric defaulted to ``op='>', value=0``),
     # surface them as a fact so consumers reading only ``agent_contract.facts``
     # still see the silent-state disclosure.
     warnings_list = list(warnings_out) if warnings_out else []
     if warnings_list:
-        facts.append(
-            f"alerts config triggered {len(warnings_list)} silent-fallback warnings"
-        )
+        facts.append(f"alerts config triggered {len(warnings_list)} silent-fallback warnings")
     next_commands = [
         "roam health",
         "roam architecture-drift",

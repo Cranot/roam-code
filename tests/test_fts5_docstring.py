@@ -25,7 +25,6 @@ import sqlite3
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixture: minimal DB whose schema matches the production one closely
 # enough to exercise the FTS5 docstring path. We deliberately use the
@@ -64,11 +63,13 @@ def fts_db(monkeypatch):
     # point of the test, we want column drift in _ensure_fts5_table to
     # break this fixture.
     from roam.db.connection import _ensure_fts5_table
+
     _ensure_fts5_table(conn)
 
     conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/auth.py')")
 
     import roam.search.index_embeddings as ie
+
     monkeypatch.setattr(ie, "build_and_store_tfidf", lambda c: None)
     monkeypatch.setattr(ie, "build_and_store_onnx_embeddings", lambda *a, **kw: None)
 
@@ -105,7 +106,12 @@ def test_fts5_schema_columns_order_is_stable(fts_db):
     # PRAGMA table_info returns (cid, name, type, notnull, dflt_value, pk).
     cols_in_order = [r[1] for r in sorted(rows, key=lambda r: r[0])]
     assert cols_in_order == [
-        "name", "qualified_name", "signature", "docstring", "kind", "file_path",
+        "name",
+        "qualified_name",
+        "signature",
+        "docstring",
+        "kind",
+        "file_path",
     ], (
         f"FTS5 column order drifted to {cols_in_order}; this silently "
         "changes which column each BM25 weight applies to. Update "
@@ -134,11 +140,10 @@ def test_docstring_indexed_on_insert(fts_db):
     fts_db.commit()
 
     from roam.search.index_embeddings import build_fts_index
+
     build_fts_index(fts_db)
 
-    row = fts_db.execute(
-        "SELECT docstring FROM symbol_fts WHERE rowid = 1"
-    ).fetchone()
+    row = fts_db.execute("SELECT docstring FROM symbol_fts WHERE rowid = 1").fetchone()
     assert row is not None, "symbol was not inserted into symbol_fts"
     assert "Verify user credentials" in row["docstring"], (
         f"docstring not populated in symbol_fts; got {row['docstring']!r}"
@@ -173,6 +178,7 @@ def test_retrieve_uses_docstring_for_match(fts_db):
     fts_db.commit()
 
     from roam.search.index_embeddings import build_fts_index, search_fts
+
     build_fts_index(fts_db)
 
     hits = search_fts(fts_db, "trace login flow", top_k=10)
@@ -196,8 +202,8 @@ def test_bm25_weights_docstring_at_4():
     queries hit docstring text, lower than name=10/qname=5 so a query
     that also matches the name still ranks the name-match higher.
     """
-    from roam.search.index_embeddings import _BM25_WEIGHTS
     from roam.db.connection import _FTS5_SCHEMA_COLUMNS
+    from roam.search.index_embeddings import _BM25_WEIGHTS
 
     weights = [float(w.strip()) for w in _BM25_WEIGHTS.split(",")]
     assert len(weights) == len(_FTS5_SCHEMA_COLUMNS), (
@@ -238,11 +244,10 @@ def test_name_match_outranks_docstring_match(fts_db):
     fts_db.commit()
 
     from roam.search.index_embeddings import build_fts_index, search_fts
+
     build_fts_index(fts_db)
 
     hits = search_fts(fts_db, "login", top_k=10)
     assert len(hits) >= 2, f"expected both symbols to match, got {hits}"
     names = [h["name"] for h in hits]
-    assert names.index("login") < names.index("helper"), (
-        f"name match should outrank docstring match; got order {names}"
-    )
+    assert names.index("login") < names.index("helper"), f"name match should outrank docstring match; got order {names}"

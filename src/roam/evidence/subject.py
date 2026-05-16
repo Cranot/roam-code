@@ -49,13 +49,9 @@ class EvidenceSubject:
 
     def __post_init__(self) -> None:
         if self.kind not in SUBJECT_KINDS:
-            raise ValueError(
-                f"EvidenceSubject.kind={self.kind!r} is not in SUBJECT_KINDS"
-            )
+            raise ValueError(f"EvidenceSubject.kind={self.kind!r} is not in SUBJECT_KINDS")
         if not isinstance(self.qualified_name, str) or not self.qualified_name:
-            raise ValueError(
-                "EvidenceSubject.qualified_name must be a non-empty string"
-            )
+            raise ValueError("EvidenceSubject.qualified_name must be a non-empty string")
 
 
 __all__ = ["EvidenceSubject"]

@@ -34,7 +34,6 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -156,9 +155,7 @@ def test_pr_replay_evidence_flag_wins_over_bundle(tmp_path):
     assert code == 0
     assert explicit.exists(), "explicit --evidence path was not written"
     # The bundle JSON should NOT exist — the explicit flag won.
-    assert not (bundle / "evidence.json").exists(), (
-        "bundle evidence.json was written despite explicit --evidence"
-    )
+    assert not (bundle / "evidence.json").exists(), "bundle evidence.json was written despite explicit --evidence"
     # The Markdown sibling from the bundle still ships (--markdown wasn't
     # passed, so the bundle default takes over for that artefact).
     assert (bundle / "report.md").exists()
@@ -260,13 +257,9 @@ def test_collect_change_evidence_returns_content_hashed_packet(tmp_path, monkeyp
 
     packet = _collect_change_evidence(
         commit_range="HEAD~1..HEAD",
-        commits=[
-            {"sha": "abc123", "subject": "test", "high": 0, "medium": 1, "date": "2026-05-13"}
-        ],
+        commits=[{"sha": "abc123", "subject": "test", "high": 0, "medium": 1, "date": "2026-05-13"}],
         summary={"verdict": "clean", "total_high": 0, "total_medium": 1},
-        by_detector=[
-            {"detector": "test-class", "total_findings": 2, "commits_with_finding": 1}
-        ],
+        by_detector=[{"detector": "test-class", "total_findings": 2, "commits_with_finding": 1}],
         generated_at="2026-05-13 12:00 UTC",
     )
     assert packet.content_hash is not None
@@ -301,14 +294,12 @@ def test_pr_replay_uses_canonical_collector():
        branch to maintain).
     """
     import inspect
-    from pathlib import Path
 
     from roam.commands import cmd_pr_replay
 
     # (1) Symbol check on the imported module.
     assert not hasattr(cmd_pr_replay, "_build_inline_change_evidence"), (
-        "_build_inline_change_evidence should have been deleted in W179 — "
-        "the W176 canonical collector replaces it"
+        "_build_inline_change_evidence should have been deleted in W179 — the W176 canonical collector replaces it"
     )
     assert not hasattr(cmd_pr_replay, "_try_import_collector"), (
         "_try_import_collector was a W177 lazy-import shim; W176 is always "
@@ -329,9 +320,7 @@ def test_pr_replay_uses_canonical_collector():
     assert "def _build_inline_change_evidence" not in source, (
         "_build_inline_change_evidence definition still present in source"
     )
-    assert "def _try_import_collector" not in source, (
-        "_try_import_collector definition still present in source"
-    )
+    assert "def _try_import_collector" not in source, "_try_import_collector definition still present in source"
 
 
 # ---------------------------------------------------------------------------
@@ -487,9 +476,7 @@ def test_pr_replay_renders_generated_limitations():
     assert trust_idx >= 0, "Expected trust-tier warning bullet"
     assert non_cert_idx >= 0, "Expected non-certification bullet"
     assert q3_idx < redaction_idx < trust_idx < non_cert_idx, (
-        "Three-source ordering broken: "
-        f"q3={q3_idx} red={redaction_idx} trust={trust_idx} "
-        f"non_cert={non_cert_idx}"
+        f"Three-source ordering broken: q3={q3_idx} red={redaction_idx} trust={trust_idx} non_cert={non_cert_idx}"
     )
     # Actor id surfaces in the warning.
     assert "agent:claude-opus-4.7" in section
@@ -510,7 +497,6 @@ def test_actors_section_renders_when_actor_refs_present():
     """A packet with one ActorRef renders an Actors table with the id."""
     import dataclasses
 
-    from roam.evidence import ChangeEvidence
     from roam.evidence.refs import ActorRef
 
     packet = dataclasses.replace(
@@ -652,12 +638,8 @@ def test_all_three_sections_always_present_in_template():
     packet = dataclasses.replace(
         _empty_packet(),
         actor_refs=(ActorRef(actor_kind="human", actor_id="human:alice"),),
-        authority_refs=(
-            AuthorityRef(authority_kind="approval", authority_id="approval:pr_42"),
-        ),
-        environment_refs=(
-            EnvironmentRef(env_kind="workspace", env_id="workspace:/repo"),
-        ),
+        authority_refs=(AuthorityRef(authority_kind="approval", authority_id="approval:pr_42"),),
+        environment_refs=(EnvironmentRef(env_kind="workspace", env_id="workspace:/repo"),),
         content_hash=None,
     )
     out_full = _render(packet)
@@ -848,9 +830,7 @@ def test_pr_replay_gatherers_are_best_effort(monkeypatch):
     def crashing_gather(active_run_id, warnings):
         raise RuntimeError("simulated gatherer crash")
 
-    monkeypatch.setattr(
-        cmd_pr_replay, "_gather_rules_envelopes", crashing_gather
-    )
+    monkeypatch.setattr(cmd_pr_replay, "_gather_rules_envelopes", crashing_gather)
     # The other gatherers behave normally.
     monkeypatch.setattr(
         cmd_pr_replay,
@@ -1016,12 +996,12 @@ def test_pr_replay_evidence_completeness_improves_with_full_envelopes(
     )
     # Keep the real collector for this test — we want the actual
     # completeness score, not a stubbed one.
-    monkeypatch.setattr(
-        "roam.evidence.collect_change_evidence", real_collect
-    )
+    monkeypatch.setattr("roam.evidence.collect_change_evidence", real_collect)
 
     # Baseline: same call but with EVERY gatherer returning empty.
-    monkeypatch_baseline = type(
+    # Constructed for documentation; the actual baseline path below
+    # uses a different fixture, so this object is unused at runtime.
+    _monkeypatch_baseline = type(  # noqa: F841 — reserved for future baseline expansion
         "_M",
         (),
         {"setattr": lambda *a, **k: None},
@@ -1030,8 +1010,7 @@ def test_pr_replay_evidence_completeness_improves_with_full_envelopes(
     # Build the populated packet.
     packet_full = cmd_pr_replay._collect_change_evidence(
         commit_range="HEAD~1..HEAD",
-        commits=[{"sha": "abc", "subject": "t", "high": 1, "medium": 0,
-                  "date": "2026-05-14"}],
+        commits=[{"sha": "abc", "subject": "t", "high": 1, "medium": 0, "date": "2026-05-14"}],
         summary={"verdict": "x", "total_high": 1, "total_medium": 0},
         by_detector=[],
         generated_at="2026-05-14 00:00 UTC",
@@ -1044,17 +1023,12 @@ def test_pr_replay_evidence_completeness_improves_with_full_envelopes(
     # asymmetric so any drift surfaces.
     assert full["complete"] >= 4, (
         f"Expected >= 4 'complete' answers when every gatherer fires, "
-        f"got {full['complete']}. Per-Q: "
-        + ", ".join(f"Q{i}={full[f'Q{i}']}" for i in range(1, 9))
+        f"got {full['complete']}. Per-Q: " + ", ".join(f"Q{i}={full[f'Q{i}']}" for i in range(1, 9))
     )
     # And the populated paths are *specifically* complete (the smoke pin).
-    assert full["Q6"] == "complete", (
-        f"Q6 (policy) should be 'complete' with rules+audit-trail; "
-        f"got {full['Q6']}"
-    )
+    assert full["Q6"] == "complete", f"Q6 (policy) should be 'complete' with rules+audit-trail; got {full['Q6']}"
     assert full["Q7"] == "complete", (
-        f"Q7 (verify) should be 'complete' with test-impact + CGA "
-        f"artifacts; got {full['Q7']}"
+        f"Q7 (verify) should be 'complete' with test-impact + CGA artifacts; got {full['Q7']}"
     )
 
 
@@ -1127,22 +1101,16 @@ def test_pr_replay_gathers_context_files_from_postmortem(monkeypatch):
     )
     # Use the real collector so we exercise the actual context_refs
     # construction path (``_build_context_refs_from_context_files``).
-    monkeypatch.setattr(
-        "roam.evidence.collect_change_evidence", real_collect
-    )
+    monkeypatch.setattr("roam.evidence.collect_change_evidence", real_collect)
 
     packet = cmd_pr_replay._collect_change_evidence(
         commit_range="HEAD~1..HEAD",
-        commits=[{"sha": "abc", "subject": "t", "high": 0, "medium": 0,
-                  "date": "2026-05-14"}],
+        commits=[{"sha": "abc", "subject": "t", "high": 0, "medium": 0, "date": "2026-05-14"}],
         summary={"verdict": "clean"},
         by_detector=[],
         generated_at="2026-05-14 00:00 UTC",
     )
-    assert packet.context_refs, (
-        "context_refs must be non-empty when _gather_context_files "
-        "returns rows"
-    )
+    assert packet.context_refs, "context_refs must be non-empty when _gather_context_files returns rows"
 
 
 def test_pr_replay_context_refs_count_matches_commit_changes(monkeypatch):
@@ -1156,9 +1124,7 @@ def test_pr_replay_context_refs_count_matches_commit_changes(monkeypatch):
     from roam.evidence import collect_change_evidence as real_collect
 
     paths = ["src/a.py", "src/b.py", "src/c.py", "docs/README.md"]
-    synthetic = [
-        {"path": p, "content_hash": None, "kind": "changed"} for p in paths
-    ]
+    synthetic = [{"path": p, "content_hash": None, "kind": "changed"} for p in paths]
 
     monkeypatch.setattr(
         cmd_pr_replay,
@@ -1195,22 +1161,18 @@ def test_pr_replay_context_refs_count_matches_commit_changes(monkeypatch):
         "_gather_mcp_receipts_dir",
         lambda active_run_id, warnings: None,
     )
-    monkeypatch.setattr(
-        "roam.evidence.collect_change_evidence", real_collect
-    )
+    monkeypatch.setattr("roam.evidence.collect_change_evidence", real_collect)
 
     packet = cmd_pr_replay._collect_change_evidence(
         commit_range="HEAD~1..HEAD",
-        commits=[{"sha": "abc", "subject": "t", "high": 0, "medium": 0,
-                  "date": "2026-05-14"}],
+        commits=[{"sha": "abc", "subject": "t", "high": 0, "medium": 0, "date": "2026-05-14"}],
         summary={"verdict": "clean"},
         by_detector=[],
         generated_at="2026-05-14 00:00 UTC",
     )
     # One context_ref per unique path.
     assert len(packet.context_refs) == len(paths), (
-        f"Expected {len(paths)} context_refs (one per input path); "
-        f"got {len(packet.context_refs)}"
+        f"Expected {len(paths)} context_refs (one per input path); got {len(packet.context_refs)}"
     )
 
 
@@ -1268,32 +1230,22 @@ def test_pr_replay_context_refs_use_artifact_kind(monkeypatch):
         "_gather_mcp_receipts_dir",
         lambda active_run_id, warnings: None,
     )
-    monkeypatch.setattr(
-        "roam.evidence.collect_change_evidence", real_collect
-    )
+    monkeypatch.setattr("roam.evidence.collect_change_evidence", real_collect)
 
     packet = cmd_pr_replay._collect_change_evidence(
         commit_range="HEAD~1..HEAD",
-        commits=[{"sha": "abc", "subject": "t", "high": 0, "medium": 0,
-                  "date": "2026-05-14"}],
+        commits=[{"sha": "abc", "subject": "t", "high": 0, "medium": 0, "date": "2026-05-14"}],
         summary={"verdict": "clean"},
         by_detector=[],
         generated_at="2026-05-14 00:00 UTC",
     )
     assert packet.context_refs, "context_refs must be non-empty"
     for ref in packet.context_refs:
-        assert isinstance(ref, EvidenceArtifact), (
-            f"context_refs entry is not an EvidenceArtifact: {type(ref)!r}"
-        )
-        assert ref.kind in ARTIFACT_KINDS, (
-            f"context_refs entry has unknown kind {ref.kind!r}"
-        )
+        assert isinstance(ref, EvidenceArtifact), f"context_refs entry is not an EvidenceArtifact: {type(ref)!r}"
+        assert ref.kind in ARTIFACT_KINDS, f"context_refs entry has unknown kind {ref.kind!r}"
         # The original path must survive into one of the two channels.
         body = ref.path or ref.content_inline or ""
-        assert "src/lib.py" in body, (
-            f"original path lost: got path={ref.path!r}, "
-            f"inline={ref.content_inline!r}"
-        )
+        assert "src/lib.py" in body, f"original path lost: got path={ref.path!r}, inline={ref.content_inline!r}"
 
 
 def test_pr_replay_gather_context_files_handles_empty_inputs():
@@ -1409,13 +1361,9 @@ def test_pr_replay_synth_bundle_carries_actor_block(monkeypatch):
     # The packet must carry at least one agent-kind actor_ref with the
     # exact ROAM_AGENT_ID we set.
     agent_refs = [r for r in packet.actor_refs if r.actor_kind == "agent"]
-    assert agent_refs, (
-        f"Expected at least one agent-kind actor_ref; got actor_refs="
-        f"{packet.actor_refs!r}"
-    )
+    assert agent_refs, f"Expected at least one agent-kind actor_ref; got actor_refs={packet.actor_refs!r}"
     assert any(r.actor_id == "agent:w260-test" for r in agent_refs), (
-        f"Expected actor_id=agent:w260-test on at least one ref; got "
-        f"{[r.actor_id for r in agent_refs]!r}"
+        f"Expected actor_id=agent:w260-test on at least one ref; got {[r.actor_id for r in agent_refs]!r}"
     )
 
 
@@ -1462,15 +1410,10 @@ def test_pr_replay_synth_bundle_scrubs_actor_secrets(monkeypatch):
     # No actor_ref must contain the raw secret. ``[REDACTED]`` is the
     # canonical placeholder both scrub helpers stamp on a match.
     for ref in packet.actor_refs:
-        assert secret not in (ref.actor_id or ""), (
-            f"raw secret leaked into actor_ref: {ref!r}"
-        )
+        assert secret not in (ref.actor_id or ""), f"raw secret leaked into actor_ref: {ref!r}"
 
     # "secret" must appear in the packet's redactions trail.
-    assert "secret" in packet.redactions, (
-        f"Expected 'secret' in packet.redactions; got "
-        f"{packet.redactions!r}"
-    )
+    assert "secret" in packet.redactions, f"Expected 'secret' in packet.redactions; got {packet.redactions!r}"
 
 
 def test_pr_replay_synth_bundle_actor_kind_classified(monkeypatch):
@@ -1497,8 +1440,7 @@ def test_pr_replay_synth_bundle_actor_kind_classified(monkeypatch):
     )
     assert actor.get("agent_id") == "agent:w260-kind"
     assert actor.get("actor_kind") == "agent", (
-        f"Expected actor_kind='agent'; got {actor.get('actor_kind')!r} "
-        f"on resolved block {actor!r}"
+        f"Expected actor_kind='agent'; got {actor.get('actor_kind')!r} on resolved block {actor!r}"
     )
 
 
@@ -1542,16 +1484,14 @@ def test_pr_replay_emits_q8_limitation_when_no_approvals(tmp_path):
     payload = _json.loads(target.read_text(encoding="utf-8"))
     redactions = payload.get("redactions") or []
     assert "producer_not_available" in redactions, (
-        f"Expected 'producer_not_available' in redactions; got "
-        f"{redactions!r}"
+        f"Expected 'producer_not_available' in redactions; got {redactions!r}"
     )
     # Sanity: the marker fires precisely BECAUSE no real approvals data
     # was harvested. If a future producer ships, this assertion will need
     # to flip — and the W261 conditional in cmd_pr_replay.py will skip
     # the marker.
     assert not (payload.get("approvals") or []), (
-        "Producer-gap marker should only fire when approvals are empty; "
-        f"got approvals={payload.get('approvals')!r}"
+        f"Producer-gap marker should only fire when approvals are empty; got approvals={payload.get('approvals')!r}"
     )
     assert not (payload.get("accepted_risks") or []), (
         "Producer-gap marker should only fire when accepted_risks are empty; "
@@ -1620,10 +1560,7 @@ def test_pr_replay_q8_scores_complete_with_real_approval():
         redactions=("producer_not_available",),
     )
     full = packet.evidence_completeness()
-    assert full["Q8"] == "complete", (
-        f"Approvals should win over the limitation marker; got "
-        f"Q8={full['Q8']!r}"
-    )
+    assert full["Q8"] == "complete", f"Approvals should win over the limitation marker; got Q8={full['Q8']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1671,25 +1608,19 @@ def test_pr_replay_gathers_constitution_policy_decisions(monkeypatch, tmp_path):
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(
-        "roam.db.connection.find_project_root", lambda *a, **k: repo
-    )
+    monkeypatch.setattr("roam.db.connection.find_project_root", lambda *a, **k: repo)
 
     warnings: list[str] = []
     decisions = cmd_pr_replay._gather_constitution_policy_decisions(warnings)
     assert warnings == [], f"unexpected warnings: {warnings!r}"
-    assert len(decisions) == 2, (
-        f"expected 2 gate decisions, got {len(decisions)}: {decisions!r}"
-    )
+    assert len(decisions) == 2, f"expected 2 gate decisions, got {len(decisions)}: {decisions!r}"
     rule_ids = {d["rule_id"] for d in decisions}
     assert rule_ids == {
         "constitution:before_edit",
         "constitution:before_pr",
     }, f"unexpected rule_ids: {rule_ids!r}"
     for d in decisions:
-        assert d["decision"] == "not_evaluated", (
-            f"expected not_evaluated, got {d['decision']!r}"
-        )
+        assert d["decision"] == "not_evaluated", f"expected not_evaluated, got {d['decision']!r}"
         assert d["evidence_ref"].startswith("constitution:")
 
 
@@ -1712,20 +1643,20 @@ def test_pr_replay_gathers_permit_policy_decisions(monkeypatch, tmp_path):
     pid = "permit_20260514_abcdef"
     permit_file = permits_dir / f"{pid}.json"
     permit_file.write_text(
-        _json.dumps({
-            "permit_id": pid,
-            "scope": "modify src/foo.py",
-            "expires_at": "2026-05-20T12:00:00Z",
-            "issued_to": "agent:test",
-            "issued_at": "2026-05-14T10:00:00Z",
-            "issued_by": "human:operator",
-        }),
+        _json.dumps(
+            {
+                "permit_id": pid,
+                "scope": "modify src/foo.py",
+                "expires_at": "2026-05-20T12:00:00Z",
+                "issued_to": "agent:test",
+                "issued_at": "2026-05-14T10:00:00Z",
+                "issued_by": "human:operator",
+            }
+        ),
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(
-        "roam.db.connection.find_project_root", lambda *a, **k: repo
-    )
+    monkeypatch.setattr("roam.db.connection.find_project_root", lambda *a, **k: repo)
 
     warnings: list[str] = []
     decisions = cmd_pr_replay._gather_permit_policy_decisions(warnings)
@@ -1757,13 +1688,9 @@ def test_pr_replay_gathers_lease_policy_decisions(monkeypatch, tmp_path):
         "expires_at": "2026-05-14T10:30:00Z",
         "state": "active",
     }
-    (leases_dir / "lease_test_w267.json").write_text(
-        _json.dumps(lease_doc), encoding="utf-8"
-    )
+    (leases_dir / "lease_test_w267.json").write_text(_json.dumps(lease_doc), encoding="utf-8")
 
-    monkeypatch.setattr(
-        "roam.db.connection.find_project_root", lambda *a, **k: repo
-    )
+    monkeypatch.setattr("roam.db.connection.find_project_root", lambda *a, **k: repo)
 
     warnings: list[str] = []
     decisions = cmd_pr_replay._gather_lease_policy_decisions(warnings)
@@ -1787,9 +1714,7 @@ def test_pr_replay_gathers_handle_missing_state(monkeypatch, tmp_path):
     bare_repo.mkdir()
     # NOTE: no .roam dir at all.
 
-    monkeypatch.setattr(
-        "roam.db.connection.find_project_root", lambda *a, **k: bare_repo
-    )
+    monkeypatch.setattr("roam.db.connection.find_project_root", lambda *a, **k: bare_repo)
 
     for gather in (
         cmd_pr_replay._gather_constitution_policy_decisions,
@@ -1798,18 +1723,11 @@ def test_pr_replay_gathers_handle_missing_state(monkeypatch, tmp_path):
     ):
         warnings: list[str] = []
         decisions = gather(warnings)
-        assert decisions == [], (
-            f"{gather.__name__}: expected empty list on missing state, "
-            f"got {decisions!r}"
-        )
-        assert warnings == [], (
-            f"{gather.__name__}: expected no warnings, got {warnings!r}"
-        )
+        assert decisions == [], f"{gather.__name__}: expected empty list on missing state, got {decisions!r}"
+        assert warnings == [], f"{gather.__name__}: expected no warnings, got {warnings!r}"
 
 
-def test_w447_pr_replay_lease_dir_missing_warns_when_mode_expects_leases(
-    monkeypatch, tmp_path
-):
+def test_w447_pr_replay_lease_dir_missing_warns_when_mode_expects_leases(monkeypatch, tmp_path):
     """W447: a missing ``.roam/leases/`` dir emits an info-level marker
     when the active mode is one that *expects* leases (``migration`` /
     ``autonomous_pr``).
@@ -1840,33 +1758,23 @@ def test_w447_pr_replay_lease_dir_missing_warns_when_mode_expects_leases(
         # NOTE: deliberately do NOT create .roam/leases/.
         set_active_mode(repo, mode_name)
 
-        monkeypatch.setattr(
-            "roam.db.connection.find_project_root", lambda *a, **k: repo
-        )
+        monkeypatch.setattr("roam.db.connection.find_project_root", lambda *a, **k: repo)
         warnings: list[str] = []
         decisions = cmd_pr_replay._gather_lease_policy_decisions(warnings)
-        assert decisions == [], (
-            f"mode={mode_name}: expected empty decisions, got {decisions!r}"
-        )
+        assert decisions == [], f"mode={mode_name}: expected empty decisions, got {decisions!r}"
         if expect_warning:
-            assert len(warnings) == 1, (
-                f"mode={mode_name}: expected exactly 1 info marker; "
-                f"got {warnings!r}"
-            )
+            assert len(warnings) == 1, f"mode={mode_name}: expected exactly 1 info marker; got {warnings!r}"
             msg = warnings[0]
             assert "leases" in msg, msg
             assert ".roam/leases/" in msg, msg
             assert f"mode '{mode_name}'" in msg, msg
         else:
             assert warnings == [], (
-                f"mode={mode_name}: expected silence (no leases expected "
-                f"in this mode); got {warnings!r}"
+                f"mode={mode_name}: expected silence (no leases expected in this mode); got {warnings!r}"
             )
 
 
-def test_pr_replay_forwards_extra_policy_decisions_to_collector(
-    monkeypatch, tmp_path
-):
+def test_pr_replay_forwards_extra_policy_decisions_to_collector(monkeypatch, tmp_path):
     """The dispatcher merges all three gatherers into ``extra_policy_decisions``.
 
     Stubs every gatherer to return controlled outputs and asserts the
@@ -1959,8 +1867,7 @@ def test_pr_replay_forwards_extra_policy_decisions_to_collector(
     )
     extras = capture.get("extra_policy_decisions") or []
     assert len(extras) == 3, (
-        f"expected 3 forwarded rows (1 constitution + 1 permit + 1 lease), "
-        f"got {len(extras)}: {extras!r}"
+        f"expected 3 forwarded rows (1 constitution + 1 permit + 1 lease), got {len(extras)}: {extras!r}"
     )
     rule_ids = [row["rule_id"] for row in extras]
     # Stable order: constitution first, permits second, leases last.
@@ -2034,10 +1941,7 @@ def test_pr_replay_synth_bundle_carries_environment_refs(monkeypatch):
     )
 
     env_kinds = [r.env_kind for r in packet.environment_refs]
-    assert "workspace" in env_kinds, (
-        f"Expected a workspace env_ref on the packet; got "
-        f"{packet.environment_refs!r}"
-    )
+    assert "workspace" in env_kinds, f"Expected a workspace env_ref on the packet; got {packet.environment_refs!r}"
 
 
 def test_pr_replay_synth_bundle_carries_permits_empty_array(monkeypatch, tmp_path):
@@ -2085,13 +1989,9 @@ def test_pr_replay_synth_bundle_carries_permits_empty_array(monkeypatch, tmp_pat
         generated_at="2026-05-14 00:00 UTC",
     )
     envelope = capture.get("pr_bundle_envelope") or {}
-    assert "permits" in envelope, (
-        f"Expected 'permits' key on synth envelope; got keys="
-        f"{sorted(envelope.keys())!r}"
-    )
+    assert "permits" in envelope, f"Expected 'permits' key on synth envelope; got keys={sorted(envelope.keys())!r}"
     assert envelope["permits"] == [], (
-        f"Expected empty permits list when no on-disk permits exist; "
-        f"got {envelope['permits']!r}"
+        f"Expected empty permits list when no on-disk permits exist; got {envelope['permits']!r}"
     )
     # Sibling key check: leases must also always-emit even when empty.
     assert "leases" in envelope and envelope["leases"] == [], (
@@ -2100,8 +2000,7 @@ def test_pr_replay_synth_bundle_carries_permits_empty_array(monkeypatch, tmp_pat
     # environment_refs always-emit (the helper is total, so the list is
     # never empty in practice — but the key must be present).
     assert "environment_refs" in envelope, (
-        f"Expected 'environment_refs' key on synth envelope; got keys="
-        f"{sorted(envelope.keys())!r}"
+        f"Expected 'environment_refs' key on synth envelope; got keys={sorted(envelope.keys())!r}"
     )
 
 
@@ -2128,8 +2027,7 @@ def test_pr_replay_synth_bundle_lifts_leases_from_disk(monkeypatch, tmp_path):
         ttl_seconds=3600,
     )
     assert claimed is not None and conflict is None, (
-        f"claim_lease should have succeeded on a virgin tmp repo; "
-        f"got claimed={claimed!r}, conflict={conflict!r}"
+        f"claim_lease should have succeeded on a virgin tmp repo; got claimed={claimed!r}, conflict={conflict!r}"
     )
     written_lease_id = claimed.lease_id
 
@@ -2171,22 +2069,14 @@ def test_pr_replay_synth_bundle_lifts_leases_from_disk(monkeypatch, tmp_path):
         generated_at="2026-05-14 00:00 UTC",
     )
 
-    lease_refs = [
-        r for r in packet.authority_refs if r.authority_kind == "lease"
-    ]
-    assert lease_refs, (
-        f"Expected at least one authority_kind='lease' ref; got "
-        f"authority_refs={packet.authority_refs!r}"
-    )
+    lease_refs = [r for r in packet.authority_refs if r.authority_kind == "lease"]
+    assert lease_refs, f"Expected at least one authority_kind='lease' ref; got authority_refs={packet.authority_refs!r}"
     assert any(r.authority_id == written_lease_id for r in lease_refs), (
-        f"Expected lease_id={written_lease_id!r} on at least one ref; got "
-        f"{[r.authority_id for r in lease_refs]!r}"
+        f"Expected lease_id={written_lease_id!r} on at least one ref; got {[r.authority_id for r in lease_refs]!r}"
     )
 
 
-def test_pr_replay_synth_bundle_authority_refs_include_permits(
-    monkeypatch, tmp_path
-):
+def test_pr_replay_synth_bundle_authority_refs_include_permits(monkeypatch, tmp_path):
     """W272: a hand-written ``.roam/permits/`` row flows into ``authority_refs``.
 
     ``roam permit`` is still a verdict facade per W198 — nothing
@@ -2214,9 +2104,7 @@ def test_pr_replay_synth_bundle_authority_refs_include_permits(
         "issued_at": "2026-05-14T00:00:00Z",
         "issued_by": "human:w272-operator",
     }
-    (permits_dir / "permit_20260514_a12345.json").write_text(
-        _json.dumps(permit_payload), encoding="utf-8"
-    )
+    (permits_dir / "permit_20260514_a12345.json").write_text(_json.dumps(permit_payload), encoding="utf-8")
 
     monkeypatch.setattr(_conn, "find_project_root", lambda *a, **kw: tmp_path)
 
@@ -2253,16 +2141,11 @@ def test_pr_replay_synth_bundle_authority_refs_include_permits(
         generated_at="2026-05-14 00:00 UTC",
     )
 
-    permit_refs = [
-        r for r in packet.authority_refs if r.authority_kind == "permit"
-    ]
+    permit_refs = [r for r in packet.authority_refs if r.authority_kind == "permit"]
     assert permit_refs, (
-        f"Expected at least one authority_kind='permit' ref; got "
-        f"authority_refs={packet.authority_refs!r}"
+        f"Expected at least one authority_kind='permit' ref; got authority_refs={packet.authority_refs!r}"
     )
-    assert any(
-        r.authority_id == "permit_20260514_a12345" for r in permit_refs
-    ), (
+    assert any(r.authority_id == "permit_20260514_a12345" for r in permit_refs), (
         f"Expected authority_id='permit_20260514_a12345' on at least "
         f"one ref; got {[r.authority_id for r in permit_refs]!r}"
     )

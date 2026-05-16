@@ -32,7 +32,6 @@ from click.testing import CliRunner
 
 from roam.cli import _COMMANDS, _DEPRECATED_COMMANDS, cli
 
-
 # The seven aliases under test, with their canonical replacement and the
 # CLI module/function tuple the canonical name resolves to. We assert that
 # the alias resolves to the SAME tuple so it's a true alias (not a divergent
@@ -108,25 +107,21 @@ def test_deprecated_alias_emits_warning_on_stderr(cli_runner_split_stderr):
     # --help always exits 0 regardless of whether the canonical command
     # would succeed under the current cwd.
     assert result.exit_code == 0, (
-        f"`roam math --help` exited {result.exit_code}; stdout={result.output!r}; "
-        f"stderr={_result_stderr(result)!r}"
+        f"`roam math --help` exited {result.exit_code}; stdout={result.output!r}; stderr={_result_stderr(result)!r}"
     )
     stderr = _result_stderr(result)
     assert "DEPRECATION" in stderr, (
-        f"Expected 'DEPRECATION' on stderr when invoking deprecated alias 'math'; "
-        f"got stderr={stderr!r}"
+        f"Expected 'DEPRECATION' on stderr when invoking deprecated alias 'math'; got stderr={stderr!r}"
     )
     assert "math" in stderr and "algo" in stderr, (
-        f"Deprecation notice should name both the alias ('math') and the "
-        f"replacement ('algo'); got stderr={stderr!r}"
+        f"Deprecation notice should name both the alias ('math') and the replacement ('algo'); got stderr={stderr!r}"
     )
     # The canonical command's help text mentions itself ("algo" or the
     # docstring of cmd_math.math_cmd). Verify --help still ran rather than
     # being aborted by the deprecation handling.
     stdout = _result_stdout(result)
     assert "Usage:" in stdout or "Options:" in stdout, (
-        f"`roam math --help` should still render the canonical command's "
-        f"help text on stdout; got stdout={stdout!r}"
+        f"`roam math --help` should still render the canonical command's help text on stdout; got stdout={stdout!r}"
     )
 
 
@@ -204,12 +199,10 @@ def test_deprecated_alias_in_json_mode_carries_warning_in_envelope(
     )
     warning = summary["deprecation_warning"]
     assert "DEPRECATION" in warning, (
-        f"summary.deprecation_warning should be a 'DEPRECATION: ...' string; "
-        f"got {warning!r}"
+        f"summary.deprecation_warning should be a 'DEPRECATION: ...' string; got {warning!r}"
     )
     assert "churn" in warning and "weather" in warning, (
-        f"summary.deprecation_warning should name alias ('churn') and "
-        f"replacement ('weather'); got {warning!r}"
+        f"summary.deprecation_warning should name alias ('churn') and replacement ('weather'); got {warning!r}"
     )
 
 
@@ -231,13 +224,11 @@ def test_canonical_command_emits_no_deprecation(cli_runner_split_stderr, tmp_pat
         for canonical in set(_SEVEN_ALIASES.values()):
             result = cli_runner_split_stderr.invoke(cli, [canonical, "--help"])
             assert result.exit_code == 0, (
-                f"`roam {canonical} --help` exited {result.exit_code}; "
-                f"stderr={_result_stderr(result)!r}"
+                f"`roam {canonical} --help` exited {result.exit_code}; stderr={_result_stderr(result)!r}"
             )
             stderr = _result_stderr(result)
             assert "DEPRECATION" not in stderr, (
-                f"Canonical command `{canonical}` unexpectedly emitted a "
-                f"deprecation notice on stderr: {stderr!r}"
+                f"Canonical command `{canonical}` unexpectedly emitted a deprecation notice on stderr: {stderr!r}"
             )
     finally:
         os.chdir(old_cwd)
@@ -282,17 +273,13 @@ def test_all_seven_aliases_resolve():
         if _COMMANDS[alias] != _COMMANDS[replacement]:
             target_mismatch.append((alias, _COMMANDS[alias], replacement, _COMMANDS[replacement]))
 
-    assert not wrong_replacement, (
-        "Deprecation record points at the wrong replacement:\n  "
-        + "\n  ".join(f"{a}: {got!r} (expected {want!r})" for a, got, want in wrong_replacement)
+    assert not wrong_replacement, "Deprecation record points at the wrong replacement:\n  " + "\n  ".join(
+        f"{a}: {got!r} (expected {want!r})" for a, got, want in wrong_replacement
     )
-    assert not not_in_commands, (
-        "Deprecated alias or replacement is missing from _COMMANDS:\n  "
-        + "\n  ".join(sorted(set(not_in_commands)))
+    assert not not_in_commands, "Deprecated alias or replacement is missing from _COMMANDS:\n  " + "\n  ".join(
+        sorted(set(not_in_commands))
     )
     assert not target_mismatch, (
         "Deprecated alias points at a different (module, function) than its replacement:\n  "
-        + "\n  ".join(
-            f"{a} -> {at} vs {r} -> {rt}" for a, at, r, rt in target_mismatch
-        )
+        + "\n  ".join(f"{a} -> {at} vs {r} -> {rt}" for a, at, r, rt in target_mismatch)
     )

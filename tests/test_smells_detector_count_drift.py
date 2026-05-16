@@ -130,10 +130,7 @@ def test_run_all_detectors_docstring_count_matches_registry() -> None:
     docstring_count = _extract_single_count(
         func_docstring,
         _RUN_ALL_DOCSTRING_PATTERN,
-        location=(
-            f"{_SMELLS_PATH}:{docstring_line} "
-            "(run_all_detectors docstring)"
-        ),
+        location=(f"{_SMELLS_PATH}:{docstring_line} (run_all_detectors docstring)"),
     )
     registry_count = len(list(all_detectors()))
 

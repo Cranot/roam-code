@@ -1,4 +1,11 @@
-"""Detect potential breaking changes between git refs."""
+"""Detect potential breaking changes between git refs.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because breaking outputs are invocation-scoped breaking-change
+verdicts — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
+"""
 
 from __future__ import annotations
 

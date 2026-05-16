@@ -20,10 +20,8 @@ import os
 import time
 
 import pytest
-from click.testing import CliRunner
 
-from tests.conftest import index_in_process, invoke_cli, parse_json_output
-
+from tests.conftest import invoke_cli, parse_json_output
 
 # ---------------------------------------------------------------------------
 # Fixture: a moderate-size project with several files containing clones
@@ -95,9 +93,7 @@ def _run_with_env(runner, args, cwd, parallel: bool, command: str):
         else:
             os.environ["ROAM_NO_PARALLEL"] = "1"
         result = invoke_cli(runner, args, cwd=cwd, json_mode=True)
-        assert result.exit_code == 0, (
-            f"roam {' '.join(args)} failed: {result.output}"
-        )
+        assert result.exit_code == 0, f"roam {' '.join(args)} failed: {result.output}"
         return parse_json_output(result, command=command)
     finally:
         if old is None:
@@ -150,32 +146,23 @@ def test_clones_parallel_matches_serial_output(clones_project, cli_runner):
     order and ``Counter.most_common`` tie-breaking under randomized
     string hashing). Cluster membership is the load-bearing invariant.
     """
-    serial = _run_with_env(
-        cli_runner, ["clones"], cwd=clones_project, parallel=False, command="clones"
-    )
-    parallel = _run_with_env(
-        cli_runner, ["clones"], cwd=clones_project, parallel=True, command="clones"
-    )
+    serial = _run_with_env(cli_runner, ["clones"], cwd=clones_project, parallel=False, command="clones")
+    parallel = _run_with_env(cli_runner, ["clones"], cwd=clones_project, parallel=True, command="clones")
 
     s_sig = _cluster_signatures(serial)
     p_sig = _cluster_signatures(parallel)
-    assert s_sig == p_sig, (
-        f"Cluster membership differs.\n"
-        f"serial-only: {s_sig - p_sig}\n"
-        f"parallel-only: {p_sig - s_sig}"
-    )
+    assert s_sig == p_sig, f"Cluster membership differs.\nserial-only: {s_sig - p_sig}\nparallel-only: {p_sig - s_sig}"
 
     # Pair count must match exactly (deterministic across paths).
-    assert (
-        serial["summary"]["clone_pairs"] == parallel["summary"]["clone_pairs"]
-    ), "clone_pairs count differs between serial and parallel"
-    assert (
-        serial["summary"]["clusters"] == parallel["summary"]["clusters"]
-    ), "cluster count differs between serial and parallel"
-    assert (
-        serial["summary"]["total_functions"]
-        == parallel["summary"]["total_functions"]
-    ), "total_functions differs between serial and parallel"
+    assert serial["summary"]["clone_pairs"] == parallel["summary"]["clone_pairs"], (
+        "clone_pairs count differs between serial and parallel"
+    )
+    assert serial["summary"]["clusters"] == parallel["summary"]["clusters"], (
+        "cluster count differs between serial and parallel"
+    )
+    assert serial["summary"]["total_functions"] == parallel["summary"]["total_functions"], (
+        "total_functions differs between serial and parallel"
+    )
 
 
 @pytest.mark.xdist_group("parallel_analyzers")
@@ -190,12 +177,8 @@ def test_dead_parallel_matches_serial_output(indexed_project, cli_runner):
     Both are reduction-style (write to a shared dict from the main
     thread), so output is fully deterministic across paths.
     """
-    serial = _run_with_env(
-        cli_runner, ["dead"], cwd=indexed_project, parallel=False, command="dead"
-    )
-    parallel = _run_with_env(
-        cli_runner, ["dead"], cwd=indexed_project, parallel=True, command="dead"
-    )
+    serial = _run_with_env(cli_runner, ["dead"], cwd=indexed_project, parallel=False, command="dead")
+    parallel = _run_with_env(cli_runner, ["dead"], cwd=indexed_project, parallel=True, command="dead")
 
     # The high-confidence + low-confidence symbol lists must match.
     # Skip metadata like _meta.timestamp, _meta.index_age_s, response_tokens.
@@ -208,14 +191,8 @@ def test_dead_parallel_matches_serial_output(indexed_project, cli_runner):
     s = _strip_meta(serial)
     p = _strip_meta(parallel)
     # Compare the structured findings (dead_symbols list) explicitly.
-    s_dead = sorted(
-        (d.get("symbol", "") or d.get("name", "") or "")
-        for d in s.get("dead_symbols", []) or []
-    )
-    p_dead = sorted(
-        (d.get("symbol", "") or d.get("name", "") or "")
-        for d in p.get("dead_symbols", []) or []
-    )
+    s_dead = sorted((d.get("symbol", "") or d.get("name", "") or "") for d in s.get("dead_symbols", []) or [])
+    p_dead = sorted((d.get("symbol", "") or d.get("name", "") or "") for d in p.get("dead_symbols", []) or [])
     assert s_dead == p_dead, (
         f"dead_symbols set differs.\nserial-only: {set(s_dead) - set(p_dead)}\n"
         f"parallel-only: {set(p_dead) - set(s_dead)}"
@@ -223,9 +200,7 @@ def test_dead_parallel_matches_serial_output(indexed_project, cli_runner):
 
 
 @pytest.mark.xdist_group("parallel_analyzers")
-def test_small_repos_skip_parallelization_for_clones(
-    small_clones_project, cli_runner
-):
+def test_small_repos_skip_parallelization_for_clones(small_clones_project, cli_runner):
     """A repo with < 100 files should take the serial path even without
     ROAM_NO_PARALLEL.
 
@@ -247,8 +222,7 @@ def test_small_repos_skip_parallelization_for_clones(
     # ProcessPool spinup is ~1-2s; we should finish well under that
     # threshold for a < 100-file project on the serial fallback.
     assert parallel_elapsed < 5.0, (
-        f"Small repo took {parallel_elapsed:.2f}s — looks like parallel path "
-        f"was taken when it shouldn't have been."
+        f"Small repo took {parallel_elapsed:.2f}s — looks like parallel path was taken when it shouldn't have been."
     )
     # And confirm correctness.
     assert parallel.get("command") == "clones"
@@ -287,10 +261,7 @@ def large_clones_project(project_factory):
     for f in range(100):
         funcs = []
         for g in range(6):
-            funcs.append(
-                f"def compute_metric_f{f}_g{g}(items_{g}):\n"
-                + body_template.format(coll=f"items_{g}")
-            )
+            funcs.append(f"def compute_metric_f{f}_g{g}(items_{g}):\n" + body_template.format(coll=f"items_{g}"))
         files[f"src/mod_{f}.py"] = "\n".join(funcs)
     # Padding so total file count comfortably exceeds the 500-file
     # parallel-extraction threshold.
@@ -301,9 +272,7 @@ def large_clones_project(project_factory):
 
 @pytest.mark.slow
 @pytest.mark.xdist_group("parallel_analyzers")
-def test_parallel_runs_faster_on_large_clones_fixture(
-    large_clones_project, cli_runner
-):
+def test_parallel_runs_faster_on_large_clones_fixture(large_clones_project, cli_runner):
     """Wall-clock comparison: parallel should not be net-negative on a
     fixture large enough to amortize ProcessPool spinup.
 
@@ -345,10 +314,7 @@ def test_parallel_runs_faster_on_large_clones_fixture(
     parallel_elapsed = time.time() - t0
 
     speedup = serial_elapsed / max(parallel_elapsed, 0.01)
-    print(
-        f"\nclones speedup: serial={serial_elapsed:.2f}s "
-        f"parallel={parallel_elapsed:.2f}s -> {speedup:.2f}x"
-    )
+    print(f"\nclones speedup: serial={serial_elapsed:.2f}s parallel={parallel_elapsed:.2f}s -> {speedup:.2f}x")
     # On a quiet multi-core box we typically see 2-4x. Under test load
     # (e.g. running this test alongside hundreds of others in the same
     # pytest process) ProcessPool spinup can blow the budget. We gate

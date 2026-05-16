@@ -99,9 +99,7 @@ def _audit_trail_conformance_finding_id(check_id: str, audit_trail_path: str) ->
     """
     from roam.db.findings import make_finding_id
 
-    return make_finding_id(
-        "audit-trail-conformance", check_id, check_id, audit_trail_path
-    )
+    return make_finding_id("audit-trail-conformance", check_id, check_id, audit_trail_path)
 
 
 def _emit_audit_trail_conformance_findings(
@@ -152,9 +150,7 @@ def _emit_audit_trail_conformance_findings(
             "schema_reference": "EU AI Act Regulation 2024/1689, Article 12",
         }
         finding_id = _audit_trail_conformance_finding_id(check_id, audit_trail_path)
-        claim = (
-            f"audit-trail-conformance ({check_id}): {audit_trail_path} — {message}"
-        )
+        claim = f"audit-trail-conformance ({check_id}): {audit_trail_path} — {message}"
         emit_finding(
             conn,
             FindingRecord(

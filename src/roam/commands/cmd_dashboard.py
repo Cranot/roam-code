@@ -3,6 +3,13 @@
 Combines health, hotspots, bus factor, dead symbols, and AI rot (vibe-check)
 into a single concise view.  Queries the DB directly for speed -- no shelling
 out to other commands.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because dashboard outputs are invocation-scoped health/hotspot
+summaries — not per-location violations. Underlying detectors (health,
+hotspots, bus-factor, dead, vibe-check) emit their own SARIF where it
+fits. See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket
+B propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations
@@ -410,9 +417,7 @@ def dashboard(ctx):
             # ``summary.ai_rot_definition`` to confirm they're seeing
             # the canonical 8-pattern number.
             ai_rot_score_top = vibe["score"] if vibe is not None else None
-            ai_rot_definition_top = (
-                vibe.get("ai_rot_definition") if vibe is not None else None
-            )
+            ai_rot_definition_top = vibe.get("ai_rot_definition") if vibe is not None else None
 
             summary_block = {
                 "verdict": verdict,
@@ -557,13 +562,7 @@ def dashboard(ctx):
             )
             click.echo()
 
-        click.echo(
-            "  Run `roam health`, `roam hotspots`, `roam vibe-check` for details."
-        )
-        click.echo(
-            "  Discover more: `roam algo` (anti-patterns), `roam ai-readiness` (agent-readiness),"
-        )
-        click.echo(
-            "    `roam ai-ratio` (AI-generated %), `roam forecast` (30d health projection),"
-        )
+        click.echo("  Run `roam health`, `roam hotspots`, `roam vibe-check` for details.")
+        click.echo("  Discover more: `roam algo` (anti-patterns), `roam ai-readiness` (agent-readiness),")
+        click.echo("    `roam ai-ratio` (AI-generated %), `roam forecast` (30d health projection),")
         click.echo("    `roam module <dir>` (cohesion %).")

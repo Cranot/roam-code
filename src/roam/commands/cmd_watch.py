@@ -1,4 +1,13 @@
-"""Watch mode: poll for file changes and auto-re-index."""
+"""Watch mode: poll for file changes and auto-re-index.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam watch`` is a long-running process, not a stateless
+invocation; SARIF emission is incompatible with the stateless one-shot
+schema. The watcher's signals are consumed by other roam commands +
+agent runtimes directly from disk on the next invocation; SARIF would
+be redundant. See action.yml _SUPPORTED_SARIF allowlist + W1181-audit
+memo.
+"""
 
 from __future__ import annotations
 

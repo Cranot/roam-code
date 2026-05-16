@@ -17,7 +17,6 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # audit-trail-verify -- "chain not initialized" vs "chain BROKEN"
 # ---------------------------------------------------------------------------

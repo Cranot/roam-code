@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import re
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -341,16 +340,12 @@ def test_no_compliance_overclaim_in_readme_or_landing_page():
                 line = text[line_start:line_end]
                 lowered = line.lower()
                 if "not " not in lowered and "no " not in lowered and "never" not in lowered:
-                    raise AssertionError(
-                        f"Compliance overclaim in {path_str}: {line.strip()!r}"
-                    )
+                    raise AssertionError(f"Compliance overclaim in {path_str}: {line.strip()!r}")
         # Headline-window check for `guarantee` (the place where a
         # compliance overclaim would be most prominent).
         head_lines = text.splitlines()[:20]
         head = "\n".join(head_lines).lower()
-        assert "guarantee" not in head, (
-            f"'guarantee' must not appear in the headline window of {path_str}"
-        )
+        assert "guarantee" not in head, f"'guarantee' must not appear in the headline window of {path_str}"
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +375,8 @@ _WORDING_GUARD_ALLOWED = ("maps to", "supports evidence for", "audit-ready recor
 # The README-only lint above keeps its narrower local subset by design.
 from tests._helpers.wording_lint import (
     FORBIDDEN_WORDS as _YAML_FORBIDDEN_OVERCLAIMS,
+)
+from tests._helpers.wording_lint import (
     NEGATION_MARKERS as _YAML_NEGATION_MARKERS,
 )
 
@@ -401,10 +398,7 @@ def _run_wording_guard_lint(entries):
 
         # Rule 1 - declared wording_guard must appear verbatim in export_text.
         if wording_guard and wording_guard.lower() not in export_text.lower():
-            drift.append(
-                f"{cid}: wording_guard {wording_guard!r} NOT in "
-                f"export_text {export_text!r}"
-            )
+            drift.append(f"{cid}: wording_guard {wording_guard!r} NOT in export_text {export_text!r}")
 
         # Rule 2 - forbidden overclaim words only in negation context.
         et_lower = export_text.lower()
@@ -418,8 +412,7 @@ def _run_wording_guard_lint(entries):
                 window = et_lower[window_start : idx + len(word) + 10]
                 if not any(neg in window for neg in _YAML_NEGATION_MARKERS):
                     overclaim.append(
-                        f"{cid}: forbidden word {word!r} in export_text "
-                        f"without negation context: ...{window}..."
+                        f"{cid}: forbidden word {word!r} in export_text without negation context: ...{window}..."
                     )
                 start = idx + len(word)
 
@@ -462,8 +455,7 @@ def test_control_mapping_yaml_wording_discipline():
         entries = parsed
 
     assert isinstance(entries, list) and entries, (
-        f"control-mapping.yaml must yield a non-empty list of entries, "
-        f"got {type(entries).__name__}"
+        f"control-mapping.yaml must yield a non-empty list of entries, got {type(entries).__name__}"
     )
 
     # Sanity: every entry must declare a wording_guard from the closed set.
@@ -472,20 +464,14 @@ def test_control_mapping_yaml_wording_discipline():
         for e in entries
         if e.get("wording_guard") not in _WORDING_GUARD_ALLOWED
     ]
-    assert not bad_guards, (
-        f"wording_guard must be one of {_WORDING_GUARD_ALLOWED}; offending entries: "
-        + ", ".join(bad_guards)
+    assert not bad_guards, f"wording_guard must be one of {_WORDING_GUARD_ALLOWED}; offending entries: " + ", ".join(
+        bad_guards
     )
 
     drift, overclaim = _run_wording_guard_lint(entries)
 
-    assert not drift, (
-        f"wording_guard drift in {len(drift)} entries:\n  " + "\n  ".join(drift)
-    )
-    assert not overclaim, (
-        f"compliance overclaim in {len(overclaim)} entries:\n  "
-        + "\n  ".join(overclaim)
-    )
+    assert not drift, f"wording_guard drift in {len(drift)} entries:\n  " + "\n  ".join(drift)
+    assert not overclaim, f"compliance overclaim in {len(overclaim)} entries:\n  " + "\n  ".join(overclaim)
 
 
 def test_wording_guard_lint_catches_violations():
@@ -519,30 +505,18 @@ def test_wording_guard_lint_catches_violations():
 
     # BAD_DRIFT: "maps to" missing from export_text -> drift; also has
     # raw "certifies" and "compliant" with no negation -> two overclaims.
-    assert "BAD_DRIFT" in drift_ids, (
-        f"lint failed to flag BAD_DRIFT wording_guard drift; drift={drift!r}"
-    )
-    assert "BAD_DRIFT" in overclaim_ids, (
-        f"lint failed to flag BAD_DRIFT overclaim words; overclaim={overclaim!r}"
-    )
+    assert "BAD_DRIFT" in drift_ids, f"lint failed to flag BAD_DRIFT wording_guard drift; drift={drift!r}"
+    assert "BAD_DRIFT" in overclaim_ids, f"lint failed to flag BAD_DRIFT overclaim words; overclaim={overclaim!r}"
 
     # BAD_GUARANTEE: "supports evidence for" missing -> drift; raw
     # "guarantees" with no negation -> overclaim.
-    assert "BAD_GUARANTEE" in drift_ids, (
-        f"lint failed to flag BAD_GUARANTEE drift; drift={drift!r}"
-    )
-    assert "BAD_GUARANTEE" in overclaim_ids, (
-        f"lint failed to flag BAD_GUARANTEE overclaim; overclaim={overclaim!r}"
-    )
+    assert "BAD_GUARANTEE" in drift_ids, f"lint failed to flag BAD_GUARANTEE drift; drift={drift!r}"
+    assert "BAD_GUARANTEE" in overclaim_ids, f"lint failed to flag BAD_GUARANTEE overclaim; overclaim={overclaim!r}"
 
     # GOOD_NEGATED: "maps to" present; "certify" and "compliance" both
     # sit inside a "does not" negation window -> neither rule fires.
-    assert "GOOD_NEGATED" not in drift_ids, (
-        f"lint falsely flagged GOOD_NEGATED drift; drift={drift!r}"
-    )
-    assert "GOOD_NEGATED" not in overclaim_ids, (
-        f"lint falsely flagged GOOD_NEGATED overclaim; overclaim={overclaim!r}"
-    )
+    assert "GOOD_NEGATED" not in drift_ids, f"lint falsely flagged GOOD_NEGATED drift; drift={drift!r}"
+    assert "GOOD_NEGATED" not in overclaim_ids, f"lint falsely flagged GOOD_NEGATED overclaim; overclaim={overclaim!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -594,8 +568,14 @@ def _load_control_mapping_entries():
 # source of truth.
 from roam.evidence.control_mapping_vocab import (
     FRAMEWORK_SLUGS as _SOURCE_FRAMEWORK_ALLOWED,
+)
+from roam.evidence.control_mapping_vocab import (
     FRAMEWORK_TITLES,
+)
+from roam.evidence.control_mapping_vocab import (
     PASS_CONDITIONS as _PASS_CONDITION_ALLOWED,
+)
+from roam.evidence.control_mapping_vocab import (
     SURFACES as _SURFACE_ALLOWED,
 )
 
@@ -609,9 +589,7 @@ def test_control_mapping_source_framework_enum_closed():
     `iso_iec_42001` for spec alignment). Pin the enum here.
     """
     entries = _load_control_mapping_entries()
-    assert isinstance(entries, list) and entries, (
-        "control-mapping.yaml must yield a non-empty list of entries"
-    )
+    assert isinstance(entries, list) and entries, "control-mapping.yaml must yield a non-empty list of entries"
     bad = []
     for entry in entries:
         cid = entry.get("control_id", "<unknown>")
@@ -633,9 +611,7 @@ def test_control_mapping_pass_condition_enum_closed():
     a hard "all" gate to an "always-fail-on-missing" string compare.
     """
     entries = _load_control_mapping_entries()
-    assert isinstance(entries, list) and entries, (
-        "control-mapping.yaml must yield a non-empty list of entries"
-    )
+    assert isinstance(entries, list) and entries, "control-mapping.yaml must yield a non-empty list of entries"
     bad = []
     for entry in entries:
         cid = entry.get("control_id", "<unknown>")
@@ -643,8 +619,7 @@ def test_control_mapping_pass_condition_enum_closed():
         if pc not in _PASS_CONDITION_ALLOWED:
             bad.append(f"{cid}: pass_condition={pc!r}")
     assert not bad, (
-        f"pass_condition values must be in {sorted(_PASS_CONDITION_ALLOWED)}; "
-        f"offending entries:\n  " + "\n  ".join(bad)
+        f"pass_condition values must be in {sorted(_PASS_CONDITION_ALLOWED)}; offending entries:\n  " + "\n  ".join(bad)
     )
 
 
@@ -658,23 +633,16 @@ def test_control_mapping_surface_enum_closed():
     silently split the surface population. Pin the enum here.
     """
     entries = _load_control_mapping_entries()
-    assert isinstance(entries, list) and entries, (
-        "control-mapping.yaml must yield a non-empty list of entries"
-    )
+    assert isinstance(entries, list) and entries, "control-mapping.yaml must yield a non-empty list of entries"
     bad = []
     for entry in entries:
         cid = entry.get("control_id", "<unknown>")
         surfaces = entry.get("surface") or []
-        assert isinstance(surfaces, list), (
-            f"{cid}: surface must be a list, got {type(surfaces).__name__}"
-        )
+        assert isinstance(surfaces, list), f"{cid}: surface must be a list, got {type(surfaces).__name__}"
         for s in surfaces:
             if s not in _SURFACE_ALLOWED:
                 bad.append(f"{cid}: surface item={s!r}")
-    assert not bad, (
-        f"surface[] items must be in {sorted(_SURFACE_ALLOWED)}; "
-        f"offending entries:\n  " + "\n  ".join(bad)
-    )
+    assert not bad, f"surface[] items must be in {sorted(_SURFACE_ALLOWED)}; offending entries:\n  " + "\n  ".join(bad)
 
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,6 @@ from roam.cli import cli
 from roam.index import file_roles as fr
 from roam.index import test_conventions as tc
 
-
 # ---------------------------------------------------------------------------
 # 1-2. Canonical is_test_file — positive + negative cases
 # ---------------------------------------------------------------------------
@@ -146,8 +145,7 @@ class TestFileRolesDelegation:
     def test_file_roles_is_test_delegates_to_canonical(self):
         for path in self.representative_paths:
             assert fr.is_test(path) == tc.is_test_file(path), (
-                f"is_test disagreement on {path!r}: "
-                f"file_roles={fr.is_test(path)} canonical={tc.is_test_file(path)}"
+                f"is_test disagreement on {path!r}: file_roles={fr.is_test(path)} canonical={tc.is_test_file(path)}"
             )
 
     def test_file_roles_classify_test_kind_delegates_to_canonical(self):
@@ -280,8 +278,7 @@ class TestFacadeAdapterParity:
             facade_kind = tc.classify_test_kind(p)
             adapter_kind = adapter.classify_kind(p)
             assert facade_kind == adapter_kind, (
-                f"facade returned {facade_kind!r} but adapter returned "
-                f"{adapter_kind!r} for {p!r}"
+                f"facade returned {facade_kind!r} but adapter returned {adapter_kind!r} for {p!r}"
             )
 
     def test_adapter_recognises_smoke_directory(self):
@@ -331,27 +328,20 @@ def _mixed_fixture(tmp_path, monkeypatch):
     agreement test."""
     # Python source + unit test
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "service.py").write_text(
-        "def get_user(id): return {'id': id}\n"
-    )
+    (tmp_path / "src" / "service.py").write_text("def get_user(id): return {'id': id}\n")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_service.py").write_text(
-        "from src.service import get_user\n"
-        "def test_get_user(): assert get_user(1)['id'] == 1\n"
+        "from src.service import get_user\ndef test_get_user(): assert get_user(1)['id'] == 1\n"
     )
     # Vue source + colocated Vitest unit test
     (tmp_path / "src" / "components").mkdir()
-    (tmp_path / "src" / "components" / "Foo.vue").write_text(
-        "<template><div>Foo</div></template>\n"
-    )
+    (tmp_path / "src" / "components" / "Foo.vue").write_text("<template><div>Foo</div></template>\n")
     (tmp_path / "src" / "components" / "Foo.test.vue").write_text(
         "<script>\nimport { test } from 'vitest';\ntest('renders', () => {});\n</script>\n"
     )
     # TS source + colocated unit test
     (tmp_path / "src" / "composables").mkdir()
-    (tmp_path / "src" / "composables" / "useFoo.ts").write_text(
-        "export function useFoo() { return 1; }\n"
-    )
+    (tmp_path / "src" / "composables" / "useFoo.ts").write_text("export function useFoo() { return 1; }\n")
     (tmp_path / "src" / "composables" / "useFoo.test.ts").write_text(
         "import { useFoo } from './useFoo';\n"
         "import { test, expect } from 'vitest';\n"
@@ -371,8 +361,7 @@ def _mixed_fixture(tmp_path, monkeypatch):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "-q", "-m", "init"],
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"],
         cwd=tmp_path,
         check=True,
     )
@@ -431,6 +420,4 @@ def test_consumers_use_canonical_api(_mixed_fixture):
         r = runner.invoke(cli, ["--json", sub])
         # Either success or a clean "nothing found" — both fine. A crash
         # would indicate the delegation broke.
-        assert r.exit_code in (0, 1), (
-            f"roam {sub} crashed (exit {r.exit_code}): {r.output!r}"
-        )
+        assert r.exit_code in (0, 1), f"roam {sub} crashed (exit {r.exit_code}): {r.output!r}"

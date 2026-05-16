@@ -36,15 +36,14 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_audit_trail_verify import (
     AUDIT_TRAIL_VERIFY_DETECTOR_VERSION,
     _audit_trail_verify_finding_id,
     _emit_audit_trail_verify_findings,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -138,9 +137,7 @@ def _persist_verify(proj, trail):
     """
     runner = CliRunner()
     assert runner.invoke(cli, ["index"]).exit_code == 0
-    result = runner.invoke(
-        cli, ["audit-trail-verify", "--input", str(trail), "--persist"]
-    )
+    result = runner.invoke(cli, ["audit-trail-verify", "--input", str(trail), "--persist"])
     assert result.exit_code == 0, result.output
     return result
 
@@ -181,30 +178,20 @@ def test_audit_trail_verify_emits_to_findings_registry(tmp_path):
 
 def test_audit_trail_verify_finding_id_is_deterministic():
     """``_audit_trail_verify_finding_id`` is stable across calls."""
-    fid_a = _audit_trail_verify_finding_id(
-        ".roam/audit-trail.jsonl", 3, "previous_record_hash mismatch"
-    )
-    fid_b = _audit_trail_verify_finding_id(
-        ".roam/audit-trail.jsonl", 3, "previous_record_hash mismatch"
-    )
+    fid_a = _audit_trail_verify_finding_id(".roam/audit-trail.jsonl", 3, "previous_record_hash mismatch")
+    fid_b = _audit_trail_verify_finding_id(".roam/audit-trail.jsonl", 3, "previous_record_hash mismatch")
     assert fid_a == fid_b
     assert fid_a.startswith("audit-trail-verify:hash_mismatch:")
     # Different line → different id.
-    fid_c = _audit_trail_verify_finding_id(
-        ".roam/audit-trail.jsonl", 4, "previous_record_hash mismatch"
-    )
+    fid_c = _audit_trail_verify_finding_id(".roam/audit-trail.jsonl", 4, "previous_record_hash mismatch")
     assert fid_c != fid_a
     # Different issue kind → different slug, different id.
-    fid_d = _audit_trail_verify_finding_id(
-        ".roam/audit-trail.jsonl", 3, "invalid JSON"
-    )
+    fid_d = _audit_trail_verify_finding_id(".roam/audit-trail.jsonl", 3, "invalid JSON")
     assert fid_d != fid_a
     assert fid_d.startswith("audit-trail-verify:invalid_json:")
     # Different path → different id (per-run trails don't collide with
     # the canonical .roam/audit-trail.jsonl rows).
-    fid_e = _audit_trail_verify_finding_id(
-        ".roam/runs/abc/audit-trail.jsonl", 3, "previous_record_hash mismatch"
-    )
+    fid_e = _audit_trail_verify_finding_id(".roam/runs/abc/audit-trail.jsonl", 3, "previous_record_hash mismatch")
     assert fid_e != fid_a
 
 
@@ -220,34 +207,28 @@ def test_audit_trail_verify_rerun_upserts_not_duplicates(tmp_path):
             first_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'audit-trail-verify'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'audit-trail-verify'"
                 ).fetchall()
             }
             first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'audit-trail-verify'"
+                "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-verify'"
             ).fetchone()[0]
         assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
 
         # Second run — same tampered trail → same ids.
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["audit-trail-verify", "--input", str(trail), "--persist"]
-        )
+        result = runner.invoke(cli, ["audit-trail-verify", "--input", str(trail), "--persist"])
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
             second_ids = {
                 r[0]
                 for r in conn.execute(
-                    "SELECT finding_id_str FROM findings "
-                    "WHERE source_detector = 'audit-trail-verify'"
+                    "SELECT finding_id_str FROM findings WHERE source_detector = 'audit-trail-verify'"
                 ).fetchall()
             }
             second_count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'audit-trail-verify'"
+                "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-verify'"
             ).fetchone()[0]
         assert second_count == first_count, "row count drifted across runs"
         assert second_ids == first_ids, "finding_id_str set changed across runs"
@@ -318,14 +299,13 @@ def test_audit_trail_verify_hash_mismatch_is_static_analysis(tmp_path):
             }
         ]
         written = _emit_audit_trail_verify_findings(
-            conn, issues, ".roam/audit-trail.jsonl",
+            conn,
+            issues,
+            ".roam/audit-trail.jsonl",
             AUDIT_TRAIL_VERIFY_DETECTOR_VERSION,
         )
         assert written == 1
-        row = conn.execute(
-            "SELECT confidence FROM findings "
-            "WHERE source_detector = 'audit-trail-verify'"
-        ).fetchone()
+        row = conn.execute("SELECT confidence FROM findings WHERE source_detector = 'audit-trail-verify'").fetchone()
         assert row["confidence"] == "static_analysis"
 
 
@@ -340,14 +320,13 @@ def test_audit_trail_verify_invalid_json_is_static_analysis(tmp_path):
             }
         ]
         written = _emit_audit_trail_verify_findings(
-            conn, issues, ".roam/audit-trail.jsonl",
+            conn,
+            issues,
+            ".roam/audit-trail.jsonl",
             AUDIT_TRAIL_VERIFY_DETECTOR_VERSION,
         )
         assert written == 1
-        row = conn.execute(
-            "SELECT confidence FROM findings "
-            "WHERE source_detector = 'audit-trail-verify'"
-        ).fetchone()
+        row = conn.execute("SELECT confidence FROM findings WHERE source_detector = 'audit-trail-verify'").fetchone()
         assert row["confidence"] == "static_analysis"
 
 
@@ -370,14 +349,13 @@ def test_audit_trail_verify_skips_not_found_synthetic_issue(tmp_path):
             },
         ]
         written = _emit_audit_trail_verify_findings(
-            conn, issues, ".roam/audit-trail.jsonl",
+            conn,
+            issues,
+            ".roam/audit-trail.jsonl",
             AUDIT_TRAIL_VERIFY_DETECTOR_VERSION,
         )
         assert written == 1, "expected exactly one row (the real anomaly)"
-        rows = conn.execute(
-            "SELECT claim FROM findings "
-            "WHERE source_detector = 'audit-trail-verify'"
-        ).fetchall()
+        rows = conn.execute("SELECT claim FROM findings WHERE source_detector = 'audit-trail-verify'").fetchall()
         assert all("not found" not in r["claim"] for r in rows)
 
 
@@ -395,20 +373,14 @@ def test_audit_trail_verify_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_verify(proj, trail)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list",
-                  "--detector", "audit-trail-verify"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "audit-trail-verify"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "audit-trail-verify" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "audit-trail-verify"
-            for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "audit-trail-verify" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -439,15 +411,12 @@ def test_audit_trail_verify_no_persist_does_not_emit_findings(tmp_path):
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
         # No --persist.
-        assert runner.invoke(
-            cli, ["audit-trail-verify", "--input", str(trail)]
-        ).exit_code == 0
+        assert runner.invoke(cli, ["audit-trail-verify", "--input", str(trail)]).exit_code == 0
 
         with open_db(readonly=True) as conn:
             try:
                 count = conn.execute(
-                    "SELECT COUNT(*) FROM findings "
-                    "WHERE source_detector = 'audit-trail-verify'"
+                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-verify'"
                 ).fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
@@ -475,9 +444,7 @@ def test_audit_trail_verify_persist_no_findings_table_no_crash(tmp_path):
             conn.execute("DROP TABLE IF EXISTS findings")
             conn.commit()
 
-        result = runner.invoke(
-            cli, ["audit-trail-verify", "--input", str(trail), "--persist"]
-        )
+        result = runner.invoke(cli, ["audit-trail-verify", "--input", str(trail), "--persist"])
         # Must succeed despite the missing findings table.
         assert result.exit_code == 0, result.output
     finally:
@@ -509,15 +476,12 @@ def test_audit_trail_verify_valid_chain_writes_no_findings(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         assert runner.invoke(cli, ["index"]).exit_code == 0
-        result = runner.invoke(
-            cli, ["audit-trail-verify", "--input", str(trail), "--persist"]
-        )
+        result = runner.invoke(cli, ["audit-trail-verify", "--input", str(trail), "--persist"])
         assert result.exit_code == 0, result.output
 
         with open_db(readonly=True) as conn:
             count = conn.execute(
-                "SELECT COUNT(*) FROM findings "
-                "WHERE source_detector = 'audit-trail-verify'"
+                "SELECT COUNT(*) FROM findings WHERE source_detector = 'audit-trail-verify'"
             ).fetchone()[0]
         assert count == 0, "clean chain wrote findings rows"
     finally:
@@ -538,9 +502,7 @@ def test_audit_trail_verify_invalid_json_in_trail_emits_finding(tmp_path):
                 "WHERE source_detector = 'audit-trail-verify'"
             ).fetchall()
         # At least one invalid_json finding present.
-        invalid_json_rows = [
-            r for r in rows if "invalid_json" in r["finding_id_str"]
-        ]
+        invalid_json_rows = [r for r in rows if "invalid_json" in r["finding_id_str"]]
         assert len(invalid_json_rows) >= 1, (
             f"expected an invalid_json finding; got {[r['finding_id_str'] for r in rows]}"
         )

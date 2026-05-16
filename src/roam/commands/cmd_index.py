@@ -1,4 +1,13 @@
-"""Build or rebuild the codebase index."""
+"""Build or rebuild the codebase index.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam index`` is a setup/state command — its output is
+human-facing index-build status (files discovered, symbols extracted,
+edges resolved, elapsed seconds), not analysis findings with file:line
+coordinates. SARIF is reserved for scanning results. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation plan +
+W1224-audit memo.
+"""
 
 from __future__ import annotations
 

@@ -42,7 +42,6 @@ from roam.evidence.collector import (
     _resolve_authority_provenance,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -166,8 +165,7 @@ def test_approval_authority_has_producer_envelope_provenance() -> None:
     refs = _build_authority_refs(
         pr_bundle_envelope={
             "approvals": [
-                {"approval_id": "appr_pr42_review1",
-                 "approver": "human:alice@example.com"},
+                {"approval_id": "appr_pr42_review1", "approver": "human:alice@example.com"},
             ],
         },
         caller_mode=None,
@@ -251,11 +249,13 @@ def test_duplicate_authority_precedence_is_deterministic() -> None:
         "permits": [{"permit_id": "perm_alpha"}],
         "leases": [{"lease_id": "lease_beta"}],
     }
-    corroborated = frozenset({
-        ("mode", "safe_edit"),
-        ("permit", "perm_alpha"),
-        # lease_beta NOT in ledger -> stays at producer_envelope(lease)
-    })
+    corroborated = frozenset(
+        {
+            ("mode", "safe_edit"),
+            ("permit", "perm_alpha"),
+            # lease_beta NOT in ledger -> stays at producer_envelope(lease)
+        }
+    )
 
     # Run the resolver three times and assert byte-identical output.
     runs = []
@@ -265,10 +265,7 @@ def test_duplicate_authority_precedence_is_deterministic() -> None:
             caller_mode=None,
             corroborated_authorities=corroborated,
         )
-        runs.append([
-            (r.authority_kind, r.authority_id, r.extra.get("provenance"))
-            for r in refs
-        ])
+        runs.append([(r.authority_kind, r.authority_id, r.extra.get("provenance")) for r in refs])
 
     # Determinism: every run produces the same sequence.
     assert runs[0] == runs[1] == runs[2]
@@ -336,13 +333,9 @@ def test_resolver_emits_only_PROVENANCE_SOURCES_values() -> None:
             corroborated_in_run_ledger=corrob,
         )
         base = _provenance_base(label)
-        assert base in PROVENANCE_SOURCES, (
-            f"resolver emitted {label!r} (base {base!r}) not in "
-            f"PROVENANCE_SOURCES"
-        )
+        assert base in PROVENANCE_SOURCES, f"resolver emitted {label!r} (base {base!r}) not in PROVENANCE_SOURCES"
         assert base == expected_base, (
-            f"resolver({src!r}, corrob={corrob}) -> {label!r}, "
-            f"expected base {expected_base!r}"
+            f"resolver({src!r}, corrob={corrob}) -> {label!r}, expected base {expected_base!r}"
         )
 
 
@@ -416,11 +409,8 @@ def test_authority_provenance_uses_only_PROVENANCE_SOURCES_values() -> None:
 
     for r in all_refs:
         label = r.extra.get("provenance")
-        assert isinstance(label, str) and label, (
-            f"AuthorityRef missing extra['provenance']: {r!r}"
-        )
+        assert isinstance(label, str) and label, f"AuthorityRef missing extra['provenance']: {r!r}"
         base = _provenance_base(label)
         assert base in PROVENANCE_SOURCES, (
-            f"AuthorityRef provenance base {base!r} (from label {label!r}) "
-            f"is not in PROVENANCE_SOURCES"
+            f"AuthorityRef provenance base {base!r} (from label {label!r}) is not in PROVENANCE_SOURCES"
         )

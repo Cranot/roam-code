@@ -1,4 +1,11 @@
-"""List all detected REST/GraphQL/gRPC endpoints with handlers."""
+"""List all detected REST/GraphQL/gRPC endpoints with handlers.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because endpoints outputs are invocation-scoped route-surface
+enumerations — not per-location violations. Editor consumers should use
+the JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +21,7 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.index.test_conventions import is_test_file as _is_test_file
 from roam.output.formatter import format_table, json_envelope, loc, to_json
+from roam.output.structured_unknowns import structured_unknown_filter
 
 # ---------------------------------------------------------------------------
 # Framework detection patterns
@@ -292,7 +300,8 @@ def _scan_vue_router(source: str, file_path: str, rel_path: str) -> list[dict]:
         "createRouter" in source
         or "vue-router" in source
         or "defineRouter" in source
-        or "useRouter" in source and "routes" in source
+        or "useRouter" in source
+        and "routes" in source
     ):
         return []
 
@@ -344,9 +353,7 @@ def _scan_vue_sfc(source: str, file_path: str, rel_path: str) -> list[dict]:
     blocks but stripping them avoids matching path-like strings inside
     template attributes.
     """
-    script_blocks = re.findall(
-        r"<script(?:\s[^>]*)?>(.*?)</script>", source, re.DOTALL | re.IGNORECASE
-    )
+    script_blocks = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", source, re.DOTALL | re.IGNORECASE)
     if not script_blocks:
         return []
     joined = "\n".join(script_blocks)
@@ -781,6 +788,28 @@ def endpoints(ctx, framework, http_method, include_tests, group_by):
 
     all_endpoints = _collect_endpoints(project_root, file_paths, include_tests)
 
+    # W1069 (sibling of W1063/W1068): capture the observed-framework
+    # superset BEFORE filtering so the unknown_framework_filter
+    # disclosure can enumerate every framework the corpus actually
+    # exposes. Apply the same lowercase substring contract as the
+    # filter itself (``fw_lower in e["framework"].lower()``).
+    observed_frameworks = sorted({e["framework"] for e in all_endpoints})
+    framework_matched_corpus = True
+    if framework:
+        fw_lower = framework.lower()
+        framework_matched_corpus = any(fw_lower in fw.lower() for fw in observed_frameworks)
+
+    # W1075 (drive-by sibling of W1069): capture the observed-method
+    # superset BEFORE filtering so the unknown_method_filter disclosure
+    # can enumerate every HTTP method the corpus actually exposes. Apply
+    # the same upper-case equality contract as the filter itself
+    # (``e["method"] == meth_upper``).
+    observed_methods = sorted({e["method"] for e in all_endpoints})
+    method_matched_corpus = True
+    if http_method:
+        meth_upper = http_method.upper()
+        method_matched_corpus = meth_upper in observed_methods
+
     # Apply filters
     if framework:
         fw_lower = framework.lower()
@@ -794,6 +823,147 @@ def endpoints(ctx, framework, http_method, include_tests, group_by):
     # Collect distinct frameworks
     frameworks_found = sorted(set(e["framework"] for e in all_endpoints))
     n_frameworks = len(frameworks_found)
+
+    # W1069: when ``--framework`` was supplied AND its substring matches
+    # NO framework in the observed superset, emit the explicit
+    # unknown_framework_filter envelope (Pattern-1D: silent-success on
+    # degraded filter resolution otherwise renders this as a generic
+    # "no endpoints matching the given filters" — indistinguishable from
+    # a valid filter that just happens to have zero hits).
+    # W1080: delegated to the shared ``structured_unknown_filter`` helper.
+    # Note the helper's membership test is exact, while the
+    # surrounding filter is substring-match — at this point in the
+    # control flow ``framework_matched_corpus`` is False, so the
+    # substring miss already rules out exact membership too, and the
+    # helper is guaranteed to return a fragment.
+    if framework and not framework_matched_corpus:
+        frag = structured_unknown_filter(
+            requested=framework,
+            known=observed_frameworks,
+            state="unknown_framework_filter",
+            requested_field="requested_framework",
+            known_field="observed_frameworks",
+            fact_anchor="frameworks",
+            did_you_mean_omit_when_empty=True,
+            requested_disclosure_verb="substring not in observed",
+            known_disclosure_label="observed frameworks",
+        )
+        assert frag is not None  # substring miss guarantees membership miss
+        close = frag.get("did_you_mean", [])
+        verdict_unknown = (
+            f"unknown framework filter {framework!r} ({len(observed_frameworks)} observed){frag['verdict_suffix']}"
+        )
+        if json_mode:
+            summary_payload: dict[str, object] = {
+                "verdict": verdict_unknown,
+                "partial_success": frag["partial_success"],
+                "state": frag["state"],
+                "count": 0,
+                "frameworks": [],
+                "framework_count": 0,
+                "requested_framework": frag["requested_framework"],
+                "observed_frameworks": frag["observed_frameworks"],
+            }
+            # W1082: helper now controls presence + second-fact wording
+            # via the W1081 kwargs (did_you_mean_omit_when_empty +
+            # requested_disclosure_verb + known_disclosure_label). No
+            # post-helper splice or fact patch needed; LAW 4 anchor
+            # ``frameworks`` preserved on every fact terminal.
+            if "did_you_mean" in frag:
+                summary_payload["did_you_mean"] = frag["did_you_mean"]
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "endpoints",
+                        summary=summary_payload,
+                        agent_contract={
+                            "facts": frag["facts"],
+                            "next_commands": ["roam endpoints"],
+                        },
+                        budget=token_budget,
+                        endpoints=[],
+                    )
+                )
+            )
+            return
+        click.echo(f"VERDICT: {verdict_unknown}")
+        if close:
+            quoted = " or ".join(f"'{m}'" for m in close)
+            click.echo(f"Did you mean: {quoted}?")
+        if observed_frameworks:
+            click.echo("Observed frameworks: " + ", ".join(observed_frameworks))
+        else:
+            click.echo("No frameworks observed in the indexed corpus.")
+        return
+
+    # W1075: mirror of the W1069 unknown_framework_filter block for the
+    # ``--method`` filter. When ``--method`` was supplied AND its
+    # upper-cased value is NOT in the observed-method superset, emit the
+    # explicit unknown_method_filter envelope. Otherwise Pattern-1D
+    # silent-success renders as a generic "no endpoints detected matching
+    # the given filters" — indistinguishable from a valid method that just
+    # happens to have zero occurrences in the corpus.
+    if http_method and not method_matched_corpus:
+        meth_upper = http_method.upper()
+        # W1082: migrated to the shared ``structured_unknown_filter`` helper
+        # using the W1081 kwargs (did_you_mean_omit_when_empty +
+        # requested_disclosure_verb + known_disclosure_label). The helper's
+        # second-fact wording matches the pre-migration string
+        # ``"'GARBAGE' not in observed methods"`` exactly; LAW 4 anchor
+        # ``methods`` preserved on every fact terminal.
+        frag_m = structured_unknown_filter(
+            requested=meth_upper,
+            known=observed_methods,
+            state="unknown_method_filter",
+            requested_field="requested_method",
+            known_field="observed_methods",
+            fact_anchor="methods",
+            did_you_mean_omit_when_empty=True,
+            requested_disclosure_verb="not in observed",
+            known_disclosure_label="observed methods",
+        )
+        assert frag_m is not None  # not in superset guarantees membership miss
+        close_m = frag_m.get("did_you_mean", [])
+        verdict_unknown_method = (
+            f"unknown method filter {meth_upper!r} ({len(observed_methods)} observed){frag_m['verdict_suffix']}"
+        )
+        if json_mode:
+            summary_payload_m: dict[str, object] = {
+                "verdict": verdict_unknown_method,
+                "partial_success": frag_m["partial_success"],
+                "state": frag_m["state"],
+                "count": 0,
+                "frameworks": [],
+                "framework_count": 0,
+                "requested_method": frag_m["requested_method"],
+                "observed_methods": frag_m["observed_methods"],
+            }
+            if "did_you_mean" in frag_m:
+                summary_payload_m["did_you_mean"] = frag_m["did_you_mean"]
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "endpoints",
+                        summary=summary_payload_m,
+                        agent_contract={
+                            "facts": frag_m["facts"],
+                            "next_commands": ["roam endpoints"],
+                        },
+                        budget=token_budget,
+                        endpoints=[],
+                    )
+                )
+            )
+            return
+        click.echo(f"VERDICT: {verdict_unknown_method}")
+        if close_m:
+            quoted_m = " or ".join(f"'{m}'" for m in close_m)
+            click.echo(f"Did you mean: {quoted_m}?")
+        if observed_methods:
+            click.echo("Observed methods: " + ", ".join(observed_methods))
+        else:
+            click.echo("No methods observed in the indexed corpus.")
+        return
 
     # Build verdict
     if n == 0:
@@ -831,8 +1001,7 @@ def endpoints(ctx, framework, http_method, include_tests, group_by):
                     # concrete-noun facts here.
                     agent_contract={
                         "facts": [
-                            f"endpoints scan found {n} endpoint(s) across "
-                            f"{n_frameworks} framework(s)",
+                            f"endpoints scan found {n} endpoint(s) across {n_frameworks} framework(s)",
                             f"endpoints scan frameworks: {', '.join(frameworks_found) or '(none)'}",
                         ],
                     },

@@ -8,6 +8,14 @@ dev's local self-check and as a customer's first-touch demo.
 Lives at the top of the funnel: a new user runs ``roam dogfood`` once
 and sees the full v2 product surface in 30 seconds. No subscription,
 no API key, no upload.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because dogfood outputs are invocation-scoped compound audit
+envelopes — not per-location violations. ``dogfood`` delegates SARIF
+emission to composed subcommands (``audit``, ``pr-analyze``, etc.) when
+their own ``--sarif`` flag fires directly. See action.yml
+_SUPPORTED_SARIF allowlist + W1145 / W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

@@ -26,7 +26,6 @@ from roam.catalog.type_switch import (
     detect_type_switch,
 )
 
-
 # ---------------------------------------------------------------------------
 # DB fixture — mirrors test_smells.py's ``_make_db`` (subset)
 # ---------------------------------------------------------------------------
@@ -86,8 +85,7 @@ def _wire_file(
     if enclosing is not None:
         name, kind, ls, le = enclosing
         conn.execute(
-            "INSERT INTO symbols (file_id, name, kind, line_start, line_end) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO symbols (file_id, name, kind, line_start, line_end) VALUES (?, ?, ?, ?, ?)",
             (file_id, name, kind, ls, le),
         )
     conn.commit()
@@ -194,7 +192,10 @@ class TestTypeSwitchDetector:
             "    return '?'\n"
         )
         _wire_file(
-            tmp_path, conn, "src/zoo.py", src,
+            tmp_path,
+            conn,
+            "src/zoo.py",
+            src,
             enclosing=("speak", "function", 5, 12),
         )
         findings = _run(tmp_path, conn)
@@ -230,7 +231,10 @@ class TestTypeSwitchDetector:
             "    return '?'\n"
         )
         _wire_file(
-            tmp_path, conn, "src/zoo.py", src,
+            tmp_path,
+            conn,
+            "src/zoo.py",
+            src,
             enclosing=("speak", "function", 4, 9),
         )
         assert _run(tmp_path, conn) == []
@@ -250,7 +254,10 @@ class TestTypeSwitchDetector:
             "    return None\n"
         )
         _wire_file(
-            tmp_path, conn, "src/coerce.py", src,
+            tmp_path,
+            conn,
+            "src/coerce.py",
+            src,
             enclosing=("coerce", "function", 1, 8),
         )
         assert _run(tmp_path, conn) == []
@@ -284,7 +291,10 @@ class TestTypeSwitchDetector:
             "        pass\n"
         )
         _wire_file(
-            tmp_path, conn, "src/dispatch.py", src,
+            tmp_path,
+            conn,
+            "src/dispatch.py",
+            src,
             enclosing=("configure", "function", 11, 22),
         )
         assert _run(tmp_path, conn) == []
@@ -312,7 +322,10 @@ class TestTypeSwitchDetector:
             "    return '?'\n"
         )
         _wire_file(
-            tmp_path, conn, "src/zoo_match.py", src,
+            tmp_path,
+            conn,
+            "src/zoo_match.py",
+            src,
             enclosing=("speak", "function", 8, 16),
         )
         findings = _run(tmp_path, conn)
@@ -343,7 +356,10 @@ class TestTypeSwitchDetector:
             "    return '?'\n"
         )
         _wire_file(
-            tmp_path, conn, "src/zoo_typeeq.py", src,
+            tmp_path,
+            conn,
+            "src/zoo_typeeq.py",
+            src,
             enclosing=("speak", "function", 5, 12),
         )
         findings = _run(tmp_path, conn)
@@ -373,7 +389,10 @@ class TestTypeSwitchDetector:
             "    return '?'\n"
         )
         _wire_file(
-            tmp_path, conn, "tests/test_zoo.py", src,
+            tmp_path,
+            conn,
+            "tests/test_zoo.py",
+            src,
             enclosing=("speak", "function", 5, 12),
         )
         assert _run(tmp_path, conn) == []
@@ -393,7 +412,10 @@ class TestTypeSwitchDetector:
             "    return '?'\n"
         )
         _wire_file(
-            tmp_path, conn, "src/zoo_tuple.py", src,
+            tmp_path,
+            conn,
+            "src/zoo_tuple.py",
+            src,
             enclosing=("speak", "function", 5, 8),
         )
         findings = _run(tmp_path, conn)
@@ -423,7 +445,10 @@ class TestTypeSwitchDetector:
             "    return '?'\n"
         )
         _wire_file(
-            tmp_path, conn, "src/zoo_multi.py", src,
+            tmp_path,
+            conn,
+            "src/zoo_multi.py",
+            src,
             enclosing=("speak", "function", 5, 12),
         )
         assert _run(tmp_path, conn) == []
@@ -447,7 +472,10 @@ class TestTypeSwitchDetector:
             "    return '?'\n"
         )
         _wire_file(
-            tmp_path, conn, "src/zoo.py", src,
+            tmp_path,
+            conn,
+            "src/zoo.py",
+            src,
             enclosing=("speak", "function", 5, 12),
         )
         assert _run(tmp_path, conn, min_class_arms=4) == []
@@ -466,10 +494,7 @@ class TestTypeSwitchDetector:
         """File row exists in DB but disk file missing -> silently skipped."""
         conn = _make_db(tmp_path)
         # Insert a files row without writing the actual file.
-        conn.execute(
-            "INSERT INTO files (path, language, file_role) "
-            "VALUES ('src/ghost.py', 'python', 'source')"
-        )
+        conn.execute("INSERT INTO files (path, language, file_role) VALUES ('src/ghost.py', 'python', 'source')")
         conn.commit()
         (tmp_path / ".git").mkdir(exist_ok=True)
         old_cwd = os.getcwd()
@@ -507,6 +532,7 @@ class TestRegistryWiring:
 class TestClassesFromIsinstance:
     def _parse_call(self, src: str):
         import ast
+
         tree = ast.parse(src, mode="eval")
         return tree.body
 
@@ -528,5 +554,6 @@ class TestClassesFromIsinstance:
 
     def test_classname_from_node_call_type_none(self):
         import ast
+
         tree = ast.parse("type(None)", mode="eval")
         assert _classname_from_node(tree.body) == "NoneType"

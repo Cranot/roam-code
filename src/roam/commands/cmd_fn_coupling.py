@@ -1,4 +1,12 @@
-"""Show function-level temporal coupling: symbols that change together across files."""
+"""Show function-level temporal coupling: symbols that change together across files.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because fn-coupling outputs are invocation-scoped temporal
+co-change rankings (per-symbol-pair lift / support / confidence scores
+derived from git history) — not per-location code violations. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 

@@ -167,7 +167,9 @@ class TestVisualizeJson:
         data = json.loads(out)
         assert data["command"] == "visualize"
         assert "summary" in data
-        assert data["summary"]["verdict"] == "OK"
+        # LAW 4 (W17.3): verdict names the analytical product, not bare "OK".
+        # Use startswith for forward-compat with diagram-shape changes.
+        assert data["summary"]["verdict"].startswith("visualize rendered mermaid diagram")
         assert data["summary"]["nodes"] > 0
         assert "diagram" in data
         assert "graph TD" in data["diagram"] or "graph LR" in data["diagram"]

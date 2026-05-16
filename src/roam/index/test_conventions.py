@@ -279,36 +279,20 @@ class JavaScriptConvention(TestConvention):
 
     # File extension alternation matches: .js / .jsx / .ts / .tsx / .mjs /
     # .cjs / .mts / .cts / .vue. Order doesn't matter inside the group.
-    _TEST_PATTERN = re.compile(
-        r"^.*\.(?:test|spec)\.(?:[jt]sx?|[mc][jt]s|vue)$"
-    )
-    _TEST_PARSE_PATTERN = re.compile(
-        r"^(.*)\.(test|spec)(\.(?:[jt]sx?|[mc][jt]s|vue))$"
-    )
+    _TEST_PATTERN = re.compile(r"^.*\.(?:test|spec)\.(?:[jt]sx?|[mc][jt]s|vue)$")
+    _TEST_PARSE_PATTERN = re.compile(r"^(.*)\.(test|spec)(\.(?:[jt]sx?|[mc][jt]s|vue))$")
 
     # Directory hints for kind classification (Vitest-aware). Mirrors the
     # facade's ``_TEST_KIND_PATH_PATTERNS`` so the adapter is a strict
     # superset of the cross-language fallback for JS/TS/Vue paths — the
     # facade can therefore delegate to this adapter without losing the
     # ``smoke`` / ``sanity`` classification.
-    _E2E_DIR_RE = re.compile(
-        r"(^|/)(e2e|end-to-end|cypress|playwright|selenium)/", re.IGNORECASE
-    )
-    _INTEGRATION_DIR_RE = re.compile(
-        r"(^|/)(integration|integ)/", re.IGNORECASE
-    )
-    _SMOKE_DIR_RE = re.compile(
-        r"(^|/)(smoke|sanity)/", re.IGNORECASE
-    )
-    _E2E_NAME_RE = re.compile(
-        r"(?:^|[._-])(e2e|end[._-]to[._-]end)(?:[._-]|$)", re.IGNORECASE
-    )
-    _INTEGRATION_NAME_RE = re.compile(
-        r"(?:^|[._-])(integration|integ)(?:[._-]|$)", re.IGNORECASE
-    )
-    _SMOKE_NAME_RE = re.compile(
-        r"(?:^|[._-])(smoke|sanity)(?:[._-]|$)", re.IGNORECASE
-    )
+    _E2E_DIR_RE = re.compile(r"(^|/)(e2e|end-to-end|cypress|playwright|selenium)/", re.IGNORECASE)
+    _INTEGRATION_DIR_RE = re.compile(r"(^|/)(integration|integ)/", re.IGNORECASE)
+    _SMOKE_DIR_RE = re.compile(r"(^|/)(smoke|sanity)/", re.IGNORECASE)
+    _E2E_NAME_RE = re.compile(r"(?:^|[._-])(e2e|end[._-]to[._-]end)(?:[._-]|$)", re.IGNORECASE)
+    _INTEGRATION_NAME_RE = re.compile(r"(?:^|[._-])(integration|integ)(?:[._-]|$)", re.IGNORECASE)
+    _SMOKE_NAME_RE = re.compile(r"(?:^|[._-])(smoke|sanity)(?:[._-]|$)", re.IGNORECASE)
 
     def source_to_test_paths(self, source_path):
         p = source_path.replace("\\", "/")
@@ -664,9 +648,7 @@ _ALL_CONVENTIONS: list[TestConvention] = [
 # these as module-level constants so ``classify_test_kind`` doesn't pay
 # the construction cost on every call (the facade is hot — called once
 # per indexed file by ``test-pyramid``, ``endpoints``, ``n1`` etc.).
-_JS_CONVENTION = next(
-    c for c in _ALL_CONVENTIONS if isinstance(c, JavaScriptConvention)
-)
+_JS_CONVENTION = next(c for c in _ALL_CONVENTIONS if isinstance(c, JavaScriptConvention))
 
 
 def get_conventions() -> list[TestConvention]:
@@ -801,9 +783,7 @@ _TEST_KIND_NAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # File extensions whose ``.test.<ext>`` / ``.spec.<ext>`` infix is the
 # Vitest/Jest/Mocha convention. Colocated specs of these kinds default
 # to ``unit`` when no other directory hint is present.
-_VITEST_LIKE_EXTS = frozenset(
-    {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue"}
-)
+_VITEST_LIKE_EXTS = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue"})
 _VITEST_INFIX_RE = re.compile(r"\.(test|spec)\.")
 
 

@@ -17,8 +17,6 @@ These tests pin down:
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -27,7 +25,6 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, parse_json_output  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -184,17 +181,13 @@ def test_dedup_via_content_hash(project, monkeypatch):
     # is the realistic case for a fast-running CLI invocation.
     from roam.output import formatter as fmt
 
-    monkeypatch.setattr(
-        fmt, "datetime", _FrozenDatetime, raising=True
-    )
+    monkeypatch.setattr(fmt, "datetime", _FrozenDatetime, raising=True)
 
     json_envelope("health", summary={"verdict": "ok", "score": 42})
     json_envelope("health", summary={"verdict": "ok", "score": 42})
 
     files = _list_responses(project)
-    assert len(files) == 1, (
-        f"two identical envelopes must dedup to ONE file via content hash, got: {files}"
-    )
+    assert len(files) == 1, f"two identical envelopes must dedup to ONE file via content hash, got: {files}"
 
 
 class _FrozenDatetime:
@@ -236,9 +229,7 @@ def test_writes_when_active_bundle_present(project, monkeypatch):
     env = json_envelope("health", summary={"verdict": "ok", "score": 88})
 
     files = _list_responses(project)
-    assert len(files) == 1, (
-        f"expected exactly one response file from the bundle-signal trigger, got: {files}"
-    )
+    assert len(files) == 1, f"expected exactly one response file from the bundle-signal trigger, got: {files}"
     assert files[0].name.startswith("health_")
     # The envelope content is intact.
     on_disk = json.loads(files[0].read_text(encoding="utf-8"))
@@ -252,8 +243,8 @@ def test_writes_when_both_signals_present(project, monkeypatch):
     Content-hash dedup means both triggers still produce exactly one file
     per logically-identical envelope.
     """
-    from roam.output.formatter import json_envelope
     from roam.output import formatter as fmt
+    from roam.output.formatter import json_envelope
 
     monkeypatch.setenv("ROAM_RUN_ID", "test-both-signals")
     bundles = project / ".roam" / "pr-bundles"
@@ -267,9 +258,7 @@ def test_writes_when_both_signals_present(project, monkeypatch):
     json_envelope("health", summary={"verdict": "ok", "score": 7})
 
     files = _list_responses(project)
-    assert len(files) == 1, (
-        f"both signals present + identical envelopes should still dedup to one file, got: {files}"
-    )
+    assert len(files) == 1, f"both signals present + identical envelopes should still dedup to one file, got: {files}"
 
 
 def test_no_signals_no_write_even_with_bundle_dir_empty(project, monkeypatch):
@@ -288,8 +277,7 @@ def test_no_signals_no_write_even_with_bundle_dir_empty(project, monkeypatch):
     json_envelope("health", summary={"verdict": "ok"})
 
     assert _list_responses(project) == [], (
-        "empty pr-bundles/ directory must NOT trigger the write — only a "
-        "real bundle file is a valid signal"
+        "empty pr-bundles/ directory must NOT trigger the write — only a real bundle file is a valid signal"
     )
 
 
@@ -306,13 +294,9 @@ def test_non_envelope_dict_is_not_written(project, monkeypatch):
     # Missing schema marker → must be rejected.
     _write_response_to_responses_dir({"command": "health", "summary": {}})
     # Wrong schema marker → must be rejected.
-    _write_response_to_responses_dir(
-        {"schema": "something-else", "command": "health", "summary": {}}
-    )
+    _write_response_to_responses_dir({"schema": "something-else", "command": "health", "summary": {}})
     # Empty command → must be rejected.
-    _write_response_to_responses_dir(
-        {"schema": "roam-envelope-v1", "command": "", "summary": {}}
-    )
+    _write_response_to_responses_dir({"schema": "roam-envelope-v1", "command": "", "summary": {}})
 
     assert _list_responses(project) == []
 
@@ -356,14 +340,16 @@ def test_pr_bundle_auto_collect_consumes_cli_responses(project, monkeypatch):
 
     # Step 2: init the bundle.
     result = runner.invoke(
-        cli, ["--json", "pr-bundle", "init", "--intent", "test the W9.1 closure"],
+        cli,
+        ["--json", "pr-bundle", "init", "--intent", "test the W9.1 closure"],
         catch_exceptions=False,
     )
     assert result.exit_code == 0, f"pr-bundle init failed: {result.output}"
 
     # Step 3: emit with auto-collect (the default).
     result = runner.invoke(
-        cli, ["--json", "pr-bundle", "emit"],
+        cli,
+        ["--json", "pr-bundle", "emit"],
         catch_exceptions=False,
     )
     assert result.exit_code == 0, f"pr-bundle emit failed: {result.output}"
@@ -379,11 +365,5 @@ def test_pr_bundle_auto_collect_consumes_cli_responses(project, monkeypatch):
     # - commands_run: "roam health"
     # - affected_symbols: hello
     # - risks: low-impact churn
-    contributed = (
-        auto.get("commands_run", 0)
-        + auto.get("affected_symbols", 0)
-        + auto.get("risks", 0)
-    )
-    assert contributed >= 1, (
-        f"auto-collect scanned envelopes but folded nothing in — harvester broken: {auto}"
-    )
+    contributed = auto.get("commands_run", 0) + auto.get("affected_symbols", 0) + auto.get("risks", 0)
+    assert contributed >= 1, f"auto-collect scanned envelopes but folded nothing in — harvester broken: {auto}"

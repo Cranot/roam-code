@@ -35,7 +35,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # Tier ids - closed enumeration, surfaced in JSON envelopes so
 # programmatic consumers can switch on the value.
 TIER_STRONG: str = "strong"
@@ -112,8 +111,7 @@ def classify_evidence_coverage(packet: Any) -> tuple[str, str, str]:
         return (
             TIER_STRONG,
             TIER_LABELS[TIER_STRONG],
-            f"{complete} of 8 evidence questions answered; "
-            f"{missing} missing acknowledged below.",
+            f"{complete} of 8 evidence questions answered; {missing} missing acknowledged below.",
         )
 
     # Tier 2 — PARTIAL. Sum of complete + partial gates a real
@@ -123,8 +121,7 @@ def classify_evidence_coverage(packet: Any) -> tuple[str, str, str]:
         return (
             TIER_PARTIAL,
             TIER_LABELS[TIER_PARTIAL],
-            f"{complete + partial} of 8 evidence questions answered "
-            f"fully or partially; {missing} missing.",
+            f"{complete + partial} of 8 evidence questions answered fully or partially; {missing} missing.",
         )
 
     # Tier 3 — INSUFFICIENT. Name the count and the do-not-publish
@@ -133,8 +130,7 @@ def classify_evidence_coverage(packet: Any) -> tuple[str, str, str]:
     return (
         TIER_INSUFFICIENT,
         TIER_LABELS[TIER_INSUFFICIENT],
-        f"{complete} of 8 evidence questions answered; "
-        f"do not publish as governance evidence.",
+        f"{complete} of 8 evidence questions answered; do not publish as governance evidence.",
     )
 
 
@@ -154,10 +150,7 @@ def render_banner_markdown(packet: Any) -> str:
     :func:`classify_evidence_coverage`.
     """
     _tier_id, label, rationale = classify_evidence_coverage(packet)
-    return (
-        f"> **Evidence coverage: {label}**\n"
-        f"> {rationale}"
-    )
+    return f"> **Evidence coverage: {label}**\n> {rationale}"
 
 
 def banner_envelope_block(packet: Any) -> dict[str, Any]:

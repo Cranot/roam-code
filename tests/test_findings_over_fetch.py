@@ -29,18 +29,17 @@ import sqlite3
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._findings_helpers import assert_detector_visible_in_findings_count
 from roam.commands.cmd_over_fetch import (
-    OVER_FETCH_DETECTOR_VERSION,
     _ENDPOINT_STATE_TO_CONFIDENCE,
     _MODEL_CONFIDENCE_TO_TIER,
+    OVER_FETCH_DETECTOR_VERSION,
     _emit_over_fetch_findings,
     _over_fetch_endpoint_finding_id,
     _over_fetch_model_finding_id,
 )
 from roam.db.connection import open_db
+from tests._findings_helpers import assert_detector_visible_in_findings_count
 from tests.conftest import make_src_project as _make_project
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -179,14 +178,8 @@ def test_over_fetch_emits_both_kinds(tmp_path):
                 "WHERE source_detector = 'over-fetch' "
                 "AND finding_id_str LIKE 'over-fetch:endpoint:%'"
             ).fetchone()[0]
-        assert model_count >= 1, (
-            "expected at least one model-level over-fetch finding "
-            f"(got {model_count})"
-        )
-        assert endpoint_count >= 1, (
-            "expected at least one endpoint-level over-fetch finding "
-            f"(got {endpoint_count})"
-        )
+        assert model_count >= 1, f"expected at least one model-level over-fetch finding (got {model_count})"
+        assert endpoint_count >= 1, f"expected at least one endpoint-level over-fetch finding (got {endpoint_count})"
     finally:
         os.chdir(old_cwd)
 
@@ -256,9 +249,9 @@ def test_over_fetch_rerun_upserts_not_duplicates(tmp_path):
                     "SELECT finding_id_str FROM findings WHERE source_detector = 'over-fetch'"
                 ).fetchall()
             }
-            first_count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'over-fetch'"
-            ).fetchone()[0]
+            first_count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'over-fetch'").fetchone()[
+                0
+            ]
         assert first_count == len(first_ids), "duplicate finding_id_str rows on first run"
         assert first_count >= 1, "first run emitted no findings"
 
@@ -390,9 +383,7 @@ def test_over_fetch_three_state_classification_emitted(tmp_path):
             states_seen.add(state)
             # Verify the per-state confidence tier mapping at write time.
             assert r["confidence"] == _ENDPOINT_STATE_TO_CONFIDENCE.get(state), (
-                f"state {state!r} expected "
-                f"{_ENDPOINT_STATE_TO_CONFIDENCE.get(state)!r}, "
-                f"got {r['confidence']!r}"
+                f"state {state!r} expected {_ENDPOINT_STATE_TO_CONFIDENCE.get(state)!r}, got {r['confidence']!r}"
             )
         # The fixture exercises all three states; check at least the
         # confirmed-leak pair lands (BARE + UNGUARDED). GUARDED is also
@@ -480,9 +471,7 @@ def test_model_bucket_tier_mapping(tmp_path):
                 "missing_selects": [{"file": "src/X.php", "line": 1}],
             },
         ]
-        written = _emit_over_fetch_findings(
-            conn, findings_data, [], OVER_FETCH_DETECTOR_VERSION
-        )
+        written = _emit_over_fetch_findings(conn, findings_data, [], OVER_FETCH_DETECTOR_VERSION)
         assert written == len(findings_data)
         rows = conn.execute(
             "SELECT evidence_json, confidence FROM findings "
@@ -551,18 +540,14 @@ def test_endpoint_state_tier_mapping(tmp_path):
                 "evidence": "with('rel:id,name')",
                 "recommendation": "Consider Resource wrapper",
                 "details": {
-                    "guarded": [
-                        {"relation": "rel", "cols": ["id", "name"], "raw": "rel:id,name"}
-                    ],
+                    "guarded": [{"relation": "rel", "cols": ["id", "name"], "raw": "rel:id,name"}],
                     "unguarded": [],
                     "has_select": False,
                     "bare_main_model": False,
                 },
             },
         ]
-        written = _emit_over_fetch_findings(
-            conn, [], endpoint_findings, OVER_FETCH_DETECTOR_VERSION
-        )
+        written = _emit_over_fetch_findings(conn, [], endpoint_findings, OVER_FETCH_DETECTOR_VERSION)
         assert written == len(endpoint_findings)
         rows = conn.execute(
             "SELECT evidence_json, confidence FROM findings "
@@ -575,12 +560,8 @@ def test_endpoint_state_tier_mapping(tmp_path):
             ev = json.loads(r["evidence_json"])
             seen[ev["state"]] = r["confidence"]
         assert seen["BARE"] == _ENDPOINT_STATE_TO_CONFIDENCE["BARE"]
-        assert seen["UNGUARDED_RELATION"] == _ENDPOINT_STATE_TO_CONFIDENCE[
-            "UNGUARDED_RELATION"
-        ]
-        assert seen["GUARDED_RELATION"] == _ENDPOINT_STATE_TO_CONFIDENCE[
-            "GUARDED_RELATION"
-        ]
+        assert seen["UNGUARDED_RELATION"] == _ENDPOINT_STATE_TO_CONFIDENCE["UNGUARDED_RELATION"]
+        assert seen["GUARDED_RELATION"] == _ENDPOINT_STATE_TO_CONFIDENCE["GUARDED_RELATION"]
 
 
 # ---------------------------------------------------------------------------
@@ -597,18 +578,14 @@ def test_over_fetch_findings_visible_via_cmd_findings_list(tmp_path):
         _persist_over_fetch(proj)
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "findings", "list", "--detector", "over-fetch"]
-        )
+        result = runner.invoke(cli, ["--json", "findings", "list", "--detector", "over-fetch"])
         assert result.exit_code == 0, result.output
         envelope = json.loads(result.output)
         assert envelope["command"] == "findings-list"
         assert envelope["summary"]["state"] == "populated"
         assert envelope["summary"]["total_findings"] >= 1
         assert "over-fetch" in envelope["summary"]["detectors"]
-        assert all(
-            r["source_detector"] == "over-fetch" for r in envelope["findings"]
-        )
+        assert all(r["source_detector"] == "over-fetch" for r in envelope["findings"])
     finally:
         os.chdir(old_cwd)
 
@@ -647,9 +624,7 @@ def test_no_persist_does_not_emit_findings(tmp_path):
 
         with open_db(readonly=True) as conn:
             try:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM findings WHERE source_detector = 'over-fetch'"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'over-fetch'").fetchone()[0]
             except sqlite3.OperationalError:
                 count = 0
         assert count == 0, "non-persist over-fetch still wrote to findings"

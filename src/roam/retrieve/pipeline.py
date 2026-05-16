@@ -2,7 +2,7 @@
 
 End-to-end flow:
 
-1. **Seeds** — caller-supplied ``--seed-files`` resolved to symbol ids,
+1. **Seeds** — caller-supplied ``--seed-file`` resolved to symbol ids,
    or :func:`infer_seeds` over the free-form task text.
 2. **First-stage** — FTS5 BM25 over ``symbol_fts`` using the same token
    extraction the seed inference uses (so query and reranker agree on
@@ -154,7 +154,7 @@ def _resolve_seeds(
     task: str,
     seed_files: list[str] | None,
 ) -> dict[int, float]:
-    """Resolve `--seed-files` first; if absent, infer from task text."""
+    """Resolve `--seed-file` first; if absent, infer from task text."""
     if seed_files:
         seeds = _seeds_from_files(conn, seed_files)
         if seeds:

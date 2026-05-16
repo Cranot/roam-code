@@ -22,6 +22,7 @@ from pathlib import Path
 
 import click
 
+from roam.capability import roam_capability
 from roam.commands.grep_helpers import (
     build_interval_index,
     build_orphan_set,
@@ -32,14 +33,28 @@ from roam.commands.grep_helpers import (
     indexed_file_scan,
     run_search,
 )
-from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.evidence._vocabulary import REFERENCE_REMOVAL_VERDICTS
 from roam.git_utils import worktree_git_env
 from roam.output.formatter import json_envelope, loc, to_json
 
 # Exit code 5 signals a CI gate failure (matches cmd_rules)
 EXIT_GATE_FAILURE = 5
+
+
+def _validate_verdict(verdict: str) -> str:
+    """Assert ``verdict`` is in the W1156 closed-enum vocabulary.
+
+    Display form is UPPERCASE-WITH-HYPHENS; canonical form is
+    lowercase+underscore. Normalize before membership check and return
+    the original display form so callers stay unchanged.
+    """
+    canonical = verdict.lower().replace("-", "_")
+    assert canonical in REFERENCE_REMOVAL_VERDICTS, (
+        f"verdict {verdict!r} (canonical {canonical!r}) not in REFERENCE_REMOVAL_VERDICTS - see W1156"
+    )
+    return verdict
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +226,7 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
       roam delete-check --reachable-from main --ci
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     ensure_index()
@@ -218,6 +234,17 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
 
     diff = _git_diff(root, source, base_ref, commit_range)
     if not diff.strip():
+        if sarif_mode:
+            # W1192: SARIF projection for CI / GitHub Code Scanning
+            # integration. Empty-diff path emits a valid SARIF doc with
+            # zero results (rules catalogue is always populated so
+            # consumers can introspect the rule vocabulary even on a
+            # clean run). Branches BEFORE json/text paths so those
+            # legacy paths stay byte-identical to pre-W1192 output.
+            from roam.output.sarif import delete_check_to_sarif, write_sarif
+
+            click.echo(write_sarif(delete_check_to_sarif({"command": "delete-check", "deletions": []})))
+            return
         if json_mode:
             click.echo(
                 to_json(
@@ -253,6 +280,14 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         targets.append({"kind": "file", "name": f, "from_file": f, "from_line": 0})
 
     if not targets:
+        if sarif_mode:
+            # W1192: same empty-deletions SARIF envelope as the empty-diff
+            # path above — preserves the "clean run" signal in SARIF
+            # without inventing a rule for "nothing to gate".
+            from roam.output.sarif import delete_check_to_sarif, write_sarif
+
+            click.echo(write_sarif(delete_check_to_sarif({"command": "delete-check", "deletions": []})))
+            return
         if json_mode:
             click.echo(
                 to_json(
@@ -336,7 +371,41 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
     safe = sum(1 for d in decorated if d["verdict"] == "SAFE")
     overall = "BREAK-RISK" if breaks else ("LIKELY-SAFE" if likely else "SAFE")
 
-    if json_mode:
+    if sarif_mode:
+        # W1192: SARIF projection for CI / GitHub Code Scanning integration.
+        # The ``--ci`` exit-5 gate below stays identical to the JSON / text
+        # paths so the CI behaviour is invariant across output formats. The
+        # SARIF document follows the same per-deletion shape used by the
+        # JSON path: PRIMARY anchor = ``from_file:from_line``; SECONDARY =
+        # up to 10 survivors[] entries. The ``--json`` and text paths stay
+        # byte-identical to pre-W1192 output (this branch short-circuits
+        # before them; nothing above changed shape).
+        from roam.output.sarif import delete_check_to_sarif, write_sarif
+
+        deletions_for_sarif = []
+        for d in decorated[:count]:
+            deletions_for_sarif.append(
+                {
+                    "kind": d["kind"],
+                    "name": d["name"],
+                    "from_file": d["from_file"],
+                    "from_line": d["from_line"],
+                    "verdict": d["verdict"],
+                    "reason": d["reason"],
+                    "survivors": [
+                        {
+                            "path": m["path"],
+                            "line": m["line"],
+                            "enclosing_symbol": m.get("enclosing_symbol"),
+                            "reachable": m.get("reachable"),
+                            "surface": m.get("surface"),
+                        }
+                        for m in d["matches"][:5]
+                    ],
+                }
+            )
+        click.echo(write_sarif(delete_check_to_sarif({"command": "delete-check", "deletions": deletions_for_sarif})))
+    elif json_mode:
         results = []
         for d in decorated[:count]:
             results.append(
@@ -396,15 +465,15 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
 
 def _verdict(survivors: list[dict]) -> tuple[str, str]:
     if not survivors:
-        return "SAFE", "no surviving references"
+        return _validate_verdict("SAFE"), "no surviving references"
     code = [m for m in survivors if m["surface"] in ("code",)]
     reachable = [m for m in code if m.get("reachable", True)]
     test = [m for m in survivors if m["surface"] == "test"]
     docs = [m for m in survivors if m["surface"] == "docs"]
     if reachable:
-        return "BREAK-RISK", f"{len(reachable)} surviving reachable code reference(s)"
+        return _validate_verdict("BREAK-RISK"), f"{len(reachable)} surviving reachable code reference(s)"
     if code:
-        return "LIKELY-SAFE", f"{len(code)} reference(s) only in unreachable code"
+        return _validate_verdict("LIKELY-SAFE"), f"{len(code)} reference(s) only in unreachable code"
     if test or docs:
-        return "LIKELY-SAFE", f"{len(test)} test / {len(docs)} doc reference(s)"
-    return "LIKELY-SAFE", f"{len(survivors)} reference(s) in non-code surfaces"
+        return _validate_verdict("LIKELY-SAFE"), f"{len(test)} test / {len(docs)} doc reference(s)"
+    return _validate_verdict("LIKELY-SAFE"), f"{len(survivors)} reference(s) in non-code surfaces"

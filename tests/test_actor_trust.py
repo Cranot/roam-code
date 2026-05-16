@@ -23,7 +23,6 @@ import pytest
 from roam.evidence import ACTOR_TRUST_TIERS
 from roam.evidence.actor_trust import classify_actor_trust_tier
 
-
 # ---------------------------------------------------------------------------
 # Tier 1 - verified_ci
 # ---------------------------------------------------------------------------

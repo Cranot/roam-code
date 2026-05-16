@@ -73,9 +73,7 @@ def test_malformed_json_emits_warning(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     suppressions_dir = tmp_path / ".roam"
     suppressions_dir.mkdir()
-    (suppressions_dir / "suppressions.json").write_text(
-        "{not valid json: [", encoding="utf-8"
-    )
+    (suppressions_dir / "suppressions.json").write_text("{not valid json: [", encoding="utf-8")
 
     warnings: list[str] = []
     rows = _load_suppressions(warnings_out=warnings)
@@ -98,9 +96,7 @@ def test_malformed_root_type_emits_warning(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     suppressions_dir = tmp_path / ".roam"
     suppressions_dir.mkdir()
-    (suppressions_dir / "suppressions.json").write_text(
-        json.dumps("a bare string"), encoding="utf-8"
-    )
+    (suppressions_dir / "suppressions.json").write_text(json.dumps("a bare string"), encoding="utf-8")
 
     warnings: list[str] = []
     rows = _load_suppressions(warnings_out=warnings)
@@ -160,9 +156,7 @@ def test_typed_warns_on_legacy_envelope_shape(tmp_path, monkeypatch) -> None:
     suppressions_dir = tmp_path / ".roam"
     suppressions_dir.mkdir()
     (suppressions_dir / "suppressions.json").write_text(
-        json.dumps(
-            {"suppressions": [{"rule_id": "X", "location": "src/x.py:1"}]}
-        ),
+        json.dumps({"suppressions": [{"rule_id": "X", "location": "src/x.py:1"}]}),
         encoding="utf-8",
     )
 
@@ -183,9 +177,7 @@ def test_pre_w1042_caller_byte_identical_behaviour(tmp_path, monkeypatch) -> Non
     monkeypatch.chdir(tmp_path)
     suppressions_dir = tmp_path / ".roam"
     suppressions_dir.mkdir()
-    (suppressions_dir / "suppressions.json").write_text(
-        "{not valid json: [", encoding="utf-8"
-    )
+    (suppressions_dir / "suppressions.json").write_text("{not valid json: [", encoding="utf-8")
 
     # No warnings_out kwarg — must return [] silently.
     assert _load_suppressions() == []

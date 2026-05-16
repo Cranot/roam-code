@@ -1,4 +1,12 @@
-"""Show shortest dependency path between two symbols."""
+"""Show shortest dependency path between two symbols.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because trace outputs are invocation-scoped call-path
+enumerations — not per-location violations. Editor consumers should
+use the JSON envelope directly. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket B propagation plan + W1148 audit
+memo.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +15,49 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import (
+    abbrev_kind,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 
 # Exhaustive Yen's-algorithm pathfinding is O(K*V*(V+E)) and degrades sharply
 # above this threshold. Bounded BFS is always available; the exhaustive code
 # path is gated behind --exhaustive on graphs this size.
 _MAX_EXHAUSTIVE_GRAPH_SYMBOLS = 18000
+
+
+def _combine_resolution(src_tier: str, tgt_tier: str) -> str:
+    """W1248: combine two-target tiers into a single most-degraded outcome.
+
+    ``trace`` resolves TWO targets (source + target) where every other
+    flagship wave (W1242/W1243/W1244) resolved ONE. The most-degraded
+    outcome wins so a single top-level ``resolution`` field still works
+    for agents that only read the top-level disclosure. Per-target tiers
+    are surfaced separately via ``src_resolution`` / ``tgt_resolution``
+    extension fields so consumers can distinguish "both fuzzy" from
+    "source fuzzy, target exact" when needed.
+    """
+    if src_tier == "unresolved" or tgt_tier == "unresolved":
+        return "unresolved"
+    if "fuzzy" in (src_tier, tgt_tier):
+        return "fuzzy"
+    return "symbol"
+
+
+def _verdict_fuzzy_suffix(src_tier: str, tgt_tier: str) -> str:
+    """W1248: human-readable suffix when one or both targets resolved fuzzily."""
+    src_fuzzy = src_tier == "fuzzy"
+    tgt_fuzzy = tgt_tier == "fuzzy"
+    if src_fuzzy and tgt_fuzzy:
+        return " [fuzzy: src+tgt]"
+    if src_fuzzy:
+        return " [fuzzy: src]"
+    if tgt_fuzzy:
+        return " [fuzzy: tgt]"
+    return ""
 
 
 def _find_bounded_paths(G, source_id: int, target_id: int, *, max_hops: int, k: int) -> list[list[int]]:
@@ -219,7 +264,11 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
     ensure_index()
 
     from roam.graph.builder import build_symbol_graph
-    from roam.graph.pathfinding import find_k_paths, find_symbol_id, format_path
+    from roam.graph.pathfinding import (
+        find_k_paths,
+        find_symbol_id_with_tier,
+        format_path,
+    )
 
     with open_db(readonly=True) as conn:
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
@@ -254,8 +303,36 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                 click.echo(f"VERDICT: {msg}")
             return
 
-        src_ids = find_symbol_id(conn, source)
+        # W1248 — ``resolution_block`` carries ``target="src -> tgt"`` for the
+        # disclosure, but ``json_envelope`` already takes ``target=<tgt>`` as a
+        # top-level kwarg. ``_TOP_LEVEL_RESERVED`` lists the keys we strip
+        # before splatting the block as kwargs, and we also drop
+        # ``partial_success`` because the caller computes a combined-OR value.
+        _TOP_LEVEL_RESERVED = {"target", "partial_success"}
+
+        def _disclosure_for_kwargs(block: dict) -> dict:
+            return {k: v for k, v in block.items() if k not in _TOP_LEVEL_RESERVED}
+
+        def _disclosure_for_summary(block: dict) -> dict:
+            # Summary already carries source/target as separate fields too,
+            # but the disclosure's ``target`` is the "<src -> tgt>" descriptor
+            # and is safe to keep there as a self-describing label. We only
+            # strip ``partial_success`` (re-computed with combined-OR).
+            return {k: v for k, v in block.items() if k != "partial_success"}
+
+        # W1249: ``find_symbol_id_with_tier`` returns ``(ids, tier)`` where
+        # tier is one of {"symbol", "fuzzy", "unresolved"} -- the exact same
+        # vocabulary the old ``_detect_resolution_tier`` re-query helper
+        # computed. We capture it once here and reuse it across the
+        # resolved + asymmetric-unresolved + both-resolved branches below.
+        src_ids, src_tier = find_symbol_id_with_tier(conn, source)
         if not src_ids:
+            # W1248 Pattern-2 variant-D: unresolved source. Surface the same
+            # disclosure shape as the resolved path so MCP consumers don't have
+            # to special-case the failure envelope.
+            unresolved_block = resolution_disclosure("unresolved", target=f"{source} -> {target}")
+            unresolved_block["src_resolution"] = "unresolved"
+            unresolved_block["tgt_resolution"] = "unknown"
             if json_mode:
                 click.echo(
                     to_json(
@@ -264,10 +341,14 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                             summary={
                                 "verdict": f"symbol not found: '{source}'",
                                 "error": "symbol_not_found",
+                                "partial_success": True,
+                                **_disclosure_for_summary(unresolved_block),
                             },
                             source=source,
                             target=target,
                             hint=symbol_not_found_hint(source),
+                            partial_success=True,
+                            **_disclosure_for_kwargs(unresolved_block),
                         )
                     )
                 )
@@ -275,8 +356,14 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
             click.echo(symbol_not_found_hint(source))
             raise SystemExit(1)
 
-        tgt_ids = find_symbol_id(conn, target)
+        tgt_ids, tgt_tier = find_symbol_id_with_tier(conn, target)
         if not tgt_ids:
+            unresolved_block = resolution_disclosure("unresolved", target=f"{source} -> {target}")
+            # Source resolved (else we'd have returned above) so ``src_tier``
+            # is already populated from the W1249 tiered helper; surface it
+            # so the envelope honestly reports the asymmetric outcome.
+            unresolved_block["src_resolution"] = src_tier
+            unresolved_block["tgt_resolution"] = "unresolved"
             if json_mode:
                 click.echo(
                     to_json(
@@ -285,16 +372,44 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                             summary={
                                 "verdict": f"symbol not found: '{target}'",
                                 "error": "symbol_not_found",
+                                "partial_success": True,
+                                **_disclosure_for_summary(unresolved_block),
                             },
                             source=source,
                             target=target,
                             hint=symbol_not_found_hint(target),
+                            partial_success=True,
+                            **_disclosure_for_kwargs(unresolved_block),
                         )
                     )
                 )
                 raise SystemExit(1)
             click.echo(symbol_not_found_hint(target))
             raise SystemExit(1)
+
+        # W1248 / W1249 Pattern-2 variant-D: both targets resolved. The
+        # W1249 tiered helper already stamped ``src_tier`` / ``tgt_tier``
+        # at the lookup sites above, so the envelope can disclose whether
+        # the resolver landed on the exact-match rung or the LIKE-fallback
+        # rung for either side without re-querying. The most-degraded
+        # outcome wins for the top-level disclosure; per-target tiers are
+        # surfaced via src_resolution / tgt_resolution extension fields.
+        # ``find_symbol_id`` returns up to 50 fuzzy matches and cmd_trace
+        # iterates all combinations — the disclosure makes that blow-up
+        # visible without gating it (W1248 mandate: annotate, don't gate).
+        combined_tier = _combine_resolution(src_tier, tgt_tier)
+        resolution_block = resolution_disclosure(combined_tier, target=f"{source} -> {target}")
+        resolution_block["src_resolution"] = src_tier
+        resolution_block["tgt_resolution"] = tgt_tier
+        # W1248 drive-by: surface the fuzzy LIMIT-50 ceiling when the resolver
+        # hit it, so agents can choose to refine the query rather than wade
+        # through up to 2500 (50 x 50) path-combinations downstream.
+        _LIKE_LIMIT = 50
+        if src_tier == "fuzzy" and len(src_ids) >= _LIKE_LIMIT:
+            resolution_block["src_max_results_hit"] = True
+        if tgt_tier == "fuzzy" and len(tgt_ids) >= _LIKE_LIMIT:
+            resolution_block["tgt_max_results_hit"] = True
+        verdict_suffix = _verdict_fuzzy_suffix(src_tier, tgt_tier)
 
         G = build_symbol_graph(conn)
 
@@ -346,9 +461,7 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
             # result (a longer path may exist); the exhaustive case is final.
             if exhaustive:
                 no_path_state = "no_path"
-                no_path_verdict = (
-                    f"no path found between {source} and {target} (exhaustive)"
-                )
+                no_path_verdict = f"no path found between {source} and {target} (exhaustive)"
                 partial = False
             else:
                 no_path_state = "no_path_within_hops"
@@ -357,6 +470,12 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                     f"increase --max-hops or pass --exhaustive"
                 )
                 partial = True
+            # W1248 — combined-OR partial_success: fuzzy resolution on either
+            # target degrades the verdict regardless of whether a path was
+            # found, so OR it with the no-path partial flag. The verdict
+            # suffix mirrors the same signal for text-only consumers.
+            no_path_verdict = f"{no_path_verdict}{verdict_suffix}"
+            partial = partial or combined_tier != "symbol"
             if json_mode:
                 click.echo(
                     to_json(
@@ -370,6 +489,11 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                                 "partial_success": partial,
                                 "max_hops": max_hops,
                                 "exhaustive": exhaustive,
+                                # W1248 — Pattern-2 variant-D disclosure. The
+                                # helper's own partial_success is suppressed
+                                # here because we OR-combine it with the
+                                # no-path partial flag above.
+                                **_disclosure_for_summary(resolution_block),
                             },
                             source=source,
                             target=target,
@@ -378,6 +502,7 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                             coupling_summary="none — no dependency path exists",
                             state=no_path_state,
                             partial_success=partial,
+                            **_disclosure_for_kwargs(resolution_block),
                         )
                     )
                 )
@@ -385,9 +510,7 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                 click.echo(f"VERDICT: {no_path_verdict}\n")
                 click.echo(f"No dependency path between '{source}' and '{target}'.")
                 if exhaustive:
-                    click.echo(
-                        "These symbols are independent — changes to one cannot affect the other."
-                    )
+                    click.echo("These symbols are independent — changes to one cannot affect the other.")
                 else:
                     click.echo(
                         f"Bounded search exhausted at --max-hops={max_hops}. "
@@ -444,11 +567,17 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
         if json_mode:
             # Backward-compatible: "path" = first path's hops, "hops" = first path hop count
             first = annotated_paths[0]
+            # W1248 — Pattern-2 variant-D: append fuzzy-resolution marker to
+            # the verdict + flip partial_success when the resolver landed on
+            # a degraded match for either source or target. Path-finding
+            # itself succeeded -- the disclosure surfaces *which* source/
+            # target pair was traced.
             trace_verdict = (
                 f"trace: {len(first['hops'])} hops {source}->{target}, "
                 f"{len(annotated_paths)} path{'s' if len(annotated_paths) != 1 else ''} found, "
-                f"{coupling_summary}"
+                f"{coupling_summary}{verdict_suffix}"
             )
+            is_partial = combined_tier != "symbol"
             click.echo(
                 to_json(
                     json_envelope(
@@ -461,6 +590,10 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                             "state": "ok",
                             "max_hops": max_hops,
                             "exhaustive": exhaustive,
+                            "partial_success": is_partial,
+                            # W1248 — merge disclosure (omit duplicate
+                            # partial_success; computed above).
+                            **_disclosure_for_summary(resolution_block),
                         },
                         source=source,
                         target=target,
@@ -468,6 +601,7 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                         path=first["hops"],
                         coupling_summary=coupling_summary,
                         state="ok",
+                        partial_success=is_partial,
                         paths=[
                             {
                                 "hops": len(ap["hops"]),
@@ -478,6 +612,7 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                             }
                             for ap in annotated_paths
                         ],
+                        **_disclosure_for_kwargs(resolution_block),
                     )
                 )
             )
@@ -488,7 +623,7 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
         text_verdict = (
             f"trace: {len(first_txt['hops'])} hops {source}->{target}, "
             f"{len(annotated_paths)} path{'s' if len(annotated_paths) != 1 else ''} found, "
-            f"{coupling_summary}"
+            f"{coupling_summary}{verdict_suffix}"
         )
         click.echo(f"VERDICT: {text_verdict}\n")
 

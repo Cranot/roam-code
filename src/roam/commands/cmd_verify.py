@@ -1,4 +1,15 @@
-"""Pre-commit consistency verification against established codebase patterns."""
+"""Pre-commit consistency verification against established codebase patterns.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because cmd_verify is a multi-check pre-commit composer
+(naming + imports + error-handling + duplicates + syntax) with weighted
+scoring + threshold gates. The composed sub-checks emit their own
+verdicts; cmd_verify rolls them into a single pre-commit PASS/FAIL
+summary. SARIF would conflate composite-gate output with per-violation
+findings. Each sub-check exposes its own --sarif via dedicated
+commands when applicable. See action.yml _SUPPORTED_SARIF allowlist +
+W1198-audit memo.
+"""
 
 from __future__ import annotations
 

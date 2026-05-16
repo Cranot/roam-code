@@ -4,10 +4,12 @@ Master index of ~155 items synthesised from 8 deep-audit lenses run
 2026-05-10. **What to build / research / test next.** Items get pulled
 from here into `dev/BACKLOG.md` when they're queued up.
 
-Current build order lives in `dev/BUILD-PRIORITIES-2026-05-13.md`.
+Current strategy/build order lives in `dev/ROAM-STRATEGY-2026-05-15.md`.
 Treat this roadmap as the full demand index, not the authoritative
 next-sprint sequence. Some top-tier entries are retained for provenance even
-after shipping.
+after shipping. Older entries may preserve historical marketing/count wording;
+use the strategy command center and generated docs counts for current surface
+numbers.
 
 Current architecture evidence-compiler memo lives in
 `dev/ARCHITECTURE-EVIDENCE-COMPILER-2026-05-13.md`.
@@ -815,7 +817,7 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 - **Effort:** XS
 - **Move:** Currently 62 chars. Use the room: *"Coding agents can write
   code. Roam is the structural intelligence they don't have. Free CLI,
-  28 languages, runs locally. 130+ MCP tools your agent calls before
+  28 languages, runs locally. 57 core MCP tools your agent calls before
   every change."* (~177 chars)
 
 #### D9. Reframe algo-wedge eyebrow [07 #6, 01 cross-ref]
@@ -1184,7 +1186,7 @@ that misleads buyers/agents, (d) revenue-blocking with effort < 5 days.
 #### H8. Cut "200+ commands"; lead with 5 verbs [01 B6]
 - **Where:** Hero/trust strip/press kit/JSON-LD/OG/llms.txt
 - **Effort:** XS
-- **Move:** "5 core commands. 137 MCP tools. 28 languages. 100% local."
+- **Move:** "5 core commands. 224 MCP tools (57 core). 28 languages. 100% local."
   "200+" stays only in `/docs` and `/command-reference`.
 
 #### H9. Promote 8 demo scenarios to a /demos page [01 B7]

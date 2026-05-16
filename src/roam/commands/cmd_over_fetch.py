@@ -61,7 +61,6 @@ from roam.db.connection import find_project_root, open_db
 from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import json_envelope, loc, to_json
 
-
 # W114 (W93 follow-up): over-fetch is the seventh detector migrating onto
 # the central findings registry (after ``clones`` in W95, ``dead`` in
 # W99, ``complexity`` in W102, ``smells`` in W109, ``n1`` in W110, and
@@ -136,9 +135,7 @@ def _over_fetch_model_finding_id(model_name: str, file_path: str) -> str:
     return f"over-fetch:model:{digest}"
 
 
-def _over_fetch_endpoint_finding_id(
-    controller: str, method: str, file_path: str, state: str
-) -> str:
+def _over_fetch_endpoint_finding_id(controller: str, method: str, file_path: str, state: str) -> str:
     """Stable, deterministic finding id for one endpoint-level hit.
 
     The (controller, method, file_path, state) tuple keys the finding —
@@ -239,14 +236,10 @@ def _emit_over_fetch_findings(
                 line_hint = int(model_location.rsplit(":", 1)[1])
             except (ValueError, IndexError):
                 line_hint = None
-        subject_id = _resolve_over_fetch_subject_id(
-            conn, file_path, model_name, line_hint
-        )
+        subject_id = _resolve_over_fetch_subject_id(conn, file_path, model_name, line_hint)
         finding_id = _over_fetch_model_finding_id(model_name, file_path)
         confidence_bucket = f.get("confidence") or "low"
-        tier = _MODEL_CONFIDENCE_TO_TIER.get(
-            confidence_bucket, "heuristic"
-        )
+        tier = _MODEL_CONFIDENCE_TO_TIER.get(confidence_bucket, "heuristic")
         evidence = {
             "kind": "model",
             "model_name": model_name,
@@ -266,10 +259,7 @@ def _emit_over_fetch_findings(
         }
         fillable = f.get("fillable_count")
         hidden = f.get("hidden_count")
-        claim = (
-            f"Over-fetch ({confidence_bucket}): {model_name} "
-            f"({file_path}) — {fillable} fillable, {hidden} hidden"
-        )
+        claim = f"Over-fetch ({confidence_bucket}): {model_name} ({file_path}) — {fillable} fillable, {hidden} hidden"
         emit_finding(
             conn,
             FindingRecord(
@@ -294,12 +284,8 @@ def _emit_over_fetch_findings(
         if not (controller and method_name and file_path and state):
             continue
         line_start = ep.get("line")
-        subject_id = _resolve_over_fetch_subject_id(
-            conn, file_path, method_name, line_start
-        )
-        finding_id = _over_fetch_endpoint_finding_id(
-            controller, method_name, file_path, state
-        )
+        subject_id = _resolve_over_fetch_subject_id(conn, file_path, method_name, line_start)
+        finding_id = _over_fetch_endpoint_finding_id(controller, method_name, file_path, state)
         tier = _ENDPOINT_STATE_TO_CONFIDENCE.get(state, "heuristic")
         # Strip the nested ``details.guarded`` / ``details.unguarded``
         # dict-of-dicts down to flat counts so the evidence payload
@@ -344,6 +330,7 @@ def _emit_over_fetch_findings(
         written += 1
 
     return written
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -437,7 +424,9 @@ _LOAD_CALL_RE = re.compile(
 
 # Detect `Model::query()` chains and `Model::paginate(` etc that originate
 # in a class-static call. We need the model name for endpoint naming.
-_MODEL_STATIC_RE = re.compile(r"\b(?P<model>[A-Z][A-Za-z0-9_]+)\s*::\s*(?:query|paginate|all|where|with|find|first|select)\s*\(")
+_MODEL_STATIC_RE = re.compile(
+    r"\b(?P<model>[A-Z][A-Za-z0-9_]+)\s*::\s*(?:query|paginate|all|where|with|find|first|select)\s*\("
+)
 
 
 # ---------------------------------------------------------------------------
@@ -889,8 +878,7 @@ _SEVERITY_BY_STATE = {
 def _recommendation_for_state(state: str, details: dict) -> str:
     if state == "BARE":
         return (
-            "Bare model load — add ->select(['col1','col2',...]) or wrap "
-            "in an API Resource to control output columns."
+            "Bare model load — add ->select(['col1','col2',...]) or wrap in an API Resource to control output columns."
         )
     if state == "UNGUARDED_RELATION":
         rels = ", ".join(u["relation"] for u in details.get("unguarded", []) or [])
@@ -900,10 +888,7 @@ def _recommendation_for_state(state: str, details: dict) -> str:
             "relation columns."
         )
     if state == "GUARDED_RELATION":
-        return (
-            "Already partially guarded; consider full API Resource wrapper "
-            "for stronger contract."
-        )
+        return "Already partially guarded; consider full API Resource wrapper for stronger contract."
     return ""
 
 
@@ -936,8 +921,7 @@ def analyze_endpoint_states(conn, root) -> list[dict]:
     findings: list[dict] = []
 
     controller_files = conn.execute(
-        "SELECT path FROM files WHERE (path LIKE '%Controller%' OR path LIKE '%controller%') "
-        "AND path LIKE '%.php'",
+        "SELECT path FROM files WHERE (path LIKE '%Controller%' OR path LIKE '%controller%') AND path LIKE '%.php'",
     ).fetchall()
 
     for row in controller_files:
@@ -1280,6 +1264,7 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         roam --json over-fetch           # JSON output
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     # W21.6 --ci composition: under --ci, default leaks_only=True so the CI
     # gate fails only on real leaks (BARE/UNGUARDED). leaks_only is a
     # tri-state Click option (--leaks-only/--no-leaks-only/None=unset);
@@ -1346,9 +1331,7 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
     # preserved above). The flag is a presentation filter; detection is
     # identical with or without it.
     if leaks_only:
-        endpoint_findings = [
-            e for e in endpoint_findings if e["state"] in {"BARE", "UNGUARDED_RELATION"}
-        ]
+        endpoint_findings = [e for e in endpoint_findings if e["state"] in {"BARE", "UNGUARDED_RELATION"}]
 
     # Endpoint verdict — concrete-noun anchored (LAW 4). Names the worst
     # endpoint by file:line where possible so agents see WHICH leak to fix.
@@ -1358,9 +1341,7 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         if bare_count:
             ep_parts.append(f"{bare_count} BARE leak{'s' if bare_count != 1 else ''}")
         if guarded_relation_count and not leaks_only:
-            ep_parts.append(
-                f"{guarded_relation_count} GUARDED_RELATION (already partial)"
-            )
+            ep_parts.append(f"{guarded_relation_count} GUARDED_RELATION (already partial)")
         if unguarded_relation_count:
             ep_parts.append(
                 f"{unguarded_relation_count} UNGUARDED_RELATION "
@@ -1385,14 +1366,31 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
     if total or endpoint_total:
         head_bits: list[str] = []
         if total:
-            head_bits.append(
-                f"{total} over-fetch pattern{'s' if total != 1 else ''} ({conf_str})"
-            )
+            head_bits.append(f"{total} over-fetch pattern{'s' if total != 1 else ''} ({conf_str})")
         if endpoint_verdict:
             head_bits.append(endpoint_verdict)
         verdict = "; ".join(head_bits)
     else:
         verdict = "No over-fetch patterns detected"
+
+    # -------------------------------------------------------------------
+    # SARIF output (W1219)
+    # -------------------------------------------------------------------
+    # Branches BEFORE json/text so the pre-existing paths stay
+    # byte-identical to pre-W1219. The SARIF projection feeds the
+    # POST-`--leaks-only` filtered endpoint list — so a CI gate sees the
+    # same surviving leaks the human / agent sees. Model-level findings
+    # are NOT subject to --leaks-only filtering (that flag scopes only
+    # the 3-state endpoint classification per the W21.6 contract).
+    if sarif_mode:
+        from roam.output.sarif import over_fetch_to_sarif, write_sarif
+
+        # Combine model-level + endpoint-level findings into one list
+        # so the SARIF projector can branch on the ``state`` field
+        # (present on endpoint findings only).
+        combined: list[dict] = list(findings) + list(endpoint_findings)
+        click.echo(write_sarif(over_fetch_to_sarif(combined)))
+        return
 
     # -------------------------------------------------------------------
     # JSON output
@@ -1444,9 +1442,7 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         click.echo()
         click.echo("Endpoint classification (BARE / GUARDED_RELATION / UNGUARDED_RELATION):")
         for ep in endpoint_findings:
-            click.echo(
-                f"  [{ep['severity']}] {ep['state']:<20} {ep['endpoint']}  {ep['location']}"
-            )
+            click.echo(f"  [{ep['severity']}] {ep['state']:<20} {ep['endpoint']}  {ep['location']}")
             if ep.get("evidence"):
                 click.echo(f"          Evidence: {ep['evidence']}")
             if ep.get("recommendation"):

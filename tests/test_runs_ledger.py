@@ -36,10 +36,8 @@ from roam.runs.ledger import (  # noqa: E402
     read_run_events,
     read_run_meta,
     run_dir,
-    runs_root,
     start_run,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

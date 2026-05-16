@@ -12,6 +12,12 @@ effectiveness:
 7. Architecture clarity (10%) -- clear layers = agents understand boundaries
 
 Produces a composite 0-100 AI Readiness Score and per-dimension breakdown.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ai-readiness outputs are invocation-scoped
+agent-effectiveness dimension scores — not per-location violations.
+See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B
+propagation plan + W1148 audit memo.
 """
 
 from __future__ import annotations

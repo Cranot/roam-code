@@ -498,8 +498,7 @@ class TestEmptyCatch:
             (rel_path, language),
         )
         conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (1, 1, ?, ?, ?, ?)",
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (1, 1, ?, ?, ?, ?)",
             (symbol_name, symbol_kind, line_start, line_end),
         )
         conn.commit()
@@ -525,13 +524,7 @@ class TestEmptyCatch:
 
     def test_python_pass(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "def outer():\n"
-            "    try:\n"
-            "        do_work()\n"
-            "    except Exception:\n"
-            "        pass\n"
-        )
+        src = "def outer():\n    try:\n        do_work()\n    except Exception:\n        pass\n"
         self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -544,13 +537,7 @@ class TestEmptyCatch:
 
     def test_python_ellipsis(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "def outer():\n"
-            "    try:\n"
-            "        do_work()\n"
-            "    except Exception:\n"
-            "        ...\n"
-        )
+        src = "def outer():\n    try:\n        do_work()\n    except Exception:\n        ...\n"
         self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -576,13 +563,7 @@ class TestEmptyCatch:
 
     def test_python_single_log_only(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "def outer():\n"
-            "    try:\n"
-            "        do_work()\n"
-            "    except Exception as e:\n"
-            "        logger.error(e)\n"
-        )
+        src = "def outer():\n    try:\n        do_work()\n    except Exception as e:\n        logger.error(e)\n"
         self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -606,13 +587,7 @@ class TestEmptyCatch:
 
     def test_does_not_flag_recovery(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "def outer():\n"
-            "    try:\n"
-            "        do_work()\n"
-            "    except Exception:\n"
-            "        return fallback()\n"
-        )
+        src = "def outer():\n    try:\n        do_work()\n    except Exception:\n        return fallback()\n"
         self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
         results = self._run(tmp_path, conn)
         # ``return fallback()`` is recovery code, not trivial.
@@ -637,13 +612,7 @@ class TestEmptyCatch:
 
     def test_javascript_empty_block(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "function outer() {\n"
-            "  try {\n"
-            "    doWork();\n"
-            "  } catch (e) { }\n"
-            "}\n"
-        )
+        src = "function outer() {\n  try {\n    doWork();\n  } catch (e) { }\n}\n"
         self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -653,15 +622,7 @@ class TestEmptyCatch:
 
     def test_javascript_console_log_only(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "function outer() {\n"
-            "  try {\n"
-            "    doWork();\n"
-            "  } catch (e) {\n"
-            "    console.log(e);\n"
-            "  }\n"
-            "}\n"
-        )
+        src = "function outer() {\n  try {\n    doWork();\n  } catch (e) {\n    console.log(e);\n  }\n}\n"
         self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -670,14 +631,7 @@ class TestEmptyCatch:
     def test_javascript_throw_not_flagged(self, tmp_path):
         conn = _make_db(tmp_path)
         src = (
-            "function outer() {\n"
-            "  try {\n"
-            "    doWork();\n"
-            "  } catch (e) {\n"
-            "    console.error(e);\n"
-            "    throw e;\n"
-            "  }\n"
-            "}\n"
+            "function outer() {\n  try {\n    doWork();\n  } catch (e) {\n    console.error(e);\n    throw e;\n  }\n}\n"
         )
         self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
         results = self._run(tmp_path, conn)
@@ -688,11 +642,7 @@ class TestEmptyCatch:
         """Promise-chain ``.catch(...)`` MUST NOT be flagged -- it's
         method chaining on a promise, not exception handling."""
         conn = _make_db(tmp_path)
-        src = (
-            "function outer() {\n"
-            "  return fetch(url).then(r => r.json()).catch(() => ({}));\n"
-            "}\n"
-        )
+        src = "function outer() {\n  return fetch(url).then(r => r.json()).catch(() => ({}));\n}\n"
         self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
         results = self._run(tmp_path, conn)
         # The catch here is a Promise method, not a try-catch keyword.
@@ -769,13 +719,11 @@ class TestRefusedBequest:
             (rel_path + ".parent", language),
         )
         conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (1, 1, ?, 'class', ?, ?)",
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (1, 1, ?, 'class', ?, ?)",
             (child_class, child_line_start, child_line_end),
         )
         conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (2, 2, ?, 'class', 1, 100)",
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (2, 2, ?, 'class', 1, 100)",
             (parent_class,),
         )
         # Parent method rows (parent_id = 2 so we can look them up by parent).
@@ -796,9 +744,7 @@ class TestRefusedBequest:
             )
             next_id += 1
         # Inherits edge: child -> parent
-        conn.execute(
-            "INSERT INTO edges (source_id, target_id, kind) VALUES (1, 2, 'inherits')"
-        )
+        conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, 2, 'inherits')")
         conn.commit()
         (tmp_path / ".git").mkdir(exist_ok=True)
 
@@ -819,17 +765,18 @@ class TestRefusedBequest:
     def test_two_trivial_overrides_flagged(self, tmp_path):
         """Positive: child overrides 2 parent methods with ``pass`` bodies."""
         conn = _make_db(tmp_path)
-        src = (
-            "class Child(Base):\n"
-            "    def foo(self):\n"
-            "        pass\n"
-            "    def bar(self):\n"
-            "        pass\n"
-        )
+        src = "class Child(Base):\n    def foo(self):\n        pass\n    def bar(self):\n        pass\n"
         self._wire_inheritance(
-            tmp_path, conn, "src/refuse.py", src, "python",
-            child_class="Child", child_line_start=1, child_line_end=5,
-            parent_class="Base", parent_method_names=["foo", "bar"],
+            tmp_path,
+            conn,
+            "src/refuse.py",
+            src,
+            "python",
+            child_class="Child",
+            child_line_start=1,
+            child_line_end=5,
+            parent_class="Base",
+            parent_method_names=["foo", "bar"],
             child_methods=[("foo", 2, 3), ("bar", 4, 5)],
         )
         results = self._run(tmp_path, conn)
@@ -846,17 +793,18 @@ class TestRefusedBequest:
     def test_one_trivial_override_not_flagged(self, tmp_path):
         """Threshold is 2 -- a single trivial override is below threshold."""
         conn = _make_db(tmp_path)
-        src = (
-            "class Child(Base):\n"
-            "    def foo(self):\n"
-            "        pass\n"
-            "    def bar(self):\n"
-            "        return self.x + 1\n"
-        )
+        src = "class Child(Base):\n    def foo(self):\n        pass\n    def bar(self):\n        return self.x + 1\n"
         self._wire_inheritance(
-            tmp_path, conn, "src/refuse.py", src, "python",
-            child_class="Child", child_line_start=1, child_line_end=5,
-            parent_class="Base", parent_method_names=["foo", "bar"],
+            tmp_path,
+            conn,
+            "src/refuse.py",
+            src,
+            "python",
+            child_class="Child",
+            child_line_start=1,
+            child_line_end=5,
+            parent_class="Base",
+            parent_method_names=["foo", "bar"],
             child_methods=[("foo", 2, 3), ("bar", 4, 5)],
         )
         results = self._run(tmp_path, conn)
@@ -874,9 +822,16 @@ class TestRefusedBequest:
             "        raise NotImplementedError('not yet')\n"
         )
         self._wire_inheritance(
-            tmp_path, conn, "src/refuse.py", src, "python",
-            child_class="Child", child_line_start=1, child_line_end=5,
-            parent_class="Base", parent_method_names=["foo", "bar"],
+            tmp_path,
+            conn,
+            "src/refuse.py",
+            src,
+            "python",
+            child_class="Child",
+            child_line_start=1,
+            child_line_end=5,
+            parent_class="Base",
+            parent_method_names=["foo", "bar"],
             child_methods=[("foo", 2, 3), ("bar", 4, 5)],
         )
         results = self._run(tmp_path, conn)
@@ -897,9 +852,16 @@ class TestRefusedBequest:
             "            self.process(item)\n"
         )
         self._wire_inheritance(
-            tmp_path, conn, "src/refuse.py", src, "python",
-            child_class="Child", child_line_start=1, child_line_end=7,
-            parent_class="Base", parent_method_names=["foo", "bar"],
+            tmp_path,
+            conn,
+            "src/refuse.py",
+            src,
+            "python",
+            child_class="Child",
+            child_line_start=1,
+            child_line_end=7,
+            parent_class="Base",
+            parent_method_names=["foo", "bar"],
             child_methods=[("foo", 2, 4), ("bar", 5, 7)],
         )
         results = self._run(tmp_path, conn)
@@ -1034,8 +996,7 @@ class TestDuplicateConditionals:
             (rel_path, language),
         )
         conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (1, 1, ?, ?, ?, ?)",
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (1, 1, ?, ?, ?, ?)",
             (symbol_name, symbol_kind, line_start, line_end),
         )
         conn.commit()
@@ -1053,15 +1014,7 @@ class TestDuplicateConditionals:
 
     def test_three_ifs_same_predicate_python_flagged(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "def outer(x):\n"
-            "    if x:\n"
-            "        a()\n"
-            "    if x:\n"
-            "        b()\n"
-            "    if x:\n"
-            "        c()\n"
-        )
+        src = "def outer(x):\n    if x:\n        a()\n    if x:\n        b()\n    if x:\n        c()\n"
         self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -1074,13 +1027,7 @@ class TestDuplicateConditionals:
 
     def test_two_ifs_same_predicate_not_flagged(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "def outer(x):\n"
-            "    if x:\n"
-            "        a()\n"
-            "    if x:\n"
-            "        b()\n"
-        )
+        src = "def outer(x):\n    if x:\n        a()\n    if x:\n        b()\n"
         self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
         results = self._run(tmp_path, conn)
         # Threshold is 3, not 2.
@@ -1109,17 +1056,7 @@ class TestDuplicateConditionals:
     def test_brace_lang_duplicate_if_flagged(self, tmp_path):
         conn = _make_db(tmp_path)
         src = (
-            "function outer(x) {\n"
-            "  if (x) {\n"
-            "    a();\n"
-            "  }\n"
-            "  if (x) {\n"
-            "    b();\n"
-            "  }\n"
-            "  if (x) {\n"
-            "    c();\n"
-            "  }\n"
-            "}\n"
+            "function outer(x) {\n  if (x) {\n    a();\n  }\n  if (x) {\n    b();\n  }\n  if (x) {\n    c();\n  }\n}\n"
         )
         self._wire_file(tmp_path, conn, "src/mod.js", src, "javascript")
         results = self._run(tmp_path, conn)
@@ -1151,15 +1088,7 @@ class TestDuplicateConditionals:
 
     def test_different_predicates_not_flagged(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "def outer(x, y, z):\n"
-            "    if x:\n"
-            "        a()\n"
-            "    if y:\n"
-            "        b()\n"
-            "    if z:\n"
-            "        c()\n"
-        )
+        src = "def outer(x, y, z):\n    if x:\n        a()\n    if y:\n        b()\n    if z:\n        c()\n"
         self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
         results = self._run(tmp_path, conn)
         # Three distinct predicates -- independent guards, not duplicates.
@@ -1168,15 +1097,7 @@ class TestDuplicateConditionals:
 
     def test_whitespace_normalized_in_hash(self, tmp_path):
         conn = _make_db(tmp_path)
-        src = (
-            "def outer(x):\n"
-            "    if x==1:\n"
-            "        a()\n"
-            "    if x == 1:\n"
-            "        b()\n"
-            "    if  x  ==  1 :\n"
-            "        c()\n"
-        )
+        src = "def outer(x):\n    if x==1:\n        a()\n    if x == 1:\n        b()\n    if  x  ==  1 :\n        c()\n"
         self._wire_file(tmp_path, conn, "src/mod.py", src, "python")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -1304,12 +1225,7 @@ class TestMagicNumbers:
     def test_three_repeats_of_same_literal_flagged(self, tmp_path):
         """Positive: non-exempt literal 7 repeats 3 times -> flag."""
         conn = _make_db(tmp_path)
-        src = (
-            "def schedule(items):\n"
-            "    a = items[7]\n"
-            "    b = items[7] + 1\n"
-            "    return a + b * 7\n"
-        )
+        src = "def schedule(items):\n    a = items[7]\n    b = items[7] + 1\n    return a + b * 7\n"
         self._wire_python_file(tmp_path, conn, "src/m.py", src)
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -1343,12 +1259,7 @@ class TestMagicNumbers:
     def test_two_repeats_below_threshold(self, tmp_path):
         """Threshold is 3 -- two occurrences are not flagged."""
         conn = _make_db(tmp_path)
-        src = (
-            "def small(x):\n"
-            "    a = x + 99\n"
-            "    b = x - 99\n"
-            "    return a + b\n"
-        )
+        src = "def small(x):\n    a = x + 99\n    b = x - 99\n    return a + b\n"
         self._wire_python_file(tmp_path, conn, "src/m.py", src)
         results = self._run(tmp_path, conn)
         assert results == []
@@ -1360,13 +1271,7 @@ class TestMagicNumbers:
         ``-1`` is exempt; ``-7`` repeated 3x must still flag.
         """
         conn = _make_db(tmp_path)
-        src = (
-            "def negs(items):\n"
-            "    a = items[-7]\n"
-            "    b = items[-7]\n"
-            "    c = items[-7]\n"
-            "    return a + b + c\n"
-        )
+        src = "def negs(items):\n    a = items[-7]\n    b = items[-7]\n    c = items[-7]\n    return a + b + c\n"
         self._wire_python_file(tmp_path, conn, "src/m.py", src)
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -1475,13 +1380,12 @@ class TestBooleanParameter:
     def test_two_positional_bools_flagged(self, tmp_path):
         """Positive: ``f(True, False)`` is the canonical smell shape."""
         conn = _make_db(tmp_path)
-        src = (
-            "def caller():\n"
-            "    do_thing(True, False)\n"
-            "    return None\n"
-        )
+        src = "def caller():\n    do_thing(True, False)\n    return None\n"
         self._wire_python_file(
-            tmp_path, conn, "src/m.py", src,
+            tmp_path,
+            conn,
+            "src/m.py",
+            src,
             enclosing=("caller", 1, 3),
         )
         results = self._run(tmp_path, conn)
@@ -1497,13 +1401,12 @@ class TestBooleanParameter:
     def test_single_positional_bool_not_flagged(self, tmp_path):
         """Threshold is >= 2; a single bool arg is fine."""
         conn = _make_db(tmp_path)
-        src = (
-            "def caller():\n"
-            "    do_thing(True, 42, 'x')\n"
-            "    return None\n"
-        )
+        src = "def caller():\n    do_thing(True, 42, 'x')\n    return None\n"
         self._wire_python_file(
-            tmp_path, conn, "src/m.py", src,
+            tmp_path,
+            conn,
+            "src/m.py",
+            src,
             enclosing=("caller", 1, 3),
         )
         results = self._run(tmp_path, conn)
@@ -1513,13 +1416,12 @@ class TestBooleanParameter:
     def test_keyword_bools_not_flagged(self, tmp_path):
         """Keyword bool args are the FIX, not the smell -- must NOT flag."""
         conn = _make_db(tmp_path)
-        src = (
-            "def caller():\n"
-            "    do_thing(verbose=True, strict=False)\n"
-            "    return None\n"
-        )
+        src = "def caller():\n    do_thing(verbose=True, strict=False)\n    return None\n"
         self._wire_python_file(
-            tmp_path, conn, "src/m.py", src,
+            tmp_path,
+            conn,
+            "src/m.py",
+            src,
             enclosing=("caller", 1, 3),
         )
         results = self._run(tmp_path, conn)
@@ -1530,13 +1432,12 @@ class TestBooleanParameter:
         """``f(True, x, False)`` -- the two positional bools count even
         when mixed with non-bool positional args."""
         conn = _make_db(tmp_path)
-        src = (
-            "def caller(x):\n"
-            "    do_thing(True, x, False)\n"
-            "    return None\n"
-        )
+        src = "def caller(x):\n    do_thing(True, x, False)\n    return None\n"
         self._wire_python_file(
-            tmp_path, conn, "src/m.py", src,
+            tmp_path,
+            conn,
+            "src/m.py",
+            src,
             enclosing=("caller", 1, 3),
         )
         results = self._run(tmp_path, conn)
@@ -1547,14 +1448,12 @@ class TestBooleanParameter:
     def test_attribute_call_name_rendered(self, tmp_path):
         """``self.f(...)`` and ``a.b.c(...)`` render readable names."""
         conn = _make_db(tmp_path)
-        src = (
-            "def caller(self):\n"
-            "    self.helper(True, False)\n"
-            "    a.b.c(True, False)\n"
-            "    return None\n"
-        )
+        src = "def caller(self):\n    self.helper(True, False)\n    a.b.c(True, False)\n    return None\n"
         self._wire_python_file(
-            tmp_path, conn, "src/m.py", src,
+            tmp_path,
+            conn,
+            "src/m.py",
+            src,
             enclosing=("caller", 1, 4),
         )
         results = self._run(tmp_path, conn)
@@ -1569,13 +1468,12 @@ class TestBooleanParameter:
         ``bool`` is an ``int`` subclass. The ``type() is bool`` guard
         keeps the two cases separate."""
         conn = _make_db(tmp_path)
-        src = (
-            "def caller():\n"
-            "    do_thing(1, 0)\n"
-            "    return None\n"
-        )
+        src = "def caller():\n    do_thing(1, 0)\n    return None\n"
         self._wire_python_file(
-            tmp_path, conn, "src/m.py", src,
+            tmp_path,
+            conn,
+            "src/m.py",
+            src,
             enclosing=("caller", 1, 3),
         )
         results = self._run(tmp_path, conn)
@@ -1655,9 +1553,7 @@ class TestSwitchStatement:
             "        return 8\n"
             "    return 0\n"
         )
-        self._wire_python_file(
-            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20)
-        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20))
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         f = results[0]
@@ -1690,9 +1586,7 @@ class TestSwitchStatement:
             "        return 7\n"
             "    return 0\n"
         )
-        self._wire_python_file(
-            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 18)
-        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 18))
         results = self._run(tmp_path, conn)
         assert results == []
         conn.close()
@@ -1713,9 +1607,7 @@ class TestSwitchStatement:
             "        case 'h': return 8\n"
             "    return 0\n"
         )
-        self._wire_python_file(
-            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 12)
-        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 12))
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         f = results[0]
@@ -1750,9 +1642,7 @@ class TestSwitchStatement:
             "        return 8\n"
             "    return 0\n"
         )
-        self._wire_python_file(
-            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20)
-        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20))
         results = self._run(tmp_path, conn)
         assert results == []
         conn.close()
@@ -1782,9 +1672,7 @@ class TestSwitchStatement:
             "        return 8\n"
             "    return 0\n"
         )
-        self._wire_python_file(
-            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20)
-        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20))
         results = self._run(tmp_path, conn)
         # Compound LHS -- not a single-Name discriminator.
         assert results == []
@@ -1814,9 +1702,7 @@ class TestSwitchStatement:
             "        return 8\n"
             "    return 0\n"
         )
-        self._wire_python_file(
-            tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20)
-        )
+        self._wire_python_file(tmp_path, conn, "src/m.py", src, enclosing=("dispatch", 1, 20))
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         assert results[0]["smell_id"] == "switch-statement"
@@ -1846,8 +1732,7 @@ class TestTemporalCoupling:
         conn.execute("DELETE FROM files")
         conn.execute("DELETE FROM git_cochange")
         conn.execute(
-            "INSERT INTO files (id, path, language) VALUES "
-            "(1, 'src/a.py', 'python'), (2, 'src/b.py', 'python')"
+            "INSERT INTO files (id, path, language) VALUES (1, 'src/a.py', 'python'), (2, 'src/b.py', 'python')"
         )
         conn.execute(
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
@@ -1855,18 +1740,11 @@ class TestTemporalCoupling:
             "       (2, 2, 'fn_b', 'function', 30, 40)"
         )
         if edge_direction in ("a_to_b", "both"):
-            conn.execute(
-                "INSERT INTO edges (source_id, target_id, kind) "
-                "VALUES (1, 2, 'call')"
-            )
+            conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, 2, 'call')")
         if edge_direction in ("b_to_a", "both"):
-            conn.execute(
-                "INSERT INTO edges (source_id, target_id, kind) "
-                "VALUES (2, 1, 'call')"
-            )
+            conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (2, 1, 'call')")
         conn.execute(
-            "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) "
-            "VALUES (1, 2, ?)",
+            "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (1, 2, ?)",
             (cochange_count,),
         )
         conn.commit()
@@ -1948,9 +1826,7 @@ class TestTemporalCouplingCluster:
         conn.execute("DELETE FROM symbols")
         conn.execute("DELETE FROM files")
         conn.execute("DELETE FROM git_cochange")
-        conn.execute(
-            "INSERT INTO files (id, path, language) VALUES (1, 'src/hub.py', 'python')"
-        )
+        conn.execute("INSERT INTO files (id, path, language) VALUES (1, 'src/hub.py', 'python')")
         conn.execute(
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
             "VALUES (1, 1, 'hub_fn', 'function', 10, 20)"
@@ -1974,8 +1850,7 @@ class TestTemporalCouplingCluster:
                 (sym_id,),
             )
             conn.execute(
-                "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) "
-                "VALUES (1, ?, ?)",
+                "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (1, ?, ?)",
                 (file_id, cochange_count),
             )
         conn.commit()
@@ -1986,9 +1861,7 @@ class TestTemporalCouplingCluster:
         self._wire_hub(conn, partners=2)
         results = detect_temporal_coupling(conn)
         pairs = [r for r in results if r["smell_id"] == "temporal-coupling"]
-        clusters = [
-            r for r in results if r["smell_id"] == "temporal-coupling-cluster"
-        ]
+        clusters = [r for r in results if r["smell_id"] == "temporal-coupling-cluster"]
         # 2 pair findings -- one per (hub, partner_i) pair.
         assert len(pairs) == 2
         # 1 cluster finding -- the hub appears in >= 2 pair findings.
@@ -2014,9 +1887,7 @@ class TestTemporalCouplingCluster:
         self._wire_hub(conn, partners=1)
         results = detect_temporal_coupling(conn)
         pairs = [r for r in results if r["smell_id"] == "temporal-coupling"]
-        clusters = [
-            r for r in results if r["smell_id"] == "temporal-coupling-cluster"
-        ]
+        clusters = [r for r in results if r["smell_id"] == "temporal-coupling-cluster"]
         assert len(pairs) == 1
         assert clusters == []
         conn.close()
@@ -2028,16 +1899,13 @@ class TestTemporalCouplingCluster:
         conn = _make_db(tmp_path)
         self._wire_hub(conn, partners=3, cochange_count=15)
         results = detect_temporal_coupling(conn)
-        clusters = [
-            r for r in results if r["smell_id"] == "temporal-coupling-cluster"
-        ]
+        clusters = [r for r in results if r["smell_id"] == "temporal-coupling-cluster"]
         assert len(clusters) == 1
         c = clusters[0]
         assert c["metric_value"] == 3
         for i in range(3):
             assert f"partner_{i}" in c["description"], (
-                f"partner_{i} missing from cluster description: "
-                f"{c['description']}"
+                f"partner_{i} missing from cluster description: {c['description']}"
             )
         # max cc surfaces in the description so the operator sees the
         # cluster's history strength.
@@ -2095,14 +1963,17 @@ class TestCommentDensity:
         conn = _make_db(tmp_path)
         # 3 marker lines + 17 plain lines = 20 lines total, 15% rate.
         body_lines = ["x = 1"] * 17
-        src = "\n".join(
-            [
-                "# TODO: implement caching",
-                "# FIXME: race condition",
-                "# HACK: hard-coded retry count",
-                *body_lines,
-            ]
-        ) + "\n"
+        src = (
+            "\n".join(
+                [
+                    "# TODO: implement caching",
+                    "# FIXME: race condition",
+                    "# HACK: hard-coded retry count",
+                    *body_lines,
+                ]
+            )
+            + "\n"
+        )
         self._wire_file(tmp_path, conn, "src/m.py", src)
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -2121,17 +1992,18 @@ class TestCommentDensity:
         """Positive: ``//``-comment language path also fires."""
         conn = _make_db(tmp_path)
         body_lines = ["let x = 1;"] * 17
-        src = "\n".join(
-            [
-                "// TODO: rewrite this loop",
-                "// XXX: revisit after migration",
-                "// HACK: workaround for IE11",
-                *body_lines,
-            ]
-        ) + "\n"
-        self._wire_file(
-            tmp_path, conn, "src/m.js", src, language="javascript"
+        src = (
+            "\n".join(
+                [
+                    "// TODO: rewrite this loop",
+                    "// XXX: revisit after migration",
+                    "// HACK: workaround for IE11",
+                    *body_lines,
+                ]
+            )
+            + "\n"
         )
+        self._wire_file(tmp_path, conn, "src/m.js", src, language="javascript")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         assert results[0]["smell_id"] == "comment-density"
@@ -2143,13 +2015,7 @@ class TestCommentDensity:
         conn = _make_db(tmp_path)
         # 2 markers in 5 lines = 40% rate (well above rate gate) but absolute
         # count fails -> no finding.
-        src = (
-            "# TODO: do the thing\n"
-            "# FIXME: also this\n"
-            "x = 1\n"
-            "y = 2\n"
-            "z = 3\n"
-        )
+        src = "# TODO: do the thing\n# FIXME: also this\nx = 1\ny = 2\nz = 3\n"
         self._wire_file(tmp_path, conn, "src/m.py", src)
         assert self._run(tmp_path, conn) == []
         conn.close()
@@ -2158,14 +2024,17 @@ class TestCommentDensity:
         """Negative: 3 markers in 200 lines = 1.5% rate -> below 5% gate."""
         conn = _make_db(tmp_path)
         body_lines = ["x = 1"] * 197
-        src = "\n".join(
-            [
-                "# TODO: A",
-                "# TODO: B",
-                "# TODO: C",
-                *body_lines,
-            ]
-        ) + "\n"
+        src = (
+            "\n".join(
+                [
+                    "# TODO: A",
+                    "# TODO: B",
+                    "# TODO: C",
+                    *body_lines,
+                ]
+            )
+            + "\n"
+        )
         self._wire_file(tmp_path, conn, "src/m.py", src)
         assert self._run(tmp_path, conn) == []
         conn.close()
@@ -2183,14 +2052,17 @@ class TestCommentDensity:
         # 3 marker lines + 57 plain lines = 60 lines, 5.0% rate -- the
         # exact boundary. >= 3 AND >= 0.05 both pass.
         body_lines = ["x = 1"] * 57
-        src = "\n".join(
-            [
-                "# TODO: one",
-                "# TODO: two",
-                "# TODO: three",
-                *body_lines,
-            ]
-        ) + "\n"
+        src = (
+            "\n".join(
+                [
+                    "# TODO: one",
+                    "# TODO: two",
+                    "# TODO: three",
+                    *body_lines,
+                ]
+            )
+            + "\n"
+        )
         self._wire_file(tmp_path, conn, "src/m.py", src)
         results = self._run(tmp_path, conn)
         assert len(results) == 1
@@ -2222,12 +2094,7 @@ class TestCommentDensity:
         comment-syntax map, so it stays the canonical "unsupported" probe.
         """
         conn = _make_db(tmp_path)
-        src = (
-            "# TODO: A\n"
-            "# TODO: B\n"
-            "# TODO: C\n"
-            "x = 1\n"
-        )
+        src = "# TODO: A\n# TODO: B\n# TODO: C\nx = 1\n"
         # ``foxpro`` is NOT in ``_COMMENT_SYNTAX_BY_LANG`` (FoxPro uses
         # ``*`` and ``&&`` markers, which the detector does not model).
         self._wire_file(tmp_path, conn, "legacy.prg", src, language="foxpro")
@@ -2248,22 +2115,23 @@ class TestCommentDensity:
         conn = _make_db(tmp_path)
         # 3 markers inside one block + 17 plain lines = 20 lines, 15% rate.
         body_lines = ["let x = 1;"] * 17
-        src = "\n".join(
-            [
-                "/**",
-                " * Module entry point.",
-                " * TODO: rewrite this loop",
-                " * FIXME: race on init",
-                " * HACK: hard-coded retry count",
-                " */",
-                *body_lines,
-            ]
-        ) + "\n"
+        src = (
+            "\n".join(
+                [
+                    "/**",
+                    " * Module entry point.",
+                    " * TODO: rewrite this loop",
+                    " * FIXME: race on init",
+                    " * HACK: hard-coded retry count",
+                    " */",
+                    *body_lines,
+                ]
+            )
+            + "\n"
+        )
         # File is 23 physical lines (6 block + 17 body); the file has 3
         # markers / 23 lines = ~13% which is above both gates.
-        self._wire_file(
-            tmp_path, conn, "src/m.js", src, language="javascript"
-        )
+        self._wire_file(tmp_path, conn, "src/m.js", src, language="javascript")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         f = results[0]
@@ -2279,17 +2147,18 @@ class TestCommentDensity:
         """
         conn = _make_db(tmp_path)
         body_lines = ["let x = 1;"] * 17
-        src = "\n".join(
-            [
-                "// TODO: rewrite",
-                "// FIXME: race",
-                "// HACK: workaround",
-                *body_lines,
-            ]
-        ) + "\n"
-        self._wire_file(
-            tmp_path, conn, "src/m.ts", src, language="typescript"
+        src = (
+            "\n".join(
+                [
+                    "// TODO: rewrite",
+                    "// FIXME: race",
+                    "// HACK: workaround",
+                    *body_lines,
+                ]
+            )
+            + "\n"
         )
+        self._wire_file(tmp_path, conn, "src/m.ts", src, language="typescript")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         assert results[0]["metric_value"] == 3
@@ -2304,18 +2173,19 @@ class TestCommentDensity:
         conn = _make_db(tmp_path)
         # 1 line marker + 1 block carrying 2 markers + 17 body lines.
         body_lines = ["int x = 1;"] * 17
-        src = "\n".join(
-            [
-                "// TODO: review",
-                "/* FIXME: A",
-                "   XXX: B */",
-                *body_lines,
-            ]
-        ) + "\n"
-        # 1 (line) + 2 (block) = 3 markers, 20 physical lines = 15%.
-        self._wire_file(
-            tmp_path, conn, "src/M.java", src, language="java"
+        src = (
+            "\n".join(
+                [
+                    "// TODO: review",
+                    "/* FIXME: A",
+                    "   XXX: B */",
+                    *body_lines,
+                ]
+            )
+            + "\n"
         )
+        # 1 (line) + 2 (block) = 3 markers, 20 physical lines = 15%.
+        self._wire_file(tmp_path, conn, "src/M.java", src, language="java")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         f = results[0]
@@ -2332,19 +2202,20 @@ class TestCommentDensity:
         conn = _make_db(tmp_path)
         # 3 markers inside one HTML comment block + 17 plain body lines.
         body_lines = ["<p>x</p>"] * 17
-        src = "\n".join(
-            [
-                "<!--",
-                "  TODO: rewrite hero",
-                "  FIXME: missing alt text",
-                "  HACK: inline styles",
-                "-->",
-                *body_lines,
-            ]
-        ) + "\n"
-        self._wire_file(
-            tmp_path, conn, "src/index.html", src, language="html"
+        src = (
+            "\n".join(
+                [
+                    "<!--",
+                    "  TODO: rewrite hero",
+                    "  FIXME: missing alt text",
+                    "  HACK: inline styles",
+                    "-->",
+                    *body_lines,
+                ]
+            )
+            + "\n"
         )
+        self._wire_file(tmp_path, conn, "src/index.html", src, language="html")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         f = results[0]
@@ -2358,18 +2229,19 @@ class TestCommentDensity:
         combine on one file."""
         conn = _make_db(tmp_path)
         body_lines = ["SELECT 1;"] * 17
-        src = "\n".join(
-            [
-                "-- TODO: index this column",
-                "/* FIXME: slow scan",
-                "   XXX: review plan */",
-                *body_lines,
-            ]
-        ) + "\n"
-        # 1 (line) + 2 (block) = 3 markers, 20 physical lines = 15%.
-        self._wire_file(
-            tmp_path, conn, "src/schema.sql", src, language="sql"
+        src = (
+            "\n".join(
+                [
+                    "-- TODO: index this column",
+                    "/* FIXME: slow scan",
+                    "   XXX: review plan */",
+                    *body_lines,
+                ]
+            )
+            + "\n"
         )
+        # 1 (line) + 2 (block) = 3 markers, 20 physical lines = 15%.
+        self._wire_file(tmp_path, conn, "src/schema.sql", src, language="sql")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         assert results[0]["smell_id"] == "comment-density"
@@ -2381,17 +2253,18 @@ class TestCommentDensity:
         with ``#``-prefixed marker comments flag like Python."""
         conn = _make_db(tmp_path)
         body_lines = ["echo hi"] * 17
-        src = "\n".join(
-            [
-                "# TODO: split this script",
-                "# FIXME: handle SIGTERM",
-                "# HACK: workaround for set -e",
-                *body_lines,
-            ]
-        ) + "\n"
-        self._wire_file(
-            tmp_path, conn, "scripts/build.sh", src, language="bash"
+        src = (
+            "\n".join(
+                [
+                    "# TODO: split this script",
+                    "# FIXME: handle SIGTERM",
+                    "# HACK: workaround for set -e",
+                    *body_lines,
+                ]
+            )
+            + "\n"
         )
+        self._wire_file(tmp_path, conn, "scripts/build.sh", src, language="bash")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         assert results[0]["smell_id"] == "comment-density"
@@ -2403,17 +2276,18 @@ class TestCommentDensity:
         comments. The ``#``-only marker lines should count too."""
         conn = _make_db(tmp_path)
         body_lines = ["$x = 1;"] * 17
-        src = "\n".join(
-            [
-                "# TODO: switch to typed properties",
-                "// FIXME: race in worker",
-                "# HACK: legacy global",
-                *body_lines,
-            ]
-        ) + "\n"
-        self._wire_file(
-            tmp_path, conn, "src/legacy.php", src, language="php"
+        src = (
+            "\n".join(
+                [
+                    "# TODO: switch to typed properties",
+                    "// FIXME: race in worker",
+                    "# HACK: legacy global",
+                    *body_lines,
+                ]
+            )
+            + "\n"
         )
+        self._wire_file(tmp_path, conn, "src/legacy.php", src, language="php")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         assert results[0]["metric_value"] == 3
@@ -2427,17 +2301,18 @@ class TestCommentDensity:
         one file combines to clear both gates."""
         conn = _make_db(tmp_path)
         body_lines = ['  name = "x"'] * 17
-        src = "\n".join(
-            [
-                "# TODO: lock module version",
-                "// FIXME: hard-coded region",
-                "/* HACK: temp variable override */",
-                *body_lines,
-            ]
-        ) + "\n"
-        self._wire_file(
-            tmp_path, conn, "infra/main.tf", src, language="hcl"
+        src = (
+            "\n".join(
+                [
+                    "# TODO: lock module version",
+                    "// FIXME: hard-coded region",
+                    "/* HACK: temp variable override */",
+                    *body_lines,
+                ]
+            )
+            + "\n"
         )
+        self._wire_file(tmp_path, conn, "infra/main.tf", src, language="hcl")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         f = results[0]
@@ -2451,18 +2326,19 @@ class TestCommentDensity:
         line marker + one block carrying two markers combines to three."""
         conn = _make_db(tmp_path)
         body_lines = ["Integer x = 1;"] * 17
-        src = "\n".join(
-            [
-                "// TODO: bulkify this",
-                "/* FIXME: SOQL in loop",
-                "   XXX: governor limit risk */",
-                *body_lines,
-            ]
-        ) + "\n"
-        # 1 (line) + 2 (block) = 3 markers, 20 physical lines = 15%.
-        self._wire_file(
-            tmp_path, conn, "src/AcctSvc.cls", src, language="apex"
+        src = (
+            "\n".join(
+                [
+                    "// TODO: bulkify this",
+                    "/* FIXME: SOQL in loop",
+                    "   XXX: governor limit risk */",
+                    *body_lines,
+                ]
+            )
+            + "\n"
         )
+        # 1 (line) + 2 (block) = 3 markers, 20 physical lines = 15%.
+        self._wire_file(tmp_path, conn, "src/AcctSvc.cls", src, language="apex")
         results = self._run(tmp_path, conn)
         assert len(results) == 1
         f = results[0]
@@ -2813,9 +2689,7 @@ class TestW653DetectorFailLoud:
             raise NameError("name 'Counter' is not defined")
 
         # Replace registry with one synthetic detector so the test is hermetic.
-        monkeypatch.setattr(
-            smells_mod, "ALL_DETECTORS", [("bad-detector", _bad_detector)]
-        )
+        monkeypatch.setattr(smells_mod, "ALL_DETECTORS", [("bad-detector", _bad_detector)])
         conn = _make_db(tmp_path)
         try:
             with pytest.raises(RuntimeError, match="bad-detector|_bad_detector"):
@@ -2830,9 +2704,7 @@ class TestW653DetectorFailLoud:
         def _bad_detector(conn):
             raise ImportError("cannot import name 'missing_helper'")
 
-        monkeypatch.setattr(
-            smells_mod, "ALL_DETECTORS", [("bad-detector", _bad_detector)]
-        )
+        monkeypatch.setattr(smells_mod, "ALL_DETECTORS", [("bad-detector", _bad_detector)])
         conn = _make_db(tmp_path)
         try:
             with pytest.raises(RuntimeError, match="ImportError"):
@@ -2848,9 +2720,7 @@ class TestW653DetectorFailLoud:
         def _bad_detector(conn):
             raise AttributeError("'NoneType' object has no attribute 'execute'")
 
-        monkeypatch.setattr(
-            smells_mod, "ALL_DETECTORS", [("bad-detector", _bad_detector)]
-        )
+        monkeypatch.setattr(smells_mod, "ALL_DETECTORS", [("bad-detector", _bad_detector)])
         conn = _make_db(tmp_path)
         try:
             with pytest.raises(RuntimeError, match="AttributeError"):
@@ -2886,10 +2756,9 @@ class TestW653DetectorFailLoud:
         # Good detector still ran.
         assert {"smell_id": "ok", "severity": "info"} in results
         # Warning was logged for the bad detector.
-        assert any(
-            "sqlite error" in rec.message and "_bad_detector" in rec.message
-            for rec in caplog.records
-        ), f"expected sqlite-warning log; got: {[r.message for r in caplog.records]}"
+        assert any("sqlite error" in rec.message and "_bad_detector" in rec.message for rec in caplog.records), (
+            f"expected sqlite-warning log; got: {[r.message for r in caplog.records]}"
+        )
 
     def test_clean_run_unchanged(self, tmp_path):
         """Sanity: empty corpus still returns []. The fail-loud refactor must
@@ -2991,9 +2860,7 @@ suppressions:
         """Suppress entry uses dotted path; smells emit bare names."""
         from roam.commands.smells_suppress import is_suppressed
 
-        entries = [
-            {"kind": "shotgun-surgery", "symbol": "roam.languages.registry.get_extractor"}
-        ]
+        entries = [{"kind": "shotgun-surgery", "symbol": "roam.languages.registry.get_extractor"}]
         finding = {
             "smell_id": "shotgun-surgery",
             "symbol_name": "get_extractor",
@@ -3104,13 +2971,10 @@ class TestSmellsSuppressCLI:
         conn = _make_db(tmp_path)
         conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/utils.py')")
         conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (1, 1, ?, 'function', 1, 10)",
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (1, 1, ?, 'function', 1, 10)",
             (symbol_name,),
         )
-        conn.execute(
-            "INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (1, 12, 2)"
-        )
+        conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (1, 12, 2)")
         conn.commit()
         conn.close()
         return tmp_path

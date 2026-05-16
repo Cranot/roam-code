@@ -94,19 +94,11 @@ class ActorRef:
 
     def __post_init__(self) -> None:
         if self.actor_kind not in ACTOR_KINDS:
-            raise ValueError(
-                f"ActorRef.actor_kind={self.actor_kind!r} is not in "
-                f"ACTOR_KINDS"
-            )
+            raise ValueError(f"ActorRef.actor_kind={self.actor_kind!r} is not in ACTOR_KINDS")
         if not isinstance(self.actor_id, str) or not self.actor_id:
-            raise ValueError(
-                "ActorRef.actor_id must be a non-empty string"
-            )
+            raise ValueError("ActorRef.actor_id must be a non-empty string")
         if self.trust_tier not in ACTOR_TRUST_TIERS:
-            raise ValueError(
-                f"ActorRef.trust_tier={self.trust_tier!r} is not in "
-                f"ACTOR_TRUST_TIERS"
-            )
+            raise ValueError(f"ActorRef.trust_tier={self.trust_tier!r} is not in ACTOR_TRUST_TIERS")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -163,19 +155,11 @@ class AuthorityRef:
 
     def __post_init__(self) -> None:
         if self.authority_kind not in AUTHORITY_KINDS:
-            raise ValueError(
-                f"AuthorityRef.authority_kind={self.authority_kind!r} is "
-                f"not in AUTHORITY_KINDS"
-            )
+            raise ValueError(f"AuthorityRef.authority_kind={self.authority_kind!r} is not in AUTHORITY_KINDS")
         if not isinstance(self.authority_id, str) or not self.authority_id:
-            raise ValueError(
-                "AuthorityRef.authority_id must be a non-empty string"
-            )
+            raise ValueError("AuthorityRef.authority_id must be a non-empty string")
         if self.source not in AUTHORITY_SOURCES:
-            raise ValueError(
-                f"AuthorityRef.source={self.source!r} is not in "
-                f"AUTHORITY_SOURCES"
-            )
+            raise ValueError(f"AuthorityRef.source={self.source!r} is not in AUTHORITY_SOURCES")
         # W198 facade flag: when the producer says the authority came
         # from the permit facade (source="permit") but no permit_id is
         # persisted in extra, auto-stamp ``extra["facade"] = True`` so
@@ -217,14 +201,9 @@ class EnvironmentRef:
 
     def __post_init__(self) -> None:
         if self.env_kind not in ENV_KINDS:
-            raise ValueError(
-                f"EnvironmentRef.env_kind={self.env_kind!r} is not in "
-                f"ENV_KINDS"
-            )
+            raise ValueError(f"EnvironmentRef.env_kind={self.env_kind!r} is not in ENV_KINDS")
         if not isinstance(self.env_id, str) or not self.env_id:
-            raise ValueError(
-                "EnvironmentRef.env_id must be a non-empty string"
-            )
+            raise ValueError("EnvironmentRef.env_id must be a non-empty string")
 
 
 __all__ = [

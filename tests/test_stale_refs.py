@@ -3906,9 +3906,7 @@ class TestRepoConfig:
         )
         # Fall-through: scan completes. Exit 0 (no --gate so no
         # promotion to EXIT_PARTIAL).
-        assert result.exit_code == 0, (
-            f"expected fall-through, got exit {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"expected fall-through, got exit {result.exit_code}:\n{result.output}"
         # Structured error surfaced in the JSON envelope.
         data = parse_json_output(result)
         summary = data["summary"]

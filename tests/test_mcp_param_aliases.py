@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-
 # ---------------------------------------------------------------------------
 # Direct unit tests on the helper functions
 # ---------------------------------------------------------------------------
@@ -28,9 +27,7 @@ def test_normalize_alias_rewrites_name_to_symbol():
     """Single alias only -> rewrites to canonical, emits one warning."""
     from roam.mcp_server import _normalize_aliases
 
-    out, warns = _normalize_aliases(
-        "roam_uses", {"name": "handleSave"}, accepted={"symbol"}
-    )
+    out, warns = _normalize_aliases("roam_uses", {"name": "handleSave"}, accepted={"symbol"})
     assert out == {"symbol": "handleSave"}
     assert len(warns) == 1
     # The deprecation message must name BOTH the alias (so the agent learns
@@ -44,9 +41,7 @@ def test_normalize_alias_rewrites_target_to_symbol():
     """``target`` alias also resolves to ``symbol``."""
     from roam.mcp_server import _normalize_aliases
 
-    out, warns = _normalize_aliases(
-        "roam_preflight", {"target": "open_db"}, accepted={"symbol"}
-    )
+    out, warns = _normalize_aliases("roam_preflight", {"target": "open_db"}, accepted={"symbol"})
     assert out == {"symbol": "open_db"}
     assert len(warns) == 1
     assert "target" in warns[0]
@@ -56,9 +51,7 @@ def test_normalize_alias_rewrites_file_to_path():
     """``file`` alias resolves to ``path``."""
     from roam.mcp_server import _normalize_aliases
 
-    out, warns = _normalize_aliases(
-        "roam_effects", {"file": "src/auth.py"}, accepted={"path"}
-    )
+    out, warns = _normalize_aliases("roam_effects", {"file": "src/auth.py"}, accepted={"path"})
     assert out == {"path": "src/auth.py"}
     assert len(warns) == 1
     assert "file" in warns[0]
@@ -68,9 +61,7 @@ def test_normalize_alias_rewrites_pattern_to_query():
     """``pattern`` alias resolves to ``query``."""
     from roam.mcp_server import _normalize_aliases
 
-    out, warns = _normalize_aliases(
-        "roam_search_symbol", {"pattern": "login"}, accepted={"query"}
-    )
+    out, warns = _normalize_aliases("roam_search_symbol", {"pattern": "login"}, accepted={"query"})
     assert out == {"query": "login"}
     assert "pattern" in warns[0]
 
@@ -95,9 +86,7 @@ def test_normalize_alias_canonical_only_no_warning():
     """Canonical name only -> no rewrite, no warning."""
     from roam.mcp_server import _normalize_aliases
 
-    out, warns = _normalize_aliases(
-        "roam_uses", {"symbol": "foo"}, accepted={"symbol"}
-    )
+    out, warns = _normalize_aliases("roam_uses", {"symbol": "foo"}, accepted={"symbol"})
     assert out == {"symbol": "foo"}
     assert warns == []
 
@@ -291,6 +280,7 @@ def test_wrapper_exposes_alias_in_synthesised_signature():
     ``__signature__`` so FastMCP / Pydantic schema generation lists both
     spellings on the public tool surface."""
     import inspect
+
     from roam.mcp_server import _wrap_with_alias_normalization
 
     def fake_tool(symbol: str = "", root: str = ".") -> dict:
@@ -313,6 +303,7 @@ def test_wrapper_demotes_required_canonical_to_optional():
     Otherwise a client sending only the legacy alias would fail FastMCP
     schema validation before the wrapper translates."""
     import inspect
+
     from roam.mcp_server import _wrap_with_alias_normalization
 
     def fake_tool(symbol: str, root: str = ".") -> dict:  # symbol required
@@ -329,6 +320,7 @@ def test_wrapper_async_path():
     functions and preserves async-ness."""
     import asyncio
     import inspect
+
     from roam.mcp_server import _wrap_with_alias_normalization
 
     async def fake_async(symbol: str = "", root: str = ".") -> dict:
@@ -351,6 +343,7 @@ def test_renamed_tool_signature_is_canonical():
     """After Fix D rename: ``roam_uses`` accepts kwarg ``symbol`` (canonical).
     Legacy ``name`` is supported transparently via the wrapper."""
     import inspect
+
     from roam.mcp_server import roam_uses
 
     sig = inspect.signature(roam_uses)
@@ -391,5 +384,5 @@ def test_renamed_effects_callable_with_canonical_kwargs():
         mock.return_value = {"command": "roam_effects", "data": []}
         effects(symbol="open_db", path="src/auth.py")
         actual_args = mock.call_args[0][0]
-        # Args order: ["effects", symbol, "--file", path]
-        assert actual_args == ["effects", "open_db", "--file", "src/auth.py"]
+        # Args order: ["effects", symbol, "--path", path]  (W1099: --file is deprecated alias)
+        assert actual_args == ["effects", "open_db", "--path", "src/auth.py"]

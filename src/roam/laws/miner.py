@@ -48,7 +48,7 @@ defines its own minimal-shape rule:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
@@ -121,10 +121,10 @@ class Violation:
 
 # Conformance thresholds. Pulled out as module-level constants so tests and
 # future tuning don't have to dig into individual functions.
-_MIN_CONFORMANCE_PCT = 70.0           # below this we emit nothing
-_HIGH_CONFIDENCE_PCT = 90.0           # >= this -> confidence: high
-_MED_CONFIDENCE_PCT = 80.0            # >= this -> confidence: medium
-_MIN_SAMPLE_SIZE = 5                  # below this the signal is too noisy
+_MIN_CONFORMANCE_PCT = 70.0  # below this we emit nothing
+_HIGH_CONFIDENCE_PCT = 90.0  # >= this -> confidence: high
+_MED_CONFIDENCE_PCT = 80.0  # >= this -> confidence: medium
+_MIN_SAMPLE_SIZE = 5  # below this the signal is too noisy
 
 
 def mine_laws(
@@ -191,9 +191,7 @@ def _confidence_from_pct(pct: float) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _mine_naming_laws(
-    conn, min_pct: float, min_sample: int
-) -> list[Law]:
+def _mine_naming_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     """Emit a naming law per symbol kind that has a dominant style.
 
     Defers to the canonical conventions helper so all five consumers of
@@ -279,9 +277,7 @@ def _naming_examples(conn, kind: str, style: str, *, limit: int = 3) -> list[str
 # ---------------------------------------------------------------------------
 
 
-def _mine_import_laws(
-    conn, min_pct: float, min_sample: int
-) -> list[Law]:
+def _mine_import_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     """Emit a law per (source_dir, target_dir) that dominates the
     source_dir's cross-directory imports.
 
@@ -337,8 +333,7 @@ def _mine_import_laws(
             id=_safe_id(f"imports_{src_bucket}_to_{dominant_tgt}"),
             kind="import",
             description=(
-                f"Files in {src_bucket}/ import from {dominant_tgt}/"
-                f" ({pct:.0f}% of {total} cross-directory imports)"
+                f"Files in {src_bucket}/ import from {dominant_tgt}/ ({pct:.0f}% of {total} cross-directory imports)"
             ),
             evidence={
                 "sample_size": total,
@@ -424,9 +419,7 @@ def _import_examples(conn, src_bucket: str, tgt_bucket: str, *, limit: int = 3) 
 # ---------------------------------------------------------------------------
 
 
-def _mine_testing_laws(
-    conn, min_pct: float, min_sample: int
-) -> list[Law]:
+def _mine_testing_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     """Emit a law when a high fraction of public symbols have a
     matching test file.
 
@@ -562,9 +555,7 @@ def _has_matching_test(name: str, test_basenames: set[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _mine_error_laws(
-    conn, min_pct: float, min_sample: int
-) -> list[Law]:
+def _mine_error_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     """Discover error-handling conventions (v1 stub).
 
     Planned: scan symbol bodies for ``except`` / ``catch`` clauses and
@@ -580,9 +571,7 @@ def _mine_error_laws(
 # ---------------------------------------------------------------------------
 
 
-def _mine_cochange_laws(
-    conn, min_pct: float, min_sample: int
-) -> list[Law]:
+def _mine_cochange_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     """Discover git co-change invariants (v1 stub).
 
     Planned: walk ``git_cochange`` for file pairs that change together

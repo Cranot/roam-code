@@ -25,14 +25,9 @@ shape.
 
 from __future__ import annotations
 
-import io
-from unittest.mock import patch
-
-import pytest
 from click.testing import CliRunner
 
 from roam.mcp_server import mcp_cmd
-
 
 # ---------------------------------------------------------------------------
 # Branch 1: missing card file (all fallback paths absent)
@@ -55,24 +50,18 @@ def test_card_missing_file_exits_with_error_message(monkeypatch):
     # Click surfaces ``SystemExit(1)`` as exit_code == 1 under
     # ``standalone_mode=False`` (the SystemExit is captured into
     # ``result.exception``).
-    assert result.exit_code != 0, (
-        f"expected non-zero exit, got {result.exit_code}: {result.output!r}"
-    )
+    assert result.exit_code != 0, f"expected non-zero exit, got {result.exit_code}: {result.output!r}"
     # The current handler emits to stderr via ``click.echo(err=True)``.
     # CliRunner merges streams in this Click version, so the warning
     # surfaces in either ``.output`` or ``.stderr``.
     combined = (result.output or "") + (getattr(result, "stderr", "") or "")
-    assert "error" in combined.lower(), (
-        f"expected human-readable 'error' marker in output: {combined!r}"
-    )
+    assert "error" in combined.lower(), f"expected human-readable 'error' marker in output: {combined!r}"
     assert "card" in combined.lower() or "not found" in combined.lower(), (
         f"expected actionable hint about the missing card: {combined!r}"
     )
     # Pattern-1 hygiene: the error string must be human-readable, NEVER a
     # raw traceback dump. Asserts the handler doesn't leak Python frames.
-    assert "Traceback" not in combined, (
-        f"error must not leak a raw traceback: {combined!r}"
-    )
+    assert "Traceback" not in combined, f"error must not leak a raw traceback: {combined!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +90,7 @@ def test_card_read_oserror_propagates_or_handled(monkeypatch):
     # Future canonical handler: would emit Pattern-1 envelope + non-zero exit.
     # Either way, the invocation must not succeed silently.
     assert result.exit_code != 0, (
-        f"OSError on read must fail the invocation, got exit "
-        f"{result.exit_code} with output {result.output!r}"
+        f"OSError on read must fail the invocation, got exit {result.exit_code} with output {result.output!r}"
     )
     # If it raised, the exception should be the OSError (or a wrapper
     # carrying its message). The output, if any, must not be valid JSON
@@ -145,9 +133,7 @@ def test_card_malformed_json_is_passthrough_today(monkeypatch):
         f"Pattern-1 envelope shape. Got exit {result.exit_code}, "
         f"output {result.output!r}"
     )
-    assert bad_bytes.strip() in result.output, (
-        f"expected raw bytes echo, got {result.output!r}"
-    )
+    assert bad_bytes.strip() in result.output, f"expected raw bytes echo, got {result.output!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -170,10 +156,7 @@ def test_card_missing_emits_no_raw_traceback(monkeypatch):
     # SystemExit is fine; an uncaught Exception is not.
     if result.exception is not None:
         assert isinstance(result.exception, SystemExit), (
-            f"missing-file branch should raise SystemExit, not "
-            f"{type(result.exception).__name__}: {result.exception!r}"
+            f"missing-file branch should raise SystemExit, not {type(result.exception).__name__}: {result.exception!r}"
         )
     # No Python frame leakage in user-facing output.
-    assert "File \"" not in combined, (
-        f"traceback frame leaked into output: {combined!r}"
-    )
+    assert 'File "' not in combined, f"traceback frame leaked into output: {combined!r}"

@@ -86,17 +86,14 @@ class TestJavaDeserializationRuleShape:
         try:
             os.chdir(str(proj))
             assert runner.invoke(cli, ["index"]).exit_code == 0
-            result = runner.invoke(
-                cli, ["--json", "taint", "--rules-pack", "deserialization"]
-            )
+            result = runner.invoke(cli, ["--json", "taint", "--rules-pack", "deserialization"])
             assert result.exit_code == 0, result.output
             data = json.loads(result.output)
             verdict = data.get("summary", {}).get("verdict", "")
             assert "No rules" not in verdict, verdict
             rule_ids = data.get("rule_ids") or []
             assert "java-deserialization" in rule_ids, (
-                f"java-deserialization missing from deserialization pack "
-                f"rule_ids: {rule_ids!r}"
+                f"java-deserialization missing from deserialization pack rule_ids: {rule_ids!r}"
             )
         finally:
             os.chdir(old_cwd)
@@ -290,14 +287,9 @@ class TestJavaDeserializationFindings:
         with open_db(readonly=True) as conn:
             findings = _java_deser_findings(conn)
 
-        assert findings == [], (
-            f"no-sink project produced unexpected findings: "
-            f"{[f.rule_id for f in findings]!r}"
-        )
+        assert findings == [], f"no-sink project produced unexpected findings: {[f.rule_id for f in findings]!r}"
 
-    def test_sanitized_case_marks_sanitizer_when_flagged(
-        self, java_deser_sanitized_project
-    ):
+    def test_sanitized_case_marks_sanitizer_when_flagged(self, java_deser_sanitized_project):
         """setObjectInputFilter on the path must surface as
         sanitizer_in_path=True when the engine flags the flow, so
         downstream OpenVEX can map to inline_mitigations_already_exist.
@@ -315,9 +307,7 @@ class TestJavaDeserializationFindings:
                 "sanitized case did not surface sanitizer_in_path on any finding"
             )
 
-    def test_user_class_documents_qualified_only_behaviour(
-        self, java_deser_user_class_project
-    ):
+    def test_user_class_documents_qualified_only_behaviour(self, java_deser_user_class_project):
         """User-defined class with its own `readObject` method.
 
         Under qualified_only=true (W454/W467), the bare-name branch is a
@@ -344,9 +334,7 @@ class TestJavaDeserializationFindings:
 class TestJavaDeserializationCLI:
     def test_deserialization_pack_runs_clean(self, java_deser_positive_project):
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "taint", "--rules-pack", "deserialization"]
-        )
+        result = runner.invoke(cli, ["--json", "taint", "--rules-pack", "deserialization"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         verdict = data.get("summary", {}).get("verdict", "")

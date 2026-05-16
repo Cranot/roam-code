@@ -1,4 +1,11 @@
-"""Explain why a symbol matters — role, reach, criticality, verdict."""
+"""Explain why a symbol matters — role, reach, criticality, verdict.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because why outputs are invocation-scoped importance rankings —
+not per-location violations. Editor consumers should use the JSON
+envelope directly. See action.yml _SUPPORTED_SARIF allowlist
++ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +18,13 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import batched_in, open_db
 from roam.graph.builder import build_symbol_graph
-from roam.output.formatter import format_table, json_envelope, loc, to_json
+from roam.output.formatter import (
+    format_table,
+    json_envelope,
+    loc,
+    resolution_disclosure,
+    to_json,
+)
 
 
 def _label_cluster(conn, sym_ids):
@@ -117,12 +130,25 @@ def _cluster_cohesion(conn, comm_set):
 
 
 def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster, cluster_label_cache, cluster_cohesion_cache):
-    """Analyze a single symbol and return its result dict."""
+    """Analyze a single symbol and return its result dict.
+
+    W1245 Pattern-2 variant-D: the returned dict carries ``resolution`` +
+    ``partial_success`` so the per-entry payload discloses which resolver
+    tier landed the match. Unresolved targets emit an explicit
+    ``resolution="unresolved"`` entry; fuzzy LIKE-fallback matches flip
+    ``partial_success`` so success payloads aren't indistinguishable from
+    exact-match successes.
+    """
     sym = find_symbol(conn, name)
     if sym is None:
-        return {"name": name, "error": f"Symbol not found: {name}"}
+        return {
+            "name": name,
+            "error": f"Symbol not found: {name}",
+            **resolution_disclosure("unresolved", target=name),
+        }
 
     sym_id = sym["id"]
+    resolution_tier = sym.get("_resolution_tier", "symbol")
 
     gm = conn.execute(
         "SELECT in_degree, out_degree, betweenness, pagerank FROM graph_metrics WHERE symbol_id = ?",
@@ -175,9 +201,12 @@ def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster, cluster_labe
         cluster_cohesion = cluster_cohesion_cache[sym_cluster_id]
 
     verdict_text = _verdict(role, reach, in_deg, out_deg, critical, len(affected_files))
+    resolved_name = sym["qualified_name"] or sym["name"]
+    if resolution_tier == "fuzzy":
+        verdict_text = f"{verdict_text} [fuzzy resolution]"
 
     return {
-        "name": sym["qualified_name"] or sym["name"],
+        "name": resolved_name,
         "kind": sym["kind"],
         "location": loc(sym["file_path"], sym["line_start"]),
         "role": role,
@@ -192,6 +221,8 @@ def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster, cluster_labe
         "cluster_size": cluster_size,
         "cluster_cohesion": cluster_cohesion,
         "verdict": verdict_text,
+        # W1245 Pattern-2 variant-D per-entry resolver disclosure.
+        **resolution_disclosure(resolution_tier, target=resolved_name),
     }
 
 
@@ -212,15 +243,40 @@ def _detect_communities(G) -> list[set]:
 
 
 def _emit_why_json(results: list[dict]) -> None:
-    """JSON envelope for the why command — single OR multi-symbol."""
+    """JSON envelope for the why command — single OR multi-symbol.
+
+    W1245 Pattern-2 variant-D: per-entry disclosure rides on each entry
+    in ``symbols[]`` (set in ``_analyze_symbol``). Top-level
+    ``partial_success`` flips when ANY entry resolved non-exactly so
+    LAW-6 single-field consumers see the degradation without parsing
+    the array. The single-target case mirrors that by suffixing the
+    verdict with ``[fuzzy resolution]`` when the lone entry is fuzzy.
+    """
     crit = sum(1 for r in results if r.get("critical"))
-    verdict = f"{crit} of {len(results)} symbol(s) critical" if crit else f"{len(results)} symbol(s) — none critical"
+    any_degraded = any(r.get("resolution", "symbol") != "symbol" for r in results)
+    base_verdict = (
+        f"{crit} of {len(results)} symbol(s) critical" if crit else f"{len(results)} symbol(s) — none critical"
+    )
+    # Single-target case: surface fuzzy resolution on the LAW-6 verdict line
+    # so editor consumers reading only the verdict see the disclosure.
+    fuzzy_suffix = ""
+    if len(results) == 1 and results[0].get("resolution") == "fuzzy":
+        fuzzy_suffix = " [fuzzy resolution]"
+    verdict = f"{base_verdict}{fuzzy_suffix}"
+
+    summary: dict[str, object] = {
+        "verdict": verdict,
+        "symbols": len(results),
+        "critical": crit,
+        "partial_success": any_degraded,
+    }
     click.echo(
         to_json(
             json_envelope(
                 "why",
-                summary={"verdict": verdict, "symbols": len(results), "critical": crit},
+                summary=summary,
                 symbols=results,
+                partial_success=any_degraded,
             )
         )
     )

@@ -156,12 +156,7 @@ def _ast_hash_bag(node) -> tuple[Counter, int]:
             else:
                 # Keywords, operators, punctuation — keep exact text
                 text = n.text if isinstance(n.text, bytes) else str(n.text).encode("utf-8", errors="replace")
-                h = _stable_hash(
-                    b"_tok_:"
-                    + n.type.encode("utf-8", errors="replace")
-                    + b":"
-                    + text
-                )
+                h = _stable_hash(b"_tok_:" + n.type.encode("utf-8", errors="replace") + b":" + text)
             bag[h] += 1
             return h
 
@@ -174,9 +169,7 @@ def _ast_hash_bag(node) -> tuple[Counter, int]:
         # Serialize child hashes as fixed-width little-endian bytes so the
         # resulting hash is stable across processes.
         children_bytes = b"".join(h.to_bytes(8, "big") for h in child_hashes)
-        h = _stable_hash(
-            b"_node_:" + n.type.encode("utf-8", errors="replace") + b":" + children_bytes
-        )
+        h = _stable_hash(b"_node_:" + n.type.encode("utf-8", errors="replace") + b":" + children_bytes)
         bag[h] += 1
         return h
 
@@ -373,9 +366,7 @@ def _extract_func_infos_from_file(file_row, min_lines: int, start_idx: int) -> l
 
     file_path = file_row["path"]
     project_root = find_project_root()
-    records = _extract_func_records_pickleable(
-        file_path, file_row["language"], str(project_root), min_lines
-    )
+    records = _extract_func_records_pickleable(file_path, file_row["language"], str(project_root), min_lines)
 
     out: list[_FuncInfo] = []
     idx = start_idx
@@ -427,9 +418,7 @@ def _parallel_extract_func_infos(
         all_records: list[tuple] = []
         for fr in file_rows:
             all_records.extend(
-                _extract_func_records_pickleable(
-                    fr["path"], fr["language"], project_root_str, min_lines
-                )
+                _extract_func_records_pickleable(fr["path"], fr["language"], project_root_str, min_lines)
             )
     else:
         # Parallel path — ProcessPool because work is CPU-bound (tree-sitter).
@@ -448,9 +437,7 @@ def _parallel_extract_func_infos(
             all_records = []
             for fr in file_rows:
                 all_records.extend(
-                    _extract_func_records_pickleable(
-                        fr["path"], fr["language"], project_root_str, min_lines
-                    )
+                    _extract_func_records_pickleable(fr["path"], fr["language"], project_root_str, min_lines)
                 )
 
     # Build _FuncInfo with deterministic idx assignment.
@@ -609,10 +596,7 @@ def _find_clone_pairs(
     # roam-code (1.99M pairs took 125s serial → 30s parallel, ratio holds
     # down to ~100K). Below that, the serial path wins.
     parallel_threshold = 100_000
-    use_parallel = (
-        not os.environ.get("ROAM_NO_PARALLEL")
-        and len(candidate_pairs) >= parallel_threshold
-    )
+    use_parallel = not os.environ.get("ROAM_NO_PARALLEL") and len(candidate_pairs) >= parallel_threshold
 
     if use_parallel:
         try:
@@ -622,10 +606,7 @@ def _find_clone_pairs(
             # Chunk pairs so each worker processes ~1000 comparisons per batch
             # — minimizes IPC overhead while keeping load balanced.
             chunk_size = max(500, len(candidate_pairs) // (workers * 4))
-            chunks = [
-                candidate_pairs[i : i + chunk_size]
-                for i in range(0, len(candidate_pairs), chunk_size)
-            ]
+            chunks = [candidate_pairs[i : i + chunk_size] for i in range(0, len(candidate_pairs), chunk_size)]
             with ProcessPoolExecutor(
                 max_workers=workers,
                 initializer=_pair_worker_init,
@@ -952,9 +933,7 @@ def _emit_clone_findings(conn, pairs: list[ClonePair]) -> None:
         # Below that, the pair shouldn't even reach store_clones (the
         # detector default threshold is 0.70) — but keep the gate explicit
         # for future callers that pass --threshold below the floor.
-        confidence = (
-            CONFIDENCE_STRUCTURAL if p.similarity >= 0.70 else "heuristic"
-        )
+        confidence = CONFIDENCE_STRUCTURAL if p.similarity >= 0.70 else "heuristic"
         claim = (
             f"{p.func_a} ({p.file_a}:{p.line_a}) is a structural clone of "
             f"{p.func_b} ({p.file_b}:{p.line_b}) — Jaccard {p.similarity:.2f}"

@@ -30,6 +30,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from roam.output.formatter import WarningsOut
+
 if TYPE_CHECKING:
     from roam.policy.suppression_v2 import FindingIdSuppression
 
@@ -143,7 +145,7 @@ def _parse_simple_ignore_findings_yaml(text: str) -> dict:
 def _load_ignore_findings_file(
     path: Path,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> list[dict]:
     """Load `.roamignore-findings` from ``path``. Returns ``[]`` on any error.
 
@@ -252,7 +254,7 @@ def _path_matches_glob(file_path: str, glob: str) -> bool:
 def _load_per_finding_suppressions(
     path: Path,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> dict[str, dict]:
     """Load `.roam/suppressions.json` keyed by finding_id.
 
@@ -318,7 +320,7 @@ def _load_per_finding_suppressions(
 def load_per_finding_suppressions_typed(
     path: Path,
     *,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> list[FindingIdSuppression]:
     """Typed counterpart of :func:`_load_per_finding_suppressions` (W723 Phase B-b).
 
@@ -359,7 +361,7 @@ def annotate_with_suppression(
     project_root: Path | None = None,
     ignore_findings_path: Path | None = None,
     suppressions_path: Path | None = None,
-    warnings_out: list[str] | None = None,
+    warnings_out: WarningsOut = None,
 ) -> tuple[list[dict], int]:
     """Mark findings that match a suppression rule. Returns ``(annotated, suppressed_count)``.
 

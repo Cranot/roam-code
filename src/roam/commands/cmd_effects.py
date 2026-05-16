@@ -1,4 +1,12 @@
-"""Show direct + transitive side effects of symbols."""
+"""Show direct + transitive side effects of symbols.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because effects outputs are invocation-scoped side-effect
+classification rollups (per-symbol io_read / io_write / mutation /
+process / none labels) — not per-location code violations. See
+action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH propagation
+plan + W1224-audit memo.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +34,14 @@ from roam.output.formatter import abbrev_kind, json_envelope, to_json
 )
 @click.command("effects")
 @click.argument("target", required=False, default=None)
-@click.option("--file", "file_path", default=None, help="Show effects per function in a file.")
+@click.option("--path", "file_path", default=None, help="Show effects per function in a file path.")
+@click.option(
+    "--file",
+    "file_path",
+    default=None,
+    hidden=True,
+    help="Deprecated alias for --path. Retained for backward compatibility.",
+)
 @click.option("--type", "effect_type", default=None, help="Filter by effect type (e.g. writes_db, network).")
 @click.option("--transitive/--direct-only", default=True, help="Include transitive effects (default: yes).")
 @click.pass_context
@@ -44,7 +59,7 @@ def effects(ctx, target, file_path, effect_type, transitive):
     \b
     Examples:
       roam effects create_user       # effects of a specific function
-      roam effects --file src/api.py  # effects per function in a file
+      roam effects --path src/api.py  # effects per function in a file
       roam effects --type writes_db   # all functions that write to DB
       roam effects --transitive login_user
 

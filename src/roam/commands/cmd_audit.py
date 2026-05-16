@@ -19,6 +19,21 @@ Each section runs the corresponding sub-command in --json mode and
 extracts a small set of high-signal fields. Failures from individual
 sections are surfaced as ``{"error": ...}`` rows so the audit never
 fails the whole report.
+
+Output formats: text (default) and ``--json``. ``audit`` does not expose
+a ``--sarif`` flag and does not emit a top-level SARIF document — it is
+a composite envelope spanning environment-scoped sections (test pyramid,
+API surface, coverage %) that have no source coordinates to populate
+SARIF ``locations[]``. SARIF is emitted by the composed subcommands
+(``cmd_complexity``, ``cmd_health``, ``cmd_dead``, etc.) when their own
+``--sarif`` flag fires directly. See ``cmd_doctor`` docstring for the
+parallel "no SARIF emission" disclosure pattern (W1085 / W1144 / W1145).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because audit outputs are invocation-scoped composite audit
+envelopes — not per-location violations. See action.yml
+_SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
++ W1148 audit memo.
 """
 
 from __future__ import annotations

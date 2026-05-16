@@ -18,7 +18,6 @@ These tests pin both fixes so we cannot regress.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from pathlib import Path
 
@@ -30,7 +29,6 @@ from roam.atomic_io import (
     atomic_write_text,
 )
 from tests._helpers.repo_root import repo_root
-
 
 # ---------------------------------------------------------------------------
 # atomic_io helper itself
@@ -134,9 +132,7 @@ def test_telemetry_open_creates_schema_atomically(tmp_path, monkeypatch):
     assert conn is not None
     try:
         # Schema must exist after _open returns.
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='calls'"
-        ).fetchall()
+        rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='calls'").fetchall()
         assert rows == [("calls",)]
     finally:
         conn.close()
@@ -159,9 +155,7 @@ def test_telemetry_record_writes_transactionally(tmp_path, monkeypatch):
     # Independently reopen the DB and confirm both rows are present
     # (i.e. both committed).
     with sqlite3.connect(str(db_path)) as conn:
-        rows = conn.execute(
-            "SELECT command, duration_ms, exit_code FROM calls ORDER BY id"
-        ).fetchall()
+        rows = conn.execute("SELECT command, duration_ms, exit_code FROM calls ORDER BY id").fetchall()
     assert rows == [("roam test", 42, 0), ("roam other", 99, 1)]
 
 
@@ -265,9 +259,7 @@ def test_atomic_io_module_uses_os_replace_not_rename():
     """Source-level invariant: ``atomic_io.py`` MUST use ``os.replace``
     (atomic on Windows) and never ``os.rename`` (raises on Windows
     when the target exists)."""
-    src = (repo_root() / "src" / "roam" / "atomic_io.py").read_text(
-        encoding="utf-8"
-    )
+    src = (repo_root() / "src" / "roam" / "atomic_io.py").read_text(encoding="utf-8")
     assert "os.replace" in src, "atomic_io must use os.replace"
     # ``os.rename`` would be a regression — guards against an accidental
     # downgrade in a future edit.

@@ -28,27 +28,19 @@ two different definitions must say different things).
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Impact / blast-radius family — shared by cmd_impact and cmd_preflight.
 # ---------------------------------------------------------------------------
 
-BLAST_RADIUS_AFFECTED_SYMBOLS = (
-    "transitive reverse-BFS over edges; bounded by --depth + --max-callers + --timeout."
-)
+BLAST_RADIUS_AFFECTED_SYMBOLS = "transitive reverse-BFS over edges; bounded by --depth + --max-callers + --timeout."
 
-BLAST_RADIUS_AFFECTED_FILES = (
-    "distinct file_path values of every symbol reached by the reverse-BFS."
-)
+BLAST_RADIUS_AFFECTED_FILES = "distinct file_path values of every symbol reached by the reverse-BFS."
 
 WEIGHTED_IMPACT_DEFINITION = (
-    "sum of personalized PageRank (alpha=0.85) over the reverse-graph from the target,"
-    " rounded to 6 decimals."
+    "sum of personalized PageRank (alpha=0.85) over the reverse-graph from the target, rounded to 6 decimals."
 )
 
-REACH_PCT_DEFINITION = (
-    "affected_symbols / total_symbols_in_graph * 100, rounded to 1 decimal."
-)
+REACH_PCT_DEFINITION = "affected_symbols / total_symbols_in_graph * 100, rounded to 1 decimal."
 
 
 # ---------------------------------------------------------------------------
@@ -59,13 +51,9 @@ COGNITIVE_COMPLEXITY_DEFINITION = (
     "SonarSource-compatible cognitive complexity from symbol_metrics.cognitive_complexity."
 )
 
-CYCLOMATIC_COMPLEXITY_DEFINITION = (
-    "McCabe cyclomatic complexity (decision points + 1)."
-)
+CYCLOMATIC_COMPLEXITY_DEFINITION = "McCabe cyclomatic complexity (decision points + 1)."
 
-NESTING_DEPTH_DEFINITION = (
-    "max nested block depth in the AST (if/for/while/try) from symbol_metrics.nesting_depth."
-)
+NESTING_DEPTH_DEFINITION = "max nested block depth in the AST (if/for/while/try) from symbol_metrics.nesting_depth."
 
 
 # ---------------------------------------------------------------------------
@@ -78,18 +66,14 @@ HEALTH_SCORE_DEFINITION = (
     " god_components, bottlenecks, layer_violations, file_health (+coverage if available)."
 )
 
-TANGLE_RATIO_DEFINITION = (
-    "fraction of symbols inside non-trivial SCCs; higher = more cyclic coupling."
-)
+TANGLE_RATIO_DEFINITION = "fraction of symbols inside non-trivial SCCs; higher = more cyclic coupling."
 
 
 # ---------------------------------------------------------------------------
 # Dead-export family — cmd_dead.
 # ---------------------------------------------------------------------------
 
-DEAD_EXPORT_DEFINITION = (
-    "exported symbols (kind in function/class/method) with zero inbound edges in edges table."
-)
+DEAD_EXPORT_DEFINITION = "exported symbols (kind in function/class/method) with zero inbound edges in edges table."
 
 DEAD_EXPORT_ACTION_DEFINITION = (
     "SAFE = no production consumers (graph proof); REVIEW = heuristic (API/barrel/test-only);"
@@ -101,13 +85,9 @@ DEAD_EXPORT_ACTION_DEFINITION = (
 # Invariants family — cmd_invariants.
 # ---------------------------------------------------------------------------
 
-INVARIANTS_DEFINITION = (
-    "implicit contracts discovered from signature, param_count, caller-count, file-spread, callees."
-)
+INVARIANTS_DEFINITION = "implicit contracts discovered from signature, param_count, caller-count, file-spread, callees."
 
-BREAKING_RISK_DEFINITION = (
-    "caller_count * max(file_spread, 1) — heuristic damage score, NOT a probability."
-)
+BREAKING_RISK_DEFINITION = "caller_count * max(file_spread, 1) — heuristic damage score, NOT a probability."
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +110,7 @@ COVERAGE_PCT_DEFINITION = (
     "fraction of exported entry points with a BFS path (max --max-depth hops) to any --gate symbol."
 )
 
-GATE_VIOLATION_DEFINITION = (
-    "preset/config file-level rule violations: missing test file or test_count < min_required."
-)
+GATE_VIOLATION_DEFINITION = "preset/config file-level rule violations: missing test file or test_count < min_required."
 
 
 # ---------------------------------------------------------------------------

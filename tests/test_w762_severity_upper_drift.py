@@ -124,17 +124,21 @@ _PRE_W762_PENDING: dict[str, str] = {
     # SARIF downgrade risk is mitigated today by the preflight CLI
     # bypass path; the drift-guard pins the inventory so the
     # follow-up sprint sees an empty allowlist when it ships.
-    "cmd_preflight.py:175": (
+    # W1297: line numbers refreshed after session-introduced cmd_preflight
+    # edits shifted the existing sites (~10–65 lines down). The
+    # W759-pending migration backlog is unchanged; only the line cursor
+    # rebased.
+    "cmd_preflight.py:185": (
         "W759-pending: gate-decision verdict envelope; cmd_preflight "
         "canonical-severity migration in flight"
     ),
-    "cmd_preflight.py:290": (
-        "W759-pending: no-target safety envelope; same migration as L175"
+    "cmd_preflight.py:300": (
+        "W759-pending: no-target safety envelope; same migration as L185"
     ),
-    "cmd_preflight.py:312": (
-        "W759-pending: clean-pass envelope; same migration as L175"
+    "cmd_preflight.py:322": (
+        "W759-pending: clean-pass envelope; same migration as L185"
     ),
-    "cmd_preflight.py:790": (
+    "cmd_preflight.py:855": (
         "W759-pending: fitness severity fall-through default; lifts to "
         "canonical 'warning' alongside the helper migration"
     ),

@@ -243,8 +243,18 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
 
     from roam.rules.engine import evaluate_all
 
+    # W1036: plumb the per-file YAML-loader warnings up to the envelope so
+    # malformed rule files surface as actionable warnings instead of silent
+    # `_error` placeholders.
+    _rules_warnings: list[str] = []
     with open_db(readonly=True) as conn:
-        results = evaluate_all(rules_dir, conn, max_depth=depth, max_nodes=max_nodes)
+        results = evaluate_all(
+            rules_dir,
+            conn,
+            max_depth=depth,
+            max_nodes=max_nodes,
+            warnings_out=_rules_warnings,
+        )
 
     # Tally results
     total = len(results)
@@ -319,6 +329,12 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
         }
         if partial_success:
             summary_dict["partial_success"] = True
+        if _rules_warnings:
+            # W1036: surface loader warnings (malformed files that were
+            # skipped) so the agent doesn't see a green verdict that
+            # silently dropped half its rules.
+            summary_dict["warnings_out"] = list(_rules_warnings)
+            summary_dict["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
@@ -376,6 +392,11 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
             "had unresolved targets or missing clone index). Verdict reflects "
             "rules that DID run; consult evidence for partial cases."
         )
+
+    if _rules_warnings:
+        click.echo()
+        for w in _rules_warnings:
+            click.echo(f"WARNING: {w}")
 
     if ci_mode and failed_errors > 0:
         from roam.exit_codes import EXIT_GATE_FAILURE

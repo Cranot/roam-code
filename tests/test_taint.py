@@ -18,7 +18,6 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from tests._helpers.repo_root import repo_root
 from roam.security.taint_engine import (
     OPENVEX_JUSTIFICATIONS,
     OPENVEX_STATUSES,
@@ -30,6 +29,7 @@ from roam.security.taint_engine import (
     vex_justification_for,
     vex_justification_for_unreachable,
 )
+from tests._helpers.repo_root import repo_root
 from tests.conftest import make_src_project as _make_project
 
 # ---------------------------------------------------------------------------
@@ -287,8 +287,7 @@ class TestRunTaint:
                 findings = run_taint(conn, [rule])
             # Default permissive matcher flags the user wrapper.
             assert any(f.rule_id == "bare-name-fp" for f in findings), (
-                "Default qualified_only=False must still match bare names "
-                "(backwards-compat with pre-W454 behaviour)."
+                "Default qualified_only=False must still match bare names (backwards-compat with pre-W454 behaviour)."
             )
         finally:
             os.chdir(old_cwd)
@@ -334,10 +333,7 @@ class TestRunTaint:
                 qualified_only=True,
             )
             with open_db(readonly=True) as conn:
-                strict_findings = [
-                    f for f in run_taint(conn, [rule_strict])
-                    if f.rule_id == "qual-only-strict"
-                ]
+                strict_findings = [f for f in run_taint(conn, [rule_strict]) if f.rule_id == "qual-only-strict"]
 
             rule_permissive = TaintRule(
                 rule_id="qual-only-permissive",
@@ -349,8 +345,7 @@ class TestRunTaint:
             )
             with open_db(readonly=True) as conn:
                 permissive_findings = [
-                    f for f in run_taint(conn, [rule_permissive])
-                    if f.rule_id == "qual-only-permissive"
+                    f for f in run_taint(conn, [rule_permissive]) if f.rule_id == "qual-only-permissive"
                 ]
 
             # The locking assertion: with qualified_only=true the user
@@ -366,8 +361,7 @@ class TestRunTaint:
             )
             # The strict variant must NOT flag the user-defined wrapper.
             assert strict_findings == [], (
-                f"qualified_only=true must NOT flag bare-name user "
-                f"wrappers — saw {strict_findings}"
+                f"qualified_only=true must NOT flag bare-name user wrappers — saw {strict_findings}"
             )
         finally:
             os.chdir(old_cwd)
@@ -390,16 +384,12 @@ class TestRunTaint:
             )
             rules = load_rules(yaml_dir)
             assert len(rules) == 1
-            assert rules[0].qualified_only is True, (
-                f"qualified_only spelling {spelling!r} should coerce to True"
-            )
+            assert rules[0].qualified_only is True, f"qualified_only spelling {spelling!r} should coerce to True"
 
         # Default (missing key) stays False — backwards-compat.
         default_dir = tmp_path / "default"
         default_dir.mkdir()
-        (default_dir / "rule.yaml").write_text(
-            "id: q\nsinks:\n  - x\n", encoding="utf-8"
-        )
+        (default_dir / "rule.yaml").write_text("id: q\nsinks:\n  - x\n", encoding="utf-8")
         rules = load_rules(default_dir)
         assert rules[0].qualified_only is False
 
@@ -446,10 +436,7 @@ class TestRunTaint:
                 qualified_only=True,
             )
             with open_db(readonly=True) as conn:
-                findings = [
-                    f for f in run_taint(conn, [rule])
-                    if f.rule_id == "w467-bare-sink-strict"
-                ]
+                findings = [f for f in run_taint(conn, [rule]) if f.rule_id == "w467-bare-sink-strict"]
             assert findings == [], (
                 f"W467 regression: qualified_only=true with a bare-name sink "
                 f"must NO-OP, not match user DAO .executeQuery via "
@@ -510,10 +497,7 @@ class TestRunTaint:
                 qualified_only=True,
             )
             with open_db(readonly=True) as conn:
-                findings = [
-                    f for f in run_taint(conn, [rule])
-                    if f.rule_id == "w467-dotted"
-                ]
+                findings = [f for f in run_taint(conn, [rule]) if f.rule_id == "w467-dotted"]
             # The dotted sink must resolve to Statement.executeQuery —
             # the assertion is that ONLY the Statement-qualified hit
             # fires (not MyDao). MyDao.executeQuery has qualified
@@ -522,12 +506,10 @@ class TestRunTaint:
             for f in findings:
                 qn = f.sink_symbol.get("qualified_name", "")
                 assert "Statement.executeQuery" in qn, (
-                    f"W467 regression: dotted sink leaked onto a "
-                    f"non-matching qualified symbol: {f.sink_symbol}"
+                    f"W467 regression: dotted sink leaked onto a non-matching qualified symbol: {f.sink_symbol}"
                 )
                 assert "MyDao" not in qn, (
-                    f"W467 regression: dotted Statement.executeQuery "
-                    f"matched MyDao.executeQuery: {f.sink_symbol}"
+                    f"W467 regression: dotted Statement.executeQuery matched MyDao.executeQuery: {f.sink_symbol}"
                 )
         finally:
             os.chdir(old_cwd)
@@ -571,15 +553,12 @@ class TestRunTaint:
                 qualified_only=False,
             )
             with open_db(readonly=True) as conn:
-                findings = [
-                    f for f in run_taint(conn, [rule])
-                    if f.rule_id == "w467-permissive"
-                ]
+                findings = [f for f in run_taint(conn, [rule]) if f.rule_id == "w467-permissive"]
             # Permissive: the user wrapper hit SHOULD still fire.
             assert len(findings) >= 1, (
-                f"W467 permissive regression: qualified_only=false "
-                f"should still flag a top-level bare-name user wrapper. "
-                f"Got 0 findings."
+                "W467 permissive regression: qualified_only=false "
+                "should still flag a top-level bare-name user wrapper. "
+                "Got 0 findings."
             )
         finally:
             os.chdir(old_cwd)
@@ -696,7 +675,6 @@ class TestTaintCLI:
         least one rule_id in the built-in rules pack. Without this
         check, deserialization could silently filter to zero rules
         and emit "No rules" without explaining why."""
-        from pathlib import Path
 
         import roam
         from roam.security.taint_engine import load_rules

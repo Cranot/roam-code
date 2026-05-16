@@ -58,29 +58,55 @@ def find_k_paths(G: nx.DiGraph, source_id: int, target_id: int, k: int = 3) -> l
         return []
 
 
-def find_symbol_id(conn: sqlite3.Connection, name: str) -> list[int]:
-    """Find symbol IDs matching *name*.
+def find_symbol_id_with_tier(conn: sqlite3.Connection, name: str) -> tuple[list[int], str]:
+    """W1249: find symbol IDs *and* disclose which resolver tier fired.
 
-    Searches by exact ``name`` first, then by ``qualified_name``.  If neither
-    matches, performs a ``LIKE`` search.  Returns a (possibly empty) list of
-    matching symbol IDs.
+    Same 3-rung chain as :func:`find_symbol_id` (exact ``name`` -> exact
+    ``qualified_name`` -> fuzzy ``LIKE`` LIMIT 50) but returns
+    ``(ids, tier)`` where ``tier`` is one of the W1241 closed-enum kinds:
+
+    * ``"symbol"`` -- one of the two exact-name rungs hit
+    * ``"fuzzy"``  -- the LIKE fallback hit
+    * ``"unresolved"`` -- no rung returned any rows
+
+    Callers that already discriminate tier (cmd_trace, W1248) should switch
+    to this helper and drop the local ``_detect_resolution_tier`` boilerplate
+    that re-asked the same exact queries. :func:`find_symbol_id` remains the
+    backwards-compatible single-return wrapper for callers that don't need
+    the tier.
     """
     # Exact name match
     rows = conn.execute("SELECT id FROM symbols WHERE name = ?", (name,)).fetchall()
     if rows:
-        return [r[0] for r in rows]
+        return [r[0] for r in rows], "symbol"
 
     # Exact qualified name match
     rows = conn.execute("SELECT id FROM symbols WHERE qualified_name = ?", (name,)).fetchall()
     if rows:
-        return [r[0] for r in rows]
+        return [r[0] for r in rows], "symbol"
 
     # Fuzzy / LIKE search
     rows = conn.execute(
         "SELECT id FROM symbols WHERE name LIKE ? OR qualified_name LIKE ? LIMIT 50",
         (f"%{name}%", f"%{name}%"),
     ).fetchall()
-    return [r[0] for r in rows]
+    ids = [r[0] for r in rows]
+    return ids, ("fuzzy" if ids else "unresolved")
+
+
+def find_symbol_id(conn: sqlite3.Connection, name: str) -> list[int]:
+    """Find symbol IDs matching *name*.
+
+    Searches by exact ``name`` first, then by ``qualified_name``.  If neither
+    matches, performs a ``LIKE`` search.  Returns a (possibly empty) list of
+    matching symbol IDs.
+
+    Backwards-compatible single-return wrapper around
+    :func:`find_symbol_id_with_tier`; callers that need the W1249 resolution
+    tier should call the tiered helper directly.
+    """
+    ids, _ = find_symbol_id_with_tier(conn, name)
+    return ids
 
 
 def format_path(path: list[int], conn: sqlite3.Connection) -> list[dict]:

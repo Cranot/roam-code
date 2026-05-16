@@ -9,6 +9,13 @@ invalidates the suppression still surfaces in JSON output.
 
 Companion paths to per-file inline annotations + ``.roamignore-findings``
 (see :mod:`roam.commands.finding_suppress`).
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because ``roam suppress`` operates on substrate state in ``.roam/``
+(suppression records) — not code locations or per-location violations.
+The state is consumed by other roam commands + agent runtimes directly
+from disk; SARIF would be redundant. See action.yml _SUPPORTED_SARIF
+allowlist + W1181-audit memo.
 """
 
 from __future__ import annotations

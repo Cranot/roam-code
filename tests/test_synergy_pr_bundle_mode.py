@@ -11,7 +11,6 @@ emit proceeds as today.
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, parse_json_output  # noqa: E402
 
 from roam.modes import set_active_mode  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -43,9 +41,7 @@ def bundle_project(tmp_path, monkeypatch):
     (proj / ".gitignore").write_text(".roam/\n")
     (proj / "main.py").write_text("def hello():\n    return 'hi'\n")
     git_init(proj)
-    subprocess.run(
-        ["git", "checkout", "-B", "test-branch"], cwd=proj, capture_output=True
-    )
+    subprocess.run(["git", "checkout", "-B", "test-branch"], cwd=proj, capture_output=True)
     monkeypatch.chdir(proj)
     # Clear any inherited env mode so the test owns mode state via
     # .roam/active_mode (the policy module's "file" precedence tier).
@@ -75,9 +71,7 @@ def _bundle_file(proj: Path, branch: str = "test-branch") -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_pr_bundle_emit_in_read_only_mode_returns_restricted(
-    cli_runner, bundle_project
-):
+def test_pr_bundle_emit_in_read_only_mode_returns_restricted(cli_runner, bundle_project):
     """read_only mode: emit refuses; state=mode_restricted; bundle untouched."""
     _init_minimal_bundle(cli_runner)
     set_active_mode(bundle_project, "read_only")

@@ -15,14 +15,45 @@ output uses ``json_envelope`` with ``summary.value`` (``true|false|null``),
 ``summary.reason``, ``summary.reason_class``, and ``summary.confidence``.
 The tri-state shape lets agents distinguish "we proved no" from "we
 can't tell" — a distinction that flat booleans were collapsing.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because oracle outputs are invocation-scoped boolean verdicts
+(value, reason, reason_class) — a single answer per invocation, not
+per-location violations. SARIF requires ``locations[]``. See action.yml
+_SUPPORTED_SARIF allowlist and W1154 audit memo.
 """
 
 from __future__ import annotations
 
+import difflib
 import sqlite3
 from dataclasses import dataclass
 
 import click
+
+# W1079: known oracle names for the batch runner. Hardcoded here (matched
+# against the ``name`` dispatched in ``oracle_batch_cmd``) so closest-match
+# suggestions stay in lockstep with the if/elif chain. Sorted for
+# deterministic suggestion ordering when difflib returns multiple matches
+# of equal score. If a new oracle is added below, extend this tuple.
+_KNOWN_ORACLE_NAMES: tuple[str, ...] = (
+    "is-clone-of",
+    "is-reachable-from-entry",
+    "is-test-only",
+    "route-exists",
+    "symbol-exists",
+)
+
+
+def _suggest_oracle_names(name: str) -> list[str]:
+    """Return up to 2 close-match oracle names for ``name``.
+
+    Mirrors the W1064 ``cmd_math._suggest_unknown`` algorithm
+    (``cutoff=0.6, n=2``) adapted to a tiny (~5-entry) fixed
+    vocabulary. Empty list when no match clears the cutoff.
+    """
+    return difflib.get_close_matches(name, _KNOWN_ORACLE_NAMES, n=2, cutoff=0.6)
+
 
 from roam.capability import roam_capability
 from roam.commands.cmd_dead import _scaffolding_signals
@@ -386,9 +417,7 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
             chunk = frontier[chunk_start : chunk_start + 400]
             placeholders = ",".join("?" * len(chunk))
             rows = conn.execute(
-                f"SELECT target_id FROM edges "
-                f"WHERE source_id IN ({placeholders}) "
-                f"  AND {call_or_ref_in_clause()}",
+                f"SELECT target_id FROM edges WHERE source_id IN ({placeholders})   AND {call_or_ref_in_clause()}",
                 chunk,
             ).fetchall()
             for r in rows:
@@ -530,10 +559,10 @@ def oracle() -> None:
 
 
 @oracle.command("symbol-exists")
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL")
 @click.pass_context
 def symbol_exists_cmd(ctx, name: str) -> None:
-    """Does a symbol with this name exist?"""
+    """Does a symbol with this identifier exist?"""
     ensure_index()
     with open_db(readonly=True) as conn:
         result = oracle_symbol_exists(conn, name)
@@ -552,10 +581,10 @@ def route_exists_cmd(ctx, path: str) -> None:
 
 
 @oracle.command("is-test-only")
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL")
 @click.pass_context
 def is_test_only_cmd(ctx, name: str) -> None:
-    """Are all callers of this symbol in test files?"""
+    """Are all callers of SYMBOL in test files?"""
     ensure_index()
     with open_db(readonly=True) as conn:
         result = oracle_is_test_only(conn, name)
@@ -569,11 +598,11 @@ def is_test_only_cmd(ctx, name: str) -> None:
 
 
 @oracle.command("is-reachable-from-entry")
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL")
 @click.option("--max-hops", type=int, default=10, help="BFS depth cap (default 10).")
 @click.pass_context
 def is_reachable_cmd(ctx, name: str, max_hops: int) -> None:
-    """Is the symbol reachable from any entry point via the call graph?"""
+    """Is SYMBOL reachable from any entry point via the call graph?"""
     ensure_index()
     with open_db(readonly=True) as conn:
         result = oracle_is_reachable_from_entry(conn, name, max_hops=max_hops)
@@ -588,10 +617,10 @@ def is_reachable_cmd(ctx, name: str, max_hops: int) -> None:
 
 
 @oracle.command("is-clone-of")
-@click.argument("name")
+@click.argument("name", metavar="SYMBOL")
 @click.pass_context
 def is_clone_of_cmd(ctx, name: str) -> None:
-    """Does this symbol have persisted clone siblings?"""
+    """Does SYMBOL have persisted clone siblings?"""
     ensure_index()
     with open_db(readonly=True) as conn:
         result = oracle_is_clone_of(conn, name)
@@ -661,7 +690,17 @@ def oracle_batch_cmd(ctx, input_path: str) -> None:
                     elif name == "is-clone-of":
                         r = oracle_is_clone_of(conn, args["name"])
                     else:
-                        results.append({"line": line_no, "error": f"unknown oracle '{name}'"})
+                        # W1079: surface difflib closest-match suggestions
+                        # on the per-line result row so a typo
+                        # ("symbol_exists" → "symbol-exists") gets a hint
+                        # instead of silently dropping the query.
+                        did_you_mean = _suggest_oracle_names(name)
+                        row: dict = {
+                            "line": line_no,
+                            "error": f"unknown oracle '{name}'",
+                            "did_you_mean": did_you_mean,
+                        }
+                        results.append(row)
                         continue
                 results.append(
                     {
@@ -696,7 +735,13 @@ def oracle_batch_cmd(ctx, input_path: str) -> None:
     click.echo(f"{'-' * 4}  {'-' * 24}  {'-' * 6}  {'-' * 30}")
     for r in results:
         if "error" in r:
-            click.echo(f"{r.get('line', 0):>4}  {'(error)':<24}  {'-':<6}  {r['error']}")
+            # W1079: text-mode hint when did_you_mean has close matches.
+            err_text = r["error"]
+            dym = r.get("did_you_mean") or []
+            if dym:
+                quoted = " or ".join(f"'{m}'" for m in dym)
+                err_text = f"{err_text}. Did you mean: {quoted}?"
+            click.echo(f"{r.get('line', 0):>4}  {'(error)':<24}  {'-':<6}  {err_text}")
             continue
         if r["answer"] is True:
             ans = "yes"

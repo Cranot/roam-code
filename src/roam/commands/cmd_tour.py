@@ -13,6 +13,13 @@ The ``--mermaid`` flag is also available there (``roam understand --tour
 Helper functions in this module (``_top_symbols``, ``_reading_order``,
 ``_entry_points``, ``_tour_mermaid``) are imported by
 ``roam.commands.cmd_understand`` and must not be removed.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because tour outputs are invocation-scoped topological
+onboarding rankings — not per-location violations. Editor consumers
+should use the JSON envelope directly. See action.yml _SUPPORTED_SARIF
+allowlist + W1175-RESEARCH Bucket B propagation plan + W1148 audit
+memo.
 """
 
 from __future__ import annotations

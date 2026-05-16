@@ -1,4 +1,11 @@
-"""Show detected clusters and directory mismatches."""
+"""Show detected clusters and directory mismatches.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted because clusters outputs are invocation-scoped cluster rankings
+— not per-location violations. Multi-file expansion would distort SARIF
+semantics. See action.yml _SUPPORTED_SARIF allowlist + W1175-RESEARCH
+Bucket B propagation plan + W1148 audit memo.
+"""
 
 from __future__ import annotations
 
