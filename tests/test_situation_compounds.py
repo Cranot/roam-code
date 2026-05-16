@@ -132,10 +132,12 @@ def test_for_security_review_envelope_no_symbol():
     r = for_security_review(symbol="")
     _assert_compound_envelope(r, "for-security-review", "security_review")
     sections = r["summary"]["sections"]
-    # taint + vuln + critique + adversarial should all be present
+    # W1294: taint + vulns + critique + adversarial should all be present.
+    # Updated from "vuln" → "vulns" — CLAUDE.md Pattern 5 fix that
+    # renamed the compound's internal call to the canonical CLI name.
     # (each may individually have an error if the relevant data isn't
-    # populated, but they should at least try to run).
-    expected = {"taint", "vuln", "critique", "adversarial"}
+    # populated, but they should at least try to run.)
+    expected = {"taint", "vulns", "critique", "adversarial"}
     actual = set(sections) | {e["command"] for e in r.get("errors", [])}
     missing = expected - actual
     assert not missing, f"missing security sub-cmds: {missing}"
