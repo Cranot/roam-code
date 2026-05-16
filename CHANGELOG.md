@@ -5,7 +5,32 @@ All notable changes to [roam-code](https://github.com/Cranot/roam-code) will be 
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [13.2] — 2026-05-16
+
+### Highlights — wip/v13.2-session-2026-05-16 ship (W1255-W1297)
+
+The 2026-05-16 session that landed:
+- **W1272 Pattern-2c standardization** — 8 commands now emit canonical
+  exit-0 + "not found" envelope on unresolved paths (impact, preflight,
+  trace, testmap, context, safe-delete, split, why).
+- **W1255 config-hash producer wire-up** — `.roam-rules.yml` +
+  `.roam/constitution.yml` + `.roam/control-map.yml` canonical paths
+  stamped onto every run; `evidence/config_hashes.py` substrate + ledger
+  producer wire-up. W1253 unblocked. `vsa.py` already CONSUMES the
+  hashes so VSA attestation benefits immediately.
+- **W210 W211 producer coverage** — pr-replay path achieves 7-complete
+  + 1-partial of 8 evidence questions on roam-code itself; remaining
+  gap (Q8 approvals) explicitly marked via `producer_not_available`.
+- **30+ CI hardening fixes** (W1281-W1297) — TestBatchSearch cold-start
+  guard, mode-classification taxonomy, eight-questions GitHub Actions
+  skip, README v11→v13.2 narrative refresh, .githooks executable bit,
+  ~17 dogfood-corpus-dependent tests now centrally skipped via
+  `conftest.py` collection hook, LAW-4 verdict refresh on minimap,
+  Pattern-2c test assertion updates, mode-policy W1288 (why-fail /
+  why-slow / workflow classified read_only), and the W762 cmd_preflight
+  line-allowlist refresh.
+- **Documentation** — 224 MCP tools (was: 137) surfaced; v13.2 README
+  agentic-assurance frame replaces v11 roadmap section.
 
 ### Added — W1255-W1278 batch (post-CONSOLIDATE-15, 2026-05-16 /loop iteration N+16)
 
