@@ -62,6 +62,7 @@ from pathlib import Path
 # from the W95 detector. Importing keeps the two detectors in sync as
 # new languages add function-node kinds.
 from roam.graph.clone_detect import (
+    _CLONE_ELIGIBLE_LANGUAGES,
     _SKIP_TYPES,
     _find_function_nodes,
     _get_function_body,
@@ -261,11 +262,15 @@ def _fetch_candidate_files(conn: sqlite3.Connection, scope: str | None):
     """Pull (id, path, language) rows for files we should re-parse.
 
     Mirrors ``roam.graph.clone_detect._fetch_candidate_files`` — same
-    columns + same scope semantics so both detectors see the same
-    candidate set.
+    columns + same scope semantics + same ``_CLONE_ELIGIBLE_LANGUAGES``
+    allowlist so both detectors see the same candidate set.
     """
-    sql = "SELECT f.id, f.path, f.language FROM files f WHERE f.language IS NOT NULL"
-    params: list = []
+    placeholders = ",".join("?" * len(_CLONE_ELIGIBLE_LANGUAGES))
+    sql = (
+        f"SELECT f.id, f.path, f.language FROM files f "
+        f"WHERE f.language IN ({placeholders})"
+    )
+    params: list = sorted(_CLONE_ELIGIBLE_LANGUAGES)
     if scope:
         scope_norm = scope.replace("\\", "/")
         sql += " AND f.path LIKE ?"
