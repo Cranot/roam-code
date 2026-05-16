@@ -31,8 +31,6 @@ import os as _os
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output  # noqa: E402
 
@@ -147,15 +145,6 @@ def test_ts_function_consumed_by_vue_not_flagged_dead(project_factory, cli_runne
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "W1284: pre-existing bug -- Vue template-only consumption produces "
-        "no import edge under the current relations resolver. Failing since "
-        "v13.0 (commit 850552af); v13.1 shipped with this test red on main. "
-        "Not introduced by v13.2 session work. W1284 tracks the real fix."
-    ),
-    strict=False,
-)
 def test_ts_function_consumed_only_by_vue_template_NOT_flagged(project_factory, cli_runner):
     """A TS export imported in ``<script setup>`` and used only in ``<template>``.
 
