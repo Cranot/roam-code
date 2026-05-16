@@ -274,13 +274,22 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Wait for CDN propagation
-        # PyPI can take ~30s to surface a freshly-uploaded version on
-        # the JSON API; pip's index resolver hits the same edge.
-        run: sleep 45
-
-      - name: Install + verify
-        run: python scripts/verify_release.py --pypi --install
+      - name: Install + verify (with CDN-propagation retry)
+        # W1089: PyPI's CDN can take 30-90s to surface a freshly-uploaded
+        # version; pip's index resolver hits the same edge. Retry with
+        # exponential backoff instead of a fixed ``sleep 45`` — fast path
+        # exits in ~10s when CDN is already warm; slow path covers the
+        # tail without over-waiting on the common case. Cumulative cap
+        # 160s before final attempt fails the step.
+        run: |
+          set +e
+          for delay in 10 15 30 45 60; do
+            python scripts/verify_release.py --pypi --install && exit 0
+            echo "::notice::CDN not warm yet — retrying in ${delay}s"
+            sleep "$delay"
+          done
+          set -e
+          python scripts/verify_release.py --pypi --install
 
       - name: Verify production security headers
         run: python scripts/verify_release.py --headers
