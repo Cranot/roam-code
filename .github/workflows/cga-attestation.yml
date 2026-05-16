@@ -69,10 +69,16 @@ jobs:
         env:
           COSIGN_PASSWORD: ''
         run: |
+          # W1302: --allow-dirty needed because `roam index` + `roam clones
+          # --persist` + cosign keypair generation all write artifacts into
+          # the working tree, and `cosign.key` / `.roam/index.db` are not
+          # part of the source commit. The dirty-hash is recorded in the
+          # predicate explicitly per cmd_cga.py guidance.
           roam cga emit \
             --include-taint \
             --sign \
             --key cosign.key \
+            --allow-dirty \
             --output .roam/cga-offline.intoto.json
 
       - name: Verify CGA statement (offline round-trip)
@@ -143,10 +149,13 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: '1'
         run: |
+          # W1302: see offline-key job for --allow-dirty rationale
+          # (.roam/index.db not committed, dirty tree by design).
           roam cga emit \
             --include-taint \
             --sign \
             --keyless \
+            --allow-dirty \
             --output .roam/cga-keyless.intoto.json
 
       - name: Verify keyless (Fulcio + Rekor round-trip)

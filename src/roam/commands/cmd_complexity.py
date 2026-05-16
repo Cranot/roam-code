@@ -326,7 +326,9 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
             if json_mode:
                 summary_empty: dict = {
                     "verdict": verdict,
-                    "total": 0,
+                    # W1298: LAW-4 concrete-noun anchor; "total" terminates
+                    # the auto-derived fact on the value (digit), not a noun.
+                    "functions": 0,
                     "state": "no_complexity_data",
                 }
                 if warnings:
@@ -434,7 +436,10 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 return
             verdict = "No matching symbols found."
             if json_mode:
-                summary_norows: dict = {"verdict": verdict, "total": 0}
+                # W1298: use "functions" (LAW-4 concrete-noun anchor) over
+                # "total" so the auto-derived fact terminal is in the
+                # accepted set (test_w806_complexity_empty_corpus pin).
+                summary_norows: dict = {"verdict": verdict, "functions": 0}
                 if warnings:
                     summary_norows["partial_success"] = True
                 click.echo(

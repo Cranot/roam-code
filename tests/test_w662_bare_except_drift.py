@@ -126,41 +126,20 @@ _GUARDED_DIRS: tuple[str, ...] = (
 # ``test_pre_w662_pending_entries_still_have_pattern`` assertion below
 # will catch entries that have already been migrated.
 _PRE_W662_PENDING: dict[str, str] = {
-    # Plugin-isolation perimeter — a third-party plugin detector can
-    # legitimately raise any class of exception and the host loop must
-    # survive. Narrow to ``except Exception`` (already done) keeps the
-    # host running while one plugin is broken; the surrounding comment
-    # explicitly documents this as the intent. Re-audit if the plugin
-    # protocol grows a structured error envelope (then we could narrow
-    # to that envelope's exception class).
-    "catalog/detectors.py:2044": (
-        "plugin-isolation perimeter: framework-detector plugin loop, one bad plugin must not break host detection"
-    ),
-    "catalog/detectors.py:2048": (
-        "plugin-isolation perimeter: outer wrap of plugin discovery, same plugin-isolation rationale as the inner loop"
-    ),
-    # W679 narrowed `catalog/detectors.py:4165` to
-    # ``(sqlite3.Error, KeyError, TypeError)`` — the OTel
-    # runtime-enrichment merge legitimately tolerates missing
-    # ``runtime_stats`` table, partial-migration column sets, and
-    # non-numeric legacy blobs. Programmer-class errors now propagate.
-    # W678 narrowed `security/taint_engine.py:133` to ``ValueError`` —
-    # the in-tree zero-dep parser is the only path today and raises
-    # ``ValueError`` exclusively (see ``_parse_yaml_subset``).
-    # W677 narrowed `output/formatter.py:420` to (ImportError, RuntimeError)
-    # and `output/formatter.py:905` to (ImportError, AttributeError); both
-    # sites are no longer bare-swallow.
+    # W1300 — entries refreshed after session edits to runs/ledger.py + the
+    # W746 plugin-isolation migration. Two changes:
+    #   1. ``catalog/detectors.py:2044`` + ``:2048`` were the plugin-loop
+    #      perimeters — those sites were migrated to ``except Exception as
+    #      err: log.warning(...)`` (no longer bare-swallow). Dropped.
+    #   2. ``runs/ledger.py`` lines shifted +18/+18/+18 after W1255
+    #      config-hash stamping was inserted around line 250; the same
+    #      cryptographic-substrate isolation rationale applies. Refresh
+    #      :315 -> :333 and :386 -> :404. :238 is unshifted.
     # ------------------------------------------------------------------
-    # W746 (W740 drive-by) — substrate dirs added to ``_GUARDED_DIRS``.
-    # Audit summary: 8 offenders surfaced across 4 of the 8 new dirs.
-    # 5 sites were narrowed inline (collector x2 -> OSError;
-    # github_reviews -> (ImportError, AttributeError); leases/store ->
-    # OSError; plugins/__init__ -> (AttributeError, KeyError)). The
-    # 3 entries below grandfather the cryptographic-substrate isolation
-    # perimeters in ``runs/ledger.py`` where the surrounding comments
-    # explicitly mandate that ANY failure of the signing subsystem
-    # must not block ledger writes — narrowing would contradict the
-    # intent. Re-audit when ``verify_chain`` grows a structured
+    # W746-original rationale carried over: the surrounding comments in
+    # runs/ledger.py explicitly mandate that ANY failure of the signing
+    # subsystem must not block ledger writes — narrowing would contradict
+    # the intent. Re-audit when ``verify_chain`` grows a structured
     # "unsigned event" diagnostic (then we could narrow these to the
     # specific raises of ``ensure_ledger_key`` and
     # ``compute_event_signature``).
@@ -171,17 +150,17 @@ _PRE_W662_PENDING: dict[str, str] = {
         "(OSError, ImportError) once the key-substrate failure modes "
         "are documented as a closed set)"
     ),
-    "runs/ledger.py:315": (
+    "runs/ledger.py:333": (
         "cryptographic-substrate isolation perimeter: HMAC signing of a "
         "new event must NEVER prevent the event from being recorded; "
-        "verify_chain flags unsigned events (W746; same narrowing path "
-        "as line 238)"
+        "verify_chain flags unsigned events (W746/W1300; same narrowing "
+        "path as line 238)"
     ),
-    "runs/ledger.py:386": (
+    "runs/ledger.py:404": (
         "cryptographic-substrate isolation perimeter: stamping final "
         "signature into meta.json on end_run must not crash the close; "
         "an unsigned/legacy chain legitimately yields None here "
-        "(W746; same narrowing path as line 238)"
+        "(W746/W1300; same narrowing path as line 238)"
     ),
 }
 
