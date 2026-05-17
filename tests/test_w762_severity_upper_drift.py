@@ -60,12 +60,13 @@ Pre-W762 inventory
 ------------------
 
 A full AST walk across every ``cmd_*.py`` surfaces exactly 4
-blocked sites today, all in ``cmd_preflight.py``:
+blocked sites today, all in ``cmd_preflight.py`` (line numbers
+refreshed by W1297 + W847):
 
-* L175 ``"severity": "LOW"`` (gate-decision verdict)
-* L290 ``"severity": "LOW"`` (no-target safety envelope)
-* L312 ``"severity": "LOW"`` (clean-pass envelope)
-* L790 ``"severity": fitns.get("severity", "WARNING")`` (fitness
+* L199 ``"severity": "LOW"`` (gate-decision verdict)
+* L318 ``"severity": "LOW"`` (no-target safety envelope)
+* L340 ``"severity": "LOW"`` (clean-pass envelope)
+* L887 ``"severity": fitns.get("severity", "WARNING")`` (fitness
   fall-through default)
 
 Each is gated by the cmd_preflight migration in flight (see
@@ -79,6 +80,25 @@ comparison strings) per file - those are the W759-W761
 migration target, not the W762 PR-time-prevention scope. This
 drift-guard lints the PR-time leak surface (the envelope slot
 itself); the wider cleanup is a separate workstream.
+
+W847 scope clarification
+------------------------
+
+The wider cleanup (W759) targets ONLY the four envelope-slot sites
+above. Every other UPPER-case token in ``cmd_preflight.py`` —
+helper severity classifiers (``_blast_severity`` etc.), the
+``_SEVERITY_ORDER`` rank-table keys, the upstream kind tags
+(``DIRECT`` / ``TRANSITIVE`` / ``COLOCATED``), the rule-status
+``PASS`` / ``FAIL`` vocabulary, the canonical ``risk_level``
+rollup field (distinct from the ``severity`` slot), and the
+verdict-text comparison branches — is INTERNAL VOCABULARY for
+agent-facing risk-tier display. Those sites carry inline
+``# W847`` markers in the source and are intentionally out of
+W759 scope. Lowercasing them would degrade the agent-facing
+display contract without any SARIF / canonical-severity benefit
+(those literals never flow into a SARIF level-map). See the
+risk-level helpers section header in ``cmd_preflight.py`` for
+the full rationale.
 """
 
 from __future__ import annotations
@@ -126,24 +146,22 @@ _UPPER_SEVERITY_LITERALS: frozenset[str] = frozenset(
 # stale entries automatically.
 
 _PRE_W762_PENDING: dict[str, str] = {
-    # cmd_preflight — gate-decision envelopes still emit UPPER pending
-    # W759 (canonical-severity migration for cmd_preflight). The W531
-    # SARIF downgrade risk is mitigated today by the preflight CLI
-    # bypass path; the drift-guard pins the inventory so the
-    # follow-up sprint sees an empty allowlist when it ships.
-    # W1297: line numbers refreshed after session-introduced cmd_preflight
-    # edits shifted the existing sites (~10–65 lines down). The
-    # W759-pending migration backlog is unchanged; only the line cursor
-    # rebased.
-    "cmd_preflight.py:185": (
-        "W759-pending: gate-decision verdict envelope; cmd_preflight canonical-severity migration in flight"
-    ),
-    "cmd_preflight.py:300": ("W759-pending: no-target safety envelope; same migration as L185"),
-    "cmd_preflight.py:322": ("W759-pending: clean-pass envelope; same migration as L185"),
-    "cmd_preflight.py:855": (
-        "W759-pending: fitness severity fall-through default; lifts to "
-        "canonical 'warning' alongside the helper migration"
-    ),
+    # W759 sealed (W847 cleanup): all four cmd_preflight envelope-slot
+    # UPPER literals were lowercased to the canonical W547 vocabulary
+    # (gate-decision verdict envelope, no-target safety envelope,
+    # clean-pass envelope, fitness severity fall-through default).
+    # The remaining UPPER literals in cmd_preflight (helper returns,
+    # ``_SEVERITY_ORDER`` rank-table keys, kind tags like
+    # DIRECT/TRANSITIVE/COLOCATED, PASS/FAIL rule status, the
+    # ``risk_level`` canonical rollup field, and verdict-text
+    # comparison branches) are INTERNAL VOCABULARY for agent-facing
+    # risk-tier display and carry inline ``# W847`` markers in the
+    # source. They are NOT envelope-slot emissions and are
+    # intentionally out of W759 scope.
+    #
+    # Keep this dict in the source tree (rather than deleting it) so
+    # future commands flagged by the drift-guard have a clear
+    # extension point.
 }
 
 

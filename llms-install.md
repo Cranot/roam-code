@@ -2,7 +2,7 @@
 
 roam-code is the local CLI that runs pre-change gates before every agent edit and compiles post-change evidence packets that hash-verify offline.
 <!-- BEGIN auto-count:llms-install-headline -->
-238 commands, 224 MCP tools, 28 languages, 100% local, zero API keys.
+241 commands, 224 MCP tools, 28 languages, 100% local, zero API keys.
 <!-- END auto-count:llms-install-headline -->
 
 ## Documentation Hub
@@ -48,7 +48,7 @@ roam understand       # one-screen tour of the codebase
 ## MCP server setup
 
 The MCP server is the entry point `roam mcp` (requires the `[mcp]` extra).
-It exposes **57 tools in the core preset** and up to **169 in the `full` preset**.
+It exposes **57 tools in the core preset** and up to **224 in the `full` preset**.
 
 ### Claude Code
 ```bash
@@ -69,7 +69,7 @@ Add to your MCP config:
 }
 ```
 
-To enable the full 169-tool preset, set `ROAM_MCP_PRESET=full` in the server env.
+To enable the full 224-tool preset, set `ROAM_MCP_PRESET=full` in the server env.
 
 ## Requirements
 
@@ -142,5 +142,5 @@ roam tx-boundaries    begin/commit/rollback regions; flags unsafe_mutation outsi
 - `roam --sarif health` — SARIF 2.1.0 for GitHub Code Scanning / CI
 
 <!-- BEGIN auto-count:llms-install-footer -->
-Run `roam --help` for all 238 commands (+ alias pairs).
+Run `roam --help` for all 241 commands (+ alias pairs).
 <!-- END auto-count:llms-install-footer -->

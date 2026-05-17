@@ -1225,8 +1225,18 @@ def conventions(ctx, max_outliers, persist):
             violation_triples = wrap_findings(violation_list, classifier=_convention_classify)
             distribution = confidence_distribution(violation_triples)
             wrapped_verdict = verdict_with_high_count(verdict, distribution)
+            # W805-followup-E: empty-state disclosure (Pattern 2 silent-
+            # fallback fix). When naming_summary is empty the per-group
+            # symbol analysis ran against zero symbols; "consistent
+            # naming, no test files" is indistinguishable from "we
+            # analyzed nothing." Surface the degraded state explicitly.
+            empty_naming = not naming_summary
             summary = {
-                "verdict": wrapped_verdict,
+                "verdict": (
+                    "no symbols analyzed (corpus empty — run `roam index --force` to populate)"
+                    if empty_naming
+                    else wrapped_verdict
+                ),
                 "total_symbols_analyzed": sum(g["total"] for g in naming_summary.values()),
                 "naming_groups": len(naming_summary),
                 "outlier_count": len(outliers),
@@ -1237,6 +1247,9 @@ def conventions(ctx, max_outliers, persist):
                 "exported_pct": export_info["exported_pct"],
                 "findings_confidence_distribution": distribution,
             }
+            if empty_naming:
+                summary["partial_success"] = True
+                summary["state"] = "no_symbols_analyzed"
             click.echo(
                 to_json(
                     json_envelope(

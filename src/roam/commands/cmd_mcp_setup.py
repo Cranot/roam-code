@@ -221,9 +221,9 @@ def mcp_setup(ctx, platform, preset, write):
 
     \b
     Presets:
-      core          49 tools — default, balanced for daily agent use
+      core          57 tools — default, balanced for daily agent use
       compliance    13 tools — AI-governance evidence (taint, sbom, cga, …)
-      full          137 tools — every tool exposed
+      full          224 tools — every tool exposed
       review/refactor/debug/architecture — task-specific subsets
 
     \b

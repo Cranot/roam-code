@@ -29,16 +29,19 @@ from __future__ import annotations
 
 import json as _json
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, overload
+from typing import Any, Callable, Literal, Mapping, TypeVar, overload
 
 from roam.output.formatter import WarningsOut
 
 __all__ = [
     "WarningsOut",
     "append_warning",
+    "extract_typed",
     "load_yaml_with_warnings",
     "parse_rule_list",
 ]
+
+T = TypeVar("T")
 
 # Per-callsite schema validator. Receives the parsed object (dict, or
 # top-level list when ``allow_list_root=True``), returns an empty list on
@@ -78,6 +81,126 @@ def append_warning(
     if warnings_out is None:
         return
     warnings_out.append(f"{config_label}: {str(path)!r}: {body}")
+
+
+# W1038 — shared "load → check type → warn-or-default" extractor.
+def extract_typed(
+    config: Mapping[str, Any],
+    key: str,
+    expected_type: type[T] | tuple[type, ...],
+    default: T,
+    *,
+    warnings_out: WarningsOut = None,
+    context: str = "",
+    expected_shape: str = "",
+    validator: Callable[[T], bool] | None = None,
+) -> T:
+    """Extract a typed value from a config dict; warn + default on shape mismatch.
+
+    Captures the recurring W1019/W1019b/W1019c/W1019d/W1019e/W1036/W1051/W1052
+    micro-pattern: a top-level key is fetched from a parsed config mapping,
+    its type is checked, and on mismatch a structured warning is appended and
+    the default is returned. Without this helper the shape appeared 8+ times
+    across :mod:`cmd_check_rules`, :mod:`cmd_alerts`, :mod:`cmd_budget`,
+    :mod:`cmd_fitness`, :mod:`cmd_health`. W1038 consolidates the shape.
+
+    Parameters
+    ----------
+    config
+        Parsed config dict (the post-``load_yaml_with_warnings`` mapping).
+    key
+        Top-level key to extract.
+    expected_type
+        Class (or tuple of classes) the value must be an instance of. Use a
+        tuple to accept multiple shapes (e.g. ``(int, float)`` for numeric).
+        On mismatch the warning names ``expected_type.__name__`` when a single
+        class is supplied, or ``expected_shape`` when supplied (preferred for
+        tuple-typed checks where the joint name is more readable).
+    default
+        Value returned on key-absent, type-mismatch, or value-is-None paths.
+        On type-mismatch the warning includes ``{default!r}`` so the agent
+        can see the resolution.
+    warnings_out
+        Append-only accumulator (see :data:`WarningsOut`). When ``None``,
+        the helper stays silent — byte-identical to a pre-W1038 silent-empty
+        callsite. The silent path is an EXPLICIT opt-in for pre-Pattern-2
+        callers; never default-on warning emission.
+    context
+        Short prefix prepended to the warning (e.g. ``"fitness: 'rules.yaml'"``).
+        Mirrors the :func:`append_warning` ``{config_label}: {path!r}`` shape
+        callers already build — the helper does not enforce a format on it,
+        so callsites can carry their existing vocabulary.
+    expected_shape
+        Optional clause used in the warning body in place of the bare
+        ``expected_type.__name__``. Useful when the expected shape needs a
+        more descriptive phrasing than the bare class name (e.g.
+        ``"a list"`` for ``list`` to read naturally, or ``"a mapping"`` for
+        ``dict``). When empty, the helper uses ``expected_type.__name__``.
+    validator
+        Optional callable run on the value AFTER the type check passes.
+        Captures the recurring "right type but semantically empty / out of
+        range" sub-pattern (W1038-followup; e.g. ``isinstance(v, str) and
+        v.strip()`` for non-empty strings, ``isinstance(v, int) and v > 0``
+        for positive ints). When ``validator(value)`` returns ``False`` the
+        helper treats the value as a shape mismatch — returns ``default`` and
+        appends a warning using ``expected_shape`` if supplied (e.g.
+        ``"non-empty string"``) or the bare type name otherwise. Type-mismatch
+        always wins: an instance-of-wrong-type short-circuits before the
+        validator runs so the warning correctly names the type failure.
+
+    Returns
+    -------
+    The value at ``config[key]`` when it is an instance of ``expected_type``
+    AND ``validator(value)`` is ``True`` (when supplied); otherwise
+    ``default`` (key-absent OR shape-mismatch OR validator-fail — all paths
+    converge on the same resolution, the warning distinguishes them via
+    wording).
+
+    Warning shape (when ``warnings_out`` is set and the value is the wrong type)::
+
+        ``{context}: `{key}` is '{actual_type}', expected {shape}. Treating as default {default!r}.``
+
+    When ``context`` is empty the leading prefix is omitted, but the rest of
+    the shape is invariant so callers can assert on substrings
+    (``"expected a list"``, ``"expected a mapping"``, ``` `rules` ```).
+    """
+    value = config.get(key, default)
+    if isinstance(value, expected_type):
+        # Type check passed; run optional semantic validator (W1038-followup).
+        # Type-mismatch wins over validator-fail by design — the isinstance
+        # short-circuit above ensures the validator only runs on values of
+        # the expected type, so the warning never misattributes a type
+        # failure to the validator clause.
+        if validator is not None and not validator(value):
+            if warnings_out is not None:
+                if expected_shape:
+                    shape_name = expected_shape
+                elif isinstance(expected_type, tuple):
+                    shape_name = " or ".join(t.__name__ for t in expected_type)
+                else:
+                    shape_name = expected_type.__name__
+                where = f"{context}: " if context else ""
+                warnings_out.append(
+                    f"{where}`{key}` is {value!r}, expected {shape_name}. "
+                    f"Treating as default {default!r}."
+                )
+            return default
+        return value
+    if warnings_out is not None:
+        # ``expected_type`` may be a tuple (e.g. ``(int, float)``); guard the
+        # ``__name__`` access so the warning never raises.
+        if expected_shape:
+            shape_name = expected_shape
+        elif isinstance(expected_type, tuple):
+            shape_name = " or ".join(t.__name__ for t in expected_type)
+        else:
+            shape_name = expected_type.__name__
+        where = f"{context}: " if context else ""
+        warnings_out.append(
+            f"{where}`{key}` is {type(value).__name__!r}, expected {shape_name}. "
+            f"Treating as default {default!r}."
+        )
+    return default
 
 
 def _run_tiny_parser_branch(

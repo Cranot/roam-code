@@ -239,3 +239,111 @@ def test_finding_without_location_emits_zero_locations() -> None:
     # is degraded.
     assert results[0]["level"] == "warning"
     assert "log_event" in results[0]["message"]["text"]
+
+
+# ── W1061: runtime configuration overrides ──────────────────────────
+
+
+def test_w1061_runtime_overrides_default_off_byte_identical(tmp_path, monkeypatch) -> None:
+    """No ``runtime_overrides`` arg => no ``invocations`` key (pre-W1061 shape)."""
+    monkeypatch.chdir(tmp_path)
+    doc_default = smells_to_sarif([])
+    doc_explicit_none = smells_to_sarif([], runtime_overrides=None)
+    doc_empty = smells_to_sarif([], runtime_overrides=[])
+    run_default = doc_default["runs"][0]
+    run_explicit_none = doc_explicit_none["runs"][0]
+    run_empty = doc_empty["runs"][0]
+    assert "invocations" not in run_default
+    assert "invocations" not in run_explicit_none
+    # Empty list also stays silent — emit_configuration_overrides is gated
+    # on a non-empty list inside to_sarif.
+    assert "invocations" not in run_empty
+
+
+def test_w1061_filtering_emits_rule_configuration_overrides(tmp_path, monkeypatch) -> None:
+    """``--min-severity high`` shape: rules NOT in the active kind set
+    project onto ``run.invocations[0].ruleConfigurationOverrides[]`` so a
+    filtered "no findings" SARIF result is readable as filtered rather
+    than clean.
+
+    SARIF 2.1.0 OASIS §3.51 contract: each entry MUST carry
+    ``configuration`` (a reportingConfiguration with the
+    none/note/warning/error level enum or an ``enabled`` bool) AND
+    ``descriptor`` (a reportingDescriptorReference with ``id``). Spec
+    URL: https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/sarif-v2.1.0-os.html
+    """
+    monkeypatch.chdir(tmp_path)
+    overrides = [
+        {
+            "configuration": {"enabled": False},
+            "descriptor": {"id": "smells/brain-method"},
+            "properties": {"disabled_by": "--kind", "filter_value": ["god-class"]},
+        },
+        {
+            "configuration": {"enabled": False},
+            "descriptor": {"id": "smells/deep-nesting"},
+            "properties": {"disabled_by": "--kind", "filter_value": ["god-class"]},
+        },
+    ]
+    doc = smells_to_sarif([], runtime_overrides=overrides)
+    run = doc["runs"][0]
+    assert "invocations" in run, "configurationOverrides[] must emit invocations[]"
+    inv = run["invocations"][0]
+    assert inv["executionSuccessful"] is True
+    rco = inv["ruleConfigurationOverrides"]
+    assert len(rco) == 2, "every disabled rule must surface as an override"
+    # SARIF §3.51 required structure: configuration + descriptor.
+    for entry in rco:
+        assert "configuration" in entry
+        assert "descriptor" in entry
+        # descriptor.id must reference a real rule.
+        assert entry["descriptor"]["id"].startswith("smells/")
+        # configuration.enabled is False — this is the "rule disabled
+        # at runtime" signal.
+        assert entry["configuration"]["enabled"] is False
+    # Properties survive verbatim (consumer-side filtering / dashboard
+    # grouping uses these).
+    assert rco[0]["properties"]["disabled_by"] == "--kind"
+    assert rco[0]["properties"]["filter_value"] == ["god-class"]
+
+
+def test_w1061_via_to_sarif_directly(tmp_path, monkeypatch) -> None:
+    """The core ``to_sarif`` flag pair is callable independent of smells.
+
+    Confirms the opt-in flag composes cleanly with empty
+    ``configuration_overrides`` (still no invocations[] — opt-in alone
+    isn't enough; the list must be non-empty).
+    """
+    from roam.output.sarif import to_sarif
+
+    monkeypatch.chdir(tmp_path)
+
+    # Opt-in but empty list -> still no invocations[]
+    doc_empty = to_sarif(
+        "roam-code",
+        "9.9.9",
+        rules=[],
+        results=[],
+        emit_configuration_overrides=True,
+        configuration_overrides=[],
+    )
+    assert "invocations" not in doc_empty["runs"][0]
+
+    # Opt-in + non-empty -> invocations[].ruleConfigurationOverrides[]
+    doc = to_sarif(
+        "roam-code",
+        "9.9.9",
+        rules=[],
+        results=[],
+        emit_configuration_overrides=True,
+        configuration_overrides=[
+            {
+                "configuration": {"level": "none", "enabled": False},
+                "descriptor": {"id": "smells/god-class"},
+            }
+        ],
+    )
+    run = doc["runs"][0]
+    assert run["invocations"][0]["ruleConfigurationOverrides"][0]["descriptor"]["id"] == "smells/god-class"
+    # Confirms the canonical OASIS §3.50 level enum passes through verbatim.
+    assert run["invocations"][0]["ruleConfigurationOverrides"][0]["configuration"]["level"] == "none"

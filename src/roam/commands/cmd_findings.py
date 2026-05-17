@@ -36,7 +36,10 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.db.findings import count_by_detector, get_finding, list_findings
 from roam.output.formatter import format_table, json_envelope, to_json
-from roam.output.structured_unknowns import structured_unknown_filter
+from roam.output.structured_unknowns import (
+    structured_unknown_filter,
+    to_summary_payload,
+)
 
 # ---------------------------------------------------------------------------
 # Click group
@@ -148,24 +151,21 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
             verdict_unknown = f"unknown detector {detector!r} ({len(known_detectors)} known)"
             close_matches = frag.get("did_you_mean", [])
             if json_mode:
+                # W1083: ``to_summary_payload`` extracts the splice subset
+                # (``state``, ``partial_success``, ``requested_detector``,
+                # ``known_detectors``, and ``did_you_mean`` when the helper
+                # carried it) so callsite-specific fields (``total_findings``,
+                # ``filters``) compose without hand-stamping the shared keys.
                 summary_payload: dict[str, object] = {
                     "verdict": verdict_unknown,
-                    "partial_success": frag["partial_success"],
-                    "state": frag["state"],
+                    **to_summary_payload(frag),
                     "total_findings": 0,
-                    "requested_detector": frag["requested_detector"],
-                    "known_detectors": frag["known_detectors"],
                     "filters": {
                         "detector": detector,
                         "subject_kind": subject_kind,
                         "subject_id": subject_id,
                     },
                 }
-                # W1082: helper now controls presence via
-                # ``did_you_mean_omit_when_empty``; splice the field across
-                # unconditionally when present.
-                if "did_you_mean" in frag:
-                    summary_payload["did_you_mean"] = frag["did_you_mean"]
                 click.echo(
                     to_json(
                         json_envelope(

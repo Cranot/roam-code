@@ -44,7 +44,7 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
-from roam.output.metric_definitions import CALLER_METRIC_RAW
+from roam.output.metric_definitions import CALLER_METRIC_RAW, COGNITIVE_COMPLEXITY_DEFINITION
 
 _DEFAULT_CALLER_CAP = 8
 _DEFAULT_CALLEE_CAP = 8
@@ -440,6 +440,11 @@ def guard(ctx, name):
                     "layer_violations": layers["violation_count"],
                     "move_sensitive_edges": layers["move_sensitive_count"],
                     "signals": signal_summary,
+                    # W1298 Pattern-3a: ``metrics.symbol`` carries raw
+                    # cognitive_complexity from symbol_metrics. Risk score
+                    # uses it as one of five components but the raw value
+                    # still escapes the envelope — disclose the scorer.
+                    "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                     # W1245 Pattern-2 variant-D resolution disclosure.
                     **resolution_block,
                 },

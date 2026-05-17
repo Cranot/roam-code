@@ -130,15 +130,18 @@ def _load_budgets(
                 f"`{{name, metric, max_increase|max_decrease|max_increase_pct}}` entries."
             )
         return []
-    budgets = data.get("budgets")
-    if not isinstance(budgets, list):
-        if warnings_out is not None:
-            warnings_out.append(
-                f"budget: {path_str!r} `budgets` is "
-                f"{type(budgets).__name__!r}, expected a list. Treating as "
-                f"empty budgets."
-            )
-        return []
+    # W1038 — shared "load → check type → warn-or-default" extractor.
+    from roam.commands._yaml_loader import extract_typed
+
+    budgets = extract_typed(
+        data,
+        "budgets",
+        list,
+        [],
+        warnings_out=warnings_out,
+        context=f"budget: {path_str!r}",
+        expected_shape="a list",
+    )
     out: list[dict] = []
     for idx, b in enumerate(budgets):
         if not isinstance(b, dict):

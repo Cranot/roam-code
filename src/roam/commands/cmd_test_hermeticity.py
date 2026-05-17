@@ -36,8 +36,20 @@ False-positive reduction is built in at the module level:
   given dotted module suppresses that kind in the same module.
 
 Findings persist into the central findings registry (W89/W93+) under
-``source_detector = "test-hermeticity"`` so ``roam findings list`` and
-the SARIF emit can read them like every other detector.
+``source_detector = "test-hermeticity"`` so ``roam findings list`` can
+read them like every other detector.
+
+Output formats: text (default), ``--json``. SARIF is deliberately NOT
+emitted from this command because the registry path is the canonical
+SARIF projection surface for findings-registry-backed detectors:
+consumers route through ``roam findings list --sarif`` (or the
+detector-specific SARIF projection wired off the central registry) per
+the W170 canonical mandate — every exporter is a projection from
+shared evidence, not a second source of truth. Wiring a private
+``--sarif`` flag here would create a second SARIF emit path competing
+with the registry projection. See W1148 audit memo +
+(internal memo) §8. Introduced at
+W1287.
 
 Examples
 --------
@@ -52,7 +64,7 @@ from __future__ import annotations
 import ast
 import json as _json
 import sqlite3
-from typing import Iterable
+from typing import Any, Iterable
 
 import click
 
@@ -502,7 +514,14 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
         round(100.0 * hermetic / total_test_files, 1) if total_test_files else 100.0
     )
 
-    if total_test_files == 0:
+    # W805: empty-corpus disclosure (Pattern 2 silent-fallback fix).
+    # When no Python test files are indexed the check did not actually
+    # run on any analyzable input — surface that explicitly via the
+    # ``partial_success`` flag + a closed-enum ``state`` so agents can
+    # distinguish "all tests hermetic" (real success) from "no tests
+    # analyzed" (degraded/missing input). Mirrors W834 / W836.
+    empty_corpus = total_test_files == 0
+    if empty_corpus:
         verdict = "no Python test files indexed"
     elif not findings:
         verdict = f"all {total_test_files} test files are hermetic"
@@ -518,17 +537,21 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
         kind_counts[f["kind"]] = kind_counts.get(f["kind"], 0) + 1
 
     if json_mode:
+        _summary: dict[str, Any] = {
+            "verdict": verdict,
+            "total": total_test_files,
+            "hermetic": hermetic,
+            "non_hermetic": non_hermetic,
+            "hermeticity_rate": hermeticity_rate,
+        }
+        if empty_corpus:
+            _summary["partial_success"] = True
+            _summary["state"] = "no_tests_indexed"
         click.echo(
             to_json(
                 json_envelope(
                     "test-hermeticity",
-                    summary={
-                        "verdict": verdict,
-                        "total": total_test_files,
-                        "hermetic": hermetic,
-                        "non_hermetic": non_hermetic,
-                        "hermeticity_rate": hermeticity_rate,
-                    },
+                    summary=_summary,
                     findings=findings,
                     kind_counts=kind_counts,
                     detector_version=_TEST_HERMETICITY_DETECTOR_VERSION,

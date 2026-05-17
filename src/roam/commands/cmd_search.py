@@ -25,7 +25,10 @@ from roam.output.formatter import (
     loc,
     to_json,
 )
-from roam.output.structured_unknowns import structured_unknown_filter
+from roam.output.structured_unknowns import (
+    structured_unknown_filter,
+    to_summary_payload,
+)
 
 # FTS5 column layout for symbol_fts: name=0, qualified_name=1, signature=2, kind=3, file_path=4
 _FTS_COLUMNS = ["name", "qualified_name", "signature", "kind", "file_path"]
@@ -234,7 +237,7 @@ def _format_explanation_text(expl: dict) -> list[str]:
     type=int,
     default=0,
     show_default=True,
-    help="boost results in files modified within N days (0 = no boost).",
+    help="boost results in files modified within <N> days (0 = no boost).",
 )
 @click.pass_context
 def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtures_only, explain, mode, recent_days):
@@ -290,22 +293,21 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
         if frag is not None:
             verdict_unknown = f"unknown kind {kind_filter!r} ({len(known_kinds)} known){frag['verdict_suffix']}"
             if json_mode:
-                # Pre-W1080 envelope did NOT carry ``did_you_mean`` in the
-                # summary (the suggestion only landed in the verdict
-                # suffix). Preserve that shape — don't splice
-                # ``frag['did_you_mean']`` into summary here.
+                # W1083: ``to_summary_payload(include_did_you_mean=False)``
+                # extracts the splice subset MINUS ``did_you_mean`` —
+                # pre-W1080 envelope did NOT carry the field in the
+                # summary (close-match suggestion only lands in the
+                # verdict suffix). Callsite-specific fields (``total``,
+                # ``pattern``) compose around it.
                 click.echo(
                     to_json(
                         json_envelope(
                             "search",
                             summary={
                                 "verdict": verdict_unknown,
-                                "partial_success": frag["partial_success"],
-                                "state": frag["state"],
+                                **to_summary_payload(frag, include_did_you_mean=False),
                                 "total": 0,
                                 "pattern": pattern,
-                                "requested_kind": frag["requested_kind"],
-                                "known_kinds": frag["known_kinds"],
                             },
                             budget=token_budget,
                             pattern=pattern,

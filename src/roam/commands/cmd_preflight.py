@@ -56,6 +56,17 @@ from roam.runs.helpers import auto_log
 # ---------------------------------------------------------------------------
 # Risk-level helpers
 # ---------------------------------------------------------------------------
+#
+# W847 — every UPPER-case string in this section is INTERNAL VOCABULARY
+# (agent-facing risk-tier display: CRITICAL/HIGH/MEDIUM/LOW/WARNING/OK),
+# NOT envelope severity-slot vocabulary. The W762 drift-guard already
+# scopes itself narrowly (dict-value under a literal "severity" key);
+# helper returns, rank-table keys, and risk-comparison branches are out
+# of scope by design and STAY UPPER-case. The W759 cleanup wave (when it
+# lands) only touches the four envelope-slot sites pinned in
+# tests/test_w762_severity_upper_drift.py::_PRE_W762_PENDING. Do NOT
+# lowercase the helper-return / rank-table / verdict-comparison sites in
+# this section — that would degrade the agent-facing display contract.
 
 
 def _blast_severity(affected_syms: int, affected_files: int) -> str:
@@ -111,12 +122,41 @@ def _fitness_severity(failed_rules: int) -> str:
     return "OK"
 
 
-_SEVERITY_ORDER = {"CRITICAL": 4, "HIGH": 3, "WARNING": 2, "MEDIUM": 2, "LOW": 1, "OK": 0}
+# W1088 — rank-table keys are lowercase to align with the W547 / W762
+# canonical-severity discipline. UPPER-cased aliases are preserved so
+# the W847 INTERNAL-VOCAB call-sites (helper returns + ``_risk_driver``
+# upper-cased compare) keep resolving without a forced rewrite. Both
+# cases route through ``.lower()`` at the ``_overall_risk`` callsite so
+# the W759 envelope-slot lowercase values (``"low"`` / ``"warning"``)
+# no longer silently miss the lookup and resolve to 0 by default.
+_SEVERITY_ORDER = {
+    "critical": 4,
+    "high": 3,
+    "warning": 2,
+    "medium": 2,
+    "low": 1,
+    "ok": 0,
+    # UPPER aliases — kept for the W847 INTERNAL-VOCAB sites
+    # (helper-classifier returns like ``return "HIGH"`` and
+    # ``_risk_driver``'s ``sev.upper()`` precondition) so existing
+    # callers stay byte-identical.
+    "CRITICAL": 4,
+    "HIGH": 3,
+    "WARNING": 2,
+    "MEDIUM": 2,
+    "LOW": 1,
+    "OK": 0,
+}
 
 
 def _overall_risk(*severities: str) -> str:
     """Compute overall risk from individual severity labels."""
-    max_val = max(_SEVERITY_ORDER.get(s, 0) for s in severities)
+    # W1088 — normalize case at the lookup site so envelope-slot
+    # lowercase values (W759: ``"low"`` / ``"warning"``) and INTERNAL
+    # VOCAB UPPER values (W847: ``"HIGH"`` / ``"CRITICAL"``) both
+    # resolve to their intended rank. Pre-W1088 the lowercase forms
+    # silently defaulted to 0 — Pattern-2 silent-fallback territory.
+    max_val = max(_SEVERITY_ORDER.get(s.lower() if isinstance(s, str) else s, 0) for s in severities)
     if max_val >= 4:
         return "CRITICAL"
     if max_val >= 3:
@@ -182,7 +222,7 @@ def _check_blast_radius(conn, sym_ids, file_paths):
             "affected_symbols": 0,
             "affected_files": 0,
             "affected_file_list": [],
-            "severity": "LOW",
+            "severity": "low",
         }
 
     G = build_symbol_graph(conn)
@@ -226,6 +266,10 @@ def _check_affected_tests(conn, sym_ids, file_paths):
     """Find tests that need to run."""
     results = _gather_affected_tests(conn, sym_ids, file_paths)
 
+    # W847 — DIRECT/TRANSITIVE/COLOCATED are upstream kind tags from
+    # ``_gather_affected_tests`` (internal vocabulary), not envelope
+    # severity slots. They flow into the count fields below, never into
+    # a ``"severity"`` key — out of W762 scope by design.
     direct = sum(1 for r in results if r["kind"] == "DIRECT")
     transitive = sum(1 for r in results if r["kind"] == "TRANSITIVE")
     colocated = sum(1 for r in results if r["kind"] == "COLOCATED")
@@ -297,7 +341,7 @@ def _check_complexity(conn, sym_ids):
             "max_cognitive_complexity": 0,
             "max_nesting_depth": 0,
             "high_complexity_symbols": [],
-            "severity": "LOW",
+            "severity": "low",
         }
 
     ph = ",".join("?" for _ in sym_ids)
@@ -319,7 +363,7 @@ def _check_complexity(conn, sym_ids):
             "max_cognitive_complexity": 0,
             "max_nesting_depth": 0,
             "high_complexity_symbols": [],
-            "severity": "LOW",
+            "severity": "low",
         }
 
     max_cc = max(r["cognitive_complexity"] for r in rows)
@@ -563,6 +607,10 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
 
         on_target = [v for v in violations if _violation_touches_target(v)]
         on_siblings = [v for v in violations if v not in on_target]
+        # W847 — PASS/FAIL is rule-status vocabulary (per-rule outcome),
+        # not envelope-severity vocabulary. Stays UPPER to match the
+        # ``status`` field convention used by fitness consumers (e.g.
+        # ``rule_details[*].status`` read by guard / next_steps).
         status = "PASS" if not violations else "FAIL"
         rule_results.append(
             {
@@ -764,6 +812,11 @@ def preflight(ctx, target, staged):
             not_found_summary = {
                 "verdict": verdict,
                 "target": display_label,
+                # W847 — ``risk_level`` is preflight's canonical rollup
+                # field (CRITICAL/HIGH/MEDIUM/LOW/UNKNOWN, defined by
+                # PREFLIGHT_RISK_LEVEL_DEFINITION), distinct from the
+                # W762-scoped ``severity`` envelope slot. Agent-facing
+                # risk-tier vocabulary — STAYS UPPER.
                 "risk_level": "UNKNOWN",
                 "partial_success": True,
                 "error": "No symbols found",
@@ -807,6 +860,11 @@ def preflight(ctx, target, staged):
         )
 
         # Verdict
+        # W847 — LOW/MEDIUM/HIGH branches compare against the canonical
+        # ``risk_level`` rollup (agent-facing risk-tier display, NOT a
+        # W762-scoped envelope severity slot). The interpolated ``{risk}``
+        # also reads as UPPER in the human-facing verdict text on
+        # purpose. Out of W759 scope — STAYS UPPER.
         if risk == "LOW":
             verdict = f"Safe to proceed — {risk} risk for {label}"
         elif risk == "MEDIUM":
@@ -852,7 +910,7 @@ def preflight(ctx, target, staged):
             {
                 "symbol": target_label_for_fitness,
                 "rule": detail.get("name", "unnamed"),
-                "severity": fitns.get("severity", "WARNING"),
+                "severity": fitns.get("severity", "warning"),
             }
             for detail in fitns.get("rule_details") or []
             if detail.get("status") == "FAIL"
@@ -868,6 +926,9 @@ def preflight(ctx, target, staged):
         summary_dict: dict = {
             "verdict": verdict,
             "target": label,
+            # W847 — ``risk_level`` is preflight's canonical rollup field
+            # (not the W762-scoped ``severity`` slot). UPPER values flow
+            # from ``_overall_risk``'s agent-facing risk-tier vocabulary.
             "risk_level": risk,
             "symbols_checked": len(sym_ids),
             "files_checked": len(file_paths),

@@ -22,6 +22,11 @@ from __future__ import annotations
 # The pre-collapse hardcoded set, copied verbatim from mcp_server.py line
 # 294-301 (now replaced by the derived view at module-load finalization).
 # Treat this as the regression floor.
+#
+# W365 extension: ``roam_reset`` and ``roam_clean`` joined the floor when
+# the W365 capability-parity audit found they had been silently flagged
+# read_only=True even though they delete the index DB (reset) / remove
+# orphaned rows (clean). Both are destructive=True per the same wave.
 PRE_COLLAPSE_NON_READ_ONLY = {
     "roam_annotate_symbol",
     "roam_ingest_trace",
@@ -29,6 +34,8 @@ PRE_COLLAPSE_NON_READ_ONLY = {
     "roam_mutate",
     "roam_init",
     "roam_reindex",
+    "roam_reset",   # W365
+    "roam_clean",   # W365
 }
 
 

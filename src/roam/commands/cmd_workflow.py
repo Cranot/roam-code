@@ -183,21 +183,63 @@ def workflow(ctx, recipe_name, list_recipes, query, next_after):
 
     recipe = by_name(recipe_name)
     if recipe is None:
-        # W1074 (sibling of W1066): append difflib closest-match suggestion
-        # when the typo lands within cutoff 0.6 of a registered recipe name.
-        # The 25-recipe vocab is tiny; difflib is effectively free here.
-        # Suggestion is additive — when no name is within cutoff the
-        # message stays byte-identical to the pre-W1074 phrasing.
-        import difflib
-
+        # W1083-followup: delegate the difflib closest-match + suffix-build
+        # to the shared ``structured_unknown_filter`` helper. Canonical
+        # knobs (cutoff=0.6, n=2) were already in use here per W1074. In
+        # json_mode the helper also closes the Pattern-1C gap (pre-W1083-
+        # followup the path raised UsageError unconditionally — no
+        # structured stdout). Text-mode UsageError prefix + phrasing stay
+        # byte-identical so the W1074 tests continue to pin the contract.
         from roam.output.errors import UNKNOWN_RECIPE, structured_usage_error
 
+        # Local re-import: an earlier branch (``next_after``) has its own
+        # ``from roam.output.formatter import ...`` line, which makes
+        # ``json_envelope`` / ``to_json`` function-locals for the whole
+        # function. When that branch returned early they stay unbound at
+        # this point — re-importing here keeps the binding clean.
+        from roam.output.formatter import json_envelope as _json_envelope
+        from roam.output.formatter import to_json as _to_json
+        from roam.output.structured_unknowns import (
+            structured_unknown_filter,
+            to_summary_payload,
+        )
+
         known_names = sorted(r.name for r in RECIPES)
-        close_matches = difflib.get_close_matches(recipe_name, known_names, n=2, cutoff=0.6)
-        base_msg = f"unknown workflow recipe: {recipe_name!r}. Run `roam workflow --list`."
-        if close_matches:
-            quoted = " or ".join(f"'{m}'" for m in close_matches)
-            base_msg = f"{base_msg} Did you mean: {quoted}?"
+        frag = structured_unknown_filter(
+            requested=recipe_name,
+            known=known_names,
+            state="unknown_recipe",
+            requested_field="requested_recipe",
+            known_field="known_recipes",
+            fact_anchor="recipes",
+        )
+        # ``frag`` is always non-None here (we already know ``by_name``
+        # returned None, so ``recipe_name`` is not in the closed set).
+        assert frag is not None
+        base_msg = (
+            f"unknown workflow recipe: {recipe_name!r}. "
+            f"Run `roam workflow --list`.{frag['verdict_suffix']}"
+        )
+        if json_mode:
+            verdict_unknown = f"unknown workflow recipe {recipe_name!r}"
+            click.echo(
+                _to_json(
+                    _json_envelope(
+                        "workflow",
+                        summary={
+                            "verdict": verdict_unknown + frag["verdict_suffix"],
+                            **to_summary_payload(frag),
+                            "error_code": UNKNOWN_RECIPE,
+                        },
+                        agent_contract={
+                            "facts": frag["facts"],
+                            "next_commands": ["roam workflow --list"],
+                        },
+                    )
+                )
+            )
+            # Still raise so exit code remains non-zero — agents read the
+            # structured stdout envelope, the prefix lands on stderr.
         raise structured_usage_error(UNKNOWN_RECIPE, base_msg)
 
     _emit_recipe_detail(recipe, query, json_mode)

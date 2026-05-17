@@ -151,14 +151,19 @@ def index_status() -> dict | None:
 _MAX_FTS_SUGGESTIONS = 5
 
 
-def ensure_index(quiet: bool = False) -> None:
+def ensure_index(quiet: bool = False, suppress_cold_start_advisory: bool = False) -> None:
     """Build the index if it doesn't exist yet.
 
     Args:
         quiet: If True, suppress progress output during indexing.
+        suppress_cold_start_advisory: If True, skip the "No roam index found.
+            Run `roam init`..." advisory before building. Set this from
+            commands whose PURPOSE is to build the index (``roam init``) — the
+            user just asked to create the index, so recommending they run the
+            command they're already running is confusing first-time UX (W1291).
     """
     if not db_exists():
-        if not quiet:
+        if not quiet and not suppress_cold_start_advisory:
             click.echo(
                 "No roam index found. Run `roam init` to create one.\n"
                 "  Tip: If you already ran `roam init`, your current directory may be\n"

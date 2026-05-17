@@ -70,22 +70,31 @@ def test_script_check_passes_at_head():
 
 def test_script_exits_nonzero_on_drift(tmp_path, monkeypatch):
     """Inject a wrong count into README; --check must exit non-zero, --apply must fix."""
-    # Compute the truth-aligned count substring from the source of truth instead
-    # of hard-coding it — otherwise this test breaks every time someone adds a
-    # command (the literal here used to be "233 commands and 149 MCP tools" and
-    # silently rotted to a no-op replace once the count drifted to 234).
-    from roam.surface_counts import cli_surface_counts, mcp_surface_counts
+    # W844-drive-by: the old ``readme-headline-prose`` block emitted
+    # ``f"... {command_names} commands and {mcp_full} MCP tools ..."`` and was
+    # dropped from the script in v13.2 (see the v13.2 comment on
+    # ``_readme_blocks`` in ``dev/build_readme_counts.py``). The README hero
+    # now leads with the positioning core (credential-free + zero-egress +
+    # tamper-evident evidence) — the old "N commands and M MCP tools" literal
+    # is no longer present anywhere in README.md, so the prior precondition
+    # assertion failed on clean main.
+    #
+    # The script DOES still manage a command-count substring inside the
+    # ``readme-canonical-mention`` marker block. Mirroring that template:
+    # ``f"...is **{command_names} commands ({canonical_commands} canonical "
+    # ``f"+ {alias_names} aliases) organised into..."``
+    # so we target the ``N commands (M canonical`` substring instead — it's
+    # uniquely-bound inside an auto-count block, a wrong-by-one in N breaks
+    # script drift detection cleanly, and the script's own ``--apply`` fixes it.
+    from roam.surface_counts import cli_surface_counts
 
     cli = cli_surface_counts()
-    mcp = mcp_surface_counts()
     correct_cmd_count = int(cli["command_names"])
-    correct_mcp_count = int(mcp["registered_tools"])
-    # Mirror the ``readme-headline-prose`` template in ``dev/build_readme_counts.py``:
-    # ``f"... through {c.command_names} commands and {c.mcp_full} MCP tools ..."``.
-    truth_string = f"{correct_cmd_count} commands and {correct_mcp_count} MCP tools"
+    correct_canonical = int(cli["canonical_commands"])
+    truth_string = f"{correct_cmd_count} commands ({correct_canonical} canonical"
     # Wrong-by-one is enough to trigger drift detection, and is guaranteed not to
     # collide with the truth string (so the replace below cannot become a no-op).
-    drift_string = f"{correct_cmd_count - 1} commands and {correct_mcp_count} MCP tools"
+    drift_string = f"{correct_cmd_count - 1} commands ({correct_canonical} canonical"
     assert drift_string != truth_string, "wrong-by-one drift string collided with truth"
 
     backup = README.read_text(encoding="utf-8")

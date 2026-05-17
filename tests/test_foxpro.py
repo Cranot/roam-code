@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 import struct
-import tempfile
 
 from roam.languages.foxpro_lang import FoxProExtractor
 
@@ -442,135 +439,121 @@ class TestFoxProEncoding:
 
 
 class TestFoxProCaseInsensitiveResolution:
-    def test_case_insensitive_cross_file_edge(self):
+    def test_case_insensitive_cross_file_edge(self, tmp_path):
         """DO BACKUP (uppercase) should resolve to FUNCTION backup (lowercase)."""
-        tmpdir = tempfile.mkdtemp()
-        try:
-            import subprocess
+        # W478-followup: migrated from tempfile.mkdtemp + ignore_errors=True to
+        # tmp_path so Windows handle-lock errors surface instead of silently
+        # masking SQLite-handle leaks (Pattern-2 silent-swallow family).
+        import subprocess
 
-            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
+        tmpdir = str(tmp_path)
+        subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
 
-            # caller.prg uses uppercase: DO BACKUP
-            with open(os.path.join(tmpdir, "caller.prg"), "w", encoding="utf-8") as f:
-                f.write("FUNCTION Main\n  DO BACKUP\nENDFUNC\n")
+        # caller.prg uses uppercase: DO BACKUP
+        (tmp_path / "caller.prg").write_text("FUNCTION Main\n  DO BACKUP\nENDFUNC\n", encoding="utf-8")
 
-            # target.prg defines lowercase: FUNCTION backup
-            with open(os.path.join(tmpdir, "target.prg"), "w", encoding="utf-8") as f:
-                f.write("FUNCTION backup\n  RETURN .T.\nENDFUNC\n")
+        # target.prg defines lowercase: FUNCTION backup
+        (tmp_path / "target.prg").write_text("FUNCTION backup\n  RETURN .T.\nENDFUNC\n", encoding="utf-8")
 
-            subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True)
 
-            from pathlib import Path
+        from roam.index.indexer import Indexer
 
-            from roam.index.indexer import Indexer
+        indexer = Indexer(project_root=tmp_path)
+        indexer.run(force=True)
 
-            indexer = Indexer(project_root=Path(tmpdir))
-            indexer.run(force=True)
+        from roam.db.connection import open_db
 
-            from roam.db.connection import open_db
-
-            with open_db(project_root=Path(tmpdir), readonly=True) as conn:
-                edges = conn.execute("SELECT * FROM edges WHERE kind = 'call'").fetchall()
-                # The case-insensitive fallback should resolve DO BACKUP -> backup
-                assert len(edges) >= 1, "Case-insensitive DO BACKUP should resolve to FUNCTION backup"
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
+        with open_db(project_root=tmp_path, readonly=True) as conn:
+            edges = conn.execute("SELECT * FROM edges WHERE kind = 'call'").fetchall()
+            # The case-insensitive fallback should resolve DO BACKUP -> backup
+            assert len(edges) >= 1, "Case-insensitive DO BACKUP should resolve to FUNCTION backup"
 
 
 # ── Integration test ──────────────────────────────────────────────────
 
 
 class TestFoxProIntegration:
-    def test_pipeline_integration(self):
+    def test_pipeline_integration(self, tmp_path):
         """Test that FoxPro files pass through the indexing pipeline."""
+        # W478-followup: migrated to tmp_path; no DB handles here so the
+        # original ignore_errors=False was already correct, but standardize
+        # on the fixture for consistency with the rest of the file.
         from roam.index.parser import REGEX_ONLY_LANGUAGES, parse_file
         from roam.languages.registry import get_extractor
 
         assert "foxpro" in REGEX_ONLY_LANGUAGES
 
-        # Create a temp .prg file
-        tmpdir = tempfile.mkdtemp()
-        try:
-            prg = os.path.join(tmpdir, "test.prg")
-            with open(prg, "w", encoding="utf-8") as f:
-                f.write("FUNCTION Hello\n  RETURN 1\nENDFUNC\n")
+        prg = tmp_path / "test.prg"
+        prg.write_text("FUNCTION Hello\n  RETURN 1\nENDFUNC\n", encoding="utf-8")
 
-            from pathlib import Path
+        tree, source, lang = parse_file(prg, "foxpro")
+        assert tree is None  # No tree-sitter tree
+        assert source is not None  # Source bytes available
+        assert lang == "foxpro"
 
-            tree, source, lang = parse_file(Path(prg), "foxpro")
-            assert tree is None  # No tree-sitter tree
-            assert source is not None  # Source bytes available
-            assert lang == "foxpro"
+        extractor = get_extractor("foxpro")
+        assert extractor is not None
+        assert extractor.language_name == "foxpro"
 
-            extractor = get_extractor("foxpro")
-            assert extractor is not None
-            assert extractor.language_name == "foxpro"
+        from roam.index.symbols import extract_references, extract_symbols
 
-            from roam.index.symbols import extract_references, extract_symbols
+        syms = extract_symbols(tree, source, "test.prg", extractor)
+        assert len(syms) == 1
+        assert syms[0]["name"] == "Hello"
 
-            syms = extract_symbols(tree, source, "test.prg", extractor)
-            assert len(syms) == 1
-            assert syms[0]["name"] == "Hello"
+        refs = extract_references(tree, source, "test.prg", extractor)
+        assert isinstance(refs, list)
 
-            refs = extract_references(tree, source, "test.prg", extractor)
-            assert isinstance(refs, list)
-        finally:
-            shutil.rmtree(tmpdir)
-
-    def test_full_index_with_prg_files(self):
+    def test_full_index_with_prg_files(self, tmp_path):
         """Integration test: create a temp project with .prg files, run index."""
-        tmpdir = tempfile.mkdtemp()
-        try:
-            # Create git repo
-            import subprocess
+        # W478-followup: migrated from tempfile.mkdtemp + ignore_errors=True to
+        # tmp_path so Windows handle-lock errors surface instead of silently
+        # masking SQLite-handle leaks (Pattern-2 silent-swallow family).
+        import subprocess
 
-            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
+        tmpdir = str(tmp_path)
+        subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
 
-            # Create .prg files
-            with open(os.path.join(tmpdir, "main.prg"), "w", encoding="utf-8") as f:
-                f.write("SET PROCEDURE TO utils.prg\n")
-                f.write("DO backup\n")
+        # Create .prg files
+        (tmp_path / "main.prg").write_text(
+            "SET PROCEDURE TO utils.prg\nDO backup\n", encoding="utf-8"
+        )
+        (tmp_path / "utils.prg").write_text(
+            "FUNCTION backup\n  RETURN .T.\nENDFUNC\n", encoding="utf-8"
+        )
 
-            with open(os.path.join(tmpdir, "utils.prg"), "w", encoding="utf-8") as f:
-                f.write("FUNCTION backup\n")
-                f.write("  RETURN .T.\n")
-                f.write("ENDFUNC\n")
+        # Add files to git
+        subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True)
 
-            # Add files to git
-            subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True)
+        # Run indexer
+        from roam.index.indexer import Indexer
 
-            # Run indexer
-            from pathlib import Path
+        indexer = Indexer(project_root=tmp_path)
+        indexer.run(force=True)
 
-            from roam.index.indexer import Indexer
+        # Verify results
+        from roam.db.connection import open_db
 
-            indexer = Indexer(project_root=Path(tmpdir))
-            indexer.run(force=True)
+        with open_db(project_root=tmp_path, readonly=True) as conn:
+            files = conn.execute("SELECT * FROM files WHERE language = 'foxpro'").fetchall()
+            assert len(files) == 2
 
-            # Verify results
-            from roam.db.connection import open_db
+            syms = conn.execute("SELECT * FROM symbols").fetchall()
+            sym_names = {s["name"] for s in syms}
+            assert "backup" in sym_names
+            # main.prg has no FUNCTION so it should be implicit
+            assert "main" in sym_names
 
-            with open_db(project_root=Path(tmpdir), readonly=True) as conn:
-                files = conn.execute("SELECT * FROM files WHERE language = 'foxpro'").fetchall()
-                assert len(files) == 2
-
-                syms = conn.execute("SELECT * FROM symbols").fetchall()
-                sym_names = {s["name"] for s in syms}
-                assert "backup" in sym_names
-                # main.prg has no FUNCTION so it should be implicit
-                assert "main" in sym_names
-
-                # Check edges: main -> utils (via SET PROCEDURE or DO backup)
-                edges = conn.execute("SELECT * FROM edges").fetchall()
-                assert len(edges) >= 1  # At least one cross-file edge
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
+            # Check edges: main -> utils (via SET PROCEDURE or DO backup)
+            edges = conn.execute("SELECT * FROM edges").fetchall()
+            assert len(edges) >= 1  # At least one cross-file edge
 
 
 # ── SCX/SCT synthetic binary builder ─────────────────────────────────
@@ -1068,120 +1051,112 @@ class TestSCXReferences:
 
 
 class TestSCXIntegration:
-    def test_full_pipeline_prg_to_scx(self):
+    def test_full_pipeline_prg_to_scx(self, tmp_path):
         """Integration: .prg -> DO FORM -> .scx -> DO backup -> .prg"""
-        tmpdir = tempfile.mkdtemp()
-        try:
-            import subprocess
+        # W478-followup: migrated from tempfile.mkdtemp + ignore_errors=True to
+        # tmp_path so Windows handle-lock errors surface instead of silently
+        # masking SQLite-handle leaks (Pattern-2 silent-swallow family).
+        import subprocess
 
-            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
+        tmpdir = str(tmp_path)
+        subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
 
-            # main.prg calls DO FORM myform
-            with open(os.path.join(tmpdir, "main.prg"), "w", encoding="utf-8") as f:
-                f.write("FUNCTION Main\n  DO FORM myform\nENDFUNC\n")
+        # main.prg calls DO FORM myform
+        (tmp_path / "main.prg").write_text(
+            "FUNCTION Main\n  DO FORM myform\nENDFUNC\n", encoding="utf-8"
+        )
 
-            # backup.prg has a function
-            with open(os.path.join(tmpdir, "backup.prg"), "w", encoding="utf-8") as f:
-                f.write("FUNCTION backup\n  RETURN .T.\nENDFUNC\n")
+        # backup.prg has a function
+        (tmp_path / "backup.prg").write_text(
+            "FUNCTION backup\n  RETURN .T.\nENDFUNC\n", encoding="utf-8"
+        )
 
-            # myform.scx/sct — form with a button that calls DO backup
-            methods = "PROCEDURE Click\n  DO backup\nENDPROC\n"
-            scx, sct = _build_synthetic_scx_sct(
-                [
-                    {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-                    {
-                        "platform": "WINDOWS",
-                        "objname": "cmdSave",
-                        "parent": "MyForm",
-                        "baseclass": "commandbutton",
-                        "methods": methods,
-                    },
-                ]
-            )
-            with open(os.path.join(tmpdir, "myform.scx"), "wb") as f:
-                f.write(scx)
-            with open(os.path.join(tmpdir, "myform.sct"), "wb") as f:
-                f.write(sct)
+        # myform.scx/sct — form with a button that calls DO backup
+        methods = "PROCEDURE Click\n  DO backup\nENDPROC\n"
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+                {
+                    "platform": "WINDOWS",
+                    "objname": "cmdSave",
+                    "parent": "MyForm",
+                    "baseclass": "commandbutton",
+                    "methods": methods,
+                },
+            ]
+        )
+        (tmp_path / "myform.scx").write_bytes(scx)
+        (tmp_path / "myform.sct").write_bytes(sct)
 
-            subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True)
 
-            # Run indexer
-            from pathlib import Path
+        # Run indexer
+        from roam.index.indexer import Indexer
 
-            from roam.index.indexer import Indexer
+        indexer = Indexer(project_root=tmp_path)
+        indexer.run(force=True)
 
-            indexer = Indexer(project_root=Path(tmpdir))
-            indexer.run(force=True)
+        # Verify
+        from roam.db.connection import open_db
 
-            # Verify
-            from roam.db.connection import open_db
+        with open_db(project_root=tmp_path, readonly=True) as conn:
+            # Should have 3 foxpro files: main.prg, backup.prg, myform.scx
+            files = conn.execute("SELECT * FROM files WHERE language = 'foxpro'").fetchall()
+            file_paths = {f["path"] for f in files}
+            assert "main.prg" in file_paths
+            assert "backup.prg" in file_paths
+            assert "myform.scx" in file_paths
 
-            with open_db(project_root=Path(tmpdir), readonly=True) as conn:
-                # Should have 3 foxpro files: main.prg, backup.prg, myform.scx
-                files = conn.execute("SELECT * FROM files WHERE language = 'foxpro'").fetchall()
-                file_paths = {f["path"] for f in files}
-                assert "main.prg" in file_paths
-                assert "backup.prg" in file_paths
-                assert "myform.scx" in file_paths
+            # Symbols should include: Main (from main.prg), backup (from backup.prg),
+            # myform (form class), Click (method in SCX)
+            syms = conn.execute("SELECT * FROM symbols").fetchall()
+            sym_names = {s["name"] for s in syms}
+            assert "Main" in sym_names
+            assert "backup" in sym_names
+            assert "myform" in sym_names
+            assert "Click" in sym_names
 
-                # Symbols should include: Main (from main.prg), backup (from backup.prg),
-                # myform (form class), Click (method in SCX)
-                syms = conn.execute("SELECT * FROM symbols").fetchall()
-                sym_names = {s["name"] for s in syms}
-                assert "Main" in sym_names
-                assert "backup" in sym_names
-                assert "myform" in sym_names
-                assert "Click" in sym_names
+            # Should have cross-file edges
+            edges = conn.execute("SELECT * FROM edges WHERE kind = 'call'").fetchall()
+            assert len(edges) >= 1, "Should have at least one cross-file call edge"
 
-                # Should have cross-file edges
-                edges = conn.execute("SELECT * FROM edges WHERE kind = 'call'").fetchall()
-                assert len(edges) >= 1, "Should have at least one cross-file call edge"
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-
-    def test_scx_pipeline_parse_file(self):
+    def test_scx_pipeline_parse_file(self, tmp_path):
         """parse_file should pack SCX+SCT into length-prefixed format."""
-        from pathlib import Path
-
+        # W478-followup: migrated to tmp_path; no DB handles here, but the
+        # ignore_errors=True swallow pattern was unjustified — flip it.
         from roam.index.parser import parse_file
 
-        tmpdir = tempfile.mkdtemp()
-        try:
-            methods = "PROCEDURE Init\n  RETURN\nENDPROC\n"
-            scx, sct = _build_synthetic_scx_sct(
-                [
-                    {
-                        "platform": "WINDOWS",
-                        "objname": "MyForm",
-                        "baseclass": "form",
-                        "methods": methods,
-                    },
-                ]
-            )
-            with open(os.path.join(tmpdir, "test.scx"), "wb") as f:
-                f.write(scx)
-            with open(os.path.join(tmpdir, "test.sct"), "wb") as f:
-                f.write(sct)
+        methods = "PROCEDURE Init\n  RETURN\nENDPROC\n"
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {
+                    "platform": "WINDOWS",
+                    "objname": "MyForm",
+                    "baseclass": "form",
+                    "methods": methods,
+                },
+            ]
+        )
+        (tmp_path / "test.scx").write_bytes(scx)
+        (tmp_path / "test.sct").write_bytes(sct)
 
-            tree, source, lang = parse_file(Path(os.path.join(tmpdir, "test.scx")))
-            assert tree is None
-            assert lang == "foxpro"
-            assert source is not None
-            # Source should be packed: 4-byte length header
-            assert len(source) > 4
-            scx_len = struct.unpack(">I", source[:4])[0]
-            assert scx_len == len(scx)
+        tree, source, lang = parse_file(tmp_path / "test.scx")
+        assert tree is None
+        assert lang == "foxpro"
+        assert source is not None
+        # Source should be packed: 4-byte length header
+        assert len(source) > 4
+        scx_len = struct.unpack(">I", source[:4])[0]
+        assert scx_len == len(scx)
 
-            # Extractor should work on the packed data
-            ext = FoxProExtractor()
-            syms = ext.extract_symbols(None, source, "test.scx")
-            classes = [s for s in syms if s["kind"] == "class"]
-            assert len(classes) == 1
-            meths = [s for s in syms if s["kind"] == "method"]
-            assert len(meths) == 1
-            assert meths[0]["name"] == "Init"
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
+        # Extractor should work on the packed data
+        ext = FoxProExtractor()
+        syms = ext.extract_symbols(None, source, "test.scx")
+        classes = [s for s in syms if s["kind"] == "class"]
+        assert len(classes) == 1
+        meths = [s for s in syms if s["kind"] == "method"]
+        assert len(meths) == 1
+        assert meths[0]["name"] == "Init"

@@ -86,6 +86,8 @@ def _build_surface() -> dict:
     # from the count of *defined* tools.
     from roam.surface_counts import (
         mcp_preset_counts,
+    )
+    from roam.surface_counts import (
         mcp_tool_names as _ast_mcp_tool_names,
     )
 

@@ -29,11 +29,25 @@ from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 # CLI ``--severity`` floor mapping. Each value maps to the canonical
 # ``severity_rank`` of the equivalent label so the filter compares
 # directly against finding ranks below.
+#
+# W1005-followup-B: table widened from CVSS-only 4-tier
+# {low, medium, high, critical} to the W547 canonical 7-token vocab
+# {critical, error, high, warning, medium, low, info} so agents reading
+# the canonical ``severity_rank()`` docstring can pass any tier and have
+# the filter compare via the canonical rank table. The detectors in this
+# command still EMIT only the UPPER 4-tier set {CRITICAL, HIGH, WARNING,
+# INFO}; the WIDER filter vocabulary is the contract change. Aliases like
+# ``note`` / ``unknown`` are intentionally NOT in the Choice — they
+# collapse to ``info`` / sort below ``info`` via ``severity_rank``, so a
+# user-facing filter on them would be confusing.
 _MIN_SEVERITY = {
-    "low": severity_rank("low"),
-    "medium": severity_rank("medium"),
-    "high": severity_rank("high"),
     "critical": severity_rank("critical"),
+    "error": severity_rank("error"),
+    "high": severity_rank("high"),
+    "warning": severity_rank("warning"),
+    "medium": severity_rank("medium"),
+    "low": severity_rank("low"),
+    "info": severity_rank("info"),
 }
 
 
@@ -528,9 +542,31 @@ def _format_markdown(challenges, verdict, changed_files_count):
 )
 @click.option(
     "--severity",
-    type=click.Choice(["low", "medium", "high", "critical"]),
+    type=click.Choice(
+        # W1005-followup-B: widened from CVSS-only 4-tier
+        # {low, medium, high, critical} to W547 canonical 7-token vocab
+        # so agents can pass any of {critical, error, high, warning,
+        # medium, low, info} and have it compared via ``severity_rank()``
+        # from ``roam.output._severity``. The adversarial detectors
+        # currently emit only UPPER 4-tier {CRITICAL, HIGH, WARNING, INFO},
+        # but the W547 rank table accepts SARIF aliases (``error`` ==
+        # ``high`` at rank 4) and CVSS-style mid-tiers (``medium`` /
+        # ``low``) under canonical ordering (higher = worse). Aliases like
+        # ``note`` / ``unknown`` are intentionally NOT in the Choice —
+        # they collapse to ``info`` / sort below ``info`` via
+        # ``severity_rank``, so a user-facing filter on them would be
+        # confusing.
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
     default="low",
-    help="Minimum severity to show (default: low — show all)",
+    help=(
+        "Minimum severity to show (default: low — show all). Uses the "
+        "canonical W547 ordering (critical > error == high > warning > "
+        "medium > low > info). Detectors emit CRITICAL/HIGH/WARNING/INFO "
+        "today; CVSS/SARIF aliases (error/medium/low) rank via the same "
+        "severity_rank() comparator."
+    ),
 )
 @click.option(
     "--fail-on-critical",

@@ -2,7 +2,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://roam-code.com/</loc>
-    <lastmod>2026-05-09</lastmod>
+    <lastmod>2026-05-16</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
@@ -26,9 +26,21 @@
   </url>
   <url>
     <loc>https://roam-code.com/audit</loc>
-    <lastmod>2026-05-08</lastmod>
+    <lastmod>2026-05-16</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://roam-code.com/governance</loc>
+    <lastmod>2026-05-16</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://roam-code.com/trust</loc>
+    <lastmod>2026-05-16</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
   </url>
   <url>
     <!-- Stripe Payment Link confirmation destination. noindex'd via meta
@@ -41,13 +53,13 @@
   </url>
   <url>
     <loc>https://roam-code.com/about</loc>
-    <lastmod>2026-05-09</lastmod>
+    <lastmod>2026-05-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://roam-code.com/press</loc>
-    <lastmod>2026-05-09</lastmod>
+    <lastmod>2026-05-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
@@ -106,6 +118,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://roam-code.com/docs/canonical-demo</loc>
+    <lastmod>2026-05-16</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://roam-code.com/docs/getting-started</loc>
     <lastmod>2026-05-07</lastmod>
     <changefreq>weekly</changefreq>
@@ -118,20 +136,26 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://roam-code.com/docs/mcp-usage</loc>
+    <lastmod>2026-05-16</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://roam-code.com/docs/agent-contract</loc>
-    <lastmod>2026-05-09</lastmod>
+    <lastmod>2026-05-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://roam-code.com/docs/demos</loc>
-    <lastmod>2026-05-09</lastmod>
+    <lastmod>2026-05-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://roam-code.com/docs/command-reference</loc>
-    <lastmod>2026-05-07</lastmod>
+    <lastmod>2026-05-16</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
@@ -143,13 +167,13 @@
   </url>
   <url>
     <loc>https://roam-code.com/docs/how-roam-thinks</loc>
-    <lastmod>2026-05-09</lastmod>
+    <lastmod>2026-05-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
     <loc>https://roam-code.com/docs/troubleshooting</loc>
-    <lastmod>2026-05-09</lastmod>
+    <lastmod>2026-05-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>

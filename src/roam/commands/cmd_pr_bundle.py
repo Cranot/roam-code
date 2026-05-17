@@ -2126,7 +2126,13 @@ def pr_bundle_add():
 @pr_bundle_add.command("affected")
 @click.argument("symbol")
 @click.option("--kind", default="", help="Symbol kind (function / class / method).")
-@click.option("--file", "file_path", default="", help="File path the symbol lives in.")
+@click.option(
+    "--path",
+    "--file",  # W1141-followup: deprecated alias, kept for backward compat.
+    "file_path",
+    default="",
+    help="File path the symbol lives in.",
+)
 @click.option("--blast-radius", default=0, type=int, help="Number of dependents.")
 @click.pass_context
 def pr_bundle_add_affected(ctx, symbol, kind, file_path, blast_radius):
@@ -2137,7 +2143,7 @@ def pr_bundle_add_affected(ctx, symbol, kind, file_path, blast_radius):
     bundle = _require_bundle(ctx, path)
     # W20.5: resolve the symbol in the indexed symbol table BEFORE stamping
     # the record so we can (a) fill in missing kind/file from the index when
-    # the caller didn't pass --kind/--file, and (b) flip partial_success on
+    # the caller didn't pass --kind/--path, and (b) flip partial_success on
     # the envelope when the symbol is a ghost. The fix is ADDITIVE: we
     # always write the record, then warn.
     resolved, resolution_state = _resolve_symbol_in_index(symbol)

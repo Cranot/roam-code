@@ -353,6 +353,19 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
             # W1268 audit the auto-log is reserved for success-path
             # blast-radius events and exit-0 is the canonical
             # Convention (c) shape (cf. cmd_dead --extinction).
+            #
+            # W1277 — RESTORE auto_log on the unresolved path. The W1276
+            # "no auto_log on not-found" stance created a signal-loss
+            # risk on the replay-narration surface: when an agent runs
+            # ``roam impact <typo>`` and gets a Convention-c envelope
+            # back, the run ledger no longer carried any trace that the
+            # attempt happened. Under Convention (c), unresolved IS a
+            # real success (of the "nothing to analyze" kind), so it
+            # belongs in the agent-decision timeline alongside resolved
+            # attempts. The envelope's partial_success=True + the
+            # ``resolution: unresolved`` field on summary let the
+            # replay-narrator render "agent tried to impact <name> →
+            # unresolved" rather than rendering silence.
             unresolved_disclosure = resolution_disclosure("unresolved", target=name or "")
             not_found_env = json_envelope(
                 "impact",
@@ -365,6 +378,9 @@ def impact(ctx, name, hops, depth, max_callers, timeout):
                 symbol=name or "",
                 **unresolved_disclosure,
             )
+            # W1277 — auto-log the unresolved attempt for replay-narration
+            # provenance. Silent no-op if no active run.
+            auto_log(not_found_env, action="impact", target=name or "")
             if json_mode:
                 click.echo(to_json(not_found_env))
             else:

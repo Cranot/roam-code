@@ -3,10 +3,14 @@
 The sprint added ``roam memory add/list/relevant`` (215 commands total) and
 brushed up against three classes of test-compat debt:
 
-1. **Surface-count snapshots in README / CLAUDE.md.** The README's headline
-   ``N commands and M MCP tools`` line and CLAUDE.md's ``command_count: N``
-   block must track the live count from ``roam.surface_counts``. This file
-   asserts they agree so future sprints can't accidentally let them drift.
+1. **Surface-count snapshots in README / CLAUDE.md.** The README's count
+   sub-headline (``N commands · M MCP tools · 28 languages``) and CLAUDE.md's
+   ``command_count: N`` block must track the live count from
+   ``roam.surface_counts``. This file asserts they agree so future sprints
+   can't accidentally let them drift. (W844-drive-by-2: the headline-IS-
+   the-count framing was dropped in v13.2; the README hero now leads with
+   credential-free + zero-egress + tamper-evident positioning, with counts
+   relegated to a sub-line. The assertions below still pin the sub-line.)
 
 2. **Click 8.3 stdout/stderr split.** ``parse_json_output`` in conftest now
    prefers ``result.stdout`` over the merged ``result.output``. Tests that

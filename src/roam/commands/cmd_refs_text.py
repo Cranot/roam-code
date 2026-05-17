@@ -136,6 +136,14 @@ def _classify_match(m: dict, reach_set: set[int] | None, orphans: set[int]) -> s
 )
 @click.option("-g", "--glob", "globs", multiple=True, help="Restrict scan (repeatable; e.g. -g py -g md).")
 @click.option("-F", "--fixed-string", "fixed", is_flag=True, default=True, help="Literal mode (default).")
+@click.option(
+    "-E",
+    "--regexp",
+    "regexp_mode",
+    is_flag=True,
+    default=False,
+    help="W421 — regex mode: treat each string as a regex (ripgrep without -F). Slower on large repos.",
+)
 @click.option("-i", "--ignore-case", "ci", is_flag=True, help="Case-insensitive search.")
 @click.option(
     "--with-clones/--no-clones",
@@ -155,8 +163,15 @@ def _classify_match(m: dict, reach_set: set[int] | None, orphans: set[int]) -> s
     help="Include every match in JSON output (default: only summary + per-surface counts).",
 )
 @click.pass_context
-def refs_text_cmd(ctx, strings, extra, reachable_from, globs, fixed, ci, with_clones, with_bridges, per_match_detail):
+def refs_text_cmd(
+    ctx, strings, extra, reachable_from, globs, fixed, regexp_mode, ci, with_clones, with_bridges, per_match_detail
+):
     """Audit literal strings across the project: per-surface refs + verdict.
+
+    Default mode treats each target as a literal fixed-string (ripgrep
+    ``-F``). Pass ``-E`` / ``--regexp`` to treat each target as a regex
+    (e.g. one ``setItem|removeItem|clear`` query covers three identifiers
+    in a single pass). Regex mode is slower on large repos.
 
     Examples:
 
@@ -164,6 +179,7 @@ def refs_text_cmd(ctx, strings, extra, reachable_from, globs, fixed, ci, with_cl
       roam refs-text DATABASE_URL
       roam refs-text /api/v1/users --reachable-from main
       roam refs-text -e foo.html -e bar.html        # multiple targets at once
+      roam refs-text -E "setItem|removeItem|clear"   # W421 regex mode
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
@@ -178,12 +194,16 @@ def refs_text_cmd(ctx, strings, extra, reachable_from, globs, fixed, ci, with_cl
     root = find_project_root()
     glob_filter = list(globs) if globs else []
 
+    # W421 — -E/--regexp opts into regex mode (ripgrep without -F); default
+    # stays fixed-string for backward compatibility.
+    fixed_mode = fixed and not regexp_mode
+
     engine = detect_engine()
     all_matches = run_search(
         patterns=targets,
         root=root,
         globs=glob_filter,
-        fixed_string=fixed,
+        fixed_string=fixed_mode,  # W421
         case_insensitive=ci,
         engine=engine,
     )
@@ -193,12 +213,12 @@ def refs_text_cmd(ctx, strings, extra, reachable_from, globs, fixed, ci, with_cl
         import re
 
         flags = re.IGNORECASE if ci else 0
-        compiled = [re.compile(re.escape(s) if fixed else s, flags) for s in targets]
+        compiled = [re.compile(re.escape(s) if fixed_mode else s, flags) for s in targets]  # W421
         with open_db(readonly=True) as conn_tmp:
             all_matches = indexed_file_scan(compiled, conn_tmp, root, glob_filter)
 
     # Tag each match with which target string(s) it matches (literal/case-aware).
-    _tag_matches(all_matches, targets, fixed=fixed, ci=ci)
+    _tag_matches(all_matches, targets, fixed=fixed_mode, ci=ci)  # W421
 
     if not all_matches:
         _emit_empty(json_mode, targets, token_budget, engine)

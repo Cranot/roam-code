@@ -21,7 +21,10 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.index.test_conventions import is_test_file as _is_test_file
 from roam.output.formatter import format_table, json_envelope, loc, to_json
-from roam.output.structured_unknowns import structured_unknown_filter
+from roam.output.structured_unknowns import (
+    structured_unknown_filter,
+    to_summary_payload,
+)
 
 # ---------------------------------------------------------------------------
 # Framework detection patterns
@@ -854,23 +857,19 @@ def endpoints(ctx, framework, http_method, include_tests, group_by):
             f"unknown framework filter {framework!r} ({len(observed_frameworks)} observed){frag['verdict_suffix']}"
         )
         if json_mode:
+            # W1083: ``to_summary_payload`` extracts the splice subset
+            # (``state``, ``partial_success``, ``requested_framework``,
+            # ``observed_frameworks``, and ``did_you_mean`` when the helper
+            # carried it via ``did_you_mean_omit_when_empty=True``).
+            # Callsite-specific fields (``count``, ``frameworks``,
+            # ``framework_count``) compose around it.
             summary_payload: dict[str, object] = {
                 "verdict": verdict_unknown,
-                "partial_success": frag["partial_success"],
-                "state": frag["state"],
+                **to_summary_payload(frag),
                 "count": 0,
                 "frameworks": [],
                 "framework_count": 0,
-                "requested_framework": frag["requested_framework"],
-                "observed_frameworks": frag["observed_frameworks"],
             }
-            # W1082: helper now controls presence + second-fact wording
-            # via the W1081 kwargs (did_you_mean_omit_when_empty +
-            # requested_disclosure_verb + known_disclosure_label). No
-            # post-helper splice or fact patch needed; LAW 4 anchor
-            # ``frameworks`` preserved on every fact terminal.
-            if "did_you_mean" in frag:
-                summary_payload["did_you_mean"] = frag["did_you_mean"]
             click.echo(
                 to_json(
                     json_envelope(
@@ -928,18 +927,17 @@ def endpoints(ctx, framework, http_method, include_tests, group_by):
             f"unknown method filter {meth_upper!r} ({len(observed_methods)} observed){frag_m['verdict_suffix']}"
         )
         if json_mode:
+            # W1083: ``to_summary_payload`` extracts the splice subset
+            # (``state``, ``partial_success``, ``requested_method``,
+            # ``observed_methods``, and ``did_you_mean`` when the helper
+            # carried it via ``did_you_mean_omit_when_empty=True``).
             summary_payload_m: dict[str, object] = {
                 "verdict": verdict_unknown_method,
-                "partial_success": frag_m["partial_success"],
-                "state": frag_m["state"],
+                **to_summary_payload(frag_m),
                 "count": 0,
                 "frameworks": [],
                 "framework_count": 0,
-                "requested_method": frag_m["requested_method"],
-                "observed_methods": frag_m["observed_methods"],
             }
-            if "did_you_mean" in frag_m:
-                summary_payload_m["did_you_mean"] = frag_m["did_you_mean"]
             click.echo(
                 to_json(
                     json_envelope(

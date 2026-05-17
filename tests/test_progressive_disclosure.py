@@ -175,13 +175,21 @@ class TestStripListPayloadsOutput:
         assert data["items"] == [1, 2, 3]
 
     def test_summary_is_subset_of_detail_keys(self):
-        """Summary envelope should have a subset of detail envelope keys."""
+        """Summary envelope should have a subset of detail envelope keys.
+
+        W1008: ``list_counts`` is a derived top-level key surfaced by
+        ``strip_list_payloads`` to disclose what it stripped. It's not
+        in the original envelope; it's a strip-time annotation (same
+        category as the ``summary.detail_available`` / ``summary.truncated``
+        flags). Treat as part of the strip contract, not a payload field.
+        """
         data = _make_envelope(items=[1, 2, 3], extra=[4, 5])
         summary = strip_list_payloads(data)
-        # All keys in summary (except summary dict changes) should exist in original
+        # All keys in summary (except summary dict changes + strip-time
+        # disclosure annotations) should exist in original.
         for k in summary:
             if k not in ("items", "extra"):  # these were stripped
-                assert k in data or k == "summary"
+                assert k in data or k in ("summary", "list_counts")
 
 
 # ---------------------------------------------------------------------------

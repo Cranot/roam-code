@@ -202,6 +202,33 @@ def test_add_affected_appends_to_list(cli_runner, bundle_project):
     assert foo["blast_radius"] == 12
 
 
+def test_add_affected_accepts_path_and_file_aliases(cli_runner, bundle_project):
+    """W1141-followup: ``--path`` is the canonical flag; ``--file`` aliases it.
+
+    The CLI must accept both forms identically so older agents and scripts
+    that pass ``--file`` continue to work. Both forms write to the same
+    ``file`` field on the affected-symbol record.
+    """
+    _invoke(cli_runner, ["pr-bundle", "init", "--intent", "x"])
+    # Canonical name.
+    r1 = _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "affected", "alphaSym", "--path", "src/alpha.py"],
+    )
+    assert r1.exit_code == 0, r1.output
+    # Deprecated alias.
+    r2 = _invoke(
+        cli_runner,
+        ["pr-bundle", "add", "affected", "betaSym", "--file", "src/beta.py"],
+    )
+    assert r2.exit_code == 0, r2.output
+
+    bundle = _read_bundle_file(bundle_project)
+    by_name = {s["name"]: s for s in bundle["affected_symbols"]}
+    assert by_name["alphaSym"]["file"] == "src/alpha.py"
+    assert by_name["betaSym"]["file"] == "src/beta.py"
+
+
 # ---------------------------------------------------------------------------
 # 4. add risk appends
 # ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ _MAX_GRAPH_SYMBOLS = 5000
 @click.command("cut")
 @click.option("--between", nargs=2, default=None, help="Analyze boundary between two clusters")
 @click.option("--leak-edges", "leak_edges", is_flag=True, help="Focus on leak edge analysis")
-@click.option("--top", "top_n", default=10, type=int, help="Show top N boundaries")
+@click.option("--top", "top_n", default=10, type=int, help="Show top <N> boundaries")
 @click.pass_context
 def cut(ctx, between, leak_edges, top_n):
     """Minimum cut analysis — find fragile domain boundaries.
@@ -76,18 +76,45 @@ def cut(ctx, between, leak_edges, top_n):
 
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         if sym_count > _MAX_GRAPH_SYMBOLS and not between:
-            msg = f"Graph too large ({sym_count} symbols) for cut analysis. Index a subdirectory to reduce graph size."
+            # W1086 (Pattern-1A): mirrors the W1085 cmd_fingerprint canonical
+            # fix verbatim. Refuse-on-prerequisite must surface
+            # partial_success + closed-enum state. The pre-W1086 envelope
+            # ({"verdict": msg, "symbol_count": sym_count}) was structurally
+            # indistinguishable from "analyzed cleanly with no findings" to
+            # any consumer that only reads summary fields.
+            # LAW 4: terminal token must hit the concrete-noun anchor set
+            # (formatter.concrete_plural_terminals -> "symbols"). Put the
+            # cap clause first so the sentence ends on "symbols".
+            verdict = (
+                f"Skipped cut above cap {_MAX_GRAPH_SYMBOLS:,}: "
+                f"graph has {sym_count:,} symbols"
+            )
+            hint = (
+                "Index a subdirectory with `roam index <path>` to narrow the "
+                "analyzed subset, or raise `_MAX_GRAPH_SYMBOLS` in "
+                "src/roam/commands/cmd_cut.py."
+            )
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "cut",
-                            summary={"verdict": msg, "symbol_count": sym_count},
+                            summary={
+                                "verdict": verdict,
+                                "symbol_count": sym_count,
+                                "hard_cap": _MAX_GRAPH_SYMBOLS,
+                                "partial_success": True,
+                                "state": "graph_too_large",
+                                "cap_threshold": _MAX_GRAPH_SYMBOLS,
+                                "actual_count": sym_count,
+                            },
+                            hint=hint,
                         )
                     )
                 )
             else:
-                click.echo(f"VERDICT: {msg}")
+                click.echo(f"VERDICT: {verdict}")
+                click.echo(f"HINT: {hint}")
             return
 
         G = build_symbol_graph(conn)

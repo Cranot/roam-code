@@ -217,15 +217,26 @@ def test_idempotent_axis_independent_of_read_only() -> None:
     assert "read_only" in meta, "_TOOL_METADATA missing read_only slot — W108 regressed."
     assert "idempotent" in meta, "_TOOL_METADATA missing idempotent slot — W113 regressed."
 
-    # Document the current coincidence in a soft assertion: today, the
-    # two derived views are equal. If a future tool intentionally breaks
-    # this (e.g. read_only=True, idempotent=False), this assertion will
-    # fail and the maintainer should update this test to reflect the
-    # newly-divergent semantics rather than silently re-coupling them.
-    assert mcp._NON_READ_ONLY_TOOLS == mcp._NON_IDEMPOTENT_TOOLS, (
-        "_NON_READ_ONLY_TOOLS and _NON_IDEMPOTENT_TOOLS have diverged. "
-        "This is INTENTIONALLY allowed by W113 (the axes are independent), "
-        "but the current data was expected to coincide. If you added a tool "
-        "where read_only != idempotent, update this test to reflect the new "
-        "design intent — do NOT re-couple the two axes."
+    # Document the current divergence between the two derived views.
+    # Before W365, the two coincided perfectly. W365 introduced the first
+    # deliberate divergence: ``roam_reset`` and ``roam_clean`` are
+    # non-read-only (they mutate the index DB) but ARE idempotent in the
+    # MCP-spec sense: per
+    # https://modelcontextprotocol.io/specification/2025-11-25/server/tools
+    # "idempotent = repeating with same arguments has no additional effect
+    # beyond the initial call". A second roam_reset finds nothing to
+    # delete; a second roam_clean finds no orphans. These are textbook
+    # idempotent destructive operations.
+    expected_divergence = {"roam_reset", "roam_clean"}
+    actual_divergence = mcp._NON_READ_ONLY_TOOLS - mcp._NON_IDEMPOTENT_TOOLS
+    assert actual_divergence == expected_divergence, (
+        f"Unexpected divergence between _NON_READ_ONLY_TOOLS and "
+        f"_NON_IDEMPOTENT_TOOLS:\n"
+        f"  expected non-read-only-but-idempotent: {sorted(expected_divergence)}\n"
+        f"  actual non-read-only-but-idempotent:   {sorted(actual_divergence)}\n\n"
+        f"This is INTENTIONALLY allowed by W113 (the axes are independent). "
+        f"W365 introduced the first divergence (roam_reset / roam_clean). "
+        f"If you added a new tool where read_only=False and idempotent=True "
+        f"(or vice versa), update ``expected_divergence`` above to reflect "
+        f"the new design intent — do NOT re-couple the two axes."
     )

@@ -524,7 +524,7 @@ def _group_by_directory(items):
     requires_index=True,
 )
 @click.command()
-@click.option("--limit", "-n", default=20, help="Number of files to show (default 20)")
+@click.option("--limit", "--top", "-n", "limit", default=20, help="Number of files to show (default 20)")  # W1142: --top alias
 @click.option("--by-kind", "by_kind", is_flag=True, help="Group results by parent directory")
 @click.option("--threshold", type=float, default=None, help="Only show files above this debt score")
 @click.option("--roi", is_flag=True, help="Estimate refactoring ROI (developer-hours saved/quarter).")
@@ -701,11 +701,31 @@ def debt(ctx, limit, by_kind, threshold, roi):
             return
 
         # --- Flat list (default) ---
+        # W1142-followup: cap-hit disclosure. ``all_items`` is the
+        # post-threshold full population; ``display`` is the limited slice.
+        total_items_full = len(all_items)
         display = all_items[:limit]
+        items_truncated = total_items_full > len(display)
+        _cap_summary = {
+            "count": len(display),
+            "total_count": total_items_full,
+            "truncated": items_truncated,
+            "limit": limit,
+        }
+        _warnings_out: list[str] = []
+        if items_truncated:
+            _warnings_out.append(
+                f"truncated to {len(display)} of {total_items_full} — "
+                "pass --limit larger to see more"
+            )
 
         if json_mode:
+            _summary = {**stats, "verdict": _debt_verdict, **_cap_summary}
+            if _warnings_out:
+                _summary["warnings_out"] = _warnings_out
+                _summary["partial_success"] = True
             payload = {
-                "summary": {**stats, "verdict": _debt_verdict},
+                "summary": _summary,
                 "budget": token_budget,
                 "suggestions": suggestions,
                 "items": [

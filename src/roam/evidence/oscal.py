@@ -740,7 +740,13 @@ def build_oscal_assessment_results(
     * ``ChangeEvidence.approvals[]``       → ``results[0].attestations[]``
     * ``ChangeEvidence.accepted_risks[]``  → ``results[0].risks[].mitigating-factors[]``
     * ``ChangeEvidence.authority_refs[]``  → ``results[0].props[name=authority-ref]``
-                                              (no OSCAL-native equivalent;
+                                              (flat per-ref, byte-stable
+                                              backward-compat) +
+                                              ``results[0].observations[]``
+                                              with one observation per
+                                              distinct ``authority_kind``
+                                              (W350 drive-by; no OSCAL-
+                                              native equivalent;
                                               W359 extension point)
     * ``ChangeEvidence.redactions[]``      → ``metadata.props[name=redaction]``
                                               (no OSCAL-native equivalent)
@@ -1013,24 +1019,145 @@ def build_oscal_assessment_results(
 
     # authority_refs surface as result-level props (no native OSCAL
     # equivalent — W359 extension point under urn:roam:oscal:v1).
+    # The flat per-ref props are preserved for byte-stable backward
+    # compatibility; the load-bearing per-kind aggregation now lands as
+    # ``observations[]`` entries below (W350 drive-by).
     authority_refs = evidence.get("authority_refs") or []
-    if isinstance(authority_refs, list):
-        for authref in authority_refs:
-            if not isinstance(authref, Mapping):
-                continue
-            ak = authref.get("authority_kind")
-            aid = authref.get("authority_id")
-            if isinstance(ak, str) and isinstance(aid, str):
-                result_props.append(
+    if not isinstance(authority_refs, list):
+        authority_refs = []
+    authority_refs_clean: list[Mapping[str, Any]] = [r for r in authority_refs if isinstance(r, Mapping)]
+    for authref in authority_refs_clean:
+        ak = authref.get("authority_kind")
+        aid = authref.get("authority_id")
+        if isinstance(ak, str) and isinstance(aid, str):
+            result_props.append(
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "authority-ref",
+                    "value": f"{ak}:{aid}",
+                }
+            )
+
+    # Observations: one per finding row + one per changed_subject + one
+    # per distinct authority_kind (W350 drive-by — close the
+    # producer-wired-but-not-consumed gap on the OSCAL AR surface).
+    observations: list[dict[str, Any]] = []
+
+    # Authority-axis observations (W350 drive-by). One observation per
+    # distinct ``authority_kind`` present in the packet; the observation
+    # body lists each authority ref (kind:id) up to AUTHORITY_REFS_CAP
+    # entries per kind. Truncated kinds carry a ``truncated`` prop and a
+    # ``total_count`` so downstream consumers can detect the cap-hit.
+    # Wording stays in the "axis observed" register — never "complied",
+    # "satisfied", "certifies".
+    _AUTHORITY_REFS_CAP = 10
+    by_kind: dict[str, list[Mapping[str, Any]]] = {}
+    for authref in authority_refs_clean:
+        ak = authref.get("authority_kind")
+        if isinstance(ak, str) and ak:
+            by_kind.setdefault(ak, []).append(authref)
+    for kind in sorted(by_kind.keys()):
+        refs_of_kind = by_kind[kind]
+        total_count = len(refs_of_kind)
+        truncated = total_count > _AUTHORITY_REFS_CAP
+        kept = refs_of_kind[:_AUTHORITY_REFS_CAP]
+
+        obs_uuid = str(uuid.uuid5(_UUID_NS, f"obs-authority:{document_id}:{kind}"))
+        commit_marker = str(commit_sha) if commit_sha else "<no-commit>"
+        # Each ref becomes a subject under the observation so the OSCAL
+        # consumer can navigate to the individual permit / lease / etc.
+        subjects: list[dict[str, Any]] = []
+        for authref in kept:
+            aid = authref.get("authority_id") or "<unknown>"
+            granted_by = authref.get("granted_by")
+            source = authref.get("source")
+            subj_props: list[dict[str, str]] = [
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "authority_kind",
+                    "value": kind,
+                },
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "authority_id",
+                    "value": str(aid),
+                },
+            ]
+            if isinstance(granted_by, str) and granted_by:
+                subj_props.append(
                     {
                         "ns": ROAM_OSCAL_NS,
-                        "name": "authority-ref",
-                        "value": f"{ak}:{aid}",
+                        "name": "granted_by",
+                        "value": granted_by,
                     }
                 )
+            if isinstance(source, str) and source:
+                subj_props.append(
+                    {
+                        "ns": ROAM_OSCAL_NS,
+                        "name": "source",
+                        "value": source,
+                    }
+                )
+            subjects.append(
+                {
+                    "subject-uuid": str(
+                        uuid.uuid5(
+                            _UUID_NS,
+                            f"subj-authority:{document_id}:{kind}:{aid}",
+                        )
+                    ),
+                    "type": "component",
+                    "title": f"{kind}:{aid}",
+                    "props": subj_props,
+                }
+            )
 
-    # Observations: one per finding row + one per changed_subject.
-    observations: list[dict[str, Any]] = []
+        obs_props: list[dict[str, str]] = [
+            {
+                "ns": ROAM_OSCAL_NS,
+                "name": "authority_kind",
+                "value": kind,
+            },
+            {
+                "ns": ROAM_OSCAL_NS,
+                "name": "authority_refs_total",
+                "value": str(total_count),
+            },
+        ]
+        if truncated:
+            obs_props.append(
+                {
+                    "ns": ROAM_OSCAL_NS,
+                    "name": "truncated",
+                    "value": "true",
+                }
+            )
+
+        observations.append(
+            {
+                "uuid": obs_uuid,
+                "title": f"Authority axis observed: {kind}",
+                "description": (
+                    f"Authority axis: {kind} — {total_count} entries "
+                    f"observed at {commit_marker}."
+                ),
+                "methods": ["EXAMINE"],
+                "subjects": subjects,
+                "props": obs_props,
+                "remarks": (
+                    f"Authority-axis observation supports evidence for "
+                    f"identity / authorisation review (W350 producer "
+                    f"surface). Kind: {kind}. Total observed: {total_count}"
+                    + (
+                        f"; truncated to first {_AUTHORITY_REFS_CAP} subjects."
+                        if truncated
+                        else "."
+                    )
+                ),
+            }
+        )
+
     findings_in = evidence.get("findings") or []
     if not isinstance(findings_in, list):
         findings_in = []

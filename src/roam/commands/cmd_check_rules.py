@@ -117,18 +117,20 @@ def _load_user_config(
         # No `rules:` key — a profile-only config is legitimate, so this is
         # NOT a warning. Return empty overrides and let the caller decide.
         return []
-    rules = data.get("rules", [])
-    if not isinstance(rules, list):
-        if warnings_out is not None:
-            resolved = _find_config_path(config_path)
-            path_str = resolved if resolved is not None else "<unknown>"
-            warnings_out.append(
-                f"roam-rules: {path_str!r} `rules` is "
-                f"{type(rules).__name__!r}, expected a list of "
-                f"`{{id, threshold?, severity?, enabled?}}` entries. "
-                f"Treating as empty overrides."
-            )
-        return []
+    # W1038 — shared "load → check type → warn-or-default" extractor.
+    from roam.commands._yaml_loader import extract_typed
+
+    resolved = _find_config_path(config_path)
+    path_str = resolved if resolved is not None else "<unknown>"
+    rules = extract_typed(
+        data,
+        "rules",
+        list,
+        [],
+        warnings_out=warnings_out,
+        context=f"roam-rules: {path_str!r}",
+        expected_shape="a list of `{id, threshold?, severity?, enabled?}` entries",
+    )
     return rules
 
 
@@ -156,17 +158,25 @@ def _load_config_profile(
     if "profile" not in data:
         # Absence of a profile key is legitimate (rules-only configs).
         return None
-    profile = data.get("profile")
-    if isinstance(profile, str) and profile.strip():
+    # W1038-followup — shared "load → check type → validate → warn-or-default"
+    # extractor. The validator captures the non-empty-string sub-pattern
+    # (``isinstance(v, str) and v.strip()``) the inline branch used to do.
+    from roam.commands._yaml_loader import extract_typed
+
+    resolved = _find_config_path(config_path)
+    path_str = resolved if resolved is not None else "<unknown>"
+    profile = extract_typed(
+        data,
+        "profile",
+        str,
+        "",
+        warnings_out=warnings_out,
+        context=f"roam-rules: {path_str!r}",
+        expected_shape="a non-empty string (e.g. 'strict-security')",
+        validator=lambda v: bool(v.strip()),
+    )
+    if profile:
         return profile.strip()
-    if warnings_out is not None:
-        resolved = _find_config_path(config_path)
-        path_str = resolved if resolved is not None else "<unknown>"
-        warnings_out.append(
-            f"roam-rules: {path_str!r} `profile` is "
-            f"{type(profile).__name__!r}, expected a non-empty string "
-            f"(e.g. 'strict-security'). Treating as no profile."
-        )
     return None
 
 
@@ -314,6 +324,8 @@ def _results_to_sarif(
     results: list[dict],
     *,
     warnings_out: list[str] | None = None,
+    runtime_overrides: list[dict] | None = None,
+    runtime_notification_overrides: list[dict] | None = None,
 ) -> dict:
     """Convert check-rules results to SARIF 2.1.0 format.
 
@@ -325,6 +337,14 @@ def _results_to_sarif(
     W1046 opt-in. Hash invariant: when ``warnings_out`` is ``None``/empty
     the SARIF bytes are identical to pre-W1114 callers (the opt-in flag
     stays ``False``).
+
+    W1061-followup: ``runtime_overrides`` (rule-id-level via ``--rule``)
+    and ``runtime_notification_overrides`` (finding-level via
+    ``--severity``) project onto the SARIF
+    ``ruleConfigurationOverrides`` / ``notificationConfigurationOverrides``
+    arrays so CI consumers can distinguish a filtered "no findings" run
+    from a clean codebase. Defaults stay byte-identical to pre-W1061
+    callers via gated emission in :func:`to_sarif`.
     """
     from roam.output.sarif import rules_to_sarif
 
@@ -343,6 +363,8 @@ def _results_to_sarif(
         sarif_results,
         emit_runtime_notifications=bool(warnings_out),
         warnings_out=list(warnings_out) if warnings_out else None,
+        runtime_overrides=runtime_overrides,
+        runtime_notification_overrides=runtime_notification_overrides,
     )
 
 
@@ -645,7 +667,7 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
 
     # --- SARIF output ---
     if sarif_mode:
-        from roam.output.sarif import write_sarif
+        from roam.output.sarif import runtime_filter_disclosure, write_sarif
 
         # W1114: pass accumulated loader warnings onto the SARIF
         # toolExecutionNotifications[] array so a CI consumer sees the
@@ -653,7 +675,48 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
         # carry via ``summary.warnings_out`` / the text Warnings block.
         # Hash invariant: empty/missing warnings keep the SARIF output
         # byte-identical to pre-W1114.
-        sarif = _results_to_sarif(results, warnings_out=list(deduped_warnings))
+        #
+        # W1061-followup-2: rule-level + finding-level filter disclosure
+        # delegated to the shared :func:`runtime_filter_disclosure`
+        # helper. Original W1061-followup semantics preserved:
+        #   --rule    -> rule-id-level disable; every rule NOT matching
+        #               the filter becomes a ``ruleConfigurationOverride``
+        #               with ``configuration.enabled: false``.
+        #   --severity -> finding-level filter (rules don't carry severity
+        #               1:1 — same rule can emit multiple severity tiers).
+        #               Surfaces as a ``notificationConfigurationOverride``
+        #               under a synthetic ``severity-filter`` descriptor.
+        rule_disabled: list[tuple[str, dict]] = []
+        finding_filters: list[tuple[str, dict]] = []
+        if rule_filter:
+            # ``rule_filter`` selects exactly one rule by id — the
+            # disabled set is every other rule in the result set.
+            for r in results:
+                rid = r["id"]
+                if rid != rule_filter:
+                    rule_disabled.append(
+                        (
+                            f"rules/{rid}",
+                            {"disabled_by": "--rule", "filter_value": rule_filter},
+                        )
+                    )
+        if severity_filter:
+            finding_filters.append(
+                (
+                    "severity-filter",
+                    {"filter": "--severity", "filter_value": severity_filter},
+                )
+            )
+        sarif_overrides, sarif_notif_overrides = runtime_filter_disclosure(
+            rule_ids_disabled=rule_disabled,
+            finding_level_filters=finding_filters,
+        )
+        sarif = _results_to_sarif(
+            results,
+            warnings_out=list(deduped_warnings),
+            runtime_overrides=sarif_overrides or None,
+            runtime_notification_overrides=sarif_notif_overrides or None,
+        )
         click.echo(write_sarif(sarif))
         if exit_code != 0:
             ctx.exit(exit_code)

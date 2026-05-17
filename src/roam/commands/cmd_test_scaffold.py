@@ -27,7 +27,10 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
-from roam.output.structured_unknowns import structured_unknown_filter
+from roam.output.structured_unknowns import (
+    structured_unknown_filter,
+    to_summary_payload,
+)
 from roam.refactor.codegen import _python_module_path
 
 # ---------------------------------------------------------------------------
@@ -627,25 +630,38 @@ def test_scaffold(ctx, name, write, framework):
         source_path = None
         language = None
         # W1245 Pattern-2 variant-D resolution-state tracking. File-target
-        # branch stays implicit ``symbol`` (file-path is the user's
-        # intended primary type, not a fallback); symbol branch reads
-        # the ``_resolution_tier`` stamp post-W1249.
+        # branch defaults to ``"file"`` (exact-match) and downgrades to
+        # ``"file_substring"`` (W1309) when the LIKE %name% fallback
+        # supplies the row; symbol branch reads the ``_resolution_tier``
+        # stamp post-W1249.
         resolution_tier: str = "symbol"
         resolved_target_label: str | None = None
 
         # Try file lookup first (if has slash or common extension)
         if "/" in name_norm or "." in name_norm:
             file_row = conn.execute("SELECT * FROM files WHERE path = ?", (name_norm,)).fetchone()
-            if not file_row:
+            if file_row:
+                resolution_tier = "file"
+            else:
                 file_row = conn.execute(
                     "SELECT * FROM files WHERE path LIKE ? LIMIT 1",
                     (f"%{name_norm}",),
                 ).fetchone()
+                if file_row:
+                    # W1309 Pattern-1D: LIKE %name% can land on a wrong
+                    # file (e.g. user typed ``service.py`` matching both
+                    # ``src/service.py`` and ``vendor/auth_service.py``).
+                    # Disclose the substring-fallback origin so agents can
+                    # distinguish exact-path success from substring drift.
+                    resolution_tier = "file_substring"
 
         if file_row:
             source_path = file_row["path"]
             language = file_row["language"] or "unknown"
             file_id = file_row["id"]
+            # W1309: stamp the resolved-file label so disclosure echoes
+            # the actual on-disk path, not the user's substring input.
+            resolved_target_label = source_path
 
             if is_test_file(source_path):
                 msg = f"Skipping: {source_path} is already a test file"
@@ -667,8 +683,33 @@ def test_scaffold(ctx, name, write, framework):
             # Symbol lookup
             sym = find_symbol(conn, name)
             if not sym:
-                click.echo(symbol_not_found(conn, name, json_mode=json_mode))
-                raise SystemExit(1)
+                # W1280 - Pattern-2c Convention (c): unresolved exits 0 with
+                # a resolution=unresolved + partial_success disclosure so
+                # agents can distinguish a name-typo from a tool/IO
+                # failure. Text mode keeps the FTS suggestion list (most
+                # useful next step for a human staring at a typo).
+                # W1278a - migrated from `symbol_not_found(...) +
+                # raise SystemExit(1)` to mirror cmd_guard.py:350-375.
+                unresolved_block = resolution_disclosure("unresolved", target=name or "")
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "test-scaffold",
+                                summary={
+                                    "verdict": f"Symbol '{name}' not found",
+                                    "partial_success": True,
+                                    "state": "not_found",
+                                    **unresolved_block,
+                                },
+                                symbol=name or "",
+                                **unresolved_block,
+                            )
+                        )
+                    )
+                else:
+                    click.echo(symbol_not_found(conn, name, json_mode=False))
+                return
 
             # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` stamps
             # ``_resolution_tier`` on the returned row so the scaffold
@@ -685,14 +726,44 @@ def test_scaffold(ctx, name, write, framework):
             target_symbols = _collect_symbols_for_symbol(conn, sym)
 
         if not target_symbols:
-            msg = f"No testable symbols found in {source_path or name}"
+            # W1309 Pattern-1D: when the file branch landed on this path via
+            # substring fallback (``resolution_tier == "file_substring"``)
+            # and there are zero testable symbols, the prior verdict
+            # ("No testable symbols found in src/foo.py") was indistinguishable
+            # from an exact-path success with an empty file. Surface the
+            # substring origin so agents can spot a wrong-file drift before
+            # acting on the "no work to do" verdict.
+            if resolution_tier == "file_substring":
+                msg = (
+                    f"Substring matched {source_path} (from {name!r}) with no "
+                    f"testable symbols"
+                )
+            else:
+                msg = f"No testable symbols found in {source_path or name}"
+            disclosure_empty = resolution_disclosure(
+                resolution_tier,
+                target=source_path or name,
+            )
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "test-scaffold",
-                            summary={"verdict": msg, "scaffolded": 0},
+                            summary={
+                                "verdict": msg,
+                                "scaffolded": 0,
+                                "state": (
+                                    "file_substring_match_no_symbols"
+                                    if resolution_tier == "file_substring"
+                                    else "no_testable_symbols"
+                                ),
+                                # W1309: explicit disclosure so list-strip
+                                # consumers see ``resolution`` + ``partial_success``
+                                # in the summary block, not just the envelope root.
+                                **disclosure_empty,
+                            },
                             symbols=[],
+                            **disclosure_empty,
                         )
                     )
                 )
@@ -732,18 +803,21 @@ def test_scaffold(ctx, name, write, framework):
                     f"{frag_fw['verdict_suffix']}"
                 )
                 if json_mode:
+                    # W1083: ``to_summary_payload(include_did_you_mean=False)``
+                    # extracts the splice subset MINUS ``did_you_mean`` —
+                    # pre-W1080 envelope did NOT carry the field in the
+                    # summary (close-match suggestion lands only in the
+                    # verdict suffix). Callsite-specific fields
+                    # (``scaffolded``, ``language``) compose around it.
                     click.echo(
                         to_json(
                             json_envelope(
                                 "test-scaffold",
                                 summary={
                                     "verdict": verdict_unknown,
-                                    "partial_success": frag_fw["partial_success"],
-                                    "state": frag_fw["state"],
+                                    **to_summary_payload(frag_fw, include_did_you_mean=False),
                                     "scaffolded": 0,
                                     "language": language,
-                                    "requested_framework": frag_fw["requested_framework"],
-                                    "known_frameworks": frag_fw["known_frameworks"],
                                 },
                                 source_path=source_path,
                                 agent_contract={
@@ -809,11 +883,13 @@ def test_scaffold(ctx, name, write, framework):
             if scaffolded > 0
             else f"No new symbols to scaffold for {source_path}"
         )
-        # W1245 Pattern-2 variant-D: suffix the verdict when the symbol-
-        # target resolver succeeded through a degraded tier so LAW-6
-        # single-line consumers still see the disclosure.
+        # W1245 / W1309 Pattern-2 variant-D: suffix the verdict when the
+        # resolver succeeded through a degraded tier so LAW-6 single-line
+        # consumers still see the disclosure.
         if resolution_tier == "fuzzy":
             verdict = f"{verdict} [fuzzy resolution]"
+        elif resolution_tier == "file_substring":
+            verdict = f"{verdict} [substring file match]"
         disclosure = resolution_disclosure(
             resolution_tier,
             target=resolved_target_label if resolved_target_label is not None else (source_path or name),

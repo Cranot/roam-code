@@ -123,7 +123,7 @@ def _query_hotspots(conn, top: int, changed_files: set[str] | None):
     requires_index=True,
 )
 @click.command()
-@click.option("--top", default=20, type=int, help="Limit to top N hotspots (default 20)")
+@click.option("--top", default=20, type=int, help="Limit to top <N> hotspots (default 20)")
 @click.option("--changed", is_flag=True, help="Filter to symbols in changed files (vs base branch)")
 @click.option("--base", default="HEAD~1", help="Base ref for --changed (default HEAD~1)")
 @click.option("--min-calls", default=0, type=int, help="Filter out symbols below this call_count")

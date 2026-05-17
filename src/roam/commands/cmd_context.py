@@ -44,7 +44,7 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
-from roam.output.metric_definitions import CALLER_METRIC_RAW
+from roam.output.metric_definitions import CALLER_METRIC_RAW, COGNITIVE_COMPLEXITY_DEFINITION
 
 _TASK_CHOICES = ["refactor", "debug", "extend", "review", "understand"]
 
@@ -859,6 +859,11 @@ def _render_single_json(data, budget=0):
         summary["affected_tests_total"] = len(data["affected_tests"])
     if data.get("coupling"):
         summary["coupling_partners"] = len(data["coupling"])
+    if data.get("complexity"):
+        # W1298 Pattern-3a: ``complexity`` mirrors the symbol_metrics
+        # cognitive_complexity dict — disclose the scorer so consumers
+        # cannot misread it as cyclomatic.
+        summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
 
     payload = {
         "symbol": sym["qualified_name"] or sym["name"],
@@ -1038,6 +1043,9 @@ def _render_file_json(data, budget=0):
     if data["complexity"]:
         summary["complexity_avg"] = data["complexity"]["avg"]
         summary["complexity_max"] = data["complexity"]["max"]
+        # W1298 Pattern-3a: complexity_avg/_max are aggregates over the
+        # symbol_metrics.cognitive_complexity column — disclose the scorer.
+        summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
 
     click.echo(
         to_json(

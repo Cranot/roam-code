@@ -12,7 +12,7 @@
 
 <sub>Credential-free · zero network egress · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
-<sub>238 commands · 224 MCP tools (57 in the default `core` preset) · 28 languages</sub>
+<sub>241 commands · 224 MCP tools (57 in the default `core` preset) · 28 languages</sub>
 
 </div>
 
@@ -320,12 +320,12 @@ roam health
 ## Commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~233 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **238 commands (231 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~236 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **241 commands (234 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 <!-- END auto-count:readme-canonical-mention -->
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 231)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 234)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 ### Getting Started
@@ -1179,7 +1179,7 @@ Core preset tools: `roam_affected_tests`, `roam_alerts`, `roam_ask`, `roam_audit
 | `roam_llm_smells` | Run LLM-API integration linter over indexed files: detects unpinned model versions, missing max_tokens, prompt injection via user-input concatenation, unvalidated json.loads on LLM output, and missing temperature. Different from ``roam_vibe_check`` (AI-generated code shape) and ``roam_smells`` (structural anti-patterns) -- this is the production gate for human-authored LLM-using code. |
 | `roam_map` | Show project skeleton: directory tree, entry points, top symbols by PageRank, language counts. Different from ``roam_describe`` (prose description) and ``roam_minimap`` (sentinel-block one-pager for CLAUDE.md) -- this is the structured skeleton with directories, entry points, and ranked symbols for agent onboarding. |
 | `roam_metrics` | Show unified per-file or per-symbol metrics: cognitive complexity, fan-in / fan-out, SNA centrality vector (PageRank / betweenness / closeness / eigenvector / clustering coefficient), composite debt score, churn, test coverage, and comprehension difficulty in a single view. |
-| `roam_metrics_push` | Push metrics-only summary to Roam Cloud Lite. |
+| `roam_metrics_push` | Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.** |
 | `roam_migration_plan` | Generate an ordered migration plan with risk + blast-radius per step from a target-architecture YAML spec or inline ``--move SYMBOL=path/to/new/file`` directives. Each step is annotated with caller count and a derived risk score so agents can decide where to stop or insert tests. Stops at the first step exceeding ``max_risk``. Different from ``roam_simulate`` (counterfactual single-move analysis) -- this is the ordered multi-step plan with a risk gate. |
 | `roam_migration_safety` | Non-idempotent database migrations (unsafe for re-run). |
 | `roam_minimap` | Generate a compact ~20-line codebase minimap for CLAUDE.md injection: tech stack, annotated directory tree, key symbols by PageRank, high-fan-in symbols to avoid, hotspots, detected conventions. Different from ``roam_describe`` (long-form prose) and ``roam_map`` (structured skeleton) -- this is the sentinel-block one-pager. The wrapper emits to stdout; on-disk updates are deferred to the CLI (``roam minimap --update`` / ``--init-notes``) so the MCP surface stays read-only. |
@@ -1228,7 +1228,7 @@ Core preset tools: `roam_affected_tests`, `roam_alerts`, `roam_ask`, `roam_audit
 | `roam_review_change` | Change review bundle: pr-risk + breaking changes + structural diff in one call. |
 | `roam_risk` | Rank symbols by domain-weighted risk: combines static risk (fan-in + fan-out + betweenness) with domain criticality weights so financial / auth / data-integrity symbols rank higher than UI symbols. Different from ``roam_fan`` (raw fan-in/out degree) and ``roam_hotspots`` (runtime hotspot classification) -- this is the semantic-domain-weighted risk heatmap. |
 | `roam_rules_check` | Evaluate custom governance rules from .roam/rules/ YAML files. |
-| `roam_rules_validate` | Lint a `. |
+| `roam_rules_validate` | Lint a `.roam/rules.yml` for shippability before customers see it. |
 | `roam_runtime_hotspots` | Runtime hotspots where static and runtime rankings disagree (UPGRADE/DOWNGRADE). |
 | `roam_safe_delete` | Fuse dead-code, blast-radius, and test-coverage signals into a single deletion verdict: SAFE / REVIEW / UNSAFE. Reports direct callers (non-test), transitive dependents, affected files, and a public-API bump that flips SAFE -> REVIEW for exported symbols whose name matches a common public-API prefix. Different from ``roam_dead_code`` (all unreferenced symbols) and ``roam_impact`` (transitive blast radius) -- this is the single go/no-go gate. |
 | `roam_safe_zones` | Classify the refactor containment zone around a symbol or file: ISOLATED (no external connections), CONTAINED (<=5 boundary symbols), or EXPOSED (>5). Reports strictly-internal vs boundary symbols and external caller / callee counts per boundary. Different from ``roam_impact`` (unbounded reverse blast radius) and ``roam_closure`` (exact locations needing modification) -- this maps the bounded zone where it is safe to refactor freely. |

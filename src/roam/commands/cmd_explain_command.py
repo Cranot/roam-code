@@ -164,16 +164,47 @@ def explain_command(ctx, name: str):
     surface_data = _build_surface()
     match = next((c for c in surface_data["commands"] if c["name"] == name), None)
     if not match:
-        # W1074 (sibling of W1066): append difflib closest-match suggestion
-        # when the typo lands within cutoff 0.6 of a registered command
-        # name. The vocabulary is ~238 entries — borderline but still
-        # tractable. The suggestion is additive: a no-match path keeps the
-        # pre-W1074 error/hint lines byte-identical (the "Did you mean"
-        # line is omitted entirely when no candidate is within cutoff).
-        import difflib
+        # W1083-followup: delegate the difflib closest-match + close-match
+        # phrasing to the shared ``structured_unknown_filter`` helper.
+        # Canonical knobs (cutoff=0.6, n=2) were already in use per W1074.
+        # In json_mode the helper also closes the Pattern-1C gap (pre-
+        # W1083-followup the path wrote to stderr + exited 2 with no
+        # structured stdout). Text-mode error/hint lines stay byte-
+        # identical so the W1074 tests continue to pin the contract.
+        from roam.output.structured_unknowns import (
+            structured_unknown_filter,
+            to_summary_payload,
+        )
 
         known_names = sorted(c["name"] for c in surface_data["commands"])
-        close_matches = difflib.get_close_matches(name, known_names, n=2, cutoff=0.6)
+        frag = structured_unknown_filter(
+            requested=name,
+            known=known_names,
+            state="unknown_command",
+            requested_field="requested_command",
+            known_field="known_commands",
+            fact_anchor="commands",
+        )
+        assert frag is not None  # ``match`` was None -> name not in closed set
+        close_matches = frag.get("did_you_mean", [])
+        if json_mode:
+            verdict_unknown = f"unknown command {name!r}"
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "explain-command",
+                        summary={
+                            "verdict": verdict_unknown + frag["verdict_suffix"],
+                            **to_summary_payload(frag),
+                        },
+                        agent_contract={
+                            "facts": frag["facts"],
+                            "next_commands": ["roam surface"],
+                        },
+                    )
+                )
+            )
+            ctx.exit(2)
         click.echo(f"ERROR: unknown command '{name}'.", err=True)
         if close_matches:
             quoted = " or ".join(f"'{m}'" for m in close_matches)

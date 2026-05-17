@@ -145,6 +145,13 @@ def _deprecation_record(name: str) -> dict | None:
     }
 
 
+# Source-of-truth for compound-recipe linting. ``tests/test_compound_recipe_registry.py``
+# (W1297) asserts every internal-command-name string literal referenced by a
+# compound recipe (ask recipes, report PRESETS, ``_run_roam([...])`` /
+# ``runner.invoke(cli, [...])`` / ``args = ["--json", ...]`` invocations,
+# the mcp ``_COMPOUND_REGISTRY``, etc.) resolves against ``_COMMANDS.keys()
+# | _DEPRECATED_COMMANDS.keys()`` — closes the ``vuln``/``vulns`` typo class
+# named in CLAUDE.md Pattern 5. Closed enumeration per CLAUDE.md Constraint 8.
 _COMMANDS = {
     "index": ("roam.commands.cmd_index", "index"),
     "map": ("roam.commands.cmd_map", "map_cmd"),
@@ -217,6 +224,7 @@ _COMMANDS = {
     "capabilities": ("roam.commands.cmd_capabilities", "capabilities_cmd"),
     "skill-generate": ("roam.commands.cmd_skill_generate", "skill_generate_cmd"),
     "compare": ("roam.commands.cmd_compare", "compare_cmd"),
+    "compatibility": ("roam.commands.cmd_compatibility", "compatibility"),
     "migration-plan": ("roam.commands.cmd_migration_plan", "migration_plan_cmd"),
     "guard": ("roam.commands.cmd_guard", "guard"),
     "init": ("roam.commands.cmd_init", "init"),
@@ -250,9 +258,11 @@ _COMMANDS = {
     "path-coverage": ("roam.commands.cmd_path_coverage", "path_coverage"),
     "plugins": ("roam.commands.cmd_plugins", "plugins_cmd"),
     "test-pyramid": ("roam.commands.cmd_test_pyramid", "test_pyramid"),
+    "test-hermeticity": ("roam.commands.cmd_test_hermeticity", "test_hermeticity"),
     "index-stats": ("roam.commands.cmd_index_stats", "index_stats"),
     "telemetry": ("roam.commands.cmd_telemetry", "telemetry"),
     "orphan-imports": ("roam.commands.cmd_orphan_imports", "orphan_imports"),
+    "boundary": ("roam.commands.cmd_boundary", "boundary"),
     "changelog": ("roam.commands.cmd_changelog", "changelog"),
     "graph-export": ("roam.commands.cmd_graph_export", "graph_export"),
     "graph-stats": ("roam.commands.cmd_graph_stats", "graph_stats"),
@@ -538,6 +548,7 @@ _CATEGORIES = {
         "py-types",
         "py-modern",
         "pytest-fixtures",
+        "test-hermeticity",
         "algo",
         "n1",
         "over-fetch",
@@ -550,6 +561,7 @@ _CATEGORIES = {
         "hotspots",
         "why-slow",
         "eval-retrieve",
+        "boundary",
     ],
     "Architecture": [
         "map",
@@ -629,6 +641,7 @@ _CATEGORIES = {
         "taint",
         "cga",
         "congestion",
+        "compatibility",
     ],
     "Refactoring": [
         "dead",
@@ -832,7 +845,8 @@ class LazyGroup(click.Group):
             import difflib
 
             _ensure_plugin_commands_loaded()
-            close = difflib.get_close_matches(bad, list(_COMMANDS.keys()), n=3, cutoff=0.6)
+            # W1083-followup-2: align to canonical n=2 (5 of 6 sites use n=2; cli.py was the outlier)
+            close = difflib.get_close_matches(bad, list(_COMMANDS.keys()), n=2, cutoff=0.6)
             # when no edit-distance match lands but the user
             # typed a phrase, route them through the ``ask`` classifier
             # so a natural-language attempt ("trace login flow") still

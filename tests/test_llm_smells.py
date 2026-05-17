@@ -578,6 +578,84 @@ def test_llm_smells_verdict_terminal_is_concrete_noun_anchored(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# W1005-followup-A -- --min-severity widened from 3-tier to W547 7-token vocab
+# ---------------------------------------------------------------------------
+
+
+def test_llm_smells_min_severity_high_keeps_critical_only(tmp_path):
+    """``--min-severity high`` filters via W547 severity_rank.
+
+    Detectors emit {info, warning, critical}. ``high`` has the same rank as
+    ``critical`` in W547's canonical table (CVSS alias), so only the
+    critical-severity pattern (``llm_api_direct_user_input_concatenation``,
+    aka pi1) survives. ``warning`` and ``info`` rows are filtered out.
+
+    This pins the W1005-followup-A widening: pre-widening the Click Choice
+    rejected ``high`` outright (UsageError, exit 2); post-widening the value
+    is accepted and severity_rank() does the comparison.
+    """
+    proj = _llm_project(tmp_path)
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        assert runner.invoke(cli, ["index"]).exit_code == 0
+        result = runner.invoke(cli, ["--json", "llm-smells", "--min-severity", "high"])
+        assert result.exit_code == 0, result.output
+        envelope = json.loads(result.output)
+        kinds = {f["kind"] for f in envelope.get("findings", [])}
+        # The PI-concat pattern in calls.py is critical -- must survive.
+        assert "llm_api_direct_user_input_concatenation" in kinds, (
+            f"expected critical PI pattern to survive --min-severity high; got {kinds}"
+        )
+        # Warning + info patterns must NOT survive. Spot-check a representative
+        # warning (missing_max_tokens) and info (temperature_not_set).
+        assert "llm_api_missing_max_tokens" not in kinds, (
+            f"warning-severity pattern leaked past --min-severity high: {kinds}"
+        )
+        assert "llm_api_temperature_not_set" not in kinds, (
+            f"info-severity pattern leaked past --min-severity high: {kinds}"
+        )
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_llm_smells_min_severity_info_is_passthrough(tmp_path):
+    """``--min-severity info`` keeps every emitted severity (pass-through).
+
+    ``info`` is the floor of the W547 canonical ordering, so the filter is a
+    no-op: the finding set with ``--min-severity info`` must equal the set
+    without any --min-severity flag at all (default is also ``info``). Pins
+    that the W1005-followup-A widening did not regress the default path.
+    """
+    proj = _llm_project(tmp_path)
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        assert runner.invoke(cli, ["index"]).exit_code == 0
+        baseline = runner.invoke(cli, ["--json", "llm-smells"])
+        assert baseline.exit_code == 0, baseline.output
+        baseline_envelope = json.loads(baseline.output)
+        baseline_kinds = {f["kind"] for f in baseline_envelope.get("findings", [])}
+
+        explicit = runner.invoke(cli, ["--json", "llm-smells", "--min-severity", "info"])
+        assert explicit.exit_code == 0, explicit.output
+        explicit_envelope = json.loads(explicit.output)
+        explicit_kinds = {f["kind"] for f in explicit_envelope.get("findings", [])}
+
+        assert explicit_kinds == baseline_kinds, (
+            f"--min-severity info should be pass-through; "
+            f"baseline={baseline_kinds} explicit={explicit_kinds}"
+        )
+        # Sanity: at least one finding kind survived (otherwise the test
+        # would pass trivially on an empty set).
+        assert explicit_kinds, "expected at least one finding from the synthetic LLM fixture"
+    finally:
+        os.chdir(old_cwd)
+
+
+# ---------------------------------------------------------------------------
 # MCP wrapper coverage assertion
 # ---------------------------------------------------------------------------
 

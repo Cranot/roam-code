@@ -9,14 +9,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roam-code"
 version = "13.2"
-description = "Local codebase intelligence and assurance for developers and AI coding agents"
+description = "Local codebase intelligence CLI and MCP server for developers and AI coding agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
     {name = "Cranot"},
 ]
-keywords = ["code-intelligence", "static-analysis", "mcp-server", "tree-sitter", "architecture", "code-graph", "ai-coding", "graph-analysis", "code-quality", "cli", "codebase", "code-analysis", "ai-tools", "mcp", "sql"]
+keywords = ["ai-agents", "ai-coding", "cli", "code-analysis", "code-graph", "code-intelligence", "code-quality", "code-review", "developer-tools", "graph-analysis", "local-first", "mcp", "mcp-server", "model-context-protocol", "python", "refactoring", "software-architecture", "sqlite", "static-analysis", "tree-sitter"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",

@@ -6,6 +6,16 @@ counts in README.md, CLAUDE.md, llms-install.md, and the public MCP server
 card had to be hand-bumped, and the test only caught the discrepancy after
 the fact.
 
+redacted — close the W563 auto-rotate gap. The card writer used to
+update 2 of the 4 card paths (bundled + flat well-known .json) and leave the
+SEP-1649 nested + SEP-2127 no-suffix mirrors stale, plus the SHA-256 pin in
+``tests/test_mcp_server_card_hash.py`` had to be hand-bumped after every
+``--apply``. Both gaps required manual W789/W794/W1307/W1308 fix-up commits.
+``--apply`` now (1) syncs all 3 well-known mirrors to the canonical bytes
+and (2) rewrites ``_EXPECTED_CARD_SHA256`` to the new digest. Opt out per
+invocation via ``--no-rotate-card-hash`` (the substrate stays available for
+debugging without auto-rotation).
+
 See also: ``scripts/sync_surface_counts.py``
     The two scripts are intentional cousins, not duplicates. This one
     (``build_readme_counts.py``) owns **marker-protected Markdown
@@ -59,6 +69,7 @@ Operates per-named-block, so adding a new site is a small additive edit.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -407,6 +418,37 @@ MCP_CARD_PATH = (
 )
 BUNDLED_MCP_CARD_PATH = ROOT / "src" / "roam" / "mcp-server-card.json"
 
+# W844 — the two extra .well-known mirrors that ``--apply`` used to leave
+# stale. ``test_w792_well_known_card_mirrors`` requires all 3 mirror paths
+# to hash identically; treating them as derived copies of MCP_CARD_PATH
+# closes the W1308 manual-sync gap.
+_WELL_KNOWN_DIR = ROOT / "templates" / "distribution" / "landing-page" / ".well-known"
+WELL_KNOWN_MIRROR_PATHS: tuple[Path, ...] = (
+    _WELL_KNOWN_DIR / "mcp" / "server-card.json",   # SEP-1649 nested
+    _WELL_KNOWN_DIR / "mcp-server-card",            # SEP-2127 no-suffix
+)
+
+# W844 — the SHA-256 pin in tests/test_mcp_server_card_hash.py. The hash
+# is computed on the LF-line-ending bytes (canonical git storage) per
+# W1308; ``_canonical_card_bytes`` enforces that on Windows checkouts.
+CARD_HASH_TEST_PATH = ROOT / "tests" / "test_mcp_server_card_hash.py"
+CARD_HASH_PIN_PATTERN = re.compile(
+    r'^(_EXPECTED_CARD_SHA256\s*=\s*")([0-9a-f]{64})(")',
+    flags=re.MULTILINE,
+)
+
+
+def _canonical_card_bytes(path: Path) -> bytes:
+    """Return LF-normalized card bytes for hashing.
+
+    The pin in ``tests/test_mcp_server_card_hash.py`` is computed on LF
+    bytes (canonical git storage) so CI Linux and local Windows agree.
+    W1308 normalized the working tree to LF; this helper is a belt-and-
+    suspenders guard against a future CRLF-introducing edit reaching the
+    auto-rotate path.
+    """
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
 
 def _update_mcp_card_text(text: str, c: Counts) -> str:
     """Update count-bearing keys in the card JSON text WITHOUT reformatting.
@@ -503,7 +545,58 @@ def _apply_mcp_card(path: Path, c: Counts, write: bool) -> FileResult:
     return FileResult(path=path, changed=changed, missing_blocks=[])
 
 
-def run(write: bool, *, mode_label: str) -> int:
+def _sync_well_known_mirror(canonical: Path, mirror: Path, write: bool) -> FileResult:
+    """Copy ``canonical`` to ``mirror`` if bytes differ (W844 — close W1308 gap).
+
+    The W792 byte-identity guard requires all 3 ``.well-known`` card paths
+    to hash identically. ``--apply`` used to update only MCP_CARD_PATH and
+    leave the SEP-1649 / SEP-2127 mirrors stale, forcing a manual sync. We
+    now treat the mirrors as derived copies of MCP_CARD_PATH so a single
+    ``--apply`` keeps the W792 invariant green.
+    """
+    if not canonical.exists() or not mirror.exists():
+        return FileResult(path=mirror, changed=False, missing_blocks=["<file-missing>"])
+    canonical_bytes = canonical.read_bytes()
+    mirror_bytes = mirror.read_bytes()
+    changed = canonical_bytes != mirror_bytes
+    if changed and write:
+        mirror.write_bytes(canonical_bytes)
+    return FileResult(path=mirror, changed=changed, missing_blocks=[])
+
+
+def _rotate_card_hash_pin(canonical: Path, write: bool) -> FileResult:
+    """Recompute SHA-256 of the canonical card + rewrite the test-file pin (W844).
+
+    Closes the W563 auto-rotate gap. Every prior card edit (W789, W794,
+    W1307, W1308) needed a manual hand-bump of ``_EXPECTED_CARD_SHA256``
+    in ``tests/test_mcp_server_card_hash.py`` after running ``--apply``.
+    This helper computes the LF-bytes digest of the canonical card and
+    rewrites the pin in place. The original pin line shape is preserved
+    via a tight regex (anchored on the assignment, not the digest); only
+    the 64-hex digit run between the quotes is touched.
+    """
+    if not canonical.exists() or not CARD_HASH_TEST_PATH.exists():
+        return FileResult(path=CARD_HASH_TEST_PATH, changed=False,
+                          missing_blocks=["<file-missing>"])
+    digest = hashlib.sha256(_canonical_card_bytes(canonical)).hexdigest()
+    text = CARD_HASH_TEST_PATH.read_text(encoding="utf-8")
+    new_text, count = CARD_HASH_PIN_PATTERN.subn(
+        lambda m: f"{m.group(1)}{digest}{m.group(3)}",
+        text,
+        count=1,
+    )
+    if count == 0:
+        # Pin moved or was renamed — surface as a missing block so callers
+        # notice rather than silently failing to update.
+        return FileResult(path=CARD_HASH_TEST_PATH, changed=False,
+                          missing_blocks=["_EXPECTED_CARD_SHA256"])
+    changed = new_text != text
+    if changed and write:
+        CARD_HASH_TEST_PATH.write_text(new_text, encoding="utf-8")
+    return FileResult(path=CARD_HASH_TEST_PATH, changed=changed, missing_blocks=[])
+
+
+def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True) -> int:
     c = collect_counts()
     results: list[FileResult] = []
 
@@ -526,6 +619,18 @@ def run(write: bool, *, mode_label: str) -> int:
     results.append(_apply_mcp_card(MCP_CARD_PATH, c, write))
     if BUNDLED_MCP_CARD_PATH.exists():
         results.append(_apply_mcp_card(BUNDLED_MCP_CARD_PATH, c, write))
+
+    # W844 — sync the two extra .well-known mirrors to the canonical card
+    # bytes (closes the W1308 manual-sync gap) and rotate the SHA-256 pin
+    # in tests/test_mcp_server_card_hash.py (closes the W563 auto-rotate
+    # gap). Both run on the post-_apply_mcp_card bytes so the digest
+    # reflects the just-written counts/version. Skipping rotation via
+    # ``--no-rotate-card-hash`` is intentional: useful when debugging a
+    # card edit you do NOT want the pin to chase.
+    for mirror in WELL_KNOWN_MIRROR_PATHS:
+        results.append(_sync_well_known_mirror(MCP_CARD_PATH, mirror, write))
+    if rotate_card_hash:
+        results.append(_rotate_card_hash_pin(BUNDLED_MCP_CARD_PATH, write))
 
     # Report.
     any_change = any(r.changed for r in results)
@@ -567,11 +672,18 @@ def main() -> int:
                      help="exit non-zero if any file would change")
     grp.add_argument("--apply", action="store_true",
                      help="rewrite files in place (default)")
+    parser.add_argument(
+        "--no-rotate-card-hash",
+        action="store_true",
+        help="W844: skip auto-rotation of _EXPECTED_CARD_SHA256 in "
+             "tests/test_mcp_server_card_hash.py (default: rotate)",
+    )
     args = parser.parse_args()
+    rotate = not args.no_rotate_card_hash
 
     if args.check:
-        return run(write=False, mode_label="check")
-    return run(write=True, mode_label="apply")
+        return run(write=False, mode_label="check", rotate_card_hash=rotate)
+    return run(write=True, mode_label="apply", rotate_card_hash=rotate)
 
 
 if __name__ == "__main__":

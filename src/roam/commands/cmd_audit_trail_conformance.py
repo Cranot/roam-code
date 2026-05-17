@@ -266,15 +266,30 @@ def _checks_to_sarif(
     this directly, surfacing the failures as triage items in the Security
     tab — useful for quarterly compliance gates.
     """
-    from roam.output.sarif import to_sarif
+    from roam.output.sarif import _derive_finding_tags, to_sarif
 
+    # W1062: stamp every rule + result with dashboard-filter tags so
+    # GitHub Code Scanning / SonarQube can slice the 6 EU AI Act
+    # Article 12 conformance checks by family (``compliance``) and
+    # standard (``eu-ai-act-article-12``) — the existing ``properties``
+    # carried regulation metadata but only in free-form fields the UI
+    # cannot filter on. The per-rule ``extra=[c["id"]]`` lets a triage
+    # user filter to one specific check (e.g. ``chain-integrity``)
+    # without scanning the rule_id column.
     rules = [
         {
             "id": c["id"],
             "shortDescription": f"EU AI Act Article 12 conformance check: {c['id'].replace('_', ' ')}",
             "defaultLevel": "warning",
             "helpUri": "https://artificialintelligenceact.eu/article/12/",
-            "properties": {"category": "compliance", "regulation": "EU AI Act Article 12"},
+            "properties": {
+                "category": "compliance",
+                "regulation": "EU AI Act Article 12",
+                "tags": _derive_finding_tags(
+                    family="compliance",
+                    extra=["eu-ai-act-article-12", c["id"]],
+                ),
+            },
         }
         for c in checks
     ]
@@ -294,6 +309,13 @@ def _checks_to_sarif(
                         }
                     }
                 ],
+                "properties": {
+                    "tags": _derive_finding_tags(
+                        family="compliance",
+                        severity="error" if score < 67 else "warning",
+                        extra=["eu-ai-act-article-12", c["id"]],
+                    ),
+                },
             }
         )
     return to_sarif(

@@ -45,7 +45,7 @@ from roam.output.formatter import json_envelope, to_json
 )
 @click.command(name="why-fail")
 @click.argument("target")
-@click.option("--days", type=int, default=14, show_default=True, help="Look back N days for commits.")
+@click.option("--days", type=int, default=14, show_default=True, help="Look back <N> days for commits.")
 @click.option("--max-hops", type=int, default=5, show_default=True, help="BFS depth from the test.")
 @click.option("--limit", type=int, default=10, show_default=True, help="Max suspects to surface.")
 @click.pass_context

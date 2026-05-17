@@ -16,8 +16,11 @@ These tests pin:
 
 * ``roam_doctor`` -- exit 1 + structured JSON now reaches the consumer
 * ``roam_stale_refs`` -- ``EXIT_PARTIAL`` (6) + structured JSON pass-through
-* ``roam_test_scaffold`` -- ``symbol_not_found`` + ``SystemExit(1)``
-  pass-through (W327 instance of Variant B)
+* ``roam_test_scaffold`` -- W1278a migrated this command from
+  ``SystemExit(1)`` to the Pattern-2c always-emit envelope (exit 0).
+  The W1084 test pins that the W325 chokepoint MUST NOT fire and the
+  envelope round-trips intact (NOT a Variant B pass-through anymore --
+  the test guards against regression *back* to the W327 shape).
 * non-JSON stderr falls through to the classic error envelope
 * the helper preserves a pre-existing ``_meta.cli_exit_code``
 * the helper preserves a pre-existing ``isError``
@@ -195,11 +198,19 @@ class TestPassThroughEndToEnd:
             assert result.get("isError") is True
 
     def test_test_scaffold_unknown_symbol_passes_through(self, indexed_project):
-        """W327: ``cmd_test_scaffold`` emits ``symbol_not_found`` JSON
-        then ``SystemExit(1)`` when the symbol is unknown. The CLI emits
-        structured output AND exits non-zero -- the canonical Variant B
-        pattern. Pre-W325 this envelope was buried; post-W325 it passes
-        through.
+        """W1084: ``cmd_test_scaffold`` was migrated by W1278a from the
+        original W327 ``symbol_not_found(...) + SystemExit(1)`` shape to
+        the Pattern-2c always-emit convention -- on unknown symbol the
+        CLI now emits a ``resolution=unresolved`` envelope with
+        ``partial_success=True`` and exits 0. The Variant B chokepoint
+        (W325) therefore MUST NOT fire here; the envelope must reach
+        the consumer via the classic success path without a
+        ``cli_exit_code`` annotation.
+
+        This mirrors the W354 ``pytest-fixtures`` round-trip below and
+        guards against either (a) a regression back to the pre-W1278a
+        ``SystemExit(1)`` shape OR (b) the wrapper success path
+        wrapping/stripping the Pattern-2 envelope by mistake.
         """
         from roam.mcp_server import _ROAM_RESULT_CACHE, _run_roam_inprocess
 
@@ -208,28 +219,27 @@ class TestPassThroughEndToEnd:
         result = _run_roam_inprocess(["test-scaffold", "nonexistent_symbol_xyz_w325"])
 
         assert isinstance(result, dict)
-        # Pass-through annotation -- exit 1 surfaced + isError set.
+        # W1084: Pattern-2c -- exit 0, so the W325 chokepoint MUST NOT
+        # have fired. No cli_exit_code annotation, no isError tag.
         meta = result.get("_meta") or {}
-        assert meta.get("cli_exit_code") == 1, (
-            f"test-scaffold did not pass through: keys={list(result.keys())}, meta={meta}"
+        assert "cli_exit_code" not in meta, (
+            f"exit 0 must not trigger the W325 chokepoint annotation: meta={meta}"
         )
-        assert result.get("isError") is True
-        # The underlying symbol_not_found envelope structure survives --
-        # at minimum the dict has more than the raw error fields, i.e.
-        # we did not collapse to ``{error, error_code, hint}``.
-        assert result.keys() - {
-            "error",
-            "error_code",
-            "hint",
-            "exit_code",
-            "command",
-            "isError",
-            "_meta",
-            "retryable",
-            "suggested_action",
-            "doc_link",
-            "severity",
-        }, f"only generic error fields present, no structured envelope: {result}"
+        assert result.get("isError") is not True, (
+            f"test-scaffold unknown-symbol round-trip wrongly tagged as error: {result}"
+        )
+        assert result.get("error_code") is None, (
+            f"test-scaffold unknown-symbol must not produce error envelope: {result}"
+        )
+        # W1278a envelope fields survive the round-trip intact.
+        assert result.get("command") == "test-scaffold"
+        assert result.get("resolution") == "unresolved"
+        assert result.get("partial_success") is True
+        assert result.get("symbol") == "nonexistent_symbol_xyz_w325"
+        summary = result.get("summary") or {}
+        assert summary.get("partial_success") is True
+        assert summary.get("state") == "not_found"
+        assert "nonexistent_symbol_xyz_w325" in summary.get("verdict", "")
 
     def test_pytest_fixtures_unknown_symbol_passes_through_mcp(self, indexed_project):
         """W354: confirm the W327 CLI-side fix flows through the MCP

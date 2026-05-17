@@ -186,13 +186,27 @@ def build_replacements(counts: dict, languages: int) -> None:
             )
         )
 
-    # Print all 137 MCP tools — explicit number on the command-reference page.
+    # Explicit MCP preset counts on the command-reference / MCP usage pages.
     REPLACEMENTS.append(
         (
             REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "command-reference.html",
             [
                 (re.compile(r"all (\d+) MCP tools"), f"all {mcp} MCP tools"),
                 (re.compile(r"All (\d+) commands"), f"All {cmds} commands"),
+                (
+                    re.compile(
+                        r"default: \d+ core tools(?: plus the <code>roam_expand_toolset</code> meta-tool)?; \d+ in <code>full</code>"
+                    ),
+                    f"default: 57 core tools plus the <code>roam_expand_toolset</code> meta-tool; {mcp} in <code>full</code>",
+                ),
+            ],
+        )
+    )
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "templates" / "distribution" / "landing-page" / "docs" / "mcp-usage.html",
+            [
+                (re.compile(r"exposes all\s+\d+(?: tools)?\."), f"exposes all\n        {mcp} tools."),
             ],
         )
     )

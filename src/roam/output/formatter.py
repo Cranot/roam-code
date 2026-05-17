@@ -1104,20 +1104,50 @@ def ws_json_envelope(command: str, workspace: str, summary: dict | None = None, 
 #     "Pattern 2 — explicit absence"; the agent NEEDS to know which
 #     evidence axes were masked, otherwise it cannot tell a clean
 #     packet from a redaction-heavy one.
-# Deliberately NOT added (W1006 audit):
-#   * ``dropped_keys`` — no producer in source today.
+# W1007 extension: ``agent_contract`` joins the set as a defensive
+# disclosure marker. The canonical shape is a DICT (see
+# ``_derive_agent_contract`` — emits ``{facts, risks, next_commands,
+# confidence}``). Strip only fires on list-valued fields, so the
+# canonical dict passes through the ``else`` branch untouched. But if
+# a producer wrongly emits ``agent_contract: []`` (list instead of
+# dict), the strip would silently drop it — making the schema mistake
+# invisible to the agent and forever-debugged. Preserving the empty
+# list surfaces the mistake at envelope top-level so consumers can
+# detect and react. Per-emitter sweep for the actual producer bug
+# stays open as a separate backlog item.
+# Deliberately NOT added (W1006 audit, re-verified W1028 — all 4
+# candidates remain DEFER; no state change since W1006 captured).
+# Each entry below names the candidate, the W1006 deferral reason, and
+# the W1028 re-audit finding (the bar for joining the set is "Pattern-2
+# disclosure list emitted at envelope top-level by a command that calls
+# ``strip_list_payloads``" — none of the 4 cleared all three gates):
+#   * ``dropped_keys`` — no producer in source today. W1028 grep:
+#     still zero matches across ``src/roam/``.
 #   * ``dropped_reasons`` — only emitted nested under ``summary`` by
 #     ``cmd_evidence_oscal``; ``summary`` is already preserved whole.
+#     W1028 grep: single emit at ``cmd_evidence_oscal.py:374``, nested
+#     under ``ar_counts`` → ``summary``. Preservation already covered.
 #   * ``stale_reasons`` — lives inside ``ChangeEvidence`` packets, not at
 #     envelope top-level; revisit if a packet flattener ever emerges.
+#     W1028 grep: one top-level emit at ``cmd_evidence_doctor.py:901``,
+#     but ``cmd_evidence_doctor`` does NOT call ``strip_list_payloads``
+#     (no consumer at risk).
 #   * ``enum_violations`` / ``trust_warnings`` / ``bundle_warnings`` —
 #     belong to ``evidence-doctor`` / ``pr-bundle``, neither of which
-#     calls ``strip_list_payloads``. Re-audit if that changes.
+#     calls ``strip_list_payloads``. W1028 grep: ``bundle_warnings`` is
+#     aliased into ``warnings_out`` at ``cmd_pr_bundle.py:1776,1786``
+#     (already preserved); ``enum_violations`` top-level list at
+#     ``cmd_evidence_doctor.py:883`` has no strip-helper consumer.
+# The W1028 drift-guard (``test_w1028_deferred_candidates_not_silently_added``
+# in ``tests/test_formatter_preserved_list_fields.py``) pins both the
+# preserved-set count AND the deferred-candidate membership so a future
+# editor cannot silently widen the set without re-running this audit.
 _ALWAYS_PRESERVED_LIST_FIELDS = frozenset(
     {
         "warnings_out",
         "errors",
         "redactions",
+        "agent_contract",  # W1007 — see comment above
     }
 )
 
@@ -1141,12 +1171,16 @@ def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
     (e.g. ``guard``, ``plan-refactor``, ``suggest-refactoring``) must use
     custom caps instead -- stripping their lists would erase the headline.
 
-    W1000 / W1006: list fields named in :data:`_ALWAYS_PRESERVED_LIST_FIELDS`
-    (``warnings_out``, ``errors``, ``redactions``) ARE kept — these are
-    Pattern 2 silent-fallback disclosures the caller must see. Lists
-    longer than :data:`_ALWAYS_PRESERVED_LIST_MAX` are capped and a
-    sibling ``<field>_truncated`` int is emitted naming how many entries
-    were dropped.
+    W1000 / W1006 / W1007: list fields named in
+    :data:`_ALWAYS_PRESERVED_LIST_FIELDS` (``warnings_out``, ``errors``,
+    ``redactions``, ``agent_contract``) ARE kept — these are Pattern 2
+    silent-fallback disclosures the caller must see. ``agent_contract``
+    is the W1007 defensive entry: the canonical shape is a dict, but if
+    a producer ever emits the empty-list mistake the disclosure stays
+    visible instead of silently disappearing. Lists longer than
+    :data:`_ALWAYS_PRESERVED_LIST_MAX` are capped and a sibling
+    ``<field>_truncated`` int is emitted naming how many entries were
+    dropped.
 
     Parameters
     ----------
@@ -1199,6 +1233,21 @@ def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
     has_non_empty_lists = any(c > 0 for c in list_counts.values())
     has_preserved_truncations = bool(preserved_list_truncations)
 
+    # W1100: detect schema-violation shapes — ``agent_contract`` is
+    # canonically a DICT (per ``_derive_agent_contract``), but the W1007
+    # preserve-don't-drop fix keeps the malformed list visible at envelope
+    # top-level. Visibility alone is not enough: agents reading the
+    # envelope can still treat it as a clean success unless the schema
+    # mistake also lifts a structured signal into ``summary``. Per
+    # CLAUDE.md Pattern 2 discipline (never emit a success verdict when
+    # the underlying check failed/was malformed), surface the violation
+    # via ``summary.partial_success: true`` + a ``summary.schema_violations``
+    # disclosure list. The original list payload is left untouched —
+    # W1007's preserve-don't-drop semantic is invariant.
+    schema_violation_kinds: list[str] = []
+    if isinstance(data.get("agent_contract"), list):
+        schema_violation_kinds.append("agent_contract_shape")
+
     # Annotate summary with progressive disclosure flags.
     # Keep the annotation minimal so summary is always <= detail in size.
     if "summary" not in result:
@@ -1207,6 +1256,43 @@ def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
         result["summary"]["detail_available"] = True
         if has_non_empty_lists or has_preserved_truncations:
             result["summary"]["truncated"] = True
+        # W1102: emit preserved_list_truncations always for symmetry with
+        # W1101 list_counts + W1006 redactions[]. Empty dict tells the
+        # consumer "strip_list_payloads ran and no preserved field was
+        # clipped" vs an absent key which would be indistinguishable from
+        # "envelope wasn't processed". Lives INSIDE summary (not top-level)
+        # to mirror the per-field <field>_truncated siblings, which are
+        # already top-level — the summary entry is the structured roll-up.
+        # Shape: {field_name: dropped_count} — same shape as the internal
+        # tracker, no semantic change.
+        result["summary"]["preserved_list_truncations"] = dict(preserved_list_truncations)
+        # W1100: schema violation overrides successful verdict — agent_contract
+        # must be dict, list is malformed. Override existing ``False`` because
+        # a malformed envelope is non-recoverable signal; ``setdefault`` would
+        # let a stale ``partial_success: false`` bury the violation. Extend
+        # (don't replace) any caller-supplied ``schema_violations`` list so
+        # orthogonal violations remain visible.
+        if schema_violation_kinds:
+            result["summary"]["partial_success"] = True
+            existing_violations = result["summary"].get("schema_violations")
+            if isinstance(existing_violations, list):
+                for kind in schema_violation_kinds:
+                    if kind not in existing_violations:
+                        existing_violations.append(kind)
+            else:
+                result["summary"]["schema_violations"] = list(schema_violation_kinds)
+
+    # W1008: surface ``list_counts`` at envelope top-level so agents can
+    # tell which fields were dropped + how big they were (drives the
+    # "re-request with --detail" decision). Mirrors the W1006/W1007
+    # envelope-level disclosure pattern.
+    # W1101: emit list_counts: {} always for symmetry with W1006
+    # redactions[] (consumer-side absence-vs-empty disambiguation) — an
+    # empty dict tells the consumer "strip_list_payloads ran and dropped
+    # nothing", an absent key would be indistinguishable from "envelope
+    # wasn't processed". LAW 6: a tiny ``{field: N}`` dict (or ``{}``),
+    # not a list expansion -- compression preserved.
+    result["list_counts"] = dict(list_counts)
 
     return result
 
@@ -1246,7 +1332,8 @@ def format_table_compact(headers: list[str], rows: list[list[str]], budget: int 
 _RESOLUTION_KINDS: frozenset[str] = frozenset(
     {
         "symbol",  # found via qualified-name OR simple-name match (exact)
-        "file",  # resolved by file-path fallback (target was a path, not a symbol)
+        "file",  # resolved by file-path exact match
+        "file_substring",  # W1309: file-path fell back to LIKE %name% (substring)
         "fuzzy",  # found via LIKE / FTS fallback — likely-but-not-exact match
         "unresolved",  # nothing matched; downstream may store a dangling name
     }
@@ -1254,7 +1341,7 @@ _RESOLUTION_KINDS: frozenset[str] = frozenset(
 
 
 def resolution_disclosure(
-    resolution: Literal["symbol", "file", "fuzzy", "unresolved"],
+    resolution: Literal["symbol", "file", "file_substring", "fuzzy", "unresolved"],
     *,
     target: str | None = None,
     detail: Mapping[str, Any] | None = None,

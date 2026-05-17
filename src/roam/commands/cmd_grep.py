@@ -146,7 +146,7 @@ def _read_patterns_file(p: Path) -> list[str]:
     "patterns_from",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     default=None,
-    help="Read patterns from FILE (one per line; '#' for comments).",
+    help="Read patterns from <FILE> (one per line; '#' for comments).",
 )
 @click.option(
     "-g",

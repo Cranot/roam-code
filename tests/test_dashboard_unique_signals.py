@@ -20,11 +20,96 @@ missing hint.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output
+
+
+# W414b: module-scoped indexed_project override — every test in this file
+# is a read-only `roam dashboard`/`understand`/`audit --json` invocation.
+# The conftest `indexed_project` is function-scoped (python_project ->
+# git_repo -> tmp_path), so without this override we re-index ~17 times.
+# Mirrors the W414 pattern in test_dashboard.py.
+@pytest.fixture(scope="module")
+def indexed_project(tmp_path_factory):
+    proj = tmp_path_factory.mktemp("unique_signals_proj")
+    (proj / ".gitignore").write_text(".roam/\n", encoding="utf-8")
+    src = proj / "src"
+    src.mkdir()
+
+    (src / "models.py").write_text(
+        textwrap.dedent(
+            '''\
+            class User:
+                """A user model."""
+                def __init__(self, name, email):
+                    self.name = name
+                    self.email = email
+
+                def display_name(self):
+                    return self.name.title()
+
+
+            class Admin(User):
+                """An admin user."""
+                def __init__(self, name, email, role="admin"):
+                    super().__init__(name, email)
+                    self.role = role
+            '''
+        ),
+        encoding="utf-8",
+    )
+    (src / "service.py").write_text(
+        textwrap.dedent(
+            '''\
+            from models import User, Admin
+
+
+            def create_user(name, email):
+                user = User(name, email)
+                return user
+
+
+            def unused_helper():
+                return 42
+            '''
+        ),
+        encoding="utf-8",
+    )
+
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "t@t.com",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_COMMITTER_EMAIL": "t@t.com",
+    }
+    subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(proj), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(proj), capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(proj), capture_output=True, env=env)
+
+    from roam.cli import cli
+
+    runner = CliRunner()
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        result = runner.invoke(cli, ["index"], catch_exceptions=False)
+    finally:
+        os.chdir(old_cwd)
+    assert result.exit_code == 0, f"roam index failed:\n{result.output}"
+    return proj
+
 
 # ---------------------------------------------------------------------------
 # dashboard

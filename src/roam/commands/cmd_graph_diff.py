@@ -189,7 +189,7 @@ def _resolve_snapshot(root, label: str | None) -> tuple[dict | None, str | None]
     "--top",
     default=20,
     type=int,
-    help="Cap list outputs to N rows in the envelope (0 = unlimited).",
+    help="Cap list outputs to <N> rows in the envelope (0 = unlimited).",  # W1117-followup
 )
 @click.option(
     "--save-snapshot",

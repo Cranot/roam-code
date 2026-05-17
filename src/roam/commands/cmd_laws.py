@@ -202,7 +202,7 @@ def laws_group(ctx):
     "--top",
     type=int,
     default=None,
-    help="Keep only the top N highest-confidence laws.",
+    help="Keep only the top <N> highest-confidence laws.",
 )
 @click.option(
     "--min-confidence",

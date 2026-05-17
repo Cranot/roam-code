@@ -66,18 +66,36 @@ _FIXTURE = {
 }
 
 
-@pytest.fixture
-def indexed_project(tmp_path: Path) -> Path:
-    proj = _make_project(tmp_path, _FIXTURE)
+# W414b: module-scoped — all oracle tests below are read-only against the
+# indexed project (only test_uses_qname_columns_not_name_columns mutates,
+# and it cleans up its INSERT in a try/finally). Re-indexing on every test
+# cost ~25 x ~2s. Mirrors the W414 pattern in test_dashboard.py.
+@pytest.fixture(scope="module")
+def indexed_project(tmp_path_factory) -> Path:
+    proj = _make_project(tmp_path_factory.mktemp("oracle_proj"), _FIXTURE)
     old_cwd = os.getcwd()
     try:
         os.chdir(str(proj))
         runner = CliRunner()
         result = runner.invoke(cli, ["index"])
         assert result.exit_code == 0, result.output
-        yield proj
     finally:
         os.chdir(old_cwd)
+    return proj
+
+
+@pytest.fixture(autouse=True)
+def _chdir_to_indexed_project(request, monkeypatch):
+    """W414b: chdir per-test into the module-scoped indexed_project.
+
+    The original function-scoped fixture chdir'd inside its yield; tests
+    rely on cwd being the project root for ``open_db()`` + CLI invocations.
+    With the module-scoped fixture restoring cwd at teardown, restore it
+    per-test here (auto-reverted by monkeypatch).
+    """
+    if "indexed_project" in request.fixturenames:
+        proj = request.getfixturevalue("indexed_project")
+        monkeypatch.chdir(proj)
 
 
 # ---------------------------------------------------------------------------
@@ -273,11 +291,22 @@ class TestIsCloneOf:
             except Exception:
                 pytest.skip("clone_pairs schema differs in this fixture")
 
-        with open_db(readonly=True) as conn:
-            # Suffix match: bare 'handle_login' must find 'auth.handle_login'.
-            value, reason = oracle_is_clone_of(conn, "handle_login")
-        assert value is True, reason
-        assert "clone pair" in reason
+        try:
+            with open_db(readonly=True) as conn:
+                # Suffix match: bare 'handle_login' must find 'auth.handle_login'.
+                value, reason = oracle_is_clone_of(conn, "handle_login")
+            assert value is True, reason
+            assert "clone pair" in reason
+        finally:
+            # W414b: module-scoped fixture — clean up the synthetic row so
+            # later tests (e.g. TestCLI.test_is_clone_of_text_when_clones_not_persisted)
+            # see the canonical "clones not persisted" state.
+            with _open(readonly=False) as conn:
+                conn.execute(
+                    "DELETE FROM clone_pairs WHERE qname_a = ? AND qname_b = ?",
+                    ("auth.handle_login", "auth.handle_logout"),
+                )
+                conn.commit()
 
 
 # ---------------------------------------------------------------------------

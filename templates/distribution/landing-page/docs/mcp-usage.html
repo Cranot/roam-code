@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Using Roam via MCP — Roam Docs · First-run, cold-start, agent flow</title>
-  <meta name="description" content="How to call Roam from Claude Code, Cursor, Codex, and other MCP clients: first-run setup, the cold-start envelope, tools that need no index, the canonical agent flow, slow-tool patterns, and troubleshooting.">
+  <meta name="description" content="How to call Roam from Claude Code, Cursor, Codex, and other MCP clients: setup, cold-start envelopes, agent flow, slow tools, and troubleshooting.">
   <link rel="canonical" href="https://roam-code.com/docs/mcp-usage">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -312,7 +312,7 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
         <code>roam_expand_toolset</code> meta-tool). Tools outside
         that preset are loaded on demand:
         <code>roam_expand_toolset(preset="full")</code> exposes all
-        149. You can also set <code>ROAM_MCP_PRESET=full</code> in the
+        224 tools. You can also set <code>ROAM_MCP_PRESET=full</code> in the
         server env to start with the full set.
       </p>
 
@@ -348,6 +348,16 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
       </p>
     </section>
 
+    <section>
+      <h2>See it run</h2>
+      <p>
+        <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash;
+        install &rarr; health &rarr; preflight &rarr; critique &rarr; signed
+        <code>ChangeEvidence</code> packet, end to end. The agent flow above
+        in one sitting.
+      </p>
+    </section>
+
     <nav class="docs-footer-nav" aria-label="Pagination">
       <a href="/docs/integration-tutorials">
         <span class="label">← Back to</span>
@@ -364,7 +374,7 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for developers and AI agents.</span>
+        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

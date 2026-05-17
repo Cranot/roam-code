@@ -393,6 +393,32 @@ def _classify_trust_tiers(
     return counts, warnings
 
 
+def _classify_authority_kinds(
+    packet: dict[str, Any],
+) -> dict[str, int]:
+    """W350: tally ``authority_refs[]`` by ``authority_kind``.
+
+    Returns a dict with all 6 ``AUTHORITY_KINDS`` keys present
+    (Pattern-2 always-emit; absent kinds read as 0, not "missing").
+    Permits are surfaced as the ``permit`` key here — permits flow into
+    the packet via ``authority_refs[authority_kind="permit"]`` (no
+    top-level ``permits[]`` field on ChangeEvidence). Closed-enum
+    membership is enforced by :func:`_validate_closed_enums`; values
+    outside the enumeration skip this count and surface as a hard FAIL
+    through the enum-violation channel.
+    """
+    from roam.evidence._vocabulary import AUTHORITY_KINDS
+
+    counts: dict[str, int] = {k: 0 for k in sorted(AUTHORITY_KINDS)}
+    for ref in packet.get("authority_refs") or []:
+        if not isinstance(ref, Mapping):
+            continue
+        kind = ref.get("authority_kind")
+        if isinstance(kind, str) and kind in counts:
+            counts[kind] += 1
+    return counts
+
+
 def _build_next_steps(q_results: Mapping[str, str]) -> list[dict[str, str]]:
     """For every partial / missing Q, surface a one-line hint.
 
@@ -592,6 +618,9 @@ def evidence_doctor(ctx, packet_path, from_stdin):
             "next_steps_count": 0,
             # W281: keep envelope shape stable even on hard load failure.
             "trust_warnings_count": 0,
+            # W350: keep authority-axis keys stable on hard load failure.
+            "authority_refs_count": 0,
+            "permits_count": 0,
             # W280: packet-size keys always present on the summary so
             # consumers don't branch on "did the doctor succeed?" to
             # know whether the keys exist.
@@ -614,6 +643,20 @@ def evidence_doctor(ctx, packet_path, from_stdin):
                 # so consumers can rely on the keys being present.
                 trust_tiers={k: 0 for k in _TRUST_TIER_KEYS},
                 trust_warnings=[],
+                # W350: always-emit zeroed authority_kinds dict on the
+                # hard-load failure envelope too so consumers can rely on
+                # the keys being present (Pattern-2 always-emit).
+                authority_kinds={
+                    k: 0
+                    for k in (
+                        "approval",
+                        "lease",
+                        "mode",
+                        "permit",
+                        "policy_rule",
+                        "token_scope",
+                    )
+                },
                 # W280: always-emit packet_size block on the hard-load
                 # failure envelope too. A failed-load packet has 0 bytes
                 # of canonical JSON to report; classify_packet_budget(0)
@@ -687,6 +730,16 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     # W281: actor-trust tier counts + WARN signals.
     trust_counts, trust_warnings = _classify_trust_tiers(payload)
 
+    # W350: authority-kind tally (permit / mode / lease / policy_rule /
+    # approval / token_scope). Permits are exposed as authority_refs with
+    # authority_kind="permit" - there is NO top-level permits[] field on
+    # ChangeEvidence (W268 collapsed permits/leases into the authority
+    # producer axis). Surfacing the breakdown lets reviewers see at a
+    # glance "this packet binds 2 permits + 1 mode" without re-parsing
+    # the raw authority_refs[] array.
+    authority_kind_counts = _classify_authority_kinds(payload)
+    authority_refs_total = sum(authority_kind_counts.values())
+
     # W280: packet-size budget readout. The doctor never mutates the
     # packet; it only reports the canonical-JSON byte count + budget
     # state so reviewers see at a glance whether the packet is at risk
@@ -744,6 +797,13 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         # W281: count of actor_refs whose trust_tier contributed a WARN
         # signal (self_reported_agent / unknown).
         "trust_warnings_count": len(trust_warnings),
+        # W350: authority-axis summary counters. ``permits_count`` is the
+        # most actionable single field (auditors ask "which permits
+        # authorised this change?" first); ``authority_refs_count`` is
+        # the cross-kind total so a packet with mode + permit + approval
+        # surfaces a non-zero count even if no permits exist.
+        "authority_refs_count": authority_refs_total,
+        "permits_count": authority_kind_counts.get("permit", 0),
         # W1262: surface the W1254 staleness signal so consumers reading
         # only ``summary`` can detect the banner-demotion-to-stale state
         # without re-parsing the packet.
@@ -795,6 +855,14 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         # self_reported_agent / unknown counts conditionally — they only
         # add signal when non-zero. Terminal "flagged" / "scanned" anchor
         # via the analytical-verb path in tests/test_law4_lint.py.
+        # W350: authority-axis facts. Always-emit the cross-kind total +
+        # the permit count (the P1.10 load-bearing key). Terminals anchor
+        # on ``scanned`` (analytical verb) and ``permits`` (kind plural —
+        # not in the formatter anchor set but accepted via the verb path
+        # below). Use ``records`` terminal for the permit fact so LAW 4
+        # picks up the concrete-noun anchor.
+        facts.append(f"{authority_refs_total} authority refs scanned")
+        facts.append(f"{authority_kind_counts.get('permit', 0)} permit records")
         facts.append(f"{trust_counts['verified_ci']} verified_ci actor refs scanned")
         if trust_counts["self_reported_agent"]:
             facts.append(f"{trust_counts['self_reported_agent']} self_reported_agent actor refs flagged")
@@ -891,6 +959,12 @@ def evidence_doctor(ctx, packet_path, from_stdin):
             # without re-walking actor_refs[].
             trust_tiers=trust_counts,
             trust_warnings=trust_warnings,
+            # W350: authority-kind breakdown. Always-emit all 6
+            # AUTHORITY_KINDS keys (Pattern-2 always-emit) so consumers
+            # don't branch on "did the doctor count authorities?" - they
+            # always get the dict. ``permit`` is the load-bearing key for
+            # P1.10 (permits + authority refs round-trip verification).
+            authority_kinds=authority_kind_counts,
             # W1262: top-level staleness block mirroring the W1254
             # producer signal. ``stale`` + ``stale_reasons`` are always
             # emitted (Pattern-2 always-emit) so JSON consumers don't
@@ -982,6 +1056,12 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     # the identity-provenance shape at a glance.
     tier_pairs = ", ".join(f"{k}={trust_counts[k]}" for k in _TRUST_TIER_KEYS)
     click.echo(f"Trust tiers: {tier_pairs}")
+    # W350: authority-kind readout. Always emit (Pattern-2) so reviewers
+    # see the permits + modes + approvals breakdown at a glance. The
+    # ``permit`` count is the P1.10 load-bearing key (auditors ask "what
+    # authorised this change?" before any other authority question).
+    auth_pairs = ", ".join(f"{k}={authority_kind_counts[k]}" for k in sorted(authority_kind_counts))
+    click.echo(f"Authority kinds: {auth_pairs} (total={authority_refs_total})")
     if trust_warnings:
         click.echo(f"Trust warnings ({len(trust_warnings)}):")
         for w in trust_warnings:

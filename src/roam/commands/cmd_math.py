@@ -247,6 +247,19 @@ def math_cmd(
         if task_filter not in CATALOG:
             import difflib
 
+            # W1083-followup: cutoff=0.4/n=3 intentional — looser than the
+            # canonical 0.6/2 used by the ``structured_unknown_filter``
+            # helper. The CATALOG task-id vocabulary is short kebab-case
+            # domain terms (``loop-lookup``, ``useeffect-missing-deps``,
+            # ``chained-collection-walk``, ``regex-in-loop``) with high
+            # token variety and frequent permutation typos
+            # (``lookup-loop``, ``walk-collection-chained``). Cutoff 0.6
+            # rejects plausible candidates at this length; 0.4 keeps the
+            # suggestion useful. n=3 surfaces multiple ranked candidates
+            # because the closest match by ratio is often not the
+            # intended one when names share a verb prefix. Leave the
+            # knobs alone; do NOT migrate this site to the canonical
+            # helper without first re-balancing the catalog vocabulary.
             close = difflib.get_close_matches(task_filter, list(CATALOG.keys()), n=3, cutoff=0.4)
             hint = f" Did you mean: {', '.join(close)}?" if close else ""
             click.echo(
@@ -299,43 +312,57 @@ def math_cmd(
         # mirrors the `--task` precedent above (line 253). Cutoff 0.6 catches
         # plausible typos ("typo_fixx" → "typo_fix") without spamming
         # unrelated names.
+        # W1083-followup-3: delegate to ``structured_unknown_filter_many``
+        # for the partition + per-unknown ``did_you_mean`` suggestion +
+        # warnings-list formatting. Mirrors the cmd_smells migration. The
+        # callsite still feeds ``detector_meta["only_unknown"]`` /
+        # ``exclude_unknown`` into the fragment via the pre-computed
+        # ``known`` set (run_detectors already partitioned upstream — the
+        # helper re-validates against the registry so the disclosure
+        # message is consistent with the single-value helper family).
+        from roam.catalog.detectors import _DETECTOR_REGISTRY
+        from roam.output.structured_unknowns import (
+            structured_unknown_filter_many,
+            to_summary_payload_many,
+        )
+
         _filter_warnings: list[str] = []
         only_unknown = detector_meta.get("only_unknown") or []
         exclude_unknown = detector_meta.get("exclude_unknown") or []
+        _registry_keys = set(_DETECTOR_REGISTRY.keys())
 
-        def _suggest_unknown(unknown_names: list[str]) -> str:
-            """Build a `did-you-mean` fragment for one or more unknown names.
-
-            Returns an empty string when no name has any close match above the
-            cutoff. The fragment lists per-name suggestions so a multi-typo
-            batch (`--only foo --only bar`) gets per-name guidance instead of
-            one merged set."""
-            import difflib
-
-            from roam.catalog.detectors import _DETECTOR_REGISTRY
-
-            registry_names = list(_DETECTOR_REGISTRY.keys())
-            per_name_hints: list[str] = []
-            for u in unknown_names:
-                matches = difflib.get_close_matches(u, registry_names, n=2, cutoff=0.6)
-                if matches:
-                    quoted = " or ".join(f"'{m}'" for m in matches)
-                    per_name_hints.append(f"'{u}' → {quoted}")
-            if not per_name_hints:
-                return ""
-            return f" Did you mean: {'; '.join(per_name_hints)}?"
-
+        # ``only_frag`` / ``exclude_frag`` are stamped onto the summary
+        # below conditionally. We compute them up-front so the text-mode
+        # NOTE strings stay byte-close to the pre-migration shape.
+        _only_frag: dict | None = None
+        _exclude_frag: dict | None = None
         if only_unknown:
+            _only_frag = structured_unknown_filter_many(
+                list(only_unknown),
+                _registry_keys,
+                field_name="only_detector",
+                fact_anchor="detectors",
+                state="unknown_only_detectors",
+            )
             msg = (
                 f"--only: unknown detector name(s): {', '.join(only_unknown)}. "
-                "Run `roam math --list-detectors` to see registered names." + _suggest_unknown(only_unknown)
+                "Run `roam math --list-detectors` to see registered names."
+                + _only_frag["verdict_suffix"]
             )
             click.echo(f"NOTE: {msg}", err=True)
             _filter_warnings.append(msg)
         if exclude_unknown:
+            _exclude_frag = structured_unknown_filter_many(
+                list(exclude_unknown),
+                _registry_keys,
+                field_name="exclude_detector",
+                fact_anchor="detectors",
+                state="unknown_exclude_detectors",
+            )
             msg = (
                 f"--exclude: unknown detector name(s): {', '.join(exclude_unknown)}. "
-                "Run `roam math --list-detectors` to see registered names." + _suggest_unknown(exclude_unknown)
+                "Run `roam math --list-detectors` to see registered names."
+                + _exclude_frag["verdict_suffix"]
             )
             click.echo(f"NOTE: {msg}", err=True)
             _filter_warnings.append(msg)
@@ -547,6 +574,44 @@ def math_cmd(
                 _math_summary["only_unknown"] = list(detector_meta["only_unknown"])
             if "exclude_unknown" in detector_meta:
                 _math_summary["exclude_unknown"] = list(detector_meta["exclude_unknown"])
+            # W1083-followup-3: splice the multi-value-helper fragment per
+            # --only / --exclude. ``include_known=False`` keeps the existing
+            # envelope close to pre-migration shape (cmd_math did not surface
+            # a ``known_detectors`` field; the only-/exclude_unknown keys
+            # above already carry the actionable disclosure). The fragment
+            # adds per-unknown ``did_you_mean`` suggestions and the new
+            # ``state`` + ``unknown_<group>_detectors`` echo fields.
+            if _only_frag is not None:
+                _math_summary.update(
+                    to_summary_payload_many(_only_frag, include_known=False)
+                )
+            if _exclude_frag is not None:
+                # When BOTH --only and --exclude have unknowns, the second
+                # splice overwrites the first ``state`` + ``partial_success``
+                # (already True from the only-branch). ``did_you_mean`` is
+                # similarly overwritten — we re-merge it below to retain
+                # both unknown-source suggestion maps under disambiguated
+                # keys so the consumer can tell which group a typo came from.
+                _exclude_payload = to_summary_payload_many(
+                    _exclude_frag, include_known=False
+                )
+                # Re-key did_you_mean per source so both groups survive the
+                # merge (one common Pattern-3a antidote: don't let the
+                # second splice silently overwrite the first).
+                if "did_you_mean" in _math_summary or "did_you_mean" in _exclude_payload:
+                    only_dym = _math_summary.pop("did_you_mean", None)
+                    excl_dym = _exclude_payload.pop("did_you_mean", None)
+                    _math_summary.update(_exclude_payload)
+                    if only_dym:
+                        _math_summary["only_did_you_mean"] = only_dym
+                    if excl_dym:
+                        _math_summary["exclude_did_you_mean"] = excl_dym
+                else:
+                    _math_summary.update(_exclude_payload)
+            elif _only_frag is not None and "did_you_mean" in _math_summary:
+                # Single-source: keep the disambiguated key name for
+                # forward-compat with a future --exclude typo run.
+                _math_summary["only_did_you_mean"] = _math_summary.pop("did_you_mean")
             _envelope_extras: dict = {"findings": findings}
             if _all_warnings:
                 # Carry the actionable warning strings on the envelope so the

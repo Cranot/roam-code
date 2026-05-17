@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Command Reference — Roam Docs · maps, gates, evidence, and codebase intelligence verbs</title>
+  <title>Command Reference - Roam Docs</title>
   <meta name="description" content="Roam command reference: the 5 core verbs plus the most-used commands grouped by intent — exploration, health, refactoring, security, governance, runtime.">
   <link rel="canonical" href="https://roam-code.com/docs/command-reference">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -72,7 +72,7 @@
     <p class="eyebrow">Reference</p>
     <h1>Command Reference</h1>
     <p class="subtitle">
-      The five core verbs that cover ~80% of agent workflows, plus the most-used commands grouped by intent. Run <code>roam --help</code> for the full 238-command surface; <code>roam &lt;cmd&gt; --help</code> for any command's flags.
+      The five core verbs that cover ~80% of agent workflows, plus the most-used commands grouped by intent. Every command is local, credential-free, and emits a structured envelope an agent can read. Run <code>roam --help</code> for the full surface; <code>roam &lt;cmd&gt; --help</code> for any command's flags.
     </p>
     <div class="callout">
       Every command supports <code>--json</code> for machine output and (where applicable) <code>--sarif</code> for CI Code Scanning. Verdicts use <code>VERDICT:</code> first-line convention.
@@ -204,7 +204,7 @@
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam mcp</code></td><td>Start the MCP server (stdio transport)</td></tr>
-          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 58 core tools; 145 in <code>full</code>)</td></tr>
+          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 57 core tools plus the <code>roam_expand_toolset</code> meta-tool; 224 in <code>full</code>)</td></tr>
           <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Gemini, Codex</td></tr>
           <tr><td><code>roam fleet plan</code></td><td>Partition work across N agents (Louvain + co-change + PageRank)</td></tr>
           <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with conflict-aware partitions</td></tr>
@@ -230,11 +230,12 @@
     <section>
       <h2>Where to find more</h2>
       <ul>
-        <li><strong>All 238 commands</strong>: run <code>roam --help</code> in a terminal.</li>
+        <li><strong>Every command</strong>: run <code>roam --help</code> in a terminal. The surface is large; pick by question, not by reading top-to-bottom — see <a href="/docs/how-roam-thinks">How Roam thinks</a> for the nine-moment decision tree.</li>
         <li><strong>Per-command flags</strong>: <code>roam &lt;cmd&gt; --help</code>.</li>
         <li><strong>Recipes</strong>: <code>roam ask --list</code> shows every dispatchable recipe; <code>roam ask "&lt;intent&gt;"</code> runs the closest match.</li>
         <li><strong>Source</strong>: each command lives in <code>src/roam/commands/cmd_*.py</code>. Apache 2.0.</li>
       </ul>
+      <p><strong>See it run:</strong> <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash; install &rarr; health &rarr; preflight &rarr; critique &rarr; signed <code>ChangeEvidence</code> packet, end to end.</p>
     </section>
 
     <nav class="docs-footer-nav" aria-label="Pagination">
@@ -533,7 +534,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for developers and AI agents.</span>
+        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

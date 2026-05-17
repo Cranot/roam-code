@@ -3013,7 +3013,10 @@ ALL_DETECTORS: list[tuple[str, Callable]] = list(all_detectors())
 # (canonical, higher = worse). Negate to keep "critical first" ordering.
 
 
-def run_all_detectors(conn: sqlite3.Connection) -> list[dict]:
+def run_all_detectors(
+    conn: sqlite3.Connection,
+    only: frozenset[str] | set[str] | None = None,
+) -> list[dict]:
     """Run all 24 smell detectors and return combined findings.
 
     Returns list of finding dicts sorted by severity (critical first).
@@ -3023,10 +3026,21 @@ def run_all_detectors(conn: sqlite3.Connection) -> list[dict]:
     rollup confidence-tier mapping lost its parent during a refactor,
     the run fails loudly here rather than silently mis-classifying
     findings downstream.
+
+    W1294 (perf pushdown): ``only`` restricts the dispatch loop to the
+    named ``smell_id`` set BEFORE invoking each detector function. The
+    default ``None`` runs every registered detector (byte-identical to
+    pre-W1294 behaviour). An empty set runs zero detectors. The caller
+    owns closed-enum validation of the set against the registry — this
+    function performs work skipping, not vocabulary checking, so an
+    unknown id silently does nothing (its detector simply isn't in
+    ``ALL_DETECTORS`` to dispatch).
     """
     freeze_registry()
     findings: list[dict] = []
     for _smell_id, detect_fn in ALL_DETECTORS:
+        if only is not None and _smell_id not in only:
+            continue
         try:
             hits = detect_fn(conn)
         except sqlite3.Error as err:

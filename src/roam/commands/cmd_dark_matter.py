@@ -294,19 +294,32 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist)
 
             total = len(pairs)
             parts = [f"{v} {k}" for k, v in sorted(by_cat.items(), key=lambda x: -x[1])]
-            verdict = f"{total} dark-matter coupling{'s' if total != 1 else ''} found"
-            if parts:
-                verdict += f" ({', '.join(parts)})"
+            # W805-followup-D: empty-state disclosure (Pattern 2 silent-
+            # fallback fix). Zero dark-matter pairs can mean two things:
+            # (a) the co-change graph was analyzed cleanly and produced
+            # no hidden couplings (real success), OR (b) the corpus had
+            # no co-change history to analyze (degraded — needs index
+            # populated). Distinguish via partial_success + state.
+            _summary: dict = {
+                "verdict": (
+                    f"{total} dark-matter coupling{'s' if total != 1 else ''} found"
+                    if total > 0
+                    else "no co-change history to analyze (corpus has 0 cochange records — run `roam index --force` to populate)"
+                ),
+                "total_dark_matter_edges": total,
+                "by_category": dict(by_cat),
+            }
+            if total == 0:
+                _summary["partial_success"] = True
+                _summary["state"] = "no_cochange"
+            elif parts:
+                _summary["verdict"] += f" ({', '.join(parts)})"
 
             click.echo(
                 to_json(
                     json_envelope(
                         "dark-matter",
-                        summary={
-                            "verdict": verdict,
-                            "total_dark_matter_edges": total,
-                            "by_category": dict(by_cat),
-                        },
+                        summary=_summary,
                         budget=token_budget,
                         dark_matter_pairs=[
                             {

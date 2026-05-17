@@ -152,8 +152,8 @@ def _score_one(agg: dict) -> dict:
 )
 @click.command("agent-score")
 @click.option("--agent", default=None, help="Filter to runs by this agent (default: score all agents).")
-@click.option("--since", default=None, help="Filter to runs started at >= SINCE (ISO-8601).")
-@click.option("--top", default=0, type=int, help="Cap agents reported to N highest scores (0 = all).")
+@click.option("--since", default=None, help="Filter to runs started at >= <SINCE> (ISO-8601).")  # W1117-followup
+@click.option("--top", "--limit", "top", default=0, type=int, help="Cap agents reported to <N> highest scores (0 = all).")  # W1142: --limit alias; W1117-followup
 @click.pass_context
 def agent_score_cmd(ctx, agent, since, top):
     """Aggregate runs and score each agent on a 0..100 composite.
@@ -323,8 +323,13 @@ def agent_score_cmd(ctx, agent, since, top):
 
     # Sort: highest score first; tie-break on more runs (more confident).
     scored.sort(key=lambda r: (-r["score"], -r["runs_total"], r["agent"]))
+    # W1142-followup-B: cap-hit disclosure. Record the full pre-slice
+    # count so the envelope can disclose when ``--limit`` collapsed
+    # the agent list.
+    total_scored_full = len(scored)
     if top > 0:
         scored = scored[:top]
+    scored_truncated = total_scored_full > len(scored)
 
     # ---- Verdict + facts ---------------------------------------------
     agents_scored = len(scored)
@@ -369,19 +374,37 @@ def agent_score_cmd(ctx, agent, since, top):
     partial_success_any = any(r["partial_success_rate"] > 0.0 for r in scored)
 
     if json_mode:
+        # W1142-followup-B: cap-hit disclosure. Surface whether the
+        # agent's --limit collapsed the scored agent list.
+        _cap_summary = {
+            "count": len(scored),
+            "total_count": total_scored_full,
+            "truncated": scored_truncated,
+            "limit": top,
+        }
+        _warnings_out: list[str] = []
+        if scored_truncated:
+            _warnings_out.append(
+                f"truncated to {len(scored)} of {total_scored_full} — "
+                "pass --limit larger to see more"
+            )
+        _summary = {
+            "verdict": verdict,
+            "partial_success": partial_success_any or scored_truncated,
+            "state": "ok",
+            "agents_scored": agents_scored,
+            "next_commands": next_commands,
+            **_cap_summary,
+        }
+        if _warnings_out:
+            _summary["warnings_out"] = _warnings_out
         # Route next_commands through summary so the formatter
         # auto-derives ``agent_contract`` from ``summary.next_commands``.
         click.echo(
             to_json(
                 json_envelope(
                     "agent-score",
-                    summary={
-                        "verdict": verdict,
-                        "partial_success": partial_success_any,
-                        "state": "ok",
-                        "agents_scored": agents_scored,
-                        "next_commands": next_commands,
-                    },
+                    summary=_summary,
                     budget=token_budget,
                     agents=scored,
                     score_formula={

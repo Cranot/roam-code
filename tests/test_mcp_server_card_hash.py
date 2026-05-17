@@ -9,9 +9,13 @@ catches anyone editing the card without acknowledging the security
 review surface.
 
 When updating the card:
-  1. Edit the JSON.
-  2. Re-run this test; it'll fail and print the new digest.
-  3. Paste the new digest into ``_EXPECTED_CARD_SHA256`` below.
+  1. Edit the JSON (or run ``python dev/build_readme_counts.py --apply``).
+  2. ``--apply`` auto-rotates ``_EXPECTED_CARD_SHA256`` below since W844 —
+     no manual digest paste needed in the common case.
+  3. If you DELIBERATELY want the pin to stay (e.g. you're debugging a
+     card edit you don't want the substrate to chase), run
+     ``--apply --no-rotate-card-hash`` and update the pin by hand using
+     this test's failure message as the source of truth.
   4. Note in the PR description what changed and why.
 """
 
@@ -22,20 +26,20 @@ from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
 
-# SHA-256 of the canonical mcp-server-card.json bytes. Update via the
-# protocol in this file's docstring whenever the card changes.
-# W793: bumped after renaming ``display_name`` → ``title`` per SEP-2127
-# readiness. SEP-2127-ready, byte-stable change; no other card content
-# moved. W563/W789 auto-rotate is broken per W844 finding — bumped manually.
-# v13.1 (2026-05-15): bumped after version bump 13.0 → 13.1 (card body
-# only changed the ``"version"`` field; W554 audit-report YAML bundle
-# unchanged; all other card content stable).
-# v13.2 (2026-05-16, W1307+W1308): bumped after version bump 13.1 → 13.2.
-# Card body changed only in the "version" field; auto-derived counts
-# (238 commands / 224 MCP tools / 57 core preset) unchanged. The hash
-# is computed on the LF-line-ending bytes (canonical git storage) so
-# the pin matches the CI Linux digest, not the Windows-CRLF digest.
-_EXPECTED_CARD_SHA256 = "bef2dc3e8d4618e5a105621430d32bb93361e3e8d0c4f5f0f6fb7dfd50fe3ca8"
+# SHA-256 of the canonical mcp-server-card.json bytes. Auto-rotated by
+# ``dev/build_readme_counts.py --apply`` since W844 (closes the W563 gap
+# the W789/W794/W1307/W1308 manual bumps used to fill). The W844 substrate
+# computes this digest on LF-normalized bytes so CI Linux + local Windows
+# agree.
+# W793: renamed ``display_name`` → ``title`` per SEP-2127 readiness.
+# v13.1 (2026-05-15): version bump 13.0 → 13.1.
+# v13.2 (2026-05-16, W1307+W1308): version bump 13.1 → 13.2; LF
+# normalization fixed CRLF/LF hash divergence between Windows + CI Linux.
+# redacted: added SEP-2127-ready icons[] field (favicon.svg +
+# og.png pointing at deployed assets on roam-code.com). All 3
+# .well-known card path variants stay byte-identical per the W792
+# invariant.
+_EXPECTED_CARD_SHA256 = "8990f240ea3c0f0a6a457c949cb4a7198b694fefe31da9821b4eb5c2eb3338ce"
 
 
 def _card_path() -> Path:

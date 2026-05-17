@@ -139,11 +139,15 @@ PASS_CONDITIONS: frozenset[str] = frozenset(
 #: entry in ``src/roam/templates/audit_report/control-mapping.yaml``
 #: (W554 wheel-bundled location).
 #:
-#: The seven values below are the canonical product surfaces
+#: The six values below are the canonical product surfaces
 #: documented inline in the YAML header (control-mapping.yaml lines
-#: 26-30). ``self-hosted`` is documented-but-currently-unused; keep
-#: it in the closed set so a future entry that adopts it does NOT
-#: trip the lint.
+#: 26-30).
+#:
+#: W507: pruned dead 'self-hosted' vocab (zero consumers in the YAML
+#: across 23 entries; only appeared in this enum declaration + a
+#: header-comment listing). Re-add if a future control-mapping entry
+#: needs it — the closed-enum lint will trip on the offending entry
+#: until the vocab is restored.
 #:
 #: Values and what they mean:
 #:
@@ -151,7 +155,6 @@ PASS_CONDITIONS: frozenset[str] = frozenset(
 #: * ``governance-pack``       - the governance evidence pack
 #: * ``review``                - the inline ``roam critique`` review surface
 #: * ``team-mcp-gateway``      - the future networked Team MCP gateway
-#: * ``self-hosted``           - self-hosted deployment of the evidence layer
 #: * ``due-diligence``         - the due-diligence evidence pack
 #: * ``security-reachability`` - the vuln-reachability report
 SURFACES: frozenset[str] = frozenset(
@@ -160,7 +163,6 @@ SURFACES: frozenset[str] = frozenset(
         "governance-pack",
         "review",
         "team-mcp-gateway",
-        "self-hosted",
         "due-diligence",
         "security-reachability",
     }

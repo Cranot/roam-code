@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Roam — Local codebase intelligence for AI agents</title>
-  <meta name="description" content="Roam maps your repo, finds algorithmic and architectural risk, gates risky changes, and records tamper-evident evidence. Free CLI, paid team surfaces.">
+  <title>Roam — Give every AI coding agent a map of your repo</title>
+  <meta name="description" content="Roam gives AI coding agents a local structural map of your repo — callers, clones, tests, layers, hot paths — so they stop guessing before they edit. Maps before agents edit. Gates before they merge. Evidence after every run.">
 
-  <meta property="og:title" content="Roam — Local codebase intelligence for AI agents">
-  <meta property="og:description" content="Roam indexes your repo into a code graph your editor's AI can actually use — for retrieval, architecture maps, algorithmic checks, pre-change gates, and an audit trail you can verify offline. Free CLI, runs locally.">
+  <meta property="og:title" content="Roam — Give every AI coding agent a map of your repo">
+  <meta property="og:description" content="Roam gives AI coding agents a local structural map of your repo — callers, clones, tests, layers, hot paths — so they stop guessing before they edit. Maps before agents edit. Gates before they merge. Evidence after every run.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/">
   <meta property="og:image" content="https://roam-code.com/og.png">
@@ -15,8 +15,8 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Roam — Local codebase intelligence for AI agents">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Roam — Local codebase intelligence for AI agents">
-  <meta name="twitter:description" content="Roam indexes your repo into a code graph your editor's AI can actually use — for retrieval, architecture maps, algorithmic checks, pre-change gates, and an audit trail you can verify offline. Free CLI, runs locally.">
+  <meta name="twitter:title" content="Roam — Give every AI coding agent a map of your repo">
+  <meta name="twitter:description" content="Roam gives AI coding agents a local structural map of your repo — callers, clones, tests, layers, hot paths — so they stop guessing before they edit. Maps before agents edit. Gates before they merge. Evidence after every run.">
   <meta name="twitter:image" content="https://roam-code.com/og.png">
 
   <link rel="canonical" href="https://roam-code.com/">
@@ -135,65 +135,175 @@
       <circle cx="92" cy="92" r="3.5" fill="currentColor" stroke="none"/>
     </svg>
     <div class="hero-inner">
-      <p class="eyebrow">For teams using Cursor, Claude Code, Codex, Gemini</p>
+      <p class="eyebrow">For teams running Cursor, Claude Code, Codex, Gemini in real repos</p>
       <h1 class="hero-headline">
-        Local codebase intelligence<br>
-        <strong>for AI agents and developers.</strong>
+        Give every AI coding agent<br>
+        <strong>a map of your repo before it edits.</strong>
       </h1>
       <p class="hero-subhead">
-        Roam indexes your repo into a code graph your editor's AI can
-        actually use — for retrieval, architecture maps, algorithmic
-        checks, pre-change gates, and an audit trail you can verify
-        offline. Free CLI, runs entirely on your machine.
+        Roam gives AI coding agents a local structural map of your
+        repository — callers, dependencies, clones, tests, hot paths,
+        architecture boundaries. Agents call Roam before they edit,
+        during the change, and before merge — so they stop guessing
+        what the codebase means.
+      </p>
+      <p class="hero-subhead hero-subhead--tight">
+        <strong>Maps before agents edit. Gates before they merge. Evidence after every run.</strong>
+        Runs locally. Exposes MCP tools. Gates CI. Your source stays
+        on your machine unless you choose otherwise.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
-        <a class="btn-secondary" href="#how-it-works">See how it works</a>
+        <a class="btn-secondary" href="#what-roam-catches">See what it catches</a>
       </div>
       <p class="hero-trust-strip">
-        Free CLI · Apache 2.0 · 28 languages · 7,731 PyPI installs/month · Runs entirely on your machine
+        Free CLI · Apache 2.0 · 28 languages · 57 core agent tools · 224 total MCP tools · 7,731 PyPI installs/month
       </p>
     </div>
   </header>
 
   <!-- ──────────────────────────────────────────────────────────
-       SECTION 1A — Algorithmic Risk Review (the differentiator)
+       LEAD BAND — "Roam reads what it touches" (the line that
+       makes the category instantly understandable)
        ────────────────────────────────────────────────────────── -->
-  <section class="whats-in whats-in--dark whats-in--wide" id="algo-wedge">
-    <div class="whats-in-inner">
-      <p class="eyebrow eyebrow--on-dark">Algorithmic risk</p>
-      <h2>Computational judgment most reviewers don't run.</h2>
-      <p class="lede">
-        AI-generated code often passes tests and still ships accidental
-        O(n²) loops, N+1 queries, regex compilation inside loops, repeated
-        JSON parsing, or recursion without memoisation. Semantic reviewers
-        (CodeRabbit, Greptile, Qodo) read the diff as text; static analyzers
-        (SonarQube, Semgrep, CodeQL) match rule patterns. <strong>Roam analyzes
-        algorithmic shape over the call graph</strong> — locally, deterministically.
-        One of nine engineering senses your agent can call.
-      </p>
-      <div class="numbers-grid numbers-grid--3">
-        <div class="num-cell">
-          <strong>Agent output</strong>
-          <span>Plausible-looking patch — passes tests, reads as clean. Hides accidental O(n²), N+1, or repeated parsing.</span>
-        </div>
-        <div class="num-cell">
-          <strong>Roam critique</strong>
-          <span>Names the structural flaw — invariant violation, asymptotic shape, hot-path interaction — with the exact line and call sites.</span>
-        </div>
-        <div class="num-cell">
-          <strong>Engineer action</strong>
-          <span>Re-prompt the agent with Roam's finding, patch the implementation, verify related clones and call sites are consistent.</span>
-        </div>
-      </div>
-      <p class="how-it-works-foot wedge-trylist">
-        Try it: <code>roam math</code> · <code>roam algo</code> · <code>roam n1</code> · <code>roam missing-index</code> · <code>roam hotspots</code>
+  <section class="reads-touches" aria-label="The structural-layer claim">
+    <div class="reads-touches-inner">
+      <p class="eyebrow reads-touches-eyebrow">Agentic code intelligence</p>
+      <p class="reads-touches-line">
+        Semantic reviewers read what the code <em>does</em>.
+        <strong>Roam reads what it <em>touches</em>.</strong>
+        Callers, clones, layers, tests, hot paths — the structural
+        layer your reviewer doesn't see.
       </p>
     </div>
   </section>
 
   <!-- ──────────────────────────────────────────────────────────
-       SECTION 1 — Agent senses (the local engineering judgment layer)
+       SECTION — What Roam catches (concrete pain, right after hero)
+       ────────────────────────────────────────────────────────── -->
+  <section class="whats-in" id="what-roam-catches">
+    <div class="whats-in-inner">
+      <h2>What Roam catches</h2>
+      <p class="lede">
+        Across <strong>22,000 developers</strong>, Faros AI's 2026
+        telemetry analysis reported AI-assisted teams saw <strong>more
+        bugs per developer and more than 3x incidents per PR</strong>.
+        The pattern is consistent: agents write plausible code faster
+        than human reviewers can inspect its structural consequences.
+        Roam catches three classes of structural consequence the agent
+        and the reviewer both tend to miss.
+        <span class="lede-source">
+          Source: <a href="https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025">Faros AI, 2026 telemetry analysis</a>
+          (exact figures: bugs/dev +54%, incidents/PR +242.7%;
+          <a class="archive-link" href="https://web.archive.org/web/20260507124644/https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025" rel="external">archive</a>).
+        </span>
+      </p>
+
+      <div class="scenarios-grid">
+
+        <article class="scenario">
+          <h3>Blast-radius the agent didn't measure</h3>
+          <p class="scenario-cite">Same failure class as the PocketOS incident, April 2026 — production database and three months of backups gone in nine seconds. Not the exact diff; the illustrative output below shows what Roam's blast-radius check would flag on a similar change. <a href="https://www.theregister.com/software/2026/04/27/cursor-opus-agent-snuffs-out-startups-production-database/5224442">Source</a> · <a class="archive-link" href="https://web.archive.org/web/20260507124522/https://www.theregister.com/software/2026/04/27/cursor-opus-agent-snuffs-out-startups-production-database/5224442" rel="external">archive</a>.</p>
+          <p>
+            An AI agent rewrites a <code>cleanup_old_records()</code> job. The diff looks fine. What it actually changed: the <code>WHERE</code> clause now matches every row.
+          </p>
+<pre class="terminal" aria-label="Sample Roam blast-radius output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
+<span class="t-line">VERDICT: BLOCK  (1 high)</span>
+<span class="t-line">  cleanup_old_records  db/maintenance.py:84</span>
+<span class="t-line">  reaches: 3 entry points, 1 destructive op</span>
+<span class="t-line">  runtime: 1,247 calls/day in trace_ingest</span>
+<span class="t-line">  flag: DELETE without LIMIT</span></pre>
+          <p class="tie-back">→ Nine seconds vs nine months of backups.</p>
+        </article>
+
+        <article class="scenario">
+          <h3>The clone the agent forgot to update</h3>
+          <p class="scenario-cite">Same failure class as Amazon's Treadwell 90-day code-controls reset, March 2026 — senior signoff added on agent-generated changes after outages including one linked to an internal AI coding tool. Illustrative Roam output, not the exact diff. <a href="https://www.businessinsider.com/amazon-tightens-code-controls-after-outages-including-one-ai-2026-3">Source</a>.</p>
+          <p>
+            AI agents fix bugs by pattern-matching, then forget the other places the same pattern lives. Diff looks clean. Roam flags the unchanged copies:
+          </p>
+<pre class="terminal" aria-label="Sample Roam clones-not-edited output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
+<span class="t-line">VERDICT: REVIEW  (clones-not-edited)</span>
+<span class="t-line">  order_service.py:142  [edited]</span>
+<span class="t-line">  billing/refunds.py:89  [UNCHANGED]</span>
+<span class="t-line">  admin/bulk_ops.py:201  [UNCHANGED]</span>
+<span class="t-line">  confidence: 0.94 (AST exact + identifier rename)</span></pre>
+          <p class="tie-back">→ Senior signoff plus a structural diff is better than senior signoff alone.</p>
+        </article>
+
+        <article class="scenario">
+          <h3>The runtime-hot path the agent treated as cold</h3>
+          <p class="scenario-cite">Shape: the diff-touches-more-than-the-reviewer-thinks pattern Faros's 22,000-developer study quantified above.</p>
+          <p>
+            AI-written code touches more places than the reviewer sees. Roam weights blast-radius by production traffic to surface the hot paths:
+          </p>
+<pre class="terminal" aria-label="Sample Roam runtime-hot output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique --runtime</span>
+<span class="t-line">VERDICT: REVIEW  (runtime-hot path)</span>
+<span class="t-line">  serialize_user  api/v2/users.py:34</span>
+<span class="t-line">  trace ingest: 3.2M calls/day (top 0.1%)</span>
+<span class="t-line">  diff: response shape changed</span>
+<span class="t-line">  downstream: 4 mobile clients, 2 webhooks</span></pre>
+          <p class="tie-back">→ The rate isn't fixed by fewer AI commits — by reviewing structural impact at machine speed.</p>
+        </article>
+
+      </div>
+
+      <p class="how-it-works-foot how-it-works-foot--centered how-it-works-foot--spaced-top">
+        Want to see what Roam would have caught on <em>your</em> last 5 PRs?
+        <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code> — no email, no upload.
+        Or jump to the <a href="#audit">paid PR Replay tiers</a> for a written report.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 2 — How agents use Roam (3-step flow + 5 calls)
+       Moved up so explanation precedes detail in the page order.
+       ────────────────────────────────────────────────────────── -->
+  <section class="how-it-works" id="how-it-works">
+    <div class="how-it-works-inner">
+      <h2>How agents use Roam</h2>
+      <p class="lede">
+        Three steps: install once, hand the MCP server to your editor,
+        and your coding agent gains 57 core structured questions to ask
+        about the codebase. The free CLI gives you the same engine to
+        run the same checks from your terminal or CI.
+      </p>
+      <ol class="flow">
+        <li>
+          <span class="flow-num">1</span>
+          <strong>You install Roam locally.</strong>
+          One command. The MCP server starts up alongside your editor or terminal.
+        </li>
+        <li>
+          <span class="flow-num">2</span>
+          <strong>Your AI agent asks structural questions.</strong>
+          <em>What else does this function affect? Where are the tests for this? Is this a clone of another implementation?</em>
+        </li>
+        <li>
+          <span class="flow-num">3</span>
+          <strong>The agent writes better code.</strong>
+          Now it edits like someone who's been on the team for a year — knows what breaks, what's a clone, what needs a test.
+        </li>
+      </ol>
+
+      <h3 class="how-it-works-sub">The five calls your agent makes most</h3>
+      <div class="verbs-grid">
+        <div class="verb-cell"><code>roam understand</code><span>Map an unfamiliar codebase before editing.</span></div>
+        <div class="verb-cell"><code>roam retrieve</code><span>Pull the exact spans for the task at hand.</span></div>
+        <div class="verb-cell"><code>roam context</code><span>List the files and lines that matter.</span></div>
+        <div class="verb-cell"><code>roam preflight</code><span>Check what a change will break.</span></div>
+        <div class="verb-cell"><code>roam critique</code><span>Review a patch against the graph.</span></div>
+      </div>
+
+      <p class="how-it-works-foot">
+        Works with Claude Code, Cursor, Windsurf, VS Code, Codex, Gemini — and any MCP-aware editor.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 1 — Local code graph (counts + install + first 5 min)
        ────────────────────────────────────────────────────────── -->
   <section class="whats-in" id="what-you-get">
     <div class="whats-in-inner">
@@ -293,123 +403,6 @@
       <p class="how-it-works-foot how-it-works-foot--centered">
         See it in action: <a href="/docs/demos">eight concrete scenarios where AI ships a plausible patch and Roam catches the problem before merge</a>. Or jump to the <a href="/docs/command-reference">full command reference</a>.
       </p>
-    </div>
-  </section>
-
-  <!-- ──────────────────────────────────────────────────────────
-       SECTION 2 — How it works (MCP flow + verbs + demo)
-       ────────────────────────────────────────────────────────── -->
-  <section class="how-it-works" id="how-it-works">
-    <div class="how-it-works-inner">
-      <h2>How it works</h2>
-      <p class="lede">
-        Three steps: install once, hand the MCP server to your editor,
-        and your coding agent gains 57 core structured questions to ask
-        about the codebase. The free CLI gives you the same engine to
-        run the same checks from your terminal or CI.
-      </p>
-      <ol class="flow">
-        <li>
-          <span class="flow-num">1</span>
-          <strong>You install Roam locally.</strong>
-          One command. The MCP server starts up alongside your editor or terminal.
-        </li>
-        <li>
-          <span class="flow-num">2</span>
-          <strong>Your AI agent asks structural questions.</strong>
-          <em>What else does this function affect? Where are the tests for this? Is this a clone of another implementation?</em>
-        </li>
-        <li>
-          <span class="flow-num">3</span>
-          <strong>The agent writes better code.</strong>
-          Now it edits like someone who's been on the team for a year — knows what breaks, what's a clone, what needs a test.
-        </li>
-      </ol>
-
-      <h3 class="how-it-works-sub">The five verbs you'll use most</h3>
-      <div class="verbs-grid">
-        <div class="verb-cell"><code>roam understand</code><span>Take a guided tour of an unfamiliar codebase.</span></div>
-        <div class="verb-cell"><code>roam retrieve</code><span>Pull the right code spans for any task.</span></div>
-        <div class="verb-cell"><code>roam context</code><span>List the exact files and lines to read.</span></div>
-        <div class="verb-cell"><code>roam preflight</code><span>See what a change will break.</span></div>
-        <div class="verb-cell"><code>roam critique</code><span>Check a patch against the graph.</span></div>
-      </div>
-
-      <p class="how-it-works-foot">
-        Works with Claude Code, Cursor, Windsurf, VS Code, Codex, Gemini — and any MCP-aware editor.
-      </p>
-    </div>
-  </section>
-
-
-  <!-- ──────────────────────────────────────────────────────────
-       SECTION 3 — What Roam catches (merged pain + scenarios)
-       ────────────────────────────────────────────────────────── -->
-  <section class="whats-in" id="what-roam-catches">
-    <div class="whats-in-inner">
-      <h2>What Roam catches</h2>
-      <p class="lede">
-        Across <strong>22,000 developers</strong>, Faros AI's 2026
-        telemetry analysis reported AI-assisted teams saw bugs per
-        developer rise <strong>+54%</strong> and incidents per PR rise
-        <strong>+242.7%</strong>. The pattern is consistent: agents write
-        plausible code faster than human reviewers can inspect its
-        structural consequences. Roam catches three classes of structural
-        consequence the agent and the reviewer both tend to miss.
-        <span class="lede-source">
-          Source: <a href="https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025">Faros AI, 2026 telemetry analysis</a>
-          (<a class="archive-link" href="https://web.archive.org/web/20260507124644/https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025" rel="external">archive</a>).
-        </span>
-      </p>
-
-      <div class="scenarios-grid">
-
-        <article class="scenario">
-          <h3>Blast-radius the agent didn't measure</h3>
-          <p class="scenario-cite">Shape: the PocketOS incident, April 2026 — production database and three months of backups gone in nine seconds. <a href="https://www.theregister.com/software/2026/04/27/cursor-opus-agent-snuffs-out-startups-production-database/5224442">Source</a> · <a class="archive-link" href="https://web.archive.org/web/20260507124522/https://www.theregister.com/software/2026/04/27/cursor-opus-agent-snuffs-out-startups-production-database/5224442" rel="external">archive</a>.</p>
-          <p>
-            An AI agent rewrites a <code>cleanup_old_records()</code> job. The diff looks fine. What it actually changed: the <code>WHERE</code> clause now matches every row.
-          </p>
-<pre class="terminal" aria-label="Sample Roam blast-radius output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
-<span class="t-line">VERDICT: BLOCK  (1 high)</span>
-<span class="t-line">  cleanup_old_records  db/maintenance.py:84</span>
-<span class="t-line">  reaches: 3 entry points, 1 destructive op</span>
-<span class="t-line">  runtime: 1,247 calls/day in trace_ingest</span>
-<span class="t-line">  flag: DELETE without LIMIT</span></pre>
-          <p class="tie-back">→ Nine seconds vs nine months of backups.</p>
-        </article>
-
-        <article class="scenario">
-          <h3>The clone the agent forgot to update</h3>
-          <p class="scenario-cite">Shape: Amazon's Treadwell 90-day code-controls reset, March 2026 — senior signoff added on agent-generated changes after outages including one linked to an internal AI coding tool. <a href="https://www.businessinsider.com/amazon-tightens-code-controls-after-outages-including-one-ai-2026-3">Source</a>.</p>
-          <p>
-            AI agents fix bugs by pattern-matching, then forget the other places the same pattern lives. Diff looks clean. Roam flags the unchanged copies:
-          </p>
-<pre class="terminal" aria-label="Sample Roam clones-not-edited output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
-<span class="t-line">VERDICT: REVIEW  (clones-not-edited)</span>
-<span class="t-line">  order_service.py:142  [edited]</span>
-<span class="t-line">  billing/refunds.py:89  [UNCHANGED]</span>
-<span class="t-line">  admin/bulk_ops.py:201  [UNCHANGED]</span>
-<span class="t-line">  confidence: 0.94 (AST exact + identifier rename)</span></pre>
-          <p class="tie-back">→ Senior signoff plus a structural diff is better than senior signoff alone.</p>
-        </article>
-
-        <article class="scenario">
-          <h3>The runtime-hot path the agent treated as cold</h3>
-          <p class="scenario-cite">Shape: the diff-touches-more-than-the-reviewer-thinks pattern Faros's 22,000-developer study quantified above.</p>
-          <p>
-            AI-written code touches more places than the reviewer sees. Roam weights blast-radius by production traffic to surface the hot paths:
-          </p>
-<pre class="terminal" aria-label="Sample Roam runtime-hot output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique --runtime</span>
-<span class="t-line">VERDICT: REVIEW  (runtime-hot path)</span>
-<span class="t-line">  serialize_user  api/v2/users.py:34</span>
-<span class="t-line">  trace ingest: 3.2M calls/day (top 0.1%)</span>
-<span class="t-line">  diff: response shape changed</span>
-<span class="t-line">  downstream: 4 mobile clients, 2 webhooks</span></pre>
-          <p class="tie-back">→ The rate isn't fixed by fewer AI commits — by reviewing structural impact at machine speed.</p>
-        </article>
-
-      </div>
     </div>
   </section>
 
@@ -572,122 +565,54 @@
   </section>
 
   <!-- ──────────────────────────────────────────────────────────
-       SECTION 5 — Comparison table
+       SECTION 5c — Built for parallel agents (multi-agent
+       coordination — Roam as agent infrastructure)
        ────────────────────────────────────────────────────────── -->
-  <section class="compare" id="compare">
-    <div class="compare-inner">
-      <h2>Roam covers the structural layer your reviewers do not</h2>
+  <section class="whats-in whats-in--wide" id="parallel-agents">
+    <div class="whats-in-inner">
+      <p class="eyebrow">Multi-agent coordination</p>
+      <h2>Built for parallel agents.</h2>
       <p class="lede">
-        Semantic reviewers (CodeRabbit, Greptile, Qodo) read what the code <em>does</em>.
-        Roam reads what it <em>touches</em>. Different layer, different bugs — you want both.
+        Most review tools assume one author per change. Roam assumes
+        many — and gives every agent and human in the loop a shared
+        structural map so they don't collide. Split work across agents
+        by graph partition. Detect overlapping blast radius before two
+        agents touch the same call chain. Produce review evidence per
+        agent before merge.
       </p>
-      <div class="compare-table-wrap">
-        <table class="compare-table">
-          <caption class="visually-hidden">Roam compared with CodeRabbit, Greptile, Qodo, and SonarQube on nine product axes.</caption>
-          <thead>
-            <tr>
-              <th scope="col"></th>
-              <th scope="col"><strong>Roam</strong></th>
-              <th scope="col">CodeRabbit</th>
-              <th scope="col">Greptile</th>
-              <th scope="col">Qodo</th>
-              <th scope="col">SonarQube</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <th scope="row">Reviews what the code <em>touches</em> (callers, layers, cycles)</th>
-              <td class="yes">Yes</td>
-              <td class="ltd">Limited</td>
-              <td class="ltd">Limited</td>
-              <td class="ltd">Limited</td>
-              <td class="yes">Yes</td>
-            </tr>
-            <tr>
-              <th scope="row">Reviews what the code <em>does</em> (semantics)</th>
-              <td class="ltd">Limited</td>
-              <td class="yes">Yes</td>
-              <td class="yes">Yes</td>
-              <td class="yes">Yes</td>
-              <td class="ltd">Limited</td>
-            </tr>
-            <tr>
-              <th scope="row">Catches the clone-not-edited bug AI keeps shipping</th>
-              <td class="yes">Yes</td>
-              <td class="no">Not advertised</td>
-              <td class="no">Not advertised</td>
-              <td class="no">Not advertised</td>
-              <td class="no">Not advertised</td>
-            </tr>
-            <tr>
-              <th scope="row">Runs locally — source never uploaded</th>
-              <td class="yes">Yes</td>
-              <td class="no">Cloud<sup>*</sup></td>
-              <td class="no">Cloud<sup>*</sup></td>
-              <td class="no">Cloud<sup>*</sup></td>
-              <td class="yes">Yes (paid)</td>
-            </tr>
-            <tr>
-              <th scope="row">Tamper-evident review attestations (in-toto v1, cosign-verifiable)</th>
-              <td class="yes">Yes</td>
-              <td class="no">Not advertised</td>
-              <td class="no">Not advertised</td>
-              <td class="no">Not advertised</td>
-              <td class="no">Not advertised</td>
-            </tr>
-            <tr>
-              <th scope="row">Exposes the code graph to agents via MCP</th>
-              <td class="yes">Yes (224 tools)</td>
-              <td class="ltd">Consumes MCP<sup>***</sup></td>
-              <td class="ltd">Consumes MCP<sup>***</sup></td>
-              <td class="ltd">Enterprise tier<sup>***</sup></td>
-              <td class="ltd">Yes (Oct 2025)<sup>***</sup></td>
-            </tr>
-            <tr>
-              <th scope="row">Open source</th>
-              <td class="yes">Apache 2.0</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
-              <td class="ltd">Community ed.</td>
-            </tr>
-            <tr>
-              <th scope="row">Free tier for individuals</th>
-              <td class="yes">Yes, forever</td>
-              <td class="ltd">Trial</td>
-              <td class="ltd">Trial</td>
-              <td class="ltd">Trial</td>
-              <td class="ltd">Community ed.</td>
-            </tr>
-            <tr>
-              <th scope="row">Starting price (team tier)</th>
-              <td>from $99/mo flat</td>
-              <td>$24/dev/mo<sup>**</sup></td>
-              <td>$30/seat/mo + usage</td>
-              <td>$30/user/mo<sup>**</sup></td>
-              <td>from $32/mo (LOC-based)</td>
-            </tr>
-          </tbody>
-        </table>
+      <div class="numbers-grid numbers-grid--3">
+        <div class="num-cell">
+          <strong>Partition the graph</strong>
+          <span>Louvain-based work splits — each agent gets an independent slice with minimised cross-cluster edges. <code>roam partition</code> · <code>roam orchestrate</code></span>
+        </div>
+        <div class="num-cell">
+          <strong>Claim and release leases</strong>
+          <span>Repo-local lease store stops two agents from editing the same subject simultaneously. <code>roam lease claim</code> · <code>roam lease list</code></span>
+        </div>
+        <div class="num-cell">
+          <strong>Score each agent's run</strong>
+          <span>Per-run evidence packets (HMAC-chained) + composite agent-score on 0..100 so reviewers can compare fleets, not commits. <code>roam runs verify</code> · <code>roam agent-score</code></span>
+        </div>
       </div>
-      <p class="compare-foot">
-        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (224 tools, 57 in the default core preset); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and an embedded version in SonarQube Cloud in March 2026.
-        Roam runs <em>alongside</em> a semantic reviewer (CodeRabbit, Greptile, Qodo) — different layer, different bugs. Also pairs with Cursor / Claude Code / Codex / Gemini via MCP, and exports SARIF for GitHub / GitLab CI.
-        See something wrong? <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
+      <p class="how-it-works-foot how-it-works-foot--centered">
+        Early — but designed in from the substrate up. Background in
+        the <a href="/docs/architecture">architecture guide</a>.
       </p>
     </div>
   </section>
 
-
   <!-- ──────────────────────────────────────────────────────────
-       SECTION 5d — Roam on Roam (dogfooding evidence)
+       SECTION 5d — Roam on Roam (dogfooding evidence — moved up
+       so proof from own repo lands before any comparison claim)
        ────────────────────────────────────────────────────────── -->
   <section class="dogfood-band">
     <div class="dogfood-band-inner dogfood-band-inner--centered">
       <p class="eyebrow">Roam on Roam</p>
-      <h2>We use what we sell.</h2>
+      <h2>Roam catches problems in Roam itself.</h2>
       <p class="lede">
-        Roam runs against its own codebase. Recent commits where Roam flagged something we missed, with the verifiable git hash:
+        If the tool cannot gate its own codebase, it should not gate
+        yours. Recent commits where Roam flagged something we missed,
+        with the verifiable git hash:
       </p>
       <ul class="dogfood-list">
         <li>
@@ -708,7 +633,134 @@
         </li>
       </ul>
       <p class="dogfood-foot">
-        Browse <a href="https://github.com/Cranot/roam-code/commits/main">the full history</a> for the rest. If a tool can't pass its own gates, we shouldn't sell it.
+        Browse <a href="https://github.com/Cranot/roam-code/commits/main">the full history</a> for the rest.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 5 — Comparison (3-row layer view; full table at /compare)
+       ────────────────────────────────────────────────────────── -->
+  <section class="compare" id="compare">
+    <div class="compare-inner">
+      <h2>Roam does not replace your reviewer</h2>
+      <p class="lede">
+        Keep CodeRabbit, Greptile, Qodo, SonarQube, or CodeQL. Roam
+        adds the structural layer they don't see: callers, clones,
+        layers, tests, hot paths. Three layers, three jobs, three
+        kinds of finding.
+      </p>
+      <div class="compare-table-wrap">
+        <table class="compare-table compare-table--layered">
+          <caption class="visually-hidden">Three code-review layers compared by what they see.</caption>
+          <thead>
+            <tr>
+              <th scope="col">Layer</th>
+              <th scope="col">What it sees</th>
+              <th scope="col">Examples</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Semantic reviewers</th>
+              <td>What the diff <em>does</em> — correctness, style, prose-level review</td>
+              <td>CodeRabbit, Greptile, Qodo</td>
+            </tr>
+            <tr>
+              <th scope="row">Static analyzers</th>
+              <td>Known rule and security patterns inside a function</td>
+              <td>SonarQube, Semgrep, CodeQL</td>
+            </tr>
+            <tr>
+              <th scope="row"><strong>Roam</strong></th>
+              <td>What the change <em>touches</em> — callers, clones, layers, tests, hot paths</td>
+              <td><strong>Roam</strong> (local CLI + MCP + CI)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="compare-foot">
+        Full feature-by-feature breakdown — including local-vs-cloud,
+        MCP exposure, attestations, and pricing — at
+        <a href="/compare"><strong>roam-code.com/compare →</strong></a>
+        Also pairs with Cursor / Claude Code / Codex / Gemini via MCP,
+        and exports SARIF for GitHub / GitLab CI.
+        See something wrong? <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
+      </p>
+    </div>
+  </section>
+
+
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 5e — PR Replay (the concrete on-ramp, moved up
+       before the paid product cards so curious devs see the
+       try-it-on-your-PRs CTA first)
+       ────────────────────────────────────────────────────────── -->
+  <section class="audit-upsell" id="audit" aria-labelledby="audit-heading">
+    <div class="audit-upsell-inner">
+      <h2 id="audit-heading">Try it on your last 5 PRs</h2>
+      <p class="lede">
+        Roam runs against your last 5 / 30 / 90 merged PRs and produces a
+        written structural-review report. What today's detectors would have
+        caught pre-merge, the patterns worth wiring into CI, and the
+        single-highest-impact gate to add today. No email, no upload.
+      </p>
+      <div class="replay-tiers">
+        <article class="replay-tier replay-tier--sample">
+          <h3>Sample</h3>
+          <p class="replay-price"><strong>Free</strong> · 5 PRs · self-serve</p>
+          <p class="install-cmd replay-cmd">
+            <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>
+          </p>
+          <p class="replay-foot">No email. Watermarked. Same engine as the paid tiers.</p>
+        </article>
+        <article class="replay-tier replay-tier--team">
+          <h3>Team</h3>
+          <p class="replay-price"><strong>$2,500</strong> · 30 PRs · 30-min walk-through</p>
+          <p class="replay-body">
+            Aggregated detector breakdown, ranked PRs, recommended CI gates.
+            50% of fee credits toward a Roam Review subscription if started
+            within 60 days.
+            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample output</a>.
+          </p>
+          <!-- STRIPE_TEAM_LINK: when the live Stripe Payment Link URL is
+               ready, replace the primary button's href with the Stripe
+               URL and re-add the "Or email first" mailto as the secondary. -->
+          <a class="btn-primary"
+             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Team%20PR%20Replay%20report.%0A%0ARepo%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
+            Buy Team — $2,500
+          </a>
+          <p class="replay-checkout-note">Self-serve checkout launches soon; email orders go through today.</p>
+        </article>
+        <article class="replay-tier replay-tier--deep">
+          <h3>Deep</h3>
+          <p class="replay-price"><strong>$6,000</strong> · 90 PRs · 90-min walk-through</p>
+          <p class="replay-body">
+            Everything in Team plus a per-detector deep-dive and a written
+            90-day remediation plan against the highest-impact CI gates.
+            Same 50% Roam Review credit applies.
+            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample (Team format; Deep adds the deep-dive section)</a>.
+          </p>
+          <!-- STRIPE_DEEP_LINK: when the live Stripe Payment Link URL is
+               ready, replace the primary button's href with the Stripe
+               URL and re-add the "Or email first" mailto as the secondary. -->
+          <a class="btn-primary"
+             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Deep%20PR%20Replay%20report.%0A%0ARepo%3A%20%0ATime%20window%20%28default%3A%20last%2090%20days%29%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
+            Buy Deep — $6,000
+          </a>
+          <p class="replay-checkout-note">Self-serve checkout launches soon; email orders go through today.</p>
+        </article>
+      </div>
+      <p class="replay-fineprint">
+        Turnaround: 5 business days from kickoff for Team, 10 business days
+        for Deep. Reports ship as Markdown + PDF. We never train on or
+        reuse buyer code; the engagement runs against a temporary clone
+        we delete on completion.
+        <strong><a href="/audit">Full deliverable spec, FAQ, and credit math →</a></strong>
+        See the <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>
+        and <a href="/security">security policy</a> for details. Email
+        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
+        with questions before purchase.
       </p>
     </div>
   </section>
@@ -741,8 +793,8 @@
         <li>GitHub Marketplace install on launch — <a href="mailto:hello@roam-code.com?subject=Roam%20Review%20early%20access">join early access</a></li>
       </ul>
       <div class="price">
-        <span class="price-amount">from $99<span class="price-unit">/mo</span></span>
-        <span class="price-note">$99 Starter · $299 Team · $799 Business · $1,499 Scale · monthly or annual · 14-day trial · free for open-source forever</span>
+        <span class="price-amount">Starter $99<span class="price-unit">/mo</span></span>
+        <span class="price-note">Team $299 · Business $799 · Scale $1,499 · monthly or annual · 14-day trial · free for open-source forever</span>
       </div>
       <a class="btn-primary" href="mailto:hello@roam-code.com?subject=Roam%20Review%20early%20access&amp;body=Hi%20%E2%80%94%20requesting%20Roam%20Review%20early%20access.%0A%0AGitHub%20org%3A%20%0ATeam%20size%20%28PR%20authors%29%3A%20%0AInterested%20tier%3A%20Starter%20%2F%20Team%20%2F%20Business%20%2F%20Scale%0A%0A%E2%80%94%20">Get early access</a>
       <p class="product-bridge">Want history across releases? <a href="#cloud">Add Roam Cloud →</a> · Want to evaluate first? <a href="/audit">Run a paid PR Replay →</a></p>
@@ -781,6 +833,44 @@
       </div>
       <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Self-Hosted%20enquiry">Book a 30-min call</a>
       <p class="product-bridge">Self-Hosted bundles <a href="#review">Roam Review</a> + <a href="#cloud">Roam Cloud</a> + the audit-trail toolkit. Talk to us about a pilot first.</p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 6b — Who Roam is for / not for + copy-paste agent prompt
+       ────────────────────────────────────────────────────────── -->
+  <section class="whats-in whats-in--wide" id="fit">
+    <div class="whats-in-inner">
+      <h2>Who Roam is for</h2>
+      <div class="numbers-grid numbers-grid--3">
+        <div class="num-cell">
+          <strong>Use Roam if</strong>
+          <span>AI agents write real PRs in your repo, your codebase has multiple services or modules, or you need review evidence you can hand to an auditor.</span>
+        </div>
+        <div class="num-cell">
+          <strong>Probably skip if</strong>
+          <span>Tiny single-file repo, no AI-generated PRs, and no structural review pain yet. Come back when one of those changes.</span>
+        </div>
+        <div class="num-cell">
+          <strong>Free forever</strong>
+          <span>The engine is Apache 2.0 and free for individuals, teams, and companies of any size. We charge for the team workflow: PR bot, dashboard, self-hosted.</span>
+        </div>
+      </div>
+
+      <h3 class="how-it-works-sub" style="margin-top:2.5rem;">Paste this into your agent's system prompt</h3>
+      <pre class="terminal" aria-label="Drop-in instructions for Claude Code, Cursor, Codex, Gemini"><span class="t-line">Before editing this repo, run:</span>
+<span class="t-line">  roam understand     # map the codebase</span>
+<span class="t-line">  roam preflight &lt;sym&gt; # blast radius + tests + fitness</span>
+<span class="t-line"></span>
+<span class="t-line">After editing, run:</span>
+<span class="t-line">  git diff | roam critique</span>
+<span class="t-line"></span>
+<span class="t-line">Do not open a PR until Roam high-severity findings</span>
+<span class="t-line">are fixed or explained.</span></pre>
+      <p class="how-it-works-foot how-it-works-foot--centered">
+        Works in Claude Code, Cursor, Windsurf, Codex, Gemini, and any
+        MCP-aware editor. Full setup guide at <a href="/setup">/setup</a>.
+      </p>
     </div>
   </section>
 
@@ -951,87 +1041,15 @@
       <details>
         <summary>Why no analytics or telemetry on this site?</summary>
         <p>
-          Two reasons. First, we'd rather not be a vector — the August 2025
-          CodeRabbit RCE that leaked write access to ~1M repos started from
-          a dependency we wouldn't have noticed. Less surface area means
-          fewer surprises. Second, we sell to teams that read Privacy
-          policies. Asking them to read ours and seeing zero cookies, zero
-          trackers, zero "anonymous usage data" is a stronger signal than
-          any logo wall. See the <a href="/no-cookies">receipt</a>.
+          Two reasons. First, every third-party script is part of the
+          attack surface — less surface, fewer surprises. Second, we
+          sell to teams that read Privacy policies. Asking them to read
+          ours and seeing zero cookies, zero trackers, zero "anonymous
+          usage data" is a stronger signal than any logo wall. See the
+          <a href="/no-cookies">receipt</a>; the supply-chain detail
+          lives on the <a href="/security#supply-chain">security page</a>.
         </p>
       </details>
-    </div>
-  </section>
-
-  <!-- ──────────────────────────────────────────────────────────
-       SECTION 9 — Audit upsell (soft on-ramp at the end)
-       ────────────────────────────────────────────────────────── -->
-  <section class="audit-upsell" id="audit" aria-labelledby="audit-heading">
-    <div class="audit-upsell-inner">
-      <h2 id="audit-heading">PR Replay — see what Roam would have flagged on your last quarter</h2>
-      <p class="lede">
-        Roam runs against your last 5 / 30 / 90 merged PRs and produces a
-        written structural-review report. What today's detectors would have
-        caught pre-merge, the patterns worth wiring into CI, and the
-        single-highest-impact gate to add today.
-      </p>
-      <div class="replay-tiers">
-        <article class="replay-tier replay-tier--sample">
-          <h3>Sample</h3>
-          <p class="replay-price"><strong>Free</strong> · 5 PRs · self-serve</p>
-          <p class="install-cmd replay-cmd">
-            <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>
-          </p>
-          <p class="replay-foot">No email. Watermarked. Same engine as the paid tiers.</p>
-        </article>
-        <article class="replay-tier replay-tier--team">
-          <h3>Team</h3>
-          <p class="replay-price"><strong>$2,500</strong> · 30 PRs · 30-min walk-through</p>
-          <p class="replay-body">
-            Aggregated detector breakdown, ranked PRs, recommended CI gates.
-            50% of fee credits toward a Roam Review subscription if started
-            within 60 days.
-            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample output</a>.
-          </p>
-          <!-- STRIPE_TEAM_LINK: when the live Stripe Payment Link URL is
-               ready, replace the primary button's href with the Stripe
-               URL and re-add the "Or email first" mailto as the secondary. -->
-          <a class="btn-primary"
-             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Team%20PR%20Replay%20report.%0A%0ARepo%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
-            Buy Team — $2,500
-          </a>
-          <p class="replay-checkout-note">Self-serve checkout launches soon; email orders go through today.</p>
-        </article>
-        <article class="replay-tier replay-tier--deep">
-          <h3>Deep</h3>
-          <p class="replay-price"><strong>$6,000</strong> · 90 PRs · 90-min walk-through</p>
-          <p class="replay-body">
-            Everything in Team plus a per-detector deep-dive and a written
-            90-day remediation plan against the highest-impact CI gates.
-            Same 50% Roam Review credit applies.
-            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample (Team format; Deep adds the deep-dive section)</a>.
-          </p>
-          <!-- STRIPE_DEEP_LINK: when the live Stripe Payment Link URL is
-               ready, replace the primary button's href with the Stripe
-               URL and re-add the "Or email first" mailto as the secondary. -->
-          <a class="btn-primary"
-             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Deep%20PR%20Replay%20report.%0A%0ARepo%3A%20%0ATime%20window%20%28default%3A%20last%2090%20days%29%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
-            Buy Deep — $6,000
-          </a>
-          <p class="replay-checkout-note">Self-serve checkout launches soon; email orders go through today.</p>
-        </article>
-      </div>
-      <p class="replay-fineprint">
-        Turnaround: 5 business days from kickoff for Team, 10 business days
-        for Deep. Reports ship as Markdown + PDF. We never train on or
-        reuse buyer code; the engagement runs against a temporary clone
-        we delete on completion.
-        <strong><a href="/audit">Full deliverable spec, FAQ, and credit math →</a></strong>
-        See the <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>
-        and <a href="/security">security policy</a> for details. Email
-        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
-        with questions before purchase.
-      </p>
     </div>
   </section>
 
@@ -1041,7 +1059,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for developers and AI agents.</span>
+        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">
