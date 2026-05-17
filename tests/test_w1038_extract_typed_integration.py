@@ -147,10 +147,7 @@ def test_migrated_caller_cmd_budget_load_budgets(tmp_path: Path) -> None:
     path = _write(
         tmp_path,
         "budget.yaml",
-        "budgets:\n"
-        "  - name: cycles-cap\n"
-        "    metric: cycles\n"
-        "    max_increase: 5\n",
+        "budgets:\n  - name: cycles-cap\n    metric: cycles\n    max_increase: 5\n",
     )
     warnings: list[str] = []
     result = _load_budgets(path, warnings_out=warnings)

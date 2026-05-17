@@ -807,9 +807,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # SYNTHESIS Pattern 2 (silent fallback) guard — surface any
         # silently-degraded checks BEFORE deciding the verdict. If any
         # check errored, the "clean" verdict is a lie.
-        errored_checks = sorted(
-            name for name, s in check_status.items() if s.startswith("errored:")
-        )
+        errored_checks = sorted(name for name, s in check_status.items() if s.startswith("errored:"))
         partial_success = bool(errored_checks)
 
         if not challenges:
@@ -832,10 +830,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         if partial_success and challenges:
             # Append partial qualifier so consumers see BOTH the findings
             # count AND the cascade. Matches the W832 cmd_critique shape.
-            verdict += (
-                f" -- {len(errored_checks)} check(s) errored: "
-                f"{', '.join(errored_checks)}"
-            )
+            verdict += f" -- {len(errored_checks)} check(s) errored: {', '.join(errored_checks)}"
 
         # ------------------------------------------------------------------
         # Output
@@ -881,11 +876,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                             "partial_success": partial_success,
                             "failed_checks": errored_checks,
                             "check_status": dict(check_status),
-                            "state": (
-                                "partial_adversarial"
-                                if partial_success
-                                else "all_checks_ran"
-                            ),
+                            "state": ("partial_adversarial" if partial_success else "all_checks_ran"),
                         },
                         budget=token_budget,
                         challenges=challenges,

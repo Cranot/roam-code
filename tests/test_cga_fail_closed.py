@@ -221,16 +221,10 @@ class TestVerifyKeylessRequiresCertIdentity:
         runner = CliRunner()
         result = runner.invoke(cli, ["cga", "verify", "--help"])
         assert result.exit_code == 0, result.output
-        assert "--cert-identity" in result.output, (
-            "verify --help must document --cert-identity for keyless mode"
-        )
-        assert "--cert-oidc-issuer" in result.output, (
-            "verify --help must document --cert-oidc-issuer for keyless mode"
-        )
+        assert "--cert-identity" in result.output, "verify --help must document --cert-identity for keyless mode"
+        assert "--cert-oidc-issuer" in result.output, "verify --help must document --cert-oidc-issuer for keyless mode"
 
-    def test_keyless_verify_without_cert_flags_fails_closed(
-        self, cga_project, tmp_path, monkeypatch
-    ):
+    def test_keyless_verify_without_cert_flags_fails_closed(self, cga_project, tmp_path, monkeypatch):
         """Bundle present, no --cosign-key, no --cert-identity — must refuse
         before invoking cosign so the error is actionable, not the raw
         cosign stderr.
@@ -288,9 +282,7 @@ class TestVerifyKeylessRequiresCertIdentity:
             f"refusal error must name the missing cert flag(s); got: {joined}"
         )
 
-    def test_keyless_verify_with_env_cert_flags_passes_through(
-        self, cga_project, tmp_path, monkeypatch
-    ):
+    def test_keyless_verify_with_env_cert_flags_passes_through(self, cga_project, tmp_path, monkeypatch):
         """ROAM_CGA_CERT_IDENTITY + ROAM_CGA_CERT_OIDC_ISSUER env vars
         satisfy the gate without command-line flags (the workflow uses
         env-var injection from GitHub context, see cga-attestation.yml)."""
@@ -350,12 +342,8 @@ class TestVerifyKeylessRequiresCertIdentity:
         cosign_calls = [a for a in captured_argv if "verify-blob" in a]
         assert cosign_calls, "cosign verify-blob must have been invoked"
         flat = " ".join(cosign_calls[-1])
-        assert "--certificate-identity" in flat, (
-            f"cert-identity env must reach cosign args; got: {flat}"
-        )
-        assert "--certificate-oidc-issuer" in flat, (
-            f"cert-oidc-issuer env must reach cosign args; got: {flat}"
-        )
+        assert "--certificate-identity" in flat, f"cert-identity env must reach cosign args; got: {flat}"
+        assert "--certificate-oidc-issuer" in flat, f"cert-oidc-issuer env must reach cosign args; got: {flat}"
 
 
 # ---------------------------------------------------------------------------
