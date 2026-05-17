@@ -1434,15 +1434,14 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         # don't break. The summary carries the headline counts so agents
         # can read the verdict line and skip the full envelope.
         # Pre-existing partial_success semantic (leaks present) is
-        # preserved for back-compat. W805 layers an additional
-        # detector-input-state field (`detector_state`) for the
-        # empty-input case + flips partial_success on empty-input
-        # branches per the canonical Pattern-2 convention. The legacy
-        # `state` ("ok"/"leak") is preserved unchanged so existing
-        # consumers don't break.
+        # preserved for back-compat. W805 added detector-input-state
+        # disclosure via the `detector_state` field for the
+        # empty-corpus / no-PHP-models cases — partial_success stays
+        # False on those branches because 0 real leaks is genuinely
+        # healthy (W809 pins this contract: empty corpus → 0 real
+        # leaks → partial_success MUST be False). The legacy `state`
+        # ("ok"/"leak") is preserved unchanged.
         partial_success = bare_count > 0 or unguarded_relation_count > 0
-        if w805_empty_state is not None:
-            partial_success = True
         click.echo(
             to_json(
                 json_envelope(
