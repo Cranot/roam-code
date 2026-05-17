@@ -175,9 +175,17 @@ class TestVerifyFailsClosedOnMissingBundle:
         assert emit.exit_code == 0, emit.output
         assert bundle.exists(), "mocked cosign must have written the bundle"
 
-        # Verify — no flags. Auto-detects the sibling bundle, both halves
-        # of the verdict must clear.
-        verify = runner.invoke(cli, ["--json", "cga", "verify", str(out)])
+        # Verify — pass --cosign-key (offline-keypair path). Auto-detects
+        # the sibling bundle, both halves of the verdict must clear.
+        # Note: under cosign >= 2.0, keyless verify (no --cosign-key) also
+        # requires --cert-identity + --cert-oidc-issuer; the offline path
+        # we exercise here only needs the public key.
+        fake_pub = tmp_path / "fake.pub"
+        fake_pub.write_text("# mock pub", encoding="utf-8")
+        verify = runner.invoke(
+            cli,
+            ["--json", "cga", "verify", str(out), "--cosign-key", str(fake_pub)],
+        )
         assert verify.exit_code == 0, verify.output
         data = json.loads(verify.output)
         assert data["summary"]["ok"] is True

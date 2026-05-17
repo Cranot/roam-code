@@ -483,12 +483,48 @@ def _emit_vsa_sibling(
     is_flag=True,
     help="Skip cosign verification even if a sibling .bundle exists.",
 )
+@click.option(
+    "--cert-identity",
+    "cert_identity",
+    type=str,
+    default=None,
+    envvar="ROAM_CGA_CERT_IDENTITY",
+    help=(
+        "Expected signer identity for keyless cosign verification "
+        "(passed to ``cosign verify-blob --certificate-identity``). "
+        "For GitHub Actions OIDC this is the workflow path, e.g. "
+        "``https://github.com/<owner>/<repo>/.github/workflows/<wf>.yml@refs/heads/main``. "
+        "Cosign >= 2.0 requires this for keyless verification. "
+        "Also reads ``ROAM_CGA_CERT_IDENTITY`` from env."
+    ),
+)
+@click.option(
+    "--cert-oidc-issuer",
+    "cert_oidc_issuer",
+    type=str,
+    default=None,
+    envvar="ROAM_CGA_CERT_OIDC_ISSUER",
+    help=(
+        "Expected OIDC issuer for keyless cosign verification "
+        "(passed to ``cosign verify-blob --certificate-oidc-issuer``). "
+        "For GitHub Actions this is "
+        "``https://token.actions.githubusercontent.com``. "
+        "Cosign >= 2.0 requires this for keyless verification. "
+        "Also reads ``ROAM_CGA_CERT_OIDC_ISSUER`` from env."
+    ),
+)
 @click.pass_context
-def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign):
+def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign, cert_identity, cert_oidc_issuer):
     """Re-derive the merkle root + edge digest and compare to *statement_path*.
 
     Verifier exits 0 on a clean match. Any mismatch (changed symbols,
     different commit, edited edges) exits 5 — CI-gateable.
+
+    Keyless verification (no ``--cosign-key``) requires both
+    ``--cert-identity`` and ``--cert-oidc-issuer`` because cosign >= 2.0
+    refuses to verify keyless signatures without an explicit signer-
+    identity check. Offline keypair mode (``--cosign-key cosign.pub``)
+    does not need either flag.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     raw = Path(statement_path).read_text(encoding="utf-8")
@@ -519,19 +555,43 @@ def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign):
         # User explicitly opted out of cosign — predicate-only verdict.
         cosign_skipped_reason = "skipped per --no-cosign"
     elif cosign_bundle:
-        cosign_ok, message = cosign_verify_statement(
-            sp,
-            bundle_path=Path(cosign_bundle) if cosign_bundle else None,
-            public_key_path=Path(cosign_key) if cosign_key else None,
-        )
-        cosign_result = {
-            "verified": cosign_ok,
-            "bundle_path": cosign_bundle,
-            "message": message[:300],
-        }
-        if not cosign_ok:
-            errors = list(errors) + [f"cosign verification failed: {message[:200]}"]
+        # Keyless (no --cosign-key) needs --cert-identity + --cert-oidc-issuer
+        # under cosign >= 2.0. Refuse loudly rather than letting cosign emit
+        # its own confusing error message buried in our envelope.
+        if not cosign_key and (not cert_identity or not cert_oidc_issuer):
             ok = False
+            missing = []
+            if not cert_identity:
+                missing.append("--cert-identity")
+            if not cert_oidc_issuer:
+                missing.append("--cert-oidc-issuer")
+            errors = list(errors) + [
+                f"keyless cosign verify requires {' and '.join(missing)} "
+                "(or set ROAM_CGA_CERT_IDENTITY / ROAM_CGA_CERT_OIDC_ISSUER); "
+                "for GitHub Actions OIDC pass the workflow-path identity and "
+                "https://token.actions.githubusercontent.com as the issuer"
+            ]
+            cosign_result = {
+                "verified": False,
+                "bundle_path": cosign_bundle,
+                "message": "keyless verify refused: cert-identity / cert-oidc-issuer missing",
+            }
+        else:
+            cosign_ok, message = cosign_verify_statement(
+                sp,
+                bundle_path=Path(cosign_bundle) if cosign_bundle else None,
+                public_key_path=Path(cosign_key) if cosign_key else None,
+                certificate_identity=cert_identity,
+                certificate_oidc_issuer=cert_oidc_issuer,
+            )
+            cosign_result = {
+                "verified": cosign_ok,
+                "bundle_path": cosign_bundle,
+                "message": message[:300],
+            }
+            if not cosign_ok:
+                errors = list(errors) + [f"cosign verification failed: {message[:200]}"]
+                ok = False
     else:
         # FAIL CLOSED — load-bearing claim is "tamper-evident". Silently
         # passing the predicate-only check while skipping cosign cryptography

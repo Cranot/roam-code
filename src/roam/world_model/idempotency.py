@@ -20,6 +20,7 @@ side-effects analysis, which is wasteful.
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -282,7 +283,17 @@ def classify_idempotency(
 
     try:
         repo_root = find_project_root()
-    except Exception:
+    except Exception as exc:
+        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — a
+        # missing project root downgrades per-symbol source slicing
+        # silently; surface it so callers see "could not locate repo"
+        # rather than empty-body classifications.
+        warnings.warn(
+            f"find_project_root() failed in classify_idempotency "
+            f"({type(exc).__name__}: {exc}); falling back to Path('.')",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
         repo_root = Path(".")
 
     # Group by file for cache-friendly source reads.

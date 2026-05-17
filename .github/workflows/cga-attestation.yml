@@ -161,6 +161,16 @@ jobs:
       - name: Verify keyless (Fulcio + Rekor round-trip)
         env:
           COSIGN_EXPERIMENTAL: '1'
+          # Cosign >= 2.0 refuses keyless verification without an explicit
+          # signer-identity check. For GitHub Actions OIDC the certificate
+          # subject is the workflow file path on the ref that ran the job,
+          # and the issuer is GitHub's token endpoint. The expected identity
+          # must match the workflow that signed the bundle one step earlier
+          # — i.e. this same workflow file, on this same ref. Constructed
+          # from $GITHUB_SERVER_URL / $GITHUB_REPOSITORY / $GITHUB_WORKFLOW_REF
+          # (the latter is "<owner>/<repo>/.github/workflows/<wf>@<ref>").
+          ROAM_CGA_CERT_IDENTITY: ${{ github.server_url }}/${{ github.workflow_ref }}
+          ROAM_CGA_CERT_OIDC_ISSUER: https://token.actions.githubusercontent.com
         run: |
           roam cga verify .roam/cga-keyless.intoto.json
 

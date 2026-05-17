@@ -243,6 +243,11 @@ def fake_index_root(tmp_path: Path) -> Path:
     roam_dir = tmp_path / ".roam"
     roam_dir.mkdir()
     db_path = roam_dir / "index.db"
+    # AA4: completions._project_root_for requires a real project marker
+    # (.git or pyproject.toml) next to .roam/index.db. The marker prevents
+    # the walk-up from binding onto a stray .roam/index.db left in %TEMP%
+    # by an earlier test session.
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='fake'\n", encoding="utf-8")
 
     conn = sqlite3.connect(str(db_path))
     conn.executescript(

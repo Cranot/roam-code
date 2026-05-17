@@ -17,13 +17,11 @@ when rustworkx isn't installed or the algorithm isn't supported.
 
 from __future__ import annotations
 
-import logging
 import os
+import warnings
 from typing import Any
 
 import networkx as nx
-
-_log = logging.getLogger(__name__)
 
 # Lineage-rule sentinel (CLAUDE.md §"Make fallback chains loud"): records the
 # most recent backend that actually executed ``pagerank()``. When rustworkx
@@ -135,13 +133,17 @@ def pagerank(G: nx.DiGraph, alpha: float = 0.85, personalization: dict[int, floa
             # NetworkX, but RECORD the lineage so callers can distinguish a
             # "selected rustworkx and got rustworkx" run from a "selected
             # rustworkx and silently degraded" run (CLAUDE.md §"Make fallback
-            # chains loud"). Log at WARNING so the degradation is visible in
-            # CI logs without being noisy on the happy path.
+            # chains loud"). Emit a ``RuntimeWarning`` (consistent with the
+            # cycles.py / spectral.py loud-fallback pattern from this
+            # session) so the degradation surfaces in pytest warnings AND
+            # CI stderr without polluting the happy path.
             _LAST_PAGERANK_FALLBACK_REASON = type(exc).__name__
-            _log.warning(
-                "rustworkx pagerank failed (%s: %s); falling back to NetworkX",
-                type(exc).__name__,
-                exc,
+            warnings.warn(
+                f"rustworkx pagerank failed ({type(exc).__name__}: {exc}); "
+                "falling back to NetworkX — active_backend() still reports 'rustworkx' "
+                "but last_pagerank_backend() now reports 'networkx'",
+                category=RuntimeWarning,
+                stacklevel=2,
             )
 
     # NetworkX path

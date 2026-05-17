@@ -49,6 +49,7 @@ symbol).
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -523,7 +524,18 @@ def classify_side_effects(
     # 3) Group rows by file so we read each file once.
     try:
         repo_root = find_project_root()
-    except Exception:
+    except Exception as exc:
+        # Silent fallback to CWD masks "we couldn't locate the project"
+        # behind file-not-found errors downstream. Disclose the lineage
+        # (CLAUDE.md §"Make fallback chains loud") so callers see the
+        # degraded resolution instead of inferring it from empty bodies.
+        warnings.warn(
+            f"find_project_root() failed in classify_side_effects "
+            f"({type(exc).__name__}: {exc}); falling back to Path('.') — "
+            "per-symbol source slices may be empty if CWD isn't the repo root",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
         repo_root = Path(".")
 
     rows_by_file: dict[str, list] = {}

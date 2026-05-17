@@ -2461,6 +2461,14 @@ _SEVERITY_MAP: dict[str, str] = {
     "ELICITATION_REQUIRED": "warning",  # awaits user response, retryable
     "FILE_NOT_FOUND": "error",  # specific file missing
     "DIRTY_TREE": "warning",  # uncommitted changes block emit
+    # INVALID_JSON envelopes are emitted inline by ``_run_roam_inprocess`` /
+    # ``_run_roam_subprocess`` / ``_parse_subprocess_result`` when stdout
+    # exists but won't json.loads(). They carry ``summary.partial_success:
+    # True`` -- this is a degraded but recoverable signal, not a fatal
+    # error. Pin severity to ``warning`` so any future call site that
+    # routes the code through ``_structured_error`` gets the right
+    # branching (rather than falling through to the default "error").
+    "INVALID_JSON": "warning",
     # R10.1 — destructive op partial failure (rollback ran). Severity is
     # ``error`` because the working tree may carry partial edits even
     # after rollback; the agent must re-verify before retrying.
