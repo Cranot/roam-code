@@ -1040,7 +1040,7 @@ def llm_smells(ctx, min_severity, persist):
         # + a closed-enum ``state`` field. Mirrors W834 / W836.
         no_llm_files = len(llm_files) == 0
         if no_llm_files:
-            verdict = "no LLM-using files detected (scan empty — corpus may not use LLM APIs)"
+            verdict = "no LLM-API findings — scan empty, no LLM-using files"
         elif total_findings == 0:
             verdict = f"0 LLM-API findings in {len(llm_files)} scanned files"
         else:
