@@ -96,9 +96,7 @@ def _validate(instance, schema, path: str = "") -> list[str]:
         props = schema.get("properties", {})
         for key, sub_schema in props.items():
             if key in instance:
-                errors.extend(
-                    _validate(instance[key], sub_schema, f"{path}.{key}" if path else key)
-                )
+                errors.extend(_validate(instance[key], sub_schema, f"{path}.{key}" if path else key))
 
     if isinstance(instance, list):
         item_schema = schema.get("items")
@@ -124,11 +122,7 @@ def _make_indexed_repo(tmp: Path) -> None:
     """Init a git repo, write a tiny multi-symbol module + caller, run ``roam init``."""
     (tmp / "src").mkdir()
     (tmp / "src" / "app.py").write_text(
-        "def core():\n"
-        "    return 1\n"
-        "\n"
-        "def caller_a():\n"
-        "    return core()\n",
+        "def core():\n    return 1\n\ndef caller_a():\n    return core()\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
@@ -183,9 +177,7 @@ def _run_in(tmp: Path, args: list[str]) -> tuple[int, dict]:
 def test_audit_trail_conformance_no_trail_envelope_validates(tmp_path: Path) -> None:
     """no_trail branch (Fix E): no audit trail file -> 6 checks in not_run state."""
     _make_indexed_repo(tmp_path)
-    exit_code, envelope = _run_in(
-        tmp_path, ["--json", "audit-trail-conformance-check"]
-    )
+    exit_code, envelope = _run_in(tmp_path, ["--json", "audit-trail-conformance-check"])
     assert exit_code == 0, envelope
     assert envelope["command"] == "audit-trail-conformance-check"
     # Verify the no_trail closed-enum state.
@@ -220,9 +212,7 @@ def test_audit_trail_conformance_valid_trail_envelope_validates(tmp_path: Path) 
         "tool_version": "0.0.0",
     }
     trail_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
-    exit_code, envelope = _run_in(
-        tmp_path, ["--json", "audit-trail-conformance-check"]
-    )
+    exit_code, envelope = _run_in(tmp_path, ["--json", "audit-trail-conformance-check"])
     assert exit_code == 0, envelope
     assert envelope["command"] == "audit-trail-conformance-check"
     # Normal-flow branch: score is set, state field is absent (omitted).
@@ -260,9 +250,7 @@ def test_fetch_handle_byte_slice_envelope_validates(tmp_path: Path) -> None:
     try:
         responses_dir = tmp_path / ".roam" / "responses"
         responses_dir.mkdir(parents=True, exist_ok=True)
-        (responses_dir / f"{handle_id}.json").write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        (responses_dir / f"{handle_id}.json").write_text(json.dumps(payload), encoding="utf-8")
         envelope = fetch_handle(handle=handle_id)
     finally:
         os.chdir(cwd)
@@ -283,9 +271,7 @@ def test_fetch_handle_section_envelope_validates(tmp_path: Path) -> None:
     try:
         responses_dir = tmp_path / ".roam" / "responses"
         responses_dir.mkdir(parents=True, exist_ok=True)
-        (responses_dir / f"{handle_id}.json").write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        (responses_dir / f"{handle_id}.json").write_text(json.dumps(payload), encoding="utf-8")
         envelope = fetch_handle(handle=handle_id, section="items")
     finally:
         os.chdir(cwd)
@@ -426,11 +412,7 @@ def test_wave_b5b_schemas_wired_in_decorators() -> None:
     for entry in _REGISTERED_TOOLS:
         name = entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", None)
         if name in targets:
-            schema = (
-                entry.get("output_schema")
-                if isinstance(entry, dict)
-                else getattr(entry, "output_schema", None)
-            )
+            schema = entry.get("output_schema") if isinstance(entry, dict) else getattr(entry, "output_schema", None)
             found[name] = schema
 
     if not found:
@@ -439,6 +421,5 @@ def test_wave_b5b_schemas_wired_in_decorators() -> None:
     for name, expected_schema in targets.items():
         if name in found:
             assert found[name] is expected_schema, (
-                f"{name} output_schema is not the W767 Wave B5b specialised schema "
-                f"(drift detected)"
+                f"{name} output_schema is not the W767 Wave B5b specialised schema (drift detected)"
             )

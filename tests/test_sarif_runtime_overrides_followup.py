@@ -59,9 +59,7 @@ def test_w1061_followup_check_rules_severity_emits_notification_override() -> No
             "properties": {"filter": "--severity", "filter_value": "error"},
         }
     ]
-    doc = _results_to_sarif(
-        results, runtime_notification_overrides=sarif_notif_overrides
-    )
+    doc = _results_to_sarif(results, runtime_notification_overrides=sarif_notif_overrides)
     run = doc["runs"][0]
     assert "invocations" in run
     inv = run["invocations"][0]

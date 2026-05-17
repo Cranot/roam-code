@@ -250,12 +250,15 @@ def test_cmd_math_only_unknown_envelope_carries_did_you_mean(roam_repo):
     assert summary.get("partial_success") is True
     assert summary.get("warnings_count", 0) >= 1
     # W1083-followup-3: helper-derived state + partition fields.
-    assert summary.get("state") in {"unknown_only_detectors", "unknown_exclude_detectors"} or \
-        "unknown_only_detectors" in summary or \
-        "unknown_exclude_detectors" in summary
+    assert (
+        summary.get("state") in {"unknown_only_detectors", "unknown_exclude_detectors"}
+        or "unknown_only_detectors" in summary
+        or "unknown_exclude_detectors" in summary
+    )
     # The unknown name surfaces on the helper's unknown_only_detectors list.
-    assert summary.get("unknown_only_detectors") == ["totally-not-a-real-detector"] or \
-        summary.get("requested_only_detectors") == ["totally-not-a-real-detector"]
+    assert summary.get("unknown_only_detectors") == ["totally-not-a-real-detector"] or summary.get(
+        "requested_only_detectors"
+    ) == ["totally-not-a-real-detector"]
 
 
 def test_cmd_math_no_filter_envelope_byte_close_to_pre_migration(roam_repo):
@@ -306,10 +309,7 @@ def test_cmd_smells_kind_unknown_envelope_carries_did_you_mean(roam_repo):
     summary = payload["summary"]
     # The W987 / W1066 warnings still flow into the envelope's
     # warnings_out (the callsite re-formats them for wire-compat).
-    assert any(
-        "totally-not-a-real-smell" in w
-        for w in payload.get("warnings_out", [])
-    )
+    assert any("totally-not-a-real-smell" in w for w in payload.get("warnings_out", []))
     # W1083-followup-3 helper-derived disclosure on summary.
     assert summary.get("partial_success") is True
     assert summary.get("state") == "unknown_kinds"

@@ -77,9 +77,7 @@ def _validate(instance, schema, path: str = "") -> list[str]:
         props = schema.get("properties", {})
         for key, sub_schema in props.items():
             if key in instance:
-                errors.extend(
-                    _validate(instance[key], sub_schema, f"{path}.{key}" if path else key)
-                )
+                errors.extend(_validate(instance[key], sub_schema, f"{path}.{key}" if path else key))
 
     if isinstance(instance, list):
         item_schema = schema.get("items")
@@ -105,19 +103,12 @@ def _make_indexed_repo(tmp: Path) -> None:
     """Init a git repo, write a tiny module with a symbol + test caller, run ``roam init``."""
     (tmp / "src").mkdir()
     (tmp / "src" / "app.py").write_text(
-        "def core():\n"
-        "    return 1\n"
-        "\n"
-        "def caller():\n"
-        "    return core()\n",
+        "def core():\n    return 1\n\ndef caller():\n    return core()\n",
         encoding="utf-8",
     )
     (tmp / "tests").mkdir()
     (tmp / "tests" / "test_app.py").write_text(
-        "from app import core\n"
-        "\n"
-        "def test_core():\n"
-        "    assert core() == 1\n",
+        "from app import core\n\ndef test_core():\n    assert core() == 1\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
@@ -185,9 +176,7 @@ _ORACLE_CASES: list[tuple[list[str], str]] = [
 
 
 @pytest.mark.parametrize(("cli_args", "expected_command"), _ORACLE_CASES)
-def test_oracle_envelope_validates_against_schema(
-    cli_args: list[str], expected_command: str, tmp_path: Path
-) -> None:
+def test_oracle_envelope_validates_against_schema(cli_args: list[str], expected_command: str, tmp_path: Path) -> None:
     """Each of the 5 oracles emits a `_SCHEMA_ORACLE`-conformant envelope."""
     _make_indexed_repo(tmp_path)
     exit_code, envelope = _run_in(tmp_path, cli_args)
@@ -264,11 +253,7 @@ def test_oracle_wrappers_wired_with_shared_schema() -> None:
     for entry in _REGISTERED_TOOLS:
         name = entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", None)
         if name in oracle_tool_names:
-            schema = (
-                entry.get("output_schema")
-                if isinstance(entry, dict)
-                else getattr(entry, "output_schema", None)
-            )
+            schema = entry.get("output_schema") if isinstance(entry, dict) else getattr(entry, "output_schema", None)
             found[name] = schema
 
     if not found:
@@ -277,6 +262,4 @@ def test_oracle_wrappers_wired_with_shared_schema() -> None:
     # Whatever oracle entries are surfaced via introspection MUST point at
     # the shared schema -- no per-wrapper override.
     for name, schema in found.items():
-        assert schema is expected_schema, (
-            f"{name} output_schema is not _SCHEMA_ORACLE (bundled-identity drift)"
-        )
+        assert schema is expected_schema, f"{name} output_schema is not _SCHEMA_ORACLE (bundled-identity drift)"

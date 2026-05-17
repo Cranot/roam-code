@@ -454,10 +454,7 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
             # LAW 4: terminal token must hit the concrete-noun anchor set
             # (formatter.concrete_plural_terminals -> "symbols"). Put the
             # cap clause first so the sentence ends on "symbols".
-            verdict = (
-                f"Skipped fingerprint above cap {_HARD_CAP_SYMBOLS:,}: "
-                f"graph has {sym_count:,} symbols"
-            )
+            verdict = f"Skipped fingerprint above cap {_HARD_CAP_SYMBOLS:,}: graph has {sym_count:,} symbols"
             hint = (
                 "Index a subdirectory with `roam index <path>` to narrow the "
                 "analyzed subset, or raise `_HARD_CAP_SYMBOLS` in "

@@ -120,9 +120,7 @@ def test_annotation_hints_match_tool_metadata():
             # Defaults match the ``_tool`` decorator signature: read_only=True,
             # destructive=False, idempotent=True. Honest absence is fine; the
             # derived view must just agree with whatever the metadata says.
-            expected = meta.get(
-                meta_key, {"read_only": True, "destructive": False, "idempotent": True}[meta_key]
-            )
+            expected = meta.get(meta_key, {"read_only": True, "destructive": False, "idempotent": True}[meta_key])
             actual = ann.get(hint_key)
             if bool(expected) != bool(actual):
                 mismatches.append((name, hint_key, expected, actual))
@@ -173,7 +171,7 @@ def test_annotations_passed_to_wrapper_registration():
     import roam.mcp_server as mcp
 
     src = inspect.getsource(mcp._tool)
-    assert '_tool_annotations(name)' in src, (
+    assert "_tool_annotations(name)" in src, (
         "The ``_tool`` decorator no longer calls ``_tool_annotations(name)``. "
         "ToolAnnotations are no longer reaching FastMCP — on-the-wire hints will "
         "fall back to fastmcp defaults and silently disagree with _TOOL_METADATA. "
@@ -191,9 +189,7 @@ def test_tool_annotations_title_present_and_nonempty():
         title = ann.get("title")
         if not isinstance(title, str) or not title.strip():
             bad.append(name)
-    assert not bad, (
-        f"{len(bad)} tool(s) lack a non-empty annotation ``title``:\n  {bad[:20]}"
-    )
+    assert not bad, f"{len(bad)} tool(s) lack a non-empty annotation ``title``:\n  {bad[:20]}"
 
 
 # ---------------------------------------------------------------------------
@@ -407,9 +403,7 @@ def test_capability_read_only_matches_tool_metadata():
         cap_side_effect = bool(cap.side_effect)
         # Disagreement: ``read_only`` and ``side_effect`` should be inverses.
         if mcp_read_only == cap_side_effect:
-            mismatches.append(
-                (tool_name, f"read_only={mcp_read_only}", f"side_effect={cap_side_effect}")
-            )
+            mismatches.append((tool_name, f"read_only={mcp_read_only}", f"side_effect={cap_side_effect}"))
     assert not mismatches, (
         f"{len(mismatches)} read_only / side_effect axis-inversion drift entries:\n"
         f"  {mismatches[:20]}\n\n"

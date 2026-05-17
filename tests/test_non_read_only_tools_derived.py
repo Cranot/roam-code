@@ -34,8 +34,8 @@ PRE_COLLAPSE_NON_READ_ONLY = {
     "roam_mutate",
     "roam_init",
     "roam_reindex",
-    "roam_reset",   # W365
-    "roam_clean",   # W365
+    "roam_reset",  # W365
+    "roam_clean",  # W365
 }
 
 

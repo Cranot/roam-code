@@ -164,9 +164,7 @@ class TestTestScaffoldFilePathResolution:
         """
         empty_path = indexed_project / "src" / "constants_only.py"
         empty_path.write_text(
-            "# W1309 fixture: zero functions / classes / methods.\n"
-            "MAX_RETRIES = 3\n"
-            "DEFAULT_NAME = 'roam'\n"
+            "# W1309 fixture: zero functions / classes / methods.\nMAX_RETRIES = 3\nDEFAULT_NAME = 'roam'\n"
         )
         # Re-index so the new file is visible to the resolver.
         monkeypatch.chdir(indexed_project)

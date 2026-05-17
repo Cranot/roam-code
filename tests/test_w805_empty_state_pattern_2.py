@@ -106,9 +106,9 @@ class TestHermeticityEmptyCorpus:
 
         verdict = (summary.get("verdict") or "").lower()
         # Verdict must name the empty state.
-        assert any(
-            marker in verdict for marker in ("no python test files", "no tests", "0 tests")
-        ), f"verdict {verdict!r} did not disclose empty test-corpus state"
+        assert any(marker in verdict for marker in ("no python test files", "no tests", "0 tests")), (
+            f"verdict {verdict!r} did not disclose empty test-corpus state"
+        )
 
         # partial_success must be True on the empty-tests degraded path.
         assert summary.get("partial_success") is True, (
@@ -136,9 +136,9 @@ class TestLlmSmellsEmptyCorpus:
 
         verdict = (summary.get("verdict") or "").lower()
         # Verdict must name the empty / absent state.
-        assert any(
-            marker in verdict for marker in ("no llm", "scan empty", "no llm-using files")
-        ), f"verdict {verdict!r} did not disclose empty LLM-files state"
+        assert any(marker in verdict for marker in ("no llm", "scan empty", "no llm-using files")), (
+            f"verdict {verdict!r} did not disclose empty LLM-files state"
+        )
 
         assert summary.get("partial_success") is True, (
             f"summary.partial_success must be True on no-llm-files; got {summary.get('partial_success')!r}"
@@ -167,9 +167,9 @@ class TestBoundaryEmptyCorpus:
 
         verdict = (summary.get("verdict") or "").lower()
         # Verdict must name the empty-imports state.
-        assert any(
-            marker in verdict for marker in ("no imports", "0 import", "corpus has 0")
-        ), f"verdict {verdict!r} did not disclose empty-imports state"
+        assert any(marker in verdict for marker in ("no imports", "0 import", "corpus has 0")), (
+            f"verdict {verdict!r} did not disclose empty-imports state"
+        )
 
         assert summary.get("partial_success") is True, (
             f"summary.partial_success must be True on no-imports; got {summary.get('partial_success')!r}"

@@ -1138,10 +1138,7 @@ def build_oscal_assessment_results(
             {
                 "uuid": obs_uuid,
                 "title": f"Authority axis observed: {kind}",
-                "description": (
-                    f"Authority axis: {kind} — {total_count} entries "
-                    f"observed at {commit_marker}."
-                ),
+                "description": (f"Authority axis: {kind} — {total_count} entries observed at {commit_marker}."),
                 "methods": ["EXAMINE"],
                 "subjects": subjects,
                 "props": obs_props,
@@ -1149,11 +1146,7 @@ def build_oscal_assessment_results(
                     f"Authority-axis observation supports evidence for "
                     f"identity / authorisation review (W350 producer "
                     f"surface). Kind: {kind}. Total observed: {total_count}"
-                    + (
-                        f"; truncated to first {_AUTHORITY_REFS_CAP} subjects."
-                        if truncated
-                        else "."
-                    )
+                    + (f"; truncated to first {_AUTHORITY_REFS_CAP} subjects." if truncated else ".")
                 ),
             }
         )

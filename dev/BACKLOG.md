@@ -2094,7 +2094,30 @@ W489 qualified_only FULLY CLOSED; entailment surface EXHAUSTED.
 | **Working-tree drift note** — commits remain banned per user directive; ~150+ files dirty across `src/` and `templates/`. Carry-forward as session-state note; no action item. | working tree | session-state |
 | Plus all CONSOLIDATE-21 carry-forwards (W1083-followup-2 cli.py:848 difflib n alignment + W851 investigation re-triage + Wave C2+ + W363 re-scope + W846 + W1253 + W1083 Phase 3 ergonomic + W1054-W1056 + W1044 + W1251 + cmd_boundary + cmd_compatibility W-number collision) unchanged. | various | various |
 
-## Sealed batch — W1067 → W1102 (2026-05-17)
+## Bigger items captured during 2026-05-17 fix-forward
+
+- **W1084-followup — Pre-commit hook scope gap.** The `.githooks/pre-commit` runs
+  only the 2 doc-drift gates (`build_readme_counts --check` + `sync_surface_counts`).
+  It does NOT run: ruff format-check, anti-leak language sweep
+  (`test_no_internal_language.py`), nor any contract regression like
+  `test_budget_phase2`. The 5c22a8fe push tripped all 3 of those in CI on
+  fresh tracked test files + 1 contract-drifted assertion. Two paths to
+  close: (a) widen the pre-commit hook to add format/anti-leak gates as
+  fast pre-push checks (~3-5s), or (b) accept fix-forward as the workflow
+  but add CI-failure-pattern documentation. Defer pick to next process pass.
+- **W1102-followup — W1142 cap-disclosure ripple onto 16 sibling test
+  assertions.** The W1142-followup symmetric `truncated` emit replaced the
+  pre-W1142 "key absent on no-truncation" shape. `test_budget_phase2.py`
+  had 17 sites asserting `"truncated" not in data["summary"]`. Only the
+  debt path actually flipped to always-emit, so only 1 assertion fired;
+  the other 16 remain dormant until W1142-followup propagates to those
+  commands (currently: clones / debt / impact / math / migration_safety /
+  missing_index / n1 / recommend / runs / supply_chain / test_impact /
+  agent_score, plus world_model/causal_graph). When the next sibling
+  migrates, its corresponding test will trip — pre-emptively bulk-update
+  to `data["summary"].get("truncated") is False` in a single sweep.
+
+## Sealed batch — W1067 → W1102 [landed 2026-05-17]
 
 The CONSOLIDATE-21 pass consolidates the long W1067 → W1102 wave-arc
 spanning Pattern-1D helper Phase 2/3 propagation, the W1142 cap-hit

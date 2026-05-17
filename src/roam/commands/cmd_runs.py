@@ -578,7 +578,9 @@ def _emit_pr_bundle_for_end(ctx, root) -> tuple[dict | None, str, bool]:
     type=click.Choice(sorted(VALID_STATUSES)),
     help="Filter to runs with this status.",
 )
-@click.option("--top", "--limit", "top", default=0, type=int, help="Cap output to <N> runs (0 = no cap).")  # W1142: --limit alias
+@click.option(
+    "--top", "--limit", "top", default=0, type=int, help="Cap output to <N> runs (0 = no cap)."
+)  # W1142: --limit alias
 @click.pass_context
 def runs_list(ctx, agent, since, status, top):
     """Stream runs, newest first.
@@ -644,10 +646,7 @@ def runs_list(ctx, agent, since, status, top):
         }
         _warnings_out: list[str] = []
         if metas_truncated:
-            _warnings_out.append(
-                f"truncated to {len(metas)} of {total_metas_full} — "
-                "pass --limit larger to see more"
-            )
+            _warnings_out.append(f"truncated to {len(metas)} of {total_metas_full} — pass --limit larger to see more")
         _summary = {
             "verdict": verdict,
             "partial_success": metas_truncated,

@@ -686,9 +686,7 @@ def to_sarif(
     if emit_configuration_overrides and configuration_overrides:
         if "invocations" not in run:
             run["invocations"] = [{"executionSuccessful": True}]
-        run["invocations"][0]["ruleConfigurationOverrides"] = list(
-            configuration_overrides
-        )
+        run["invocations"][0]["ruleConfigurationOverrides"] = list(configuration_overrides)
 
     # W1061-followup: finding-level filter disclosure via
     # ``notificationConfigurationOverrides[]`` (SARIF 2.1.0 §3.20.4).
@@ -701,9 +699,7 @@ def to_sarif(
     if notification_configuration_overrides:
         if "invocations" not in run:
             run["invocations"] = [{"executionSuccessful": True}]
-        run["invocations"][0]["notificationConfigurationOverrides"] = list(
-            notification_configuration_overrides
-        )
+        run["invocations"][0]["notificationConfigurationOverrides"] = list(notification_configuration_overrides)
 
     return {
         "$schema": _SARIF_SCHEMA,

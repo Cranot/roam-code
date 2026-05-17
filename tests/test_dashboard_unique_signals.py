@@ -69,7 +69,7 @@ def indexed_project(tmp_path_factory):
     )
     (src / "service.py").write_text(
         textwrap.dedent(
-            '''\
+            """\
             from models import User, Admin
 
 
@@ -80,7 +80,7 @@ def indexed_project(tmp_path_factory):
 
             def unused_helper():
                 return 42
-            '''
+            """
         ),
         encoding="utf-8",
     )

@@ -340,9 +340,7 @@ def structured_unknown_filter_many(
     # Build per-unknown suggestions dict (only for entries with hits).
     did_you_mean: dict[str, list[str]] = {}
     for u in unknown:
-        matches = difflib.get_close_matches(
-            u, known_sorted, n=n_suggestions, cutoff=cutoff
-        )
+        matches = difflib.get_close_matches(u, known_sorted, n=n_suggestions, cutoff=cutoff)
         if matches:
             did_you_mean[u] = matches
 

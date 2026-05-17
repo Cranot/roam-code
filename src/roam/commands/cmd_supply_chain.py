@@ -802,7 +802,9 @@ def supply_chain_to_sarif(deps: list[Dependency], score: int) -> dict:
     requires_index=True,
 )
 @click.command("supply-chain")
-@click.option("--top", "--limit", "top", default=5, show_default=True, help="Number of riskiest dependencies to highlight")  # W1142: --limit alias
+@click.option(
+    "--top", "--limit", "top", default=5, show_default=True, help="Number of riskiest dependencies to highlight"
+)  # W1142: --limit alias
 @click.pass_context
 def supply_chain(ctx, top):
     """Dependency risk dashboard: pin coverage, risk scoring, supply-chain health.
@@ -828,7 +830,9 @@ def supply_chain(ctx, top):
     # population is the risk-sorted ``deps`` list. Record the full
     # count so the envelope can disclose when ``--limit`` truncated
     # the riskiest-dependency report.
-    risky_full = sorted(deps, key=lambda d: ({"unpinned": 2, "range": 1, "exact": 0}[d.pin_status], not d.is_dev), reverse=True)
+    risky_full = sorted(
+        deps, key=lambda d: ({"unpinned": 2, "range": 1, "exact": 0}[d.pin_status], not d.is_dev), reverse=True
+    )
     total_risky_full = len(risky_full)
     risky = top_risky(deps, top)
     risky_truncated = total_risky_full > len(risky)
@@ -866,10 +870,7 @@ def supply_chain(ctx, top):
         }
         _warnings_out: list[str] = []
         if risky_truncated:
-            _warnings_out.append(
-                f"truncated to {len(risky)} of {total_risky_full} — "
-                "pass --limit larger to see more"
-            )
+            _warnings_out.append(f"truncated to {len(risky)} of {total_risky_full} — pass --limit larger to see more")
         _summary = dict(
             verdict=verdict,
             risk_score=score,

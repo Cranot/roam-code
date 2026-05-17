@@ -153,7 +153,9 @@ def _score_one(agg: dict) -> dict:
 @click.command("agent-score")
 @click.option("--agent", default=None, help="Filter to runs by this agent (default: score all agents).")
 @click.option("--since", default=None, help="Filter to runs started at >= <SINCE> (ISO-8601).")  # W1117-followup
-@click.option("--top", "--limit", "top", default=0, type=int, help="Cap agents reported to <N> highest scores (0 = all).")  # W1142: --limit alias; W1117-followup
+@click.option(
+    "--top", "--limit", "top", default=0, type=int, help="Cap agents reported to <N> highest scores (0 = all)."
+)  # W1142: --limit alias; W1117-followup
 @click.pass_context
 def agent_score_cmd(ctx, agent, since, top):
     """Aggregate runs and score each agent on a 0..100 composite.
@@ -384,10 +386,7 @@ def agent_score_cmd(ctx, agent, since, top):
         }
         _warnings_out: list[str] = []
         if scored_truncated:
-            _warnings_out.append(
-                f"truncated to {len(scored)} of {total_scored_full} — "
-                "pass --limit larger to see more"
-            )
+            _warnings_out.append(f"truncated to {len(scored)} of {total_scored_full} — pass --limit larger to see more")
         _summary = {
             "verdict": verdict,
             "partial_success": partial_success_any or scored_truncated,

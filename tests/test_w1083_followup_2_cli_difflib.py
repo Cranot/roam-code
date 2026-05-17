@@ -37,9 +37,7 @@ def test_unknown_command_with_many_near_matches_caps_at_two() -> None:
     assert result.exit_code == 2
     # The suggestion line is comma-separated; count occurrences of "`roam ".
     suggestion_count = result.output.count("`roam ")
-    assert suggestion_count <= 2, (
-        f"expected at most 2 suggestions, got {suggestion_count}: {result.output!r}"
-    )
+    assert suggestion_count <= 2, f"expected at most 2 suggestions, got {suggestion_count}: {result.output!r}"
     assert "No such command: 'rean'" in result.output
     assert "Did you mean" in result.output
 
@@ -51,9 +49,7 @@ def test_unknown_command_with_one_match_still_emits_one() -> None:
     assert "`roam critique`" in result.output
     # Single-match path: only one backticked suggestion in the message.
     suggestion_count = result.output.count("`roam ")
-    assert suggestion_count == 1, (
-        f"expected exactly 1 suggestion, got {suggestion_count}: {result.output!r}"
-    )
+    assert suggestion_count == 1, f"expected exactly 1 suggestion, got {suggestion_count}: {result.output!r}"
 
 
 def test_unknown_command_with_zero_matches_omits_suggestion_line() -> None:

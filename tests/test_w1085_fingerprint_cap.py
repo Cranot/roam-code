@@ -107,15 +107,13 @@ class TestFingerprintHardCapDisclosure:
 
         # state is a closed-enum string we can pin exactly.
         assert summary.get("state") == "graph_too_large", (
-            f"summary.state must be 'graph_too_large' on over-cap refusal, "
-            f"got {summary.get('state')!r}"
+            f"summary.state must be 'graph_too_large' on over-cap refusal, got {summary.get('state')!r}"
         )
 
         # partial_success must be True — that's what distinguishes "refused
         # to analyze" from "analyzed cleanly with no findings".
         assert summary.get("partial_success") is True, (
-            f"summary.partial_success must be True on over-cap refusal; "
-            f"got {summary.get('partial_success')!r}"
+            f"summary.partial_success must be True on over-cap refusal; got {summary.get('partial_success')!r}"
         )
 
         # Verdict surfaces the refusal in human-readable form.
@@ -136,8 +134,7 @@ class TestFingerprintHardCapDisclosure:
         assert hint, "envelope must carry a non-empty hint on over-cap refusal"
         # An imperative hint starts with an action verb the agent can follow.
         assert any(
-            hint.lower().startswith(verb)
-            for verb in ("index", "narrow", "raise", "increase", "use", "run", "set")
+            hint.lower().startswith(verb) for verb in ("index", "narrow", "raise", "increase", "use", "run", "set")
         ), f"hint {hint!r} should start with an imperative verb"
 
     def test_under_cap_normal_run_unaffected(self, tmp_path, monkeypatch):

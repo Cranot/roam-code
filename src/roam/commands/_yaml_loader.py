@@ -181,8 +181,7 @@ def extract_typed(
                     shape_name = expected_type.__name__
                 where = f"{context}: " if context else ""
                 warnings_out.append(
-                    f"{where}`{key}` is {value!r}, expected {shape_name}. "
-                    f"Treating as default {default!r}."
+                    f"{where}`{key}` is {value!r}, expected {shape_name}. Treating as default {default!r}."
                 )
             return default
         return value
@@ -197,8 +196,7 @@ def extract_typed(
             shape_name = expected_type.__name__
         where = f"{context}: " if context else ""
         warnings_out.append(
-            f"{where}`{key}` is {type(value).__name__!r}, expected {shape_name}. "
-            f"Treating as default {default!r}."
+            f"{where}`{key}` is {type(value).__name__!r}, expected {shape_name}. Treating as default {default!r}."
         )
     return default
 

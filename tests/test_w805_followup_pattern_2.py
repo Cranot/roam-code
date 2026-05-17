@@ -106,18 +106,15 @@ class TestVibeCheckEmptyCorpus:
         summary = payload.get("summary") or {}
 
         verdict = (summary.get("verdict") or "").lower()
-        assert any(
-            marker in verdict
-            for marker in ("no files scanned", "corpus empty", "no files")
-        ), f"verdict {verdict!r} did not disclose empty-files state"
+        assert any(marker in verdict for marker in ("no files scanned", "corpus empty", "no files")), (
+            f"verdict {verdict!r} did not disclose empty-files state"
+        )
 
         assert summary.get("partial_success") is True, (
-            f"summary.partial_success must be True on empty-vibe-check; "
-            f"got {summary.get('partial_success')!r}"
+            f"summary.partial_success must be True on empty-vibe-check; got {summary.get('partial_success')!r}"
         )
         assert summary.get("state") == "no_files_scanned", (
-            f"summary.state should be 'no_files_scanned', got "
-            f"{summary.get('state')!r}"
+            f"summary.state should be 'no_files_scanned', got {summary.get('state')!r}"
         )
 
 
@@ -136,18 +133,15 @@ class TestFingerprintEmptyCorpus:
         summary = payload.get("summary") or {}
 
         verdict = (summary.get("verdict") or "").lower()
-        assert any(
-            marker in verdict
-            for marker in ("no symbols indexed", "corpus empty", "no symbols")
-        ), f"verdict {verdict!r} did not disclose empty-symbols state"
+        assert any(marker in verdict for marker in ("no symbols indexed", "corpus empty", "no symbols")), (
+            f"verdict {verdict!r} did not disclose empty-symbols state"
+        )
 
         assert summary.get("partial_success") is True, (
-            f"summary.partial_success must be True on empty-fingerprint; "
-            f"got {summary.get('partial_success')!r}"
+            f"summary.partial_success must be True on empty-fingerprint; got {summary.get('partial_success')!r}"
         )
         assert summary.get("state") == "no_symbols", (
-            f"summary.state should be 'no_symbols', got "
-            f"{summary.get('state')!r}"
+            f"summary.state should be 'no_symbols', got {summary.get('state')!r}"
         )
 
 
@@ -168,21 +162,18 @@ class TestFanEmptyCorpus:
         summary = payload.get("summary") or {}
 
         verdict = (summary.get("verdict") or "").lower()
-        assert any(
-            marker in verdict
-            for marker in ("no graph metrics", "no file edges", "corpus empty")
-        ), f"verdict {verdict!r} did not disclose empty-fan state"
+        assert any(marker in verdict for marker in ("no graph metrics", "no file edges", "corpus empty")), (
+            f"verdict {verdict!r} did not disclose empty-fan state"
+        )
 
         assert summary.get("partial_success") is True, (
-            f"summary.partial_success must be True on empty-fan; "
-            f"got {summary.get('partial_success')!r}"
+            f"summary.partial_success must be True on empty-fan; got {summary.get('partial_success')!r}"
         )
         # The default symbol-mode branch emits state='no_symbols'; the file
         # mode branch would emit state='no_file_edges'. Accept either since
         # we don't pin the default mode here.
         assert summary.get("state") in {"no_symbols", "no_file_edges"}, (
-            f"summary.state should be 'no_symbols' or 'no_file_edges', got "
-            f"{summary.get('state')!r}"
+            f"summary.state should be 'no_symbols' or 'no_file_edges', got {summary.get('state')!r}"
         )
 
 
@@ -212,12 +203,10 @@ class TestDarkMatterEmptyCorpus:
         ), f"verdict {verdict!r} did not disclose empty-cochange state"
 
         assert summary.get("partial_success") is True, (
-            f"summary.partial_success must be True on empty-dark-matter; "
-            f"got {summary.get('partial_success')!r}"
+            f"summary.partial_success must be True on empty-dark-matter; got {summary.get('partial_success')!r}"
         )
         assert summary.get("state") == "no_cochange", (
-            f"summary.state should be 'no_cochange', got "
-            f"{summary.get('state')!r}"
+            f"summary.state should be 'no_cochange', got {summary.get('state')!r}"
         )
 
 
@@ -236,16 +225,13 @@ class TestConventionsEmptyCorpus:
         summary = payload.get("summary") or {}
 
         verdict = (summary.get("verdict") or "").lower()
-        assert any(
-            marker in verdict
-            for marker in ("no symbols analyzed", "corpus empty", "no symbols")
-        ), f"verdict {verdict!r} did not disclose empty-symbols state"
+        assert any(marker in verdict for marker in ("no symbols analyzed", "corpus empty", "no symbols")), (
+            f"verdict {verdict!r} did not disclose empty-symbols state"
+        )
 
         assert summary.get("partial_success") is True, (
-            f"summary.partial_success must be True on empty-conventions; "
-            f"got {summary.get('partial_success')!r}"
+            f"summary.partial_success must be True on empty-conventions; got {summary.get('partial_success')!r}"
         )
         assert summary.get("state") == "no_symbols_analyzed", (
-            f"summary.state should be 'no_symbols_analyzed', got "
-            f"{summary.get('state')!r}"
+            f"summary.state should be 'no_symbols_analyzed', got {summary.get('state')!r}"
         )

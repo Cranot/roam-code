@@ -353,8 +353,7 @@ def _fetch_candidate_files(conn, scope: str | None):
         scope_clause = " AND f.path LIKE ?"
         params.append(f"{scope_norm}%")
     return conn.execute(
-        f"SELECT f.id, f.path, f.language FROM files f "
-        f"WHERE f.language IN ({placeholders}){scope_clause}",
+        f"SELECT f.id, f.path, f.language FROM files f WHERE f.language IN ({placeholders}){scope_clause}",
         params,
     ).fetchall()
 

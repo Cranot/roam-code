@@ -77,9 +77,7 @@ def _validate(instance, schema, path: str = "") -> list[str]:
         props = schema.get("properties", {})
         for key, sub_schema in props.items():
             if key in instance:
-                errors.extend(
-                    _validate(instance[key], sub_schema, f"{path}.{key}" if path else key)
-                )
+                errors.extend(_validate(instance[key], sub_schema, f"{path}.{key}" if path else key))
         # additionalProperties: validate each non-declared key against the schema.
         add_props = schema.get("additionalProperties")
         if isinstance(add_props, dict):
@@ -114,19 +112,12 @@ def _make_indexed_repo(tmp: Path) -> None:
     """
     (tmp / "src").mkdir()
     (tmp / "src" / "app.py").write_text(
-        "def core():\n"
-        "    return 1\n"
-        "\n"
-        "def caller():\n"
-        "    return core()\n",
+        "def core():\n    return 1\n\ndef caller():\n    return core()\n",
         encoding="utf-8",
     )
     (tmp / "tests").mkdir()
     (tmp / "tests" / "test_app.py").write_text(
-        "from app import core\n"
-        "\n"
-        "def test_core():\n"
-        "    assert core() == 1\n",
+        "from app import core\n\ndef test_core():\n    assert core() == 1\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
@@ -152,12 +143,7 @@ def _make_indexed_repo(tmp: Path) -> None:
     )
     # Second commit so timeline has more than one entry to render.
     (tmp / "src" / "app.py").write_text(
-        "def core():\n"
-        "    return 1\n"
-        "\n"
-        "def caller():\n"
-        "    # tweak\n"
-        "    return core()\n",
+        "def core():\n    return 1\n\ndef caller():\n    # tweak\n    return core()\n",
         encoding="utf-8",
     )
     subprocess.run(
@@ -361,17 +347,11 @@ def test_timeline_and_test_impact_wired_in_decorators() -> None:
     for entry in _REGISTERED_TOOLS:
         name = entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", None)
         if name in expected_by_name:
-            schema = (
-                entry.get("output_schema")
-                if isinstance(entry, dict)
-                else getattr(entry, "output_schema", None)
-            )
+            schema = entry.get("output_schema") if isinstance(entry, dict) else getattr(entry, "output_schema", None)
             found[name] = schema
 
     if not found:
         pytest.skip("_REGISTERED_TOOLS doesn't expose schemas in this introspection shape")
 
     for name, schema in found.items():
-        assert schema is expected_by_name[name], (
-            f"{name} output_schema is not the W767 Wave B4 specialised schema"
-        )
+        assert schema is expected_by_name[name], f"{name} output_schema is not the W767 Wave B4 specialised schema"

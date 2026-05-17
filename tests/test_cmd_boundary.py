@@ -290,9 +290,7 @@ def test_persist_is_idempotent(tmp_path):
                     "SELECT finding_id_str FROM findings WHERE source_detector = 'boundary'"
                 ).fetchall()
             }
-            count = conn.execute(
-                "SELECT COUNT(*) FROM findings WHERE source_detector = 'boundary'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM findings WHERE source_detector = 'boundary'").fetchone()[0]
     finally:
         os.chdir(old_cwd)
     assert first_ids == second_ids

@@ -287,8 +287,7 @@ class TestListCountsSurfaced:
         assert result["summary"].get("truncated") is True
 
     def test_multiple_dropped_lists_all_surfaced(self):
-        """Multiple non-preserved lists each get a ``list_counts`` entry.
-        """
+        """Multiple non-preserved lists each get a ``list_counts`` entry."""
         env = _envelope(
             findings=[{"id": i} for i in range(8)],
             hotspots=[{"id": i} for i in range(3)],
@@ -377,9 +376,7 @@ def test_w1028_deferred_candidates_not_silently_added():
         "at envelope top-level + consumer that calls strip_list_payloads) "
         "and document the new field in formatter.py's inline comment."
     )
-    assert _ALWAYS_PRESERVED_LIST_FIELDS == frozenset(
-        {"warnings_out", "errors", "redactions", "agent_contract"}
-    )
+    assert _ALWAYS_PRESERVED_LIST_FIELDS == frozenset({"warnings_out", "errors", "redactions", "agent_contract"})
 
     # Deferred candidates from W1006 — pin them as deliberately absent so
     # a future editor noticing the comment cannot silently graduate one

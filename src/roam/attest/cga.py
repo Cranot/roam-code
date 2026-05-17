@@ -211,8 +211,7 @@ def _edge_bundle_digest(conn) -> tuple[str, int]:
     discipline above.
     """
     rows = conn.execute(
-        "SELECT source_id, target_id, kind FROM edges "
-        "ORDER BY source_id, target_id, kind, id"
+        "SELECT source_id, target_id, kind FROM edges ORDER BY source_id, target_id, kind, id"
     ).fetchall()
     chunks: list[bytes] = []
     for r in rows:

@@ -609,9 +609,7 @@ def _do_inventory(json_mode, sarif_mode, token_budget, reachable_only, persist):
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
 
-    _output_results(
-        vuln_rows, json_mode, sarif_mode, token_budget, reachable_only=reachable_only
-    )
+    _output_results(vuln_rows, json_mode, sarif_mode, token_budget, reachable_only=reachable_only)
 
 
 def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:

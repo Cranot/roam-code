@@ -743,9 +743,7 @@ def ai_readiness(ctx, threshold):
         symbols_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         empty_corpus = files_scanned == 0 or symbols_count == 0
         if empty_corpus:
-            verdict = (
-                "no files scanned (corpus empty — run `roam index --force` to populate)"
-            )
+            verdict = "no files scanned (corpus empty — run `roam index --force` to populate)"
         else:
             verdict = f"AI Readiness {composite}/100 -- {label}"
 

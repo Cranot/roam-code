@@ -74,9 +74,7 @@ def _validate(instance, schema, path: str = "") -> list[str]:
         props = schema.get("properties", {})
         for key, sub_schema in props.items():
             if key in instance:
-                errors.extend(
-                    _validate(instance[key], sub_schema, f"{path}.{key}" if path else key)
-                )
+                errors.extend(_validate(instance[key], sub_schema, f"{path}.{key}" if path else key))
 
     if isinstance(instance, list):
         item_schema = schema.get("items")
@@ -302,11 +300,7 @@ def test_diagnose_and_audit_trail_verify_wired_in_decorators() -> None:
     for entry in _REGISTERED_TOOLS:
         name = entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", None)
         if name in targets:
-            schema = (
-                entry.get("output_schema")
-                if isinstance(entry, dict)
-                else getattr(entry, "output_schema", None)
-            )
+            schema = entry.get("output_schema") if isinstance(entry, dict) else getattr(entry, "output_schema", None)
             found[name] = schema
 
     if not found:
@@ -318,6 +312,5 @@ def test_diagnose_and_audit_trail_verify_wired_in_decorators() -> None:
         )
     if "roam_audit_trail_verify" in found:
         assert found["roam_audit_trail_verify"] is _SCHEMA_AUDIT_TRAIL_VERIFY, (
-            "roam_audit_trail_verify output_schema is not _SCHEMA_AUDIT_TRAIL_VERIFY "
-            "(Wave B5 drift)"
+            "roam_audit_trail_verify output_schema is not _SCHEMA_AUDIT_TRAIL_VERIFY (Wave B5 drift)"
         )

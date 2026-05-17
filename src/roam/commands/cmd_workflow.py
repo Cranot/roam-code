@@ -216,10 +216,7 @@ def workflow(ctx, recipe_name, list_recipes, query, next_after):
         # ``frag`` is always non-None here (we already know ``by_name``
         # returned None, so ``recipe_name`` is not in the closed set).
         assert frag is not None
-        base_msg = (
-            f"unknown workflow recipe: {recipe_name!r}. "
-            f"Run `roam workflow --list`.{frag['verdict_suffix']}"
-        )
+        base_msg = f"unknown workflow recipe: {recipe_name!r}. Run `roam workflow --list`.{frag['verdict_suffix']}"
         if json_mode:
             verdict_unknown = f"unknown workflow recipe {recipe_name!r}"
             click.echo(

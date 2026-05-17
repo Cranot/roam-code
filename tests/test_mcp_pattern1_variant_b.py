@@ -222,9 +222,7 @@ class TestPassThroughEndToEnd:
         # W1084: Pattern-2c -- exit 0, so the W325 chokepoint MUST NOT
         # have fired. No cli_exit_code annotation, no isError tag.
         meta = result.get("_meta") or {}
-        assert "cli_exit_code" not in meta, (
-            f"exit 0 must not trigger the W325 chokepoint annotation: meta={meta}"
-        )
+        assert "cli_exit_code" not in meta, f"exit 0 must not trigger the W325 chokepoint annotation: meta={meta}"
         assert result.get("isError") is not True, (
             f"test-scaffold unknown-symbol round-trip wrongly tagged as error: {result}"
         )

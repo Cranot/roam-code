@@ -524,7 +524,9 @@ def _group_by_directory(items):
     requires_index=True,
 )
 @click.command()
-@click.option("--limit", "--top", "-n", "limit", default=20, help="Number of files to show (default 20)")  # W1142: --top alias
+@click.option(
+    "--limit", "--top", "-n", "limit", default=20, help="Number of files to show (default 20)"
+)  # W1142: --top alias
 @click.option("--by-kind", "by_kind", is_flag=True, help="Group results by parent directory")
 @click.option("--threshold", type=float, default=None, help="Only show files above this debt score")
 @click.option("--roi", is_flag=True, help="Estimate refactoring ROI (developer-hours saved/quarter).")
@@ -714,10 +716,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
         }
         _warnings_out: list[str] = []
         if items_truncated:
-            _warnings_out.append(
-                f"truncated to {len(display)} of {total_items_full} — "
-                "pass --limit larger to see more"
-            )
+            _warnings_out.append(f"truncated to {len(display)} of {total_items_full} — pass --limit larger to see more")
 
         if json_mode:
             _summary = {**stats, "verdict": _debt_verdict, **_cap_summary}

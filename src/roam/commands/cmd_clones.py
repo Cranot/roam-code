@@ -218,7 +218,9 @@ def _pair_classify(pair: dict) -> tuple[str, str]:
     help="Skip functions shorter than <N> lines",  # W1117-followup-4
 )
 @click.option("--scope", default=None, type=str, help="Limit to files under this path prefix")
-@click.option("--top", "--limit", "top", default=0, type=int, help="Show only top <N> clusters (0=all)")  # W1142: --limit alias; W1117-followup-4
+@click.option(
+    "--top", "--limit", "top", default=0, type=int, help="Show only top <N> clusters (0=all)"
+)  # W1142: --limit alias; W1117-followup-4
 @click.option(
     "--persist",
     is_flag=True,
@@ -521,8 +523,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             _warnings_out: list[str] = []
             if clusters_truncated:
                 _warnings_out.append(
-                    f"truncated to {len(clusters)} of {total_clusters_full} — "
-                    "pass --limit larger to see more"
+                    f"truncated to {len(clusters)} of {total_clusters_full} — pass --limit larger to see more"
                 )
 
             summary_payload = {

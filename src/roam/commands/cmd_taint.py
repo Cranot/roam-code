@@ -650,9 +650,7 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
         finding_filters: list[tuple[str, dict]] = []
         active_rule_ids = {r.rule_id for r in rules}
         if rule_filter or rules_pack:
-            disabled_rule_ids = sorted(
-                rid for rid in _pre_filter_rule_ids if rid not in active_rule_ids
-            )
+            disabled_rule_ids = sorted(rid for rid in _pre_filter_rule_ids if rid not in active_rule_ids)
             for rid in disabled_rule_ids:
                 disabled_by = []
                 if rule_filter:

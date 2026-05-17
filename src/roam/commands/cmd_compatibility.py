@@ -99,9 +99,7 @@ def _build_snapshot() -> dict[str, Any]:
         }
 
     # Deprecated alias map (used by the diff to recognise graceful renames).
-    deprecated = {
-        name: dict(record) for name, record in _DEPRECATED_COMMANDS.items()
-    }
+    deprecated = {name: dict(record) for name, record in _DEPRECATED_COMMANDS.items()}
 
     mcp_tools = sorted(mcp_tool_names())
     mcp_presets = dict(mcp_preset_counts())
@@ -148,9 +146,7 @@ def _introspect_flags(module_path: str, func_name: str) -> list[str]:
     return out
 
 
-def _diff(
-    baseline: dict[str, Any], current: dict[str, Any]
-) -> dict[str, Any]:
+def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     """Compute the structural diff between two snapshots.
 
     Returns a dict with closed-enum categories:
@@ -228,9 +224,7 @@ def _diff(
         b = base_presets.get(preset)
         c = cur_presets.get(preset)
         if b != c:
-            changed_presets.append(
-                {"preset": preset, "baseline_count": b, "current_count": c}
-            )
+            changed_presets.append({"preset": preset, "baseline_count": b, "current_count": c})
 
     # Tally breaking entries. Added items + renames are NOT breaking.
     # Preset count drops ARE breaking (fewer tools in a preset breaks
@@ -279,10 +273,7 @@ def _verdict_for(diff: dict[str, Any]) -> tuple[str, str]:
     if diff["breaking_count"] > 0:
         return ("breaking changes", "blocker")
     any_added = bool(
-        diff["added_commands"]
-        or diff["added_flags"]
-        or diff["added_envelope_fields"]
-        or diff["added_mcp_tools"]
+        diff["added_commands"] or diff["added_flags"] or diff["added_envelope_fields"] or diff["added_mcp_tools"]
     )
     any_drift = bool(diff["renamed_commands"] or diff["changed_presets"])
     if any_drift:
@@ -404,9 +395,7 @@ def compatibility(
                                 f"{len(snapshot['mcp_tools'])} MCP tools captured",
                                 f"baseline path {write_baseline}",
                             ],
-                            "next_commands": [
-                                f"roam compatibility --baseline {write_baseline}"
-                            ],
+                            "next_commands": [f"roam compatibility --baseline {write_baseline}"],
                         },
                     )
                 )
@@ -424,10 +413,7 @@ def compatibility(
     if not baseline_path.exists():
         # Pattern-1 variant C: emit a structured envelope on missing input,
         # never empty stdout. The verdict is honestly degraded.
-        msg = (
-            f"baseline not found at {baseline_path} - "
-            "capture one with `roam compatibility --write-baseline <path>`"
-        )
+        msg = f"baseline not found at {baseline_path} - capture one with `roam compatibility --write-baseline <path>`"
         if json_mode:
             click.echo(
                 to_json(
@@ -445,9 +431,7 @@ def compatibility(
                         next_command=f"roam compatibility --write-baseline {baseline_path}",
                         agent_contract={
                             "facts": ["0 baselines available"],
-                            "next_commands": [
-                                f"roam compatibility --write-baseline {baseline_path}"
-                            ],
+                            "next_commands": [f"roam compatibility --write-baseline {baseline_path}"],
                         },
                     )
                 )
@@ -498,12 +482,9 @@ def compatibility(
         next_commands: list[str] = []
         if breaking:
             next_commands.append(
-                "# inspect breaking entries, then either restore the surface "
-                "or roll the baseline forward"
+                "# inspect breaking entries, then either restore the surface or roll the baseline forward"
             )
-            next_commands.append(
-                f"roam compatibility --write-baseline {baseline_path}"
-            )
+            next_commands.append(f"roam compatibility --write-baseline {baseline_path}")
         click.echo(
             to_json(
                 json_envelope(
@@ -536,11 +517,7 @@ def compatibility(
             )
         )
     else:
-        click.echo(
-            f"VERDICT: {verdict}  "
-            f"(removed={removed_n} renamed={renamed_n} added={added_n} "
-            f"breaking={breaking})"
-        )
+        click.echo(f"VERDICT: {verdict}  (removed={removed_n} renamed={renamed_n} added={added_n} breaking={breaking})")
         if diff["removed_commands"]:
             click.echo("")
             click.echo("removed commands:")
@@ -570,9 +547,7 @@ def compatibility(
             click.echo("")
             click.echo("changed presets:")
             for e in diff["changed_presets"]:
-                click.echo(
-                    f"  - {e['preset']}: {e['baseline_count']} -> {e['current_count']}"
-                )
+                click.echo(f"  - {e['preset']}: {e['baseline_count']} -> {e['current_count']}")
 
     if ci and breaking > 0:
         ctx.exit(EXIT_GATE_FAILURE)

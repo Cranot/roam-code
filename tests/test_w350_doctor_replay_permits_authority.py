@@ -144,9 +144,7 @@ def _packet_with_authority_refs(
             }
         ],
         "authority_refs": authority_refs,
-        "environment_refs": [
-            {"env_id": "local", "env_kind": "local_run", "extra": {}}
-        ],
+        "environment_refs": [{"env_id": "local", "env_kind": "local_run", "extra": {}}],
         "signature_ref": None,
         "content_hash": None,
     }

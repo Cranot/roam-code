@@ -1280,8 +1280,7 @@ _SCHEMA_TEST_IMPACT = {
             "type": "array",
             "items": {"type": "string"},
             "description": (
-                "Non-test source files in the diff that seeded the reverse BFS. "
-                "Omitted on the empty-changeset branch."
+                "Non-test source files in the diff that seeded the reverse BFS. Omitted on the empty-changeset branch."
             ),
         },
         "tests": {
@@ -1295,8 +1294,7 @@ _SCHEMA_TEST_IMPACT = {
                         "type": "integer",
                         "minimum": 1,
                         "description": (
-                            "Number of changed seed symbols that transitively "
-                            "reach this test (higher = more relevant)."
+                            "Number of changed seed symbols that transitively reach this test (higher = more relevant)."
                         ),
                     },
                 },
@@ -1807,8 +1805,7 @@ _SCHEMA_VALIDATE_PLAN = {
                     "type": "string",
                     "enum": ["ok", "needs-review", "blocked"],
                     "description": (
-                        "Plan status: ok / needs-review / blocked. "
-                        "``blocked`` means do not apply the plan."
+                        "Plan status: ok / needs-review / blocked. ``blocked`` means do not apply the plan."
                     ),
                 },
                 "operations": {"type": "integer", "minimum": 0},
@@ -1827,8 +1824,7 @@ _SCHEMA_VALIDATE_PLAN = {
                     "kind": {
                         "type": "string",
                         "description": (
-                            "Operation kind from the plan: rename / move / "
-                            "remove / modify / add / unknown (malformed)."
+                            "Operation kind from the plan: rename / move / remove / modify / add / unknown (malformed)."
                         ),
                     },
                     "ok": {"type": "boolean"},
@@ -7438,7 +7434,9 @@ def pr_analyze(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_pr_comment_render", description="Render a markdown PR comment from a pr-analyze JSON envelope.")  # W459
+@_tool(
+    name="roam_pr_comment_render", description="Render a markdown PR comment from a pr-analyze JSON envelope."
+)  # W459
 def pr_comment_render(input_path: str = "", style: str = "github", include_links: bool = True, root: str = ".") -> dict:
     """Render a markdown PR comment from a pr-analyze JSON envelope.
 
@@ -7468,7 +7466,11 @@ def pr_comment_render(input_path: str = "", style: str = "github", include_links
     return _run_roam(args, root)
 
 
-@_tool(name="roam_audit_trail_verify", description="Verify SHA-256 chain integrity of a roam audit trail.", output_schema=_SCHEMA_AUDIT_TRAIL_VERIFY)  # W459
+@_tool(
+    name="roam_audit_trail_verify",
+    description="Verify SHA-256 chain integrity of a roam audit trail.",
+    output_schema=_SCHEMA_AUDIT_TRAIL_VERIFY,
+)  # W459
 def audit_trail_verify(input_path: str = "", root: str = ".") -> dict:
     """Verify SHA-256 chain integrity of a roam audit trail.
 
@@ -7491,7 +7493,10 @@ def audit_trail_verify(input_path: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_audit_trail_export", description="Export the audit trail as markdown / json / csv for procurement review.")  # W459
+@_tool(
+    name="roam_audit_trail_export",
+    description="Export the audit trail as markdown / json / csv for procurement review.",
+)  # W459
 def audit_trail_export(
     input_path: str = "",
     fmt: str = "md",
@@ -7533,7 +7538,9 @@ def audit_trail_export(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_metrics_push", description="Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.**")  # W459
+@_tool(
+    name="roam_metrics_push", description="Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.**"
+)  # W459
 def metrics_push(
     token: str = "",
     repo: str = "",
@@ -7617,7 +7624,9 @@ def audit_trail_conformance_check(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_dogfood", description="One-shot full-stack run: audit + pr-analyze + audit-trail + conformance.")  # W459
+@_tool(
+    name="roam_dogfood", description="One-shot full-stack run: audit + pr-analyze + audit-trail + conformance."
+)  # W459
 def dogfood(
     audit: bool = True,
     pr_analyze_on: bool = True,
@@ -7661,7 +7670,9 @@ def dogfood(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_rules_validate", description="Lint a `.roam/rules.yml` for shippability before customers see it.")  # W459
+@_tool(
+    name="roam_rules_validate", description="Lint a `.roam/rules.yml` for shippability before customers see it."
+)  # W459
 def rules_validate(
     input_path: str = ".roam/rules.yml",
     against: str = "",
@@ -7730,7 +7741,9 @@ def suggest_reviewers(top: int = 3, exclude: str = "", changed: bool = True, roo
     return _run_roam(args, root)
 
 
-@_tool(name="roam_verify", description="Check changed files for naming, import, error-handling, and duplicate issues.")  # W459
+@_tool(
+    name="roam_verify", description="Check changed files for naming, import, error-handling, and duplicate issues."
+)  # W459
 def verify(threshold: int = 70, root: str = ".") -> dict:
     """Check changed files for naming, import, error-handling, and duplicate issues.
 

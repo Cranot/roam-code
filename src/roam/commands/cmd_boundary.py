@@ -132,9 +132,7 @@ def _scan_public_by_accident(
     is genuinely private). Either way, the current state is wrong.
     """
     findings: list[dict] = []
-    rows = conn.execute(
-        "SELECT path FROM files WHERE language = 'python' ORDER BY path"
-    ).fetchall()
+    rows = conn.execute("SELECT path FROM files WHERE language = 'python' ORDER BY path").fetchall()
     for r in rows:
         rel_path = r[0]
         abs_path = project_root / rel_path
@@ -218,10 +216,7 @@ def _scan_wrong_direction_imports(
 
     # Gather symbols by file path so we can scope edges to changed files
     # without iterating every edge in the graph.
-    rows = conn.execute(
-        "SELECT s.id, f.path AS file_path "
-        "FROM symbols s JOIN files f ON s.file_id = f.id"
-    ).fetchall()
+    rows = conn.execute("SELECT s.id, f.path AS file_path FROM symbols s JOIN files f ON s.file_id = f.id").fetchall()
     sym_to_file: dict[int, str] = {}
     for sid, fpath in rows:
         sym_to_file[int(sid)] = (fpath or "").replace("\\", "/")
@@ -341,9 +336,7 @@ def _boundary_finding_id(f: dict) -> str:
 def _resolve_file_subject_id(conn: sqlite3.Connection, file_path: str) -> int | None:
     """Best-effort ``files.id`` lookup for the file carrying the finding."""
     try:
-        row = conn.execute(
-            "SELECT id FROM files WHERE path = ? LIMIT 1", (file_path,)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM files WHERE path = ? LIMIT 1", (file_path,)).fetchone()
         return int(row[0]) if row is not None else None
     except sqlite3.OperationalError:
         return None
@@ -426,9 +419,7 @@ def _emit_boundary_findings(
 @roam_capability(
     name="boundary",
     category="quality",
-    summary=(
-        "Surface public-by-accident exports + changed-range layer violations"
-    ),
+    summary=("Surface public-by-accident exports + changed-range layer violations"),
     maturity="experimental",
     mcp_expose=True,
     mcp_preset=("core",),
@@ -445,10 +436,7 @@ def _emit_boundary_findings(
     type=click.Choice(["pr", "working", "staged", "head", "all"], case_sensitive=False),
     default="working",
     show_default=True,
-    help=(
-        "Diff source for the wrong_direction_import scope. 'all' scans every "
-        "indexed file (slow on large repos)."
-    ),
+    help=("Diff source for the wrong_direction_import scope. 'all' scans every indexed file (slow on large repos)."),
 )
 @click.option("--base-ref", default="main", show_default=True, help="Base branch for --changed-range pr.")
 @click.option(
@@ -469,8 +457,7 @@ def _emit_boundary_findings(
     is_flag=True,
     default=False,
     help=(
-        "Mirror each boundary finding into the central findings registry "
-        "(``roam findings list --detector boundary``)."
+        "Mirror each boundary finding into the central findings registry (``roam findings list --detector boundary``)."
     ),
 )
 @click.pass_context
@@ -497,9 +484,7 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
     cr = changed_range.lower()
     with open_db(readonly=not persist) as conn:
         if cr == "all":
-            rows = conn.execute(
-                "SELECT path FROM files WHERE language = 'python'"
-            ).fetchall()
+            rows = conn.execute("SELECT path FROM files WHERE language = 'python'").fetchall()
             changed_files = {(r[0] or "").replace("\\", "/") for r in rows}
         else:
             if cr == "pr":
@@ -526,9 +511,7 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
         # ``roam findings list --detector boundary`` stays comprehensive.
         if persist:
             try:
-                _emit_boundary_findings(
-                    conn, all_findings, source_version=_BOUNDARY_DETECTOR_VERSION
-                )
+                _emit_boundary_findings(conn, all_findings, source_version=_BOUNDARY_DETECTOR_VERSION)
                 conn.commit()
             except sqlite3.OperationalError:
                 # Pre-W89 schema (no findings table) — degrade gracefully.
@@ -542,9 +525,9 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
         # + a state flag. Mirrors W834 / W836. Runs inside the with-block
         # so ``conn`` is still open.
         try:
-            _import_edges = conn.execute(
-                "SELECT COUNT(*) FROM edges WHERE kind IN ('imports', 'import')"
-            ).fetchone()[0] or 0
+            _import_edges = (
+                conn.execute("SELECT COUNT(*) FROM edges WHERE kind IN ('imports', 'import')").fetchone()[0] or 0
+            )
         except Exception:
             _import_edges = -1  # unknown — schema may differ
 
@@ -679,9 +662,7 @@ def _boundary_to_sarif(findings: list[dict]) -> dict:
             "id": f"boundary/{kind}",
             "name": kind,
             "shortDescription": {"text": kind},
-            "defaultConfiguration": {
-                "level": "error" if _KIND_SEVERITY[kind] == "high" else "warning"
-            },
+            "defaultConfiguration": {"level": "error" if _KIND_SEVERITY[kind] == "high" else "warning"},
         }
         for kind in _BOUNDARY_KINDS
     ]
@@ -691,9 +672,7 @@ def _boundary_to_sarif(findings: list[dict]) -> dict:
             {
                 "ruleId": f"boundary/{f['kind']}",
                 "level": "error" if f.get("severity") == "high" else "warning",
-                "message": {
-                    "text": (f.get("evidence") or {}).get("reason") or f.get("kind", "")
-                },
+                "message": {"text": (f.get("evidence") or {}).get("reason") or f.get("kind", "")},
                 "locations": [
                     {
                         "physicalLocation": {

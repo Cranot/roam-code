@@ -96,7 +96,9 @@ def test_w844_card_edit_triggers_pin_rotation(card_backups: dict[Path, bytes]) -
     # a string near the top of the card and isn't touched by
     # ``_update_mcp_card_text`` regexes, so the edit survives --apply.
     mutated = original_bytes.replace(
-        b'"card_url"', b'"card_url"  ', 1,
+        b'"card_url"',
+        b'"card_url"  ',
+        1,
     )
     assert mutated != original_bytes, "test setup: card edit produced no byte change"
     BUNDLED_CARD.write_bytes(mutated)
@@ -106,9 +108,7 @@ def test_w844_card_edit_triggers_pin_rotation(card_backups: dict[Path, bytes]) -
     PUBLIC_CARD.write_bytes(mutated)
 
     expected_digest = _lf_sha256(PUBLIC_CARD)
-    assert expected_digest != original_pin, (
-        "test setup: mutated card hashes to the original pin"
-    )
+    assert expected_digest != original_pin, "test setup: mutated card hashes to the original pin"
 
     result = _run_apply()
     assert result.returncode == 0, f"--apply failed: {result.stderr}"
@@ -118,9 +118,7 @@ def test_w844_card_edit_triggers_pin_rotation(card_backups: dict[Path, bytes]) -
     # _apply_mcp_card may further mutate count-bearing fields, so recompute.
     post_apply_digest = _lf_sha256(PUBLIC_CARD)
     assert new_pin == post_apply_digest, (
-        f"pin not rotated to match post-apply card bytes\n"
-        f"  pin:        {new_pin}\n"
-        f"  card hash:  {post_apply_digest}"
+        f"pin not rotated to match post-apply card bytes\n  pin:        {new_pin}\n  card hash:  {post_apply_digest}"
     )
 
 
@@ -129,7 +127,9 @@ def test_w844_no_rotate_card_hash_opt_out(card_backups: dict[Path, bytes]) -> No
     original_pin = _read_pin()
 
     mutated = BUNDLED_CARD.read_bytes().replace(
-        b'"card_url"', b'"card_url"  ', 1,
+        b'"card_url"',
+        b'"card_url"  ',
+        1,
     )
     BUNDLED_CARD.write_bytes(mutated)
     PUBLIC_CARD.write_bytes(mutated)
@@ -137,9 +137,7 @@ def test_w844_no_rotate_card_hash_opt_out(card_backups: dict[Path, bytes]) -> No
     result = _run_apply("--no-rotate-card-hash")
     assert result.returncode == 0, f"--apply failed: {result.stderr}"
 
-    assert _read_pin() == original_pin, (
-        "--no-rotate-card-hash should leave _EXPECTED_CARD_SHA256 untouched"
-    )
+    assert _read_pin() == original_pin, "--no-rotate-card-hash should leave _EXPECTED_CARD_SHA256 untouched"
 
 
 def test_w844_well_known_mirrors_synced(card_backups: dict[Path, bytes]) -> None:

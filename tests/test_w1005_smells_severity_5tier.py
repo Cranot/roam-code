@@ -132,10 +132,7 @@ def project_with_brain_method(tmp_path: Path) -> Path:
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
         "VALUES (1, 1, 'process_everything', 'function', 10, 200, '(data, config, opts)')"
     )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-        "VALUES (1, 75, 6)"
-    )
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (1, 75, 6)")
     conn.commit()
     conn.close()
     return tmp_path
@@ -217,10 +214,7 @@ def test_min_severity_high_keeps_only_critical(project_with_brain_method: Path) 
     high_data = json.loads(high.output)
     # severity_rank("high") == severity_rank("error") == 4; smells emit no
     # error/high natively. Both filters resolve to the same critical-only set.
-    assert (
-        crit_data["summary"]["total_smells"]
-        == high_data["summary"]["total_smells"]
-    ), (
+    assert crit_data["summary"]["total_smells"] == high_data["summary"]["total_smells"], (
         "--min-severity high should match critical-only set on emit vocab "
         "{critical, warning, info}: critical "
         f"{crit_data['summary']['total_smells']} != high "
@@ -299,8 +293,7 @@ def test_alias_note_rejected_at_parse(project_with_brain_method: Path) -> None:
     finally:
         os.chdir(old_cwd)
     assert result.exit_code != 0, (
-        "--min-severity note must hard-fail at click.Choice (W1005 "
-        "deliberately omits aliases that collapse to info)"
+        "--min-severity note must hard-fail at click.Choice (W1005 deliberately omits aliases that collapse to info)"
     )
 
 
