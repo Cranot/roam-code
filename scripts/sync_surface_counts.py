@@ -65,14 +65,21 @@ def _live_counts() -> dict:
 
 
 def _live_languages() -> int:
-    """Count of supported languages from the registry."""
-    sys.path.insert(0, str(REPO_ROOT / "src"))
-    try:
-        from roam.languages.registry import get_supported_languages
+    """Count of supported languages from the registry.
 
-        return len(get_supported_languages())
-    except Exception:
-        return 0
+    Hard-fails on import error: this script is the source of truth for
+    the language count quoted in README/llms-install/landing-page. A
+    silent ``return 0`` would write ``0 languages`` into every doc
+    surface — exactly the W933-class stale-literal hazard the sibling
+    ``_live_counts`` deliberately avoids by letting errors propagate
+    (see lines 58-64 above). Lineage rule (CLAUDE.md "Make fallback
+    chains loud"): a sync tool with no producer must crash loudly so
+    CI catches it, not silently mis-publish.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from roam.languages.registry import get_supported_languages
+
+    return len(get_supported_languages())
 
 
 REPLACEMENTS: list[tuple[Path, list[tuple[re.Pattern, str]]]] = []

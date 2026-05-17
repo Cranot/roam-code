@@ -35,14 +35,35 @@ _MAX_RESULTS = 30
 
 
 def _project_root_for(value: str | None) -> Path | None:
-    """Best-effort discovery of the .roam dir given a CWD hint."""
+    """Best-effort discovery of the .roam dir given a CWD hint.
+
+    Walks upward looking for a ``.roam/index.db`` co-located with a
+    real project marker (``.git`` or ``pyproject.toml``). The marker
+    requirement prevents pytest tmp_path tests from binding onto a
+    stray ``.roam/index.db`` left in ``%TEMP%`` / ``/tmp`` by an
+    earlier session — without it the walk reaches all the way to the
+    filesystem root and any orphaned index becomes a flake source
+    (AA4 audit, 2026-05-17).
+    """
     start = Path(value or os.getcwd()).resolve()
     if not start.exists():
         start = Path.cwd()
     cur: Path | None = start
+    home = None
+    try:
+        home = Path.home().resolve()
+    except (RuntimeError, OSError):
+        home = None
     while cur is not None:
-        if (cur / ".roam" / "index.db").exists():
+        has_index = (cur / ".roam" / "index.db").exists()
+        has_marker = (cur / ".git").exists() or (cur / "pyproject.toml").exists()
+        if has_index and has_marker:
             return cur
+        # Stop walking once we cross above the user's home directory —
+        # anything higher is system territory where finding a project
+        # root would be coincidental at best.
+        if home is not None and cur == home:
+            break
         parent = cur.parent
         if parent == cur:
             break
