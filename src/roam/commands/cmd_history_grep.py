@@ -157,6 +157,14 @@ def _diff_polarity(root: Path, sha: str, pattern: str, fixed: bool) -> str | Non
 @click.argument("positional", required=False)
 @click.option("-e", "--regex", "patterns", multiple=True, help="Pattern (repeatable).")
 @click.option("-F", "--fixed-string", "fixed", is_flag=True, default=True, help="Literal mode (default).")
+@click.option(
+    "-E",
+    "--regexp",
+    "regexp_mode",
+    is_flag=True,
+    default=False,
+    help="W421 — regex mode: switch git pickaxe from -S (literal substring) to -G (regex match across hunks). Slower on large histories.",
+)
 @click.option("-i", "--ignore-case", "ci", is_flag=True, help="Case-insensitive search.")
 @click.option("--since", default=None, help="Only commits after this date (YYYY-MM-DD or relative).")
 @click.option("--until", default=None, help="Only commits before this date.")
@@ -170,8 +178,13 @@ def _diff_polarity(root: Path, sha: str, pattern: str, fixed: bool) -> str | Non
     help="Restrict to these paths (repeatable).",
 )
 @click.pass_context
-def history_grep_cmd(ctx, positional, patterns, fixed, ci, since, until, limit, polarity, paths):
+def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, until, limit, polarity, paths):
     """Through-history search using git pickaxe (-S / -G).
+
+    Default mode is ``-S`` (literal substring across commit diffs). Pass
+    ``-E`` / ``--regexp`` to switch to ``-G`` (regex match across hunks).
+    Regex mode is slower on large histories — git has to re-evaluate the
+    pattern against every changed line of every commit.
 
     Examples:
 
@@ -180,6 +193,7 @@ def history_grep_cmd(ctx, positional, patterns, fixed, ci, since, until, limit, 
       roam history-grep -e foo -e bar --polarity
       roam history-grep "deprecated_api" --since 2024-01-01
       roam history-grep "Article 12" -p docs/
+      roam history-grep -E "set(Item|Value)"               # W421 regex mode
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
@@ -197,12 +211,16 @@ def history_grep_cmd(ctx, positional, patterns, fixed, ci, since, until, limit, 
     ensure_index()
     root = find_project_root()
 
+    # W421 — -E/--regexp opts into regex mode (git pickaxe -G); default
+    # stays literal (-S) for backward compatibility.
+    fixed_mode = fixed and not regexp_mode
+
     per_pattern: dict[str, list[dict]] = {}
     for p in pats:
         commits = _git_pickaxe(
             root,
             p,
-            fixed=fixed,
+            fixed=fixed_mode,
             case_insensitive=ci,
             since=since,
             until=until,
@@ -211,7 +229,7 @@ def history_grep_cmd(ctx, positional, patterns, fixed, ci, since, until, limit, 
         )
         if polarity:
             for c in commits:
-                c["polarity"] = _diff_polarity(root, c["sha"], p, fixed)
+                c["polarity"] = _diff_polarity(root, c["sha"], p, fixed_mode)  # W421
         per_pattern[p] = commits
 
     total = sum(len(v) for v in per_pattern.values())

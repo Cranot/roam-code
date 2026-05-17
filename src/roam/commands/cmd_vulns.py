@@ -359,10 +359,32 @@ def _severity_breakdown(vulns: list[dict], key: str = "severity") -> dict[str, i
 # ---------------------------------------------------------------------------
 
 
-def _vulns_to_sarif(vulns: list[dict]) -> dict:
-    """Convert vulnerability findings to SARIF 2.1.0 format."""
+def _vulns_to_sarif(
+    vulns: list[dict],
+    *,
+    runtime_overrides: list[dict] | None = None,
+    runtime_notification_overrides: list[dict] | None = None,
+) -> dict:
+    """Convert vulnerability findings to SARIF 2.1.0 format.
+
+    W1061-followup: ``runtime_overrides`` / ``runtime_notification_overrides``
+    project onto SARIF ``ruleConfigurationOverrides`` /
+    ``notificationConfigurationOverrides`` per OASIS §3.51 / §3.20.4. The
+    cmd_vulns ``--reachable-only`` filter is finding-level (operates on
+    each finding's ``reachable`` field, not on rule-id granularity), so
+    the caller passes it via ``runtime_notification_overrides``. Empty /
+    ``None`` keeps SARIF byte-identical to pre-W1061-followup output via
+    gated emission in :func:`to_sarif`.
+    """
     from roam.output._severity import to_sarif_level
-    from roam.output.sarif import _TOOL_NAME, _get_version, _location, _slugify, to_sarif
+    from roam.output.sarif import (
+        _TOOL_NAME,
+        _derive_finding_tags,
+        _get_version,
+        _location,
+        _slugify,
+        to_sarif,
+    )
 
     seen_rules: dict[str, dict] = {}
     results: list[dict] = []
@@ -380,12 +402,31 @@ def _vulns_to_sarif(vulns: list[dict]) -> dict:
         # roam.output._severity. Single source of truth for every CI gate.
         sarif_level = to_sarif_level(severity)
 
+        # W1062: derive normalised dashboard tags so GitHub Code
+        # Scanning / SonarQube / security-dashboard tools can filter
+        # vulnerabilities by family / CVE / severity. ``extra`` carries
+        # the CVE id (when present) so dashboards keyed on the CVE
+        # string still work without parsing the rule_id.
+        extra: list[str] = []
+        if cve.startswith("CVE-"):
+            extra.append(cve)
+        if v.get("reachable") == 1:
+            extra.append("reachable")
+        elif v.get("reachable") == -1:
+            extra.append("not-reachable")
+        tags = _derive_finding_tags(
+            severity=severity,
+            family="vuln",
+            extra=extra,
+        )
+
         if rule_id not in seen_rules:
             seen_rules[rule_id] = {
                 "id": rule_id,
                 "shortDescription": f"Vulnerability: {title}",
                 "helpUri": f"https://nvd.nist.gov/vuln/detail/{cve}" if cve.startswith("CVE-") else "",
                 "defaultLevel": sarif_level,
+                "properties": {"tags": list(tags)},
             }
 
         locations = []
@@ -406,14 +447,25 @@ def _vulns_to_sarif(vulns: list[dict]) -> dict:
                 "level": sarif_level,
                 "message": {"text": " | ".join(msg_parts)},
                 "locations": locations,
+                "properties": {"tags": list(tags)},
             }
         )
 
+    # W1061-followup: forward runtime overrides. Each branch gated on
+    # non-empty list so default path stays byte-identical to
+    # pre-W1061-followup. The cmd_vulns ``--reachable-only`` filter
+    # populates ``runtime_notification_overrides`` because it operates at
+    # finding-evaluation time, not rule-id dispatch time.
+    overrides = list(runtime_overrides or ())
+    notif_overrides = list(runtime_notification_overrides or ())
     return to_sarif(
         _TOOL_NAME,
         _get_version(),
         list(seen_rules.values()),
         results,
+        emit_configuration_overrides=bool(overrides),
+        configuration_overrides=overrides if overrides else None,
+        notification_configuration_overrides=notif_overrides if notif_overrides else None,
     )
 
 
@@ -537,6 +589,7 @@ def _do_import(
         sarif_mode,
         token_budget,
         extra_summary={"imported": len(ingested), "import_file": import_file},
+        reachable_only=reachable_only,
     )
 
 
@@ -556,7 +609,9 @@ def _do_inventory(json_mode, sarif_mode, token_budget, reachable_only, persist):
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
 
-    _output_results(vuln_rows, json_mode, sarif_mode, token_budget)
+    _output_results(
+        vuln_rows, json_mode, sarif_mode, token_budget, reachable_only=reachable_only
+    )
 
 
 def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
@@ -619,6 +674,8 @@ def _output_results(
     sarif_mode: bool,
     token_budget: int,
     extra_summary: dict | None = None,
+    *,
+    reachable_only: bool = False,
 ):
     """Produce output in text, JSON, or SARIF format."""
     total = len(vulns)
@@ -662,9 +719,30 @@ def _output_results(
 
     # --- SARIF output ---
     if sarif_mode:
-        from roam.output.sarif import write_sarif
+        from roam.output.sarif import runtime_filter_disclosure, write_sarif
 
-        sarif = _vulns_to_sarif(vulns)
+        # W1061-followup-2: finding-level filter disclosure delegated to
+        # the shared :func:`runtime_filter_disclosure` helper. cmd_vulns
+        # has only one such filter today — ``--reachable-only`` — and it
+        # operates at finding-evaluation time (filters each row by its
+        # ``reachable`` field), NOT at rule-id granularity. Surfaces
+        # under a synthetic ``reachable-only-filter`` notification
+        # descriptor per SARIF 2.1.0 §3.20.4.
+        finding_filters: list[tuple[str, dict]] = []
+        if reachable_only:
+            finding_filters.append(
+                (
+                    "reachable-only-filter",
+                    {"filter": "--reachable-only", "filter_value": True},
+                )
+            )
+        _, sarif_notif_overrides = runtime_filter_disclosure(
+            finding_level_filters=finding_filters,
+        )
+        sarif = _vulns_to_sarif(
+            vulns,
+            runtime_notification_overrides=sarif_notif_overrides or None,
+        )
         click.echo(write_sarif(sarif))
         return
 

@@ -17,8 +17,6 @@ These tests cover:
 
 from __future__ import annotations
 
-import shutil
-
 import pytest
 
 pytest.importorskip("fastmcp", reason="MCP tool tests require fastmcp; mcp_server module won't import without it.")
@@ -46,11 +44,16 @@ def _unwrap_tool(fn):
 def _isolate_handle_dir(tmp_path, monkeypatch):
     """Run every test from a tmp cwd so handles land under the tmp's
     ``.roam/responses/`` rather than the project's. Prevents test
-    pollution and lets us assert on the handle dir cleanly."""
+    pollution and lets us assert on the handle dir cleanly.
+
+    W478-followup-3: dropped the defensive
+    ``shutil.rmtree(..., ignore_errors=True)`` swallow. The chdir
+    already sandboxes every write under ``tmp_path`` (pytest tears it
+    down for us); the rmtree was redundant *and* hid any genuine leak
+    outside the sandbox by silently ignoring all errors.
+    """
     monkeypatch.chdir(tmp_path)
     yield
-    # Defensive cleanup (the chdir should sandbox us already).
-    shutil.rmtree(_handle_storage_dir(), ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,57 @@
+# .roamignore-findings — rule-based allowlist for detector findings (W706 substrate).
+#
+# Copy this file to .roamignore-findings at your repo root (extensionless,
+# YAML body). The math, over-fetch, missing-index, and auth-gaps detectors
+# read it automatically and suppress any finding whose `task_id` + file
+# path match a rule below.
+#
+# Use this file when a finding repeats across MANY locations sharing a
+# pattern (every Vue 3 composable, every test fixture, every legacy
+# Django module) and writing one rule beats annotating each line.
+#
+# Match semantics (see src/roam/commands/finding_suppress.py::annotate_with_suppression):
+#   - `task_id` must equal the finding's `task_id` (exact match)
+#   - `path_glob` must fnmatch the finding's file path (forward slashes;
+#     Windows backslashes are normalised at match time)
+#   - At least one of `task_id` / `path_glob` is required — bare rules
+#     would match every finding and are dropped with a warning.
+
+rules:
+  # Suppresses io-in-loop findings on TanStack Query composables — the
+  # queryClient.getQueryData call inside the loop is part of the
+  # framework's prescribed pattern.
+  - task_id: io-in-loop
+    path_glob: "src/composables/**/*.ts"
+    reason: "TanStack Query factories use queryClient.getQueryData in loops"
+
+  # Suppresses branching-recursion on a hand-rolled deep-equal helper.
+  # The shape mirrors Lodash isEqual; the recursion is intentional.
+  - task_id: branching-recursion
+    path_glob: "src/utils/object-diff.ts"
+    reason: "deepEqual implementation — recursion is the algorithm"
+
+  # Suppresses every n-plus-one finding in tests/fixtures because the
+  # fixtures intentionally exercise un-batched query paths.
+  - task_id: n-plus-one
+    path_glob: "tests/fixtures/**"
+    reason: "Test fixtures intentionally exercise unbatched query paths"
+
+  # Suppresses missing-index findings on all migration files. Migrations
+  # are one-off and never re-run after deploy.
+  - task_id: missing-index
+    path_glob: "src/migrations/**/*.sql"
+    reason: "Migrations run once at deploy — index cost not a concern"
+
+# Schema reference
+# ----------------
+# Canonical loader:  roam.commands.finding_suppress._load_ignore_findings_file
+# Applier:           roam.commands.finding_suppress.annotate_with_suppression
+# Companion paths:   inline `# roam: ignore-<command>[task-id]` annotation,
+#                    .roam/suppressions.json per-finding-hash file.
+#
+# Required fields:   one of {task_id, path_glob} (both recommended)
+# Optional fields:   reason
+# Path-glob syntax:  fnmatch (Unix shell globbing) over forward-slash paths
+#
+# Run `roam --json math` (or over-fetch / missing-index / auth-gaps) to
+# see suppressed findings annotated with `suppressed: {source: ".roamignore-findings", ...}`.

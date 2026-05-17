@@ -238,8 +238,17 @@ def cga_emit(
             )
 
     taint_findings = None
+    # W489-A-followup: stamp the W454/W479 `qualified_only` lint result
+    # on the cga envelope so out-of-tree taint-rule packs loaded via
+    # ``--taint-rules-dir`` get the same disclosure ``roam taint`` ships.
+    # Mirror the cmd_taint envelope shape byte-for-byte to keep
+    # drift-guards stable (the W489-A canonical shape is the source of
+    # truth; this is the second consumer).
+    _w489_a_violations: list[dict] = []
+    _w489_a_total_rules = 0
     if include_taint:
-        from roam.security.taint_engine import load_rules, run_taint
+        from roam.security.taint_engine import run_taint
+        from roam.security.taint_rules_lint import capture_qualified_only_lint
 
         # W643: route the default rules-dir through ``cmd_taint``'s
         # importlib.resources-aware helper so wheel installs resolve the
@@ -250,7 +259,10 @@ def cga_emit(
             from roam.commands.cmd_taint import _default_rules_dir as _taint_default_rules_dir
 
             rules_path = _taint_default_rules_dir()
-        rules = load_rules(rules_path)
+        # W489-A-followup: capture qualified_only lint warnings alongside
+        # the loaded rules — advisory disclosure, never gates execution.
+        rules, _w489_a_violations = capture_qualified_only_lint(rules_path)
+        _w489_a_total_rules = len(rules)
 
     with open_db(readonly=True) as conn:
         if include_taint:
@@ -332,26 +344,47 @@ def cga_emit(
     )
 
     if json_mode:
+        # W489-A-followup: stamp the qualified_only lint result on the
+        # cga-emit envelope. ``rules_lint`` is emitted symmetrically
+        # whenever ``--include-taint`` actually loaded rules (per
+        # W1101/W1006); the top-level ``qualified_only_violations`` list
+        # only appears when N > 0 (W1006 redactions[] precedent for
+        # content lists). Shape mirrors cmd_taint's envelope byte-for-byte.
+        _w489_a_summary: dict = {
+            "verdict": verdict,
+            "merkle_root": pred["merkle_root"],
+            "edge_bundle_digest": pred["edge_bundle_digest"],
+            "symbol_count": pred["symbol_count"],
+            "edge_count": pred["edge_count"],
+            "predicate_type": statement.get("predicateType", PREDICATE_TYPE),
+            "statement_type": STATEMENT_TYPE,
+            "written_to": written_to,
+            "signed": bool(sign_result and sign_result.get("signed")),
+            "vsa_emitted": bool(vsa_result and vsa_result.get("vsa_path")),
+        }
+        _w489_a_envelope_extra: dict = {
+            "budget": token_budget,
+            "statement": statement,
+            "sign_result": sign_result,
+            "vsa_result": vsa_result,
+        }
+        if include_taint:
+            _w489_a_summary["rules_lint"] = {
+                "qualified_only_violations": len(_w489_a_violations),
+                "total_rules": _w489_a_total_rules,
+            }
+            if _w489_a_violations:
+                _w489_a_summary["partial_success"] = True
+                _w489_a_summary["warnings_out"] = [
+                    f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
+                ]
+                _w489_a_envelope_extra["qualified_only_violations"] = _w489_a_violations
         click.echo(
             to_json(
                 json_envelope(
                     "cga-emit",
-                    summary={
-                        "verdict": verdict,
-                        "merkle_root": pred["merkle_root"],
-                        "edge_bundle_digest": pred["edge_bundle_digest"],
-                        "symbol_count": pred["symbol_count"],
-                        "edge_count": pred["edge_count"],
-                        "predicate_type": statement.get("predicateType", PREDICATE_TYPE),
-                        "statement_type": STATEMENT_TYPE,
-                        "written_to": written_to,
-                        "signed": bool(sign_result and sign_result.get("signed")),
-                        "vsa_emitted": bool(vsa_result and vsa_result.get("vsa_path")),
-                    },
-                    budget=token_budget,
-                    statement=statement,
-                    sign_result=sign_result,
-                    vsa_result=vsa_result,
+                    summary=_w489_a_summary,
+                    **_w489_a_envelope_extra,
                 )
             )
         )

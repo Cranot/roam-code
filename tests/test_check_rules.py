@@ -62,7 +62,16 @@ def tmp_project(tmp_path: Path):
 
 @pytest.fixture()
 def empty_db(tmp_project: Path) -> sqlite3.Connection:
-    return _make_db(tmp_project)
+    # W478: yield + teardown so the SQLite file handle releases BEFORE
+    # pytest tmp_path cleanup. Returning the bare conn leaked handles on
+    # Windows, where the kernel refuses tempdir removal while files are
+    # still open — surfacing as `PermissionError: [WinError 32]` at
+    # session teardown.
+    conn = _make_db(tmp_project)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 @pytest.fixture()

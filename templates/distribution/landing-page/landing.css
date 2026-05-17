@@ -294,10 +294,11 @@ label:focus-within,
   border-radius: var(--radius-sm);
 }
 
-/* Sticky nav is ~58px; on docs pages a second sticky strip stacks on top
-   for ~110px combined. Use the larger value so anchor jumps don't hide
-   the heading under the nav on either layout. */
-[id] { scroll-margin-top: 80px; }
+/* Sticky nav is ~58px; on docs pages a second sticky strip (.docs-subnav)
+   stacks on top for ~110px combined. Use the larger value so anchor
+   jumps land below BOTH sticky strips on docs pages — the homepage's
+   single sticky absorbs the extra cushion as breathing room. */
+[id] { scroll-margin-top: 110px; }
 
 .skip-link {
   position: absolute;
@@ -524,10 +525,12 @@ label:focus-within,
   color: var(--accent);
   pointer-events: none;
 }
-/* On phones the corner mark sits too close to the eyebrow line and
-   competes for attention. Hide below the mid-tablet break — hero text
-   is the only thing that matters at narrow widths. */
-@media (max-width: 540px) {
+/* On phones and small tablets the corner mark sits too close to the
+   eyebrow / headline and competes for attention. Hide below the
+   tablet break — hero text is the only thing that matters at narrow
+   widths. (Was 540 px; bumped to 720 px after observing overlap on
+   iPad portrait + landscape phones.) */
+@media (max-width: 720px) {
   .hero-graph-mark { display: none; }
 }
 .hero-inner {
@@ -567,6 +570,19 @@ label:focus-within,
   /* Read-flow optimization: text-wrap: pretty drops orphans + balances
      line lengths. Both progressive-enhanced — older browsers ignore. */
   text-wrap: pretty;
+}
+/* Inline command names (roam math / roam preflight / roam pr-replay)
+   inside the hero subhead get a soft chip so they read as commands,
+   not muted body text. Matches the chip treatment used elsewhere on
+   the page (.faq code, .install-note code, .docs-page code). */
+.hero-subhead code {
+  background: rgba(0, 73, 183, 0.06);
+  color: var(--ink);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.92em;
+  font-weight: 500;
+  white-space: nowrap;
 }
 .hero-ctas {
   display: flex;
@@ -638,6 +654,49 @@ label:focus-within,
   margin: 32px 0 0;
   letter-spacing: -0.005em;
 }
+
+/* Tighter hero subhead variant — used for the "Maps before agents edit"
+   support line so it reads as a single emphasised stanza beneath the
+   primary subhead, not a second equally-weighted paragraph. */
+.hero-subhead--tight {
+  margin-top: 14px;
+  font-size: 17px;
+  color: var(--ink-80);
+  line-height: 1.55;
+}
+
+/* ─── Lead band: "Roam reads what it touches" ─── */
+.reads-touches {
+  padding: 36px 0;
+  background: var(--bg-tint);
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+.reads-touches-inner {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 0 var(--container-x);
+  text-align: center;
+}
+.reads-touches-eyebrow {
+  margin: 0 0 12px;
+  text-align: center;
+}
+.reads-touches-line {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.55;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.reads-touches-line em { font-style: italic; }
+.reads-touches-line strong { color: var(--accent); font-weight: 600; }
+
+/* Compare table — 3-row layered variant. The base .compare-table rules
+   centre all body cells; the layered version reads as prose (left-align
+   the "what it sees" column for readability). */
+.compare-table--layered tbody td { text-align: left; }
+.compare-table--layered tbody th[scope="row"] { width: 180px; min-width: 160px; }
 
 /* ─── What's in the free CLI ─── */
 .whats-in {
@@ -721,6 +780,7 @@ section.whats-in--dark .how-it-works-foot code {
 .wedge-trylist { text-align: center; margin-top: 32px; }
 .eyebrow--on-dark { color: rgba(255, 255, 255, 0.55); }
 .how-it-works-foot--centered { text-align: center; }
+.how-it-works-foot--spaced-top { margin-top: var(--s-6); }
 /* Inline-source caption inside .lede paragraphs (e.g. Faros source line). */
 .lede-source {
   display: block;
@@ -971,6 +1031,17 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   color: var(--muted);
   margin: 0;
 }
+/* Inline commands inside the section foot get the same soft chip
+   treatment as .hero-subhead code so they read as a runnable command
+   rather than muted body text. */
+.how-it-works-foot code {
+  background: var(--bg-tint);
+  color: var(--ink);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line-soft);
+  font-size: 0.92em;
+}
 
 /* ─── Demo block (terminal screenshot) ─── */
 .demo-block {
@@ -1011,6 +1082,8 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   text-align: left;
   overflow-x: auto;
   white-space: pre;
+  width: 100%;
+  max-width: 100%;
   margin: 0 auto 18px;
   /* Outer drop + 1px top inner highlight for terminal-window depth. */
   box-shadow:
@@ -1137,6 +1210,10 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 @media (max-width: 900px) { .demo-grid { grid-template-columns: 1fr; } }
 .demo-col { display: flex; flex-direction: column; }
+.demo-col > * {
+  min-width: 0;
+  max-width: 100%;
+}
 .demo-label {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 12px;
@@ -1715,7 +1792,22 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   grid-template-columns: 1fr 1fr 1fr;
   gap: var(--s-5);
 }
-@media (max-width: 900px) { .products { grid-template-columns: 1fr; } }
+/* Tablet: 2-col so three product cards don't immediately stack on iPad
+   portrait. The third (Self-Hosted) wraps under the first two — span it
+   across both columns and constrain its max-width so it reads as a
+   centered "and one more option" beat instead of a stranded left card. */
+@media (max-width: 960px) {
+  .products { grid-template-columns: repeat(2, 1fr); }
+  .products > :nth-child(3):last-child {
+    grid-column: 1 / -1;
+    max-width: calc(50% - var(--s-5) / 2);
+    justify-self: center;
+  }
+}
+@media (max-width: 620px) {
+  .products { grid-template-columns: 1fr; }
+  .products > :nth-child(3):last-child { max-width: none; }
+}
 
 .product-card {
   background: var(--bg);
@@ -2308,8 +2400,20 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   margin-top: var(--s-5);
   text-align: left;
 }
-@media (max-width: 880px) {
+/* Tablet: 2-col with the third tier (Deep) centered on row 2 — keeps
+   the "and one more option" tier visible without leaving an orphaned
+   left-aligned card. */
+@media (max-width: 960px) {
+  .replay-tiers { grid-template-columns: repeat(2, 1fr); }
+  .replay-tiers > :nth-child(3):last-child {
+    grid-column: 1 / -1;
+    max-width: calc(50% - var(--s-5) / 2);
+    justify-self: center;
+  }
+}
+@media (max-width: 620px) {
   .replay-tiers { grid-template-columns: 1fr; }
+  .replay-tiers > :nth-child(3):last-child { max-width: none; }
 }
 .replay-tier {
   background: var(--bg);
@@ -2355,10 +2459,18 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .replay-tier .replay-cmd {
   margin: 0 0 var(--s-3);
   font-size: 13px;
-  /* Inline command stays scrollable on narrow viewports — same rule as
-     the hero install-cmd. */
   display: block;
   text-align: left;
+  /* The tier card is intentionally narrow (3 across on desktop) — the
+     hero .install-cmd's default `white-space: nowrap; overflow-x: auto`
+     would force an in-card horizontal scrollbar that looks broken. Wrap
+     the command at all widths instead. */
+  white-space: normal;
+  overflow-x: visible;
+}
+.replay-tier .replay-cmd code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .replay-tier .replay-foot {
   font-size: var(--t-xs);
@@ -2512,11 +2624,22 @@ footer .footer-col strong { color: #fff; font-weight: 600; letter-spacing: -0.01
   margin: 0 auto;
   padding: 0 var(--container-x);
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr;
+  /* Five columns: brand block is wider so the four nav/contact columns
+     read as a tighter cluster on the right. Prior `2fr 1fr 1fr 1fr` only
+     declared four tracks for five children — the contact column stranded
+     onto a second row, leaving the right half of the footer empty. */
+  grid-template-columns: 1.6fr 1fr 1fr 1fr 1.2fr;
   gap: var(--s-5);
 }
-@media (max-width: 800px) { .footer-inner { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 480px) { .footer-inner { grid-template-columns: 1fr; } }
+@media (max-width: 960px) {
+  /* Tablet: brand spans the full first row, four nav columns sit beneath
+     it. Keeps the contact column readable instead of squashing five
+     tracks into 768 px. */
+  .footer-inner { grid-template-columns: 1fr 1fr 1fr 1fr; }
+  .footer-inner > .footer-col:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) { .footer-inner { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 420px) { .footer-inner { grid-template-columns: 1fr; } }
 .footer-col { display: flex; flex-direction: column; gap: 4px; }
 .footer-col span { color: var(--footer-meta); font-size: var(--t-sm); }
 footer a { color: #fff; }
@@ -2636,6 +2759,16 @@ footer a { color: #fff; }
     justify-content: center;
   }
   .num-cell--link { padding-block: 12px; }
+  /* The verb-cell holds <code> + <span> as stacked block children. The
+     shared touch-target rule above flips it to `inline-flex` (row), so
+     restore the column flow so the command name sits above its caption
+     on touch widths. Its 18 px padding already exceeds the 44 px floor. */
+  .verb-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding-block: 18px;
+  }
   .footer-col a {
     padding-block: 10px;
   }

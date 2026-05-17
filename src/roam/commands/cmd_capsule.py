@@ -21,6 +21,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 # ---------------------------------------------------------------------------
 # Path redaction helper
@@ -222,7 +223,7 @@ def _build_capsule(conn, redact_paths: bool, no_signatures: bool) -> dict:
     "--output",
     default=None,
     metavar="FILE",
-    help="Write the full JSON capsule to FILE instead of stdout.",
+    help="Write the full JSON capsule to <FILE> instead of stdout.",
 )
 @click.pass_context
 def capsule(ctx, redact_paths, no_signatures, output):
@@ -288,6 +289,11 @@ def capsule(ctx, redact_paths, no_signatures, output):
                         "symbols": symbols_n,
                         "edges": edges_n,
                         "health_score": score,
+                        # W1298 Pattern-3a: per-symbol metrics in the capsule
+                        # carry ``cognitive_complexity`` direct from
+                        # symbol_metrics — disclose the scorer so importers
+                        # cannot misread it as cyclomatic.
+                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                     },
                     budget=token_budget,
                     **capsule_data,

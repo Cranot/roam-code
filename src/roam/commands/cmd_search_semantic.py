@@ -36,7 +36,7 @@ from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 )
 @click.command()
 @click.argument("query")
-@click.option("--top", "top_k", default=10, type=int, help="Number of results (default 10)")
+@click.option("--top", "--limit", "top_k", default=10, type=int, help="Number of results (default 10)")  # W1142: --limit alias
 @click.option("--threshold", default=0.05, type=float, help="Minimum similarity score (default 0.05)")
 @click.option(
     "--backend",

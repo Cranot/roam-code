@@ -2631,6 +2631,56 @@ class TestSmellsCLI:
         # Should only show critical smells
         assert "VERDICT:" in result.output
 
+    # W1005: --min-severity widened from 3-tier {critical, warning, info} to
+    # W547 canonical 5-tier so agents can pass any of {critical, error, high,
+    # warning, medium, low, info}. The two cases below exercise the new ends
+    # of the rank-ordered envelope:
+    #   * ``critical`` (rank 5) — passes only ``critical`` findings; brain-
+    #     method severity=critical is the only thing the fixture emits, so
+    #     total_smells must be >= 1.
+    #   * ``info`` (rank 0) — the floor; every emitted tier (critical/
+    #     warning/info) ranks >= 0, so total_smells must equal the unfiltered
+    #     baseline. Pins LAW 6: filter-floor === pass-through.
+    def test_filter_by_min_severity_critical_keeps_critical_only(self, project_with_smells):
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(project_with_smells))
+            baseline = runner.invoke(cli, ["--json", "smells"])
+            critical_only = runner.invoke(
+                cli, ["--json", "smells", "--min-severity", "critical"]
+            )
+        finally:
+            os.chdir(old_cwd)
+        assert baseline.exit_code == 0
+        assert critical_only.exit_code == 0
+        baseline_data = json.loads(baseline.output)
+        critical_data = json.loads(critical_only.output)
+        baseline_sev = baseline_data["summary"]["severity"]
+        critical_sev = critical_data["summary"]["severity"]
+        # ``critical`` count survives the floor; everything else is dropped.
+        assert critical_data["summary"]["total_smells"] == baseline_sev.get("critical", 0)
+        assert "warning" not in critical_sev
+        assert "info" not in critical_sev
+
+    def test_filter_by_min_severity_info_keeps_everything(self, project_with_smells):
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(project_with_smells))
+            baseline = runner.invoke(cli, ["--json", "smells"])
+            info_floor = runner.invoke(
+                cli, ["--json", "smells", "--min-severity", "info"]
+            )
+        finally:
+            os.chdir(old_cwd)
+        assert baseline.exit_code == 0
+        assert info_floor.exit_code == 0
+        baseline_total = json.loads(baseline.output)["summary"]["total_smells"]
+        info_total = json.loads(info_floor.output)["summary"]["total_smells"]
+        # ``info`` is the floor of the W547 rank table; nothing should drop.
+        assert info_total == baseline_total
+
     def test_filter_by_file(self, project_with_smells):
         runner = CliRunner()
         old_cwd = os.getcwd()

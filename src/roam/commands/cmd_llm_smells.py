@@ -904,9 +904,29 @@ def _iter_indexed_files(conn, project_root: Path) -> list[tuple[str, Path]]:
 @click.command("llm-smells")
 @click.option(
     "--min-severity",
-    type=click.Choice(["info", "warning", "critical"], case_sensitive=False),
+    # W1005-followup-A: widened from 3-tier {info, warning, critical} to W547
+    # canonical 7-token vocabulary so agents can pass any of
+    # {critical, error, high, warning, medium, low, info} and have it compared
+    # via ``severity_rank()`` from ``roam.output._severity``. The llm-smells
+    # detectors currently emit only {info, warning, critical} (per
+    # ``_PATTERN_SEVERITY``), but the W547 rank table accepts CVSS terms
+    # (high/medium/low) and SARIF ``error`` as equivalents under the
+    # canonical ordering (higher = worse). Aliases like ``note``/``unknown``
+    # are intentionally NOT in the Choice — they collapse to ``info``/
+    # sort-below-info via severity_rank, so a user-facing filter on them
+    # would be confusing. Mirrors the cmd_smells widening landed in W1005.
+    type=click.Choice(
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
     default="info",
-    help="Minimum severity to include (info/warning/critical).",
+    help=(
+        "Minimum severity to include. Uses the canonical W547 7-token "
+        "ordering (critical > error == high > warning > medium > low > "
+        "info). Detectors emit info/warning/critical today; CVSS aliases "
+        "(high/medium/low) and SARIF ``error`` rank via the same "
+        "severity_rank() comparator."
+    ),
 )
 @click.option(
     "--persist",
@@ -1012,7 +1032,16 @@ def llm_smells(ctx, min_severity, persist):
         # LAW 6 — verdict line works without any other field. LAW 4 —
         # terminal token is ``findings`` (anchor noun) or ``files`` (also
         # an anchor) when the scan found nothing.
-        if total_findings == 0:
+        #
+        # W805: empty-corpus disclosure (Pattern 2 silent-fallback fix).
+        # When no LLM-using files are detected, the scan did not run on
+        # any analyzable input — distinguish that degraded state from
+        # "0 findings in a real LLM-using codebase" via ``partial_success``
+        # + a closed-enum ``state`` field. Mirrors W834 / W836.
+        no_llm_files = len(llm_files) == 0
+        if no_llm_files:
+            verdict = "no LLM-using files detected (scan empty — corpus may not use LLM APIs)"
+        elif total_findings == 0:
             verdict = f"0 LLM-API findings in {len(llm_files)} scanned files"
         else:
             verdict = f"{total_findings} LLM-API findings ({critical_findings} critical) in {len(llm_files)} files"
@@ -1046,17 +1075,27 @@ def llm_smells(ctx, min_severity, persist):
 
         # JSON output
         if json_mode:
+            _summary = {
+                "verdict": verdict,
+                "total_findings": total_findings,
+                "critical_findings": critical_findings,
+                "llm_files_scanned": len(llm_files),
+                "files_scanned": files_scanned,
+                "patterns_detected": sum(1 for v in counts_by_kind.values() if v > 0),
+                "min_severity": min_severity,
+            }
+            # W805: empty-corpus disclosure (Pattern 2). When the scan
+            # found zero LLM-using files, distinguish "0 findings on real
+            # LLM code" (clean success) from "0 findings because we found
+            # nothing to analyze" (degraded) via partial_success + state.
+            if no_llm_files:
+                _summary["partial_success"] = True
+                _summary["state"] = "no_llm_files"
             envelope = json_envelope(
                 "llm-smells",
                 budget=budget,
                 summary={
-                    "verdict": verdict,
-                    "total_findings": total_findings,
-                    "critical_findings": critical_findings,
-                    "llm_files_scanned": len(llm_files),
-                    "files_scanned": files_scanned,
-                    "patterns_detected": sum(1 for v in counts_by_kind.values() if v > 0),
-                    "min_severity": min_severity,
+                    **_summary,
                     # Pattern 3 vocabulary: name what the metric counts so
                     # downstream agents reading just the summary know the
                     # axis. ``findings`` here is per-OCCURRENCE, NOT per

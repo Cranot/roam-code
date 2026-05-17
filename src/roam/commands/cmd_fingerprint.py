@@ -419,11 +419,49 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
         from roam.graph.fingerprint import compare_fingerprints, compute_fingerprint
 
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        # W805-followup-B: empty-corpus short-circuit (Pattern 2 silent-fallback fix).
+        # The spectral analysis (Fiedler vector + Louvain clustering)
+        # operates on the symbol graph; with zero symbols it would either
+        # crash inside build_symbol_graph / compute_fingerprint OR return
+        # degenerate metrics (0 layers, 0.000 fiedler) that look like a
+        # tidy result. Surface the empty state explicitly via
+        # partial_success + closed-enum state. Mirrors W834 / W836 + W805.
+        if sym_count == 0:
+            verdict = "no symbols indexed (corpus empty — run `roam index --force` to populate)"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "fingerprint",
+                            summary={
+                                "verdict": verdict,
+                                "symbol_count": 0,
+                                "partial_success": True,
+                                "state": "no_symbols",
+                            },
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {verdict}")
+            return
         if sym_count > _HARD_CAP_SYMBOLS:
-            msg = (
-                f"Graph too large ({sym_count} symbols, hard cap {_HARD_CAP_SYMBOLS:,}) "
-                "for fingerprint analysis. Index a subdirectory to reduce graph size, "
-                "or override `_HARD_CAP_SYMBOLS` in cmd_fingerprint.py."
+            # W1085 (Pattern-1A): refuse-on-prerequisite must surface
+            # partial_success + closed-enum state. The pre-W1085 envelope
+            # made "graph too large, refused to analyze" structurally
+            # indistinguishable from "analyzed cleanly with no findings"
+            # to any consumer that only reads summary fields.
+            # LAW 4: terminal token must hit the concrete-noun anchor set
+            # (formatter.concrete_plural_terminals -> "symbols"). Put the
+            # cap clause first so the sentence ends on "symbols".
+            verdict = (
+                f"Skipped fingerprint above cap {_HARD_CAP_SYMBOLS:,}: "
+                f"graph has {sym_count:,} symbols"
+            )
+            hint = (
+                "Index a subdirectory with `roam index <path>` to narrow the "
+                "analyzed subset, or raise `_HARD_CAP_SYMBOLS` in "
+                "src/roam/commands/cmd_fingerprint.py."
             )
             if json_mode:
                 click.echo(
@@ -431,15 +469,21 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
                         json_envelope(
                             "fingerprint",
                             summary={
-                                "verdict": msg,
+                                "verdict": verdict,
                                 "symbol_count": sym_count,
                                 "hard_cap": _HARD_CAP_SYMBOLS,
+                                "partial_success": True,
+                                "state": "graph_too_large",
+                                "cap_threshold": _HARD_CAP_SYMBOLS,
+                                "actual_count": sym_count,
                             },
+                            hint=hint,
                         )
                     )
                 )
             else:
-                click.echo(f"VERDICT: {msg}")
+                click.echo(f"VERDICT: {verdict}")
+                click.echo(f"HINT: {hint}")
             return
         if sym_count > _WARN_THRESHOLD_SYMBOLS and not json_mode:
             click.echo(

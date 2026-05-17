@@ -14,6 +14,18 @@
     "url": "https://github.com/Cranot/roam-code"
   },
   "documentation": "https://roam-code.com/docs/getting-started",
+  "icons": [
+    {
+      "src": "https://roam-code.com/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "https://roam-code.com/og.png",
+      "sizes": "1200x630",
+      "type": "image/png"
+    }
+  ],
   "license": "Apache-2.0",
   "spdx_license_id": "Apache-2.0",
   "categories": [

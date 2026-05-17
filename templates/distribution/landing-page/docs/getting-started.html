@@ -82,7 +82,7 @@
     <section>
       <h2>Why Roam is different</h2>
       <p>
-        Cursor, Cody, Aider, and Windsurf are <strong>human-first IDE surfaces</strong> that log a session. Roam is an <strong>agent-first CLI surface</strong> that gates the change and emits proof. The moat is three properties no competitor combines today:
+        IDE-surface tools (Cursor, Cody, Windsurf, Continue, Sweep) and cloud semantic reviewers (CodeRabbit, Greptile, Qodo, SonarQube) all read the diff after the agent writes it, in the cloud, after credentials. Roam is the local-CLI surface that gates the change <em>before</em> the diff and emits portable proof <em>after</em>. Side-by-side facts (Cody enterprise-only since July 2025, Cursor multi-repo + audit-logs 2026-05-13, Windsurf SOC2 II + FedRAMP High + HIPAA) live on <a href="/compare">/compare</a>. The Roam moat is three properties no competitor combines today:
       </p>
       <ul>
         <li><strong>Credential-free.</strong> No account, no API key, no cloud login. <code>pip install</code> and run.</li>
@@ -131,6 +131,7 @@ roam init</code></pre>
       <h2>What's next</h2>
       <p>Pick the path that matches your role:</p>
       <ul>
+        <li><strong>See it run end-to-end:</strong> <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash; install &rarr; health &rarr; preflight &rarr; critique &rarr; signed <code>ChangeEvidence</code> packet, the moat arc in one sitting.</li>
         <li><strong>Agent integration:</strong> <code>roam mcp-setup claude-code</code> (or <code>cursor</code>, <code>continue</code>) — then see <a href="/docs/mcp-usage">Using Roam via MCP</a> for the cold-start envelope and canonical agent loop.</li>
         <li><strong>Full surface reference:</strong> <a href="/docs/command-reference">Command Reference</a> — every command, every flag, every JSON envelope.</li>
         <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> — how the graph, findings registry, run ledger, and evidence compiler fit together.</li>
@@ -238,7 +239,7 @@ roam --json test-gaps --changed</code></pre>
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for developers and AI agents.</span>
+        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

@@ -34,6 +34,7 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 # ---------------------------------------------------------------------------
 # Health scoring
@@ -624,6 +625,10 @@ def _output_symbol_metrics(conn, symbol_id, target, json_mode, budget, resolutio
                         "target_type": "symbol",
                         "health": health,
                         "caller_metric_definition": "direct_in_degree (fan_in from graph_metrics.in_degree, raw_edge_rows fallback)",
+                        # W1298 Pattern-3a: disclose the precise complexity
+                        # scorer that produced ``metrics.complexity`` so this
+                        # envelope cannot drift from cmd_complexity's reading.
+                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                         **disclosure,
                     },
                     target_type="symbol",
@@ -677,6 +682,10 @@ def _output_file_metrics(conn, file_id, target, json_mode, budget):
                         "health": file_health,
                         "symbol_count": fm["symbol_count"],
                         "caller_metric_definition": "direct_in_degree (per-symbol fan_in summed across file)",
+                        # W1298 Pattern-3a: per-symbol ``complexity`` and the
+                        # file-level ``metrics.complexity`` aggregate are both
+                        # sums of cognitive_complexity from symbol_metrics.
+                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                     },
                     target_type="file",
                     file=data["file"],

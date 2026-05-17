@@ -87,12 +87,15 @@ also exposes `commands[]`, `categories[]`, and `mcp_tools[]` arrays):
 }
 ```
 
-The README claim of **238 commands, 224 MCP tools, 7 categories** matches.
-The `summary.mcp_tool_count_by_preset` field on the same envelope breaks
-the 224 down per preset (`core`: 57, `review`: 70, `refactor`: 70,
-`debug`: 69, `architecture`: 71, `compliance`: 13, `full`: 224). These
+The counts above (commands / canonical / categories / MCP tools) match the
+README sub-headline. The `summary.mcp_tool_count_by_preset` field on the
+same envelope breaks the MCP-tool total down per preset (`core` is the
+default curated subset; `full` enumerates every registered tool). These
 counts are AST-derived from `src/roam/mcp_server.py`, so they hold
-whether or not the `[mcp]` extras are installed at runtime.
+whether or not the `[mcp]` extras are installed at runtime. (W844-drive-
+by-2: the inline 238/224/7 numbers were a v13.1 snapshot of the headline;
+v13.2 dropped the count-headline framing and the live count is now
+whatever `surface --json` reports.)
 
 ---
 

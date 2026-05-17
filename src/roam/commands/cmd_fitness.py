@@ -80,6 +80,7 @@ from roam.output.confidence import (
     wrap_findings,
 )
 from roam.output.formatter import WarningsOut, json_envelope, loc, to_json
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 
 # R22 — confidence classifier for fitness violations.
@@ -177,13 +178,18 @@ def _load_rules(
                 f"`{{name, type, ...}}` entries."
             )
         return []
-    rules = data.get("rules")
-    if not isinstance(rules, list):
-        if warnings_out is not None:
-            warnings_out.append(
-                f"fitness: {path_str!r} `rules` is {type(rules).__name__!r}, expected a list. Treating as empty rules."
-            )
-        return []
+    # W1038 — shared "load → check type → warn-or-default" extractor.
+    from roam.commands._yaml_loader import extract_typed
+
+    rules = extract_typed(
+        data,
+        "rules",
+        list,
+        [],
+        warnings_out=warnings_out,
+        context=f"fitness: {path_str!r}",
+        expected_shape="a list",
+    )
     out: list[dict] = []
     for idx, r in enumerate(rules):
         if not isinstance(r, dict):
@@ -809,6 +815,11 @@ def _emit_fitness_json(summary, rule_results, all_violations, new_violations) ->
     enriched_summary["findings_confidence_distribution"] = distribution
     if "verdict" in enriched_summary:
         enriched_summary["verdict"] = verdict_with_high_count(enriched_summary["verdict"], distribution)
+    # W1298 Pattern-3a: any cognitive_complexity-keyed violation reads
+    # from symbol_metrics.cognitive_complexity — disclose the scorer so a
+    # consumer cannot misread it as McCabe cyclomatic complexity.
+    if any(v.get("metric") == "cognitive_complexity" for v in all_violations):
+        enriched_summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
     click.echo(
         to_json(
             json_envelope(

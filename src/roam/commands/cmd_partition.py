@@ -12,6 +12,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 # ---------------------------------------------------------------------------
 # Conflict-risk classifier (extracted for unit-testing — fleet planner
@@ -695,6 +696,10 @@ def partition(ctx, n_agents, output_format):
                 "total_partitions": manifest["total_partitions"],
                 "n_agents": manifest["n_agents"],
                 "overall_conflict_probability": manifest["overall_conflict_probability"],
+                # W1298 Pattern-3a: each partition's ``complexity`` (and the
+                # downstream ``estimated_complexity`` constraint) is a sum
+                # of cognitive_complexity from symbol_metrics.
+                "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
             },
             partitions=manifest["partitions"],
             dependencies=manifest["dependencies"],
@@ -716,6 +721,9 @@ def partition(ctx, n_agents, output_format):
                             "verdict": manifest["verdict"],
                             "total_partitions": manifest["total_partitions"],
                             "overall_conflict_probability": manifest["overall_conflict_probability"],
+                            # W1298 Pattern-3a: estimated_complexity in
+                            # teams constraints is a sum of cognitive_complexity.
+                            "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                         },
                         format="claude-teams",
                         **teams_data,
@@ -737,6 +745,11 @@ def partition(ctx, n_agents, output_format):
                         "total_partitions": manifest["total_partitions"],
                         "n_agents": manifest["n_agents"],
                         "overall_conflict_probability": manifest["overall_conflict_probability"],
+                        # W1298 Pattern-3a: each partition's ``complexity``
+                        # (and the downstream agents[*].constraints
+                        # ``estimated_complexity``) is a sum of
+                        # cognitive_complexity from symbol_metrics.
+                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                     },
                     partitions=manifest["partitions"],
                     dependencies=manifest["dependencies"],

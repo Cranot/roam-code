@@ -37,10 +37,10 @@ from roam.output.formatter import json_envelope, to_json
 from roam.security.taint_engine import (
     OPENVEX_JUSTIFICATIONS,
     OPENVEX_STATUSES,
-    load_rules,
     run_taint,
     vex_justification_for,
 )
+from roam.security.taint_rules_lint import capture_qualified_only_lint
 
 # W122: taint is the fifth detector migrating onto the central findings
 # registry (after `clones` W95, `dead` W99, `complexity` W102, `n1`
@@ -51,6 +51,12 @@ from roam.security.taint_engine import (
 # :mod:`roam.security.taint_engine` change meaningfully — both shape
 # the registry row's ``claim`` / ``confidence``.
 TAINT_DETECTOR_VERSION: str = "1.0.0"
+
+# W489-A: hoisted to ``roam.security.taint_rules_lint`` so cmd_cga (and
+# any future command loading taint rules out-of-band) can reuse the
+# same capture path. The local name is kept as a thin alias to preserve
+# any test or downstream importer expecting it inside cmd_taint.
+_w489_a_capture_qualified_only_lint = capture_qualified_only_lint
 
 
 def _taint_finding_id(rule_id: str, source_id: int, sink_id: int, path_ids: list[int]) -> str:
@@ -431,7 +437,19 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     rules_path = Path(rules_dir) if rules_dir else _default_rules_dir()
-    rules = load_rules(rules_path)
+    # W489-A: capture the W454/W479 `qualified_only` lint warnings
+    # alongside the loaded rules so the envelope can disclose bare-name
+    # violations without losing rule_id / kind / name fields. The lint
+    # is advisory — rules still load — so this is disclosure-only and
+    # never gates execution (W462 territory).
+    rules, _w489_a_violations = _w489_a_capture_qualified_only_lint(rules_path)
+    _w489_a_total_rules = len(rules)
+    # W1061-followup: capture the pre-filter rule-id set so the SARIF emit
+    # branch below can disclose which rules ``--rule`` / ``--rules-pack``
+    # disabled at runtime. The post-filter ``rules`` list no longer
+    # contains the dropped entries, so any future filter-disclosure must
+    # diff against this baseline.
+    _pre_filter_rule_ids = [r.rule_id for r in rules]
     if rules_pack:
         # Pack name → substring matched against rule id (e.g. "sqli"
         # matches "python-sqli", "xss" matches "js-xss").
@@ -443,16 +461,33 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
     if not rules:
         verdict = f"No rules in {rules_path}"
         if json_mode:
+            # W489-A: surface the qualified_only lint even on the
+            # no-rules branch — N=0 violations against M=0 rules is
+            # still useful disclosure (M == 0 itself signals an empty
+            # / broken pack).
+            _w489_a_summary = {
+                "verdict": verdict,
+                "rules": 0,
+                "findings": 0,
+                "rules_lint": {
+                    "qualified_only_violations": len(_w489_a_violations),
+                    "total_rules": _w489_a_total_rules,
+                },
+            }
+            if _w489_a_violations:
+                _w489_a_summary["partial_success"] = True
+                _w489_a_summary["warnings_out"] = [
+                    f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
+                ]
+            _w489_a_envelope_extra: dict = {"rules_dir": str(rules_path)}
+            if _w489_a_violations:
+                _w489_a_envelope_extra["qualified_only_violations"] = _w489_a_violations
             click.echo(
                 to_json(
                     json_envelope(
                         "taint",
-                        summary={
-                            "verdict": verdict,
-                            "rules": 0,
-                            "findings": 0,
-                        },
-                        rules_dir=str(rules_path),
+                        summary=_w489_a_summary,
+                        **_w489_a_envelope_extra,
                     )
                 )
             )
@@ -483,35 +518,53 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
                 f"run `roam index --force` to populate the graph)"
             )
             if json_mode:
+                # W489-A: stamp the qualified_only lint result on the
+                # empty-corpus branch too. partial_success is already
+                # True here (empty corpus is itself degraded); the
+                # warnings_out entry appends without overriding.
+                _w489_a_summary = {
+                    "verdict": verdict,
+                    "state": "empty_corpus",
+                    "partial_success": True,
+                    "rules": len(rules),
+                    "findings": 0,
+                    # Keep the distribution shape consistent with the
+                    # populated-corpus branch (line 611) so consumers
+                    # don't have to special-case empty_corpus.
+                    "findings_confidence_distribution": {"high": 0, "medium": 0, "low": 0},
+                    "rules_lint": {
+                        "qualified_only_violations": len(_w489_a_violations),
+                        "total_rules": _w489_a_total_rules,
+                    },
+                }
+                if _w489_a_violations:
+                    _w489_a_summary["warnings_out"] = [
+                        f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
+                    ]
+                _w489_a_envelope_extra: dict = {
+                    "rules_dir": str(rules_path),
+                    "rule_ids": [r.rule_id for r in rules],
+                    "findings": [],
+                    "agent_contract": {
+                        "facts": [
+                            "0 symbols in graph",
+                            f"{len(rules)} rules loaded but not run against 0 symbols",
+                            "run `roam index --force` to populate the indexed symbols",
+                        ],
+                        "next_commands": [
+                            "roam index --force",
+                            "roam taint",
+                        ],
+                    },
+                }
+                if _w489_a_violations:
+                    _w489_a_envelope_extra["qualified_only_violations"] = _w489_a_violations
                 click.echo(
                     to_json(
                         json_envelope(
                             "taint",
-                            summary={
-                                "verdict": verdict,
-                                "state": "empty_corpus",
-                                "partial_success": True,
-                                "rules": len(rules),
-                                "findings": 0,
-                                # Keep the distribution shape consistent with the
-                                # populated-corpus branch (line 611) so consumers
-                                # don't have to special-case empty_corpus.
-                                "findings_confidence_distribution": {"high": 0, "medium": 0, "low": 0},
-                            },
-                            rules_dir=str(rules_path),
-                            rule_ids=[r.rule_id for r in rules],
-                            findings=[],
-                            agent_contract={
-                                "facts": [
-                                    "0 symbols in graph",
-                                    f"{len(rules)} rules loaded but not run against 0 symbols",
-                                    "run `roam index --force` to populate the indexed symbols",
-                                ],
-                                "next_commands": [
-                                    "roam index --force",
-                                    "roam taint",
-                                ],
-                            },
+                            summary=_w489_a_summary,
+                            **_w489_a_envelope_extra,
                         )
                     )
                 )
@@ -572,9 +625,67 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
                 pass
 
     if sarif_mode:
-        from roam.output.sarif import taint_to_sarif, write_sarif
+        from roam.output.sarif import (
+            runtime_filter_disclosure,
+            taint_to_sarif,
+            write_sarif,
+        )
 
-        click.echo(write_sarif(taint_to_sarif(findings_dump)))
+        # W1061-followup-2: rule-level + finding-level filter disclosure
+        # delegated to the shared :func:`runtime_filter_disclosure`
+        # helper. Original W1061-followup semantics preserved:
+        #   --rule    / --rules-pack  -> rule-id-level disables; every
+        #                                pre-filter rule_id NOT in the
+        #                                post-filter set surfaces as a
+        #                                ``ruleConfigurationOverride``
+        #                                with ``configuration.enabled:
+        #                                false``.
+        #   --rules-dir               -> alternate rule pack location;
+        #                                surfaces as a finding-level
+        #                                notification (``rules-dir-filter``
+        #                                synthetic descriptor) because the
+        #                                rule_id namespace itself is
+        #                                replaced rather than narrowed.
+        rule_disabled: list[tuple[str, dict]] = []
+        finding_filters: list[tuple[str, dict]] = []
+        active_rule_ids = {r.rule_id for r in rules}
+        if rule_filter or rules_pack:
+            disabled_rule_ids = sorted(
+                rid for rid in _pre_filter_rule_ids if rid not in active_rule_ids
+            )
+            for rid in disabled_rule_ids:
+                disabled_by = []
+                if rule_filter:
+                    disabled_by.append("--rule")
+                if rules_pack:
+                    disabled_by.append("--rules-pack")
+                props: dict = {"disabled_by": ",".join(disabled_by)}
+                if rule_filter:
+                    props["rule_filter"] = rule_filter
+                if rules_pack:
+                    props["rules_pack"] = rules_pack
+                rule_disabled.append((rid, props))
+        if rules_dir:
+            finding_filters.append(
+                (
+                    "rules-dir-filter",
+                    {"filter": "--rules-dir", "filter_value": str(rules_path)},
+                )
+            )
+        sarif_overrides, sarif_notif_overrides = runtime_filter_disclosure(
+            rule_ids_disabled=rule_disabled,
+            finding_level_filters=finding_filters,
+        )
+
+        click.echo(
+            write_sarif(
+                taint_to_sarif(
+                    findings_dump,
+                    runtime_overrides=sarif_overrides or None,
+                    runtime_notification_overrides=sarif_notif_overrides or None,
+                )
+            )
+        )
         if ci_mode and high_count > 0:
             ctx.exit(5)
         return
@@ -600,20 +711,35 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
         if findings_dump:
             envelope_kwargs["openvex_justification_strings"] = sorted(OPENVEX_JUSTIFICATIONS)
             envelope_kwargs["openvex_statuses"] = sorted(OPENVEX_STATUSES)
+        # W489-A: stamp the qualified_only lint result on the main JSON
+        # branch. rules_lint is always present (symmetric emission per
+        # W1101/W1006); qualified_only_violations[] only when non-empty
+        # (W1006 redactions[] precedent for content lists).
+        _w489_a_summary = {
+            "verdict": wrapped_verdict,
+            "rules": len(rules),
+            "findings": len(findings),
+            "errors": high_count,
+            "warnings": medium_count,
+            "sanitized": sanitized_count,
+            "risk_score": risk_score,
+            "findings_confidence_distribution": distribution,
+            "rules_lint": {
+                "qualified_only_violations": len(_w489_a_violations),
+                "total_rules": _w489_a_total_rules,
+            },
+        }
+        if _w489_a_violations:
+            _w489_a_summary["partial_success"] = True
+            _w489_a_summary["warnings_out"] = [
+                f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
+            ]
+            envelope_kwargs["qualified_only_violations"] = _w489_a_violations
         click.echo(
             to_json(
                 json_envelope(
                     "taint",
-                    summary={
-                        "verdict": wrapped_verdict,
-                        "rules": len(rules),
-                        "findings": len(findings),
-                        "errors": high_count,
-                        "warnings": medium_count,
-                        "sanitized": sanitized_count,
-                        "risk_score": risk_score,
-                        "findings_confidence_distribution": distribution,
-                    },
+                    summary=_w489_a_summary,
                     **envelope_kwargs,
                 )
             )

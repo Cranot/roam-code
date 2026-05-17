@@ -26,7 +26,10 @@ from roam.output.formatter import json_envelope, to_json
     maturity="stable",
     mcp_expose=False,
     mcp_preset=("core",),
-    side_effect=False,
+    # W365-followup: deleting the index DB is a side effect (writes to disk /
+    # mutates state). destructive=True and side_effect=False were
+    # self-contradictory under capability.py:64's canonical semantic.
+    side_effect=True,
     task_required=False,
     destructive=True,
     stale_sensitive=False,

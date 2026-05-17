@@ -58,7 +58,7 @@ def _changed_files(commit_range: str | None) -> list[str]:
 @click.command(name="test-impact")
 @click.argument("commit_range", required=False, default=None)
 @click.option("--max-hops", type=int, default=5, show_default=True, help="BFS depth from each changed symbol.")
-@click.option("--limit", type=int, default=20, show_default=True, help="Top N tests to surface.")
+@click.option("--limit", "--top", "limit", type=int, default=20, show_default=True, help="Top N tests to surface.")  # W1142: --top alias
 @click.pass_context
 def test_impact(ctx, commit_range, max_hops, limit) -> None:
     """List tests transitively reachable from symbols changed in <range>."""
@@ -162,7 +162,12 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
                     test_hits[path] = test_hits.get(path, 0) + 1
 
     ranked = sorted(test_hits.items(), key=lambda x: -x[1])
+    # W1142-followup: cap-hit disclosure. ``ranked`` holds every reachable
+    # test before slicing by --limit. Record the pre-slice population so
+    # agents can distinguish "N total tests" from "N of M, truncated".
+    total_tests_full = len(ranked)
     items = [{"file": path, "reach_count": cnt} for path, cnt in ranked[:limit]]
+    items_truncated = total_tests_full > len(items)
 
     verdict = (
         f"{len(test_hits)} test file(s) reachable from {len(files)} changed file(s)"
@@ -191,11 +196,25 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
         return
 
     if json_mode:
+        # W1142-followup: cap-hit disclosure (canonical Pattern-2 shape).
+        _summary = {
+            "verdict": verdict,
+            "count": len(items),
+            "total_count": total_tests_full,
+            "truncated": items_truncated,
+            "limit": limit,
+        }
+        if items_truncated:
+            _summary["warnings_out"] = [
+                f"truncated to {len(items)} of {total_tests_full} — "
+                "pass --limit larger to see more"
+            ]
+            _summary["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "test-impact",
-                    summary={"verdict": verdict, "count": len(test_hits)},
+                    summary=_summary,
                     changed_files=files,
                     tests=items,
                 )

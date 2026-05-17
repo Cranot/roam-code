@@ -341,6 +341,25 @@ def evidence_oscal(
         control_count = finding_count
         document_uuid = ar["uuid"]
 
+        # W350 drive-by: surface authority-axis summary counters on the
+        # envelope so consumers reading only ``summary`` can detect the
+        # P1.10 producer surface (identity / authority / evidence Q2)
+        # without re-parsing the OSCAL document. Always-emit shape
+        # (Pattern-2): all 6 AUTHORITY_KINDS keys present, zero-padded
+        # so consumers don't branch on "did the projection populate
+        # this?". Counts come straight from the parsed evidence packet
+        # — they are not derived from observations[] (observations are
+        # capped at AUTHORITY_REFS_CAP per kind; counters are uncapped
+        # totals).
+        from roam.evidence._vocabulary import AUTHORITY_KINDS as _AUTH_KINDS
+
+        authority_kinds_count: dict[str, int] = {k: 0 for k in sorted(_AUTH_KINDS)}
+        for _aref in getattr(evidence, "authority_refs", None) or ():
+            _ak = getattr(_aref, "authority_kind", None)
+            if isinstance(_ak, str) and _ak in authority_kinds_count:
+                authority_kinds_count[_ak] += 1
+        authority_refs_total = sum(authority_kinds_count.values())
+
         # W561 Pattern 1 variant D: when non-strict parsing dropped any
         # rows, the verdict + envelope MUST disclose the degradation.
         # `dropped` is always a list (empty when nothing was dropped); we
@@ -368,6 +387,9 @@ def evidence_oscal(
             "control_count": control_count,
             "framework_count": framework_count,
             "import_ap_ref": import_ap_ref,
+            # W350 drive-by: authority-axis projection counters.
+            "authority_refs_count": authority_refs_total,
+            "authority_kinds": authority_kinds_count,
             # W561 disclosure fields: always present so the envelope
             # shape is stable; values are 0 / False on the happy path so
             # the no-drop fixtures stay byte-stable.
@@ -488,6 +510,8 @@ def _emit_doc(
             facts.append(f"{counts.get('finding_count', 0)} findings")
             facts.append(f"{counts.get('observation_count', 0)} observations")
             facts.append("OSCAL v1.2 assessment-results document")
+            # W350 drive-by: LAW-4 ``records`` terminal is anchored.
+            facts.append(f"{counts.get('authority_refs_count', 0)} authority records")
             # W561 Pattern 1 variant D: surface dropped rows in facts
             # so an agent reading only ``agent_contract.facts`` still
             # sees the degradation. LAW 4 anchor: terminal noun is the

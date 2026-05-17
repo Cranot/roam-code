@@ -626,8 +626,9 @@ def test_control_mapping_pass_condition_enum_closed():
 def test_control_mapping_surface_enum_closed():
     """W504 - every item in every entry's ``surface[]`` is in the closed enum.
 
-    The seven legal surfaces are documented inline in the YAML header
-    (control-mapping.yaml lines 26-30). The crosswalk addition wave
+    The six legal surfaces are documented inline in the YAML header
+    (control-mapping.yaml lines 26-30; W507 pruned dead 'self-hosted'
+    vocab so the count dropped 7 -> 6). The crosswalk addition wave
     (W428) introduced new entries; any future typo (``pr_replay`` vs
     ``pr-replay``, ``security-reach`` vs ``security-reachability``) would
     silently split the surface population. Pin the enum here.

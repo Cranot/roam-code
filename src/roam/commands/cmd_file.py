@@ -203,7 +203,7 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
     "deps_of",
     type=str,
     default=None,
-    help="Show skeleton of PATH plus all files it imports",
+    help="Show skeleton of <PATH> plus all files it imports",
 )
 @click.pass_context
 def file_cmd(ctx, paths, full, changed, deps_of):

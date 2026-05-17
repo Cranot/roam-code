@@ -32,11 +32,13 @@ def cli_runner():
     return CliRunner()
 
 
-@pytest.fixture
-def empty_indexed_project(tmp_path):
+# W414b: module-scoped — every test below is a read-only `roam onboard`
+# (alias) / `roam understand` invocation. Re-indexing twice per test (one
+# for each fixture variant) across ~20 tests cost ~80s of redundant work.
+@pytest.fixture(scope="module")
+def empty_indexed_project(tmp_path_factory):
     """A git repo with a single trivial file, indexed."""
-    repo = tmp_path / "empty_proj"
-    repo.mkdir()
+    repo = tmp_path_factory.mktemp("empty_proj")
     (repo / ".gitignore").write_text(".roam/\n")
     (repo / "hello.py").write_text("# empty\n")
     git_init(repo)
@@ -45,11 +47,10 @@ def empty_indexed_project(tmp_path):
     return repo
 
 
-@pytest.fixture
-def small_indexed_project(tmp_path):
+@pytest.fixture(scope="module")
+def small_indexed_project(tmp_path_factory):
     """A small Python project with imports and calls, indexed."""
-    repo = tmp_path / "small_proj"
-    repo.mkdir()
+    repo = tmp_path_factory.mktemp("small_proj")
     (repo / ".gitignore").write_text(".roam/\n")
 
     src = repo / "src"

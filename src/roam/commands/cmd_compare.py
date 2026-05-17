@@ -34,6 +34,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 
 @roam_capability(
@@ -58,7 +59,7 @@ from roam.output.formatter import json_envelope, to_json
     type=int,
     default=15,
     show_default=True,
-    help="Show only the top N changes per category.",
+    help="Show only the top <N> changes per category.",
 )
 @click.option(
     "--threshold",
@@ -104,6 +105,9 @@ def compare_cmd(ctx, baseline: str, target: str, top: int, threshold: int) -> No
                         "symbols_moved": len(delta["symbols_moved"]),
                         "complexity_regressions": len(delta["complexity_up"]),
                         "complexity_improvements": len(delta["complexity_down"]),
+                        # W1298 Pattern-3a: complexity_up/_down deltas are
+                        # per-file sums of cognitive_complexity, not McCabe.
+                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                     },
                     symbols_added=delta["symbols_added"][:top],
                     symbols_removed=delta["symbols_removed"][:top],

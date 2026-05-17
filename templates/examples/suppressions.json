@@ -1,0 +1,44 @@
+{
+  "_comment": "templates/examples/suppressions.json -- per-finding-hash allowlist (W691 substrate). Copy to .roam/suppressions.json at your repo root. Reach this file via `roam suppress <finding_id>` after manually verifying a finding is a false positive. The math / over-fetch / missing-index / auth-gaps detectors flag the matched finding with `suppressed: {source: 'suppressions.json', ...}` instead of dropping it. The SARIF projection at roam.output.sarif._load_suppressions consumes the same file via the optional rule_id + location fields.",
+
+  "_schema_reference": "Canonical loader: roam.commands.finding_suppress._load_per_finding_suppressions. Typed loader: roam.commands.finding_suppress.load_per_finding_suppressions_typed. Dataclass: roam.policy.suppression_v2.FindingIdSuppression. SARIF projection: roam.output.sarif._load_suppressions. Required key: top-level finding_id (16-char sha256 prefix from roam.commands.finding_suppress.finding_id). Required entry field: reason. Optional entry fields: added_at, rule_id, location, task_id, symbol_name, author, status, expires.",
+
+  "a1b2c3d4e5f6a7b8": {
+    "reason": "Verified false positive — Stripe webhook signature check happens upstream in middleware.py",
+    "added_at": "2026-05-15T14:32:01.123456Z",
+    "author": "alice@example.com",
+    "rule_id": "auth-gaps",
+    "location": "src/api/webhooks.py:42",
+    "task_id": "missing-auth",
+    "symbol_name": "stripe_event_handler"
+  },
+
+  "f7e6d5c4b3a29180": {
+    "reason": "Intentional — fan-out queries are bounded by N<=10 categories enum",
+    "added_at": "2026-05-12T09:15:00.000000Z",
+    "author": "bob@example.com",
+    "rule_id": "n-plus-one",
+    "location": "src/api/categories.py:88",
+    "task_id": "io-in-loop",
+    "symbol_name": "list_category_summaries"
+  },
+
+  "0123456789abcdef": {
+    "reason": "Tracked in JIRA-2218 — index rewrite scheduled for Q3 migration",
+    "added_at": "2026-04-01T00:00:00.000000Z",
+    "author": "carol@example.com",
+    "status": "acknowledged",
+    "expires": "2026-09-30",
+    "rule_id": "missing-index",
+    "location": "src/db/legacy_search.py:140",
+    "task_id": "missing-index",
+    "symbol_name": "search_archive"
+  },
+
+  "fedcba9876543210": {
+    "reason": "Recursive object-diff helper — recursion is the algorithm, not a smell",
+    "added_at": "2026-05-10T11:00:00.000000Z",
+    "task_id": "branching-recursion",
+    "symbol_name": "deepEqual"
+  }
+}

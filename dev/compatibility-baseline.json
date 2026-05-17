@@ -1,0 +1,2675 @@
+{
+  "categories": [
+    "Getting Started",
+    "Daily Workflow",
+    "Codebase Health",
+    "Architecture",
+    "Exploration",
+    "Reports & CI",
+    "Refactoring"
+  ],
+  "commands": {
+    "adrs": {
+      "flags": [
+        "--limit",
+        "--status"
+      ],
+      "function": "adrs",
+      "module": "roam.commands.cmd_adrs"
+    },
+    "adversarial": {
+      "flags": [
+        "--fail-on-critical",
+        "--format",
+        "--range",
+        "--severity",
+        "--staged"
+      ],
+      "function": "adversarial",
+      "module": "roam.commands.cmd_adversarial"
+    },
+    "affected": {
+      "flags": [
+        "--base",
+        "--changed",
+        "--depth"
+      ],
+      "function": "affected",
+      "module": "roam.commands.cmd_affected"
+    },
+    "affected-tests": {
+      "flags": [
+        "--command",
+        "--staged",
+        "target"
+      ],
+      "function": "affected_tests",
+      "module": "roam.commands.cmd_affected_tests"
+    },
+    "agent-context": {
+      "flags": [
+        "--agent-id",
+        "--agents"
+      ],
+      "function": "agent_context",
+      "module": "roam.commands.cmd_agent_context"
+    },
+    "agent-export": {
+      "flags": [
+        "--brief",
+        "--bundle",
+        "--format",
+        "--output",
+        "--profile",
+        "--write"
+      ],
+      "function": "agent_export",
+      "module": "roam.commands.cmd_agent_export"
+    },
+    "agent-plan": {
+      "flags": [
+        "--agents",
+        "--format"
+      ],
+      "function": "agent_plan",
+      "module": "roam.commands.cmd_agent_plan"
+    },
+    "agent-score": {
+      "flags": [
+        "--agent",
+        "--since",
+        "--top"
+      ],
+      "function": "agent_score_cmd",
+      "module": "roam.commands.cmd_agent_score"
+    },
+    "agents-md": {
+      "flags": [
+        "--out",
+        "--refresh",
+        "--top-danger",
+        "--top-laws",
+        "--with-constitution",
+        "--with-laws",
+        "--with-rules"
+      ],
+      "function": "agents_md_cmd",
+      "module": "roam.commands.cmd_agents_md"
+    },
+    "ai-ratio": {
+      "flags": [
+        "--detail",
+        "--since"
+      ],
+      "function": "ai_ratio",
+      "module": "roam.commands.cmd_ai_ratio"
+    },
+    "ai-readiness": {
+      "flags": [
+        "--threshold"
+      ],
+      "function": "ai_readiness",
+      "module": "roam.commands.cmd_ai_readiness"
+    },
+    "alerts": {
+      "flags": [],
+      "function": "alerts",
+      "module": "roam.commands.cmd_alerts"
+    },
+    "algo": {
+      "flags": [
+        "--confidence",
+        "--exclude",
+        "--framework",
+        "--include-tests",
+        "--list-detectors",
+        "--list-frameworks",
+        "--max-per-task",
+        "--only",
+        "--profile",
+        "--since",
+        "--task",
+        "--top"
+      ],
+      "function": "math_cmd",
+      "module": "roam.commands.cmd_math"
+    },
+    "annotate": {
+      "flags": [
+        "--author",
+        "--expires",
+        "--tag",
+        "content",
+        "target"
+      ],
+      "function": "annotate",
+      "module": "roam.commands.cmd_annotate"
+    },
+    "annotations": {
+      "flags": [
+        "--since",
+        "--tag",
+        "target"
+      ],
+      "function": "annotations",
+      "module": "roam.commands.cmd_annotate"
+    },
+    "api": {
+      "flags": [
+        "--limit",
+        "--scope"
+      ],
+      "function": "api",
+      "module": "roam.commands.cmd_api"
+    },
+    "api-changes": {
+      "flags": [
+        "--base",
+        "--changed",
+        "--severity"
+      ],
+      "function": "api_changes",
+      "module": "roam.commands.cmd_api_changes"
+    },
+    "api-drift": {
+      "flags": [
+        "--confidence",
+        "--limit",
+        "--model"
+      ],
+      "function": "api_drift_cmd",
+      "module": "roam.commands.cmd_api_drift"
+    },
+    "architecture-drift": {
+      "flags": [
+        "--top",
+        "--window"
+      ],
+      "function": "architecture_drift_cmd",
+      "module": "roam.commands.cmd_architecture_drift"
+    },
+    "article-12-check": {
+      "flags": [
+        "--output",
+        "--pdf"
+      ],
+      "function": "article_12_check_cmd",
+      "module": "roam.commands.cmd_article_12_check"
+    },
+    "ask": {
+      "flags": [
+        "--explain",
+        "--list",
+        "--recipe",
+        "query"
+      ],
+      "function": "ask",
+      "module": "roam.commands.cmd_ask"
+    },
+    "attest": {
+      "flags": [
+        "--format",
+        "--output",
+        "--sign",
+        "--staged",
+        "commit_range"
+      ],
+      "function": "attest",
+      "module": "roam.commands.cmd_attest"
+    },
+    "audit": {
+      "flags": [
+        "--brief"
+      ],
+      "function": "audit",
+      "module": "roam.commands.cmd_audit"
+    },
+    "audit-trail-conformance-check": {
+      "flags": [
+        "--gate",
+        "--input",
+        "--persist",
+        "--retention-days",
+        "--sarif-output"
+      ],
+      "function": "audit_trail_conformance_check",
+      "module": "roam.commands.cmd_audit_trail_conformance"
+    },
+    "audit-trail-export": {
+      "flags": [
+        "--aggregate",
+        "--finalize",
+        "--format",
+        "--input",
+        "--output",
+        "--since",
+        "--top-actors",
+        "--until",
+        "--verdict"
+      ],
+      "function": "audit_trail_export",
+      "module": "roam.commands.cmd_audit_trail_export"
+    },
+    "audit-trail-verify": {
+      "flags": [
+        "--gate",
+        "--input",
+        "--persist"
+      ],
+      "function": "audit_trail_verify",
+      "module": "roam.commands.cmd_audit_trail_verify"
+    },
+    "auth-gaps": {
+      "flags": [
+        "--controllers-only",
+        "--limit",
+        "--min-confidence",
+        "--persist",
+        "--routes-only"
+      ],
+      "function": "auth_gaps_cmd",
+      "module": "roam.commands.cmd_auth_gaps"
+    },
+    "batch-search": {
+      "flags": [
+        "--include-paths",
+        "--limit-per-query",
+        "queries"
+      ],
+      "function": "batch_search",
+      "module": "roam.commands.cmd_batch_search"
+    },
+    "bisect": {
+      "flags": [
+        "--direction",
+        "--metric",
+        "--threshold",
+        "--top"
+      ],
+      "function": "bisect",
+      "module": "roam.commands.cmd_bisect"
+    },
+    "boundary": {
+      "flags": [
+        "--base-ref",
+        "--changed-range",
+        "--ci",
+        "--persist",
+        "--sarif"
+      ],
+      "function": "boundary",
+      "module": "roam.commands.cmd_boundary"
+    },
+    "breaking": {
+      "flags": [
+        "target"
+      ],
+      "function": "breaking",
+      "module": "roam.commands.cmd_breaking"
+    },
+    "brief": {
+      "flags": [
+        "--no-highlights",
+        "--no-mode",
+        "--no-next",
+        "--no-pr-bundle",
+        "--no-runs",
+        "--top-runs"
+      ],
+      "function": "brief_cmd",
+      "module": "roam.commands.cmd_brief"
+    },
+    "budget": {
+      "flags": [
+        "--config",
+        "--explain",
+        "--init",
+        "--range",
+        "--staged"
+      ],
+      "function": "budget",
+      "module": "roam.commands.cmd_budget"
+    },
+    "bus-factor": {
+      "flags": [
+        "--brain-methods",
+        "--force-team-mode",
+        "--limit",
+        "--persist",
+        "--stale-months"
+      ],
+      "function": "bus_factor",
+      "module": "roam.commands.cmd_bus_factor"
+    },
+    "capabilities": {
+      "flags": [
+        "--ai-safe-only",
+        "--category",
+        "--emit"
+      ],
+      "function": "capabilities_cmd",
+      "module": "roam.commands.cmd_capabilities"
+    },
+    "capsule": {
+      "flags": [
+        "--no-signatures",
+        "--output",
+        "--redact-paths"
+      ],
+      "function": "capsule",
+      "module": "roam.commands.cmd_capsule"
+    },
+    "causal-graph": {
+      "flags": [
+        "--kind",
+        "--top",
+        "symbol"
+      ],
+      "function": "causal_graph_cmd",
+      "module": "roam.commands.cmd_causal_graph"
+    },
+    "cga": {
+      "flags": [],
+      "function": "cga",
+      "module": "roam.commands.cmd_cga"
+    },
+    "changelog": {
+      "flags": [
+        "--since",
+        "--suggest"
+      ],
+      "function": "changelog",
+      "module": "roam.commands.cmd_changelog"
+    },
+    "check-rules": {
+      "flags": [
+        "--config",
+        "--list",
+        "--list-profiles",
+        "--profile",
+        "--rule",
+        "--severity"
+      ],
+      "function": "check_rules",
+      "module": "roam.commands.cmd_check_rules"
+    },
+    "churn": {
+      "flags": [
+        "-n"
+      ],
+      "function": "weather",
+      "module": "roam.commands.cmd_weather"
+    },
+    "ci-setup": {
+      "flags": [
+        "--gate",
+        "--platform",
+        "--python-version",
+        "--with-oscal",
+        "--with-slsa-l3",
+        "--write"
+      ],
+      "function": "ci_setup",
+      "module": "roam.commands.cmd_ci_setup"
+    },
+    "clean": {
+      "flags": [],
+      "function": "clean",
+      "module": "roam.commands.cmd_clean"
+    },
+    "clones": {
+      "flags": [
+        "--by-file",
+        "--exclude-fixtures",
+        "--exclude-tests",
+        "--min-lines",
+        "--persist",
+        "--scope",
+        "--threshold",
+        "--top"
+      ],
+      "function": "clones",
+      "module": "roam.commands.cmd_clones"
+    },
+    "closure": {
+      "flags": [
+        "--delete",
+        "--rename",
+        "name"
+      ],
+      "function": "closure",
+      "module": "roam.commands.cmd_closure"
+    },
+    "clusters": {
+      "flags": [
+        "--mermaid",
+        "--min-size",
+        "--strong",
+        "--weak"
+      ],
+      "function": "clusters",
+      "module": "roam.commands.cmd_clusters"
+    },
+    "codeowners": {
+      "flags": [
+        "--limit",
+        "--owner",
+        "--unowned"
+      ],
+      "function": "codeowners",
+      "module": "roam.commands.cmd_codeowners"
+    },
+    "compare": {
+      "flags": [
+        "--threshold",
+        "--top",
+        "baseline",
+        "target"
+      ],
+      "function": "compare_cmd",
+      "module": "roam.commands.cmd_compare"
+    },
+    "compatibility": {
+      "flags": [
+        "--baseline",
+        "--ci",
+        "--current",
+        "--write-baseline"
+      ],
+      "function": "compatibility",
+      "module": "roam.commands.cmd_compatibility"
+    },
+    "complete": {
+      "flags": [
+        "--kind",
+        "--limit",
+        "prefix"
+      ],
+      "function": "complete",
+      "module": "roam.commands.cmd_complete"
+    },
+    "complexity": {
+      "flags": [
+        "--bumpy-road",
+        "--by-file",
+        "--include-tooling",
+        "--no-framework",
+        "--no-imports",
+        "--persist",
+        "--threshold",
+        "--top",
+        "target"
+      ],
+      "function": "complexity",
+      "module": "roam.commands.cmd_complexity"
+    },
+    "config": {
+      "flags": [
+        "--check",
+        "--env",
+        "--exclude",
+        "--remove-exclude",
+        "--semantic-backend",
+        "--semantic-status",
+        "--set-db-dir",
+        "--set-onnx-max-length",
+        "--set-onnx-model",
+        "--set-onnx-tokenizer",
+        "--show",
+        "--use-local-cache",
+        "--weights"
+      ],
+      "function": "config",
+      "module": "roam.commands.cmd_config"
+    },
+    "congestion": {
+      "flags": [
+        "--limit",
+        "--min-authors",
+        "--window"
+      ],
+      "function": "congestion",
+      "module": "roam.commands.cmd_congestion"
+    },
+    "constitution": {
+      "flags": [],
+      "function": "constitution_group",
+      "module": "roam.commands.cmd_constitution"
+    },
+    "context": {
+      "flags": [
+        "--for-file",
+        "--inline",
+        "--no-propagation",
+        "--recent-symbol",
+        "--session-hint",
+        "--task",
+        "names"
+      ],
+      "function": "context",
+      "module": "roam.commands.cmd_context"
+    },
+    "conventions": {
+      "flags": [
+        "--persist",
+        "-n"
+      ],
+      "function": "conventions",
+      "module": "roam.commands.cmd_conventions"
+    },
+    "coupling": {
+      "flags": [
+        "--against",
+        "--min-cochanges",
+        "--min-strength",
+        "--staged",
+        "-n"
+      ],
+      "function": "coupling",
+      "module": "roam.commands.cmd_coupling"
+    },
+    "coverage-gaps": {
+      "flags": [
+        "--auto-detect",
+        "--config",
+        "--entry-pattern",
+        "--gate",
+        "--gate-pattern",
+        "--import-report",
+        "--max-depth",
+        "--merge-imported",
+        "--preset",
+        "--scope"
+      ],
+      "function": "coverage_gaps",
+      "module": "roam.commands.cmd_coverage_gaps"
+    },
+    "critique": {
+      "flags": [
+        "--batch",
+        "--high-callers",
+        "--input",
+        "--intent",
+        "--persist"
+      ],
+      "function": "critique",
+      "module": "roam.commands.cmd_critique"
+    },
+    "cut": {
+      "flags": [
+        "--between",
+        "--leak-edges",
+        "--top"
+      ],
+      "function": "cut",
+      "module": "roam.commands.cmd_cut"
+    },
+    "dark-matter": {
+      "flags": [
+        "--category",
+        "--explain",
+        "--min-cochanges",
+        "--min-npmi",
+        "--persist",
+        "-n"
+      ],
+      "function": "dark_matter",
+      "module": "roam.commands.cmd_dark_matter"
+    },
+    "dashboard": {
+      "flags": [],
+      "function": "dashboard",
+      "module": "roam.commands.cmd_dashboard"
+    },
+    "db-check": {
+      "flags": [
+        "--ci"
+      ],
+      "function": "db_check",
+      "module": "roam.commands.cmd_db_check"
+    },
+    "dead": {
+      "flags": [
+        "--aging",
+        "--all",
+        "--by-directory",
+        "--by-kind",
+        "--clusters",
+        "--dataflow",
+        "--decay",
+        "--effort",
+        "--extinction",
+        "--persist",
+        "--reachable-only",
+        "--sort-by-age",
+        "--sort-by-decay",
+        "--sort-by-effort",
+        "--summary"
+      ],
+      "function": "dead",
+      "module": "roam.commands.cmd_dead"
+    },
+    "debt": {
+      "flags": [
+        "--by-kind",
+        "--limit",
+        "--roi",
+        "--threshold"
+      ],
+      "function": "debt",
+      "module": "roam.commands.cmd_debt"
+    },
+    "delete-check": {
+      "flags": [
+        "--base-ref",
+        "--ci",
+        "--commit-range",
+        "--include-line-deletions",
+        "--reachable-from",
+        "--source",
+        "-n"
+      ],
+      "function": "delete_check_cmd",
+      "module": "roam.commands.cmd_delete_check"
+    },
+    "deps": {
+      "flags": [
+        "--full",
+        "path"
+      ],
+      "function": "deps",
+      "module": "roam.commands.cmd_deps"
+    },
+    "describe": {
+      "flags": [
+        "--agent-prompt",
+        "--force",
+        "--output",
+        "--write"
+      ],
+      "function": "describe",
+      "module": "roam.commands.cmd_describe"
+    },
+    "dev-profile": {
+      "flags": [
+        "--days",
+        "--limit",
+        "author"
+      ],
+      "function": "dev_profile",
+      "module": "roam.commands.cmd_dev_profile"
+    },
+    "diagnose": {
+      "flags": [
+        "--batch",
+        "--depth",
+        "name"
+      ],
+      "function": "diagnose",
+      "module": "roam.commands.cmd_diagnose"
+    },
+    "diff": {
+      "flags": [
+        "--coupling",
+        "--fitness",
+        "--full",
+        "--since-tag",
+        "--staged",
+        "--tests",
+        "commit_range"
+      ],
+      "function": "diff_cmd",
+      "module": "roam.commands.cmd_diff"
+    },
+    "digest": {
+      "flags": [
+        "--analyze",
+        "--anomalies",
+        "--assert",
+        "--cohort-by-author",
+        "--compare",
+        "--days",
+        "--fail-on-anomaly",
+        "--forecast",
+        "--metric",
+        "--range",
+        "--record",
+        "--save",
+        "--sensitivity",
+        "--since",
+        "--tag"
+      ],
+      "function": "trends",
+      "module": "roam.commands.cmd_trends"
+    },
+    "disambiguate": {
+      "flags": [
+        "--limit",
+        "name"
+      ],
+      "function": "disambiguate",
+      "module": "roam.commands.cmd_disambiguate"
+    },
+    "doc-staleness": {
+      "flags": [
+        "--days",
+        "--include-prose-drift",
+        "--limit"
+      ],
+      "function": "doc_staleness",
+      "module": "roam.commands.cmd_doc_staleness"
+    },
+    "docs-coverage": {
+      "flags": [
+        "--days",
+        "--limit",
+        "--quality",
+        "--threshold"
+      ],
+      "function": "docs_coverage",
+      "module": "roam.commands.cmd_docs_coverage"
+    },
+    "doctor": {
+      "flags": [
+        "--persist",
+        "--strict"
+      ],
+      "function": "doctor",
+      "module": "roam.commands.cmd_doctor"
+    },
+    "dogfood": {
+      "flags": [
+        "--audit",
+        "--audit-trail",
+        "--pr-analyze",
+        "--rules"
+      ],
+      "function": "dogfood",
+      "module": "roam.commands.cmd_dogfood"
+    },
+    "dogfood-aggregate": {
+      "flags": [
+        "--all",
+        "--limit",
+        "--path",
+        "--severity",
+        "--since",
+        "--status",
+        "--top",
+        "--type"
+      ],
+      "function": "dogfood_aggregate",
+      "module": "roam.commands.cmd_dogfood_aggregate"
+    },
+    "drift": {
+      "flags": [
+        "--by-team",
+        "--limit",
+        "--threshold"
+      ],
+      "function": "drift",
+      "module": "roam.commands.cmd_drift"
+    },
+    "duplicates": {
+      "flags": [
+        "--exclude-fixtures",
+        "--exclude-tests",
+        "--max-pairs",
+        "--min-lines",
+        "--persist",
+        "--sample",
+        "--scope",
+        "--threshold"
+      ],
+      "function": "duplicates",
+      "module": "roam.commands.cmd_duplicates"
+    },
+    "effects": {
+      "flags": [
+        "--file",
+        "--path",
+        "--transitive",
+        "--type",
+        "target"
+      ],
+      "function": "effects",
+      "module": "roam.commands.cmd_effects"
+    },
+    "endpoints": {
+      "flags": [
+        "--framework",
+        "--group-by",
+        "--include-tests",
+        "--method"
+      ],
+      "function": "endpoints",
+      "module": "roam.commands.cmd_endpoints"
+    },
+    "entry-points": {
+      "flags": [
+        "--limit",
+        "--protocol"
+      ],
+      "function": "entry_points",
+      "module": "roam.commands.cmd_entry_points"
+    },
+    "eval-retrieve": {
+      "flags": [
+        "--emit-format",
+        "--emit-k",
+        "--emit-out",
+        "--min-recall-at-20",
+        "--quick",
+        "--report",
+        "--rerank",
+        "--sweep",
+        "--tasks"
+      ],
+      "function": "eval_retrieve",
+      "module": "roam.commands.cmd_eval_retrieve"
+    },
+    "evidence-diff": {
+      "flags": [
+        "new_path",
+        "old_path"
+      ],
+      "function": "evidence_diff",
+      "module": "roam.commands.cmd_evidence_diff"
+    },
+    "evidence-doctor": {
+      "flags": [
+        "--stdin",
+        "packet_path"
+      ],
+      "function": "evidence_doctor",
+      "module": "roam.commands.cmd_evidence_doctor"
+    },
+    "evidence-oscal": {
+      "flags": [
+        "--control-map",
+        "--evidence",
+        "--import-ap-ref",
+        "--indent",
+        "--kind",
+        "--output",
+        "--strict",
+        "--title"
+      ],
+      "function": "evidence_oscal",
+      "module": "roam.commands.cmd_evidence_oscal"
+    },
+    "exit-codes": {
+      "flags": [],
+      "function": "exit_codes",
+      "module": "roam.commands.cmd_exit_codes"
+    },
+    "explain-command": {
+      "flags": [
+        "name"
+      ],
+      "function": "explain_command",
+      "module": "roam.commands.cmd_explain_command"
+    },
+    "fan": {
+      "flags": [
+        "--include-tooling",
+        "--no-framework",
+        "--persist",
+        "-n",
+        "mode"
+      ],
+      "function": "fan",
+      "module": "roam.commands.cmd_fan"
+    },
+    "file": {
+      "flags": [
+        "--changed",
+        "--deps-of",
+        "--full",
+        "paths"
+      ],
+      "function": "file_cmd",
+      "module": "roam.commands.cmd_file"
+    },
+    "findings": {
+      "flags": [],
+      "function": "findings",
+      "module": "roam.commands.cmd_findings"
+    },
+    "fingerprint": {
+      "flags": [
+        "--compact",
+        "--compare",
+        "--export",
+        "--persist"
+      ],
+      "function": "fingerprint",
+      "module": "roam.commands.cmd_fingerprint"
+    },
+    "fitness": {
+      "flags": [
+        "--baseline",
+        "--explain",
+        "--init",
+        "--rule",
+        "--write-baseline"
+      ],
+      "function": "fitness",
+      "module": "roam.commands.cmd_fitness"
+    },
+    "flag-dead": {
+      "flags": [
+        "--config",
+        "--include-tests"
+      ],
+      "function": "flag_dead",
+      "module": "roam.commands.cmd_flag_dead"
+    },
+    "fleet": {
+      "flags": [],
+      "function": "fleet",
+      "module": "roam.commands.cmd_fleet"
+    },
+    "fn-coupling": {
+      "flags": [
+        "--include-connected",
+        "--include-tests",
+        "--limit",
+        "--max-files-per-commit",
+        "--max-symbols-per-file",
+        "--min-count",
+        "--since"
+      ],
+      "function": "fn_coupling",
+      "module": "roam.commands.cmd_fn_coupling"
+    },
+    "forecast": {
+      "flags": [
+        "--alert-only",
+        "--horizon",
+        "--min-slope",
+        "--symbol"
+      ],
+      "function": "forecast",
+      "module": "roam.commands.cmd_forecast"
+    },
+    "graph-diff": {
+      "flags": [
+        "--base",
+        "--head",
+        "--save-snapshot",
+        "--top"
+      ],
+      "function": "graph_diff_cmd",
+      "module": "roam.commands.cmd_graph_diff"
+    },
+    "graph-export": {
+      "flags": [
+        "--format",
+        "--output",
+        "--scope"
+      ],
+      "function": "graph_export",
+      "module": "roam.commands.cmd_graph_export"
+    },
+    "graph-stats": {
+      "flags": [
+        "--scope"
+      ],
+      "function": "graph_stats",
+      "module": "roam.commands.cmd_graph_stats"
+    },
+    "grep": {
+      "flags": [
+        "--blame",
+        "--co-occur",
+        "--exclude",
+        "--fixed-string",
+        "--glob",
+        "--group-by",
+        "--heat",
+        "--ignore-case",
+        "--missing-pattern",
+        "--no-bridges",
+        "--no-clones",
+        "--patterns-from",
+        "--rank-by",
+        "--reachable-from",
+        "--regex",
+        "--source-only",
+        "--test-only",
+        "--unreachable",
+        "--word",
+        "-n",
+        "positional"
+      ],
+      "function": "grep_cmd",
+      "module": "roam.commands.cmd_grep"
+    },
+    "guard": {
+      "flags": [
+        "name"
+      ],
+      "function": "guard",
+      "module": "roam.commands.cmd_guard"
+    },
+    "health": {
+      "flags": [
+        "--baseline",
+        "--explain",
+        "--gate",
+        "--no-framework",
+        "--persist"
+      ],
+      "function": "health",
+      "module": "roam.commands.cmd_health"
+    },
+    "help-search": {
+      "flags": [
+        "--limit",
+        "query"
+      ],
+      "function": "help_search",
+      "module": "roam.commands.cmd_help_search"
+    },
+    "history-grep": {
+      "flags": [
+        "--fixed-string",
+        "--ignore-case",
+        "--path",
+        "--polarity",
+        "--regex",
+        "--since",
+        "--until",
+        "-n",
+        "positional"
+      ],
+      "function": "history_grep_cmd",
+      "module": "roam.commands.cmd_history_grep"
+    },
+    "hooks": {
+      "flags": [],
+      "function": "hooks",
+      "module": "roam.commands.cmd_hooks"
+    },
+    "hotspots": {
+      "flags": [
+        "--danger",
+        "--discrepancy",
+        "--persist",
+        "--runtime",
+        "--security"
+      ],
+      "function": "hotspots",
+      "module": "roam.commands.cmd_hotspots"
+    },
+    "hover": {
+      "flags": [
+        "symbol"
+      ],
+      "function": "hover",
+      "module": "roam.commands.cmd_hover"
+    },
+    "idempotency": {
+      "flags": [
+        "--kind",
+        "--top",
+        "symbol"
+      ],
+      "function": "idempotency_cmd",
+      "module": "roam.commands.cmd_idempotency"
+    },
+    "impact": {
+      "flags": [
+        "--depth",
+        "--hops",
+        "--max-callers",
+        "--timeout",
+        "name"
+      ],
+      "function": "impact",
+      "module": "roam.commands.cmd_impact"
+    },
+    "index": {
+      "flags": [
+        "--force",
+        "--quiet",
+        "--verbose"
+      ],
+      "function": "index",
+      "module": "roam.commands.cmd_index"
+    },
+    "index-export": {
+      "flags": [
+        "--key",
+        "--keyless",
+        "--sign",
+        "output"
+      ],
+      "function": "index_export",
+      "module": "roam.commands.cmd_index_bundle"
+    },
+    "index-import": {
+      "flags": [
+        "--cosign-bundle",
+        "--cosign-key",
+        "--force",
+        "--no-verify-head",
+        "bundle"
+      ],
+      "function": "index_import",
+      "module": "roam.commands.cmd_index_bundle"
+    },
+    "index-stats": {
+      "flags": [],
+      "function": "index_stats",
+      "module": "roam.commands.cmd_index_stats"
+    },
+    "ingest-trace": {
+      "flags": [
+        "--generic",
+        "--jaeger",
+        "--otel",
+        "--zipkin",
+        "trace_file"
+      ],
+      "function": "ingest_trace",
+      "module": "roam.commands.cmd_ingest_trace"
+    },
+    "init": {
+      "flags": [
+        "--full-history",
+        "--root",
+        "--since",
+        "--with-ci",
+        "--yes"
+      ],
+      "function": "init",
+      "module": "roam.commands.cmd_init"
+    },
+    "intent": {
+      "flags": [
+        "--doc",
+        "--drift",
+        "--symbol",
+        "--top",
+        "--undocumented"
+      ],
+      "function": "intent",
+      "module": "roam.commands.cmd_intent"
+    },
+    "intent-check": {
+      "flags": [
+        "intended_command"
+      ],
+      "function": "intent_check_cmd",
+      "module": "roam.commands.cmd_intent_check"
+    },
+    "invariants": {
+      "flags": [
+        "--breaking-risk",
+        "--public-api",
+        "--top",
+        "target"
+      ],
+      "function": "invariants",
+      "module": "roam.commands.cmd_invariants"
+    },
+    "laws": {
+      "flags": [],
+      "function": "laws_group",
+      "module": "roam.commands.cmd_laws"
+    },
+    "layers": {
+      "flags": [
+        "--mermaid"
+      ],
+      "function": "layers",
+      "module": "roam.commands.cmd_layers"
+    },
+    "lease": {
+      "flags": [],
+      "function": "lease_group",
+      "module": "roam.commands.cmd_lease"
+    },
+    "llm-smells": {
+      "flags": [
+        "--min-severity",
+        "--persist"
+      ],
+      "function": "llm_smells",
+      "module": "roam.commands.cmd_llm_smells"
+    },
+    "lsp": {
+      "flags": [
+        "--once"
+      ],
+      "function": "lsp",
+      "module": "roam.commands.cmd_lsp"
+    },
+    "map": {
+      "flags": [
+        "--budget",
+        "--depth",
+        "--full",
+        "--seed",
+        "-n"
+      ],
+      "function": "map_cmd",
+      "module": "roam.commands.cmd_map"
+    },
+    "math": {
+      "flags": [
+        "--confidence",
+        "--exclude",
+        "--framework",
+        "--include-tests",
+        "--list-detectors",
+        "--list-frameworks",
+        "--max-per-task",
+        "--only",
+        "--profile",
+        "--since",
+        "--task",
+        "--top"
+      ],
+      "function": "math_cmd",
+      "module": "roam.commands.cmd_math"
+    },
+    "mcp": {
+      "flags": [
+        "--card",
+        "--compat-profile",
+        "--host",
+        "--list-tools",
+        "--list-tools-json",
+        "--no-auto-index",
+        "--port",
+        "--transport"
+      ],
+      "function": "mcp",
+      "module": "roam.commands.cmd_mcp"
+    },
+    "mcp-setup": {
+      "flags": [
+        "--preset",
+        "--write",
+        "platform"
+      ],
+      "function": "mcp_setup",
+      "module": "roam.commands.cmd_mcp_setup"
+    },
+    "mcp-status": {
+      "flags": [],
+      "function": "mcp_status",
+      "module": "roam.commands.cmd_mcp_status"
+    },
+    "memory": {
+      "flags": [],
+      "function": "memory_group",
+      "module": "roam.commands.cmd_memory"
+    },
+    "metrics": {
+      "flags": [
+        "target"
+      ],
+      "function": "metrics",
+      "module": "roam.commands.cmd_metrics"
+    },
+    "metrics-push": {
+      "flags": [
+        "--anonymize",
+        "--dry-run",
+        "--endpoint",
+        "--include-hotspots",
+        "--include-pr-analysis",
+        "--repo",
+        "--timeout",
+        "--token"
+      ],
+      "function": "metrics_push",
+      "module": "roam.commands.cmd_metrics_push"
+    },
+    "migration-plan": {
+      "flags": [
+        "--max-risk",
+        "--move",
+        "--target"
+      ],
+      "function": "migration_plan_cmd",
+      "module": "roam.commands.cmd_migration_plan"
+    },
+    "migration-safety": {
+      "flags": [
+        "--confidence",
+        "--include-archive",
+        "--limit"
+      ],
+      "function": "migration_safety_cmd",
+      "module": "roam.commands.cmd_migration_safety"
+    },
+    "minimap": {
+      "flags": [
+        "--init-notes",
+        "--output",
+        "--update"
+      ],
+      "function": "minimap",
+      "module": "roam.commands.cmd_minimap"
+    },
+    "missing-index": {
+      "flags": [
+        "--confidence",
+        "--limit",
+        "--persist",
+        "--table"
+      ],
+      "function": "missing_index_cmd",
+      "module": "roam.commands.cmd_missing_index"
+    },
+    "mode": {
+      "flags": [
+        "--check",
+        "--list",
+        "mode_name"
+      ],
+      "function": "mode_cmd",
+      "module": "roam.commands.cmd_mode"
+    },
+    "module": {
+      "flags": [
+        "path"
+      ],
+      "function": "module",
+      "module": "roam.commands.cmd_module"
+    },
+    "mutate": {
+      "flags": [],
+      "function": "mutate",
+      "module": "roam.commands.cmd_mutate"
+    },
+    "n1": {
+      "flags": [
+        "--confidence",
+        "--limit",
+        "--persist",
+        "--verbose"
+      ],
+      "function": "n1_cmd",
+      "module": "roam.commands.cmd_n1"
+    },
+    "next": {
+      "flags": [],
+      "function": "next_cmd",
+      "module": "roam.commands.cmd_next"
+    },
+    "onboard": {
+      "flags": [
+        "--agent",
+        "--full",
+        "--mermaid",
+        "--skeleton",
+        "--tour"
+      ],
+      "function": "understand",
+      "module": "roam.commands.cmd_understand"
+    },
+    "oracle": {
+      "flags": [],
+      "function": "oracle",
+      "module": "roam.commands.cmd_oracle"
+    },
+    "orchestrate": {
+      "flags": [
+        "--agents",
+        "--file",
+        "--files",
+        "--staged"
+      ],
+      "function": "orchestrate",
+      "module": "roam.commands.cmd_orchestrate"
+    },
+    "orphan-imports": {
+      "flags": [
+        "--lang",
+        "--persist"
+      ],
+      "function": "orphan_imports",
+      "module": "roam.commands.cmd_orphan_imports"
+    },
+    "orphan-routes": {
+      "flags": [
+        "--confidence",
+        "--limit",
+        "--no-unrouted"
+      ],
+      "function": "orphan_routes_cmd",
+      "module": "roam.commands.cmd_orphan_routes"
+    },
+    "over-fetch": {
+      "flags": [
+        "--leaks-only",
+        "--limit",
+        "--persist",
+        "--threshold"
+      ],
+      "function": "over_fetch_cmd",
+      "module": "roam.commands.cmd_over_fetch"
+    },
+    "owner": {
+      "flags": [
+        "path"
+      ],
+      "function": "owner",
+      "module": "roam.commands.cmd_owner"
+    },
+    "partition": {
+      "flags": [
+        "--agents",
+        "--format"
+      ],
+      "function": "partition",
+      "module": "roam.commands.cmd_partition"
+    },
+    "path-coverage": {
+      "flags": [
+        "--from",
+        "--max-depth",
+        "--to"
+      ],
+      "function": "path_coverage",
+      "module": "roam.commands.cmd_path_coverage"
+    },
+    "patterns": {
+      "flags": [
+        "--pattern",
+        "--strict-factory"
+      ],
+      "function": "patterns",
+      "module": "roam.commands.cmd_patterns"
+    },
+    "permit": {
+      "flags": [
+        "--block-on-high-severity",
+        "--input",
+        "--review-on-blast-radius",
+        "--staged",
+        "--symbol"
+      ],
+      "function": "permit_cmd",
+      "module": "roam.commands.cmd_permit"
+    },
+    "plan": {
+      "flags": [
+        "--depth",
+        "--file",
+        "--path",
+        "--staged",
+        "--symbol",
+        "--task",
+        "target"
+      ],
+      "function": "plan",
+      "module": "roam.commands.cmd_plan"
+    },
+    "plan-refactor": {
+      "flags": [
+        "--max-steps",
+        "--operation",
+        "--target-file",
+        "symbol"
+      ],
+      "function": "plan_refactor",
+      "module": "roam.commands.cmd_plan_refactor"
+    },
+    "plugins": {
+      "flags": [],
+      "function": "plugins_cmd",
+      "module": "roam.commands.cmd_plugins"
+    },
+    "postmortem": {
+      "flags": [
+        "--limit",
+        "--show",
+        "commit_range"
+      ],
+      "function": "postmortem_cmd",
+      "module": "roam.commands.cmd_postmortem"
+    },
+    "pr-analyze": {
+      "flags": [
+        "--audit-trail",
+        "--audit-trail-path",
+        "--baseline",
+        "--batch",
+        "--block-threshold",
+        "--cache",
+        "--cache-dir",
+        "--diff-from-pr",
+        "--explain",
+        "--gate",
+        "--high-callers",
+        "--input",
+        "--intent",
+        "--language",
+        "--parallel",
+        "--progress",
+        "--quiet",
+        "--reviewers-top",
+        "--rules",
+        "--rules-strict",
+        "--save-baseline",
+        "--staged",
+        "--stream-jsonl",
+        "--watch",
+        "--with-reviewers",
+        "commit_range"
+      ],
+      "function": "pr_analyze",
+      "module": "roam.commands.cmd_pr_analyze"
+    },
+    "pr-bundle": {
+      "flags": [],
+      "function": "pr_bundle_group",
+      "module": "roam.commands.cmd_pr_bundle"
+    },
+    "pr-comment-render": {
+      "flags": [
+        "--from-baseline",
+        "--include-links",
+        "--input",
+        "--style"
+      ],
+      "function": "pr_comment_render",
+      "module": "roam.commands.cmd_pr_comment_render"
+    },
+    "pr-diff": {
+      "flags": [
+        "--fail-on-degradation",
+        "--format",
+        "--range",
+        "--staged"
+      ],
+      "function": "pr_diff",
+      "module": "roam.commands.cmd_pr_diff"
+    },
+    "pr-prep": {
+      "flags": [
+        "--high-callers",
+        "commit_range"
+      ],
+      "function": "pr_prep",
+      "module": "roam.commands.cmd_pr_prep"
+    },
+    "pr-replay": {
+      "flags": [
+        "--client",
+        "--evidence",
+        "--evidence-bundle",
+        "--github-pr-number",
+        "--github-reviews-gh",
+        "--github-reviews-json",
+        "--markdown",
+        "--output",
+        "--pdf",
+        "--range",
+        "--tier",
+        "--track-engagement"
+      ],
+      "function": "pr_replay_cmd",
+      "module": "roam.commands.cmd_pr_replay"
+    },
+    "pr-risk": {
+      "flags": [
+        "--author",
+        "--persist",
+        "--staged",
+        "commit_range"
+      ],
+      "function": "pr_risk",
+      "module": "roam.commands.cmd_pr_risk"
+    },
+    "pre-commit": {
+      "flags": [
+        "--install",
+        "--print"
+      ],
+      "function": "pre_commit",
+      "module": "roam.commands.cmd_pre_commit"
+    },
+    "preflight": {
+      "flags": [
+        "--staged",
+        "target"
+      ],
+      "function": "preflight",
+      "module": "roam.commands.cmd_preflight"
+    },
+    "py-modern": {
+      "flags": [
+        "--detail",
+        "--top"
+      ],
+      "function": "py_modern",
+      "module": "roam.commands.cmd_py_modern"
+    },
+    "py-types": {
+      "flags": [
+        "--ci",
+        "--detail",
+        "--include-tests",
+        "--min-coverage",
+        "--top"
+      ],
+      "function": "py_types",
+      "module": "roam.commands.cmd_py_types"
+    },
+    "pytest-fixtures": {
+      "flags": [
+        "--max-depth",
+        "--reverse",
+        "--unused",
+        "symbol"
+      ],
+      "function": "pytest_fixtures",
+      "module": "roam.commands.cmd_pytest_fixtures"
+    },
+    "recipes": {
+      "flags": [],
+      "function": "recipes",
+      "module": "roam.commands.cmd_recipes"
+    },
+    "recommend": {
+      "flags": [
+        "--limit",
+        "symbol"
+      ],
+      "function": "recommend",
+      "module": "roam.commands.cmd_recommend"
+    },
+    "refs": {
+      "flags": [
+        "--full",
+        "name"
+      ],
+      "function": "uses",
+      "module": "roam.commands.cmd_uses"
+    },
+    "refs-text": {
+      "flags": [
+        "--fixed-string",
+        "--glob",
+        "--ignore-case",
+        "--per-match-detail",
+        "--reachable-from",
+        "--regex",
+        "--with-bridges",
+        "--with-clones",
+        "strings"
+      ],
+      "function": "refs_text_cmd",
+      "module": "roam.commands.cmd_refs_text"
+    },
+    "relate": {
+      "flags": [
+        "--depth",
+        "--file",
+        "--path",
+        "symbols"
+      ],
+      "function": "relate",
+      "module": "roam.commands.cmd_relate"
+    },
+    "replay": {
+      "flags": [
+        "--dry-run",
+        "--execute",
+        "run_id"
+      ],
+      "function": "replay_cmd",
+      "module": "roam.commands.cmd_replay"
+    },
+    "report": {
+      "flags": [
+        "--config",
+        "--list",
+        "--md",
+        "--strict",
+        "preset"
+      ],
+      "function": "report",
+      "module": "roam.commands.cmd_report"
+    },
+    "reset": {
+      "flags": [
+        "--dry-run",
+        "--force",
+        "--root"
+      ],
+      "function": "reset",
+      "module": "roam.commands.cmd_reset"
+    },
+    "retrieve": {
+      "flags": [
+        "--budget",
+        "--dry-run",
+        "--k",
+        "--rerank",
+        "--scope",
+        "--seed-file",
+        "--seed-files",
+        "task"
+      ],
+      "function": "retrieve",
+      "module": "roam.commands.cmd_retrieve"
+    },
+    "risk": {
+      "flags": [
+        "--domain",
+        "--explain",
+        "--include-tests",
+        "--show-suppressed",
+        "-n"
+      ],
+      "function": "risk",
+      "module": "roam.commands.cmd_risk"
+    },
+    "rules": {
+      "flags": [
+        "--ci",
+        "--depth",
+        "--init",
+        "--max-nodes",
+        "--rules-dir",
+        "--top"
+      ],
+      "function": "rules",
+      "module": "roam.commands.cmd_rules"
+    },
+    "rules-validate": {
+      "flags": [
+        "--against",
+        "--explain",
+        "--fix",
+        "--gate",
+        "--strict",
+        "rules_path"
+      ],
+      "function": "rules_validate",
+      "module": "roam.commands.cmd_rules_validate"
+    },
+    "runs": {
+      "flags": [],
+      "function": "runs_group",
+      "module": "roam.commands.cmd_runs"
+    },
+    "safe-delete": {
+      "flags": [
+        "name"
+      ],
+      "function": "safe_delete",
+      "module": "roam.commands.cmd_safe_delete"
+    },
+    "safe-zones": {
+      "flags": [
+        "--depth",
+        "target"
+      ],
+      "function": "safe_zones",
+      "module": "roam.commands.cmd_safe_zones"
+    },
+    "sbom": {
+      "flags": [
+        "--aibom",
+        "--format",
+        "--no-reachability",
+        "--output"
+      ],
+      "function": "sbom",
+      "module": "roam.commands.cmd_sbom"
+    },
+    "schema": {
+      "flags": [
+        "--changelog",
+        "--validate"
+      ],
+      "function": "schema_cmd",
+      "module": "roam.commands.cmd_schema"
+    },
+    "search": {
+      "flags": [
+        "--async",
+        "--decorator",
+        "--explain",
+        "--fixtures-only",
+        "--full",
+        "--kind",
+        "--mode",
+        "--recent",
+        "pattern"
+      ],
+      "function": "search",
+      "module": "roam.commands.cmd_search"
+    },
+    "search-semantic": {
+      "flags": [
+        "--backend",
+        "--threshold",
+        "--top",
+        "query"
+      ],
+      "function": "search_semantic",
+      "module": "roam.commands.cmd_search_semantic"
+    },
+    "secrets": {
+      "flags": [
+        "--fail-on-found",
+        "--include-tests",
+        "--severity"
+      ],
+      "function": "secrets",
+      "module": "roam.commands.cmd_secrets"
+    },
+    "semantic-diff": {
+      "flags": [
+        "--base"
+      ],
+      "function": "semantic_diff",
+      "module": "roam.commands.cmd_semantic_diff"
+    },
+    "side-effects": {
+      "flags": [
+        "--kind",
+        "--top",
+        "symbol"
+      ],
+      "function": "side_effects_cmd",
+      "module": "roam.commands.cmd_side_effects"
+    },
+    "simulate": {
+      "flags": [],
+      "function": "simulate",
+      "module": "roam.commands.cmd_simulate"
+    },
+    "simulate-departure": {
+      "flags": [
+        "--limit",
+        "developers"
+      ],
+      "function": "simulate_departure",
+      "module": "roam.commands.cmd_simulate_departure"
+    },
+    "sketch": {
+      "flags": [
+        "--full",
+        "directory"
+      ],
+      "function": "sketch",
+      "module": "roam.commands.cmd_sketch"
+    },
+    "skill-generate": {
+      "flags": [
+        "--ai-safe-only",
+        "--output",
+        "--target"
+      ],
+      "function": "skill_generate_cmd",
+      "module": "roam.commands.cmd_skill_generate"
+    },
+    "smells": {
+      "flags": [
+        "--file",
+        "--include-tooling",
+        "--kind",
+        "--min-severity",
+        "--no-suppress",
+        "--only",
+        "--persist"
+      ],
+      "function": "smells",
+      "module": "roam.commands.cmd_smells"
+    },
+    "snapshot": {
+      "flags": [
+        "--analyze",
+        "--anomalies",
+        "--assert",
+        "--cohort-by-author",
+        "--compare",
+        "--days",
+        "--fail-on-anomaly",
+        "--forecast",
+        "--metric",
+        "--range",
+        "--record",
+        "--save",
+        "--sensitivity",
+        "--since",
+        "--tag"
+      ],
+      "function": "trends",
+      "module": "roam.commands.cmd_trends"
+    },
+    "spectral": {
+      "flags": [
+        "--compare",
+        "--depth",
+        "--gap-only",
+        "--k"
+      ],
+      "function": "spectral",
+      "module": "roam.commands.cmd_spectral"
+    },
+    "split": {
+      "flags": [
+        "--min-group",
+        "path"
+      ],
+      "function": "split",
+      "module": "roam.commands.cmd_split"
+    },
+    "stale-refs": {
+      "flags": [
+        "--attest",
+        "--baseline-from",
+        "--baseline-save",
+        "--by-file",
+        "--check-absolute-routes",
+        "--check-external",
+        "--diff",
+        "--external-allow-status",
+        "--external-auth-header",
+        "--external-cache-ttl",
+        "--external-concurrency",
+        "--external-insecure",
+        "--external-timeout",
+        "--fix",
+        "--fix-medium",
+        "--gate",
+        "--github-summary",
+        "--ignore",
+        "--ignore-target",
+        "--init",
+        "--init-force",
+        "--kind",
+        "--limit",
+        "--no-anchors",
+        "--rename-hint",
+        "--root",
+        "--scan-bare-backticks",
+        "--sort-by",
+        "--watch",
+        "--watch-interval",
+        "--with-candidates"
+      ],
+      "function": "stale_refs",
+      "module": "roam.commands.cmd_stale_refs"
+    },
+    "stats": {
+      "flags": [
+        "--days"
+      ],
+      "function": "stats",
+      "module": "roam.commands.cmd_stats"
+    },
+    "suggest-refactoring": {
+      "flags": [
+        "--limit",
+        "--min-score"
+      ],
+      "function": "suggest_refactoring",
+      "module": "roam.commands.cmd_suggest_refactoring"
+    },
+    "suggest-reviewers": {
+      "flags": [
+        "--changed",
+        "--exclude",
+        "--top",
+        "files"
+      ],
+      "function": "suggest_reviewers",
+      "module": "roam.commands.cmd_suggest_reviewers"
+    },
+    "supply-chain": {
+      "flags": [
+        "--top"
+      ],
+      "function": "supply_chain",
+      "module": "roam.commands.cmd_supply_chain"
+    },
+    "suppress": {
+      "flags": [
+        "--dry-run",
+        "--filter",
+        "--from-finding",
+        "--input",
+        "--list",
+        "--reason",
+        "--remove",
+        "finding_id"
+      ],
+      "function": "suppress",
+      "module": "roam.commands.cmd_suppress"
+    },
+    "surface": {
+      "flags": [
+        "--category",
+        "--filter"
+      ],
+      "function": "surface",
+      "module": "roam.commands.cmd_surface"
+    },
+    "symbol": {
+      "flags": [
+        "--full",
+        "name"
+      ],
+      "function": "symbol",
+      "module": "roam.commands.cmd_symbol"
+    },
+    "syntax-check": {
+      "flags": [
+        "--changed",
+        "paths"
+      ],
+      "function": "syntax_check",
+      "module": "roam.commands.cmd_syntax_check"
+    },
+    "taint": {
+      "flags": [
+        "--ci",
+        "--max-hops",
+        "--persist",
+        "--rule",
+        "--rules-dir",
+        "--rules-pack"
+      ],
+      "function": "taint",
+      "module": "roam.commands.cmd_taint"
+    },
+    "telemetry": {
+      "flags": [
+        "--recent",
+        "--top"
+      ],
+      "function": "telemetry",
+      "module": "roam.commands.cmd_telemetry"
+    },
+    "test-gaps": {
+      "flags": [
+        "--changed",
+        "--severity",
+        "files"
+      ],
+      "function": "test_gaps",
+      "module": "roam.commands.cmd_test_gaps"
+    },
+    "test-hermeticity": {
+      "flags": [
+        "--ci",
+        "--persist"
+      ],
+      "function": "test_hermeticity",
+      "module": "roam.commands.cmd_test_hermeticity"
+    },
+    "test-impact": {
+      "flags": [
+        "--limit",
+        "--max-hops",
+        "commit_range"
+      ],
+      "function": "test_impact",
+      "module": "roam.commands.cmd_test_impact"
+    },
+    "test-map": {
+      "flags": [
+        "name"
+      ],
+      "function": "test_map",
+      "module": "roam.commands.cmd_testmap"
+    },
+    "test-pyramid": {
+      "flags": [],
+      "function": "test_pyramid",
+      "module": "roam.commands.cmd_test_pyramid"
+    },
+    "test-scaffold": {
+      "flags": [
+        "--framework",
+        "--write",
+        "name"
+      ],
+      "function": "test_scaffold",
+      "module": "roam.commands.cmd_test_scaffold"
+    },
+    "timeline": {
+      "flags": [
+        "--limit",
+        "symbol"
+      ],
+      "function": "timeline",
+      "module": "roam.commands.cmd_timeline"
+    },
+    "tour": {
+      "flags": [
+        "--focus",
+        "--mermaid",
+        "--write"
+      ],
+      "function": "tour",
+      "module": "roam.commands.cmd_tour"
+    },
+    "trace": {
+      "flags": [
+        "--exhaustive",
+        "--max-hops",
+        "-k",
+        "source",
+        "target"
+      ],
+      "function": "trace",
+      "module": "roam.commands.cmd_trace"
+    },
+    "trend": {
+      "flags": [
+        "--analyze",
+        "--anomalies",
+        "--assert",
+        "--cohort-by-author",
+        "--compare",
+        "--days",
+        "--fail-on-anomaly",
+        "--forecast",
+        "--metric",
+        "--range",
+        "--record",
+        "--save",
+        "--sensitivity",
+        "--since",
+        "--tag"
+      ],
+      "function": "trends",
+      "module": "roam.commands.cmd_trends"
+    },
+    "trends": {
+      "flags": [
+        "--analyze",
+        "--anomalies",
+        "--assert",
+        "--cohort-by-author",
+        "--compare",
+        "--days",
+        "--fail-on-anomaly",
+        "--forecast",
+        "--metric",
+        "--range",
+        "--record",
+        "--save",
+        "--sensitivity",
+        "--since",
+        "--tag"
+      ],
+      "function": "trends",
+      "module": "roam.commands.cmd_trends"
+    },
+    "triage": {
+      "flags": [],
+      "function": "triage",
+      "module": "roam.commands.cmd_triage"
+    },
+    "tx-boundaries": {
+      "flags": [
+        "--classification",
+        "--top",
+        "symbol"
+      ],
+      "function": "tx_boundaries_cmd",
+      "module": "roam.commands.cmd_tx_boundaries"
+    },
+    "understand": {
+      "flags": [
+        "--agent",
+        "--full",
+        "--mermaid",
+        "--skeleton",
+        "--tour"
+      ],
+      "function": "understand",
+      "module": "roam.commands.cmd_understand"
+    },
+    "uses": {
+      "flags": [
+        "--full",
+        "name"
+      ],
+      "function": "uses",
+      "module": "roam.commands.cmd_uses"
+    },
+    "verify": {
+      "flags": [
+        "--changed",
+        "--fix-suggestions",
+        "--threshold",
+        "files"
+      ],
+      "function": "verify",
+      "module": "roam.commands.cmd_verify"
+    },
+    "verify-imports": {
+      "flags": [
+        "--file",
+        "--path"
+      ],
+      "function": "verify_imports_cmd",
+      "module": "roam.commands.cmd_verify_imports"
+    },
+    "version": {
+      "flags": [
+        "--check"
+      ],
+      "function": "version",
+      "module": "roam.commands.cmd_version"
+    },
+    "vibe-check": {
+      "flags": [
+        "--persist",
+        "--threshold"
+      ],
+      "function": "vibe_check",
+      "module": "roam.commands.cmd_vibe_check"
+    },
+    "visualize": {
+      "flags": [
+        "--depth",
+        "--direction",
+        "--file-level",
+        "--focus",
+        "--format",
+        "--limit",
+        "--no-clusters"
+      ],
+      "function": "visualize",
+      "module": "roam.commands.cmd_visualize"
+    },
+    "vuln-map": {
+      "flags": [
+        "--generic",
+        "--npm-audit",
+        "--osv",
+        "--pip-audit",
+        "--trivy"
+      ],
+      "function": "vuln_map",
+      "module": "roam.commands.cmd_vuln_map"
+    },
+    "vuln-reach": {
+      "flags": [
+        "--cve",
+        "--from"
+      ],
+      "function": "vuln_reach",
+      "module": "roam.commands.cmd_vuln_reach"
+    },
+    "vulns": {
+      "flags": [
+        "--format",
+        "--import-file",
+        "--persist",
+        "--reachable-only"
+      ],
+      "function": "vulns",
+      "module": "roam.commands.cmd_vulns"
+    },
+    "watch": {
+      "flags": [
+        "--debounce",
+        "--guardian",
+        "--guardian-drift-threshold",
+        "--guardian-health-gate",
+        "--guardian-report",
+        "--interval",
+        "--quiet",
+        "--webhook-force",
+        "--webhook-host",
+        "--webhook-only",
+        "--webhook-path",
+        "--webhook-port",
+        "--webhook-secret"
+      ],
+      "function": "watch",
+      "module": "roam.commands.cmd_watch"
+    },
+    "weather": {
+      "flags": [
+        "-n"
+      ],
+      "function": "weather",
+      "module": "roam.commands.cmd_weather"
+    },
+    "why": {
+      "flags": [
+        "names"
+      ],
+      "function": "why",
+      "module": "roam.commands.cmd_why"
+    },
+    "why-fail": {
+      "flags": [
+        "--days",
+        "--limit",
+        "--max-hops",
+        "target"
+      ],
+      "function": "why_fail",
+      "module": "roam.commands.cmd_why_fail"
+    },
+    "why-slow": {
+      "flags": [
+        "--base",
+        "--changed",
+        "--min-calls",
+        "--top"
+      ],
+      "function": "why_slow",
+      "module": "roam.commands.cmd_why_slow"
+    },
+    "workflow": {
+      "flags": [
+        "--list",
+        "--next",
+        "--query",
+        "recipe_name"
+      ],
+      "function": "workflow",
+      "module": "roam.commands.cmd_workflow"
+    },
+    "ws": {
+      "flags": [],
+      "function": "ws",
+      "module": "roam.commands.cmd_ws"
+    },
+    "x-lang": {
+      "flags": [
+        "--scope"
+      ],
+      "function": "xlang",
+      "module": "roam.commands.cmd_xlang"
+    }
+  },
+  "deprecated_aliases": {
+    "churn": {
+      "reason": "alias for 'weather'",
+      "replacement": "weather"
+    },
+    "digest": {
+      "reason": "alias for 'trends'",
+      "replacement": "trends"
+    },
+    "math": {
+      "reason": "alias for 'algo'",
+      "replacement": "algo"
+    },
+    "onboard": {
+      "reason": "alias for 'understand'",
+      "replacement": "understand"
+    },
+    "refs": {
+      "reason": "alias for 'uses'",
+      "replacement": "uses"
+    },
+    "snapshot": {
+      "reason": "alias for 'trends'",
+      "replacement": "trends"
+    },
+    "trend": {
+      "reason": "alias for 'trends'",
+      "replacement": "trends"
+    }
+  },
+  "envelope_summary_keys": [
+    "command_count",
+    "canonical_count",
+    "category_count",
+    "mcp_tool_count",
+    "mcp_tool_count_by_preset",
+    "mcp_introspection_available",
+    "by_maturity",
+    "verdict"
+  ],
+  "mcp_preset_counts": {
+    "architecture": 71,
+    "compliance": 13,
+    "core": 57,
+    "debug": 69,
+    "full": 224,
+    "refactor": 70,
+    "review": 70
+  },
+  "mcp_tools": [
+    "roam_adrs",
+    "roam_adversarial",
+    "roam_adversarial_review",
+    "roam_affected",
+    "roam_affected_tests",
+    "roam_agent_context",
+    "roam_agent_export",
+    "roam_agent_plan",
+    "roam_agent_score",
+    "roam_ai_ratio",
+    "roam_ai_readiness",
+    "roam_alerts",
+    "roam_algo",
+    "roam_annotate_symbol",
+    "roam_api",
+    "roam_api_changes",
+    "roam_api_drift",
+    "roam_architecture_drift",
+    "roam_article_12_check",
+    "roam_ask",
+    "roam_attest",
+    "roam_audit",
+    "roam_audit_trail_conformance_check",
+    "roam_audit_trail_export",
+    "roam_audit_trail_verify",
+    "roam_auth_gaps",
+    "roam_batch_get",
+    "roam_batch_search",
+    "roam_bisect_blame",
+    "roam_breaking_changes",
+    "roam_brief",
+    "roam_budget_check",
+    "roam_bus_factor",
+    "roam_capsule_export",
+    "roam_catalog",
+    "roam_causal_graph",
+    "roam_cga_emit",
+    "roam_cga_verify",
+    "roam_changelog",
+    "roam_check_rules",
+    "roam_clean",
+    "roam_clones",
+    "roam_closure",
+    "roam_clusters",
+    "roam_codeowners",
+    "roam_compare",
+    "roam_complete",
+    "roam_complexity_report",
+    "roam_congestion",
+    "roam_context",
+    "roam_conventions",
+    "roam_coupling",
+    "roam_coverage_gaps",
+    "roam_critique",
+    "roam_cut",
+    "roam_cut_analysis",
+    "roam_dark_matter",
+    "roam_dashboard",
+    "roam_dead_code",
+    "roam_debt",
+    "roam_delete_check",
+    "roam_deps",
+    "roam_describe",
+    "roam_dev_profile",
+    "roam_diagnose",
+    "roam_diagnose_issue",
+    "roam_diff",
+    "roam_disambiguate",
+    "roam_doc_intent",
+    "roam_doc_staleness",
+    "roam_docs_coverage",
+    "roam_doctor",
+    "roam_dogfood",
+    "roam_dogfood_aggregate",
+    "roam_drift",
+    "roam_duplicates",
+    "roam_effects",
+    "roam_endpoints",
+    "roam_entry_points",
+    "roam_eval_retrieve",
+    "roam_evidence_diff",
+    "roam_evidence_doctor",
+    "roam_evidence_oscal",
+    "roam_expand_toolset",
+    "roam_explore",
+    "roam_fan",
+    "roam_fetch_handle",
+    "roam_file_info",
+    "roam_findings_count",
+    "roam_findings_list",
+    "roam_findings_show",
+    "roam_fingerprint",
+    "roam_fitness",
+    "roam_flag_dead",
+    "roam_fleet_plan",
+    "roam_fn_coupling",
+    "roam_for_bug_fix",
+    "roam_for_new_feature",
+    "roam_for_refactor",
+    "roam_for_security_review",
+    "roam_forecast",
+    "roam_generate_plan",
+    "roam_get_annotations",
+    "roam_get_invariants",
+    "roam_graph_diff",
+    "roam_graph_stats",
+    "roam_grep",
+    "roam_guard",
+    "roam_health",
+    "roam_history_grep",
+    "roam_hotspots",
+    "roam_hover",
+    "roam_idempotency",
+    "roam_impact",
+    "roam_ingest_trace",
+    "roam_init",
+    "roam_intent",
+    "roam_invariants",
+    "roam_layers",
+    "roam_llm_smells",
+    "roam_map",
+    "roam_metrics",
+    "roam_metrics_push",
+    "roam_migration_plan",
+    "roam_migration_safety",
+    "roam_minimap",
+    "roam_missing_index",
+    "roam_module",
+    "roam_mutate",
+    "roam_n1",
+    "roam_next",
+    "roam_onboard",
+    "roam_oracle_batch",
+    "roam_oracle_is_clone_of",
+    "roam_oracle_is_reachable_from_entry",
+    "roam_oracle_is_test_only",
+    "roam_oracle_route_exists",
+    "roam_oracle_symbol_exists",
+    "roam_oracle_test_only",
+    "roam_orchestrate",
+    "roam_orphan_imports",
+    "roam_orphan_routes",
+    "roam_over_fetch",
+    "roam_owner",
+    "roam_partition",
+    "roam_path_coverage",
+    "roam_patterns",
+    "roam_plan",
+    "roam_plan_refactor",
+    "roam_postmortem",
+    "roam_pr_analyze",
+    "roam_pr_comment_render",
+    "roam_pr_diff",
+    "roam_pr_prep",
+    "roam_pr_risk",
+    "roam_preflight",
+    "roam_prepare_change",
+    "roam_py_modern",
+    "roam_py_types",
+    "roam_pytest_fixtures",
+    "roam_recommend",
+    "roam_refs_text",
+    "roam_reindex",
+    "roam_relate",
+    "roam_repo_map",
+    "roam_report",
+    "roam_reset",
+    "roam_retrieve",
+    "roam_review_change",
+    "roam_risk",
+    "roam_rules_check",
+    "roam_rules_validate",
+    "roam_runtime_hotspots",
+    "roam_safe_delete",
+    "roam_safe_zones",
+    "roam_sbom",
+    "roam_search_semantic",
+    "roam_search_symbol",
+    "roam_secrets",
+    "roam_semantic_diff",
+    "roam_session_metrics",
+    "roam_side_effects",
+    "roam_simulate",
+    "roam_simulate_departure",
+    "roam_sketch",
+    "roam_smells",
+    "roam_spectral",
+    "roam_split",
+    "roam_stale_refs",
+    "roam_stats",
+    "roam_suggest_refactoring",
+    "roam_suggest_reviewers",
+    "roam_supply_chain",
+    "roam_symbol",
+    "roam_syntax_check",
+    "roam_taint",
+    "roam_taint_classify",
+    "roam_test_gaps",
+    "roam_test_impact",
+    "roam_test_map",
+    "roam_test_pyramid",
+    "roam_test_scaffold",
+    "roam_timeline",
+    "roam_tour",
+    "roam_trace",
+    "roam_trends",
+    "roam_tx_boundaries",
+    "roam_understand",
+    "roam_uses",
+    "roam_validate_plan",
+    "roam_verify",
+    "roam_verify_imports",
+    "roam_vibe_check",
+    "roam_visualize",
+    "roam_vuln_map",
+    "roam_vuln_reach",
+    "roam_weather",
+    "roam_why",
+    "roam_why_fail",
+    "roam_why_slow",
+    "roam_workflow",
+    "roam_ws_context",
+    "roam_ws_understand",
+    "roam_x_lang"
+  ],
+  "schema_version": "1.0.0"
+}

@@ -29,6 +29,7 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 
 def _get_symbol_metrics(conn, sym_id):
@@ -513,6 +514,11 @@ def diagnose(ctx, name, depth, batch_input):
                     "downstream_count": len(downstream_ranked),
                     "ambiguous": bool(did_you_mean),
                     "caller_metric_definition": "transitive_upstream_bfs",
+                    # W1298 Pattern-3a: the ``complexity`` field on each
+                    # upstream/downstream/target row is raw
+                    # cognitive_complexity from symbol_metrics, renamed in
+                    # the envelope but identical to cmd_complexity's reading.
+                    "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                     # W1244 Pattern-2 variant-D resolution disclosure --
                     # the partial_success polarity flips True for any
                     # non-``symbol`` tier per resolution_disclosure().

@@ -33,8 +33,12 @@ def test_resolution_kinds_membership_locked() -> None:
     Adding a kind requires editing BOTH ``src/roam/output/formatter.py``
     AND this test in the same commit — prevents silent enum expansion
     that would break downstream consumers reading the closed vocabulary.
+
+    W1309 extended the set with ``file_substring`` so the file-path tier
+    can disclose exact-match vs LIKE %name% fallback distinctly (Pattern-1D
+    silent-success fix for ``cmd_test_scaffold``).
     """
-    assert _RESOLUTION_KINDS == frozenset({"symbol", "file", "fuzzy", "unresolved"})
+    assert _RESOLUTION_KINDS == frozenset({"symbol", "file", "file_substring", "fuzzy", "unresolved"})
     assert isinstance(_RESOLUTION_KINDS, frozenset)
 
 
@@ -48,6 +52,7 @@ def test_resolution_kinds_membership_locked() -> None:
     [
         ("symbol", False),
         ("file", True),
+        ("file_substring", True),
         ("fuzzy", True),
         ("unresolved", True),
     ],
@@ -61,7 +66,7 @@ def test_each_kind_returns_expected_shape(resolution: str, expected_partial: boo
 def test_partial_success_false_only_for_symbol() -> None:
     """``partial_success=False`` is reserved for the exact-match tier."""
     assert resolution_disclosure("symbol")["partial_success"] is False
-    for kind in ("file", "fuzzy", "unresolved"):
+    for kind in ("file", "file_substring", "fuzzy", "unresolved"):
         assert resolution_disclosure(kind)["partial_success"] is True  # type: ignore[arg-type]
 
 

@@ -16,6 +16,7 @@ from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
@@ -612,6 +613,11 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             failed_count = sum(1 for r in fitness_rule_results if r["status"] == "FAIL")
             summary["fitness_violations"] = len(fitness_violations)
             summary["fitness_rules_failed"] = failed_count
+            # W1298 Pattern-3a: any cognitive_complexity-keyed violation
+            # in ``fitness_violations`` reads from ``symbol_metrics`` — disclose
+            # the scorer so consumers cannot confuse it with cyclomatic.
+            if any(v.get("metric") == "cognitive_complexity" for v in fitness_violations):
+                summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
             envelope_data["fitness_violations"] = {
                 "rules": fitness_rule_results,
                 "violations": fitness_violations[:100],

@@ -802,7 +802,7 @@ def supply_chain_to_sarif(deps: list[Dependency], score: int) -> dict:
     requires_index=True,
 )
 @click.command("supply-chain")
-@click.option("--top", default=5, show_default=True, help="Number of riskiest dependencies to highlight")
+@click.option("--top", "--limit", "top", default=5, show_default=True, help="Number of riskiest dependencies to highlight")  # W1142: --limit alias
 @click.pass_context
 def supply_chain(ctx, top):
     """Dependency risk dashboard: pin coverage, risk scoring, supply-chain health.
@@ -823,7 +823,15 @@ def supply_chain(ctx, top):
     deps = discover_and_parse(project_root)
     metrics = compute_risk_score(deps)
     score = metrics["score"]
+    # W1142-followup-B: cap-hit disclosure. ``top_risky`` returns a
+    # risk-sorted slice of length <= ``top``; the full pre-slice
+    # population is the risk-sorted ``deps`` list. Record the full
+    # count so the envelope can disclose when ``--limit`` truncated
+    # the riskiest-dependency report.
+    risky_full = sorted(deps, key=lambda d: ({"unpinned": 2, "range": 1, "exact": 0}[d.pin_status], not d.is_dev), reverse=True)
+    total_risky_full = len(risky_full)
     risky = top_risky(deps, top)
+    risky_truncated = total_risky_full > len(risky)
     found_files = sorted({d.source_file for d in deps})
     ecosystems: dict[str, int] = {}
     for d in deps:
@@ -847,21 +855,41 @@ def supply_chain(ctx, top):
         return
 
     if json_mode:
+        # W1142-followup-B: cap-hit disclosure on the canonical JSON
+        # envelope. ``count``/``total_count``/``truncated``/``limit``
+        # surface whether the agent's --limit collapsed signal.
+        _cap_summary = {
+            "count": len(risky),
+            "total_count": total_risky_full,
+            "truncated": risky_truncated,
+            "limit": top,
+        }
+        _warnings_out: list[str] = []
+        if risky_truncated:
+            _warnings_out.append(
+                f"truncated to {len(risky)} of {total_risky_full} — "
+                "pass --limit larger to see more"
+            )
+        _summary = dict(
+            verdict=verdict,
+            risk_score=score,
+            total_dependencies=metrics["total"],
+            direct_count=metrics["direct_count"],
+            dev_count=metrics["dev_count"],
+            pin_coverage_pct=round(metrics["pin_coverage"] * 100, 1),
+            unpinned_count=metrics["unpinned_count"],
+            range_count=metrics["range_count"],
+            exact_count=metrics["exact_count"],
+            files_scanned=found_files,
+            ecosystems=ecosystems,
+            **_cap_summary,
+        )
+        if _warnings_out:
+            _summary["warnings_out"] = _warnings_out
+            _summary["partial_success"] = True
         envelope = json_envelope(
             "supply-chain",
-            summary=dict(
-                verdict=verdict,
-                risk_score=score,
-                total_dependencies=metrics["total"],
-                direct_count=metrics["direct_count"],
-                dev_count=metrics["dev_count"],
-                pin_coverage_pct=round(metrics["pin_coverage"] * 100, 1),
-                unpinned_count=metrics["unpinned_count"],
-                range_count=metrics["range_count"],
-                exact_count=metrics["exact_count"],
-                files_scanned=found_files,
-                ecosystems=ecosystems,
-            ),
+            summary=_summary,
             budget=token_budget,
             risk_score=score,
             total_dependencies=metrics["total"],

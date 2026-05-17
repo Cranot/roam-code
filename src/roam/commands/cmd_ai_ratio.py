@@ -666,7 +666,7 @@ def analyse_ai_ratio(conn, since_days: int = 90) -> dict:
     requires_index=True,
 )
 @click.command()
-@click.option("--since", default=90, type=int, help="Analyze commits from last N days (default: 90)")
+@click.option("--since", default=90, type=int, help="Analyze commits from last <N> days (default: 90)")
 @click.option("--detail", is_flag=True, help="Show per-file breakdown")
 @click.pass_context
 def ai_ratio(ctx, since, detail):

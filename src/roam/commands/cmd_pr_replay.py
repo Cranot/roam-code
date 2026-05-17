@@ -3232,7 +3232,7 @@ def _render_pdf(markdown_text: str, output_path: Path) -> tuple[bool, str]:
     "output_path",
     default=None,
     type=click.Path(dir_okay=False, writable=True),
-    help="Write the markdown report to PATH instead of stdout.",
+    help="Write the markdown report to <PATH> instead of stdout.",  # W1117-followup
 )
 @click.option(
     "--pdf",
@@ -3551,6 +3551,32 @@ def pr_replay_cmd(
         if evidence_packet is not None:
             extra_payload["evidence_coverage"] = _banner_envelope_block(evidence_packet)
 
+        # W350 — surface ``authority_refs[]`` + permit count in the JSON
+        # envelope so consumers don't have to parse ``report_markdown``
+        # to recover the agentic-assurance authority axis. Permits flow
+        # into the packet via ``authority_refs[authority_kind="permit"]``
+        # (no top-level ``permits[]`` field on ChangeEvidence per W268);
+        # the canonical mapping is enforced by the collector. Both keys
+        # are always emitted when an evidence packet exists (Pattern-2
+        # always-emit; an empty list reads as "no authorities" rather
+        # than "we didn't look").
+        authority_refs_payload: list[dict] = []
+        authority_permits_count = 0
+        if evidence_packet is not None:
+            for ref in evidence_packet.authority_refs or ():
+                row = {
+                    "authority_kind": ref.authority_kind,
+                    "authority_id": ref.authority_id,
+                    "granted_by": ref.granted_by,
+                    "source": ref.source,
+                    "extra": dict(ref.extra or {}),
+                }
+                authority_refs_payload.append(row)
+                if ref.authority_kind == "permit":
+                    authority_permits_count += 1
+            extra_payload["authority_refs"] = authority_refs_payload
+            extra_payload["permits_count"] = authority_permits_count
+
         click.echo(
             to_json(
                 json_envelope(
@@ -3577,6 +3603,14 @@ def pr_replay_cmd(
                             if evidence_packet is not None
                             else None
                         ),
+                        # W350: summary-level authority counters so a
+                        # CI gate reading only ``summary`` sees the
+                        # P1.10 axis without scanning ``authority_refs``.
+                        # ``None`` when no evidence packet was produced.
+                        "authority_refs_count": (
+                            len(evidence_packet.authority_refs or ()) if evidence_packet is not None else None
+                        ),
+                        "permits_count": (authority_permits_count if evidence_packet is not None else None),
                     },
                     **extra_payload,
                 )

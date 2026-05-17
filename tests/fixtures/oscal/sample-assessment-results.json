@@ -99,6 +99,53 @@
             "name": "authority-ref",
             "value": "mode:mode:safe_edit"
           }
+        ],
+        "observations": [
+          {
+            "uuid": "48d59f44-b136-565e-a232-142b5667af76",
+            "title": "Authority axis observed: mode",
+            "description": "Authority axis: mode \u2014 1 entries observed at def5678.",
+            "methods": [
+              "EXAMINE"
+            ],
+            "subjects": [
+              {
+                "subject-uuid": "7775f8ab-f642-5cbc-b1d8-2656e134b5e5",
+                "type": "component",
+                "title": "mode:mode:safe_edit",
+                "props": [
+                  {
+                    "ns": "urn:roam:oscal:v1",
+                    "name": "authority_kind",
+                    "value": "mode"
+                  },
+                  {
+                    "ns": "urn:roam:oscal:v1",
+                    "name": "authority_id",
+                    "value": "mode:safe_edit"
+                  },
+                  {
+                    "ns": "urn:roam:oscal:v1",
+                    "name": "source",
+                    "value": "mode"
+                  }
+                ]
+              }
+            ],
+            "props": [
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "authority_kind",
+                "value": "mode"
+              },
+              {
+                "ns": "urn:roam:oscal:v1",
+                "name": "authority_refs_total",
+                "value": "1"
+              }
+            ],
+            "remarks": "Authority-axis observation supports evidence for identity / authorisation review (W350 producer surface). Kind: mode. Total observed: 1."
+          }
         ]
       }
     ],

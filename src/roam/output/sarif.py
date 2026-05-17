@@ -202,6 +202,179 @@ def _result_entry(
     return result
 
 
+# ── Dashboard-filtering tag derivation (W1062) ───────────────────────
+#
+# SARIF 2.1.0 stores free-form categorisation tags under
+# ``result.properties.tags[]`` (and ``rule.properties.tags[]``).
+# GitHub Code Scanning, SonarQube, and security-dashboard tools surface
+# them as filter chips so a triage user can slice findings by CWE /
+# OWASP category / detector family without expanding every result.
+#
+# Without normalised tags every roam finding looks uniform to the
+# dashboard. This helper centralises the projection so every emitter
+# produces the same tag vocabulary shape:
+#
+#   - lowercase, hyphen-separated, URL-safe (CWE-89 -> ``cwe-89``)
+#   - one tag per metadata axis (cwe, owasp, severity, family, ...)
+#   - free-form ``extra`` tags pass through after normalisation
+#   - duplicates collapsed, order preserved
+#
+# The vocabulary is intentionally narrow: agents and dashboards key off
+# stable tokens like ``cwe-89`` / ``owasp-a03`` / ``security`` rather
+# than producer-side variants like ``CWE-89`` / ``A03:2021_Injection``.
+
+import re as _re
+
+# Match the OWASP Top 10 category prefix only ("A01" through "A99")
+# so we strip the year + descriptive suffix from inputs like
+# ``A03:2021_Injection`` -> ``a03`` without dropping the rank token.
+_OWASP_CATEGORY_RE = _re.compile(r"^a\d{1,2}", _re.IGNORECASE)
+
+
+def _normalize_tag(raw: str) -> str:
+    """Normalise one tag string to lowercase-hyphen URL-safe shape.
+
+    Conversion rules (closed):
+
+    - lowercase
+    - whitespace, underscores, colons, slashes, dots collapse to ``-``
+    - leading/trailing hyphens trimmed
+    - empty input returns ``""`` (caller drops empties)
+
+    Examples::
+
+        ``CWE-89``                   -> ``cwe-89``
+        ``A03:2021_Injection``       -> ``a03-2021-injection``
+        ``EU AI Act Article 12``     -> ``eu-ai-act-article-12``
+        ``security``                 -> ``security``
+    """
+    s = (raw or "").strip().lower()
+    if not s:
+        return ""
+    # Collapse common separators to single hyphen.
+    s = _re.sub(r"[\s_:/.]+", "-", s)
+    # Drop any leftover non [a-z0-9-] characters (parentheses, etc.).
+    s = _re.sub(r"[^a-z0-9-]", "", s)
+    # Collapse consecutive hyphens then trim edges.
+    s = _re.sub(r"-{2,}", "-", s).strip("-")
+    return s
+
+
+def _derive_finding_tags(
+    *,
+    cwe: str = "",
+    owasp_top10: str = "",
+    severity: str = "",
+    family: str = "",
+    extra: list[str] | tuple[str, ...] = (),
+) -> list[str]:
+    """Build a normalised SARIF ``properties.tags[]`` list from one finding.
+
+    Threads the OWASP / CWE metadata roam already attaches to taint
+    rules (W492 ``owasp_top10`` field; W374 CWE codes) into the SARIF
+    surface so dashboards can filter by CWE / OWASP category. Without
+    this, every roam finding looks uniform to the dashboard.
+
+    Parameters
+    ----------
+    cwe:
+        Raw CWE token, e.g. ``"CWE-89"``. Empty string drops the tag.
+    owasp_top10:
+        Raw OWASP Top 10 string. Accepts the rank-only form ``"A03"``
+        or the rank+year+name form ``"A03:2021_Injection"`` (the shape
+        rule YAMLs ship today). Only the rank prefix is kept, projected
+        to ``owasp-a03``. Empty string drops the tag.
+    severity:
+        Closed-enum severity vocab (``critical`` / ``warning`` / ``info``
+        / ``error`` / ``note`` / ``low`` / ``medium`` / ``high``). Empty
+        string drops the tag. Passed through ``_normalize_tag`` so
+        producer-side uppercase variants converge.
+    family:
+        Finding-family / detector-bucket tag, e.g. ``"security"``,
+        ``"taint"``, ``"compliance"``. Empty string drops the tag.
+    extra:
+        Free-form additional tags (e.g. detector-specific tokens).
+        Each entry is normalised and emptied entries are dropped.
+
+    Returns
+    -------
+    list[str]
+        Normalised tag list with duplicates collapsed (insertion order
+        preserved). Empty list when every input is empty.
+
+    Examples
+    --------
+    Taint SQLI finding::
+
+        _derive_finding_tags(
+            cwe="CWE-89", owasp_top10="A03:2021_Injection",
+            severity="error", family="security", extra=["taint"],
+        )
+        # -> ['security', 'taint', 'cwe-89', 'owasp-a03', 'error']
+
+    Vulnerability finding::
+
+        _derive_finding_tags(cwe="", severity="critical", family="vuln")
+        # -> ['vuln', 'critical']
+
+    Audit-trail conformance check::
+
+        _derive_finding_tags(
+            family="compliance",
+            extra=["eu-ai-act-article-12", "chain_integrity"],
+        )
+        # -> ['compliance', 'eu-ai-act-article-12', 'chain-integrity']
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(token: str) -> None:
+        if not token:
+            return
+        norm = _normalize_tag(token)
+        if not norm or norm in seen:
+            return
+        seen.add(norm)
+        out.append(norm)
+
+    # Family / detector-bucket first so dashboards anchor on the broad
+    # axis before the specific identifiers. Matches the legacy taint
+    # vocabulary (``["security", "taint", ...]``) which is the only
+    # pre-W1062 tag shape any external consumer already keys off.
+    _add(family)
+
+    # ``extra`` tokens pass through next so per-emitter custom tags
+    # (e.g. ``["taint"]`` after ``family="security"``) line up with the
+    # legacy taint shape rather than appearing after CWE / OWASP.
+    for token in extra:
+        _add(token)
+
+    # CWE projection: ``CWE-89`` -> ``cwe-89``. Pure normalisation; the
+    # token shape is already URL-safe-ish, this just lowercases.
+    if cwe:
+        _add(cwe)
+
+    # OWASP projection: keep only the rank prefix so ``A03`` and
+    # ``A03:2021_Injection`` collapse to the same ``owasp-a03`` tag.
+    # Year + descriptive suffix is noise for dashboard filtering — the
+    # rank IS the OWASP Top 10 category identifier.
+    if owasp_top10:
+        match = _OWASP_CATEGORY_RE.match(owasp_top10.strip())
+        if match:
+            _add("owasp-" + match.group(0).lower())
+        else:
+            # Unknown shape: pass through normalised so we don't drop
+            # signal silently. A rule author who writes
+            # ``owasp_top10: "Mobile-M1"`` still gets ``owasp-mobile-m1``.
+            _add("owasp-" + owasp_top10)
+
+    # Severity last — dashboards usually have a dedicated severity
+    # facet, but stamping the tag too lets text-search filters work.
+    _add(severity)
+
+    return out
+
+
 # ── Core builder ─────────────────────────────────────────────────────
 
 
@@ -220,6 +393,86 @@ _RUNTIME_NOTIFICATION_SUPPRESSIONS_MALFORMED = "suppressions.malformed-entry"
 _RUNTIME_NOTIFICATION_PRODUCER_ADVISORY = "producer.advisory-warning"
 
 
+# W1061-followup-2: shared builder for the W1061 / W1061-followup
+# override pair. The "build a list of configurationOverride dicts and a
+# parallel list of notificationConfigurationOverride dicts" boilerplate
+# was duplicated across 4 callers (cmd_smells, cmd_check_rules,
+# cmd_taint, cmd_vulns). Each caller composed structurally identical
+# entries from a (descriptor_id, properties) pair:
+#
+#     {"configuration": {"enabled": <bool>},
+#      "descriptor": {"id": <str>},
+#      "properties": <dict>}
+#
+# This helper centralises that construction. The two returned lists are
+# passed verbatim onto :func:`to_sarif`'s ``configuration_overrides`` /
+# ``notification_configuration_overrides`` kwargs.
+#
+# Semantic contract preserved from the inline builders:
+#   - rule-id-level entries always carry ``configuration.enabled: False``
+#     (the rule is disabled by a runtime filter — disclosure under
+#     SARIF §3.51 ``ruleConfigurationOverrides[]``).
+#   - finding-level entries always carry ``configuration.enabled: True``
+#     (the filter IS active and operates at finding-evaluation time
+#     under SARIF §3.20.4 ``notificationConfigurationOverrides[]``).
+#
+# Empty input → empty output. Callers gate emission on the returned
+# lists being non-empty (preserves byte-stable default-path SARIF
+# bytes — see W1061 hash invariants).
+def runtime_filter_disclosure(
+    *,
+    rule_ids_disabled: list[tuple[str, dict]] | None = None,
+    finding_level_filters: list[tuple[str, dict]] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Build the W1061 / W1061-followup override pair.
+
+    Parameters
+    ----------
+    rule_ids_disabled:
+        Sequence of ``(rule_descriptor_id, properties)`` tuples — each
+        becomes a ``configurationOverride`` with
+        ``configuration.enabled: False`` and ``descriptor.id =
+        rule_descriptor_id``. Caller owns the descriptor-id namespace
+        (e.g. ``"smells/<kind>"`` for cmd_smells, ``"rules/<id>"`` for
+        cmd_check_rules, bare ``<rule_id>`` for cmd_taint).
+    finding_level_filters:
+        Sequence of ``(notification_descriptor_id, properties)`` tuples
+        — each becomes a ``notificationConfigurationOverride`` with
+        ``configuration.enabled: True`` and ``descriptor.id =
+        notification_descriptor_id`` (a synthetic descriptor like
+        ``"severity-filter"`` / ``"reachable-only-filter"`` /
+        ``"rules-dir-filter"`` — NOT a real rule id).
+
+    Returns
+    -------
+    tuple[list[dict], list[dict]]
+        ``(rule_overrides, notification_overrides)`` — pass straight
+        through to :func:`to_sarif`'s
+        ``configuration_overrides`` / ``notification_configuration_overrides``
+        kwargs (with ``emit_configuration_overrides=bool(rule_overrides)``).
+        Either list is empty when its input was ``None`` / empty.
+    """
+    rule_overrides: list[dict] = []
+    for descriptor_id, props in rule_ids_disabled or ():
+        rule_overrides.append(
+            {
+                "configuration": {"enabled": False},
+                "descriptor": {"id": descriptor_id},
+                "properties": dict(props),
+            }
+        )
+    notif_overrides: list[dict] = []
+    for descriptor_id, props in finding_level_filters or ():
+        notif_overrides.append(
+            {
+                "configuration": {"enabled": True},
+                "descriptor": {"id": descriptor_id},
+                "properties": dict(props),
+            }
+        )
+    return rule_overrides, notif_overrides
+
+
 def to_sarif(
     tool_name: str,
     version: str,
@@ -228,6 +481,9 @@ def to_sarif(
     *,
     emit_runtime_notifications: bool = False,
     warnings_out: list[str] | None = None,
+    emit_configuration_overrides: bool = False,
+    configuration_overrides: list[dict] | None = None,
+    notification_configuration_overrides: list[dict] | None = None,
 ) -> dict:
     """Build a complete SARIF 2.1.0 JSON document.
 
@@ -284,6 +540,46 @@ def to_sarif(
         default-path output). Hash invariant: passing ``warnings_out=None``
         or ``warnings_out=[]`` produces SARIF output byte-identical to
         omitting the kwarg.
+    emit_configuration_overrides:
+        W1061 (opt-in, default ``False`` — preserves byte-identical SARIF
+        output for pre-W1061 callers). When ``True`` AND
+        ``configuration_overrides`` is a non-empty list, the entries are
+        projected onto
+        ``run.invocations[0].ruleConfigurationOverrides[]`` per the SARIF
+        2.1.0 OASIS spec §3.51 ``configurationOverride`` object — each
+        entry MUST carry ``configuration`` (a ``reportingConfiguration``
+        per §3.50, accepting ``level`` from the same closed enum as
+        ``notification.level``: ``"none"`` / ``"note"`` / ``"warning"`` /
+        ``"error"``, plus an ``enabled`` bool) AND ``descriptor`` (a
+        ``reportingDescriptorReference`` per §3.51.2, carrying ``id``).
+        The invocations entry is created if absent so this flag composes
+        cleanly with ``emit_runtime_notifications``. Use when a runtime
+        filter (``--min-severity high``, ``--gate-pattern``, ``--kind``)
+        means a "no findings" SARIF result should be readable as
+        "filtered" rather than "clean codebase". Empty / None list +
+        opt-in produces no key on the SARIF document (hash-stable).
+    configuration_overrides:
+        W1061 (opt-in, default ``None``). List of pre-built SARIF
+        configurationOverride dicts. Each dict's shape is forwarded
+        verbatim — the caller owns the closed-enum discipline on
+        ``configuration.level``. When ``emit_configuration_overrides`` is
+        False this kwarg is ignored (silent drop preserves byte-stable
+        pre-W1061 output).
+    notification_configuration_overrides:
+        W1061-followup (opt-in, default ``None``). Sibling field of
+        ``ruleConfigurationOverrides`` per SARIF 2.1.0 §3.20.4 — the
+        spec slot for FINDING-LEVEL filters that don't map onto
+        rule-id-granular disable semantics (e.g. ``--min-severity high``,
+        ``--reachable-only`` on cmd_vulns). Entries carry the same shape
+        as ``configurationOverride`` (§3.51): ``configuration`` (a
+        reportingConfiguration §3.50, e.g. ``{"enabled": False}``) +
+        ``descriptor`` (a reportingDescriptorReference §3.51.2 with
+        ``id``) + free-form ``properties``. The ``descriptor.id``
+        references a synthetic notification descriptor like
+        ``reachable-only-filter`` rather than a real rule. Gated on
+        non-empty list inside this function — passing ``None`` or
+        ``[]`` keeps the SARIF document byte-identical to the
+        pre-W1061-followup default path.
 
     Returns
     -------
@@ -376,6 +672,38 @@ def to_sarif(
                 "toolExecutionNotifications": notifications,
             }
         ]
+
+    # W1061: project runtime rule-level configuration overrides onto
+    # ``run.invocations[0].ruleConfigurationOverrides[]`` (SARIF 2.1.0
+    # §3.20.5 + §3.51). Without this, consumers (GitHub Code Scanning,
+    # Sonar) cannot distinguish a filtered "no findings" run (e.g. user
+    # passed ``--min-severity high``) from a clean codebase. Opt-in via
+    # ``emit_configuration_overrides=True`` AND non-empty
+    # ``configuration_overrides``; default-False path stays byte-identical
+    # to pre-W1061 SARIF output. Composes with W1046's
+    # ``emit_runtime_notifications`` — share the same ``invocations[0]``
+    # entry rather than emitting two parallel invocation objects.
+    if emit_configuration_overrides and configuration_overrides:
+        if "invocations" not in run:
+            run["invocations"] = [{"executionSuccessful": True}]
+        run["invocations"][0]["ruleConfigurationOverrides"] = list(
+            configuration_overrides
+        )
+
+    # W1061-followup: finding-level filter disclosure via
+    # ``notificationConfigurationOverrides[]`` (SARIF 2.1.0 §3.20.4).
+    # Distinct from rule-level overrides because the underlying filter
+    # operates at finding-evaluation time (severity floor, reachability)
+    # rather than at rule-dispatch time. Composes with both
+    # ``emit_runtime_notifications`` and ``emit_configuration_overrides``
+    # — share the same ``invocations[0]`` entry. Default ``None`` /
+    # empty stays byte-identical to the pre-W1061-followup output.
+    if notification_configuration_overrides:
+        if "invocations" not in run:
+            run["invocations"] = [{"executionSuccessful": True}]
+        run["invocations"][0]["notificationConfigurationOverrides"] = list(
+            notification_configuration_overrides
+        )
 
     return {
         "$schema": _SARIF_SCHEMA,
@@ -885,14 +1213,33 @@ def dead_to_sarif(dead_exports: list[dict]) -> dict:
     - ``kind`` (str): symbol kind (function, class, ...)
     - ``location`` (str): ``"path:line"`` location string
     - ``action`` (str, optional): ``"SAFE"`` / ``"REVIEW"`` / ``"INTENTIONAL"``
+
+    W1062-followup-2 dashboard-filtering tags
+    -----------------------------------------
+
+    Each rule + result carries ``properties.tags[]`` shaped as
+    ``["hygiene", "dead-code", "<action-slug>", "<level>"]`` so a
+    dashboard (GitHub Code Scanning / SonarQube) can slice the
+    dead-code finding stream by family (``hygiene``) / category
+    (``dead-code``) / action (``safe`` / ``review``) / SARIF level
+    (``warning`` / ``note``). Dead-code findings have no CWE / OWASP
+    anchor — that's expected; family + category + action gives triage
+    users the chips they need to separate the ``SAFE`` removal
+    candidates from the ``REVIEW`` set.
     """
     rule_id = "dead-code/unreferenced-export"
+    # W1062-followup-2: rule-level tags carry the family + category
+    # axes so dashboards grouping by rule still get the filter chips
+    # even before any specific result lands. The action / level axes
+    # are per-result and stamped below.
+    rule_tags = _derive_finding_tags(family="hygiene", extra=["dead-code"])
     rules = [
         _rule_entry(
             id=rule_id,
             short_desc="Exported symbol has no references",
             help_uri=_HELP_BASE + "dead",
             default_level="warning",
+            properties={"tags": list(rule_tags)},
         )
     ]
 
@@ -913,6 +1260,16 @@ def dead_to_sarif(dead_exports: list[dict]) -> dict:
         if fpath:
             locations.append(_location(fpath, line))
 
+        # W1062-followup-2: per-result tags add the action + SARIF level
+        # axes. ``action`` is uppercase producer-side (``SAFE`` /
+        # ``REVIEW``) — the helper normalises to ``safe`` / ``review``
+        # via _normalize_tag so the dashboard chip vocabulary stays
+        # lowercase-hyphen.
+        result_tags = _derive_finding_tags(
+            family="hygiene",
+            extra=["dead-code", action],
+            severity=level,
+        )
         results.append(
             _result_entry(
                 rule_id=rule_id,
@@ -920,6 +1277,7 @@ def dead_to_sarif(dead_exports: list[dict]) -> dict:
                 locations=locations,
                 message=(f"Unreferenced export: {item.get('kind', '?')} '{item.get('name', '?')}' ({action})"),
                 level_mapper=lambda s: s,
+                properties={"tags": list(result_tags)},
             )
         )
 
@@ -1231,6 +1589,8 @@ def rules_to_sarif(
     *,
     emit_runtime_notifications: bool = False,
     warnings_out: list[str] | None = None,
+    runtime_overrides: list[dict] | None = None,
+    runtime_notification_overrides: list[dict] | None = None,
 ) -> dict:
     """Convert custom governance rule results to SARIF.
 
@@ -1254,6 +1614,16 @@ def rules_to_sarif(
     ``False``), the SARIF output is byte-identical to pre-W1114 callers
     because :func:`to_sarif` then suppresses the ``invocations`` key
     entirely.
+
+    W1061-followup — *runtime_overrides* carries pre-built SARIF
+    ``configurationOverride`` dicts (§3.51) for rule-id-level filters
+    that disabled specific rules at dispatch time (e.g.
+    ``--rule R1 --severity error`` on ``cmd_check_rules``). They project
+    onto ``run.invocations[0].ruleConfigurationOverrides[]``.
+    *runtime_notification_overrides* carries the same shape but for
+    FINDING-LEVEL filters (per SARIF 2.1.0 §3.20.4 sibling slot). Default
+    ``None`` keeps SARIF bytes byte-identical to the pre-W1061-followup
+    callers via the gated emission inside :func:`to_sarif`.
     """
     seen_rules: dict[str, dict] = {}
     results: list[dict] = []
@@ -1298,6 +1668,13 @@ def rules_to_sarif(
                 )
             )
 
+    # W1061-followup: forward runtime overrides when the caller (typically
+    # ``cmd_check_rules``) captured filter state. Each branch is gated on a
+    # non-empty list so the default (no overrides) path stays byte-identical
+    # to pre-W1061-followup. Composes cleanly with the W1114 runtime
+    # notifications opt-in above.
+    overrides = list(runtime_overrides or ())
+    notif_overrides = list(runtime_notification_overrides or ())
     return to_sarif(
         _TOOL_NAME,
         _get_version(),
@@ -1305,13 +1682,21 @@ def rules_to_sarif(
         results,
         emit_runtime_notifications=emit_runtime_notifications,
         warnings_out=warnings_out,
+        emit_configuration_overrides=bool(overrides),
+        configuration_overrides=overrides if overrides else None,
+        notification_configuration_overrides=notif_overrides if notif_overrides else None,
     )
 
 
 # ── Taint analysis ────────────────────────────────────────────────────
 
 
-def taint_to_sarif(findings: list[dict]) -> dict:
+def taint_to_sarif(
+    findings: list[dict],
+    *,
+    runtime_overrides: list[dict] | None = None,
+    runtime_notification_overrides: list[dict] | None = None,
+) -> dict:
     """SARIF output for ``roam taint``.
 
     Each finding becomes one result located at its sink, with a
@@ -1322,6 +1707,17 @@ def taint_to_sarif(findings: list[dict]) -> dict:
 
     Each finding dict is the per-finding shape that ``cmd_taint`` builds
     via its ``findings_dump`` list.
+
+    W1061-followup — *runtime_overrides* carries pre-built SARIF
+    ``configurationOverride`` dicts (§3.51) when the caller (typically
+    ``cmd_taint``) applied a rule-id-level runtime filter that disabled
+    rules at dispatch time (``--rule`` / ``--rules-pack`` substring
+    match against rule_id). They project onto
+    ``run.invocations[0].ruleConfigurationOverrides[]``.
+    *runtime_notification_overrides* covers finding-level filters
+    (alternate ``--rules-dir``). Default ``None`` keeps SARIF
+    byte-identical to pre-W1061-followup output via gated emission in
+    :func:`to_sarif`.
     """
     seen_rules: dict[str, dict] = {}
     results: list[dict] = []
@@ -1336,16 +1732,22 @@ def taint_to_sarif(findings: list[dict]) -> dict:
         # break a CI gate that fails on warnings/errors.
         level = "note" if sanitized else _to_level(severity)
 
-        # W453: build the per-finding tags list once and reuse it on
-        # both the rule (first time we see it) and the result. The SARIF
-        # spec stores tags under `properties.tags` as a list of strings;
-        # GitHub Code Scanning surfaces them in the UI and lets dashboard
-        # consumers filter by CWE / OWASP category.
-        tags = ["security", "taint"]
-        if cwe:
-            tags.append(cwe)
-        if owasp:
-            tags.append(owasp)
+        # W453 + W1062: build the per-finding tags list once and reuse
+        # it on both the rule (first time we see it) and the result.
+        # SARIF stores tags under `properties.tags` as a list of strings;
+        # GitHub Code Scanning + SonarQube + security-dashboard tools
+        # surface them in the UI as filter chips so triage users can
+        # slice findings by CWE / OWASP category. W1062 routes through
+        # the canonical ``_derive_finding_tags`` helper so the raw
+        # producer-side ``CWE-89`` / ``A03:2021_Injection`` strings
+        # converge on the URL-safe lowercase-hyphen vocabulary
+        # (``cwe-89`` / ``owasp-a03``) every emitter agrees on.
+        tags = _derive_finding_tags(
+            cwe=cwe,
+            owasp_top10=owasp,
+            family="security",
+            extra=["taint"],
+        )
 
         if rule_id not in seen_rules:
             short = f"Taint: {rule_id}"
@@ -1405,11 +1807,22 @@ def taint_to_sarif(findings: list[dict]) -> dict:
             result["codeFlows"] = [{"threadFlows": [{"locations": thread_locations}]}]
         results.append(result)
 
+    # W1061-followup: forward runtime overrides when the caller captured
+    # filter state. ``--rule`` / ``--rules-pack`` produce rule-id-level
+    # disables (``ruleConfigurationOverrides``); ``--rules-dir`` is a
+    # finding-level filter (``notificationConfigurationOverrides``). Each
+    # branch gated on non-empty so the default path stays byte-identical
+    # to pre-W1061-followup SARIF output.
+    overrides = list(runtime_overrides or ())
+    notif_overrides = list(runtime_notification_overrides or ())
     return to_sarif(
         _TOOL_NAME,
         _get_version(),
         list(seen_rules.values()),
         results,
+        emit_configuration_overrides=bool(overrides),
+        configuration_overrides=overrides if overrides else None,
+        notification_configuration_overrides=notif_overrides if notif_overrides else None,
     )
 
 
@@ -1513,14 +1926,42 @@ def secrets_to_sarif(findings: list[dict]) -> dict:
     - ``severity`` (str): ``"high"`` / ``"medium"`` / ``"low"``
     - ``pattern_name`` (str): human-readable pattern name
     - ``matched_text`` (str): masked matched text (safe to include)
+
+    W1062 dashboard-filtering tags
+    ------------------------------
+
+    Each rule + result carries ``properties.tags[]`` shaped as
+    ``["security", "secret", "<pattern-slug>", "<severity>"]`` so a
+    security dashboard (GitHub Code Scanning, SonarQube, security
+    dashboards) can slice the finding stream by detector family
+    (``security``) / category (``secret``) / pattern slug
+    (``aws-access-key``) / severity (``high``). Secret findings have
+    no CWE / OWASP anchors — that's expected; the family + category +
+    pattern axes already give triage users the chips they need.
     """
     seen_rules: dict[str, dict] = {}
     results: list[dict] = []
 
     for f in findings:
         pattern_name = f.get("pattern_name", f.get("pattern", "unknown"))
-        rule_id = f"secrets/{_slugify(pattern_name)}"
+        # Pattern slug doubles as the rule-id suffix AND as a W1062
+        # dashboard tag, so a triage user filtering by ``aws-access-key``
+        # sees the rule AND every result in one chip.
+        pattern_slug = _slugify(pattern_name)
+        rule_id = f"secrets/{pattern_slug}"
         severity = f.get("severity", "medium")
+
+        # W1062: per-finding tags. ``family="security"`` anchors the
+        # dashboard's broad axis; ``extra=["secret", pattern_slug]``
+        # adds the detector category + the specific pattern slug;
+        # severity passes through ``_normalize_tag`` so producer-side
+        # uppercase variants (e.g. ``"HIGH"``) converge on lowercase
+        # chips.
+        tags = _derive_finding_tags(
+            family="security",
+            extra=["secret", pattern_slug],
+            severity=severity,
+        )
 
         if rule_id not in seen_rules:
             seen_rules[rule_id] = _rule_entry(
@@ -1528,6 +1969,7 @@ def secrets_to_sarif(findings: list[dict]) -> dict:
                 short_desc=f"Hardcoded secret: {pattern_name}",
                 help_uri=_HELP_BASE + "secrets",
                 default_level=_to_level(severity),
+                properties={"tags": list(tags)},
             )
 
         fpath = f.get("file", "")
@@ -1543,6 +1985,7 @@ def secrets_to_sarif(findings: list[dict]) -> dict:
                 severity=severity,
                 locations=locations,
                 message=f"Hardcoded {pattern_name} detected: {matched}",
+                properties={"tags": list(tags)},
             )
         )
 
@@ -2175,7 +2618,11 @@ def test_impact_to_sarif(data: dict) -> dict:
 # ── Smells (code-smell detectors) ────────────────────────────────────
 
 
-def smells_to_sarif(findings: list[dict]) -> dict:
+def smells_to_sarif(
+    findings: list[dict],
+    *,
+    runtime_overrides: list[dict] | None = None,
+) -> dict:
     """Convert ``roam smells`` detector output to SARIF.
 
     *findings* is the raw smell-finding list produced by
@@ -2216,6 +2663,14 @@ def smells_to_sarif(findings: list[dict]) -> dict:
     ``findings`` produces a valid SARIF envelope with zero results
     (rules catalogue is always emitted so consumers can introspect the
     full kind vocabulary even on a clean run).
+
+    W1061 — *runtime_overrides* carries pre-built SARIF
+    ``configurationOverride`` dicts (§3.51) when the caller (typically
+    ``cmd_smells``) applied a runtime filter that disabled rules. They
+    project onto ``run.invocations[0].ruleConfigurationOverrides[]`` so
+    consumers (GitHub Code Scanning, Sonar) can read a filtered
+    zero-finding result as "filtered" rather than "clean". Default
+    ``None`` keeps the SARIF output byte-identical to pre-W1061.
     """
     # Lazy import: keeps the SARIF module's cold-import cost off the
     # critical path of callers that never hit smells. The
@@ -2228,6 +2683,21 @@ def smells_to_sarif(findings: list[dict]) -> dict:
     from roam.catalog.registry import kind_to_confidence
 
     known_kinds = sorted(kind_to_confidence().keys())
+
+    # W1062-followup-3: rule-level tags carry the family + category +
+    # smell-id axes so dashboards grouping by rule still get the filter
+    # chips even before any specific result lands. Severity is
+    # per-result and stamped below from the finding's ``severity``
+    # field. Smell findings have no CWE / OWASP anchors — that's
+    # expected; the family + category + smell_id axes already give
+    # triage users the chips they need.
+    _smells_rule_tags = {
+        smell_id: _derive_finding_tags(
+            family="hygiene",
+            extra=["smells", smell_id],
+        )
+        for smell_id in known_kinds
+    }
 
     # One rule descriptor per registered smell kind. defaultLevel
     # is "warning" uniformly — per-result level (derived from
@@ -2242,6 +2712,7 @@ def smells_to_sarif(findings: list[dict]) -> dict:
             short_desc=f"Structural code-smell detector: {smell_id}",
             help_uri=_HELP_BASE + "smells",
             default_level="warning",
+            properties={"tags": list(_smells_rule_tags[smell_id])},
         )
         for smell_id in known_kinds
     ]
@@ -2277,6 +2748,17 @@ def smells_to_sarif(findings: list[dict]) -> dict:
         else:
             message_text = f"{smell_id}: {description}"
 
+        # W1062-followup-3: per-result tags add the resolved SARIF
+        # level axis so dashboards can slice on actionable bands
+        # (``critical`` -> ``error``) from the result chip set without
+        # re-resolving locally. Severity is passed through the helper's
+        # ``_normalize_tag`` chokepoint so producer-side casing
+        # converges to lowercase.
+        smell_result_tags = _derive_finding_tags(
+            family="hygiene",
+            extra=["smells", smell_id],
+            severity=_to_level(severity),
+        )
         # smells maps raw severity through the closed-enum
         # ``_to_level`` mapping (critical/warning/info -> error/warning/note);
         # this is the helper's default ``level_mapper`` so we leave it
@@ -2287,10 +2769,23 @@ def smells_to_sarif(findings: list[dict]) -> dict:
                 severity=severity,
                 locations=locations,
                 message=message_text,
+                properties={"tags": list(smell_result_tags)},
             )
         )
 
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    # W1061: forward runtime configurationOverrides[] when the caller
+    # captured filter state. ``emit_configuration_overrides=True`` is
+    # gated on a non-empty list inside :func:`to_sarif` so the default
+    # (no overrides) path stays byte-identical to pre-W1061.
+    overrides = list(runtime_overrides or ())
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        rules,
+        results,
+        emit_configuration_overrides=bool(overrides),
+        configuration_overrides=overrides if overrides else None,
+    )
 
 
 # ── Partition (multi-agent work zones) ───────────────────────────────
@@ -2528,18 +3023,35 @@ def clones_to_sarif(data: dict) -> dict:
     results (rules catalogue is always emitted so consumers can
     introspect the rule vocabulary even on a clean run).
     """
+    # W1062-followup-3: rule-level tags carry the family + category +
+    # kind axes so dashboards grouping by rule still get the filter
+    # chips even before any specific result lands. Severity is
+    # per-result and stamped below from the resolved SARIF level
+    # (warning / note via :func:`_clones_pair_level`).
+    _CLONES_RULE_TAGS: dict[str, list[str]] = {
+        "clones/pair": _derive_finding_tags(
+            family="hygiene",
+            extra=["duplication", "pair"],
+        ),
+        "clones/cluster": _derive_finding_tags(
+            family="hygiene",
+            extra=["duplication", "cluster"],
+        ),
+    }
     rules = [
         _rule_entry(
             id="clones/pair",
             short_desc=("Pair of structurally similar functions (Type-2 AST clone)"),
             help_uri=_HELP_BASE + "clones",
             default_level="note",
+            properties={"tags": list(_CLONES_RULE_TAGS["clones/pair"])},
         ),
         _rule_entry(
             id="clones/cluster",
             short_desc=("Cluster of 3+ structurally similar functions sharing an AST skeleton"),
             help_uri=_HELP_BASE + "clones",
             default_level="warning",
+            properties={"tags": list(_CLONES_RULE_TAGS["clones/cluster"])},
         ),
     ]
 
@@ -2584,6 +3096,19 @@ def clones_to_sarif(data: dict) -> dict:
 
         bucket_suffix = f" [{role_bucket}]" if role_bucket else ""
         pattern_suffix = f" — {pattern}" if pattern else ""
+        # W1062-followup-3: per-result tags add the role_bucket + SARIF
+        # level axes. Producer-side underscore (``test_intentional``)
+        # collapses to the URL-safe hyphen form via ``_normalize_tag``.
+        # Cluster findings are always SARIF ``warning`` — pre-resolved
+        # here so the tag vocabulary stays lowercase.
+        cluster_extra = ["duplication", "cluster"]
+        if role_bucket:
+            cluster_extra.append(role_bucket)
+        cluster_tags = _derive_finding_tags(
+            family="hygiene",
+            extra=cluster_extra,
+            severity="warning",
+        )
         # Cluster findings are always SARIF "warning" — pass the literal
         # level via an identity ``level_mapper``.
         results.append(
@@ -2597,6 +3122,7 @@ def clones_to_sarif(data: dict) -> dict:
                     f"avg similarity{pattern_suffix}"
                 ),
                 level_mapper=lambda s: s,
+                properties={"tags": list(cluster_tags)},
             )
         )
 
@@ -2632,6 +3158,20 @@ def clones_to_sarif(data: dict) -> dict:
             locations.append(_location(file_b, line_b))
 
         bucket_suffix = f" [{role_bucket}]" if role_bucket else ""
+        # W1062-followup-3: per-result tags add role_bucket + SARIF
+        # level axes. Pair level is derived from the similarity score
+        # via :func:`_clones_pair_level` (>=0.95 -> warning, else
+        # note); pre-resolve here so the chip vocabulary stays
+        # lowercase. Producer-side underscores (``test_intentional``)
+        # collapse via ``_normalize_tag``.
+        pair_extra = ["duplication", "pair"]
+        if role_bucket:
+            pair_extra.append(role_bucket)
+        pair_tags = _derive_finding_tags(
+            family="hygiene",
+            extra=pair_extra,
+            severity=_clones_pair_level(similarity),
+        )
         # Pair severity scales with the similarity score via
         # :func:`_clones_pair_level` (closed band — >=0.95 -> warning,
         # else note).
@@ -2644,6 +3184,7 @@ def clones_to_sarif(data: dict) -> dict:
                     f"Clone pair{bucket_suffix}: '{func_a}' <-> '{func_b}' at {round(similarity * 100)}% similarity"
                 ),
                 level_mapper=_clones_pair_level,
+                properties={"tags": list(pair_tags)},
             )
         )
 
@@ -2883,12 +3424,49 @@ def auth_gaps_to_sarif(findings: list[dict]) -> dict:
         _auth_gap_finding_kind,
     )
 
+    # W1062-followup-2: stamp dashboard-filter tags on every rule descriptor
+    # so a SARIF dashboard (GitHub Code Scanning / SonarQube) can slice the
+    # auth-gap rule catalogue by family (`security`), category (`auth`),
+    # kind (`direct-unauthenticated-handler` / `helper-indirection` /
+    # `name-based`), and confidence tier (`static-analysis` / `structural` /
+    # `heuristic`). The W1062 helper normalises the underscore-separated
+    # confidence tier (`static_analysis`) to the URL-safe `static-analysis`
+    # chip so the dashboard vocabulary stays uniform across emitters.
+    _RULE_TAG_SPECS = [
+        (
+            "auth-gaps/direct-unauthenticated-handler",
+            "direct-unauthenticated-handler",
+            "static_analysis",
+            "error",
+        ),
+        (
+            "auth-gaps/helper-indirection",
+            "helper-indirection",
+            "structural",
+            "warning",
+        ),
+        (
+            "auth-gaps/name-based",
+            "name-based",
+            "heuristic",
+            "note",
+        ),
+    ]
+    _RULE_TAGS_BY_ID: dict[str, list[str]] = {
+        rule_id: _derive_finding_tags(
+            family="security",
+            extra=["auth", kind, tier],
+        )
+        for rule_id, kind, tier, _level in _RULE_TAG_SPECS
+    }
+
     rules = [
         _rule_entry(
             id="auth-gaps/direct-unauthenticated-handler",
             short_desc=("Route handler sits outside every auth middleware group and has no inline auth middleware"),
             help_uri=_HELP_BASE + "auth-gaps",
             default_level="error",
+            properties={"tags": list(_RULE_TAGS_BY_ID["auth-gaps/direct-unauthenticated-handler"])},
         ),
         _rule_entry(
             id="auth-gaps/helper-indirection",
@@ -2899,6 +3477,7 @@ def auth_gaps_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "auth-gaps",
             default_level="warning",
+            properties={"tags": list(_RULE_TAGS_BY_ID["auth-gaps/helper-indirection"])},
         ),
         _rule_entry(
             id="auth-gaps/name-based",
@@ -2909,6 +3488,7 @@ def auth_gaps_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "auth-gaps",
             default_level="note",
+            properties={"tags": list(_RULE_TAGS_BY_ID["auth-gaps/name-based"])},
         ),
     ]
 
@@ -2964,6 +3544,17 @@ def auth_gaps_to_sarif(findings: list[dict]) -> dict:
         # auth-gaps pre-resolves the level via the closed-enum
         # _auth_gaps_confidence_tier_level mapping; pass the tier
         # through the helper so the helper doesn't double-translate.
+        #
+        # W1062-followup-2: stamp the per-result tags with the same
+        # family / category / kind / tier vocabulary as the rule
+        # descriptor, plus the resolved SARIF severity level so a
+        # dashboard can slice by `error` / `warning` / `note` from the
+        # result chip set without re-resolving the tier locally.
+        result_tags = _derive_finding_tags(
+            family="security",
+            extra=["auth", kind, tier],
+            severity=_auth_gaps_confidence_tier_level(tier),
+        )
         results.append(
             _result_entry(
                 rule_id=rule_id,
@@ -2971,6 +3562,7 @@ def auth_gaps_to_sarif(findings: list[dict]) -> dict:
                 locations=[_location(fpath, line)],
                 message=message_text,
                 level_mapper=_auth_gaps_confidence_tier_level,
+                properties={"tags": list(result_tags)},
             )
         )
 
@@ -3046,7 +3638,26 @@ def n1_to_sarif(findings: list[dict]) -> dict:
     consumers can introspect the rule vocabulary even on a clean run.
     Mirrors the closed-enum design from :func:`auth_gaps_to_sarif`
     (W1195) and :func:`smells_to_sarif` (W1171).
+
+    W1062-followup-4 dashboard-filtering tags
+    -----------------------------------------
+
+    Each rule + result carries ``properties.tags[]`` shaped as
+    ``["performance", "n1-query", <severity>]`` so a dashboard
+    (GitHub Code Scanning / SonarQube) can slice the implicit-N+1
+    finding stream by family (``performance``) / category
+    (``n1-query``) / resolved SARIF level (``error`` / ``warning`` /
+    ``note``). N+1 findings have no CWE / OWASP anchor — performance
+    bugs aren't covered by the security taxonomies — so family +
+    category + severity is the canonical filter-chip shape. Severity
+    is per-result; the rule descriptor carries only family + category
+    so dashboards grouping by rule still see the chips on a clean run.
     """
+    # W1062-followup-4: rule-level tags carry the family + category
+    # axes so dashboards grouping by rule still get the filter chips
+    # even before any specific result lands. Severity is per-result and
+    # stamped below from the resolved SARIF level.
+    _N1_RULE_TAGS = _derive_finding_tags(family="performance", extra=["n1-query"])
     rules = [
         _rule_entry(
             id="n1/high-confidence",
@@ -3057,6 +3668,7 @@ def n1_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "n1",
             default_level="error",
+            properties={"tags": list(_N1_RULE_TAGS)},
         ),
         _rule_entry(
             id="n1/medium-confidence",
@@ -3066,6 +3678,7 @@ def n1_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "n1",
             default_level="warning",
+            properties={"tags": list(_N1_RULE_TAGS)},
         ),
         _rule_entry(
             id="n1/low-confidence",
@@ -3074,6 +3687,7 @@ def n1_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "n1",
             default_level="note",
+            properties={"tags": list(_N1_RULE_TAGS)},
         ),
     ]
 
@@ -3125,6 +3739,14 @@ def n1_to_sarif(findings: list[dict]) -> dict:
         if suggestion:
             message_text += f" — Fix: {suggestion}"
 
+        # W1062-followup-4: per-result tags add the SARIF-level axis
+        # (resolved from confidence via the level-mapper) so dashboards
+        # can filter by severity chip without re-running the mapper.
+        result_tags = _derive_finding_tags(
+            family="performance",
+            extra=["n1-query"],
+            severity=_n1_confidence_level(confidence),
+        )
         results.append(
             _result_entry(
                 rule_id=rule_id,
@@ -3132,6 +3754,7 @@ def n1_to_sarif(findings: list[dict]) -> dict:
                 locations=[_location(fpath, line)],
                 message=message_text,
                 level_mapper=_n1_confidence_level,
+                properties={"tags": list(result_tags)},
             )
         )
 
@@ -3212,13 +3835,37 @@ def missing_index_to_sarif(findings: list[dict]) -> dict:
     consumers can introspect the rule vocabulary even on a clean run.
     Mirrors the closed-enum design from :func:`n1_to_sarif` (W1208)
     and :func:`auth_gaps_to_sarif` (W1195).
+
+    W1062-followup-4 dashboard-filtering tags
+    -----------------------------------------
+
+    Each rule + result carries ``properties.tags[]`` shaped as
+    ``["performance", "missing-index", <severity>]`` so a dashboard
+    (GitHub Code Scanning / SonarQube) can slice the missing-index
+    finding stream by family (``performance``) / category
+    (``missing-index``) / resolved SARIF level (``error`` /
+    ``warning`` / ``note``). Missing-index findings have no CWE /
+    OWASP anchor — query-planner pathology isn't covered by the
+    security taxonomies — so family + category + severity is the
+    canonical filter-chip shape. Severity is per-result; the rule
+    descriptor carries only family + category so dashboards grouping
+    by rule still see the chips on a clean run.
     """
+    # W1062-followup-4: rule-level tags carry the family + category
+    # axes so dashboards grouping by rule still get the filter chips
+    # even before any specific result lands. Severity is per-result and
+    # stamped below from the resolved SARIF level.
+    _MISSING_INDEX_RULE_TAGS = _derive_finding_tags(
+        family="performance",
+        extra=["missing-index"],
+    )
     rules = [
         _rule_entry(
             id="missing-index/high-confidence",
             short_desc=("Missing index: WHERE on an unindexed column in a paginated query (guaranteed table scan)"),
             help_uri=_HELP_BASE + "missing-index",
             default_level="error",
+            properties={"tags": list(_MISSING_INDEX_RULE_TAGS)},
         ),
         _rule_entry(
             id="missing-index/medium-confidence",
@@ -3227,12 +3874,14 @@ def missing_index_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "missing-index",
             default_level="warning",
+            properties={"tags": list(_MISSING_INDEX_RULE_TAGS)},
         ),
         _rule_entry(
             id="missing-index/low-confidence",
             short_desc=("Sub-optimal index: column has an individual index but no composite covering filter + sort"),
             help_uri=_HELP_BASE + "missing-index",
             default_level="note",
+            properties={"tags": list(_MISSING_INDEX_RULE_TAGS)},
         ),
     ]
 
@@ -3286,6 +3935,14 @@ def missing_index_to_sarif(findings: list[dict]) -> dict:
         if suggestion:
             message_text += f" — Fix: {suggestion}"
 
+        # W1062-followup-4: per-result tags add the SARIF-level axis
+        # (resolved from confidence via the level-mapper) so dashboards
+        # can filter by severity chip without re-running the mapper.
+        result_tags = _derive_finding_tags(
+            family="performance",
+            extra=["missing-index"],
+            severity=_missing_index_confidence_level(confidence),
+        )
         results.append(
             _result_entry(
                 rule_id=rule_id,
@@ -3293,6 +3950,7 @@ def missing_index_to_sarif(findings: list[dict]) -> dict:
                 locations=[_location(fpath, line)],
                 message=message_text,
                 level_mapper=_missing_index_confidence_level,
+                properties={"tags": list(result_tags)},
             )
         )
 
@@ -3425,7 +4083,41 @@ def orphan_imports_to_sarif(findings: list[dict]) -> dict:
     on a clean run. Mirrors the closed-enum design from
     :func:`n1_to_sarif` (W1208) and :func:`auth_gaps_to_sarif`
     (W1195).
+
+    W1062-followup-4 dashboard-filtering tags
+    -----------------------------------------
+
+    Each rule + result carries ``properties.tags[]`` shaped as
+    ``["hygiene", "orphan-imports", <kind-slug>, <severity>]`` so a
+    dashboard (GitHub Code Scanning / SonarQube) can slice the
+    orphan-imports finding stream by family (``hygiene``) / category
+    (``orphan-imports``) / kind (``internal-typo`` /
+    ``missing-package`` / ``missing-local``) / resolved SARIF level
+    (``error`` / ``warning`` / ``note``). Orphan imports are a
+    hygiene / dead-edge concern with no CWE / OWASP anchor — family
+    + category + kind + severity is the canonical filter-chip shape.
+    Producer-side underscores in the kind label
+    (``internal_typo`` / ``missing_package`` / ``missing_local``)
+    collapse to the URL-safe hyphen form via ``_normalize_tag``.
     """
+    # W1062-followup-4: rule-level tags carry the family + category +
+    # kind axes so dashboards grouping by rule still get the filter
+    # chips even before any specific result lands. Severity is
+    # per-result and stamped below.
+    _ORPHAN_IMPORTS_RULE_TAGS: dict[str, list[str]] = {
+        "orphan-imports/internal-typo": _derive_finding_tags(
+            family="hygiene",
+            extra=["orphan-imports", "internal-typo"],
+        ),
+        "orphan-imports/missing-package": _derive_finding_tags(
+            family="hygiene",
+            extra=["orphan-imports", "missing-package"],
+        ),
+        "orphan-imports/missing-local": _derive_finding_tags(
+            family="hygiene",
+            extra=["orphan-imports", "missing-local"],
+        ),
+    }
     rules = [
         _rule_entry(
             id="orphan-imports/internal-typo",
@@ -3436,6 +4128,7 @@ def orphan_imports_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "orphan-imports",
             default_level="error",
+            properties={"tags": list(_ORPHAN_IMPORTS_RULE_TAGS["orphan-imports/internal-typo"])},
         ),
         _rule_entry(
             id="orphan-imports/missing-package",
@@ -3446,12 +4139,14 @@ def orphan_imports_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "orphan-imports",
             default_level="warning",
+            properties={"tags": list(_ORPHAN_IMPORTS_RULE_TAGS["orphan-imports/missing-package"])},
         ),
         _rule_entry(
             id="orphan-imports/missing-local",
             short_desc=("Orphan import: path-style import did not resolve to an indexed file / package"),
             help_uri=_HELP_BASE + "orphan-imports",
             default_level="warning",
+            properties={"tags": list(_ORPHAN_IMPORTS_RULE_TAGS["orphan-imports/missing-local"])},
         ),
     ]
 
@@ -3491,6 +4186,17 @@ def orphan_imports_to_sarif(findings: list[dict]) -> dict:
             parts.append(hint)
         message_text = " — ".join(parts)
 
+        # W1062-followup-4: per-result tags add the SARIF-level axis
+        # (resolved from kind via the level-mapper) so dashboards can
+        # filter by severity chip without re-running the mapper.
+        # Producer-side underscore (``internal_typo``) collapses to
+        # the URL-safe hyphen form (``internal-typo``) via
+        # ``_normalize_tag``.
+        result_tags = _derive_finding_tags(
+            family="hygiene",
+            extra=["orphan-imports", kind],
+            severity=_orphan_imports_kind_level(kind),
+        )
         results.append(
             _result_entry(
                 rule_id=rule_id,
@@ -3498,6 +4204,7 @@ def orphan_imports_to_sarif(findings: list[dict]) -> dict:
                 locations=[_location(fpath, line)],
                 message=message_text,
                 level_mapper=_orphan_imports_kind_level,
+                properties={"tags": list(result_tags)},
             )
         )
 
@@ -3581,6 +4288,17 @@ def over_fetch_to_sarif(findings: list[dict]) -> dict:
     the concatenation of the JSON envelope's ``findings`` (model-level)
     and ``endpoint_findings`` (3-state) lists.
     """
+    # W1062-followup-3: rule-level tags carry the family + category
+    # axes so dashboards grouping by rule still get the filter chips
+    # even before any specific result lands. Severity is per-result and
+    # stamped below from the resolved SARIF level. Over-fetch is a
+    # performance / data-exposure concern with no CWE / OWASP anchor —
+    # family + category + scope + severity is the canonical filter
+    # shape.
+    _OVER_FETCH_RULE_TAGS = _derive_finding_tags(
+        family="performance",
+        extra=["over-fetch"],
+    )
     rules = [
         _rule_entry(
             id="over-fetch/select-star-or-wide-query",
@@ -3591,6 +4309,7 @@ def over_fetch_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "over-fetch",
             default_level="warning",
+            properties={"tags": list(_OVER_FETCH_RULE_TAGS)},
         ),
     ]
 
@@ -3628,6 +4347,17 @@ def over_fetch_to_sarif(findings: list[dict]) -> dict:
                 parts.append(f"Fix: {recommendation}")
             message_text = " — ".join(parts)
 
+            # W1062-followup-3: per-result tags add the scope
+            # (``endpoint``) + resolved SARIF-level axes so dashboards
+            # can slice on actionable bands without re-running the
+            # mapper. Producer-side ``H`` / ``L`` severity letters
+            # converge to ``warning`` / ``note`` via the helper's
+            # ``_normalize_tag`` chokepoint.
+            endpoint_tags = _derive_finding_tags(
+                family="performance",
+                extra=["over-fetch", "endpoint"],
+                severity=_over_fetch_severity_level(severity_label),
+            )
             results.append(
                 _result_entry(
                     rule_id=rule_id,
@@ -3635,6 +4365,7 @@ def over_fetch_to_sarif(findings: list[dict]) -> dict:
                     locations=[_location(fpath, line)],
                     message=message_text,
                     level_mapper=_over_fetch_severity_level,
+                    properties={"tags": list(endpoint_tags)},
                 )
             )
             continue
@@ -3675,6 +4406,15 @@ def over_fetch_to_sarif(findings: list[dict]) -> dict:
             parts.append(str(reasons[0]))
         message_text = " — ".join(str(p) for p in parts)
 
+        # W1062-followup-3: per-result tags add the scope (``model``) +
+        # confidence + resolved SARIF-level axes so dashboards can
+        # isolate the model-level rows from the endpoint-level rows
+        # under the same rule.
+        model_tags = _derive_finding_tags(
+            family="performance",
+            extra=["over-fetch", "model", confidence],
+            severity=_over_fetch_severity_level(confidence),
+        )
         results.append(
             _result_entry(
                 rule_id=rule_id,
@@ -3682,6 +4422,7 @@ def over_fetch_to_sarif(findings: list[dict]) -> dict:
                 locations=[_location(model_path, line_anchor)],
                 message=message_text,
                 level_mapper=_over_fetch_severity_level,
+                properties={"tags": list(model_tags)},
             )
         )
 
@@ -3770,6 +4511,24 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
     zero results (rules catalogue is always emitted so consumers can
     introspect the rule vocabulary even on a clean run).
     """
+    # W1062-followup-3: rule-level tags carry the family + category
+    # axes so dashboards grouping by rule still get the filter chips
+    # even before any specific result lands. Severity is per-result and
+    # stamped below from the actual risk label.
+    _BUS_FACTOR_RULE_TAGS: dict[str, list[str]] = {
+        "bus-factor/author-concentration": _derive_finding_tags(
+            family="governance",
+            extra=["bus-factor", "author-concentration"],
+        ),
+        "bus-factor/stale-ownership": _derive_finding_tags(
+            family="governance",
+            extra=["bus-factor", "stale-ownership"],
+        ),
+        "bus-factor/solo-author-summary": _derive_finding_tags(
+            family="governance",
+            extra=["bus-factor", "solo-author-summary"],
+        ),
+    }
     rules = [
         _rule_entry(
             id="bus-factor/author-concentration",
@@ -3780,12 +4539,14 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "bus-factor",
             default_level="warning",
+            properties={"tags": list(_BUS_FACTOR_RULE_TAGS["bus-factor/author-concentration"])},
         ),
         _rule_entry(
             id="bus-factor/stale-ownership",
             short_desc=("Directory primary author inactive beyond the stale-months threshold — forgotten module risk"),
             help_uri=_HELP_BASE + "bus-factor",
             default_level="warning",
+            properties={"tags": list(_BUS_FACTOR_RULE_TAGS["bus-factor/stale-ownership"])},
         ),
         _rule_entry(
             id="bus-factor/solo-author-summary",
@@ -3796,6 +4557,7 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
             ),
             help_uri=_HELP_BASE + "bus-factor",
             default_level="note",
+            properties={"tags": list(_BUS_FACTOR_RULE_TAGS["bus-factor/solo-author-summary"])},
         ),
     ]
 
@@ -3828,6 +4590,15 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
                 parts.append(f"{unique_authors} unique authors")
             message_text = " — ".join(str(p) for p in parts)
 
+            # W1062-followup-3: per-result tags add the SARIF-level axis
+            # (the solo-summary row is always "LOW" risk -> "note" level
+            # via _bus_factor_risk_level — pre-resolve here so the tag
+            # vocabulary stays lowercase).
+            solo_tags = _derive_finding_tags(
+                family="governance",
+                extra=["bus-factor", "solo-author-summary"],
+                severity=_bus_factor_risk_level("LOW"),
+            )
             results.append(
                 _result_entry(
                     rule_id="bus-factor/solo-author-summary",
@@ -3835,6 +4606,7 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
                     locations=[_location(repo, None)],
                     message=message_text,
                     level_mapper=_bus_factor_risk_level,
+                    properties={"tags": list(solo_tags)},
                 )
             )
             continue
@@ -3876,6 +4648,17 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
                 f"{'s' if bus_factor != 1 else ''}, "
                 f"entropy {entropy_str}) [risk={risk}]"
             )
+            # W1062-followup-3: per-result tags add the risk + SARIF
+            # level axes so dashboards can slice on actionable bands
+            # (HIGH -> warning) from the result chip set without
+            # re-resolving locally. Producer-side uppercase risk labels
+            # converge to lowercase via the helper's _normalize_tag
+            # chokepoint.
+            concentration_tags = _derive_finding_tags(
+                family="governance",
+                extra=["bus-factor", "author-concentration", risk],
+                severity=_bus_factor_risk_level(risk),
+            )
             results.append(
                 _result_entry(
                     rule_id="bus-factor/author-concentration",
@@ -3883,6 +4666,7 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
                     locations=[_location(directory, None)],
                     message=message_text,
                     level_mapper=_bus_factor_risk_level,
+                    properties={"tags": list(concentration_tags)},
                 )
             )
 
@@ -3897,6 +4681,14 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
                 f"inactive — staleness factor {staleness_str} "
                 f"[risk={risk}]"
             )
+            # W1062-followup-3: per-result tags for the stale-ownership
+            # row mirror the author-concentration shape — same family,
+            # different kind / risk surfaces.
+            stale_tags = _derive_finding_tags(
+                family="governance",
+                extra=["bus-factor", "stale-ownership", risk],
+                severity=_bus_factor_risk_level(risk),
+            )
             results.append(
                 _result_entry(
                     rule_id="bus-factor/stale-ownership",
@@ -3904,6 +4696,7 @@ def bus_factor_to_sarif(findings: list[dict]) -> dict:
                     locations=[_location(directory, None)],
                     message=message_text,
                     level_mapper=_bus_factor_risk_level,
+                    properties={"tags": list(stale_tags)},
                 )
             )
 

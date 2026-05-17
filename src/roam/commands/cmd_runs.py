@@ -193,7 +193,7 @@ def runs_start(ctx, agent):
     "--signal",
     "signals",
     multiple=True,
-    help="Key=value signal (repeatable). Bundled into the event's 'signals' dict.",
+    help="<KEY>=<VALUE> signal (repeatable). Bundled into the event's 'signals' dict.",
 )
 @click.pass_context
 def runs_log(
@@ -571,14 +571,14 @@ def _emit_pr_bundle_for_end(ctx, root) -> tuple[dict | None, str, bool]:
 
 @runs_group.command("list")
 @click.option("--agent", default=None, help="Filter to runs by this agent.")
-@click.option("--since", default=None, help="Filter to runs started at >= SINCE (ISO-8601).")
+@click.option("--since", default=None, help="Filter to runs started at >= <SINCE> (ISO-8601).")
 @click.option(
     "--status",
     default=None,
     type=click.Choice(sorted(VALID_STATUSES)),
     help="Filter to runs with this status.",
 )
-@click.option("--top", default=0, type=int, help="Cap output to N runs (0 = no cap).")
+@click.option("--top", "--limit", "top", default=0, type=int, help="Cap output to <N> runs (0 = no cap).")  # W1142: --limit alias
 @click.pass_context
 def runs_list(ctx, agent, since, status, top):
     """Stream runs, newest first.
@@ -616,8 +616,13 @@ def runs_list(ctx, agent, since, status, top):
         return
 
     metas = list(list_runs(root, agent=agent, since=since, status=status))
+    # W1142-followup-B: cap-hit disclosure. Record the full pre-slice
+    # run count so the envelope can disclose when ``--limit`` truncated
+    # the list.
+    total_metas_full = len(metas)
     if top > 0:
         metas = metas[:top]
+    metas_truncated = total_metas_full > len(metas)
 
     total = len(metas)
     if total == 0:
@@ -628,16 +633,35 @@ def runs_list(ctx, agent, since, status, top):
         state = "ok"
 
     if json_mode:
+        # W1142-followup-B: cap-hit disclosure on the canonical JSON
+        # envelope. ``count``/``total_count``/``truncated``/``limit``
+        # surface whether the agent's --limit collapsed signal.
+        _cap_summary = {
+            "count": len(metas),
+            "total_count": total_metas_full,
+            "truncated": metas_truncated,
+            "limit": top,
+        }
+        _warnings_out: list[str] = []
+        if metas_truncated:
+            _warnings_out.append(
+                f"truncated to {len(metas)} of {total_metas_full} — "
+                "pass --limit larger to see more"
+            )
+        _summary = {
+            "verdict": verdict,
+            "partial_success": metas_truncated,
+            "state": state,
+            "total": total,
+            **_cap_summary,
+        }
+        if _warnings_out:
+            _summary["warnings_out"] = _warnings_out
         click.echo(
             to_json(
                 json_envelope(
                     "runs-list",
-                    summary={
-                        "verdict": verdict,
-                        "partial_success": False,
-                        "state": state,
-                        "total": total,
-                    },
+                    summary=_summary,
                     budget=token_budget,
                     runs=[m.to_dict() for m in metas],
                     path=str(rroot),
@@ -803,7 +827,7 @@ def _verify_one_run(root, run_id: str) -> dict:
     "verify_all",
     is_flag=True,
     default=False,
-    help="Verify every run in the repo. Mutually exclusive with RUN_ID.",
+    help="Verify every run in the repo. Mutually exclusive with <RUN_ID>.",
 )
 @click.pass_context
 def runs_verify(ctx, run_id, verify_all):
@@ -830,7 +854,7 @@ def runs_verify(ctx, run_id, verify_all):
     root = find_project_root()
 
     if verify_all and run_id:
-        verdict = "pass RUN_ID OR --all, not both"
+        verdict = "pass <RUN_ID> OR --all, not both"
         if json_mode:
             click.echo(
                 to_json(
@@ -850,7 +874,7 @@ def runs_verify(ctx, run_id, verify_all):
         ctx.exit(2)
 
     if not verify_all and not run_id:
-        verdict = "pass a RUN_ID or use --all to verify every run"
+        verdict = "pass a <RUN_ID> or use --all to verify every run"
         if json_mode:
             click.echo(
                 to_json(

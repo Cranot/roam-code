@@ -215,10 +215,10 @@ def _pair_classify(pair: dict) -> tuple[str, str]:
     default=5,
     show_default=True,
     type=int,
-    help="Skip functions shorter than N lines",
+    help="Skip functions shorter than <N> lines",  # W1117-followup-4
 )
 @click.option("--scope", default=None, type=str, help="Limit to files under this path prefix")
-@click.option("--top", default=0, type=int, help="Show only top N clusters (0=all)")
+@click.option("--top", "--limit", "top", default=0, type=int, help="Show only top <N> clusters (0=all)")  # W1142: --limit alias; W1117-followup-4
 @click.option(
     "--persist",
     is_flag=True,
@@ -337,8 +337,16 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             _enrich_clones_findings_with_role_bucket(conn)
             conn.commit()
 
+        # W1142-followup: cap-hit disclosure. Record the full pre-truncation
+        # cluster count so the envelope can distinguish "N total clusters"
+        # from "N of M, truncated by --limit".
+        total_clusters_full = len(clusters)
         if top > 0:
             clusters = clusters[:top]
+        # W1142-followup: pair count is already pre-truncation (`total_pairs`
+        # is `len(pairs)` below); record the truncation flag derived from
+        # the cluster slicing above.
+        clusters_truncated = top > 0 and total_clusters_full > len(clusters)
 
         # Summary stats
         total_functions = sum(len(c.members) for c in clusters)
@@ -501,23 +509,45 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             distribution = confidence_distribution(combined)
             verdict_with_conf = verdict_with_high_count(verdict, distribution)
 
+            # W1142-followup: cap-hit disclosure on the canonical JSON
+            # envelope. ``count``/``total_count``/``truncated``/``limit``
+            # surface whether the agent's --limit collapsed signal.
+            _cap_summary = {
+                "count": len(clusters),
+                "total_count": total_clusters_full,
+                "truncated": clusters_truncated,
+                "limit": top,
+            }
+            _warnings_out: list[str] = []
+            if clusters_truncated:
+                _warnings_out.append(
+                    f"truncated to {len(clusters)} of {total_clusters_full} — "
+                    "pass --limit larger to see more"
+                )
+
+            summary_payload = {
+                "verdict": verdict_with_conf,
+                "clusters": len(clusters),
+                "clone_pairs": total_pairs,
+                "total_functions": total_functions,
+                "avg_similarity": round(avg_sim, 3),
+                "estimated_reducible_lines": reducible_lines,
+                "findings_confidence_distribution": distribution,
+                # W165 — per-bucket cluster counts surfaced in
+                # the summary so agent contracts can filter
+                # without re-walking clusters[].
+                "role_buckets": bucket_counts,
+                **_cap_summary,
+            }
+            if _warnings_out:
+                summary_payload["warnings_out"] = _warnings_out
+                summary_payload["partial_success"] = True
+
             click.echo(
                 to_json(
                     json_envelope(
                         "clones",
-                        summary={
-                            "verdict": verdict_with_conf,
-                            "clusters": len(clusters),
-                            "clone_pairs": total_pairs,
-                            "total_functions": total_functions,
-                            "avg_similarity": round(avg_sim, 3),
-                            "estimated_reducible_lines": reducible_lines,
-                            "findings_confidence_distribution": distribution,
-                            # W165 — per-bucket cluster counts surfaced in
-                            # the summary so agent contracts can filter
-                            # without re-walking clusters[].
-                            "role_buckets": bucket_counts,
-                        },
+                        summary=summary_payload,
                         budget=token_budget,
                         clusters=cluster_triples,
                         pairs=pair_triples,

@@ -20,6 +20,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 # ---------------------------------------------------------------------------
 # Thresholds for aggregate snapshot metrics
@@ -328,6 +329,9 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
                         "snapshots_available": n_snapshots,
                         "metrics_trending": metrics_trending,
                         "symbols_at_risk": symbols_at_risk,
+                        # W1298 Pattern-3a: at_risk_symbols[*].cognitive_complexity
+                        # is the raw symbol_metrics value — disclose the scorer.
+                        "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                     },
                     # LAW 4 (W17.3): the auto-derive renders
                     # ``symbols_at_risk`` as "N symbols at risk findings"

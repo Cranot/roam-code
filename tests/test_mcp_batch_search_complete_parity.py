@@ -15,7 +15,6 @@ agent calling ``roam_batch_search(queries=["X"])`` gets the same answer as
 
 from __future__ import annotations
 
-import shutil
 import textwrap
 
 import pytest
@@ -118,9 +117,9 @@ def isolated_project(tmp_path, monkeypatch):
         pytest.skip(f"roam init failed: {res.output}")
 
     yield tmp_path
-
-    # Best-effort cleanup of the index directory.
-    shutil.rmtree(tmp_path / ".roam", ignore_errors=True)
+    # W478-followup-2: cleanup delegated to pytest's tmp_path fixture
+    # (Windows-handle-retry aware). The previous explicit
+    # `shutil.rmtree(..., ignore_errors=True)` was a redundant swallow site.
 
 
 # ---------------------------------------------------------------------------

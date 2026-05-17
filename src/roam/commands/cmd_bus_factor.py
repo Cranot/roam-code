@@ -18,6 +18,7 @@ from roam.commands.conventions_helper import (
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
+from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 # W115 — bus-factor is the fourth detector migrating onto the central
 # findings registry (after clones W95, dead W99, complexity W102). The
@@ -739,18 +740,23 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                 return
             no_data_verdict = "no git history data available"
             if json_mode:
+                no_data_summary: dict = {
+                    "verdict": no_data_verdict,
+                    # W21.7 LAW 4 rename: ``directory_count: N`` rendered
+                    # awkwardly as ``"directory count N"``. The new key
+                    # humanizes to ``"N directories analyzed"`` — a clean
+                    # concrete-noun anchor.
+                    "directories_analyzed": 0,
+                    "high_risk": 0,
+                    "excluded_files_count": excluded_files_count,
+                    "exclude_prefixes_active": list(exclude_prefixes),
+                }
+                if brain_methods:
+                    # W1298 Pattern-3a: brain_methods rows carry raw
+                    # cognitive_complexity from symbol_metrics.
+                    no_data_summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
                 envelope_kwargs = dict(
-                    summary={
-                        "verdict": no_data_verdict,
-                        # W21.7 LAW 4 rename: ``directory_count: N`` rendered
-                        # awkwardly as ``"directory count N"``. The new key
-                        # humanizes to ``"N directories analyzed"`` — a clean
-                        # concrete-noun anchor.
-                        "directories_analyzed": 0,
-                        "high_risk": 0,
-                        "excluded_files_count": excluded_files_count,
-                        "exclude_prefixes_active": list(exclude_prefixes),
-                    },
+                    summary=no_data_summary,
                     directories=[],
                 )
                 if brain_methods:
@@ -843,6 +849,10 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
             }
             if brain_methods:
                 summary["brain_method_count"] = len(brain_list)
+                # W1298 Pattern-3a: brain_methods rows carry raw
+                # cognitive_complexity from symbol_metrics — disclose the
+                # scorer so consumers cannot confuse it with cyclomatic.
+                summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
 
             envelope_kwargs = dict(
                 summary=summary,

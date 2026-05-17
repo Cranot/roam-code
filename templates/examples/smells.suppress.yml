@@ -1,0 +1,61 @@
+# .roam/smells.suppress.yml — allowlist for code-smell findings (W658 substrate).
+#
+# Copy this file to .roam/smells.suppress.yml in your repo root. The roam
+# smells command reads it automatically and partitions findings into
+# (kept, suppressed); kept rows still drive the gate, suppressed rows
+# carry a `_suppressed_by` audit annotation on the JSON envelope.
+#
+# Use this file when a `roam smells` finding is INTENTIONAL (public-API
+# hub, framework-required pattern, legacy region awaiting refactor) and
+# you want to keep the gate green without disabling the detector globally.
+#
+# Match semantics (see src/roam/commands/smells_suppress.py::is_suppressed):
+#   - `kind` must equal the finding's `smell_id` (exact match)
+#   - `symbol` must equal the finding's `symbol_name` (bare-name OR
+#     qualified-name; trailing dot-segment compared)
+#   - `file` (optional) suffix-matches the finding's file path
+#   - `expires` (optional) ISO date; entries past today (UTC) are skipped
+
+suppressions:
+  # Suppresses shotgun-surgery findings on get_language_for_file — the
+  # registry dispatcher fans out by design.
+  - kind: shotgun-surgery
+    symbol: roam.languages.registry.get_language_for_file
+    reason: "Public API hub — fan-in is intended by registry pattern"
+    author: "team-platform"
+    added: "2026-05-16"
+
+  # Suppresses god-class on LegacyOrderProcessor with an explicit sunset
+  # date. Re-runs after 2027-01-15 will surface the finding again.
+  - kind: god-class
+    symbol: LegacyOrderProcessor
+    reason: "Tracked in JIRA-4421; refactor scheduled for v14"
+    expires: "2027-01-15"
+
+  # Suppresses long-params on handleCheckout in the checkout module only.
+  # File suffix scopes the suppression so a same-named symbol elsewhere
+  # still fires.
+  - kind: long-params
+    symbol: handleCheckout
+    file: src/checkout/handlers.ts
+    reason: "Stripe SDK callback signature — width is fixed upstream"
+
+  # Suppresses magic-numbers on calibrate without a reason for the
+  # minimum-viable shape. Prefer adding a `reason` so reviewers know why.
+  - kind: magic-numbers
+    symbol: calibrate
+
+# Schema reference
+# ----------------
+# Canonical loader:  roam.commands.smells_suppress.load_smells_suppressions
+# Typed loader:      roam.commands.smells_suppress.load_smells_suppressions_typed
+# Dataclass:         roam.policy.suppression_v2.KindSymbolSuppression
+# Matcher:           roam.commands.smells_suppress.is_suppressed
+# Applier:           roam.commands.smells_suppress.apply_suppressions
+#
+# Required fields:   kind, symbol
+# Optional fields:   file, reason, author, added, expires, status
+# Date format:       YYYY-MM-DD (UTC)
+#
+# Run `roam smells --json` to see suppressed findings annotated with
+# `_suppressed_by` in the JSON envelope.

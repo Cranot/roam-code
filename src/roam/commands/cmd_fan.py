@@ -460,15 +460,22 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                     click.echo(write_sarif(fan_to_sarif([])))
                     return
                 if json_mode:
+                    # W805-followup-C: empty-state disclosure (Pattern 2
+                    # silent-fallback fix). Zero rows on a symbol-mode
+                    # query means the symbols/degrees corpus is empty —
+                    # not a clean run. Surface via partial_success +
+                    # closed-enum state.
                     click.echo(
                         to_json(
                             json_envelope(
                                 "fan",
                                 budget=token_budget,
                                 summary={
-                                    "verdict": "no graph metrics available",
+                                    "verdict": "no graph metrics available (corpus empty — run `roam index --force` to populate)",
                                     "mode": mode,
                                     "items": 0,
+                                    "partial_success": True,
+                                    "state": "no_symbols",
                                 },
                                 mode=mode,
                                 items=[],
@@ -637,15 +644,21 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                     click.echo(write_sarif(fan_to_sarif([])))
                     return
                 if json_mode:
+                    # W805-followup-C: empty-state disclosure (Pattern 2
+                    # silent-fallback fix). Zero rows on a file-mode
+                    # query means the file_edges corpus is empty — not
+                    # a clean run. Surface via partial_success + state.
                     click.echo(
                         to_json(
                             json_envelope(
                                 "fan",
                                 budget=token_budget,
                                 summary={
-                                    "verdict": "no file edges available",
+                                    "verdict": "no file edges available (corpus empty — run `roam index --force` to populate)",
                                     "mode": mode,
                                     "items": 0,
+                                    "partial_success": True,
+                                    "state": "no_file_edges",
                                 },
                                 mode=mode,
                                 items=[],

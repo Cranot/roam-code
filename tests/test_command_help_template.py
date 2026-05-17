@@ -12,9 +12,12 @@ docstring that:
    discover related tooling without re-reading the whole help index).
 
 The list grows incrementally as commands are polished. New commands
-SHOULD aim for the template; ones in the long tail (~217 commands at
-the time of writing) are NOT held to it yet — adding them here when
-ready is how we ratchet up consistency over time.
+SHOULD aim for the template; ones in the long tail (the canonical
+surface count is env-derived — see ``roam surface --json``) are NOT
+held to it yet — adding them here when ready is how we ratchet up
+consistency over time. (W844-drive-by-2: dropped the stale "~217
+commands" snapshot; the live count is whatever ``surface_counts``
+reports.)
 """
 
 from __future__ import annotations

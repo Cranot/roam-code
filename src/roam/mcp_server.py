@@ -260,6 +260,49 @@ _ACTIVE_TOOLS = _PRESETS[_ACTIVE_PRESET]
 
 
 # ---------------------------------------------------------------------------
+# Wave C1 (W767) — compat profile env-vars.
+#
+# Three env-vars under the ``ROAM_MCP_COMPAT_*`` prefix wire client-compat
+# shims through the ``@_tool`` registration path. The legacy
+# ``_compat_profile_payload`` namespace is the *client-config-template*
+# emitter (mcp-setup) and is intentionally distinct from this server-side
+# runtime knob; do not merge the two namespaces (W976 lock-comment on
+# ``_compat_profile_payload`` covers the inverse direction).
+#
+# - ``ROAM_MCP_COMPAT_STRIP_OUTPUT_SCHEMA`` (default ``0``). When ``1``,
+#   strip ``output_schema=`` from ``@_tool`` decorations at registration
+#   time. Load-bearing compat shim for Claude Code #41361 / #45839: the
+#   client's ``safeParse → return null`` guard silently bails on any
+#   schema mismatch on every release **2.1.88 through 2.1.107+**.
+#   Mirrors j0hanz filesystem-mcp ``FS_CONTEXT_STRIP_STRUCTURED=false``
+#   default. Wave A text-mirror still emits structured JSON in a
+#   ``TextContent`` block; JSON-path projection still works.
+# - ``ROAM_MCP_COMPAT_STRICT`` (default ``1``). When ``0``, Wave B
+#   per-command schemas are advertised on ``tools/list`` but
+#   server-side validation of the response payload is skipped before
+#   emit. Local dev escape hatch for in-flight schema drift; never set
+#   ``0`` in CI.
+#
+# Override precedence (LAW 11): explicit env > auto-detected client
+# profile > defaults. Wave C2 will add the client-profile layer; today
+# only explicit env + defaults are in play.
+# ---------------------------------------------------------------------------
+
+
+def _env_truthy(name: str, default: str) -> bool:
+    """Parse a boolean env-var with closed truthy/falsy vocabulary.
+
+    Truthy: ``1``, ``true``, ``yes``, ``on`` (case-insensitive).
+    Falsy: everything else (including unset → fall back to ``default``).
+    """
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
+_COMPAT_STRIP_OUTPUT_SCHEMA: bool = _env_truthy("ROAM_MCP_COMPAT_STRIP_OUTPUT_SCHEMA", "0")
+_COMPAT_STRICT: bool = _env_truthy("ROAM_MCP_COMPAT_STRICT", "1")
+
+
+# ---------------------------------------------------------------------------
 # Server instance
 # ---------------------------------------------------------------------------
 
@@ -544,6 +587,38 @@ def _make_schema(summary_fields: dict | None = None, **payload_fields) -> dict:
     return {"type": "object", "properties": props}
 
 
+def _strict_validate_envelope(envelope: dict, schema: dict) -> list[str]:
+    """Wave C1 (W767): server-side envelope validation gate.
+
+    Honors ``ROAM_MCP_COMPAT_STRICT`` — when ``0``, returns ``[]``
+    unconditionally so optional-field absence (or any other shape
+    drift) does not raise. When ``1`` (default), runs the same minimal
+    structural walk the Wave B tests use: required-keys present.
+
+    The check is intentionally narrow — we don't pull in ``jsonschema``
+    here; the runtime contract is *required-keys-only*. Per-type
+    validation and enum checking remain Wave B test discipline. The
+    point of this hook is to give ``ROAM_MCP_COMPAT_STRICT=0`` a real
+    runtime effect (a callable that can be exercised in tests + Wave
+    C2 doctor) without coupling dispatch to ``jsonschema``.
+    """
+    if not _COMPAT_STRICT:
+        return []
+    errors: list[str] = []
+    if not isinstance(envelope, dict):
+        return [f"<root>: expected object, got {type(envelope).__name__}"]
+    for required_key in schema.get("required", []):
+        if required_key not in envelope:
+            errors.append(f"<root>: missing required key {required_key!r}")
+    props = schema.get("properties", {})
+    for key, sub_schema in props.items():
+        if key in envelope and isinstance(envelope[key], dict):
+            for sub_required in sub_schema.get("required", []):
+                if sub_required not in envelope[key]:
+                    errors.append(f"{key}: missing required key {sub_required!r}")
+    return errors
+
+
 # -- Compound operation schemas ------------------------------------------------
 
 _WORKFLOW_SCHEMA = {
@@ -583,21 +658,212 @@ _SCHEMA_DIAGNOSE_ISSUE = _make_schema(
 
 # -- Core tool schemas ---------------------------------------------------------
 
-_SCHEMA_UNDERSTAND = _make_schema(
-    {"health_score": {"type": "number"}, "tech_stack": {"type": "array"}},
-    architecture={"type": "object"},
-    hotspots={"type": "array"},
-)
-
-_SCHEMA_HEALTH = _make_schema(
-    {
-        "health_score": {"type": "number"},
-        "total_files": {"type": "integer"},
-        "total_symbols": {"type": "integer"},
+# Wave B2 (W767): specialised per-command schema for ``roam_understand``.
+# Mirrors the actual envelope emitted by ``cmd_understand`` in the
+# default success-path codebase-briefing mode (``--json`` without
+# ``--agent-prompt`` / ``--skeleton`` sub-modes). Required is narrow —
+# only ``verdict`` is emitted on every exit path (e.g. the
+# ``--skeleton DIR`` empty-symbols branch at cmd_understand.py:1199 omits
+# health_score / languages / files). The agent-prompt and skeleton
+# branches use the same envelope shape so additional summary props are
+# declared but not required.
+_SCHEMA_UNDERSTAND = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {"type": "string"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                "health_score": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+                "files": {"type": "integer", "minimum": 0},
+                "symbols": {"type": "integer", "minimum": 0},
+                "languages": {"type": "integer", "minimum": 0},
+                "caller_metric_definition": {"type": "string"},
+                # --skeleton sub-mode (cmd_understand.py:1199-1255):
+                "file_count": {"type": "integer", "minimum": 0},
+                "symbol_count": {"type": "integer", "minimum": 0},
+                # --agent-prompt sub-mode (cmd_understand.py:1150):
+                "mode": {"type": "string", "enum": ["agent"]},
+                "partial_success": {"type": "boolean"},
+            },
+        },
+        "project": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "root": {"type": "string"},
+                "files": {"type": "integer", "minimum": 0},
+                "symbols": {"type": "integer", "minimum": 0},
+                "edges": {"type": "integer", "minimum": 0},
+            },
+        },
+        "tech_stack": {
+            "type": "object",
+            "properties": {
+                "languages": {"type": "array"},
+                "frameworks": {"type": "array"},
+                "build": {"type": ["string", "null"]},
+            },
+        },
+        "architecture": {
+            "type": "object",
+            "properties": {
+                "layers": {"type": "array"},
+                "layer_count": {"type": "integer", "minimum": 0},
+                "entry_points": {"type": "array"},
+                "key_abstractions": {"type": "array"},
+                "clusters": {"type": "array"},
+            },
+        },
+        "health_summary": {
+            "type": "object",
+            "properties": {
+                "score": {"type": ["number", "null"]},
+                "cycles": {"type": ["integer", "array"]},
+                "god_components": {"type": ["integer", "array"]},
+                "bottlenecks": {"type": ["integer", "array"]},
+                "dead_exports": {"type": ["integer", "array"]},
+                "layer_violations": {"type": ["integer", "array"]},
+                "worst_issues": {"type": "array"},
+            },
+        },
+        "conventions": {"type": "object"},
+        "complexity": {"type": "object"},
+        "patterns": {"type": ["array", "object"]},
+        "debt_hotspots": {"type": "array"},
+        "hotspots": {"type": "array"},
+        "suggested_reading_order": {"type": "array"},
+        "discoverable_via": {"type": ["array", "object"]},
+        "next_steps": {"type": "array", "items": {"type": "string"}},
+        "tour": {"type": "object"},
+        # --skeleton sub-mode top-level payload:
+        "directory": {"type": "string"},
+        "files": {"type": ["object", "array"]},
+        "file_count": {"type": "integer", "minimum": 0},
+        "symbol_count": {"type": "integer", "minimum": 0},
+        # --agent-prompt sub-mode top-level payload:
+        "agent_prompt": {"type": "string"},
     },
-    issues={"type": "array"},
-    bottlenecks={"type": "array"},
-)
+}
+
+# Wave B2 (W767): specialised per-command schema for ``roam_health``.
+# Mirrors the 3 distinct exit paths in ``cmd_health``:
+#   1. Empty-corpus W834 branch (cmd_health.py:1180): verdict + state +
+#      partial_success + health_score=None + zeros. Stamped via Fix E.
+#   2. Baseline-mode branch (cmd_health.py:990, 1027): verdict in
+#      {DEGRADED, IMPROVED, REGRESSED, ...} + baseline_ref + new_findings_count.
+#   3. Default scoring branch (cmd_health.py:1795): full health_score +
+#      tangle_ratio + propagation_cost + issue_count + 4 issue categories.
+# Gate-mode (cmd_health.py:1675) emits a 4th shape with gate_passed +
+# gate_results. ``required`` is narrowed to ``verdict`` only because the
+# empty-corpus branch sets health_score=None and the baseline+gate
+# branches both emit health_score but other fields differ.
+_SCHEMA_HEALTH = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {"type": "string"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                "health_score": {
+                    "type": ["number", "null"],
+                    "minimum": 0,
+                    "maximum": 100,
+                },
+                "health_score_definition": {"type": "string"},
+                "tangle_ratio": {"type": ["number", "null"]},
+                "tangle_ratio_definition": {"type": "string"},
+                "propagation_cost": {"type": ["number", "null"]},
+                "algebraic_connectivity": {"type": ["number", "null"]},
+                "issue_count": {"type": "integer", "minimum": 0},
+                "severity": {"type": "object"},
+                "category_severity": {"type": "object"},
+                "actionable_cycles": {"type": "integer", "minimum": 0},
+                "ignored_cycles": {"type": "integer", "minimum": 0},
+                "total_cycles": {"type": "integer", "minimum": 0},
+                "cycles_total": {"type": "integer", "minimum": 0},
+                "cycles_actionable": {"type": "integer", "minimum": 0},
+                "god_components": {"type": "integer", "minimum": 0},
+                "cycles_definition": {"type": "string"},
+                "god_components_definition": {"type": "string"},
+                "imported_coverage_pct": {"type": ["number", "null"]},
+                "imported_coverage_files": {"type": "integer", "minimum": 0},
+                # Empty-corpus branch (cmd_health.py:1183):
+                "state": {
+                    "type": "string",
+                    "enum": ["empty_corpus"],
+                },
+                "partial_success": {"type": "boolean"},
+                # Baseline-mode branch (cmd_health.py:992, 1030):
+                "reason": {"type": "string"},
+                "baseline_ref": {"type": "string"},
+                "baseline_taken_at": {"type": ["string", "null"]},
+                "new_findings_count": {"type": "integer", "minimum": 0},
+                "fixed_findings_count": {"type": "integer", "minimum": 0},
+                "regressed_count": {"type": "integer", "minimum": 0},
+                "score_delta": {"type": "number"},
+                # Gate-mode branch (cmd_health.py:1662):
+                "gate_passed": {"type": "boolean"},
+                "warnings_out": {"type": "array"},
+            },
+        },
+        "health_score": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "tangle_ratio": {"type": ["number", "null"]},
+        "propagation_cost": {"type": ["number", "null"]},
+        "algebraic_connectivity": {"type": ["number", "null"]},
+        "issue_count": {"type": "integer", "minimum": 0},
+        "severity": {"type": "object"},
+        "category_severity": {"type": "object"},
+        "actionable_cycles": {"type": "integer", "minimum": 0},
+        "ignored_cycles": {"type": "integer", "minimum": 0},
+        "total_cycles": {"type": "integer", "minimum": 0},
+        "cycles_total": {"type": "integer", "minimum": 0},
+        "cycles_actionable": {"type": "integer", "minimum": 0},
+        "indexed_symbols": {"type": "integer", "minimum": 0},
+        "imported_coverage_pct": {"type": ["number", "null"]},
+        "imported_coverage_files": {"type": "integer", "minimum": 0},
+        "imported_covered_lines": {"type": "integer", "minimum": 0},
+        "imported_coverable_lines": {"type": "integer", "minimum": 0},
+        "score_breakdown": {"type": "array"},
+        "framework_filtered": {"type": "integer", "minimum": 0},
+        "actionable_count": {"type": "integer", "minimum": 0},
+        "utility_count": {"type": "integer", "minimum": 0},
+        "cycles": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "size": {"type": "integer", "minimum": 1},
+                    "severity": {"type": "string"},
+                    "directories": {"type": "array"},
+                    "symbols": {"type": "array"},
+                    "files": {"type": "array"},
+                },
+            },
+        },
+        "cycle_break_suggestions": {"type": "array"},
+        "god_components": {"type": "array"},
+        "bottleneck_thresholds": {"type": "object"},
+        "bottlenecks": {"type": "array"},
+        "layer_violations": {"type": "array"},
+        "next_steps": {"type": "array"},
+        "index_status": {"type": ["object", "null"]},
+        # Baseline-mode top-level fields:
+        "delta": {"type": "object"},
+        "baseline_ref": {"type": "string"},
+        "message": {"type": "string"},
+        # Gate-mode top-level fields:
+        "gate_results": {"type": "array"},
+        # Empty-corpus branch top-level field (cmd_health.py:1206):
+        "agent_contract": {"type": "object"},
+    },
+}
 
 _SCHEMA_SEARCH = _make_schema(
     {"total_matches": {"type": "integer"}, "query": {"type": "string"}},
@@ -615,12 +881,110 @@ _SCHEMA_SEARCH = _make_schema(
     },
 )
 
-_SCHEMA_PREFLIGHT = _make_schema(
-    {"risk_level": {"type": "string"}, "target": {"type": "string"}},
-    blast_radius={"type": "object"},
-    affected_tests={"type": "array"},
-    complexity={"type": "object"},
-)
+# Wave B1 (W767): specialised per-command schema for ``roam_preflight``.
+# Mirrors the actual envelope emitted by ``cmd_preflight``:
+# 6 signal dimensions (blast_radius / tests / complexity / coupling /
+# conventions / fitness) plus a summary that always carries
+# verdict + target + risk_level. ``required`` is restricted to fields
+# emitted on EVERY exit path — including ``not_found`` (where
+# risk_level="UNKNOWN") — to avoid Pattern 1-variant-D schema lies.
+_SCHEMA_PREFLIGHT = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {"type": "string"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict", "target", "risk_level"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                "target": {"type": "string"},
+                "risk_level": {
+                    "type": "string",
+                    "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN"],
+                },
+                "symbols_checked": {"type": "integer", "minimum": 0},
+                "files_checked": {"type": "integer", "minimum": 0},
+                "fitness_violations": {"type": "array"},
+                "risk_level_definition": {"type": "string"},
+                "partial_success": {"type": "boolean"},
+                "resolution": {
+                    "type": "string",
+                    "enum": ["symbol", "file", "unresolved", "fuzzy"],
+                },
+                "error": {"type": "string"},
+                "alias_warnings": {"type": "array"},
+            },
+        },
+        "blast_radius": {
+            "type": "object",
+            "properties": {
+                "affected_symbols": {"type": "integer", "minimum": 0},
+                "affected_files": {"type": "integer", "minimum": 0},
+                "affected_file_list": {"type": "array"},
+                "severity": {"type": "string"},
+                "affected_symbols_definition": {"type": "string"},
+                "affected_files_definition": {"type": "string"},
+            },
+        },
+        "tests": {
+            "type": "object",
+            "properties": {
+                "direct": {"type": "integer", "minimum": 0},
+                "transitive": {"type": "integer", "minimum": 0},
+                "colocated": {"type": "integer", "minimum": 0},
+                "total": {"type": "integer", "minimum": 0},
+                "test_files": {"type": "array", "items": {"type": "string"}},
+                "pytest_command": {"type": ["string", "null"]},
+                "severity": {"type": "string"},
+            },
+        },
+        "complexity": {
+            "type": "object",
+            "properties": {
+                "max_cognitive_complexity": {"type": "number"},
+                "max_nesting_depth": {"type": "integer", "minimum": 0},
+                "high_complexity_symbols": {"type": "array"},
+                "severity": {"type": "string"},
+                "complexity_definition": {"type": "string"},
+            },
+        },
+        "coupling": {
+            "type": "object",
+            "properties": {
+                "coupled_files": {"type": "integer", "minimum": 0},
+                "missing_partners": {"type": "array"},
+                "severity": {"type": "string"},
+            },
+        },
+        "conventions": {
+            "type": "object",
+            "properties": {
+                "violation_count": {"type": "integer", "minimum": 0},
+                "violations": {"type": "array"},
+                "severity": {"type": "string"},
+                "majority_threshold_pct": {"type": ["number", "null"]},
+                "kinds_with_majority": {"type": ["integer", "null"], "minimum": 0},
+            },
+        },
+        "fitness": {
+            "type": "object",
+            "properties": {
+                "rules_checked": {"type": "integer", "minimum": 0},
+                "rules_failed": {"type": "integer", "minimum": 0},
+                "total_violations": {"type": "integer", "minimum": 0},
+                "failed_rules": {"type": "array"},
+                "rule_details": {"type": "array"},
+                "severity": {"type": "string"},
+            },
+        },
+        "resolution": {
+            "type": "string",
+            "enum": ["symbol", "file", "unresolved", "fuzzy"],
+        },
+        "partial_success": {"type": "boolean"},
+    },
+}
 
 _SCHEMA_CONTEXT = _make_schema(
     {"target": {"type": "string"}},
@@ -719,16 +1083,301 @@ _SCHEMA_FLEET_PLAN = _make_schema(
     },
 )
 
-_SCHEMA_IMPACT = _make_schema(
-    {"total_affected": {"type": "integer"}, "target": {"type": "string"}},
-    affected_symbols={"type": "array"},
-    affected_files={"type": "array"},
-)
+# Wave B1 (W767): specialised per-command schema for ``roam_impact``.
+# Mirrors the actual envelope emitted by ``cmd_impact``:
+# blast-radius integers + ranked file list + indirect refs + truncation
+# state. ``required`` is restricted to ``verdict`` because the not_found
+# / not_in_graph / no_dependents / success branches all emit the same
+# summary base shape but only the success branch carries every counter
+# (Pattern 1-variant-D avoidance: don't require fields that not_found
+# omits).
+_SCHEMA_IMPACT = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {"type": "string"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                "affected_symbols": {"type": "integer", "minimum": 0},
+                "affected_files": {"type": "integer", "minimum": 0},
+                "weighted_impact": {"type": "number", "minimum": 0},
+                "reach_pct": {"type": "number", "minimum": 0, "maximum": 100},
+                "sf_convention_tests": {"type": "integer", "minimum": 0},
+                "truncated": {"type": "boolean"},
+                "partial_success": {"type": "boolean"},
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "timeout",
+                        "caller_cap",
+                        "depth_cap",
+                        "not_found",
+                    ],
+                },
+                "limits": {
+                    "type": "object",
+                    "properties": {
+                        "depth": {"type": ["integer", "null"]},
+                        "max_callers": {"type": ["integer", "null"]},
+                        "timeout_s": {"type": ["number", "null"]},
+                    },
+                },
+                "affected_symbols_definition": {"type": "string"},
+                "affected_files_definition": {"type": "string"},
+                "weighted_impact_definition": {"type": "string"},
+                "reach_pct_definition": {"type": "string"},
+                "resolution": {
+                    "type": "string",
+                    "enum": ["symbol", "file", "unresolved", "fuzzy"],
+                },
+                "in_graph": {"type": "boolean"},
+            },
+        },
+        "symbol": {"type": "string"},
+        "affected_symbols": {"type": "integer", "minimum": 0},
+        "affected_files": {"type": "integer", "minimum": 0},
+        "weighted_impact": {"type": "number", "minimum": 0},
+        "reach_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "direct_dependents": {
+            "type": "object",
+            "description": (
+                "Per-edge-kind buckets of direct callers; keys are edge kinds "
+                "(calls / inherits / type_ref / ...), values are arrays of "
+                "{name, kind, file} records."
+            ),
+        },
+        "affected_file_list": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "importance": {"type": "number"},
+                },
+            },
+        },
+        "sf_convention_tests": {"type": "array", "items": {"type": "string"}},
+        "indirect_refs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string"},
+                    "line": {"type": "integer", "minimum": 1},
+                    "match": {"type": "string"},
+                },
+            },
+        },
+        "truncated": {"type": "boolean"},
+        "partial_success": {"type": "boolean"},
+        "state": {"type": "string"},
+        "limits": {"type": "object"},
+        "resolution": {
+            "type": "string",
+            "enum": ["symbol", "file", "unresolved", "fuzzy"],
+        },
+        "tip": {"type": "string"},
+    },
+}
 
 _SCHEMA_PR_RISK = _make_schema(
     {"risk_score": {"type": "number"}, "risk_level": {"type": "string"}},
     per_file={"type": "array"},
 )
+
+# Wave B4 (W767): specialised per-command schema for ``roam_timeline``.
+# Mirrors the actual envelope emitted by ``cmd_timeline`` -- the 7-field
+# summary (verdict + commit_count + file_path + added_total +
+# removed_total + distinct_authors + top_author) + ``commits[]`` array
+# of {sha,date,author,added,removed,subject} records + ``authors{}`` map
+# of author->commit_count. ``required`` is intentionally narrow
+# (``verdict`` only) because the no-symbol-found path emits only
+# ``{verdict, commit_count: 0}`` + ``commits: []`` and omits
+# ``file_path`` / ``top_author`` / etc.
+_SCHEMA_TIMELINE = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {"const": "timeline"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict", "commit_count"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                "commit_count": {"type": "integer", "minimum": 0},
+                "file_path": {
+                    "type": "string",
+                    "description": "Path of the file owning the resolved symbol.",
+                },
+                "added_total": {"type": "integer", "minimum": 0},
+                "removed_total": {"type": "integer", "minimum": 0},
+                "distinct_authors": {"type": "integer", "minimum": 0},
+                "top_author": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "Author with the most commits in this window; ``null`` "
+                        "when the file has no commits in the window."
+                    ),
+                },
+                "partial_success": {"type": "boolean"},
+            },
+        },
+        "commits": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "sha": {"type": "string", "description": "12-char short SHA."},
+                    "date": {"type": "string", "description": "YYYY-MM-DD (or ``?`` if absent)."},
+                    "author": {"type": "string"},
+                    "added": {"type": "integer", "minimum": 0},
+                    "removed": {"type": "integer", "minimum": 0},
+                    "subject": {"type": "string", "description": "First line of commit message."},
+                },
+            },
+        },
+        "authors": {
+            "type": "object",
+            "description": "Map of author name -> commit count in the returned window.",
+            "additionalProperties": {"type": "integer", "minimum": 0},
+        },
+    },
+}
+
+# Wave B4 (W767): specialised per-command schema for ``roam_test_impact``.
+# High-leverage agent-input envelope -- this is what an agent reads to
+# decide which tests to run after a code change. Mirrors the envelope
+# emitted by ``cmd_test_impact``: 2-field summary (verdict + count) +
+# ``changed_files[]`` (non-test source files in the diff) +
+# ``tests[{file, reach_count}]`` ranked by reach. ``required`` is narrow
+# (``verdict`` + ``count``) because both are guaranteed on every emit
+# path (the 3 paths: no-changes / no-symbols / normal). ``changed_files``
+# is omitted on the very-first no-changes path; ``tests`` is always
+# emitted (possibly empty).
+_SCHEMA_TEST_IMPACT = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {"const": "test-impact"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict", "count"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of distinct test files reachable from the changed scope.",
+                },
+                "partial_success": {"type": "boolean"},
+            },
+        },
+        "changed_files": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Non-test source files in the diff that seeded the reverse BFS. "
+                "Omitted on the empty-changeset branch."
+            ),
+        },
+        "tests": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["file", "reach_count"],
+                "properties": {
+                    "file": {"type": "string", "description": "Test file path."},
+                    "reach_count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Number of changed seed symbols that transitively "
+                            "reach this test (higher = more relevant)."
+                        ),
+                    },
+                },
+            },
+        },
+    },
+}
+
+# Wave B3 (W767): one shared schema for the 5 boolean-oracle wrappers
+# (``roam_oracle_symbol_exists``, ``roam_oracle_route_exists``,
+# ``roam_oracle_is_test_only``, ``roam_oracle_is_reachable_from_entry``,
+# ``roam_oracle_is_clone_of``) plus the ``roam_oracle_test_only`` short-name
+# alias. All six share the tri-state envelope shape emitted by
+# ``cmd_oracle._emit`` -- closed ``verdict`` / ``value`` / ``confidence``
+# enums + ``reason_class`` taxonomy. ``command`` is the dotted form
+# ``oracle:<oracle-name>`` (NOT a const here because 5 oracles share the
+# schema). The top-level payload is open: each oracle stamps the query
+# arguments back onto the envelope (``name``, ``path``, ``max_hops``).
+_SCHEMA_ORACLE = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {
+            "type": "string",
+            "description": "Oracle command name, e.g. ``oracle:symbol-exists``.",
+        },
+        "summary": {
+            "type": "object",
+            "required": ["verdict", "value", "reason", "reason_class", "confidence"],
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": ["true", "false", "indeterminate"],
+                    "description": "Tri-state answer. ``indeterminate`` when the oracle lacks data.",
+                },
+                "value": {
+                    "type": ["boolean", "null"],
+                    "description": (
+                        "Machine-readable answer. ``true`` / ``false`` when provable; "
+                        "``null`` when the oracle cannot decide (workspace not configured, "
+                        "clone table absent, etc)."
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Human-readable rationale for the answer.",
+                },
+                "reason_class": {
+                    "type": "string",
+                    "enum": [
+                        "definitive_yes",
+                        "definitive_no",
+                        "indeterminate_workspace",
+                        "indeterminate_no_data",
+                        "unreachable_dead",
+                        "unreachable_scaffolding",
+                        "unreachable_test_only",
+                        "unreachable_dynamic_import",
+                    ],
+                    "description": "Short tag for downstream branching (see OracleResult docstring).",
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["high", "medium", "low", "indeterminate"],
+                },
+                "caller_metric_definition": {
+                    "type": "string",
+                    "description": (
+                        "Per Pattern 3a: short label naming the caller metric "
+                        "this oracle's answer was derived from (when applicable)."
+                    ),
+                },
+            },
+        },
+        # Top-level arg echo -- populated by ``_emit(**extra)`` with the
+        # original query inputs so agents can correlate response to call.
+        "name": {"type": "string"},
+        "path": {"type": "string"},
+        "max_hops": {"type": "integer", "minimum": 1},
+    },
+}
 
 _SCHEMA_DIFF = _make_schema(
     {"changed_files": {"type": "integer"}},
@@ -736,11 +1385,491 @@ _SCHEMA_DIFF = _make_schema(
     affected_symbols={"type": "array"},
 )
 
-_SCHEMA_DIAGNOSE = _make_schema(
-    {"target": {"type": "string"}, "top_suspect": {"type": "string"}},
-    upstream_suspects={"type": "array"},
-    downstream_suspects={"type": "array"},
-)
+# Wave B5 (W767): specialised per-command schema for ``roam_diagnose``.
+# Mirrors the actual envelope emitted by ``cmd_diagnose`` -- summary +
+# target_metrics + upstream[] + downstream[] + cochange_partners[] +
+# recent_commits[] + did_you_mean[] + resolution disclosure. ``required``
+# is narrowed to ``verdict`` only because cmd_diagnose has 2 distinct
+# emit paths: success (everything populated) and not_found
+# (state="not_found" + resolution="unresolved" + partial_success=True,
+# all other fields omitted). Required suspect-item fields are narrow
+# (``name`` only) because the not_found branch never emits a row but
+# every fuzzy/success row does carry ``name``. The batch-mode envelope
+# (``command="diagnose.batch"``) is emitted by a different code path
+# the MCP wrapper does NOT trigger -- this schema covers the
+# single-symbol shape only.
+_SCHEMA_DIAGNOSE = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {"type": "string"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                "target": {"type": "string"},
+                "upstream_count": {"type": "integer", "minimum": 0},
+                "downstream_count": {"type": "integer", "minimum": 0},
+                "ambiguous": {"type": "boolean"},
+                "caller_metric_definition": {"type": "string"},
+                "complexity_definition": {"type": "string"},
+                "partial_success": {"type": "boolean"},
+                "state": {
+                    "type": "string",
+                    "enum": ["not_found"],
+                },
+                "resolution": {
+                    "type": "string",
+                    "enum": ["symbol", "file", "unresolved", "fuzzy"],
+                },
+            },
+        },
+        # Echo of the original query symbol (not_found branch).
+        "symbol": {"type": "string"},
+        "target_metrics": {
+            "type": "object",
+            "properties": {
+                "complexity": {"type": "number"},
+                "nesting": {"type": "integer", "minimum": 0},
+                "line_count": {"type": "integer", "minimum": 0},
+                "pagerank": {"type": "number"},
+                "in_degree": {"type": "integer", "minimum": 0},
+                "out_degree": {"type": "integer", "minimum": 0},
+                "betweenness": {"type": "number"},
+                "commits": {"type": "integer", "minimum": 0},
+                "churn": {"type": "integer", "minimum": 0},
+                "entropy": {"type": "number"},
+                "health": {"type": "number"},
+                "file_path": {"type": "string"},
+            },
+        },
+        "upstream": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "location": {"type": "string"},
+                    "risk_score": {"type": "number", "minimum": 0},
+                    "complexity": {"type": "number"},
+                    "commits": {"type": "integer", "minimum": 0},
+                    "health": {"type": "number"},
+                    "entropy": {"type": "number"},
+                    "direction": {
+                        "type": "string",
+                        "enum": ["upstream", "downstream"],
+                    },
+                },
+            },
+        },
+        "downstream": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "location": {"type": "string"},
+                    "risk_score": {"type": "number", "minimum": 0},
+                    "complexity": {"type": "number"},
+                    "commits": {"type": "integer", "minimum": 0},
+                    "health": {"type": "number"},
+                    "entropy": {"type": "number"},
+                    "direction": {
+                        "type": "string",
+                        "enum": ["upstream", "downstream"],
+                    },
+                },
+            },
+        },
+        "cochange_partners": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string"},
+                    "cochange_count": {"type": "integer", "minimum": 0},
+                },
+            },
+        },
+        "recent_commits": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "hash": {"type": "string"},
+                    "author": {"type": "string"},
+                    "message": {"type": "string"},
+                },
+            },
+        },
+        "did_you_mean": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "location": {"type": "string"},
+                },
+            },
+        },
+        "next_steps": {"type": "array"},
+        "index_status": {"type": ["object", "null"]},
+        "resolution": {
+            "type": "string",
+            "enum": ["symbol", "file", "unresolved", "fuzzy"],
+        },
+        "partial_success": {"type": "boolean"},
+    },
+}
+
+# Wave B5 (W767): specialised per-command schema for
+# ``roam_audit_trail_verify``. Mirrors the actual envelope emitted by
+# ``cmd_audit_trail_verify`` -- a 3-state machine (valid / broken /
+# uninitialized) with chain-anomaly issues[]. ``required`` is restricted
+# to ``verdict`` + ``state`` because every exit path stamps those
+# uniformly (see cmd_audit_trail_verify.py:326-337). Top-level
+# ``records`` is an integer (count of records, NOT the records
+# themselves) per the envelope construction at cmd_audit_trail_verify.py:346.
+_SCHEMA_AUDIT_TRAIL_VERIFY = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {"type": "string"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict", "state"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                "state": {
+                    "type": "string",
+                    "enum": ["valid", "broken", "uninitialized"],
+                },
+                "partial_success": {"type": "boolean"},
+                "chain_valid": {"type": "boolean"},
+                "total_records": {"type": "integer", "minimum": 0},
+                "issues_count": {"type": "integer", "minimum": 0},
+                "first_timestamp": {"type": ["string", "null"]},
+                "last_timestamp": {"type": ["string", "null"]},
+                "first_actor": {"type": ["string", "null"]},
+                "audit_trail_path": {"type": "string"},
+            },
+        },
+        "issues": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["line", "issue"],
+                "properties": {
+                    "line": {"type": "integer", "minimum": 0},
+                    "issue": {"type": "string"},
+                    "expected_prev": {"type": "string"},
+                    "computed_prev": {"type": "string"},
+                    "timestamp": {"type": ["string", "null"]},
+                    "verdict": {"type": ["string", "null"]},
+                    "detail": {"type": "string"},
+                },
+            },
+        },
+        "records": {
+            "type": "integer",
+            "minimum": 0,
+            "description": (
+                "Count of records walked (NOT the records themselves). "
+                "Envelope-construction parity with cmd_audit_trail_verify.py:346."
+            ),
+        },
+    },
+}
+
+# Wave B5b (W767): specialised per-command schema for
+# ``roam_audit_trail_conformance_check``. Mirrors the envelope emitted by
+# ``cmd_audit_trail_conformance.audit_trail_conformance_check`` (the
+# 6-check EU AI Act Article 12 readiness gate). ``required`` is narrowed
+# to ``verdict`` because the no_trail branch (Fix E) sets ``score: null``
+# and skips ``checks_passed``/``checks_total`` semantics. The
+# ``compliance_kind: "audit_trail_chain_integrity"`` literal is the
+# Pattern 3c discriminator that distinguishes this command from
+# ``article-12-check`` (repo-level readiness score) per W17.2 — both
+# commands publish ``compliance_kind`` + ``compliance_kind_definition``
+# so consumers never confuse them. ``summary.state`` is the closed
+# enum disclosing whether the 6 checks ran (``no_trail`` skips them).
+# Each ``checks[]`` item carries the per-check verdict shape; an item's
+# ``state`` is only emitted on the no_trail branch (``not_run``).
+_SCHEMA_AUDIT_TRAIL_CONFORMANCE = {
+    "type": "object",
+    "required": ["command", "summary"],
+    "properties": {
+        "command": {"const": "audit-trail-conformance-check"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                # ``no_trail`` is the only closed-enum state emitted today
+                # (Fix E disclosure: the 6 checks did not run). The
+                # conformant / partial / NON-conformant branches all skip
+                # ``state`` because the score field carries the verdict.
+                "state": {"type": "string", "enum": ["no_trail"]},
+                "partial_success": {"type": "boolean"},
+                # Score is null on the no_trail branch; integer on every
+                # other path. The ``null`` permission is what forces
+                # ``required`` to be narrow.
+                "score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+                "chain_compliance_score": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+                # W331b + W17.2 Pattern 3c — definition sidecars that
+                # name the score computation + disambiguate this command
+                # from article-12-check (repo-level readiness).
+                "chain_compliance_score_definition": {"type": "string"},
+                "compliance_kind": {
+                    "type": "string",
+                    "enum": ["audit_trail_chain_integrity"],
+                    "description": (
+                        "Pattern 3c discriminator: distinguishes this command's "
+                        "chain-of-custody score from article-12-check's repo-level "
+                        "readiness score (different metrics, same regulation)."
+                    ),
+                },
+                "compliance_kind_definition": {"type": "string"},
+                "checks_passed": {"type": "integer", "minimum": 0},
+                "checks_total": {"type": "integer", "minimum": 0},
+                "total_records": {"type": "integer", "minimum": 0},
+                "audit_trail_path": {"type": "string"},
+                "retention_days_required": {"type": "integer", "minimum": 0},
+                "schema_reference": {"type": "string"},
+                "disclaimer": {"type": "string"},
+                # no_trail branch only.
+                "reason": {"type": "string"},
+                "fix": {"type": "string"},
+            },
+        },
+        "checks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "passed"],
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": (
+                            "One of the 6 Article 12 check ids: chain_integrity, "
+                            "timestamp_completeness, actor_attribution, "
+                            "reproducibility_metadata, verdict_and_rationale, retention."
+                        ),
+                        "enum": [
+                            "chain_integrity",
+                            "timestamp_completeness",
+                            "actor_attribution",
+                            "reproducibility_metadata",
+                            "verdict_and_rationale",
+                            "retention",
+                        ],
+                    },
+                    "passed": {"type": "boolean"},
+                    "message": {"type": "string"},
+                    # ``state`` is only emitted on the no_trail branch
+                    # (per-check disclosure that the predicate did not
+                    # run). Closed enum so the only allowed value is the
+                    # explicit not_run marker.
+                    "state": {"type": "string", "enum": ["not_run"]},
+                },
+            },
+        },
+        "disclaimer": {"type": "string"},
+        "schema_reference": {"type": "string"},
+    },
+}
+
+# Wave B5b (W767): specialised per-command schema for ``roam_fetch_handle``.
+# 3-mode dispatch (byte_slice / section / jq) per W333 v2.0.0 paginated
+# handle fetch. Chose FLAT schema with ``mode`` closed enum (NOT oneOf)
+# because the 3 modes share the bulk of their envelope shape — every
+# emit path carries ``handle`` + ``total_size`` + ``total_keys`` — and
+# the per-mode payload differences (``data`` is str vs list vs object;
+# ``offset``/``end`` only on byte_slice; ``section`` only on section
+# pick; ``jq`` only on jq projection) are surfaced as optional fields.
+# ``required`` is narrow: ``command`` + ``summary`` + ``handle``.
+# ``data`` is ``{"type": ["string", "array", "object", "null"]}`` to
+# cover all 3 modes' payload variants without forcing a oneOf branch
+# the agent would have to discriminate on. The ``mode`` enum
+# (``byte_slice`` / ``section`` / ``jq``) drives agent dispatch.
+_SCHEMA_FETCH_HANDLE = {
+    "type": "object",
+    "required": ["command", "summary", "handle"],
+    "properties": {
+        "command": {"const": "roam_fetch_handle"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict", "mode"],
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+                # 3-mode closed enum drives agent dispatch — flat-schema
+                # discriminator. See W333 v2.0.0 paginated handle fetch.
+                "mode": {
+                    "type": "string",
+                    "enum": ["byte_slice", "section", "jq"],
+                },
+                "total_size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Byte size of the full stored payload.",
+                },
+                "total_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Sorted top-level keys of the stored payload when it's a "
+                        "JSON object; empty when the payload is a list / scalar."
+                    ),
+                },
+                # byte_slice mode only.
+                "offset": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 0},
+                "end": {"type": "integer", "minimum": 0},
+                "has_more": {"type": "boolean"},
+                "next_offset": {"type": ["integer", "null"], "minimum": 0},
+                "partial_success": {"type": "boolean"},
+                # section mode only.
+                "section": {"type": "string"},
+                # jq mode only.
+                "jq": {"type": "string"},
+            },
+        },
+        "handle": {
+            "type": "string",
+            "description": "16-char lowercase hex handle id.",
+            "pattern": "^[0-9a-f]{16}$",
+        },
+        # byte_slice top-level fields.
+        "offset": {"type": "integer", "minimum": 0},
+        "end": {"type": "integer", "minimum": 0},
+        "total_size": {"type": "integer", "minimum": 0},
+        "has_more": {"type": "boolean"},
+        "next_offset": {"type": ["integer", "null"], "minimum": 0},
+        # section top-level fields.
+        "section": {"type": "string"},
+        # jq top-level fields.
+        "jq": {"type": "string"},
+        # Common to all 3 modes.
+        "total_keys": {"type": "array", "items": {"type": "string"}},
+        # ``data`` shape varies by mode: byte_slice => string (UTF-8 text
+        # slice); section => the parsed value (any JSON type) of the
+        # picked top-level key; jq => the projected value (any JSON type).
+        # The 4-type union covers the cartesian without a oneOf.
+        "data": {"type": ["string", "array", "object", "number", "integer", "boolean", "null"]},
+        # Parity-only field: when byte_slice covers offset=0 and
+        # has_more=False, the wrapper also returns the parsed JSON for
+        # convenience.
+        "parsed": {"type": ["object", "array", "string", "number", "integer", "boolean", "null"]},
+    },
+}
+
+# Wave B5b (W767): specialised per-command schema for ``roam_validate_plan``.
+# Plan-status closed enum drives agent dispatch (``ok`` /
+# ``needs-review`` / ``blocked``); structured per-operation ``blockers[]``
+# + ``warnings[]`` + ``advice[]`` arrays let the agent triage by
+# operation index. Mechanical clone of the ``_SCHEMA_PR_RISK`` shape
+# per the inventory memo.
+#
+# BAIL drift caught (2 prongs):
+# 1. The SUCCESS envelope at ``mcp_server.py:5417`` does NOT set
+#    ``command`` (only the 4 error-path envelopes do). So ``command``
+#    cannot be required at the root.
+# 2. The ERROR envelopes (USAGE_ERROR / etc) emit ``isError`` +
+#    ``error`` + ``error_code`` but NO ``summary``. So ``summary``
+#    cannot be required at the root either.
+# Net: ``required: []`` at the root; the schema still pins ``command``
+# (when present) to the const literal AND pins the success-path
+# ``summary.verdict`` to the 3-tier closed enum. Both branches validate
+# under one schema without forcing a oneOf split. The producer gaps
+# stay surfaced via inline comments; fixing them is outside Wave B's
+# "schema follows cmd" constraint.
+_SCHEMA_VALIDATE_PLAN = {
+    "type": "object",
+    "required": [],
+    "properties": {
+        "command": {"const": "roam_validate_plan"},
+        "schema": {"type": "string"},
+        "schema_version": {"type": "string"},
+        "summary": {
+            "type": "object",
+            "required": ["verdict"],
+            "properties": {
+                # 3-tier closed enum drives agent dispatch:
+                # ``ok`` (no findings) / ``needs-review`` (warnings only)
+                # / ``blocked`` (any blocker — do NOT call mutate).
+                "verdict": {
+                    "type": "string",
+                    "enum": ["ok", "needs-review", "blocked"],
+                    "description": (
+                        "Plan status: ok / needs-review / blocked. "
+                        "``blocked`` means do not apply the plan."
+                    ),
+                },
+                "operations": {"type": "integer", "minimum": 0},
+                "blockers_count": {"type": "integer", "minimum": 0},
+                "warnings_count": {"type": "integer", "minimum": 0},
+                "verdict_text": {"type": "string"},
+            },
+        },
+        "operations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["index", "kind", "ok"],
+                "properties": {
+                    "index": {"type": "integer", "minimum": 0},
+                    "kind": {
+                        "type": "string",
+                        "description": (
+                            "Operation kind from the plan: rename / move / "
+                            "remove / modify / add / unknown (malformed)."
+                        ),
+                    },
+                    "ok": {"type": "boolean"},
+                    "blockers": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["code"],
+                            "properties": {
+                                "code": {"type": "string"},
+                                "detail": {"type": "string"},
+                                # Optional structured per-blocker fields the
+                                # validators stamp (line/severity/symbol/etc.).
+                                "symbol": {"type": "string"},
+                                "severity": {"type": "string"},
+                                "line": {"type": "integer", "minimum": 0},
+                            },
+                        },
+                    },
+                    "warnings": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "code": {"type": "string"},
+                                "detail": {"type": "string"},
+                            },
+                        },
+                    },
+                    "advice": {"type": "array"},
+                    "facts": {"type": "object"},
+                },
+            },
+        },
+        # Error-path fields (per-envelope error vocab).
+        "error": {"type": "string"},
+        "error_code": {"type": "string"},
+        "hint": {"type": "string"},
+        "isError": {"type": "boolean"},
+    },
+}
 
 _SCHEMA_TRACE = _make_schema(
     {"source": {"type": "string"}, "target": {"type": "string"}, "hop_count": {"type": "integer"}},
@@ -1031,6 +2160,19 @@ def _tool(
         # response the client can act on.
         fn = _wrap_with_cold_start_guard(name, fn)
 
+        # Wave C1 (W767): populate the ``output_schema_stripped`` sidecar
+        # on ``_TOOL_METADATA`` UNCONDITIONALLY — before the
+        # ``if mcp is None`` early-return — so the catalog surface
+        # reflects the runtime compat decision even in environments
+        # where fastmcp isn't installed (tests, CLI-only installs).
+        # The on-the-wire ``kwargs["output_schema"]`` strip below (inside
+        # the registered path) still honors ``_COMPAT_STRIP_OUTPUT_SCHEMA``;
+        # this populates the *audit* sidecar that ``roam mcp doctor``
+        # (Wave C2) consumes. Parity rule with ``_TOOL_METADATA``
+        # population at decorator-top: metadata is orthogonal to whether
+        # the MCP transport can actually serve.
+        _TOOL_METADATA[name]["output_schema_stripped"] = bool(_COMPAT_STRIP_OUTPUT_SCHEMA)
+
         if mcp is None:
             return fn
         # R8.E8 / Fix F: apply the handle-off wrapper UP-FRONT, before the
@@ -1093,7 +2235,22 @@ def _tool(
         if effective_description:
             kwargs["description"] = effective_description
         schema = output_schema if output_schema is not None else _ENVELOPE_SCHEMA
-        kwargs["output_schema"] = schema
+        # Wave C1 (W767): compat shim for Claude Code #41361 / #45839.
+        # ``ROAM_MCP_COMPAT_STRIP_OUTPUT_SCHEMA=1`` drops the declared
+        # schema entirely so the client's ``safeParse → return null``
+        # guard no longer silently bails. Wave A text-mirror still
+        # ships structured JSON in a ``TextContent`` block; agents that
+        # JSON-path-project still get the payload. Captured into
+        # ``_TOOL_METADATA[name]["output_schema_stripped"]`` so
+        # ``roam mcp doctor`` (Wave C2) can surface the runtime state.
+        # The ``output_schema_stripped`` sidecar on ``_TOOL_METADATA`` was
+        # already populated above the ``if mcp is None`` gate so the catalog
+        # surface stays honest in fastmcp-less environments; here we only
+        # decide what rides on the wire.
+        if _COMPAT_STRIP_OUTPUT_SCHEMA:
+            kwargs["output_schema"] = None
+        else:
+            kwargs["output_schema"] = schema
         kwargs["annotations"] = _tool_annotations(name)
 
         # ROADMAP A1 / W99 + W105 + W107: ``task_mode`` is the canonical 3-way
@@ -4151,7 +5308,7 @@ async def understand(
     return await _maybe_summarize(result, ctx=ctx, summarize=summarize, task=task)
 
 
-@_tool(name="roam_onboard")
+@_tool(name="roam_onboard", description="Generate a new-developer onboarding guide for the codebase.")  # W459
 def onboard(detail: str = "normal", root: str = ".") -> dict:
     """Generate a new-developer onboarding guide for the codebase.
 
@@ -4536,6 +5693,7 @@ def _vp_validate_one(idx: int, op: dict, root: str = ".") -> dict:
     name="roam_validate_plan",
     description="Pre-apply validator for a multi-step change plan. Returns blockers, warnings, advice per operation.",
     version="1.0.0",
+    output_schema=_SCHEMA_VALIDATE_PLAN,
 )
 def validate_plan(
     operations: list[dict] | None = None,
@@ -4769,6 +5927,7 @@ def _apply_jq_projection(payload: object, expr: str) -> tuple[object, str | None
     name="roam_fetch_handle",
     description="Fetch all or part of a large payload by handle — supports byte slice, section pick, jq projection.",
     version="2.0.0",
+    output_schema=_SCHEMA_FETCH_HANDLE,
 )
 def fetch_handle(
     handle: str = "",
@@ -5700,6 +6859,7 @@ def critique_patch(
 @_tool(
     name="roam_oracle_test_only",
     description="Alias of roam_oracle_is_test_only — preserves the shorter name agents sometimes guess.",
+    output_schema=_SCHEMA_ORACLE,
 )
 def oracle_test_only_alias(symbol: str, root: str = ".") -> dict:
     """Alias of :func:`oracle_is_test_only`.
@@ -6202,7 +7362,7 @@ def pr_risk(staged: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_pr_analyze")
+@_tool(name="roam_pr_analyze", description="Agent-aware PR risk verdict — INTENTIONAL / SAFE / REVIEW / BLOCK.")  # W459
 def pr_analyze(
     diff_path: str = "",
     commit_range: str = "",
@@ -6278,7 +7438,7 @@ def pr_analyze(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_pr_comment_render")
+@_tool(name="roam_pr_comment_render", description="Render a markdown PR comment from a pr-analyze JSON envelope.")  # W459
 def pr_comment_render(input_path: str = "", style: str = "github", include_links: bool = True, root: str = ".") -> dict:
     """Render a markdown PR comment from a pr-analyze JSON envelope.
 
@@ -6308,7 +7468,7 @@ def pr_comment_render(input_path: str = "", style: str = "github", include_links
     return _run_roam(args, root)
 
 
-@_tool(name="roam_audit_trail_verify")
+@_tool(name="roam_audit_trail_verify", description="Verify SHA-256 chain integrity of a roam audit trail.", output_schema=_SCHEMA_AUDIT_TRAIL_VERIFY)  # W459
 def audit_trail_verify(input_path: str = "", root: str = ".") -> dict:
     """Verify SHA-256 chain integrity of a roam audit trail.
 
@@ -6331,7 +7491,7 @@ def audit_trail_verify(input_path: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_audit_trail_export")
+@_tool(name="roam_audit_trail_export", description="Export the audit trail as markdown / json / csv for procurement review.")  # W459
 def audit_trail_export(
     input_path: str = "",
     fmt: str = "md",
@@ -6373,7 +7533,7 @@ def audit_trail_export(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_metrics_push")
+@_tool(name="roam_metrics_push", description="Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.**")  # W459
 def metrics_push(
     token: str = "",
     repo: str = "",
@@ -6424,7 +7584,11 @@ def metrics_push(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_audit_trail_conformance_check")
+@_tool(
+    name="roam_audit_trail_conformance_check",
+    description="Score the audit trail against an EU AI Act Article 12 checklist.",
+    output_schema=_SCHEMA_AUDIT_TRAIL_CONFORMANCE,
+)  # W459
 def audit_trail_conformance_check(
     input_path: str = "",
     retention_days: int = 180,
@@ -6453,7 +7617,7 @@ def audit_trail_conformance_check(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_dogfood")
+@_tool(name="roam_dogfood", description="One-shot full-stack run: audit + pr-analyze + audit-trail + conformance.")  # W459
 def dogfood(
     audit: bool = True,
     pr_analyze_on: bool = True,
@@ -6497,7 +7661,7 @@ def dogfood(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_rules_validate")
+@_tool(name="roam_rules_validate", description="Lint a `.roam/rules.yml` for shippability before customers see it.")  # W459
 def rules_validate(
     input_path: str = ".roam/rules.yml",
     against: str = "",
@@ -6536,7 +7700,7 @@ def rules_validate(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_suggest_reviewers")
+@_tool(name="roam_suggest_reviewers", description="Suggest optimal code reviewers for changed files.")  # W459
 def suggest_reviewers(top: int = 3, exclude: str = "", changed: bool = True, root: str = ".") -> dict:
     """Suggest optimal code reviewers for changed files.
 
@@ -6566,7 +7730,7 @@ def suggest_reviewers(top: int = 3, exclude: str = "", changed: bool = True, roo
     return _run_roam(args, root)
 
 
-@_tool(name="roam_verify")
+@_tool(name="roam_verify", description="Check changed files for naming, import, error-handling, and duplicate issues.")  # W459
 def verify(threshold: int = 70, root: str = ".") -> dict:
     """Check changed files for naming, import, error-handling, and duplicate issues.
 
@@ -6610,7 +7774,7 @@ def breaking_changes(target: str = "HEAD~1", root: str = ".") -> dict:
     return _run_roam(["breaking", target], root)
 
 
-@_tool(name="roam_api_changes")
+@_tool(name="roam_api_changes", description="Detect breaking and non-breaking API changes vs a git ref.")  # W459
 def api_changes(base: str = "HEAD~1", severity: str = "warning", root: str = ".") -> dict:
     """Detect breaking and non-breaking API changes vs a git ref.
 
@@ -6796,7 +7960,7 @@ def affected_tests(symbol: str = "", staged: bool = False, root: str = ".") -> d
     return _run_roam(args, root)
 
 
-@_tool(name="roam_test_gaps")
+@_tool(name="roam_test_gaps", description="Find changed symbols missing test coverage, ranked by severity.")  # W459
 def test_gaps(changed: bool = True, severity: str = "medium", files: str = "", root: str = ".") -> dict:
     """Find changed symbols missing test coverage, ranked by severity.
 
@@ -6901,7 +8065,7 @@ def dead_code(root: str = ".") -> dict:
     return _run_roam(["dead"], root)
 
 
-@_tool(name="roam_duplicates")
+@_tool(name="roam_duplicates", description="Detect semantically duplicate functions via structural similarity.")  # W459
 def duplicates_tool(
     threshold: float = 0.75,
     min_lines: int = 5,
@@ -6945,7 +8109,7 @@ def duplicates_tool(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_clones")
+@_tool(name="roam_clones", description="Detect near-duplicate code via AST structural hashing (Type-2 clones).")  # W459
 def clones_tool(threshold: float = 0.70, min_lines: int = 5, scope: str = "", top: int = 10, root: str = ".") -> dict:
     """Detect near-duplicate code via AST structural hashing (Type-2 clones).
 
@@ -9630,7 +10794,7 @@ def roam_api_drift(model: str = "", confidence: str = "medium", root: str = ".")
     return _run_roam(args, root)
 
 
-@_tool(name="roam_simulate_departure")
+@_tool(name="roam_simulate_departure", description="Simulate knowledge loss if a developer leaves the team.")  # W459
 def roam_simulate_departure(developer: str, root: str = ".") -> dict:
     """Simulate knowledge loss if a developer leaves the team.
 
@@ -9653,7 +10817,7 @@ def roam_simulate_departure(developer: str, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_ai_ratio")
+@_tool(name="roam_ai_ratio", description="Estimate AI-generated code percentage from git commit heuristics.")  # W459
 def roam_ai_ratio(since: int = 90, root: str = ".") -> dict:
     """Estimate AI-generated code percentage from git commit heuristics.
 
@@ -9998,6 +11162,15 @@ def roam_trends(record: bool = False, days: int = 30, metric: str = "", root: st
     output_schema=_make_schema(
         {"removed": {"type": "boolean"}, "db_path": {"type": "string"}},
     ),
+    # W365: deletes .roam/index.db. The roam_capability registry already
+    # flags this as destructive=True; without this kwarg, _TOOL_METADATA
+    # silently disagreed with the capability registry AND under-stated the
+    # blast radius to MCP clients that route on destructiveHint.
+    # idempotent stays True (default): per the MCP spec, idempotent =
+    # "repeating with same args adds no further effect" — once the DB is
+    # gone, a second reset is a no-op delete.
+    destructive=True,
+    read_only=False,
 )
 def roam_reset(force: bool = False, root: str = ".") -> dict:
     """Delete the roam index DB and rebuild from scratch.
@@ -10035,6 +11208,14 @@ def roam_reset(force: bool = False, root: str = ".") -> dict:
         },
         orphaned_paths={"type": "array", "items": {"type": "string"}},
     ),
+    # W365: removes file/symbol/edge rows from the index DB. The capability
+    # registry already flags this as destructive=True; this kwarg keeps the
+    # _TOOL_METADATA / ToolAnnotations on-the-wire view in lockstep so MCP
+    # clients routing on destructiveHint see the right blast radius.
+    # idempotent stays True (default): repeating roam_clean has no further
+    # effect once the orphans are gone (MCP-spec idempotent semantics).
+    destructive=True,
+    read_only=False,
 )
 def roam_clean(root: str = ".") -> dict:
     """Remove stale/orphaned entries from the index without a full rebuild.
@@ -10127,7 +11308,9 @@ def roam_catalog(root: str = ".") -> dict:
 @_tool(
     name="roam_alerts",
     description="Active health alerts: thresholds breached on tangle, complexity, churn, or coverage.",
-    output_schema=_ENVELOPE_SCHEMA,
+    # W1312: redundant `output_schema=_ENVELOPE_SCHEMA` dropped — FastMCP
+    # falls back to the envelope schema by default, so the explicit kwarg
+    # is byte-equivalent to omission.
 )
 def roam_alerts(root: str = ".") -> dict:
     """Active health alerts. Call this to know what to act on RIGHT NOW.
@@ -10222,7 +11405,11 @@ def roam_session_metrics(root: str = ".") -> dict:
 @_tool(
     name="roam_timeline",
     description="Chronological commits that touched the file owning a symbol — author, date, lines added/removed.",
-    output_schema=_ENVELOPE_SCHEMA,
+    # Wave B4 (W767): specialised schema. 7 summary fields + commits[] +
+    # authors{} now strict-typed; ``required`` narrowed to ``verdict`` +
+    # ``commit_count`` (only fields emitted on EVERY branch, including
+    # the symbol-not-found path).
+    output_schema=_SCHEMA_TIMELINE,
 )
 def roam_timeline(symbol: str, limit: int = 20, root: str = ".") -> dict:
     """Show commit history for the file containing a symbol.
@@ -10239,7 +11426,12 @@ def roam_timeline(symbol: str, limit: int = 20, root: str = ".") -> dict:
 @_tool(
     name="roam_test_impact",
     description="Tests transitively reachable from changed symbols — sharper scope than affected_tests.",
-    output_schema=_ENVELOPE_SCHEMA,
+    # Wave B4 (W767): specialised schema. The high-leverage agent-input
+    # envelope (which tests to run after a change) now strict-typed:
+    # ``tests[]`` items require ``file`` + ``reach_count`` (ranked-by-
+    # reach contract). ``required`` covers ``verdict`` + ``count``
+    # because both are emitted on EVERY branch.
+    output_schema=_SCHEMA_TEST_IMPACT,
 )
 def roam_test_impact(commit_range: str = "", max_hops: int = 5, root: str = ".") -> dict:
     """Tests reachable from changed symbols within N hops.
@@ -10259,7 +11451,9 @@ def roam_test_impact(commit_range: str = "", max_hops: int = 5, root: str = ".")
 @_tool(
     name="roam_disambiguate",
     description="List every symbol matching a name with file/line/kind/signature/PageRank — pick the right overload.",
-    output_schema=_ENVELOPE_SCHEMA,
+    # W1312: redundant `output_schema=_ENVELOPE_SCHEMA` dropped — generic
+    # `summary{verdict, count}` + `matches[]` envelope, no
+    # command-specific shape worth declaring.
 )
 def roam_disambiguate(symbol: str, limit: int = 20, root: str = ".") -> dict:
     """List every symbol matching a name with disambiguators.
@@ -10278,7 +11472,9 @@ def roam_disambiguate(symbol: str, limit: int = 20, root: str = ".") -> dict:
 @_tool(
     name="roam_why_fail",
     description="Triage a failing test/symbol: recently-changed symbols transitively reachable from it.",
-    output_schema=_ENVELOPE_SCHEMA,
+    # W1312: redundant `output_schema=_ENVELOPE_SCHEMA` dropped — envelope
+    # is `summary{verdict, suspect_count, max_hops, days}` + `suspects[]`,
+    # generic enough that the default envelope schema covers it.
 )
 def roam_why_fail(symbol: str, days: int = 14, max_hops: int = 5, limit: int = 10, root: str = ".") -> dict:
     """Triage a failing test by surfacing recently-changed reachable symbols.
@@ -13657,13 +14853,8 @@ def roam_evidence_diff(
 # W305: roam_oracle_symbol_exists
 @_tool(
     name="roam_oracle_symbol_exists",
-    description=(
-        "Answer the boolean oracle question: does a symbol with this "
-        "name exist in the index? Returns a yes/no verdict envelope "
-        "with the matched symbol's file + kind when found. Different "
-        "from ``roam_search_symbol`` (top-N ranked hits) -- this is "
-        "the cheap boolean lookup for agent precondition checks."
-    ),
+    description="Answer the boolean oracle question: does a symbol with this name exist in the index? Returns a yes/no verdict envelope with the matched symbol's file + kind when found. Different from ``roam_search_symbol`` (top-N ranked hits) -- this is the cheap boolean lookup for agent precondition checks.",
+    output_schema=_SCHEMA_ORACLE,
 )
 def roam_oracle_symbol_exists(symbol: str, root: str = ".") -> dict:
     """Answer whether a symbol with this name exists in the index.
@@ -13690,14 +14881,8 @@ def roam_oracle_symbol_exists(symbol: str, root: str = ".") -> dict:
 # W305: roam_oracle_route_exists
 @_tool(
     name="roam_oracle_route_exists",
-    description=(
-        "Answer the boolean oracle question: does a route handler "
-        "match this URL path? Returns a yes/no verdict envelope with "
-        "the matched handler's file + kind when found. Different "
-        "from ``roam_endpoints`` (full endpoint enumeration) -- this "
-        "is the cheap boolean lookup for one route precondition "
-        "check."
-    ),
+    description="Answer the boolean oracle question: does a route handler match this URL path? Returns a yes/no verdict envelope with the matched handler's file + kind when found. Different from ``roam_endpoints`` (full endpoint enumeration) -- this is the cheap boolean lookup for one route precondition check.",
+    output_schema=_SCHEMA_ORACLE,
 )
 def roam_oracle_route_exists(route_path: str, root: str = ".") -> dict:
     """Answer whether a route handler matches this URL path.
@@ -13724,13 +14909,8 @@ def roam_oracle_route_exists(route_path: str, root: str = ".") -> dict:
 # W305: roam_oracle_is_test_only
 @_tool(
     name="roam_oracle_is_test_only",
-    description=(
-        "Answer the boolean oracle question: are ALL callers of this "
-        "symbol in test files? Useful for sniffing test fixtures and "
-        "dead-but-test-only helpers. Different from ``roam_dead_code`` "
-        "(broad dead-symbol detection) -- this is the cheap boolean "
-        "lookup for one symbol's test-only status."
-    ),
+    description="Answer the boolean oracle question: are ALL callers of this symbol in test files? Useful for sniffing test fixtures and dead-but-test-only helpers. Different from ``roam_dead_code`` (broad dead-symbol detection) -- this is the cheap boolean lookup for one symbol's test-only status.",
+    output_schema=_SCHEMA_ORACLE,
 )
 def roam_oracle_is_test_only(symbol: str, root: str = ".") -> dict:
     """Answer whether all callers of a symbol live in test files.
@@ -13758,15 +14938,8 @@ def roam_oracle_is_test_only(symbol: str, root: str = ".") -> dict:
 # W305: roam_oracle_is_reachable_from_entry
 @_tool(
     name="roam_oracle_is_reachable_from_entry",
-    description=(
-        "Answer the boolean oracle question: is the symbol reachable "
-        "from any entry point via the call graph (BFS up to "
-        "``max_hops`` depth)? Useful for sniffing orphans and "
-        "production-vs-tooling code. Different from ``roam_dead_code`` "
-        "(broad dead-symbol detection) and ``roam_entry_points`` "
-        "(entry-point enumeration) -- this is the cheap boolean "
-        "lookup for one symbol's reachability."
-    ),
+    description="Answer the boolean oracle question: is the symbol reachable from any entry point via the call graph (BFS up to ``max_hops`` depth)? Useful for sniffing orphans and production-vs-tooling code. Different from ``roam_dead_code`` (broad dead-symbol detection) and ``roam_entry_points`` (entry-point enumeration) -- this is the cheap boolean lookup for one symbol's reachability.",
+    output_schema=_SCHEMA_ORACLE,
 )
 def roam_oracle_is_reachable_from_entry(
     symbol: str,
@@ -13805,14 +14978,8 @@ def roam_oracle_is_reachable_from_entry(
 # W305: roam_oracle_is_clone_of
 @_tool(
     name="roam_oracle_is_clone_of",
-    description=(
-        "Answer the boolean oracle question: does this symbol have "
-        "persisted clone siblings in the ``clone_pairs`` table? "
-        "Returns a yes/no verdict envelope with the matched clone "
-        "class size. Different from ``roam_clones`` (full clone-pair "
-        "enumeration) -- this is the cheap boolean lookup for one "
-        "symbol's clone status."
-    ),
+    description="Answer the boolean oracle question: does this symbol have persisted clone siblings in the ``clone_pairs`` table? Returns a yes/no verdict envelope with the matched clone class size. Different from ``roam_clones`` (full clone-pair enumeration) -- this is the cheap boolean lookup for one symbol's clone status.",
+    output_schema=_SCHEMA_ORACLE,
 )
 def roam_oracle_is_clone_of(symbol: str, root: str = ".") -> dict:
     """Answer whether a symbol has persisted clone siblings.

@@ -277,9 +277,14 @@ def _smell_classify(finding: dict) -> tuple[str, str]:
     return conf, reason
 
 
-# W564: severity ordering sourced from roam.output._severity.severity_rank
+# W564 + W1005: severity ordering sourced from roam.output._severity.severity_rank
 # (canonical, higher = worse). Local ``_VALID_SEVERITIES`` enumeration is
-# the closed 3-tier vocab this detector emits.
+# the closed 3-tier vocab this detector EMITS. The ``--min-severity`` CLI
+# Choice (above) is intentionally WIDER — it accepts the full W547 canonical
+# 5-tier (critical/error/high/warning/medium/low/info) so agents can pass
+# any of those tokens and have severity_rank() do the canonical comparison.
+# A user-passed ``--min-severity high`` will accept only ``critical`` findings
+# because the emitted set tops out at ``critical`` (rank 5) and ``high`` ranks 4.
 _VALID_SEVERITIES = frozenset({"critical", "warning", "info"})
 
 
@@ -364,8 +369,26 @@ def _short_loc(location: str) -> str:
 @click.option(
     "--min-severity",
     default=None,
-    type=click.Choice(["critical", "warning", "info"], case_sensitive=False),
-    help="Minimum severity to include (critical > warning > info)",
+    type=click.Choice(
+        # W1005: widened from 3-tier {critical, warning, info} to W547 canonical
+        # 5-tier so agents can pass any of {critical, error, high, warning,
+        # medium, low, info} and have it compared via ``severity_rank()`` from
+        # ``roam.output._severity``. The smell detectors currently emit only
+        # {critical, warning, info} (the SARIF-aligned mid-vocab), but the W547
+        # rank table accepts CVSS terms (``high``, ``medium``, ``low``) as
+        # equivalents under the canonical ordering (higher = worse). Aliases
+        # like ``note`` / ``unknown`` are intentionally NOT in the Choice — they
+        # collapse to ``info`` / sort-below-info via ``severity_rank``, so a
+        # user-facing filter on them would be confusing.
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
+    help=(
+        "Minimum severity to include. Uses the canonical W547 5-tier ordering "
+        "(critical > error == high > warning > medium > low > info). Detectors "
+        "emit critical/warning/info today; CVSS aliases (high/medium/low) and "
+        "SARIF error rank via the same severity_rank() comparator."
+    ),
 )
 @click.option(
     "--include-tooling",
@@ -408,10 +431,12 @@ def _short_loc(location: str) -> str:
 # click.Choice([...]) would break forward-compat with CI scripts whenever a
 # new detector ships. Unknown --kind values therefore warn into
 # summary.warnings_out and are skipped (graceful, exit 0).
-# --min-severity uses click.Choice([...]) — a small fixed closed enum
-# (critical / warning / info). Unknown --min-severity raises a click usage
-# error (exit 2). Same command, two different "unknown value" semantics by
-# design: registry-derived vocabularies warn; fixed enums hard-fail at parse.
+# --min-severity uses click.Choice([...]) — a fixed closed enum widened in
+# W1005 to the W547 canonical 5-tier vocab (critical / error / high /
+# warning / medium / low / info). Unknown --min-severity raises a click
+# usage error (exit 2). Same command, two different "unknown value"
+# semantics by design: registry-derived vocabularies warn; fixed enums
+# hard-fail at parse.
 @click.option(
     "--kind",
     "kind_filter",
@@ -426,8 +451,30 @@ def _short_loc(location: str) -> str:
         "roam.catalog.registry."
     ),
 )
+# W1294 (perf pushdown — second-cheapest win from PERF-CHARACTERIZATION-
+# 2026-05-16): --only restricts the detector dispatch loop to the named
+# smell_id set BEFORE running each detector's SQL/AST pass. Distinct from
+# --kind which post-filters the finding list AFTER every detector ran
+# (preserves --kind's registry-forward-compat warn semantics for CI
+# scripts). --only is the work-skipping fast path: a typo here means we
+# do zero work, so unknown ids hard-error at parse time (Constraint 8 —
+# fixed-enum boundary at the dispatch layer). On roam-code itself
+# `roam smells --only clones` is ~10x faster than full `roam smells`.
+@click.option(
+    "--only",
+    "only_kinds",
+    multiple=True,
+    default=(),
+    metavar="SMELL_ID",
+    help=(
+        "Run ONLY these smell detectors (repeat the flag for multiple). "
+        "Skips the SQL/AST pass for every other detector. Unknown ids "
+        "raise a usage error with the registered set listed. Differs from "
+        "--kind, which post-filters findings after all detectors ran."
+    ),
+)
 @click.pass_context
-def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, kind_filter):
+def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, kind_filter, only_kinds):
     """Detect code smells: brain methods, god classes, deep nesting, and more.
 
     Unlike ``vibe-check`` (which detects AI-generated code anti-patterns via
@@ -442,7 +489,27 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
     detail = ctx.obj.get("detail", False) if ctx.obj else False
     ensure_index()
 
-    from roam.catalog.smells import run_all_detectors
+    from roam.catalog.smells import ALL_DETECTORS, run_all_detectors
+
+    # W1294 (perf pushdown): validate --only against the dispatchable
+    # detector set (the smell_ids backed by a detect_fn in ALL_DETECTORS).
+    # Rollup smell_ids like ``temporal-coupling-cluster`` are emitted as a
+    # side-effect of their parent detector and therefore not directly
+    # dispatchable — they correctly fall outside this closed enum. Unknown
+    # ids hard-error (Constraint 8 fixed-enum boundary) because --only
+    # gates which work runs; a typo means we did zero work.
+    if only_kinds:
+        dispatchable_kinds = frozenset(smell_id for smell_id, _fn in ALL_DETECTORS)
+        unknown_only = sorted({k for k in only_kinds if k and k not in dispatchable_kinds})
+        if unknown_only:
+            valid_listing = ", ".join(sorted(dispatchable_kinds))
+            raise click.UsageError(
+                f"--only: unknown smell id(s): {', '.join(unknown_only)}. "
+                f"Valid ids: {valid_listing}"
+            )
+        only_dispatch: frozenset[str] | None = frozenset(k for k in only_kinds if k)
+    else:
+        only_dispatch = None
 
     # W658: load the smells suppression allowlist exactly once per run.
     # The substrate keys on (smell_id + symbol_name) so deliberate fan-in
@@ -486,25 +553,41 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
     # raising. If every requested kind is invalid, the filter resolves to
     # zero findings rather than widening to "all smells" — a typo must not
     # explode the result set.
+    #
+    # W1083-followup-3: partition + per-unknown ``did_you_mean`` +
+    # warnings-string formatting is delegated to the shared
+    # ``structured_unknown_filter_many`` helper. The local partition loop
+    # is absorbed into the helper; the callsite now consumes
+    # ``frag["valid_kinds"]`` (-> sanitised_kinds) and
+    # ``frag["warnings_text"]`` (-> warnings_list.extend).
     known_kinds = _registered_smell_kinds()
     sanitised_kinds: set[str] = set()
     kind_filter_requested = any(bool(k) for k in kind_filter or ())
+    _kind_frag: dict | None = None
     if kind_filter:
-        # W1066 (sibling of W1064 + W987): append difflib closest-match
-        # suggestion when a registered kind is within cutoff 0.6 of the
-        # user-typed name. Mirrors the cmd_math --only/--exclude precedent
-        # and the cmd_findings --detector treatment. The suggestion is
-        # additive — when no kind has any close match the warning string
-        # is byte-identical to the pre-W1066 message.
-        import difflib
+        from roam.output.structured_unknowns import (
+            structured_unknown_filter_many,
+            to_summary_payload_many,
+        )
 
-        known_kinds_sorted = sorted(known_kinds)
-        for k in kind_filter:
-            if not k:
-                continue
-            if k in known_kinds:
-                sanitised_kinds.add(k)
-            else:
+        _kind_frag = structured_unknown_filter_many(
+            list(kind_filter),
+            known_kinds,
+            field_name="kind",
+            fact_anchor="kinds",
+            state="unknown_kinds",
+        )
+        sanitised_kinds = set(_kind_frag["valid_kinds"])
+        # The helper emits a generic "Drop {k!r}: unknown <field> matches 0
+        # entries" warning shape. We rewrite it to the W1066-canonical
+        # "Drop --kind {k!r}: unknown smell id matches 0 detectors; pick
+        # one of the {N} registered kinds" form so the migration is wire-
+        # compatible with existing CI scripts that grep this string.
+        if _kind_frag["unknown_kinds"]:
+            import difflib
+
+            known_kinds_sorted = sorted(known_kinds)
+            for k in _kind_frag["unknown_kinds"]:
                 base_msg = (
                     f"Drop --kind {k!r}: unknown smell id matches 0 detectors; "
                     f"pick one of the {len(known_kinds)} registered kinds"
@@ -516,7 +599,7 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
                 warnings_list.append(base_msg)
 
     with open_db(readonly=not persist) as conn:
-        findings = run_all_detectors(conn)
+        findings = run_all_detectors(conn, only=only_dispatch)
 
         # W658: apply the suppress.yml allowlist BEFORE persist so
         # suppressed findings never enter the findings registry. The
@@ -631,9 +714,55 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
         # the SARIF level (critical -> error, warning -> warning,
         # info -> note).
         if sarif_mode:
-            from roam.output.sarif import smells_to_sarif, write_sarif
+            from roam.output.sarif import (
+                runtime_filter_disclosure,
+                smells_to_sarif,
+                write_sarif,
+            )
 
-            click.echo(write_sarif(smells_to_sarif(findings)))
+            # W1061-followup-2: delegate the rule-level configurationOverride
+            # boilerplate to the shared :func:`runtime_filter_disclosure`
+            # helper. W1061 semantics preserved — each rule NOT in the
+            # active filter set surfaces with ``configuration.enabled:
+            # false`` so a CI consumer reads a filtered "no findings"
+            # run as FILTERED rather than CLEAN. ``--min-severity`` is
+            # still a deliberate BAIL because the disable semantic is
+            # finding-level not rule-level (rules emit mixed severities).
+            rule_disabled: list[tuple[str, dict]] = []
+            kinds_active = sanitised_kinds or (
+                set(only_dispatch) if only_dispatch else set()
+            )
+            if kinds_active:
+                from roam.catalog.registry import kind_to_confidence
+
+                all_kinds = sorted(kind_to_confidence().keys())
+                disabled_kinds = [k for k in all_kinds if k not in kinds_active]
+                filter_source = (
+                    "--only"
+                    if (only_dispatch and not sanitised_kinds)
+                    else "--kind"
+                )
+                for k in disabled_kinds:
+                    rule_disabled.append(
+                        (
+                            f"smells/{k}",
+                            {
+                                "disabled_by": filter_source,
+                                "filter_value": sorted(kinds_active),
+                            },
+                        )
+                    )
+            sarif_overrides, _ = runtime_filter_disclosure(
+                rule_ids_disabled=rule_disabled,
+            )
+
+            click.echo(
+                write_sarif(
+                    smells_to_sarif(
+                        findings, runtime_overrides=sarif_overrides or None
+                    )
+                )
+            )
             return
 
         if json_mode:
@@ -676,6 +805,14 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
             # summary still sees the silent-state disclosure.
             if warnings_list:
                 summary["partial_success"] = True
+            # W1083-followup-3: when --kind had any unknown values, splice
+            # the multi-value helper fragment so the JSON consumer can see
+            # the partition + per-unknown ``did_you_mean`` map without
+            # parsing the warnings_out strings.
+            if _kind_frag is not None and _kind_frag.get("unknown_kinds"):
+                summary.update(
+                    to_summary_payload_many(_kind_frag, include_known=False)
+                )
             envelope = json_envelope(
                 "smells",
                 budget=token_budget,

@@ -26,8 +26,9 @@
 #   surface           - Roam product surface(s) that emit this evidence. NEW
 #                       in v1. Valid values (per crosswalk "Product
 #                       implications"): pr-replay, governance-pack, review,
-#                       team-mcp-gateway, self-hosted, due-diligence,
-#                       security-reachability.
+#                       team-mcp-gateway, due-diligence,
+#                       security-reachability. (W507 pruned dead
+#                       'self-hosted' vocab — zero consumers.)
 #   wording_guard     - verbatim discipline phrase the renderer must use.
 #                       NEW in v1. One of: "maps to", "supports evidence for",
 #                       "audit-ready record". Never "certifies", "compliant",

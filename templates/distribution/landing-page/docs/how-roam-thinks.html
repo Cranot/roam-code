@@ -199,8 +199,12 @@
           Roam detects the algorithmic shape: accidental O(n²) lookups,
           N+1 queries, regex compiled inside hot loops, repeated JSON
           parsing, missing indexes on hot tables, branching recursion
-          without memoisation. CodeRabbit, Greptile, SonarQube, Semgrep
-          do not run this class of check. Roam does.
+          without memoisation. Cloud semantic reviewers (CodeRabbit,
+          Greptile, Qodo, SonarQube) read the diff for naming and
+          style; IDE surfaces (Cursor, Cody, Windsurf) log the
+          session. Neither runs this algorithmic-shape class of check.
+          Roam does, locally, before merge. See <a href="/compare">/compare</a>
+          for vendor positioning.
         </p>
         <p>
           Commands: <code>roam math</code> /
@@ -363,6 +367,12 @@
           <a href="/docs/command-reference">browse the full command reference</a> ·
           <a href="/docs/getting-started">run the 10-minute tutorial</a>.
         </p>
+        <p>
+          <strong>See it run:</strong>
+          <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash;
+          install &rarr; health &rarr; preflight &rarr; critique &rarr; signed
+          <code>ChangeEvidence</code> packet, end to end.
+        </p>
       </div>
     </section>
 
@@ -374,7 +384,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for developers and AI agents.</span>
+        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

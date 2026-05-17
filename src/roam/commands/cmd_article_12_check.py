@@ -325,14 +325,14 @@ from roam.capability import roam_capability
     "output_path",
     type=click.Path(),
     default=None,
-    help="Write the markdown report to PATH (default: stdout).",
+    help="Write the markdown report to <PATH> (default: stdout).",  # W1117-followup
 )
 @click.option(
     "--pdf",
     "pdf_path",
     type=click.Path(),
     default=None,
-    help="Also write a PDF to PATH (requires reportlab; pip install reportlab).",
+    help="Also write a PDF to <PATH> (requires reportlab; pip install reportlab).",  # W1117-followup
 )
 @click.pass_context
 def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):

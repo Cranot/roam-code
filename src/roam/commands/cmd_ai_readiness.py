@@ -287,6 +287,10 @@ def _score_dead_code(conn) -> tuple[int, dict]:
         "AND s.id NOT IN (SELECT target_id FROM edges) " + _EXCLUDE_SQL
     ).fetchone()[0]
 
+    # W1084: ``total`` is clamped to >= 1 for division safety only. Do
+    # NOT use ``total`` as an empty-corpus probe downstream — the outer
+    # ``ai_readiness`` command queries ``COUNT(*) FROM symbols`` directly
+    # to detect the zero-input case.
     total = max(total, 1)
     dead_rate = dead / total
 
@@ -358,6 +362,10 @@ def _score_test_signal(conn) -> tuple[int, dict]:
         if found_test:
             with_test += 1
 
+    # W1084: ``source_count`` is clamped to >= 1 for division safety only.
+    # Do NOT use it as an empty-corpus probe downstream — see outer
+    # ``ai_readiness`` command for the canonical ``COUNT(*) FROM symbols``
+    # probe.
     source_count = max(source_count, 1)
     coverage_rate = with_test / source_count
     score = max(0, min(100, int(round(coverage_rate * 100))))
@@ -723,9 +731,23 @@ def ai_readiness(ctx, threshold):
         label = _readiness_label(composite)
         recommendations = _generate_recommendations(dimensions, all_details)
 
-        verdict = f"AI Readiness {composite}/100 -- {label}"
-
         files_scanned = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        # W1084: Empty-corpus probe must NOT come from any per-dimension
+        # ``total`` field — those are clamped to ``max(_, 1)`` for
+        # division safety (see ``_score_dead_code`` line 290 and
+        # ``_score_test_signal`` line 361). Use a direct ``symbols``
+        # count against zero instead; that is the canonical probe used
+        # by ``cmd_vibe_check`` W805-followup-A. Without this guard the
+        # composite collapses to ~70-100 ("GOOD"/"OPTIMIZED") on a
+        # corpus with zero symbols — the W834-class silent-Healthy bug.
+        symbols_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        empty_corpus = files_scanned == 0 or symbols_count == 0
+        if empty_corpus:
+            verdict = (
+                "no files scanned (corpus empty — run `roam index --force` to populate)"
+            )
+        else:
+            verdict = f"AI Readiness {composite}/100 -- {label}"
 
         # --- JSON output ---
         if json_mode:
@@ -742,15 +764,27 @@ def ai_readiness(ctx, threshold):
                     }
                 )
 
+            _summary = {
+                "verdict": verdict,
+                "score": composite,
+                "label": label,
+                "files_scanned": files_scanned,
+                "symbols_count": symbols_count,
+            }
+            # W1084: Pattern 2 silent-fallback fix. ``empty_corpus`` is
+            # derived from a direct ``COUNT(*) FROM symbols`` query —
+            # NOT from per-dimension ``total`` fields, which are
+            # clamped to ``max(_, 1)`` and so cannot probe the empty
+            # case (see comment above). Mirrors W805-followup-A /
+            # W834 / W836.
+            if empty_corpus:
+                _summary["partial_success"] = True
+                _summary["state"] = "no_symbols_indexed"
+
             envelope = json_envelope(
                 "ai-readiness",
                 budget=budget,
-                summary={
-                    "verdict": verdict,
-                    "score": composite,
-                    "label": label,
-                    "files_scanned": files_scanned,
-                },
+                summary=_summary,
                 dimensions=dim_list,
                 recommendations=recommendations,
             )

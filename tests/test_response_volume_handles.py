@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 
 import pytest
 
@@ -41,7 +40,6 @@ os.environ.setdefault("ROAM_MCP_PRESET", "full")
 
 from roam import mcp_server  # noqa: E402
 from roam.mcp_server import (  # noqa: E402
-    _handle_storage_dir,
     _maybe_handle_off,
     fetch_handle,
 )
@@ -86,7 +84,11 @@ def _isolate_handle_dir(tmp_path, monkeypatch):
     except Exception:
         pass
     yield
-    shutil.rmtree(_handle_storage_dir(), ignore_errors=True)
+    # W478-followup-3: dropped ``shutil.rmtree(_handle_storage_dir(),
+    # ignore_errors=True)``. The chdir(tmp_path) above redirects
+    # ``Path.cwd() / .roam / responses`` under pytest's ``tmp_path``,
+    # which pytest tears down for us. The defensive rmtree was
+    # redundant AND swallowed any genuine leak outside the sandbox.
 
 
 def _large_payload(verdict: str, n_items: int = 800) -> dict:

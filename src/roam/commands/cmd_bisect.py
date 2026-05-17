@@ -109,7 +109,7 @@ def _compute_deltas(snapshots, metric):
     help="Metric to track",
 )
 @click.option("--threshold", default=None, type=float, help="Flag deltas exceeding this threshold")
-@click.option("--top", "top_n", default=10, type=int, help="Show top N snapshots")
+@click.option("--top", "top_n", default=10, type=int, help="Show top <N> snapshots")
 @click.option(
     "--direction",
     type=click.Choice(["degraded", "improved", "both"]),

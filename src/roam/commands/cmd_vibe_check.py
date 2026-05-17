@@ -1938,6 +1938,12 @@ def vibe_check(ctx, threshold, persist):
         # though the SCORE is unaffected.
         total_issues = sum(p["found"] for p in patterns.values())
         files_scanned = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        # W805-followup-A: symbol-count signal for the empty-corpus disclosure
+        # below. ``files_scanned`` alone is insufficient — a fixture with
+        # one zero-byte Python file shows 1 file but 0 symbols, so every
+        # AI-rot detector scores 0/0 and collapses to a "HEALTHY 0/100"
+        # verdict indistinguishable from a real clean run.
+        symbols_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
 
         # Severity per pattern
         for key, pdata in patterns.items():
@@ -2000,50 +2006,73 @@ def vibe_check(ctx, threshold, persist):
                 "occurrences (redundant comments + shallow wrappers)"
             )
 
-        verdict = f"AI rot score {score}/100 -- {severity}"
+        # W805-followup-A: empty-corpus disclosure (Pattern 2 silent-fallback fix).
+        # When zero symbols are indexed all 8 AI-rot detectors collapse
+        # to 0/100 ("HEALTHY") regardless of whether the corpus is
+        # pristine or simply absent. Distinguish "pristine codebase"
+        # (real success) from "nothing to analyze" (degraded/missing
+        # input) via partial_success + a closed-enum state field.
+        # ``files_scanned`` is the broader fallback (no files indexed
+        # at all); ``symbols_count == 0`` covers the file-present-but-
+        # symbol-empty case (e.g. zero-byte Python files). Per-detector
+        # ``total`` values are individually clamped to ``max(_, 1)`` so
+        # they are NOT a reliable empty-input signal. Mirrors W834 / W836 + W805.
+        empty_corpus = files_scanned == 0 or symbols_count == 0
+        if empty_corpus:
+            verdict = "no files scanned (corpus empty — run `roam index --force` to populate)"
+        else:
+            verdict = f"AI rot score {score}/100 -- {severity}"
 
         # --- JSON output ---
         if json_mode:
+            _summary = {
+                "verdict": verdict,
+                "score": score,
+                "severity": severity,
+                # W17.2 / Pattern 3c: name the axis the severity label
+                # measures. vibe-check's severity is rot-axis (higher
+                # score = more rot = worse); dashboard's `health.label`
+                # is health-axis (higher score = healthier = better).
+                # The label words coincidentally overlap ("HEALTHY")
+                # but mean opposite things — agents that confuse them
+                # ship bad decisions, so name the axis explicitly.
+                "label_axis": "ai_rot_score",
+                "label_axis_definition": (
+                    "Severity label on the AI-rot axis (0-100, lower "
+                    "= healthier). Bands: HEALTHY <=15, LOW <=35, "
+                    "MODERATE <=55, HIGH <=75, CRITICAL >75. NOT the "
+                    "same axis as dashboard's `health.label` "
+                    "(project-health, higher = healthier)."
+                ),
+                "total_issues": total_issues,
+                "files_scanned": files_scanned,
+                "patterns_detected": sum(1 for p in patterns.values() if p["found"] > 0),
+                # Pattern 3 label fix — vibe-check is the CANONICAL
+                # source for AI rot. Downstream consumers (dashboard,
+                # audit aggregates) read this label to confirm they
+                # agree on what the number means. See
+                # ``internal/dogfood/SYNTHESIS-2026-05-12.md`` Pattern 3.
+                "ai_rot_score": score,
+                "ai_rot_definition": AI_ROT_DEFINITION,
+                # W19 / Pattern 3: the ``dead_exports`` count here
+                # is COARSER than ``roam dead``'s by design (3.4x
+                # observed on a PHP backend dogfood). Surface the
+                # definition at envelope level so an agent reading
+                # just the summary doesn't conflate the metrics.
+                "dead_exports_metric_definition": _DEAD_EXPORTS_DEFINITION,
+                "dead_exports_canonical_command": "roam dead",
+            }
+            # W805-followup-A: empty-corpus disclosure (Pattern 2). When
+            # zero files are indexed, the 0/100 score is NOT a clean-run
+            # success — it's a degraded state with no analyzable input.
+            # Surface that via partial_success + closed-enum state field.
+            if empty_corpus:
+                _summary["partial_success"] = True
+                _summary["state"] = "no_files_scanned"
             envelope = json_envelope(
                 "vibe-check",
                 budget=budget,
-                summary={
-                    "verdict": verdict,
-                    "score": score,
-                    "severity": severity,
-                    # W17.2 / Pattern 3c: name the axis the severity label
-                    # measures. vibe-check's severity is rot-axis (higher
-                    # score = more rot = worse); dashboard's `health.label`
-                    # is health-axis (higher score = healthier = better).
-                    # The label words coincidentally overlap ("HEALTHY")
-                    # but mean opposite things — agents that confuse them
-                    # ship bad decisions, so name the axis explicitly.
-                    "label_axis": "ai_rot_score",
-                    "label_axis_definition": (
-                        "Severity label on the AI-rot axis (0-100, lower "
-                        "= healthier). Bands: HEALTHY <=15, LOW <=35, "
-                        "MODERATE <=55, HIGH <=75, CRITICAL >75. NOT the "
-                        "same axis as dashboard's `health.label` "
-                        "(project-health, higher = healthier)."
-                    ),
-                    "total_issues": total_issues,
-                    "files_scanned": files_scanned,
-                    "patterns_detected": sum(1 for p in patterns.values() if p["found"] > 0),
-                    # Pattern 3 label fix — vibe-check is the CANONICAL
-                    # source for AI rot. Downstream consumers (dashboard,
-                    # audit aggregates) read this label to confirm they
-                    # agree on what the number means. See
-                    # ``internal/dogfood/SYNTHESIS-2026-05-12.md`` Pattern 3.
-                    "ai_rot_score": score,
-                    "ai_rot_definition": AI_ROT_DEFINITION,
-                    # W19 / Pattern 3: the ``dead_exports`` count here
-                    # is COARSER than ``roam dead``'s by design (3.4x
-                    # observed on a PHP backend dogfood). Surface the
-                    # definition at envelope level so an agent reading
-                    # just the summary doesn't conflate the metrics.
-                    "dead_exports_metric_definition": _DEAD_EXPORTS_DEFINITION,
-                    "dead_exports_canonical_command": "roam dead",
-                },
+                summary=_summary,
                 patterns=[
                     {
                         "name": key,

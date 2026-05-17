@@ -134,8 +134,22 @@ def test_add_existing_file_blocks(tmp_path, monkeypatch):
     assert "INVALID_ADD_FILE" in codes
 
 
-def test_verdict_aggregates_correctly():
-    """Verdict order: blocked > needs-review > ok."""
+def test_verdict_aggregates_correctly(monkeypatch):
+    """Verdict order: blocked > needs-review > ok.
+
+    W1275: pin ``_vp_blast_radius`` per symbol so the REMOVE_HAS_CALLERS
+    blocker fires deterministically on ``analyze_n1`` and the modify on
+    ``_format_count`` stays in the OK band. The verdict-aggregation
+    contract is the unit under test, not live dogfood caller counts.
+    """
+    import roam.mcp_server as mcp
+
+    _blast_fixture = {"_format_count": 5, "analyze_n1": 5}
+    monkeypatch.setattr(
+        mcp,
+        "_vp_blast_radius",
+        lambda sym, root=".": _blast_fixture.get(sym, 0),
+    )
     r = validate_plan(
         operations=[
             {"kind": "modify", "symbol": "_format_count"},  # ok
@@ -295,6 +309,10 @@ def test_fitness_violations_warning_fires_when_preflight_summary_lists_them(monk
         return real_run_roam(args, root)
 
     monkeypatch.setattr(mcp, "_run_roam", fake_run_roam)
+    # W1275: pin blast radius below MEDIUM so the FITNESS_VIOLATIONS
+    # warning is the only one fired — isolates the unit under test from
+    # live caller-count drift on ``analyze_n1``.
+    monkeypatch.setattr(mcp, "_vp_blast_radius", lambda sym, root=".": 5)
 
     r = validate_plan(operations=[{"kind": "modify", "symbol": "analyze_n1"}])
     op = r["operations"][0]
@@ -466,9 +484,22 @@ def test_multiple_warnings_aggregate_in_summary(monkeypatch):
     assert op2_codes <= {"HIGH_BLAST_RADIUS", "FITNESS_VIOLATIONS"}
 
 
-def test_verdict_precedence_blocker_dominates_warning():
+def test_verdict_precedence_blocker_dominates_warning(monkeypatch):
     """When the same plan carries both a blocker and a warning, the final
-    verdict must collapse to ``blocked`` (not ``needs-review``)."""
+    verdict must collapse to ``blocked`` (not ``needs-review``).
+
+    W1275: pin ``_vp_blast_radius`` so the HIGH_BLAST_RADIUS warning on
+    ``to_json`` fires deterministically regardless of live dogfood caller
+    counts. The precedence contract is the unit under test.
+    """
+    import roam.mcp_server as mcp
+
+    _blast_fixture = {"to_json": 100, "_format_count": 5}
+    monkeypatch.setattr(
+        mcp,
+        "_vp_blast_radius",
+        lambda sym, root=".": _blast_fixture.get(sym, 0),
+    )
     r = validate_plan(
         operations=[
             # Warning-only op: HIGH_BLAST_RADIUS.

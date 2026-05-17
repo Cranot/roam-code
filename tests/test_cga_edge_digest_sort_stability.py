@@ -27,7 +27,6 @@ from pathlib import Path
 
 from roam.attest.cga import _edge_bundle_digest
 
-
 # ---------------------------------------------------------------------------
 # Test fixture: on-disk SQLite DB carrying duplicate edge triples
 # ---------------------------------------------------------------------------

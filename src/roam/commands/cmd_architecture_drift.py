@@ -195,7 +195,7 @@ def _biggest_movers(pair_diffs: list[dict], top: int) -> list[dict]:
     "--top",
     default=10,
     type=int,
-    help="Cap biggest_movers list to N rows in the envelope.",
+    help="Cap biggest_movers list to <N> rows in the envelope.",  # W1117-followup
 )
 @click.pass_context
 def architecture_drift_cmd(ctx, window_spec, top):

@@ -115,3 +115,6 @@ dev/test-rules*.yml
 .surface.json
 tmp_surface.json
 .tmp-memcheck/
+
+# Cloudflare Workers dev cache (landing-page deploy artifacts)
+.wrangler/

@@ -235,12 +235,12 @@ def test_impact_auto_logs_to_active_run(
     assert ev.get("summary_verdict"), f"empty verdict in impact event: {ev}"
 
 
-def test_impact_does_not_auto_log_on_not_found(
+def test_impact_unresolved_auto_logs_provenance(
     cli_runner,
     indexed_project,
     monkeypatch,
 ):
-    """``roam impact <missing>`` is Convention (c): exit 0, envelope, no auto_log.
+    """``roam impact <missing>`` is Convention (c) AND auto-logs to the run.
 
     W1272 standardised the not-found branch to Pattern-2c Convention (c):
     unresolved is a real success of "I tried and there's nothing to
@@ -249,21 +249,33 @@ def test_impact_does_not_auto_log_on_not_found(
     outcome, but the exit code stays 0 so CI doesn't conflate a
     name-typo with a tool/IO failure.
 
-    Per the W1268 audit, ``auto_log`` is reserved for SUCCESS-PATH
-    blast-radius events; the not-found branch deliberately does NOT
-    call ``auto_log``. This test (W1276) pins down the new contract so
-    a future refactor can't silently re-add the auto-log and undo the
-    Convention (c) standardisation.
+    W1277 — RESTORE auto_log on the unresolved path. The earlier W1276
+    "no auto_log on not-found" stance created a signal-loss risk on the
+    replay-narration surface: when an agent runs ``roam impact <typo>``
+    and gets a Convention-c envelope back, the run ledger no longer
+    carried any trace that the attempt happened. Under Convention (c),
+    unresolved IS a real success (of the "nothing to analyze" kind), so
+    it belongs in the agent-decision timeline alongside resolved
+    attempts. The replay-narrator can then render "agent tried to
+    impact <name> → unresolved" rather than rendering silence.
 
-    See also: ``cmd_dead --extinction`` for the canonical Convention (c)
-    shape, and W1242/W1249 for the resolution-disclosure mechanism.
+    Contract:
+    * exit 0 (Convention c — not a tool failure)
+    * envelope carries ``resolution=unresolved`` + ``partial_success=True``
+    * run ledger carries exactly one ``impact`` event with the typo'd
+      input name as ``target`` and ``partial_success=True``.
+
+    See also: W1272/W1249 for the resolution-disclosure mechanism,
+    W1268 for the auto_log allowlist rationale, ``cmd_dead --extinction``
+    for the canonical Convention (c) shape.
     """
     meta = start_run(Path(indexed_project), agent="test-agent")
     monkeypatch.setenv("ROAM_RUN_ID", meta.run_id)
 
+    typo = "DefinitelyDoesNotExist_xyzzy"
     result = invoke_cli(
         cli_runner,
-        ["impact", "DefinitelyDoesNotExist_xyzzy"],
+        ["impact", typo],
         cwd=indexed_project,
         json_mode=True,
     )
@@ -276,11 +288,21 @@ def test_impact_does_not_auto_log_on_not_found(
     assert envelope["summary"].get("partial_success") is True, envelope
     assert "not found" in envelope["summary"].get("verdict", "").lower(), envelope
 
-    # W1276 — no auto_log on the not-found path. The run ledger should
-    # contain zero ``impact`` events for this invocation.
+    # W1277 — auto_log fires on the unresolved path so replay-narration
+    # surfaces the attempt instead of silence.
     events = list(read_run_events(Path(indexed_project), meta.run_id))
     impact_events = [e for e in events if e.get("action") == "impact"]
-    assert not impact_events, f"not-found path must not auto-log (W1272/W1276); got events: {impact_events}"
+    assert impact_events, (
+        "W1277: unresolved path must auto-log for replay-narration provenance; "
+        f"got events: {events}"
+    )
+    ev = impact_events[0]
+    assert ev["envelope_command"] == "impact"
+    assert ev["target"] == typo, f"target should be the typo'd input {typo!r}, got {ev.get('target')!r}"
+    assert ev.get("partial_success") is True, f"partial_success should propagate from envelope: {ev}"
+    assert "not found" in (ev.get("summary_verdict") or "").lower(), (
+        f"replay-narrator needs verdict signal even on unresolved: {ev}"
+    )
 
 
 # ---------------------------------------------------------------------------

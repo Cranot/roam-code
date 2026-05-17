@@ -18,8 +18,6 @@ Tests exercise all four modes plus error envelopes for bad args.
 
 from __future__ import annotations
 
-import shutil
-
 import pytest
 
 pytest.importorskip(
@@ -51,10 +49,17 @@ def _unwrap(fn):
 
 @pytest.fixture(autouse=True)
 def _isolate_handle_dir(tmp_path, monkeypatch):
-    """Each test gets its own cwd → its own ``.roam/responses/``."""
+    """Each test gets its own cwd → its own ``.roam/responses/``.
+
+    W478-followup-3: ``_handle_storage_dir()`` resolves to
+    ``Path.cwd() / .roam / responses``; ``monkeypatch.chdir(tmp_path)``
+    redirects every write under ``tmp_path``, which pytest tears down
+    automatically. No defensive ``shutil.rmtree(..., ignore_errors=True)``
+    swallow is needed (and the previous one masked any genuine leak
+    outside ``tmp_path``).
+    """
     monkeypatch.chdir(tmp_path)
     yield
-    shutil.rmtree(_handle_storage_dir(), ignore_errors=True)
 
 
 def _store_payload(payload: dict) -> str:

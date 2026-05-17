@@ -737,15 +737,18 @@ def _load_gate_config(
                 f"thresholds."
             )
         return defaults
-    health_block = data.get("health")
-    if not isinstance(health_block, dict):
-        if warnings_out is not None:
-            warnings_out.append(
-                f"health-gate: {path_str!r} `health` is "
-                f"{type(health_block).__name__!r}, expected a mapping. "
-                f"Treating as default gates."
-            )
-        return defaults
+    # W1038 — shared "load → check type → warn-or-default" extractor.
+    from roam.commands._yaml_loader import extract_typed
+
+    health_block = extract_typed(
+        data,
+        "health",
+        dict,
+        {},
+        warnings_out=warnings_out,
+        context=f"health-gate: {path_str!r}",
+        expected_shape="a mapping",
+    )
     defaults.update(health_block)
     return defaults
 

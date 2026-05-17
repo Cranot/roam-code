@@ -203,14 +203,14 @@ def memory_add(ctx, kind, subject, body, agent, confidence, tag_csv, symbols, fi
 
 
 @memory_group.command("list")
-@click.option("--since", default=None, help="Filter to entries with ts >= SINCE (ISO-8601).")
+@click.option("--since", default=None, help="Filter to entries with ts >= <SINCE> (ISO-8601).")  # W1117-followup
 @click.option(
     "--kind",
     default=None,
     type=click.Choice(sorted(VALID_KINDS)),
     help="Filter to entries of this kind.",
 )
-@click.option("--top", default=0, type=int, help="Cap output to N entries (0 = no cap).")
+@click.option("--top", default=0, type=int, help="Cap output to <N> entries (0 = no cap).")  # W1117-followup
 @click.pass_context
 def memory_list(ctx, since, kind, top):
     """Stream stored memory entries.
@@ -304,7 +304,7 @@ def memory_list(ctx, since, kind, top):
     hidden=True,
     help="Deprecated alias for --path. Retained for backward compatibility.",
 )
-@click.option("--top", default=5, type=int, show_default=True, help="Return at most N entries.")
+@click.option("--top", default=5, type=int, show_default=True, help="Return at most <N> entries.")  # W1117-followup
 @click.pass_context
 def memory_relevant(ctx, query, symbols, files, top):
     """Rank stored memory entries against a query / symbol / file.

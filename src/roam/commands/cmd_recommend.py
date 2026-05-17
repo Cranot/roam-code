@@ -58,7 +58,7 @@ def _candidate_init() -> dict:
 )
 @click.command()
 @click.argument("symbol")
-@click.option("--limit", type=int, default=10, show_default=True, help="Top N recommendations.")
+@click.option("--limit", "--top", "limit", type=int, default=10, show_default=True, help="Top N recommendations.")  # W1142: --top alias
 @click.pass_context
 def recommend(ctx, symbol, limit) -> None:
     """Recommend related symbols using call-graph, co-change, and clone signals."""
@@ -193,16 +193,36 @@ def recommend(ctx, symbol, limit) -> None:
                 }
             )
     enriched.sort(key=lambda x: -x["score"])
-    enriched = enriched[: max(1, int(limit))]
+    # W1142-followup: cap-hit disclosure. ``enriched`` holds every related
+    # symbol before the user-supplied ``--limit`` slices it; recording the
+    # pre-slice total lets agents distinguish "N total related" from
+    # "N of M, truncated by --limit".
+    total_count_full = len(enriched)
+    limit_value = max(1, int(limit))
+    enriched = enriched[:limit_value]
+    items_truncated = total_count_full > len(enriched)
 
     verdict = f"{len(enriched)} related symbol(s) for '{symbol}'"
 
     if json_mode:
+        _summary = {
+            "verdict": verdict,
+            "count": len(enriched),
+            "total_count": total_count_full,
+            "truncated": items_truncated,
+            "limit": limit_value,
+        }
+        if items_truncated:
+            _summary["warnings_out"] = [
+                f"truncated to {len(enriched)} of {total_count_full} — "
+                "pass --limit larger to see more"
+            ]
+            _summary["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "recommend",
-                    summary={"verdict": verdict, "count": len(enriched)},
+                    summary=_summary,
                     recommendations=enriched,
                 )
             )
