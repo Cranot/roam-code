@@ -31,6 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from roam.atomic_io import atomic_write_text
 from roam.laws.miner import Law
 
 SCHEMA_VERSION = 1
@@ -271,6 +272,11 @@ def find_laws_file(repo_root: Path, explicit: str | None = None) -> Path | None:
 
 
 def write_laws_file(path: Path, laws: list[Law]) -> None:
-    """Write *laws* to *path* as YAML, creating parent dirs as needed."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump_laws_yaml(laws), encoding="utf-8")
+    """Write *laws* to *path* as YAML, creating parent dirs as needed.
+
+    Atomic write: a torn ``roam-laws.yml`` would round-trip back to ``[]``
+    in :func:`load_laws_yaml` (the parse error path), silently erasing the
+    user's mined-laws state on next read. The temp-file + ``os.replace``
+    pattern keeps the previous file intact on crash.
+    """
+    atomic_write_text(path, dump_laws_yaml(laws))

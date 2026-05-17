@@ -33,7 +33,14 @@ from roam.output.formatter import json_envelope, to_json
 
 
 def _run_subcommand(args: list[str]) -> dict:
-    """Invoke a roam subcommand in-process and return its parsed envelope."""
+    """Invoke a roam subcommand in-process and return its parsed envelope.
+
+    On JSON-parse failure or non-zero exit, returns a sentinel dict carrying
+    ``_subcommand_failed=True`` so the caller's compositor can detect it
+    instead of silently treating an error envelope as a success (Pattern 2 —
+    silent fallback). The legacy ``error``/``exit_code``/``raw_output_excerpt``
+    keys are preserved for callers / tests that pin them.
+    """
     from roam.cli import cli
 
     runner = CliRunner()
@@ -42,6 +49,7 @@ def _run_subcommand(args: list[str]) -> dict:
         return _json.loads(result.output)
     except Exception as exc:  # noqa: BLE001 — defensive
         return {
+            "_subcommand_failed": True,
             "error": f"{' '.join(args[:3])} failed to produce JSON: {exc}",
             "exit_code": result.exit_code,
             "raw_output_excerpt": result.output[:300] if result.output else "",
@@ -147,6 +155,14 @@ def dogfood(
     pr_verdict = pr_summary.get("verdict")
     conf_score = conf_summary.get("score")
 
+    # Pattern 2 disclosure: any subcommand that failed to produce a parseable
+    # envelope is carried as ``_subcommand_failed=True`` by _run_subcommand.
+    # Surface those on the compound envelope so the verdict doesn't read as
+    # green when an underlying step crashed.
+    failed_sections = sorted(
+        k for k, v in sections.items() if isinstance(v, dict) and v.get("_subcommand_failed")
+    )
+
     parts = []
     if health_score is not None:
         parts.append(f"health {health_score}")
@@ -154,6 +170,8 @@ def dogfood(
         parts.append(f"pr-analyze {pr_verdict}")
     if conf_score is not None:
         parts.append(f"conformance {conf_score}/100")
+    if failed_sections:
+        parts.append(f"{len(failed_sections)} section(s) failed: {', '.join(failed_sections)}")
     verdict_text = " · ".join(parts) if parts else "no sections enabled"
 
     summary = {
@@ -165,6 +183,9 @@ def dogfood(
         "git_branch": git_meta.get("git_branch"),
         "sections_run": sorted(sections.keys()),
     }
+    if failed_sections:
+        summary["partial_success"] = True
+        summary["failed_sections"] = failed_sections
 
     if json_mode:
         click.echo(to_json(json_envelope("dogfood", summary=summary, sections=sections)))

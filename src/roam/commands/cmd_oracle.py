@@ -103,8 +103,8 @@ class OracleResult:
 
 def _scaffolding_evidence(conn: sqlite3.Connection, name: str) -> str | None:
     """Return a human-readable evidence string when the symbol's docstring
-    matches the scaffolding heuristic from. Used by the
-    reachability oracle to distinguish dead code from preserved
+    matches the scaffolding heuristic from ``cmd_dead._scaffolding_signals``.
+    Used by the reachability oracle to distinguish dead code from preserved
     reference code.
     """
     rows = conn.execute(

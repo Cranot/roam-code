@@ -272,10 +272,14 @@ def capsule(ctx, redact_paths, no_signatures, output):
 
     verdict = f"capsule exported ({files_n} files, {symbols_n} symbols, {edges_n} edges)"
 
-    # Write to file if requested
+    # Write to file if requested — atomic so a mid-write crash does not
+    # land a torn capsule that downstream `roam capsule` / replay consumers
+    # then json.loads and crash on (Pattern 1 variant C).
     if output:
+        from roam.atomic_io import atomic_write_text
+
         out_path = Path(output)
-        out_path.write_text(_json.dumps(capsule_data, indent=2, default=str), encoding="utf-8")
+        atomic_write_text(out_path, _json.dumps(capsule_data, indent=2, default=str))
 
     # JSON mode without --output: emit full capsule in envelope
     if json_mode and not output:

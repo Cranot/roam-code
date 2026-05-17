@@ -465,7 +465,11 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
                     "kind": r["kind"],
                     "signature": r["signature"] or "",
                     "refs": ref_counts.get(r["id"], 0),
-                    "pagerank": round(r["pagerank"], 4) if r["pagerank"] else 0,
+                    # W361 — round to 6 decimals to match W336's cmd_impact
+                    # widening. On a 25k-symbol graph per-symbol PageRank
+                    # values fall in the 1e-6 to 1e-3 range, so 4-decimal
+                    # rounding silently zeroed legitimate small values.
+                    "pagerank": round(r["pagerank"], 6) if r["pagerank"] else 0,
                     "location": loc(r["file_path"], r["line_start"]),
                 }
                 if explain:

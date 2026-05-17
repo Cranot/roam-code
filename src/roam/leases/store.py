@@ -438,14 +438,26 @@ def claim_lease(
     return lease, None
 
 
-def release_lease(repo_root: Path, lease_id: str) -> bool:
+def release_lease(
+    repo_root: Path,
+    lease_id: str,
+    *,
+    warnings_out: WarningsOut = None,
+) -> bool:
     """Mark *lease_id* as ``state: released``. Returns True on success.
 
     Returns False if the lease does not exist. Releasing an already-
     released or already-expired lease is a no-op that returns True --
     idempotence makes "agent retries release on flaky network" safe.
+
+    W589: when *warnings_out* is supplied, malformed-on-disk drops
+    (corrupt JSON, non-dict root, schema-invalid) bubble up from the
+    underlying :func:`read_lease` call so callers see WHY an existing
+    file failed to round-trip rather than treating it as "lease not
+    found". A missing path is NOT a warning. ``None`` (default)
+    preserves pre-W589 silent behaviour.
     """
-    lease = read_lease(repo_root, lease_id)
+    lease = read_lease(repo_root, lease_id, warnings_out=warnings_out)
     if lease is None:
         return False
     if lease.state == "released":

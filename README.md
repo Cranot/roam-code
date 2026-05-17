@@ -751,7 +751,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 |--------|-------------|
 | `roam --json <command>` | Structured JSON output with consistent envelope |
 | `roam --compact <command>` | Token-efficient output: TSV tables, minimal JSON envelope |
-| `roam --sarif <command>` | SARIF 2.1.0 output for dead, health, complexity, rules, secrets, algo, py-types, py-modern (GitHub/CI integration) |
+| `roam --sarif <command>` | SARIF 2.1.0 output for 37 commands incl. health, complexity, dead, smells, clones, vulns, taint, secrets, n1, dark-matter, supply-chain, critique, stale-refs (run `roam --help` for the live list — GitHub Code Scanning integration) |
 | `roam health --gate` | CI quality gate. Reads `.roam-gates.yml` thresholds. Exit code 5 on failure |
 
 </details>

@@ -6,6 +6,8 @@ import sqlite3
 
 import networkx as nx
 
+from roam.db.connection import batched_in
+
 
 def detect_layers(G: nx.DiGraph) -> dict[int, int]:
     """Assign a layer number to every node using longest-path from sources.
@@ -106,19 +108,20 @@ def format_layers(layers: dict[int, int], conn: sqlite3.Connection) -> list[dict
     if not layers:
         return []
 
+    # Use the shared batched_in() helper instead of hand-rolling placeholder
+    # batching — keeps the SQLite 999-param ceiling logic single-sourced and
+    # matches the pattern in cycles.py:format_cycles.
     all_ids = list(layers.keys())
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.kind, f.path AS file_path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.id IN ({ph})",
+        all_ids,
+    )
     lookup: dict[int, dict] = {}
-    for i in range(0, len(all_ids), 500):
-        batch = all_ids[i : i + 500]
-        placeholders = ",".join("?" for _ in batch)
-        rows = conn.execute(
-            f"SELECT s.id, s.name, s.kind, f.path AS file_path "
-            f"FROM symbols s JOIN files f ON s.file_id = f.id "
-            f"WHERE s.id IN ({placeholders})",
-            batch,
-        ).fetchall()
-        for sid, name, kind, fpath in rows:
-            lookup[sid] = {"id": sid, "name": name, "kind": kind, "file_path": fpath}
+    for sid, name, kind, fpath in rows:
+        lookup[sid] = {"id": sid, "name": name, "kind": kind, "file_path": fpath}
 
     # Group by layer
     layer_groups: dict[int, list[dict]] = {}

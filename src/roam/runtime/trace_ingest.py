@@ -6,6 +6,15 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
+# OTel span-status codes that signal an error. Both numeric (``2`` per
+# the OTLP wire format) and the canonical string label are accepted —
+# different producers emit different shapes. Centralised here so the
+# OTel parser stays a one-liner and the discipline is visible to
+# auditors.
+_OTEL_ERROR_STATUS_CODES: frozenset[object] = frozenset(
+    {2, "STATUS_CODE_ERROR", "ERROR"}
+)
+
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -257,13 +266,30 @@ def ingest_generic_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict
             },
             ...
         ]
+
+    Raises ``ValueError`` when the root is not a list or an entry is not
+    a mapping. Pattern-2 "make fallback chains loud" — silently
+    skipping malformed input would let an OTel/Jaeger/Zipkin file
+    routed here by mistake produce zero rows and a SUCCESS verdict.
     """
     ensure_runtime_table(conn)
     with open(trace_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
+    if not isinstance(data, list):
+        raise ValueError(
+            f"{trace_path}: generic trace must be a JSON list, "
+            f"got {type(data).__name__}; use auto_detect_format() to "
+            f"route to the right ingester"
+        )
+
     results = []
-    for entry in data:
+    for i, entry in enumerate(data):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"{trace_path}: generic trace entry {i} must be an object, "
+                f"got {type(entry).__name__}"
+            )
         fn_name = entry.get("function", "")
         file_path = entry.get("file")
         call_count = entry.get("call_count", 0)
@@ -326,8 +352,8 @@ def ingest_otel_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict]:
             end = int(span.get("endTimeUnixNano", 0))
             if start and end:
                 durations_ms.append((end - start) / 1_000_000)
-            status = span.get("status", {})
-            if status.get("code") == 2 or status.get("code") == "STATUS_CODE_ERROR":
+            status = span.get("status") or {}
+            if isinstance(status, dict) and status.get("code") in _OTEL_ERROR_STATUS_CODES:
                 error_count += 1
             attrs = span.get("attributes", [])
             for attr in attrs:

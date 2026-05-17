@@ -6,12 +6,20 @@ owasp_top10: A01:2021_Broken_Access_Control
 languages:
   - php
 sources:
+  # NOTE: ``header`` is intentionally NOT listed here even though
+  # ``$request->header('Referer')`` is a real Laravel input accessor.
+  # Listing bare ``header`` as both source AND sink (PHP ``header()``
+  # is one of the redirect sinks below) creates a same-name self-loop
+  # that pollutes the engine's reachability search with rule-internal
+  # noise rather than evidence. Qualified ``Request.header`` would be
+  # the right form once qualified_only:true lands on this rule pack;
+  # for now, ``request`` / ``all`` / ``get`` already cover the reads
+  # that matter for redirect-destination taint.
   - input
   - all
   - query
   - post
   - get
-  - header
 sinks:
   - redirect
   - to

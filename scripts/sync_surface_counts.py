@@ -53,8 +53,14 @@ def _live_counts() -> dict:
     return {
         "commands": int(surface["cli"]["command_names"]),
         "canonical": int(surface["cli"]["canonical_commands"]),
+        "alias_names": int(surface["cli"]["alias_names"]),
         "specialised": int(surface["cli"]["command_names"]) - 5,  # 5-verb model
         "mcp_tools": int(surface["mcp"]["registered_tools"]),
+        # Core-preset tool count from the live AST parser; never hardcode
+        # this literal — it drifts the moment _CORE_TOOLS in mcp_server.py
+        # changes (W933-class stale-literal hazard). See preset_counts in
+        # roam.surface_counts.mcp_surface_counts.
+        "mcp_core_tools": int(surface["mcp"]["preset_counts"]["core"]),
     }
 
 
@@ -79,6 +85,7 @@ def build_replacements(counts: dict, languages: int) -> None:
     cmds = counts["commands"]
     mcp = counts["mcp_tools"]
     spec = counts["specialised"]
+    core = counts["mcp_core_tools"]
     langs = languages
 
     # README.md and llms-install.md — owned by dev/build_readme_counts.py
@@ -197,7 +204,7 @@ def build_replacements(counts: dict, languages: int) -> None:
                     re.compile(
                         r"default: \d+ core tools(?: plus the <code>roam_expand_toolset</code> meta-tool)?; \d+ in <code>full</code>"
                     ),
-                    f"default: 57 core tools plus the <code>roam_expand_toolset</code> meta-tool; {mcp} in <code>full</code>",
+                    f"default: {core} core tools plus the <code>roam_expand_toolset</code> meta-tool; {mcp} in <code>full</code>",
                 ),
             ],
         )
@@ -259,8 +266,13 @@ def main() -> int:
 
     counts = _live_counts()
     langs = _live_languages()
+    # ``with aliases`` reuses live alias_names from surface_counts rather than
+    # a literal "+ 7" magic number — the moment a new alias lands in
+    # ``cli._COMMANDS``, the header reflects it without an edit here
+    # (W933-class stale-literal hazard).
+    with_aliases = counts["canonical"] + counts["alias_names"]
     print(
-        f"Live surface: {counts['commands']} commands ({counts['canonical']} canonical, {counts['canonical'] + 7} with aliases)"
+        f"Live surface: {counts['commands']} commands ({counts['canonical']} canonical, {with_aliases} with aliases)"
     )
     print(f"               {counts['mcp_tools']} MCP tools, {langs} languages")
     print()

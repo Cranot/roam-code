@@ -527,8 +527,13 @@ def compute_partition_manifest(
     # -- 10. Merge order -----------------------------------------------------
     merge_order = compute_merge_order(G, partitions)
 
+    # LAW 6 verdict-first + LAW 4 concrete-noun anchor: terminal token
+    # must be a concrete noun. ``agents`` is in the anchor set; the prior
+    # form terminated on ``9%`` which trips both the auto-derive humanizer
+    # and the LAW 4 lint heuristics.
     verdict = (
-        f"{len(result_partitions)} partitions for {n_agents} agents, conflict probability {int(overall_cp * 100)}%"
+        f"conflict probability {int(overall_cp * 100)}% across "
+        f"{len(result_partitions)} partitions for {n_agents} agents"
     )
 
     return {
@@ -546,7 +551,7 @@ def compute_partition_manifest(
 def _empty_manifest(n_agents: int) -> dict:
     """Return a valid but empty manifest."""
     return {
-        "verdict": f"0 partitions for {n_agents} agents, conflict probability 0%",
+        "verdict": f"conflict probability 0% across 0 partitions for {n_agents} agents",
         "total_partitions": 0,
         "n_agents": n_agents,
         "overall_conflict_probability": 0.0,
@@ -554,6 +559,44 @@ def _empty_manifest(n_agents: int) -> dict:
         "partitions": [],
         "dependencies": [],
         "conflict_hotspots": [],
+    }
+
+
+def _partition_agent_contract(manifest: dict) -> dict:
+    """Build a curated agent_contract for the partition envelope.
+
+    The auto-derive humanizer (see :func:`roam.output.formatter._humanize_summary_fact`)
+    produces garbage facts on the ``n_agents`` /
+    ``overall_conflict_probability`` summary keys ("9092 n agents",
+    "0.0971 overall conflict probability findings"). Override the block
+    explicitly with LAW 4-anchored facts so agents reading the envelope
+    get readable, concrete-noun-anchored signal.
+    """
+    pct = int(round(manifest["overall_conflict_probability"] * 100))
+    n_parts = manifest["total_partitions"]
+    n_agents = manifest["n_agents"]
+    cp = manifest["overall_conflict_probability"]
+    # LAW 4 anchored: each fact terminates on a concrete-noun token
+    # (``agents`` / ``hotspots``) or is a measurement-suffix form
+    # (``conflict score 0.0971`` matches the ``score`` suffix in the
+    # auto-derive humaniser). Avoid bare ``"N partitions"`` because
+    # ``partitions`` is not yet in the formatter's anchor set.
+    facts = [
+        manifest["verdict"],
+        f"partitioned into {n_parts} clusters for {n_agents} agents",
+        f"conflict score {cp:.4f}",
+    ]
+    n_hotspots = len(manifest.get("conflict_hotspots") or [])
+    if n_hotspots:
+        facts.append(f"{n_hotspots} conflict hotspots")
+    next_commands = []
+    if pct >= 25 or n_hotspots >= 5:
+        next_commands.append("roam clusters")
+    return {
+        "facts": facts,
+        "risks": [],
+        "next_commands": next_commands,
+        "confidence": None,
     }
 
 
@@ -701,6 +744,7 @@ def partition(ctx, n_agents, output_format):
                 # of cognitive_complexity from symbol_metrics.
                 "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
             },
+            agent_contract=_partition_agent_contract(manifest),
             partitions=manifest["partitions"],
             dependencies=manifest["dependencies"],
             conflict_hotspots=manifest["conflict_hotspots"],
@@ -725,6 +769,7 @@ def partition(ctx, n_agents, output_format):
                             # teams constraints is a sum of cognitive_complexity.
                             "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                         },
+                        agent_contract=_partition_agent_contract(manifest),
                         format="claude-teams",
                         **teams_data,
                     )
@@ -751,6 +796,7 @@ def partition(ctx, n_agents, output_format):
                         # cognitive_complexity from symbol_metrics.
                         "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
                     },
+                    agent_contract=_partition_agent_contract(manifest),
                     partitions=manifest["partitions"],
                     dependencies=manifest["dependencies"],
                     conflict_hotspots=manifest["conflict_hotspots"],

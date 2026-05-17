@@ -86,6 +86,13 @@ class GodComponentsSummary:
         non-health consumers that just need a count).
     definition : str
         The :data:`DEFINITION` string.
+    fallback_used : bool
+        ``True`` when the all-zero result is a swallowed-exception
+        fallback (``graph_metrics`` query failed, no rows, etc.) rather
+        than a genuine god-component-free codebase. Per CLAUDE.md
+        "Make fallback chains loud".
+    fallback_reason : str
+        Short identifier (``"query_failed"`` or ``""``).
     """
 
     total: int
@@ -94,16 +101,22 @@ class GodComponentsSummary:
     utility: int
     items: list = field(default_factory=list)
     definition: str = DEFINITION
+    fallback_used: bool = False
+    fallback_reason: str = ""
 
     def as_envelope_dict(self) -> dict:
         """Render as a dict suitable for embedding in a JSON envelope."""
-        return {
+        out: dict = {
             "total": self.total,
             "critical": self.critical,
             "actionable": self.actionable,
             "utility": self.utility,
             "god_components_definition": self.definition,
         }
+        if self.fallback_used:
+            out["fallback_used"] = True
+            out["fallback_reason"] = self.fallback_reason
+        return out
 
 
 def god_components(
@@ -143,7 +156,13 @@ def god_components(
     try:
         rows = conn.execute(TOP_BY_DEGREE, (top_n,)).fetchall()
     except Exception:
-        return GodComponentsSummary(total=0, critical=0, actionable=0, utility=0)
+        # Stamp the fallback flag so consumers can distinguish a
+        # crashed query from a clean codebase (CLAUDE.md "Make
+        # fallback chains loud").
+        return GodComponentsSummary(
+            total=0, critical=0, actionable=0, utility=0,
+            fallback_used=True, fallback_reason="query_failed",
+        )
 
     god_items: list[dict] = []
     for r in rows:

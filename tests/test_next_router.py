@@ -250,3 +250,81 @@ def test_next_with_recent_envelope_suggests_from_prior(cli_runner, tmp_path, mon
     assert result.exit_code == 0, result.output
     assert "roam impact" in result.output, result.output
     assert "from prior envelope" in result.output.lower() or "suggested by last command" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# 6b. W19.1 — stale envelopes (>24h by default) must NOT win the from_prior
+#     branch. Otherwise `roam next` happily routes agents to do-nothing work
+#     based on a week-old hint.
+# ---------------------------------------------------------------------------
+
+
+def test_next_skips_stale_envelope(cli_runner, tmp_path, monkeypatch):
+    """An envelope older than the staleness cutoff is ignored by the router.
+
+    W19.1 regression: before the fix, ``_read_recent_envelope_next_command``
+    returned the newest envelope regardless of age, so a week-old
+    ``next_commands[0]`` won the branch over the (correct) idle suggestion.
+    """
+    proj = _make_minimal_project(tmp_path, "stale_envelope_proj")
+    monkeypatch.chdir(proj)
+    out, rc = index_in_process(proj)
+    assert rc == 0, f"roam index failed:\n{out}"
+
+    # Defeat the staleness branch — touch the DB forward.
+    db_path = proj / ".roam" / "index.db"
+    future = time.time() + 60
+    os.utime(db_path, (future, future))
+
+    # Plant an OLD response envelope (48h ago, > the 24h default cutoff).
+    resp_dir = proj / ".roam" / "responses"
+    resp_dir.mkdir(parents=True, exist_ok=True)
+    fake = {
+        "command": "preflight",
+        "summary": {"verdict": "ok"},
+        "agent_contract": {"next_commands": ["roam impact main"]},
+    }
+    stale_envelope = resp_dir / "stale_handle.json"
+    stale_envelope.write_text(json.dumps(fake), encoding="utf-8")
+    two_days_ago = time.time() - (48 * 60 * 60)
+    os.utime(stale_envelope, (two_days_ago, two_days_ago))
+
+    result = invoke_cli(cli_runner, ["next"], cwd=proj)
+    assert result.exit_code == 0, result.output
+    # Working tree is clean (git_init committed everything), so the
+    # idle branch should win. The stale envelope must NOT route the
+    # agent to `roam impact`.
+    assert "roam impact" not in result.output, (
+        f"stale (48h-old) envelope leaked into next-step output:\n{result.output}"
+    )
+    assert "roam tour" in result.output, result.output
+
+
+def test_next_envelope_cutoff_overridable(cli_runner, tmp_path, monkeypatch):
+    """The W19.1 cutoff is opt-out via ``ROAM_NEXT_ENVELOPE_MAX_AGE_SEC=0``.
+
+    Restores pre-fix behavior for users / CI pipelines that prefer the
+    old semantics. Validates that the env-var override actually flows
+    through ``_read_recent_envelope_next_command``.
+    """
+    proj = _make_minimal_project(tmp_path, "stale_envelope_optout_proj")
+    monkeypatch.chdir(proj)
+    out, rc = index_in_process(proj)
+    assert rc == 0, f"roam index failed:\n{out}"
+
+    db_path = proj / ".roam" / "index.db"
+    future = time.time() + 60
+    os.utime(db_path, (future, future))
+
+    resp_dir = proj / ".roam" / "responses"
+    resp_dir.mkdir(parents=True, exist_ok=True)
+    fake = {"agent_contract": {"next_commands": ["roam impact main"]}}
+    stale_envelope = resp_dir / "stale_handle.json"
+    stale_envelope.write_text(json.dumps(fake), encoding="utf-8")
+    two_days_ago = time.time() - (48 * 60 * 60)
+    os.utime(stale_envelope, (two_days_ago, two_days_ago))
+
+    monkeypatch.setenv("ROAM_NEXT_ENVELOPE_MAX_AGE_SEC", "0")
+    result = invoke_cli(cli_runner, ["next"], cwd=proj)
+    assert result.exit_code == 0, result.output
+    assert "roam impact" in result.output, result.output

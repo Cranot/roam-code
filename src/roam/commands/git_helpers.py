@@ -8,6 +8,11 @@ shared-helper pattern (``codeowners_helpers``, ``changed_files``).
 All functions are defensive: any subprocess failure returns the documented
 sentinel (`""`, `"<unknown>"`, or `{}`) so the caller can degrade gracefully
 without try/except boilerplate.
+
+W586: ``_run_git`` uses binary capture + manual UTF-8 decode (errors=replace)
+so Windows shells with non-UTF8 default codepages (cp1252 / cp1253) never
+trip the stdlib reader thread on a stray byte. This makes the helper safe
+to use on every supported host without text-mode codepage hazards.
 """
 
 from __future__ import annotations
@@ -19,22 +24,36 @@ GIT_TIMEOUT_SECONDS = 5
 
 
 def _run_git(args: list[str]) -> str:
-    """Run a git command and return its stripped stdout, or '' on any failure."""
+    """Run a git command and return its stripped stdout, or '' on any failure.
+
+    W586: captures stdout in binary mode and manually decodes as UTF-8 with
+    ``errors="replace"`` so a Windows codepage mismatch on a stray byte never
+    raises ``UnicodeDecodeError`` mid-read. Behaviour for clean ASCII git
+    output is byte-stable with the previous text-mode implementation.
+    """
     try:
         proc = subprocess.run(
             args,
             capture_output=True,
-            text=True,
             timeout=GIT_TIMEOUT_SECONDS,
             check=False,
-            encoding="utf-8",
-            errors="replace",
         )
-        if proc.returncode == 0 and proc.stdout.strip():
-            return proc.stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        pass
-    return ""
+        return ""
+    if proc.returncode != 0:
+        return ""
+    raw = proc.stdout
+    if not raw:
+        return ""
+    # ``capture_output=True`` without ``text=True`` returns bytes. Tolerate
+    # str too because in-tree tests historically monkeypatched
+    # ``subprocess.run`` to return ``CompletedProcess(stdout="...")``; the
+    # str path keeps those tests green without re-mocking every call site.
+    if isinstance(raw, bytes):
+        decoded = raw.decode("utf-8", errors="replace")
+    else:
+        decoded = str(raw)
+    return decoded.strip()
 
 
 def git_actor() -> str:

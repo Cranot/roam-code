@@ -125,7 +125,12 @@ def reach_from_entry(conn: sqlite3.Connection, G: nx.DiGraph, entry_point: str) 
 
     Returns list of reachable vulns from this entry point.
     """
-    # Find the entry point node
+    # Find the entry point node. Empty/whitespace-only ``entry_point``
+    # would otherwise match every node via the ``"" in qname`` substring
+    # branch — return no entries so the caller sees an empty result
+    # rather than a silent "everything is reachable" answer.
+    if not entry_point or not entry_point.strip():
+        return []
     entry_ids: list[int] = []
     for nid, data in G.nodes(data=True):
         name = data.get("name", "")

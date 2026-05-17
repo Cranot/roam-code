@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+log = logging.getLogger(__name__)
+
 
 def extract_symbols(tree, source: bytes, file_path: str, extractor) -> list[dict]:
     """Extract symbol definitions from a parsed AST.
@@ -17,7 +21,17 @@ def extract_symbols(tree, source: bytes, file_path: str, extractor) -> list[dict
         return []
     try:
         symbols = extractor.extract_symbols(tree, source, file_path)
-    except Exception:
+    except Exception as exc:
+        # Pattern-2 lineage: surface extractor failure via WARNING log so
+        # zero-symbol output is observable (not silent). Indexing of the
+        # remaining files continues — a bug in one language extractor
+        # must not crash the whole pipeline. Test: test_python_extractor_v2.
+        log.warning(
+            "extract_symbols failed for %s (%s: %s); emitting empty symbol list",
+            file_path,
+            type(exc).__name__,
+            exc,
+        )
         return []
 
     # Ensure every symbol dict has all required keys with defaults.
@@ -59,7 +73,16 @@ def extract_references(tree, source: bytes, file_path: str, extractor) -> list[d
         return []
     try:
         refs = extractor.extract_references(tree, source, file_path)
-    except Exception:
+    except Exception as exc:
+        # Same Pattern-2 discipline as extract_symbols above: WARN, don't
+        # silently produce zero references (which would break call graphs
+        # and import resolution invisibly for that file).
+        log.warning(
+            "extract_references failed for %s (%s: %s); emitting empty refs list",
+            file_path,
+            type(exc).__name__,
+            exc,
+        )
         return []
 
     normalised = []

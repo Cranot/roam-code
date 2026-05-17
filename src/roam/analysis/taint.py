@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Union
 
+from roam._signature_utils import parse_param_names as _parse_param_names
 from roam.db.edge_kinds import CALL_EDGE_KINDS
 
 # ---------------------------------------------------------------------------
@@ -133,9 +134,6 @@ _ASSIGN_PATTERNS = (
     re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*[\+\-\*/%]="),
 )
 
-_IGNORED_PARAMS = {"_", "self", "cls", "this"}
-
-
 def _detect_sanitizer(name: str, qualified_name: str | None = None) -> bool:
     """Return True if the symbol name suggests a sanitizer function."""
     lower = (name or "").lower()
@@ -143,44 +141,9 @@ def _detect_sanitizer(name: str, qualified_name: str | None = None) -> bool:
     return any(s in lower or s in qn for s in _SANITIZER_NAMES)
 
 
-def _parse_param_names(signature: str | None) -> list[str]:
-    """Extract parameter names from a signature string like ``def foo(a, b=1)``."""
-    if not signature:
-        return []
-    m = re.search(r"\(([^)]*)\)", signature)
-    if not m:
-        return []
-    params_str = m.group(1).strip()
-    if not params_str:
-        return []
-
-    depth = 0
-    current: list[str] = []
-    parts: list[str] = []
-    for ch in params_str:
-        if ch in "([{<":
-            depth += 1
-            current.append(ch)
-        elif ch in ")]}>":
-            depth -= 1
-            current.append(ch)
-        elif ch == "," and depth == 0:
-            parts.append("".join(current).strip())
-            current = []
-        else:
-            current.append(ch)
-    if current:
-        parts.append("".join(current).strip())
-
-    names: list[str] = []
-    for part in parts:
-        token = part
-        while token.startswith("*"):
-            token = token[1:]
-        token = token.split(":", 1)[0].split("=", 1)[0].strip()
-        if token and token not in _IGNORED_PARAMS:
-            names.append(token)
-    return names
+# ``_parse_param_names`` is imported from ``roam._signature_utils`` at
+# the top of this module (W856 hoist — was duplicated in
+# ``rules/dataflow.py``).
 
 
 # ---------------------------------------------------------------------------

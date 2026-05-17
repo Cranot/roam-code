@@ -14,14 +14,25 @@ sources:
   - err.stack
   - error.detail
 sinks:
+  # W1080: ``throw`` is a JS keyword (excluded from
+  # ``_JS_KEYWORDS`` reference-extraction in
+  # ``src/roam/languages/javascript_lang.py``) so it can NEVER appear
+  # as a symbol name and the previous entry was a guaranteed no-op.
+  # Dropped in favour of the real callable sinks that propagate the
+  # raw error to the client: Express ``next(err)`` (forwards to the
+  # error-handling middleware which by default exposes the message),
+  # Promise rejection (``reject(err)`` / ``Promise.reject(err)``) which
+  # propagates to the closest unhandled-rejection responder.
   - res.send
   - res.json
   - res.write
   - response.json
   - response.send
-  - throw
   - reply.send
   - context.json
+  - next
+  - reject
+  - Promise.reject
 sanitizers:
   - sanitizeError
   - publicError

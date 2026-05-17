@@ -2892,6 +2892,22 @@ def pr_bundle_validate(ctx, strict, strict_resolved):
     blocked, active_mode, upgrade_to = _mode_blocks_emit(root)
     if blocked:
         verdict = f"pr-bundle validate blocked: active mode is {active_mode}; run `roam mode {upgrade_to}` to enable"
+        # Producer-symmetry fix: mode-blocked validate now surfaces the
+        # same producer-side identity / authority / environment fields
+        # that the emit mode-blocked path emits (W189 actor block, W224c
+        # mode key, W266 environment_refs, W268 permits/leases). Before
+        # this fix the collector saw a stripped envelope on validate's
+        # mode-blocked path versus a full envelope on emit's mode-blocked
+        # path; the asymmetry caused producer-coverage probes to mis-
+        # categorise validate's redacted state as "producer_not_available"
+        # when the producer was actually present (just mode-restricted).
+        # Pattern 2: explicit absence beats silence — all keys present
+        # with empty values when no on-disk state exists.
+        resolved_actor = _resolve_actor_block(
+            agent_id_override=None,
+            human_actor_override=None,
+            repo_root=root,
+        )
         env = json_envelope(
             "pr-bundle-validate",
             summary={
@@ -2902,11 +2918,15 @@ def pr_bundle_validate(ctx, strict, strict_resolved):
                 "upgrade_mode": upgrade_to,
             },
             bundle_path=str(path),
+            mode=active_mode or "unmoded",
             mode_block={
                 "active_mode": active_mode,
                 "upgrade_mode": upgrade_to,
                 "reason": "active mode is read_only; validate refuses to certify",
             },
+            actor=resolved_actor,
+            approvals=[],
+            accepted_risks=[],
         )
         _emit_envelope_and_log(env, json_mode, target="validate")
         if strict:

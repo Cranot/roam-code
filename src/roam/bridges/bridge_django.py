@@ -138,6 +138,13 @@ def _find_url_file(
 class DjangoBridge(LanguageBridge):
     """Bridge for implicit Django relationships across Python files."""
 
+    # W81 / A6: bumped from inherited "1.0.0" because ``detect()`` tightened
+    # from "≥1 Django marker" to "≥2 Django markers" in v12.10.0 (commit
+    # 89bd97e0). Edges stamped with the older bridge version were emitted on
+    # projects with a single ``models.py`` that no longer activate this
+    # bridge; the stamp lets consumers detect that drift and rebuild.
+    VERSION: str = "1.1.0"
+
     @property
     def name(self) -> str:
         return "django"

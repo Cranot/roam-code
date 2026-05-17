@@ -116,10 +116,11 @@ class HclExtractor(LanguageExtractor):
     # ------------------------------------------------------------------
 
     def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
-        try:
-            text = source.decode("utf-8", errors="replace")
-        except Exception:
-            return []
+        # `errors="replace"` cannot raise — every undecodable byte maps to
+        # U+FFFD. Earlier `try/except Exception: return []` here was a W907
+        # false-hedge; surface real (non-decode) errors instead of silently
+        # dropping the whole file.
+        text = source.decode("utf-8", errors="replace")
 
         # .tfvars files: treat each assignment as a variable
         if file_path.endswith(".tfvars"):
@@ -129,10 +130,8 @@ class HclExtractor(LanguageExtractor):
         return self._hcl_symbols(lines, file_path)
 
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
-        try:
-            text = source.decode("utf-8", errors="replace")
-        except Exception:
-            return []
+        # See extract_symbols for rationale (W907 false-hedge cleanup).
+        text = source.decode("utf-8", errors="replace")
         if file_path.endswith(".tfvars"):
             return []
         lines = text.splitlines()

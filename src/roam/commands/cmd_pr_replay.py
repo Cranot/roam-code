@@ -531,22 +531,18 @@ def _git_head_sha() -> str | None:
 
     Returns ``None`` if git is unavailable or the working tree isn't a
     checkout — we never raise; the evidence packet survives a missing SHA.
-    Uses binary capture + manual UTF-8 decode so Windows shells with
-    non-UTF8 default codepages (cp1252 / cp1253) don't trip the stdlib
-    reader thread on a stray byte.
+
+    W586: delegates to the shared ``roam.commands.git_helpers._run_git``
+    helper which uses binary capture + manual UTF-8 decode so Windows
+    shells with non-UTF8 default codepages (cp1252 / cp1253) don't trip
+    the stdlib reader thread on a stray byte. The shared helper returns
+    a stripped string (or ``""`` on any failure); we normalise that back
+    to the historical ``None``-on-miss contract that callers expect.
     """
-    try:
-        result = _subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            sha = result.stdout.decode("utf-8", errors="replace").strip()
-            return sha or None
-    except (FileNotFoundError, _subprocess.TimeoutExpired, OSError):
-        pass
-    return None
+    from roam.commands.git_helpers import _run_git
+
+    sha = _run_git(["git", "rev-parse", "HEAD"])
+    return sha or None
 
 
 def _diff_hash_for_range(commit_range: str) -> str | None:

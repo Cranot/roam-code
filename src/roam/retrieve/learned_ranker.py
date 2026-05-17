@@ -24,9 +24,15 @@ package; users opt-in by training one.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from roam.eval.harness import load_tasks
+
+# Pre-compiled alphanum-token regex used by ``_token_overlap``. Hoisted to
+# module scope so per-candidate scoring doesn't re-resolve the ``re`` name
+# (called twice per candidate in :func:`score`).
+_RE_ALNUM_TOKEN = re.compile(r"[a-z0-9]+")
 from roam.retrieve.pipeline import run_retrieve
 
 # Optional dependency: LightGBM. Used by ``train_from_bench`` (training)
@@ -142,12 +148,10 @@ def _extract_features(c: dict) -> list[float]:
 
 def _token_overlap(a: str, b: str) -> float:
     """Jaccard over alphanum tokens, used for name/qname × task overlap."""
-    import re
-
     if not a or not b:
         return 0.0
-    ta = set(re.findall(r"[a-z0-9]+", a))
-    tb = set(re.findall(r"[a-z0-9]+", b))
+    ta = set(_RE_ALNUM_TOKEN.findall(a))
+    tb = set(_RE_ALNUM_TOKEN.findall(b))
     if not ta or not tb:
         return 0.0
     return len(ta & tb) / max(len(ta | tb), 1)

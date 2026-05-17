@@ -1069,7 +1069,7 @@ roll forward to "Pending after W491" below.
 | **W443 / W444 / W445** — W432 oracle dedup drive-bys (W443 landed in W466 batch — README coverage; W444/W445 still queued). | TBD | TBD |
 | **W446** / ~~**W447 / W448**~~ — W429 small-cleanup bundle drive-bys. **W447 + W448 shipped W591 batch** — pr-replay info marker on missing leases dir under `migration` / `autonomous_pr`; `roam.leases.store.read_lease(warnings_out=...)` kwarg. **137 + 31 tests pass.** W446 still queued. | TBD | partial |
 | **W449 / W450 / W458 / W459 / W460** — W443/W449 MCP-table auto-gen drive-bys (W449 landed in W466 batch). | TBD | TBD |
-| **W452 / W453** — W373 python-ssti drive-bys. | TBD | TBD |
+| **W452 / W453** — W373 python-ssti drive-bys. **W452 [PINNED-WITH-TESTS-2026-05-17]** — Agent I wave-2 landed 3 xfail-strict tests in `tests/test_w452_python_taint_indexer_gap.py` documenting the python-taint indexer gap (the indexer fix itself remains separate work). | TBD | TBD |
 | **W455 / W456 / W457** — W374 java-sqli drive-bys; **W455 is the engine Java qualified-name resolution** captured during W374 rollout. **Now more urgent post-W467** because the bare-name no-op surface ties directly to the engine's Java resolution gap. | `src/roam/security/taint_engine.py` | 4-8h |
 | **W461 / W462 / W463** — W454 qualified_only flag drive-bys. **W467 closed the precision bug in W491 batch**; these are the wider rollout. | TBD | TBD |
 | **W434 / W435** — W408 drive-bys (carry-over). | TBD | TBD |
@@ -1113,7 +1113,7 @@ roll forward to "Pending after W491" below.
 | **W444 / W445** — W432 oracle dedup drive-bys (W443 landed W466 batch). | TBD | TBD |
 | **W446** / ~~**W447 / W448**~~ — W429 small-cleanup bundle drive-bys. **W447 + W448 shipped W591 batch** — pr-replay info marker on missing leases dir under `migration` / `autonomous_pr`; `roam.leases.store.read_lease(warnings_out=...)` kwarg. **137 + 31 tests pass.** W446 still queued. | TBD | partial |
 | **W450 / W458 / W459 / W460** — W443/W449 MCP-table auto-gen drive-bys (W449 landed W466 batch). | TBD | TBD |
-| **W452 / W453** — W373 python-ssti drive-bys. | TBD | TBD |
+| **W452 / W453** — W373 python-ssti drive-bys. **W452 [PINNED-WITH-TESTS-2026-05-17]** — Agent I wave-2 landed 3 xfail-strict tests in `tests/test_w452_python_taint_indexer_gap.py` documenting the python-taint indexer gap (the indexer fix itself remains separate work). | TBD | TBD |
 | **W455 / W456 / W457** — W374 java-sqli drive-bys; **W455 is the engine Java qualified-name resolution**, now more urgent post-W467 because the bare-name no-op surface ties directly to the engine's Java resolution gap. | `src/roam/security/taint_engine.py` | 4-8h |
 | **W461 / W462 / W463** — W454 qualified_only flag drive-bys. **W467 closed the precision bug**; these are the wider rollout. | TBD | TBD |
 | **W434 / W435** — W408 drive-bys (carry-over). | TBD | TBD |
@@ -1431,8 +1431,8 @@ registry surface.
 | ~~**W946 — Refresh `smells.py:19` parallel_hierarchy wording**~~ — shipped W965-CONSOLIDATE. Module docstring lines 12-20 refreshed; notes `ALL_DETECTORS` is now a derived view + `@detector` registration. | `src/roam/catalog/smells.py:12-20` | 15 min |
 | ~~**W947 — Simplify `test_decorator_registry_parity` self-referential assertions**~~ — shipped W965-CONSOLIDATE as **regression-guard pin** instead of simplification: 11-line "W947 note (KEPT as regression guard, do not delete)" block added at the top of the file. Closes the W941 follow-up — the lint stays as the guard against silent un-deriving. | `tests/test_decorator_registry_parity.py` | 1h |
 | ~~**W948 — Move tier rationale inline to `@detector` calls**~~ — shipped W1015-CONSOLIDATE. Per-detector confidence-tier rationale now lives inline at the decorator call sites alongside the W895 `rollup_kinds=` kwarg. | smells.py + sibling catalog modules | shipped |
-| **W931 — Add `mypy` to `.venv` typecheck extras** (W939 carry-forward). | `pyproject.toml [project.optional-dependencies]` | 30 min |
-| **W932 — Audit `detectors._finding` callers for non-dict `evidence=`** (W939 carry-forward). | `src/roam/catalog/detectors.py` callers | 1h |
+| ~~**W931 — Add `mypy` to `.venv` typecheck extras**~~ [SHIPPED-2026-05-17] (W939 carry-forward). Landed in `pyproject.toml [project.optional-dependencies.typecheck]` (line 97 `mypy>=1.10`) per wave-1 Agent D. | `pyproject.toml [project.optional-dependencies]` | 30 min |
+| ~~**W932 — Audit `detectors._finding` callers for non-dict `evidence=`**~~ [SHIPPED-2026-05-17] (W939 carry-forward). Audit complete + documented at `src/roam/catalog/detectors.py:257-265` — all 4 `evidence=` keyword call-sites pass dict literals, type narrowed to `Mapping[str, Any] \| None`, defensive runtime branch retained as belt-and-braces. | `src/roam/catalog/detectors.py` callers | 1h |
 | ~~**W933 — Tighten `cmd_alerts._parse_alerts_yaml` + `_resolved_thresholds` return types**~~ — shipped W965-CONSOLIDATE. `_parse_alerts_yaml` → `dict[str, dict[str, Any]]`; `_resolved_thresholds` picked **Option B (loose-but-honest)** because `slot.update(rule)` precludes TypedDict without runtime validation. 46/46 focused tests pass. | `src/roam/commands/cmd_alerts.py` | 1h |
 | **W934 — `test_findings_*` parametrization opportunity** (W939 carry-forward). | `tests/test_findings_*.py` | 1-2h |
 | **W936 — Migrate `query_cost` string-literal defaults to `QUERY_COST_*`** (W939 carry-forward). | grep-then-migrate | 1h |
@@ -2442,7 +2442,7 @@ that kicked off at CONSOLIDATE-18 closes cleanly at CONSOLIDATE-19.
 
 | Item | Where | Effort |
 |---|---|---|
-| **W805-followup-A/B/C/D/E — Pattern-2 empty-state disclosure-consistency sweep** (carry-forward from W805; 5 surface-level disclosure-consistency candidates across the remaining detector empty-state branches, captured at consolidation time but may already be partially folded by the bundled wave running in parallel — re-triage at next session). | per-cmd edit across the remaining detector empty-state branches | ~30-60 min per followup |
+| ~~**W805-followup-A/B/C/D/E — Pattern-2 empty-state disclosure-consistency sweep**~~ [SHIPPED-2026-05-17] (carry-forward from W805). Wave-1 Agent A landed 5 Pattern-2 fixes across `cmd_n1` / `cmd_over_fetch` / `cmd_dark_matter` / `cmd_duplicates` / `cmd_laws`; pinned by `tests/test_w805_followup_pattern_2.py` and parent `tests/test_w805_empty_state_pattern_2.py` covering the original W805 triad. | per-cmd edit across the remaining detector empty-state branches | ~30-60 min per followup |
 | **Wave C — compatibility profile + `roam mcp doctor` probe** (next major MCP roadmap milestone after Wave B TERMINAL — drafts the compatibility-profile-emit + the `roam mcp doctor` probe surface that consumes it for client-side capability negotiation). | new MCP cluster | ~1-2 sessions |
 | **W1054 / W1055 / W1056 — Release-pipeline hardening P1 bundle** (carry-forward from W1049-RESEARCH; PEP 740 wheel attestations + concurrency group + publish.yml split + SBOM→wheel SHA binding; **user-decision-gated** before next dispatch). | `.github/workflows/publish.yml` + pyproject | 1-2 sessions |
 | **W1083 — `structured_unknown_filter` Phase 3 ergonomic `to_summary_payload()` fragment method** (carry-forward from W1081 drive-by; **deferred** at -18 and -19 — Phase 2 finished at W1082, Phase 3 is ergonomic-only). | `src/roam/commands/structured_unknown_filter.py` | ~30 min |
@@ -3772,12 +3772,12 @@ the fast-lookup index lives here.
 
 | Item | Where | Effort |
 |---|---|---|
-| **W931 — Add `mypy` to `.venv` typecheck extras.** Discovered during W919 / W925 type-annotation validation; convenience pending. | `pyproject.toml [project.optional-dependencies]` | 30 min |
-| **W932 — Audit `detectors._finding` callers for non-dict `evidence=`** (W925 follow-up). Type annotation says `Mapping[str, Any] \| None`; callers should be audited for stray non-dict shapes. | `src/roam/catalog/detectors.py` callers | 1h |
+| ~~**W931 — Add `mypy` to `.venv` typecheck extras.**~~ [SHIPPED-2026-05-17] Discovered during W919 / W925 type-annotation validation; landed via wave-1 Agent D at `pyproject.toml:97` (`mypy>=1.10`) inside the `typecheck` extras group. | `pyproject.toml [project.optional-dependencies]` | 30 min |
+| ~~**W932 — Audit `detectors._finding` callers for non-dict `evidence=`**~~ [SHIPPED-2026-05-17] (W925 follow-up). All 4 `evidence=` keyword call-sites audited; type narrowed to `Mapping[str, Any] \| None` at `src/roam/catalog/detectors.py:220`; rationale + audit summary documented in the docstring at lines 257-265. Defensive runtime branch retained. | `src/roam/catalog/detectors.py` callers | 1h |
 | **W933 — Tighten `cmd_alerts._parse_alerts_yaml` + `_resolved_thresholds` return types** (W919 follow-up). The TypedDict landed; the two YAML-loader return types should now narrow from `dict[str, dict]` to `dict[str, AlertThreshold]`. | `src/roam/commands/cmd_alerts.py` | 1h |
 | **W934 — `test_findings_*` parametrization opportunity** (W923 cluster). The 4 catalog-layer migration sites have near-identical test scaffolding; parametrize for drift-guard discipline. | `tests/test_findings_*.py` | 1-2h |
 | **W936 — Migrate `query_cost` string-literal defaults to `QUERY_COST_*`** (W915 follow-up). Consumer sites that take a `query_cost` kwarg with a default string literal should now reference the new constants. | grep-then-migrate | 1h |
-| **W937 — Sweep mis-encoded Unicode arrows in docstrings** (W929 drive-by). Captured while editing tfidf.py; some docstrings have UTF-8-mangled arrows from prior edits. | grep `→` / mangled variants | 30 min |
+| ~~**W937 — Sweep mis-encoded Unicode arrows in docstrings**~~ [SHIPPED-2026-05-17] (W929 drive-by). Wave-1 Agent D landed the mojibake em-dash scrub plus the drift-guard `tests/test_w937_no_mojibake_em_dashes.py`. | grep `→` / mangled variants | 30 min |
 | **W938 — Fold `cmd_bus_factor._repo_summary_finding_id`** (W935 4th cousin). Has the same shape as the 6 sites already migrated but takes only `prefix` + `subject`, no `raw_parts`. Migration is mechanical once W935 is reviewed. | `src/roam/commands/cmd_bus_factor.py` | 30 min |
 | **W903 — W686 path-length recurrence operational note.** Recurring across batches; tooling-side investigation not addressable from inside roam. Carried forward. | tooling / harness config | TBD (external) |
 | **W906 — Overly-defensive lazy-import comments** in `mcp_server.py` + `oscal.py` (W902 forward-looking, carried forward). Both surface real optional-dep handling but wording reads as cargo-cult; polish in a future docs-only wave. | `src/roam/mcp_server.py` + `src/roam/evidence/oscal.py` | 30 min |
@@ -4027,7 +4027,7 @@ lines; the fast-lookup index lives here.
 | ~~**W596**~~ — next Pattern-3a target: 15 confidence-rank tables (corrected upward from the 14 estimate) consolidated into canonical helpers — **shipped W635 batch**. 561 tests pass. | new canonical module + AST drift-guard | shipped |
 | **W597** — `roam evidence-oscal --kind assessment-plan` standalone emitter. **Number reassigned from old W566 scope** (W566 reused for severity helpers). | new emitter | 4-6h |
 | **W598** — extend W518 framework-vocab module to remaining bypass sites. **Number reassigned from old W540 scope** (W540 reused for git-helper consolidation). | `src/roam/evidence/control_mapping_vocab.py` consumers | 2-3h |
-| **W585 / W586 / W589 / W590 / W592 / W593 / W599** — drive-bys on the W591 batch (severity-helper migration tail, leasing parity follow-ons, git-helper sites outside `pr-bundle`, additional fragile-path sites picked up by W594). **W588 shipped W635 batch** (AST drift-guard for fragile-path pattern). | various | 4-8h |
+| **W585 / W589 / W590 / W592 / W593 / W599** — drive-bys on the W591 batch (severity-helper migration tail, leasing parity follow-ons, git-helper sites outside `pr-bundle`, additional fragile-path sites picked up by W594). **W588 shipped W635 batch** (AST drift-guard for fragile-path pattern). **W586 [SHIPPED-2026-05-17]** — Agent J folded `_git_head_sha` into the shared `git_helpers.git_head_sha()` helper (see `src/roam/commands/git_helpers.py:77`). | various | 4-8h |
 
 ### Pending after W570 (queue for next session)
 

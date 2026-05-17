@@ -4183,6 +4183,16 @@ def _parse_subprocess_result(args: list[str], exit_code: int, stdout: str, stder
             parsed["exit_code"] = EXIT_GATE_FAILURE
         return parsed
 
+    # W325 — Pattern-1 Variant B pass-through (phase-progress path):
+    # mirror ``_run_roam_inprocess`` / ``_run_roam_subprocess``. If the
+    # phase-progress run emitted valid JSON on stdout but exited with a
+    # non-success code (e.g. 1 for advisory failure in ``init``, 6 for
+    # EXIT_PARTIAL), surface the structured diagnostic to the agent
+    # rather than burying it in the generic error envelope.
+    passthrough = _maybe_pass_through_structured_json(stdout_text, exit_code)
+    if passthrough is not None:
+        return passthrough
+
     err_code, hint, _retryable = _classify_error(stderr, exit_code)
     return _structured_error(
         {

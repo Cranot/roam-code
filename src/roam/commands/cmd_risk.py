@@ -559,7 +559,25 @@ def risk(ctx, count, domain_keywords, explain, include_tests, show_suppressed):
                 to_json(
                     json_envelope(
                         "risk",
-                        summary={"verdict": _risk_verdict, "count": len(items), "explain": explain},
+                        summary={
+                            "verdict": _risk_verdict,
+                            "count": len(items),
+                            "explain": explain,
+                            # Pattern 3a sidecar — disclose the precise
+                            # computation so agents comparing "risk" across
+                            # commands don't conflate this with cmd_pr_risk
+                            # (composite-risk severity) or cmd_migration_plan
+                            # (callers + cross-layer gating).
+                            "adjusted_risk_definition": (
+                                "static_risk(fan_in+fan_out + betweenness, "
+                                "0-10) * max(name|callee|zone) domain_weight; "
+                                "UI files dampened *0.5 when non-zone match"
+                            ),
+                            "static_risk_definition": (
+                                "(total_degree/max_total)*5 + "
+                                "(betweenness/max_betweenness)*5"
+                            ),
+                        },
                         **envelope_extra,
                     )
                 )

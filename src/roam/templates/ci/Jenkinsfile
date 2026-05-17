@@ -9,7 +9,7 @@
 //   - Pipeline Utility Steps plugin (optional, for JSON parsing)
 //
 // Parameters:
-//   ROAM_PYTHON_VERSION: Python command to use (default: python3)
+//   ROAM_PYTHON:         Python executable name (default: python3)
 //   ROAM_HEALTH_GATE:    Minimum health score to pass (default: 60)
 //
 // To customize: copy this file to Jenkinsfile in your project root.

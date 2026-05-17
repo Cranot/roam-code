@@ -53,7 +53,15 @@ _git_metadata = git_metadata
 
 
 def _capture_audit() -> dict:
-    """Invoke ``roam audit`` in-process and return the JSON envelope."""
+    """Invoke ``roam audit`` in-process and return the JSON envelope.
+
+    On failure, returns an envelope shape carrying ``error`` +
+    ``exit_code``. Callers MUST check ``audit_envelope.get("error")``
+    before extracting metrics — otherwise the silent-defaults in
+    :func:`_extract_metrics` (None for scalars, 0 for counters)
+    masquerade as real measurements and get pushed to Cloud Lite.
+    See the "audit_ok" gate in :func:`metrics_push`.
+    """
     from roam.cli import cli
 
     runner = CliRunner()
@@ -377,6 +385,7 @@ def metrics_push(
     ensure_index()
 
     audit_envelope = _capture_audit()
+    audit_failed = isinstance(audit_envelope.get("error"), str)
     git_meta = git_metadata()
     repo_id = _infer_repo_id(git_meta, repo_override)
     last_pr = _load_last_pr_analysis() if include_pr_analysis else None
@@ -388,26 +397,43 @@ def metrics_push(
         include_hotspots=include_hotspots,
         last_pr_envelope=last_pr,
     )
+    # Pattern 2 + silent-metric-drop fix: when `roam audit` failed (returned an
+    # error envelope), _extract_metrics() silently defaults everything to
+    # None/0. Surface that explicitly on the payload so neither --dry-run
+    # consumers nor the Cloud Lite receiver mistake the defaults for real
+    # measurements. The receiving API can drop the row; the local audit
+    # operator can see WHY it dropped.
+    if audit_failed:
+        payload["audit_status"] = "failed"
+        payload["audit_error"] = audit_envelope.get("error")
+        payload["audit_exit_code"] = audit_envelope.get("exit_code")
 
     if dry_run:
+        dry_verdict = (
+            "dry-run — audit failed; payload would carry no real metrics"
+            if audit_failed
+            else "dry-run — payload not POSTed"
+        )
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "metrics-push",
                         summary={
-                            "verdict": "dry-run — payload not POSTed",
+                            "verdict": dry_verdict,
                             "repo": repo_id,
                             "git_sha": payload.get("git_sha"),
                             "anonymized": anonymize,
                             "endpoint": endpoint,
+                            "audit_status": "failed" if audit_failed else "ok",
+                            "partial_success": audit_failed,
                         },
                         payload=payload,
                     )
                 )
             )
         else:
-            click.echo(f"VERDICT: dry-run — would POST {len(_json.dumps(payload))} bytes to {endpoint}")
+            click.echo(f"VERDICT: {dry_verdict}; would POST {len(_json.dumps(payload))} bytes to {endpoint}")
             click.echo()
             click.echo(_json.dumps(payload, indent=2))
         return
@@ -417,14 +443,21 @@ def metrics_push(
 
     ok, status, response_text = _post_metrics(endpoint, token, payload, timeout=timeout)
 
+    if audit_failed:
+        verdict = "metrics pushed (audit failed; payload empty)" if ok else f"push failed ({status})"
+    else:
+        verdict = "metrics pushed" if ok else f"push failed ({status})"
+
     summary = {
-        "verdict": "metrics pushed" if ok else f"push failed ({status})",
+        "verdict": verdict,
         "ok": ok,
         "status_code": status,
         "endpoint": endpoint,
         "repo": repo_id,
         "git_sha": payload.get("git_sha"),
         "anonymized": anonymize,
+        "audit_status": "failed" if audit_failed else "ok",
+        "partial_success": audit_failed or not ok,
     }
 
     if json_mode:
@@ -444,7 +477,15 @@ def metrics_push(
         click.echo(f"  status:    {status}")
         click.echo(f"  repo:      {repo_id}")
         click.echo(f"  anonymize: {anonymize}")
+        if audit_failed:
+            click.echo(f"  audit:     failed (exit={payload.get('audit_exit_code')!r})")
         if not ok and response_text:
             click.echo()
             click.echo("Response excerpt:")
             click.echo(response_text[:200])
+
+    # Exit non-zero so CI consumers + shell pipelines see the failure.
+    # The JSON envelope already carried ok:false; the text path used to
+    # always exit 0 which masked the failure from non-JSON callers.
+    if not ok:
+        ctx.exit(1)

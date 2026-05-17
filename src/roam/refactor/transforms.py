@@ -185,25 +185,33 @@ def move_symbol(conn, symbol_name: str, target_file: str, dry_run: bool = True) 
             continue
         ref_lines = _read_file(ref_file)
         import_idx = _find_import_line(ref_lines, sym_actual_name)
-        if import_idx is not None:
-            old_line = ref_lines[import_idx]
-            new_line = _rewrite_import(old_line, old_module, new_module)
-            if old_line != new_line:
-                files_modified.append(
-                    {
-                        "path": ref_file,
-                        "action": "MODIFY",
-                        "changes": [
-                            {
-                                "type": "replace",
-                                "line_start": import_idx + 1,
-                                "line_end": import_idx + 1,
-                                "old_text": old_line,
-                                "new_text": new_line,
-                            }
-                        ],
-                    }
-                )
+        if import_idx is None:
+            # Caller references the symbol but no recognisable import line
+            # was found (wildcard import, dynamic resolution, alias rename).
+            # Surface this so the agent doesn't ship a half-rewritten move.
+            warnings.append(
+                f"caller {ref_file} references {sym_actual_name} but no import "
+                f"line was found to rewrite — manual review required"
+            )
+            continue
+        old_line = ref_lines[import_idx]
+        new_line = _rewrite_import(old_line, old_module, new_module)
+        if old_line != new_line:
+            files_modified.append(
+                {
+                    "path": ref_file,
+                    "action": "MODIFY",
+                    "changes": [
+                        {
+                            "type": "replace",
+                            "line_start": import_idx + 1,
+                            "line_end": import_idx + 1,
+                            "old_text": old_line,
+                            "new_text": new_line,
+                        }
+                    ],
+                }
+            )
 
     result = {
         "operation": "move",

@@ -64,6 +64,7 @@ from typing import Any
 from roam.evidence._vocabulary import GITHUB_REVIEW_STATES
 from roam.evidence.approval import ApprovalRecord
 from roam.evidence.policy import PolicyDecision
+from roam.evidence.provenance import provenance_label
 
 # Neutral reason string stamped on ApprovalRecord.reason. Deliberately
 # NOT the review body (which is the W247a "never store bodies" rule).
@@ -365,23 +366,15 @@ def _build_policy_decision(
     }
     if isinstance(html_url, str) and html_url:
         extra["html_url"] = html_url
-    # W293 — provenance stamp at the parser ingestion site. Bare ``import``
-    # at module top would be cleaner but parser is a leaf module and we
-    # avoid the indirect circular-import risk via local-scope import.
-    try:
-        from roam.evidence.provenance import provenance_label
-
-        extra["provenance"] = provenance_label(
-            "producer_envelope",
-            detail="github_review",
-        )
-    except (ImportError, AttributeError):
-        # W746: narrowed from bare Exception. The helper is a leaf
-        # module that builds a dict from string args; the realistic
-        # failures are an import failure (module renamed/removed) or
-        # attribute-lookup on a partial import. Programmer-class
-        # errors inside provenance_label now propagate per W531.
-        pass
+    # W293 — provenance stamp at the parser ingestion site. Hoisted to
+    # top-of-module (W907 cargo-cult cycle hedge removed): provenance only
+    # imports _vocabulary which has zero imports, so no cycle exists. The
+    # previous lazy import + bare except masked real ImportErrors and
+    # silently dropped the provenance stamp.
+    extra["provenance"] = provenance_label(
+        "producer_envelope",
+        detail="github_review",
+    )
 
     return PolicyDecision(
         rule_id=f"github_review:{review_id}",

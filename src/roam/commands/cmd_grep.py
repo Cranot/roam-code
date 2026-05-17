@@ -256,7 +256,13 @@ def grep_cmd(
     )
     used_engine = engine
 
-    # Engine fallback to indexed scan
+    # Engine fallback to indexed scan.
+    # W1010 lineage: when ``detect_engine`` returns ``"fallback"`` (no rg/git
+    # on PATH) AND the indexed scan actually runs, relabel ``used_engine`` to
+    # ``"indexed_scan"`` so the envelope discloses which engine produced the
+    # results. The pre-relabel string ``"fallback"`` claimed "no engine ran"
+    # while the indexed_file_scan code path was, in fact, the engine — that
+    # is exactly the silent-fallback shape CP45/CP46 warn against.
     if not matches and engine == "fallback":
         flags = re.IGNORECASE if case_insensitive else 0
         if fixed:
@@ -265,6 +271,7 @@ def grep_cmd(
             compiled = [re.compile(p, flags) for p in pats]
         with open_db(readonly=True) as conn_tmp:
             matches = indexed_file_scan(compiled, conn_tmp, root, glob_filter)
+        used_engine = "indexed_scan"
 
     # --- Apply path-based filters ---
     excludes = []

@@ -488,7 +488,13 @@ def audit_trail_export(
     }
 
     if output_path:
-        Path(output_path).write_text(rendered, encoding="utf-8")
+        # Atomic write — the audit-trail export is an evidence artifact
+        # consumed by downstream compliance tooling (`audit-trail-verify`,
+        # OSCAL projection). A torn write would silently corrupt the
+        # exported chain. Route through atomic_io (W880-shaped fix).
+        from roam.atomic_io import atomic_write_text
+
+        atomic_write_text(Path(output_path), rendered)
         summary["output"] = output_path
 
     if json_mode:

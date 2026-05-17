@@ -155,25 +155,36 @@ def capabilities_cmd(ctx, emit: str, category: str | None, ai_safe_only: bool) -
 
 
 def _populate_registry() -> None:
-    """Import known capability-decorated command modules to populate the registry.
+    """Import every ``cmd_*`` module backing ``_COMMANDS`` to populate the registry.
 
-    Today this lists commands explicitly. Once the decorator has been
-    applied to every command, this becomes a sweep of
-    ``roam.commands.cmd_*``.
+    The capability registry is a side-effect of importing each
+    ``cmd_*.py`` module — the ``@roam_capability(...)`` decorator runs
+    at import time. The CLI's ``LazyGroup`` deliberately avoids those
+    imports at startup, so this command must trigger them itself.
+
+    The historical hardcoded 6-module list pre-dated the
+    sweep-the-whole-tree contract that ``tests/test_capability_decoration.py``
+    now enforces (233 decorated commands as of the W869 follow-up).
+    Driving the sweep off ``cli._COMMANDS`` keeps the runtime view and
+    the test contract in lockstep by construction.
+
+    Best-effort — modules that fail to import (optional extras, broken
+    plugins) are skipped silently. Their commands simply won't appear in
+    the registry output, which is the correct failure mode for a
+    "show what's installed" command.
     """
     import importlib
 
-    decorated_modules = [
-        "roam.commands.cmd_critique",
-        "roam.commands.cmd_preflight",
-        "roam.commands.cmd_understand",
-        "roam.commands.cmd_permit",
-        "roam.commands.cmd_postmortem",
-        "roam.commands.cmd_article_12_check",
-    ]
-    for mod in decorated_modules:
+    from roam.cli import _COMMANDS
+
+    seen: set[str] = set()
+    for _name, (module_path, _func_name) in _COMMANDS.items():
+        if module_path in seen:
+            continue
+        seen.add(module_path)
         try:
-            importlib.import_module(mod)
+            importlib.import_module(module_path)
         except Exception:
-            # Best-effort; if a command module fails to import, skip it
+            # Best-effort; missing optional deps or broken plugins
+            # shouldn't break the registry dump.
             pass

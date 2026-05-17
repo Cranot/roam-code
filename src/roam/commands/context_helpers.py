@@ -1188,3 +1188,46 @@ def batch_context(conn, contexts, task=None, session_hint="", recent_symbols=(),
         propagation_scores=batch_prop_scores,
     )
     return shared_callers, shared_callees, scored_files
+
+
+def summarize_tests(
+    test_hits: list[dict], cap: int
+) -> tuple[list[dict], int, int]:
+    """Collapse per-symbol test hits to file-level coverage hints.
+
+    Each ``test_hits`` entry is a dict with ``file``, ``kind``
+    (``"DIRECT"`` or otherwise), ``hops``, and optional ``via``. Returns
+    ``(rows[:cap], direct_files, total_files)`` where ``rows`` is sorted
+    by (direct-first, hops asc, file asc) and each row drops the
+    internal ``_priority`` sort key.
+
+    Hoisted from ``cmd_guard`` + ``cmd_plan_refactor`` (W856 detector
+    flagged sim=0.947 between the two copies).
+    """
+    by_file: dict[str, dict] = {}
+
+    for hit in test_hits:
+        path = hit["file"]
+        kind = hit["kind"]
+        hops = int(hit["hops"])
+        priority = (0 if kind == "DIRECT" else 1, hops)
+
+        existing = by_file.get(path)
+        if existing is None or priority < existing["_priority"]:
+            by_file[path] = {
+                "file": path,
+                "kind": kind,
+                "hops": hops,
+                "via": hit.get("via"),
+                "_priority": priority,
+            }
+
+    rows = sorted(
+        by_file.values(),
+        key=lambda r: (0 if r["kind"] == "DIRECT" else 1, r["hops"], r["file"]),
+    )
+    for r in rows:
+        r.pop("_priority", None)
+
+    direct_files = sum(1 for r in rows if r["kind"] == "DIRECT")
+    return rows[:cap], direct_files, len(rows)

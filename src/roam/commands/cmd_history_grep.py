@@ -28,6 +28,17 @@ from roam.db.connection import find_project_root
 from roam.git_utils import worktree_git_env
 from roam.output.formatter import json_envelope, to_json
 
+# CP45/CP46 fail-loud sentinels. ``_git_pickaxe`` / ``_diff_polarity`` previously
+# swallowed ``FileNotFoundError`` (git absent) AND non-zero return codes (real
+# git error) into the same empty-result shape used for "no commits matched",
+# so an agent reading the envelope could not distinguish "string has no history"
+# from "git is broken/missing". We now thread a typed error string through the
+# subprocess wrappers and surface it on the envelope as ``git_errors[]`` so the
+# lineage is loud (per the "Make fallback chains loud" rule in CLAUDE.md).
+_GIT_MISSING = "git_not_available"
+_GIT_TIMEOUT = "git_timeout"
+_GIT_ERROR = "git_error"
+
 
 def _git_pickaxe(
     root: Path,
@@ -39,8 +50,15 @@ def _git_pickaxe(
     until: str | None,
     limit: int,
     paths: list[str],
-) -> list[dict]:
-    """Run ``git log -S<pattern>`` and parse the output."""
+) -> tuple[list[dict], str | None]:
+    """Run ``git log -S<pattern>`` and parse the output.
+
+    Returns ``(commits, error_kind)``. ``error_kind`` is ``None`` on a
+    successful git invocation (regardless of whether any commits matched);
+    otherwise one of the ``_GIT_*`` sentinels disclosing why no commits
+    are reported. Callers MUST propagate the sentinel to the envelope so
+    consumers can distinguish "no history" from "git unavailable".
+    """
     cmd = ["git", "log", "--no-merges", f"-n{limit}", "--pretty=format:%H%x09%an%x09%aI%x09%s"]
     cmd.append("-G" if not fixed else "-S")
     cmd.append(pattern)
@@ -65,11 +83,13 @@ def _git_pickaxe(
             errors="replace",
             env=worktree_git_env(root),
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
+    except FileNotFoundError:
+        return [], _GIT_MISSING
+    except subprocess.TimeoutExpired:
+        return [], _GIT_TIMEOUT
 
     if result.returncode != 0:
-        return []
+        return [], _GIT_ERROR
 
     commits: list[dict] = []
     for line in result.stdout.splitlines():
@@ -86,7 +106,7 @@ def _git_pickaxe(
                 "summary": summary,
             }
         )
-    return commits
+    return commits, None
 
 
 def _diff_polarity(root: Path, sha: str, pattern: str, fixed: bool) -> str | None:
@@ -216,8 +236,9 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
     fixed_mode = fixed and not regexp_mode
 
     per_pattern: dict[str, list[dict]] = {}
+    git_errors: dict[str, str] = {}
     for p in pats:
-        commits = _git_pickaxe(
+        commits, err_kind = _git_pickaxe(
             root,
             p,
             fixed=fixed_mode,
@@ -227,6 +248,8 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
             limit=limit,
             paths=list(paths),
         )
+        if err_kind is not None:
+            git_errors[p] = err_kind
         if polarity:
             for c in commits:
                 c["polarity"] = _diff_polarity(root, c["sha"], p, fixed_mode)  # W421
@@ -234,7 +257,21 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
 
     total = sum(len(v) for v in per_pattern.values())
     found = sum(1 for v in per_pattern.values() if v)
-    verdict = f"{total} commit(s) across {found}/{len(pats)} pattern(s)"
+    # CP45/CP46 lineage: when EVERY pattern hit a git-availability error the
+    # right verdict is "git unavailable", not "0 commits across N patterns"
+    # (which an agent reads as "this string has no history" — a silent SAFE
+    # for a gate-like consumer). Disclose the dominant error kind in both the
+    # verdict line and a top-level ``git_errors`` field on the envelope.
+    if git_errors and len(git_errors) == len(pats):
+        # All patterns failed for the same reason — the underlying git invocation
+        # is broken / missing. Lift the failure into the verdict.
+        kinds = set(git_errors.values())
+        kind_label = next(iter(kinds)) if len(kinds) == 1 else "git_error"
+        verdict = f"history search unavailable: {kind_label}"
+    else:
+        verdict = f"{total} commit(s) across {found}/{len(pats)} pattern(s)"
+        if git_errors:
+            verdict += f" — {len(git_errors)} pattern(s) failed: see git_errors"
 
     if json_mode:
         click.echo(
@@ -242,8 +279,14 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
                 json_envelope(
                     "history-grep",
                     budget=token_budget,
-                    summary={"verdict": verdict, "patterns": len(pats), "total_commits": total},
+                    summary={
+                        "verdict": verdict,
+                        "patterns": len(pats),
+                        "total_commits": total,
+                        "partial_success": bool(git_errors),
+                    },
                     patterns=list(pats),
+                    git_errors=git_errors or None,
                     results=[{"pattern": p, "commits": commits} for p, commits in per_pattern.items()],
                 )
             )
@@ -254,6 +297,11 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
     click.echo()
     for p in pats:
         commits = per_pattern[p]
+        err = git_errors.get(p)
+        if err:
+            click.echo(f"--- {p} — git error: {err} ---")
+            click.echo()
+            continue
         click.echo(f"--- {p} — {len(commits)} commit(s) ---")
         if not commits:
             click.echo("  (no history)")

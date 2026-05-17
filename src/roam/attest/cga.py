@@ -599,12 +599,32 @@ def cosign_sign_statement(
             cosign_version=version_str,
         )
 
+    # Pattern-2 discipline: cosign exited 0 but downstream verifiers
+    # need an on-disk signature OR bundle to actually verify. If neither
+    # landed, we MUST NOT report ``signed=True`` (silent success on
+    # degraded resolution — the canonical Pattern-2 anti-pattern). This
+    # only fires when cosign's exit status disagrees with its file output
+    # (write race, exotic filesystem, output_dir permissions). The
+    # well-behaved path (which the test suite exercises) always lands
+    # both files and keeps the existing contract.
+    sig_present = sig_path.exists()
+    bundle_present = bundle_path.exists()
+    if not sig_present and not bundle_present:
+        return CosignResult(
+            signed=False,
+            statement_path=statement_path,
+            skipped_reason=(
+                f"cosign exit 0 but neither signature nor bundle landed on disk "
+                f"(expected {sig_path.name!r} and/or {bundle_path.name!r})"
+            ),
+            cosign_version=version_str,
+        )
     return CosignResult(
         signed=True,
         statement_path=statement_path,
-        signature_path=sig_path if sig_path.exists() else None,
+        signature_path=sig_path if sig_present else None,
         certificate_path=cert_path if cert_path and cert_path.exists() else None,
-        bundle_path=bundle_path if bundle_path.exists() else None,
+        bundle_path=bundle_path if bundle_present else None,
         cosign_version=version_str,
     )
 

@@ -448,7 +448,14 @@ def audit_trail_conformance_check(
             "schema_reference": "EU AI Act Regulation 2024/1689, Article 12",
             "disclaimer": "Triage signal only — not legal advice.",
             "reason": no_trail_reason,
-            "fix": "Run `roam audit-trail-export` to bootstrap a trail, or use `roam pr-analyze --audit-trail` to emit the first record.",
+            # ``audit-trail-export`` READS the trail (it is an exporter,
+            # not an initializer) — recommending it here was a CONSTRAINT 12
+            # executability bug: the user would run it and get an empty
+            # export. The real bootstrap path is `pr-analyze --audit-trail`
+            # which appends a genesis record, or `roam runs start` followed
+            # by gate commands that auto-log. See module docstring +
+            # cmd_pr_analyze.py:1870 (--audit-trail flag).
+            "fix": "Run `roam pr-analyze --audit-trail` to append the first record, or `roam runs start --agent <name>` to open a run that auto-logs gate verdicts.",
         }
         # Build the same 6 checks but uniformly marked "not_run" so consumers
         # that iterate checks[] see the state explicitly rather than getting

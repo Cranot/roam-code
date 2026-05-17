@@ -183,3 +183,84 @@ def resolve_changed_to_db(conn, changed_paths: list[str]) -> dict[str, int]:
         if hit:
             file_map[hit[1]] = hit[0]
     return file_map
+
+
+# ---------------------------------------------------------------------------
+# Ref-anchored git helpers (W-vibe-check DRY consolidation)
+#
+# These helpers were previously duplicated across cmd_api_changes,
+# cmd_breaking, cmd_semantic_diff, and graph/diff.py. The detect-paste-
+# functions roster picked them up as a clone group of 4 (`_git_show`) and
+# two clone groups of 3 (`_git_changed_files`, `_parse_source_bytes`).
+# Hoisted here so every diff-against-ref command shares the same impl.
+# ---------------------------------------------------------------------------
+
+
+def git_changed_files_against_ref(root: Path, ref: str) -> list[str]:
+    """Return files changed between *ref* and the working tree (indexed state).
+
+    Distinct from :func:`get_changed_files` which handles staged / commit-range
+    / pr / working-tree sources via a single entry point. This helper is the
+    narrow "diff against an explicit ref" form used by the api-changes,
+    breaking, and semantic-diff commands.
+    """
+    cmd = ["git", "diff", "--name-only", ref]
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            return []
+        return [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+
+
+def git_show_at_ref(root: Path, ref: str, filepath: str) -> bytes | None:
+    """Return the content of *filepath* at *ref*, or None if it didn't exist."""
+    cmd = ["git", "show", f"{ref}:{filepath}"]
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+
+def parse_source_with_grammar(source: bytes, language: str):
+    """Parse *source* bytes with tree-sitter for the given language.
+
+    Returns ``(tree, source_bytes, effective_language)`` or
+    ``(None, None, None)`` on parser unavailability or parse failure.
+    Resolves grammar aliases (e.g. ``apex`` -> ``java``) via the indexer's
+    ``GRAMMAR_ALIASES`` map.
+    """
+    from roam.index.parser import GRAMMAR_ALIASES
+
+    grammar = GRAMMAR_ALIASES.get(language, language)
+
+    try:
+        from tree_sitter_language_pack import get_parser
+
+        parser = get_parser(grammar)
+    except Exception:
+        return None, None, None
+
+    try:
+        tree = parser.parse(source)
+    except Exception:
+        return None, None, None
+
+    return tree, source, language

@@ -134,11 +134,13 @@ def intent_check_cmd(ctx, intended_command: Optional[str]):
             "modes_allowing": modes_allowing,
         },
         agent_contract={
+            # LAW 4: each fact is concrete-noun-anchored. ``"passed"`` /
+            # ``"blocked"`` / ``"allowed"`` are in the analytical-verb
+            # set; ``"modes"`` is in the concrete-noun anchor set.
             "facts": [
-                f"active mode is {active.name}",
-                f"'{intended_command}' is {'ALLOWED' if allowed else 'BLOCKED'}",
+                f"'{intended_command}' {'passed' if allowed else 'blocked by'} {active.name} mode",
                 (
-                    f"'{intended_command}' is allowed in: {', '.join(modes_allowing)}"
+                    f"'{intended_command}' allowed in {len(modes_allowing)} of {len(VALID_MODES)} modes"
                     if modes_allowing
                     else f"'{intended_command}' is not in any mode's allow-list"
                 ),

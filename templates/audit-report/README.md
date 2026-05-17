@@ -34,6 +34,14 @@ codebase-architecture audit, a PR Replay engagement report, and the
 - `sample-pr-replay-team.md` — **PR Replay sample** (illustrative). The
   shape `roam pr-replay --tier team` produces today. Read this before
   quoting a paid PR Replay engagement.
+- `pr-replay-template.md` — Markdown skeleton the `roam pr-replay
+  --markdown` renderer mirrors. Drift between this template and the
+  rendered output is asserted in `tests/test_evidence_pr_replay.py`
+  (`test_pr_replay_emits_markdown`).
+- `control-mapping-README.md` — v1 schema reference for the YAML that
+  drives the "Compliance evidence mapping" section. Defines the closed
+  `wording_guard` enumeration enforced by
+  `tests/test_doc_consistency.py`.
 
 ## How to generate a real Governance report
 

@@ -63,6 +63,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from roam.evidence.change_evidence import ChangeEvidence
 from roam.evidence.control_mapping_vocab import FRAMEWORK_TITLES
 
 # ---------------------------------------------------------------------------
@@ -798,9 +799,9 @@ def build_oscal_assessment_results(
     # to the canonical-JSON dict shape so the rest of the function is
     # a pure dict reader (preserves byte-identical AR output across
     # both input types; the W465 golden fixture stays unchanged).
-    # Import locally to avoid a circular import at module load.
-    from roam.evidence.change_evidence import ChangeEvidence
-
+    # ``ChangeEvidence`` is imported at top-of-module (W907 cargo-cult
+    # cycle hedge removed: change_evidence -> approval/artifact/policy/
+    # refs/subject, none of which load oscal — verified by re-import).
     if isinstance(evidence, ChangeEvidence):
         evidence = json.loads(evidence.to_canonical_json())
 

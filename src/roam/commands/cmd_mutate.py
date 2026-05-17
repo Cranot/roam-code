@@ -56,6 +56,35 @@ def _truncate(text: str, max_len: int) -> str:
     return text
 
 
+def _emit_error(ctx, operation: str, message: str, warnings: list[str] | None = None) -> None:
+    """Emit a uniform error envelope (JSON or text) for all mutate subcommands.
+
+    Previously every subcommand inlined an identical 16-line error
+    envelope block; extracting this helper removes the DRY violation and
+    guarantees the four operations stay in lock-step on the envelope
+    shape, the verdict wording, and the empty-changes contract.
+    """
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "mutate",
+                    summary={
+                        "verdict": message,
+                        "operation": operation,
+                        "files_modified": 0,
+                        "conflicts": 0,
+                    },
+                    changes=[],
+                    warnings=warnings or [message],
+                )
+            )
+        )
+        return
+    click.echo(f"VERDICT: {message}")
+
+
 # ---------------------------------------------------------------------------
 # Click group
 # ---------------------------------------------------------------------------
@@ -135,24 +164,7 @@ def mutate_move(ctx, symbol, target_file, apply_changes, dry_run):
         result = move_symbol(conn, symbol, target_file, dry_run=(not apply_changes))
 
     if result.get("error"):
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "mutate",
-                        summary={
-                            "verdict": result["error"],
-                            "operation": "move",
-                            "files_modified": 0,
-                            "conflicts": 0,
-                        },
-                        changes=[],
-                        warnings=result.get("warnings", []),
-                    )
-                )
-            )
-            return
-        click.echo(f"VERDICT: {result['error']}")
+        _emit_error(ctx, "move", result["error"], result.get("warnings", []))
         return
 
     n_files = len(result.get("files_modified", []))
@@ -213,24 +225,7 @@ def mutate_rename(ctx, symbol, new_name, apply_changes, dry_run):
         result = rename_symbol(conn, symbol, new_name, dry_run=(not apply_changes))
 
     if result.get("error"):
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "mutate",
-                        summary={
-                            "verdict": result["error"],
-                            "operation": "rename",
-                            "files_modified": 0,
-                            "conflicts": 0,
-                        },
-                        changes=[],
-                        warnings=result.get("warnings", []),
-                    )
-                )
-            )
-            return
-        click.echo(f"VERDICT: {result['error']}")
+        _emit_error(ctx, "rename", result["error"], result.get("warnings", []))
         return
 
     n_files = len(result.get("files_modified", []))
@@ -286,24 +281,7 @@ def mutate_add_call(ctx, from_symbol, to_symbol, call_args, apply_changes):
         result = add_call(conn, from_symbol, to_symbol, call_args, dry_run=(not apply_changes))
 
     if result.get("error"):
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "mutate",
-                        summary={
-                            "verdict": result["error"],
-                            "operation": "add-call",
-                            "files_modified": 0,
-                            "conflicts": 0,
-                        },
-                        changes=[],
-                        warnings=result.get("warnings", []),
-                    )
-                )
-            )
-            return
-        click.echo(f"VERDICT: {result['error']}")
+        _emit_error(ctx, "add-call", result["error"], result.get("warnings", []))
         return
 
     n_files = len(result.get("files_modified", []))
@@ -362,24 +340,7 @@ def mutate_extract(ctx, symbol, lines, new_name, apply_changes):
         line_end = int(parts[1]) if len(parts) > 1 else line_start
     except (ValueError, IndexError):
         msg = f"invalid line range: {lines} (expected START-END)"
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "mutate",
-                        summary={
-                            "verdict": msg,
-                            "operation": "extract",
-                            "files_modified": 0,
-                            "conflicts": 0,
-                        },
-                        changes=[],
-                        warnings=[msg],
-                    )
-                )
-            )
-            return
-        click.echo(f"VERDICT: {msg}")
+        _emit_error(ctx, "extract", msg, [msg])
         return
 
     from roam.refactor.transforms import extract_symbol
@@ -388,24 +349,7 @@ def mutate_extract(ctx, symbol, lines, new_name, apply_changes):
         result = extract_symbol(conn, symbol, line_start, line_end, new_name, dry_run=(not apply_changes))
 
     if result.get("error"):
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "mutate",
-                        summary={
-                            "verdict": result["error"],
-                            "operation": "extract",
-                            "files_modified": 0,
-                            "conflicts": 0,
-                        },
-                        changes=[],
-                        warnings=result.get("warnings", []),
-                    )
-                )
-            )
-            return
-        click.echo(f"VERDICT: {result['error']}")
+        _emit_error(ctx, "extract", result["error"], result.get("warnings", []))
         return
 
     n_files = len(result.get("files_modified", []))

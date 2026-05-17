@@ -35,7 +35,10 @@ if [ "${ROAM_PRECOMMIT_SKIP:-0}" = "1" ]; then
 fi
 
 if ! command -v roam >/dev/null 2>&1; then
-  echo "roam not on PATH; install with `pip install roam-code` or set ROAM_PRECOMMIT_SKIP=1." >&2
+  # NOTE: single-quoted to keep 'pip install roam-code' as literal text.
+  # Backticks inside a double-quoted echo would trigger command
+  # substitution (sh would actually run `pip install roam-code`).
+  echo 'roam not on PATH; install with: pip install roam-code (or set ROAM_PRECOMMIT_SKIP=1).' >&2
   exit 0
 fi
 

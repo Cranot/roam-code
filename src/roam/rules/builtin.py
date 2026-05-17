@@ -258,7 +258,14 @@ def _check_no_god_classes(conn, G, threshold):
 def _check_no_deep_inheritance(conn, G, threshold):
     """Find classes with inheritance depth > threshold."""
     limit = int(threshold) if threshold is not None else 4
-    _kinds = ("extends", "inherits", "implements")
+    # W538 sealed: edge writers only ever emit ``inherits`` / ``implements``
+    # (every language extractor in ``roam.languages``) and ``uses_trait`` for
+    # PHP/Rust trait composition (PHP ``use``, generic_lang ``uses_trait``).
+    # ``extends`` was a phantom kind that never matched a row — kept the
+    # query NULL-safe but produced silent zero-violation runs even on deep
+    # hierarchies. Aligned with the indexer's canonical set in
+    # ``index/indexer.py`` and ``catalog/parallel_hierarchy.py``.
+    _kinds = ("inherits", "implements", "uses_trait")
     _ks = ", ".join(chr(39) + k + chr(39) for k in _kinds)
     try:
         edge_rows = conn.execute(

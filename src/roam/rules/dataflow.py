@@ -19,6 +19,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
+from roam._signature_utils import parse_param_names as _parse_param_names
 from roam.db.connection import find_project_root
 from roam.db.edge_kinds import CALL_EDGE_KINDS
 
@@ -54,6 +55,11 @@ _DEFAULT_SINKS = (
     "Function(",
 )
 
+# Names ignored in local dataflow scans (assignment + unused-param
+# detectors). ``_parse_param_names`` keeps its own ignore set in
+# ``roam._signature_utils``; this one stays local because the dataflow
+# detectors here also filter ``_``-prefixed names via ``startswith``,
+# which the canonical param-name parser deliberately does not.
 _IGNORED_NAMES = {"_", "self", "cls"}
 
 
@@ -76,43 +82,9 @@ def _match_glob(path: str, pattern: str | None) -> bool:
 from roam.commands.changed_files import is_test_file as _is_test_path
 
 
-def _parse_param_names(signature: str | None) -> list[str]:
-    if not signature:
-        return []
-    m = re.search(r"\(([^)]*)\)", signature)
-    if not m:
-        return []
-    params_str = m.group(1).strip()
-    if not params_str:
-        return []
-
-    depth = 0
-    current: list[str] = []
-    parts: list[str] = []
-    for ch in params_str:
-        if ch in "([{<":
-            depth += 1
-            current.append(ch)
-        elif ch in ")]}>":
-            depth -= 1
-            current.append(ch)
-        elif ch == "," and depth == 0:
-            parts.append("".join(current).strip())
-            current = []
-        else:
-            current.append(ch)
-    if current:
-        parts.append("".join(current).strip())
-
-    names: list[str] = []
-    for part in parts:
-        token = part
-        while token.startswith("*"):
-            token = token[1:]
-        token = token.split(":", 1)[0].split("=", 1)[0].strip()
-        if token and token not in _IGNORED_NAMES:
-            names.append(token)
-    return names
+# ``_parse_param_names`` is imported from ``roam._signature_utils`` at
+# the top of this module (W856 hoist — was duplicated in
+# ``analysis/taint.py``).
 
 
 def _read_file_lines(project_root: Path, rel_path: str) -> list[str]:

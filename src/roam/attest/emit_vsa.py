@@ -223,7 +223,13 @@ def emit_pr_bundle_slsa_l3(
         return result
 
     # 3. Run-ledger root statement (best-effort; ROAM_RUN_ID drives it).
-    run_id = os.environ.get("ROAM_RUN_ID")
+    # Normalise whitespace-only values to None so a malformed env var
+    # ("   ") cannot reach ``read_run_meta`` and silently surface as a
+    # misleading "run-ledger HMAC chain not signed" reason (Pattern-2
+    # silent fallback). Matches the ``.strip() or None`` discipline
+    # used on the W1279 hash-kwargs path above.
+    _run_id_raw = os.environ.get("ROAM_RUN_ID", "")
+    run_id = _run_id_raw.strip() or None
     run_path: Path | None = None
     if run_id:
         try:

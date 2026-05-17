@@ -2019,6 +2019,39 @@ def _load_repo_config(project_root: Path) -> dict:
         return {}
 
 
+_TOML_SENTINEL_SKIP = object()
+
+
+def _parse_toml_scalar(tok: str, *, on_unknown: object = _TOML_SENTINEL_SKIP) -> object:
+    """Parse a single TOML scalar token (string / bool / int / float).
+
+    ``on_unknown`` controls the fallback for unrecognized tokens:
+    - ``_TOML_SENTINEL_SKIP`` (default) returns the sentinel so the caller can
+      drop the entry — matches the top-level scalar behavior of the legacy
+      parser, which silently skipped unparseable values.
+    - any other value (e.g. ``tok`` itself) is returned as-is — matches the
+      array-item behavior, which kept the raw token rather than dropping it.
+
+    Surgical refactor: replaces two nearly-identical 4-deep try/except ladders
+    in ``_parse_minimal_toml`` (W: complexity 162 → ~30, nest 8 → 4).
+    """
+    if tok.startswith('"') and tok.endswith('"') and len(tok) >= 2:
+        return tok[1:-1]
+    if tok == "true":
+        return True
+    if tok == "false":
+        return False
+    try:
+        return int(tok)
+    except ValueError:
+        pass
+    try:
+        return float(tok)
+    except ValueError:
+        pass
+    return on_unknown
+
+
 def _parse_minimal_toml(path: Path) -> dict:
     """Last-resort TOML parser for config files we wrote ourselves.
 
@@ -2052,31 +2085,14 @@ def _parse_minimal_toml(path: Path) -> dict:
                 tok = tok.strip().rstrip(",").strip()
                 if not tok:
                     continue
-                if tok.startswith('"') and tok.endswith('"'):
-                    items.append(tok[1:-1])
-                elif tok in ("true", "false"):
-                    items.append(tok == "true")
-                else:
-                    try:
-                        items.append(int(tok))
-                    except ValueError:
-                        try:
-                            items.append(float(tok))
-                        except ValueError:
-                            items.append(tok)
+                # Array items: keep raw token on unparseable (legacy behavior).
+                items.append(_parse_toml_scalar(tok, on_unknown=tok))
             out[key] = items
-        elif value.startswith('"') and value.endswith('"'):
-            out[key] = value[1:-1]
-        elif value in ("true", "false"):
-            out[key] = value == "true"
         else:
-            try:
-                out[key] = int(value)
-            except ValueError:
-                try:
-                    out[key] = float(value)
-                except ValueError:
-                    pass
+            # Top-level scalars: silently skip unparseable (legacy behavior).
+            parsed = _parse_toml_scalar(value)
+            if parsed is not _TOML_SENTINEL_SKIP:
+                out[key] = parsed
     return out
 
 

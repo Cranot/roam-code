@@ -73,7 +73,12 @@ class TestGrepJSONShape:
         data = parse_json_output(result, "grep")
         assert_json_envelope(data, "grep")
         assert "engine" in data["summary"]
-        assert data["summary"]["engine"] in {"ripgrep", "git", "fallback"}
+        # ``indexed_scan`` is the W1010 lineage label: when no rg/git is on
+        # PATH and ``indexed_file_scan`` produced the matches, the envelope
+        # discloses ``indexed_scan`` (not the pre-lineage ``"fallback"``
+        # marker, which claimed "no engine ran" while the indexed-file scan
+        # WAS the engine — exactly the silent-fallback shape CP45/CP46 flag).
+        assert data["summary"]["engine"] in {"ripgrep", "git", "fallback", "indexed_scan"}
 
     def test_envelope_lists_patterns_array(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)

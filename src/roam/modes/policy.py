@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from roam.atomic_io import atomic_write_text
 from roam.commands._command_utils import bare_command_name as _bare_command_name
 
 # ---------------------------------------------------------------------------
@@ -345,8 +346,11 @@ def set_active_mode(repo_root: Path, mode_name: str) -> Path:
     if mode_name not in VALID_MODES:
         raise ValueError(f"unknown mode '{mode_name}' (valid: {', '.join(VALID_MODES)})")
     path = _active_mode_file(repo_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(mode_name + "\n", encoding="utf-8")
+    # Atomic write: a torn .roam/active_mode would parse to an unknown
+    # mode and ``get_active_mode`` would silently fall back to the
+    # default (Pattern-2). Temp-file + os.replace keeps the prior mode
+    # intact on crash.
+    atomic_write_text(path, mode_name + "\n")
     return path
 
 

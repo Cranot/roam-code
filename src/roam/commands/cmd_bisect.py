@@ -145,6 +145,10 @@ def bisect(ctx, metric, threshold, top_n, direction):
         snapshots = [dict(s) for s in snapshots_raw]
 
         if len(snapshots) < 2:
+            # W1010 Pattern 2: prerequisite missing (need >=2 snapshots). The
+            # pre-fix envelope was structurally indistinguishable from
+            # "analyzed cleanly with zero deltas" — agents reading only
+            # ``summary`` couldn't tell missing-input from stable-metric.
             verdict = "Not enough snapshots for bisect (need >= 2). Run 'roam trends --save' to create them."
             if json_mode:
                 click.echo(
@@ -156,7 +160,10 @@ def bisect(ctx, metric, threshold, top_n, direction):
                                 "snapshots": len(snapshots),
                                 "metric": metric,
                                 "deltas": 0,
+                                "partial_success": True,
+                                "state": "insufficient_snapshots",
                             },
+                            hint="Run 'roam trends --save' after each significant change to seed the snapshot history.",
                         )
                     )
                 )

@@ -5,7 +5,7 @@ commands that produce its evidence. Use it when assembling a real report
 for a customer engagement.
 
 All commands run locally against an indexed repository. Re-indexing with
-`roam init` before extraction guarantees the artifacts reflect the audit
+`roam init` before extraction ensures the artifacts reflect the audit
 period's HEAD SHA.
 
 ## 1. Which agents changed what

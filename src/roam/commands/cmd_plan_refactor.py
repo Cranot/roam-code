@@ -24,6 +24,7 @@ from roam.commands.context_helpers import (
     get_blast_radius,
     get_graph_metrics,
     get_symbol_metrics,
+    summarize_tests as _summarize_tests,
 )
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
@@ -37,34 +38,8 @@ from roam.output.formatter import (
 from roam.output.metric_definitions import CALLER_METRIC_RAW
 
 
-def _summarize_tests(test_hits: list[dict], cap: int) -> tuple[list[dict], int, int]:
-    by_file: dict[str, dict] = {}
-
-    for hit in test_hits:
-        path = hit["file"]
-        kind = hit["kind"]
-        hops = int(hit["hops"])
-        priority = (0 if kind == "DIRECT" else 1, hops)
-
-        existing = by_file.get(path)
-        if existing is None or priority < existing["_priority"]:
-            by_file[path] = {
-                "file": path,
-                "kind": kind,
-                "hops": hops,
-                "via": hit.get("via"),
-                "_priority": priority,
-            }
-
-    rows = sorted(
-        by_file.values(),
-        key=lambda r: (0 if r["kind"] == "DIRECT" else 1, r["hops"], r["file"]),
-    )
-    for row in rows:
-        row.pop("_priority", None)
-
-    direct_files = sum(1 for row in rows if row["kind"] == "DIRECT")
-    return rows[:cap], direct_files, len(rows)
+# ``_summarize_tests`` is imported from ``context_helpers`` at the top
+# of this module (W856 hoist — was duplicated in cmd_guard).
 
 
 def _default_target_file(source_file: str, operation: str) -> str:
