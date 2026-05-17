@@ -801,6 +801,16 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
                 click.echo(write_sarif(hotspots_to_sarif([])))
                 return
             verdict_no_data = "No runtime data. Run `roam ingest-trace` first."
+            # Preserve the legacy ``next_steps`` field alongside the
+            # canonical ``agent_contract.next_commands`` so older test
+            # contracts + integration consumers continue to work. The
+            # two surfaces are intentionally lockstep: ``next_steps`` is
+            # the legacy invocation-scoped suggestion list, while
+            # ``agent_contract.next_commands`` is the LAW 2 imperative
+            # surface that newer agents consume.
+            next_steps_legacy = suggest_next_steps(
+                "hotspots", {"total": 0, "upgrades": 0}
+            )
             if json_mode:
                 click.echo(
                     to_json(
@@ -829,11 +839,14 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
                                 ],
                             },
                             hotspots=[],
+                            next_steps=next_steps_legacy,
                         )
                     )
                 )
             else:
                 click.echo(f"VERDICT: {verdict_no_data}")
+                click.echo()
+                click.echo(format_next_steps_text(next_steps_legacy))
             return
 
         items = compute_hotspots(conn)
