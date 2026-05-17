@@ -36,8 +36,9 @@ from roam.policy.suppression_v2 import (
     FindingIdSuppression,
     RuleFileSuppression,
 )
+from tests._helpers.repo_root import repo_root
 
-EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "templates" / "examples"
+EXAMPLES_DIR = repo_root() / "templates" / "examples"
 
 
 def test_ignore_findings_example_exists() -> None:

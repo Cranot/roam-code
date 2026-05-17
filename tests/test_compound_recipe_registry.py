@@ -82,7 +82,9 @@ VALID_COMMAND_NAMES: frozenset[str] = frozenset(_COMMANDS.keys()) | frozenset(_D
 # lint scoped and gives reviewers a deterministic blast radius for the lint.
 # ---------------------------------------------------------------------------
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+from tests._helpers.repo_root import repo_root
+
+_REPO_ROOT = repo_root()
 _SRC = _REPO_ROOT / "src" / "roam"
 
 # Modules that issue compound-recipe subprocess / in-process invocations

@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 208 invokable command names (201 canonical commands + 7 alias names).
+# Total: 241 invokable command names (234 canonical commands + 7 alias names).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
 # Deprecated commands map to a structured record. When a user invokes a
 # deprecated name we still resolve it (no breaking change) and print a
