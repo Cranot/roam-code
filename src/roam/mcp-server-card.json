@@ -47,7 +47,6 @@
     "openvex",
     "in-toto",
     "cosign",
-    "code-rag",
     "agent-tools"
   ],
   "transport": {

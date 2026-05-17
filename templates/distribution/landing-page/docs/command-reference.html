@@ -311,7 +311,7 @@
       <tr><td><code>roam pr-risk</code></td><td>Compute risk score for pending changes.</td></tr>
       <tr><td><code>roam pr-prep</code></td><td>One-shot pre-PR fitness check: diff + critique + pr-risk.</td></tr>
       <tr><td><code>roam pr-analyze</code></td><td>Analyse a PR diff for structural risk and AI-likelihood.</td></tr>
-      <tr><td><code>roam pr-bundle</code></td><td>Proof-carrying PR bundle (R26 -- Roam Review MVP differen...</td></tr>
+      <tr><td><code>roam pr-bundle</code></td><td>Build a proof-carrying PR bundle (intent + context + affected symbols + risks + tests + non-goals). --auto-collect folds in envelopes from prior roam runs. CI-gateable via validate.</td></tr>
       <tr><td><code>roam pr-comment-render</code></td><td>Render a markdown PR comment from a pr-analyze envelope.</td></tr>
       <tr><td><code>roam rules-validate</code></td><td>Lint a `.roam/rules.yml` file before shipping it to your ...</td></tr>
       <tr><td><code>roam metrics-push</code></td><td>Push metrics-only summary to Roam Cloud Lite.</td></tr>
@@ -353,7 +353,7 @@
       <tr><td><code>roam plan</code></td><td>Generate a structured execution plan for modifying code.</td></tr>
       <tr><td><code>roam syntax-check</code></td><td>Check files for syntax errors using tree-sitter AST parsing.</td></tr>
       <tr><td><code>roam triage</code></td><td>Manage security finding suppressions.</td></tr>
-      <tr><td><code>roam oracle</code></td><td>Container for the five v12.1 boolean oracles.</td></tr>
+      <tr><td><code>roam oracle</code></td><td>Container for the boolean oracle commands (symbol-exists, route-exists, is-test-only, is-reachable-from-entry, is-clone-of).</td></tr>
       <tr><td><code>roam memory</code></td><td>Repo-local agent memory.</td></tr>
       <tr><td><code>roam runs</code></td><td>Per-agent-run event ledger.</td></tr>
       <tr><td><code>roam laws</code></td><td>Self-installing constitution.</td></tr>

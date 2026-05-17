@@ -69,7 +69,7 @@ Pick the path that matches your role:
 - **Canonical unresolved-path envelopes across high-traffic commands.** `impact`, `preflight`, `trace`, `test-map`, `context`, `safe-delete`, `split`, and `why` now use one explicit "not found" shape in JSON mode instead of mixing exit codes and partial-success vocabulary.
 - **Evidence freshness is now stamped at the producer.** Runs record hashes for `.roam-rules.yml`, `.roam/constitution.yml`, and `.roam/control-map.yml`, so later evidence packets can prove which policy/config inputs were active.
 - **PR Replay evidence coverage improved.** The replay path now answers 7 of the 8 evidence questions completely and marks the remaining approvals question as `producer_not_available` instead of silently omitting it.
-- **Public surface refreshed to the current shape.** README, MCP metadata, and install guidance now describe the 238-command / 224-tool v13.2 surface with the 57-tool core preset.
+- **Public surface refreshed to the current shape.** README, MCP metadata, and install guidance now describe the 241-command / 224-tool v13.2 surface with the 57-tool core preset.
 
 ### v13.1 (released 2026-05-15) -- Pattern-2 propagation + shared YAML helper + 3 flagship silent-fallback seals
 
@@ -1894,7 +1894,7 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (231 canonical + 7 aliases)
+│   ├── cli.py                         # Click CLI (234 canonical + 7 aliases)
 │   ├── mcp_server.py                  # MCP server (224 tools, 10 resources, 6 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
