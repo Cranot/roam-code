@@ -554,11 +554,23 @@ def _declared_python_dependencies(project_root: Path) -> frozenset[str]:
     pyproject = project_root / "pyproject.toml"
     if not pyproject.is_file():
         return frozenset()
+    # tomllib is stdlib on 3.11+; 3.10 needs the tomli backport. Fall back
+    # silently so the orphan-imports filter still works on 3.10 hosts that
+    # ship without tomli — but in that case the pyproject filter is a no-op
+    # and the caller sees the same behaviour as a missing pyproject.toml.
     try:
-        import tomllib
+        import tomllib  # type: ignore[import-not-found]
 
         with pyproject.open("rb") as f:
             data = tomllib.load(f)
+    except ImportError:
+        try:
+            import tomli  # type: ignore[import-not-found]
+
+            with pyproject.open("rb") as f:
+                data = tomli.load(f)
+        except Exception:
+            return frozenset()
     except Exception:
         return frozenset()
 

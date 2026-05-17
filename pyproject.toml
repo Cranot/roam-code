@@ -41,6 +41,10 @@ dependencies = [
     # cleanly across 3.9–3.13.
     "tree-sitter-language-pack>=0.6,<1.6.3",
     "networkx>=3.0",
+    # tomllib is stdlib on 3.11+. On 3.10 (our floor) we need the tomli
+    # backport so commands that parse pyproject.toml (orphan-imports
+    # dependency-allowlist filter, stale-refs config) keep working.
+    "tomli; python_version < '3.11'",
 ]
 
 [project.urls]
