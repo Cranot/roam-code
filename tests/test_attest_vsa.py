@@ -627,17 +627,13 @@ class TestEmitPrBundleSlsaL3RunIdNormalisation:
         # records to whitespace-only entries — those are the only ones
         # that prove the regression.
         whitespace_only = [r for r in seen_run_ids if r != r.strip()]
-        assert whitespace_only == [], (
-            f"ROAM_RUN_ID='   ' leaked to read_run_meta: {whitespace_only!r}"
-        )
+        assert whitespace_only == [], f"ROAM_RUN_ID='   ' leaked to read_run_meta: {whitespace_only!r}"
         # The "not set" skip reason wins over the misleading
         # "chain not signed" one.
-        assert any("ROAM_RUN_ID not set" in r for r in result["skipped_reasons"]), result[
-            "skipped_reasons"
-        ]
-        assert not any(
-            "HMAC chain not signed" in r for r in result["skipped_reasons"]
-        ), f"Pattern-2 regression: whitespace ROAM_RUN_ID surfaced misleading chain-not-signed reason: {result['skipped_reasons']!r}"
+        assert any("ROAM_RUN_ID not set" in r for r in result["skipped_reasons"]), result["skipped_reasons"]
+        assert not any("HMAC chain not signed" in r for r in result["skipped_reasons"]), (
+            f"Pattern-2 regression: whitespace ROAM_RUN_ID surfaced misleading chain-not-signed reason: {result['skipped_reasons']!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

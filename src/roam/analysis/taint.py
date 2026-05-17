@@ -134,6 +134,7 @@ _ASSIGN_PATTERNS = (
     re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*[\+\-\*/%]="),
 )
 
+
 def _detect_sanitizer(name: str, qualified_name: str | None = None) -> bool:
     """Return True if the symbol name suggests a sanitizer function."""
     lower = (name or "").lower()

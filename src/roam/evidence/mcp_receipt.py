@@ -69,15 +69,18 @@ from roam.evidence._vocabulary import POLICY_DECISIONS, REDACTION_REASONS
 #: * ``escalate``     - the call required human / higher-tier approval
 #: * ``redact``       - the call ran but output was masked
 #: * ``not_evaluated``- no policy layer was active (default)
-_POLICY_DECISIONS: frozenset[str] = frozenset(
-    {
-        "allow",
-        "deny",
-        "escalate",
-        "redact",
-        "not_evaluated",
-    }
-) & POLICY_DECISIONS
+_POLICY_DECISIONS: frozenset[str] = (
+    frozenset(
+        {
+            "allow",
+            "deny",
+            "escalate",
+            "redact",
+            "not_evaluated",
+        }
+    )
+    & POLICY_DECISIONS
+)
 
 # Drift guard: every literal listed above must remain a member of the
 # canonical POLICY_DECISIONS. If a future edit drops one of these
@@ -85,8 +88,7 @@ _POLICY_DECISIONS: frozenset[str] = frozenset(
 # rather than at first construction of a McpDecisionReceipt with that
 # verdict.
 assert _POLICY_DECISIONS == {"allow", "deny", "escalate", "redact", "not_evaluated"}, (
-    f"_POLICY_DECISIONS drift: expected authority-gate subset of POLICY_DECISIONS, "
-    f"got {sorted(_POLICY_DECISIONS)}"
+    f"_POLICY_DECISIONS drift: expected authority-gate subset of POLICY_DECISIONS, got {sorted(_POLICY_DECISIONS)}"
 )
 
 

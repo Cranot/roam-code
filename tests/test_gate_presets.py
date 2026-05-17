@@ -167,10 +167,7 @@ class TestLoadGatesConfig:
     def test_non_dict_rule_entries_skipped(self, tmp_path):
         cfg = tmp_path / "mixed.yml"
         cfg.write_text(
-            "rules:\n"
-            "  - just_a_string\n"
-            "  - name: valid\n"
-            "    include: ['src/**/*.py']\n",
+            "rules:\n  - just_a_string\n  - name: valid\n    include: ['src/**/*.py']\n",
             encoding="utf-8",
         )
         rules = load_gates_config(str(cfg))

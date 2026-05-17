@@ -432,6 +432,11 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, persist):
     pack management), and ``cga`` (the audit-grade attestation
     that cites taint findings).
     """
+    # W107/W120 composition: global `roam --ci` also enables the local
+    # exit-5 gate. LAW 11: explicit local `--ci` still wins (no-op when
+    # already True).
+    if not ci_mode and ctx.obj and ctx.obj.get("ci_mode"):
+        ci_mode = True
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

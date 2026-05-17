@@ -722,10 +722,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
             if json_mode or output_format == "json":
                 click.echo(to_json(_attest_unresolved_envelope))
             else:
-                click.echo(
-                    f"{len(changed)} changed files not found in index ({label}). "
-                    "Run `roam index` first."
-                )
+                click.echo(f"{len(changed)} changed files not found in index ({label}). Run `roam index` first.")
             return
 
         # ── Collect all evidence ──────────────────────────────────────

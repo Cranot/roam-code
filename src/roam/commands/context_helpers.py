@@ -1190,9 +1190,7 @@ def batch_context(conn, contexts, task=None, session_hint="", recent_symbols=(),
     return shared_callers, shared_callees, scored_files
 
 
-def summarize_tests(
-    test_hits: list[dict], cap: int
-) -> tuple[list[dict], int, int]:
+def summarize_tests(test_hits: list[dict], cap: int) -> tuple[list[dict], int, int]:
     """Collapse per-symbol test hits to file-level coverage hints.
 
     Each ``test_hits`` entry is a dict with ``file``, ``kind``

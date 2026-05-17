@@ -242,8 +242,7 @@ def test_python_sqli_flags_real_request_args_to_cursor_execute(
     data = _run_taint_json(sqli_cursor_project, "sqli")
     findings = data.get("summary", {}).get("findings", 0)
     assert findings >= 1, (
-        f"python-sqli silently emitted 0 findings on canonical SQLi; "
-        f"verdict={data.get('summary', {}).get('verdict')!r}"
+        f"python-sqli silently emitted 0 findings on canonical SQLi; verdict={data.get('summary', {}).get('verdict')!r}"
     )
 
 
@@ -266,11 +265,8 @@ def test_python_ssti_rule_loads_and_runs_on_indexed_corpus(
     matchable symbols" (the xfail above).
     """
     data = _run_taint_json(ssti_real_world_project, "ssti")
-    assert "python-ssti" in data.get("rule_ids", []), (
-        f"python-ssti not in loaded rules list: {data.get('rule_ids')!r}"
-    )
+    assert "python-ssti" in data.get("rule_ids", []), f"python-ssti not in loaded rules list: {data.get('rule_ids')!r}"
     # The summary must claim 1 rule loaded (the ssti pack contains only it).
     assert data.get("summary", {}).get("rules") == 1, (
-        f"expected 1 rule loaded in ssti pack; got "
-        f"{data.get('summary', {}).get('rules')}"
+        f"expected 1 rule loaded in ssti pack; got {data.get('summary', {}).get('rules')}"
     )

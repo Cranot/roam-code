@@ -593,17 +593,40 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
 
 
 def _no_paths_output(json_mode, entry_count, sink_count, from_pattern, to_pattern, token_budget=0):
-    """Emit a graceful message when no entry→sink paths can be found."""
+    """Emit a graceful message when no entry→sink paths can be found.
+
+    W807 Pattern-2 empty-corpus disclosure: the verdict line distinguishes
+    the three degenerate causes (no entries, no sinks, no paths) so machine
+    consumers don't confuse a degenerate-graph "0 paths" with a fully-
+    scanned "0 critical paths found". ``partial_success`` is True + the
+    ``state`` field surfaces a closed-enum disclosure when the degeneracy
+    is on the graph side (no entries / no sinks). LAW 6 — verdict reads
+    without any other field. LAW 4 anchored on ``paths``/``entries``/
+    ``sinks`` concrete-noun terminals.
+    """
+    # Pick a verdict + state that names which degenerate axis fired. The
+    # filter-narrowed case is NOT a degenerate corpus — it's a clean scan
+    # with a narrow filter — so it stays partial_success: False.
     if from_pattern or to_pattern:
         note = "No paths found matching the specified filters."
+        verdict = "Filter narrowed to 0 paths"
+        state = "no_paths_matching_filters"
+        partial_success = False
     elif entry_count == 0:
         note = "No entry points found (no functions with outgoing but no incoming edges)."
+        verdict = "Corpus empty: 0 entries"
+        state = "no_entry_points"
+        partial_success = True
     elif sink_count == 0:
         note = "No sinks found (no functions with side effects or leaf nodes)."
+        verdict = "Corpus empty: 0 paths"
+        state = "no_sinks"
+        partial_success = True
     else:
         note = "No paths found between entry points and sinks."
-
-    verdict = "no critical paths found"
+        verdict = f"No paths found between {entry_count} entries and {sink_count} paths"
+        state = "no_paths_connecting"
+        partial_success = False
 
     if json_mode:
         click.echo(
@@ -612,6 +635,8 @@ def _no_paths_output(json_mode, entry_count, sink_count, from_pattern, to_patter
                     "path-coverage",
                     summary={
                         "verdict": verdict,
+                        "state": state,
+                        "partial_success": partial_success,
                         "total_paths": 0,
                         "untested_paths": 0,
                         "critical": 0,

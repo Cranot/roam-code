@@ -167,7 +167,4 @@ def index(ctx, force, verbose, quiet):
         elif not quiet:
             click.echo(f"VERDICT: {_index_verdict}")
             click.echo(f"  Completed in {elapsed:.1f}s")
-            click.echo(
-                "  Hint: check ROAM_DB_DIR / cloud-sync; run `roam doctor` "
-                "for a diagnostic dump."
-            )
+            click.echo("  Hint: check ROAM_DB_DIR / cloud-sync; run `roam doctor` for a diagnostic dump.")

@@ -54,11 +54,7 @@ def _score_from_metrics(
     call_volume = min(1.0, math.log10(call_count + 1) / log_div)
     latency = min(1.0, p99_ms / _LATENCY_SATURATION_MS)
     err = max(0.0, min(1.0, error_rate))
-    return (
-        _CALL_VOLUME_WEIGHT * call_volume
-        + _LATENCY_WEIGHT * latency
-        + _ERROR_WEIGHT * err
-    )
+    return _CALL_VOLUME_WEIGHT * call_volume + _LATENCY_WEIGHT * latency + _ERROR_WEIGHT * err
 
 
 def runtime_score(

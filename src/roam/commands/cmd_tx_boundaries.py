@@ -203,11 +203,17 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
     if by_classification.get("unsafe_mutation"):
         facts.append(f"tx-boundaries flagged {by_classification['unsafe_mutation']} unsafe_mutation symbols")
     if by_classification.get("unmatched_begin"):
-        facts.append(f"tx-boundaries flagged {by_classification['unmatched_begin']} unmatched_begin symbols (transaction leak)")
+        facts.append(
+            f"tx-boundaries flagged {by_classification['unmatched_begin']} unmatched_begin symbols (transaction leak)"
+        )
     if by_classification.get("unmatched_commit"):
-        facts.append(f"tx-boundaries flagged {by_classification['unmatched_commit']} unmatched_commit symbols (stray commit)")
+        facts.append(
+            f"tx-boundaries flagged {by_classification['unmatched_commit']} unmatched_commit symbols (stray commit)"
+        )
     if by_classification.get("partial_transactional"):
-        facts.append(f"tx-boundaries flagged {by_classification['partial_transactional']} partial_transactional symbols")
+        facts.append(
+            f"tx-boundaries flagged {by_classification['partial_transactional']} partial_transactional symbols"
+        )
     if by_classification.get("transactional"):
         facts.append(f"tx-boundaries confirmed {by_classification['transactional']} transactional symbols")
     if not facts:

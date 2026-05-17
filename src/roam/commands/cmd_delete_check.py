@@ -243,6 +243,14 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    # W107/W120 composition: the global `roam --ci` lever also turns the
+    # delete-check gate on, even when the user didn't pass the local
+    # `--ci`. Per LAW 11, an explicit local `--ci` still wins (the OR
+    # below promotes ci=True; there is no way for the user to express
+    # "explicit off" from the local CLI today, so global --ci silently
+    # enables local gating — symmetric with over-fetch / pr-bundle).
+    if not ci and ctx.obj and ctx.obj.get("ci_mode"):
+        ci = True
 
     ensure_index()
     root = find_project_root()
@@ -401,6 +409,7 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
     # Verdict per target
     decorated = []
     any_break = False
+
     # Evidence-first ordering for the truncated [:5] survivors view (LAW 4 /
     # Pattern-1D): when the verdict is BREAK-RISK because of "N surviving
     # reachable code reference(s)", the first 5 rendered survivors must BE

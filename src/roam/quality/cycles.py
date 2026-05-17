@@ -151,8 +151,11 @@ def cycles_summary(conn) -> CyclesSummary:
         # Stamp the fallback flag so consumers can distinguish this from
         # a real cycle-free codebase (CLAUDE.md "Make fallback chains loud").
         return CyclesSummary(
-            total=0, actionable=0, informational=0,
-            fallback_used=True, fallback_reason="import_failed",
+            total=0,
+            actionable=0,
+            informational=0,
+            fallback_used=True,
+            fallback_reason="import_failed",
         )
 
     try:
@@ -162,8 +165,11 @@ def cycles_summary(conn) -> CyclesSummary:
         mark_actionable_cycles(formatted)
     except Exception:
         return CyclesSummary(
-            total=0, actionable=0, informational=0,
-            fallback_used=True, fallback_reason="graph_build_failed",
+            total=0,
+            actionable=0,
+            informational=0,
+            fallback_used=True,
+            fallback_reason="graph_build_failed",
         )
 
     total = len(formatted)
