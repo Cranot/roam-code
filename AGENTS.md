@@ -223,7 +223,7 @@ src/roam/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
     schema_registry.py # JSON envelope schema versioning + validation
-tests/                 # 740 test_*.py files
+tests/                 # 744 test_*.py files
   # Core & legacy
   test_basic.py, test_comprehensive.py, test_fixes.py, test_performance.py,
   test_resolve.py, test_salesforce.py, test_v6_features.py,
