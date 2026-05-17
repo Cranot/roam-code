@@ -14,6 +14,7 @@ _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 import re
@@ -98,19 +99,54 @@ def _stale_sensitivity(name: str) -> str:
 
 
 _DB_TABLE_PATTERN = re.compile(r"\bFROM\s+(\w+)|\bJOIN\s+(\w+)|\bINTO\s+(\w+)|\bUPDATE\s+(\w+)", re.IGNORECASE)
+_SQL_LITERAL_START_PATTERN = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|WITH)\b", re.IGNORECASE)
+
+
+def _docstring_node_ids(tree: ast.AST) -> set[int]:
+    """Return AST node ids for module/class/function docstring literals."""
+    out: set[int] = set()
+    doc_owners = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    for node in ast.walk(tree):
+        if not isinstance(node, doc_owners) or not node.body:
+            continue
+        first = node.body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+            out.add(id(first.value))
+    return out
+
+
+def _sql_literals_from_source(src: str) -> list[str]:
+    """Extract likely SQL string literals from Python source."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    docstring_ids = _docstring_node_ids(tree)
+    literals: list[str] = []
+    for node in ast.walk(tree):
+        if id(node) in docstring_ids:
+            continue
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and _SQL_LITERAL_START_PATTERN.search(node.value)
+        ):
+            literals.append(node.value)
+    return literals
 
 
 def _scan_module_for_tables(module_path: Path) -> list[str]:
-    """Best-effort scan: find DB table names referenced in the module source."""
+    """Best-effort scan: find DB table names referenced in SQL literals."""
     try:
         src = module_path.read_text(encoding="utf-8")
     except Exception:
         return []
     tables: set[str] = set()
-    for m in _DB_TABLE_PATTERN.finditer(src):
-        for g in m.groups():
-            if g and not g.startswith("_") and len(g) > 2:
-                tables.add(g.lower())
+    for literal in _sql_literals_from_source(src):
+        for m in _DB_TABLE_PATTERN.finditer(literal):
+            for g in m.groups():
+                if g and not g.startswith("_") and len(g) > 2:
+                    tables.add(g.lower())
     # Filter out SQL keywords accidentally captured.
     noise = {"with", "where", "as", "on", "if", "exists", "select", "table"}
     return sorted(t for t in tables if t not in noise)

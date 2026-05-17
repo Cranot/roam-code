@@ -85,6 +85,7 @@ def _build_surface() -> dict:
     # could actually serve these tools at runtime", on a different axis
     # from the count of *defined* tools.
     from roam.surface_counts import (
+        mcp_candidate_tool_names,
         mcp_preset_counts,
     )
     from roam.surface_counts import (
@@ -92,18 +93,23 @@ def _build_surface() -> dict:
     )
 
     mcp_tools: list[str] = _ast_mcp_tool_names()
+    mcp_tool_set = set(mcp_tools)
     preset_counts: dict[str, int] = mcp_preset_counts()
     mcp_introspection_available = False
+    mcp_introspection_error: str | None = None
     try:
+        from roam.mcp_server import _FASTMCP_IMPORT_ERROR
         from roam.mcp_server import FastMCP as _FastMCP
 
         mcp_introspection_available = _FastMCP is not None
-    except Exception:
+        if _FastMCP is None:
+            mcp_introspection_error = _FASTMCP_IMPORT_ERROR or "FastMCP transport unavailable"
+    except Exception as exc:
         # mcp_server module failed to import (e.g. transitive import error on
         # a fresh install without [mcp] extras). The counts above are still
         # correct because they're AST-derived; only the transport signal is
         # left at the "unavailable" baseline.
-        pass
+        mcp_introspection_error = f"{exc.__class__.__name__}: {exc}"
 
     from roam.cli import _deprecation_record
 
@@ -123,7 +129,7 @@ def _build_surface() -> dict:
                 "deprecated_replacement": deprecation.get("replacement") if deprecation else None,
                 "deprecation_reason": deprecation.get("reason") if deprecation else None,
                 "deprecation_removal_version": deprecation.get("removal_version") if deprecation else None,
-                "mcp_exposed": name.replace("-", "_") in mcp_tools,
+                "mcp_exposed": bool(mcp_candidate_tool_names(name) & mcp_tool_set),
             }
         )
 
@@ -144,11 +150,18 @@ def _build_surface() -> dict:
         "mcp_tools": sorted(mcp_tools),
     }
     # Distinct from the count itself: the count is the number of *defined*
-    # tools (env-independent); the note flags that the transport layer is
-    # absent and these tools can't actually be served until ``fastmcp`` is
-    # installed.
+    # tools (env-independent); the note flags that the transport layer is not
+    # available and these tools can't actually be served until ``fastmcp`` is
+    # installed or repaired.
     if not mcp_introspection_available:
-        result["mcp_tools_note"] = "fastmcp not installed; install with: pip install 'roam-code[mcp]'"
+        if mcp_introspection_error:
+            result["mcp_introspection_error"] = mcp_introspection_error
+        if mcp_introspection_error and "No module named 'fastmcp'" in mcp_introspection_error:
+            result["mcp_tools_note"] = "fastmcp not installed; install with: pip install 'roam-code[mcp]'"
+        else:
+            result["mcp_tools_note"] = (
+                "fastmcp transport unavailable; install or repair with: pip install 'roam-code[mcp]'"
+            )
     return result
 
 
@@ -215,6 +228,8 @@ def surface(ctx, filter_by: str, category: str | None):
         }
         if "mcp_tools_note" in data:
             summary["mcp_tools_note"] = data["mcp_tools_note"]
+        if "mcp_introspection_error" in data:
+            summary["mcp_introspection_error"] = data["mcp_introspection_error"]
         click.echo(
             to_json(
                 json_envelope(
@@ -236,9 +251,7 @@ def surface(ctx, filter_by: str, category: str | None):
     if data["mcp_introspection_available"]:
         click.echo(f"  mcp tools:          {data['mcp_tool_count']}")
     else:
-        click.echo(
-            f"  mcp tools:          {data['mcp_tool_count']} (introspection unavailable; install 'roam-code[mcp]')"
-        )
+        click.echo(f"  mcp tools:          {data['mcp_tool_count']} ({data['mcp_tools_note']})")
     click.echo("")
     click.echo("  by maturity:")
     for level in ("stable", "experimental", "internal", "deprecated"):

@@ -427,7 +427,7 @@ _DEFAULT_WEIGHTS = {
     "generic_naming": 0.15,
     "orphan_imports": 0.15,
     # NEW signals (v2 — see CodeSlick / DEV.to AI-detection research, 2026):
-    "placeholder_density": 0.10,  # TODO/FIXME/PLACEHOLDER added by stub-style generation
+    "placeholder_density": 0.10,  # stub-marker comments added by generated code
     "llm_phrase_density": 0.10,  # "We can use this approach because..." style comments
     "suspicious_imports": 0.05,  # imports that look like LLM hallucinations (numbered modules, etc.)
 }
