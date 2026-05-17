@@ -3891,6 +3891,55 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
     return _annotate_stale(result, args[0] if args else "")
 
 
+def _build_no_data_envelope(args: list[str]) -> dict:
+    """Build the canonical Pattern-1c ``no_data`` envelope.
+
+    Used by ``_run_roam_inprocess`` / ``_run_roam_subprocess`` /
+    ``_parse_subprocess_result`` when the CLI succeeded but emitted no
+    stdout (e.g. ``roam diff`` on a clean tree). Centralises the literal
+    dict shape so the three sites stay byte-identical -- key order is
+    preserved exactly as the original inline literals (``command`` ->
+    ``summary{verdict, state, partial_success}`` -> ``data``).
+    """
+    cmd_name = args[0] if args else ""
+    is_diff_like = "diff" in cmd_name
+    return {
+        "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
+        "summary": {
+            "verdict": "no changes" if is_diff_like else "no data",
+            "state": "no_data",
+            "partial_success": False,
+        },
+        "data": [],
+    }
+
+
+def _build_invalid_json_envelope(args: list[str], error_message: str, preview: str) -> dict:
+    """Build the canonical ``INVALID_JSON`` envelope.
+
+    Used by ``_run_roam_inprocess`` / ``_run_roam_subprocess`` /
+    ``_parse_subprocess_result`` when the CLI exited cleanly but emitted
+    output that does not parse as JSON. The ``error_message`` /
+    ``preview`` arguments preserve each call site's historical wording
+    (the inprocess + phase-progress paths render ``"Failed to parse
+    JSON output: {exc}"``; the subprocess path renders ``str(exc)`` --
+    that divergence is preserved on purpose, this is a no-behavior-
+    change refactor). Key order matches the original inline literals.
+    """
+    cmd_name = args[0] if args else ""
+    return {
+        "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
+        "summary": {
+            "verdict": "invalid output from underlying command",
+            "state": "invalid_output",
+            "partial_success": True,
+        },
+        "error_code": "INVALID_JSON",
+        "error": error_message,
+        "raw_stdout_preview": preview[:500],
+    }
+
+
 def _run_roam_inprocess(args: list[str]) -> dict:
     """Run a roam CLI command in-process via Click CliRunner (no subprocess)."""
     from roam.cli import cli as _cli
@@ -3959,17 +4008,7 @@ def _run_roam_inprocess(args: list[str]) -> dict:
     # canonical no_data envelope so downstream compounds (for_bug_fix,
     # pr_analyze) don't crash on it.
     if result.exit_code in _success_codes and not output:
-        cmd_name = args[0] if args else ""
-        is_diff_like = "diff" in cmd_name
-        return {
-            "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
-            "summary": {
-                "verdict": "no changes" if is_diff_like else "no data",
-                "state": "no_data",
-                "partial_success": False,
-            },
-            "data": [],
-        }
+        return _build_no_data_envelope(args)
 
     # Successful JSON output — look for JSON object in output
     if result.exit_code in _success_codes and output:
@@ -3983,18 +4022,11 @@ def _run_roam_inprocess(args: list[str]) -> dict:
             # Fix A — distinguish empty (handled above) from corrupted
             # output. Corrupted JSON gets an INVALID_JSON envelope with a
             # preview so the agent can see what came back.
-            cmd_name = args[0] if args else ""
-            return {
-                "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
-                "summary": {
-                    "verdict": "invalid output from underlying command",
-                    "state": "invalid_output",
-                    "partial_success": True,
-                },
-                "error_code": "INVALID_JSON",
-                "error": f"Failed to parse JSON output: {exc}",
-                "raw_stdout_preview": output[:500],
-            }
+            return _build_invalid_json_envelope(
+                args,
+                f"Failed to parse JSON output: {exc}",
+                output,
+            )
 
     # W325 — Pattern-1 Variant B pass-through: if the CLI emitted valid
     # JSON on stdout but exited with a non-success code (1 = advisory,
@@ -4065,33 +4097,20 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
         # no_data envelope rather than crashing the wrapper on
         # ``json.loads("")``.
         if result.returncode in _success_codes and not stdout_text:
-            cmd_name = args[0] if args else ""
-            is_diff_like = "diff" in cmd_name
-            return {
-                "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
-                "summary": {
-                    "verdict": "no changes" if is_diff_like else "no data",
-                    "state": "no_data",
-                    "partial_success": False,
-                },
-                "data": [],
-            }
+            return _build_no_data_envelope(args)
         if result.returncode in _success_codes and stdout_text:
             try:
                 parsed = json.loads(stdout_text)
             except json.JSONDecodeError as exc:
-                cmd_name = args[0] if args else ""
-                return {
-                    "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
-                    "summary": {
-                        "verdict": "invalid output from underlying command",
-                        "state": "invalid_output",
-                        "partial_success": True,
-                    },
-                    "error_code": "INVALID_JSON",
-                    "error": str(exc),
-                    "raw_stdout_preview": stdout_text[:500],
-                }
+                # MM4 follow-up: normalized to the prefixed form used by
+                # the other two INVALID_JSON sites so agents parsing the
+                # ``error`` field can match the family with a single
+                # regex.
+                return _build_invalid_json_envelope(
+                    args,
+                    f"Failed to parse JSON output: {exc}",
+                    stdout_text,
+                )
             if result.returncode == EXIT_GATE_FAILURE:
                 parsed["gate_failure"] = True
                 parsed["exit_code"] = EXIT_GATE_FAILURE
@@ -4159,33 +4178,16 @@ def _parse_subprocess_result(args: list[str], exit_code: int, stdout: str, stder
     # Fix A (SYNTHESIS Pattern 1) — empty-stdout-on-success emits a
     # no_data envelope instead of falling into the error path.
     if exit_code in success_codes and not stdout_text:
-        cmd_name = args[0] if args else ""
-        is_diff_like = "diff" in cmd_name
-        return {
-            "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
-            "summary": {
-                "verdict": "no changes" if is_diff_like else "no data",
-                "state": "no_data",
-                "partial_success": False,
-            },
-            "data": [],
-        }
+        return _build_no_data_envelope(args)
     if exit_code in success_codes and stdout_text:
         try:
             parsed = json.loads(stdout_text)
         except json.JSONDecodeError as exc:
-            cmd_name = args[0] if args else ""
-            return {
-                "command": "roam_" + cmd_name.replace("-", "_") if cmd_name else "roam",
-                "summary": {
-                    "verdict": "invalid output from underlying command",
-                    "state": "invalid_output",
-                    "partial_success": True,
-                },
-                "error_code": "INVALID_JSON",
-                "error": f"Failed to parse JSON output: {exc}",
-                "raw_stdout_preview": stdout_text[:500],
-            }
+            return _build_invalid_json_envelope(
+                args,
+                f"Failed to parse JSON output: {exc}",
+                stdout_text,
+            )
         if exit_code == EXIT_GATE_FAILURE:
             parsed["gate_failure"] = True
             parsed["exit_code"] = EXIT_GATE_FAILURE
