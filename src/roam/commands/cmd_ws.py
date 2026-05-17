@@ -351,7 +351,7 @@ def ws_resolve(ctx) -> None:
         # after `ws init`, or after the user edits roles by hand without
         # re-running init), auto-derive pairs from `role: frontend` β†”
         # `role: backend` tags so `ws resolve` does *something* useful.
-        # The on-disk config is left alone β€” populate in-memory only.
+        # The on-disk config is left alone — populate in-memory only.
         connections = list(config.get("connections", []))
         if not connections:
             fe_repos = [r for r in repo_infos if r.get("role") == "frontend"]

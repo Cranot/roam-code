@@ -605,7 +605,37 @@ def duplicates(
         ).fetchall()
 
         if len(candidates) < 2:
-            verdict = "No duplicate candidates found"
+            # W805 (Pattern 2: silent fallbacks) — fewer than 2 candidate
+            # functions means the duplicate-detection algorithm CANNOT
+            # produce findings (it needs pairs to compare). The previous
+            # verdict "No duplicate candidates found" was a silent SAFE
+            # indistinguishable from "scan ran cleanly across 1000 funcs
+            # and found no clusters". Disclose the absent input state so
+            # agents see that the detector ran in a degraded mode.
+            symbol_count = conn.execute(
+                "SELECT COUNT(*) FROM symbols WHERE kind IN ('function', 'method')"
+            ).fetchone()[0]
+            if symbol_count == 0:
+                w805_state = "empty_corpus"
+                verdict = (
+                    "no symbols to analyze (corpus has 0 functions/methods; "
+                    "run `roam index --force` to populate the graph "
+                    "before duplicate detection)"
+                )
+            elif len(candidates) == 0:
+                w805_state = "no_candidates"
+                verdict = (
+                    f"no candidates above min-lines threshold ({min_lines}; "
+                    f"all {symbol_count} functions are smaller — "
+                    f"detector had no input to analyze)"
+                )
+            else:
+                # Exactly 1 candidate — the algorithm needs pairs.
+                w805_state = "insufficient_candidates"
+                verdict = (
+                    "only 1 candidate function above min-lines threshold "
+                    "(duplicate detection requires at least 2 to form a pair)"
+                )
             if json_mode:
                 click.echo(
                     to_json(
@@ -616,6 +646,9 @@ def duplicates(
                                 "total_clusters": 0,
                                 "total_functions": 0,
                                 "estimated_reducible_lines": 0,
+                                "state": w805_state,
+                                "partial_success": True,
+                                "candidates_scanned": len(candidates),
                             },
                             clusters=[],
                         )

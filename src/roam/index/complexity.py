@@ -710,7 +710,7 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
                         body_node = child
                         break
             if body_node is not None:
-                # ``==`` not ``is`` β€” tree-sitter returns a fresh Python
+                # ``==`` not ``is`` — tree-sitter returns a fresh Python
                 # wrapper from ``child_by_field_name`` even when the
                 # underlying C-level node is identical to one in
                 # ``.children``. Identity check would always be False

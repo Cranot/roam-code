@@ -87,6 +87,15 @@ learned = [
     # Optional — current `--rerank fast` blend stays the default.
     "lightgbm>=4.0",
 ]
+typecheck = [
+    # W931: mypy convenience extras. Discovered during W919 / W925 type-annotation
+    # validation that there was no first-class way to install a typechecker into
+    # the `.venv` (`pip install -e .[typecheck]`). mypy is intentionally NOT a
+    # `dev` dependency because the test suite does not require it; treat it as
+    # an opt-in tool for type-stamping work. Pin to a recent stable; tightening
+    # the lower bound is fine when annotations need a newer mypy feature.
+    "mypy>=1.10",
+]
 dev = [
     "pytest>=7.0",
     "pytest-xdist>=3.0",

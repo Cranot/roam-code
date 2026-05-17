@@ -1699,6 +1699,23 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
     with open_db(readonly=not persist) as conn:
         findings, framework = analyze_n1(conn, confidence_filter)
 
+        # W805 (Pattern 2: silent fallbacks) — distinguish "scan ran
+        # against a populated graph and found zero N+1 patterns" from
+        # "graph has zero ORM models / zero symbols, so the detector
+        # could never match anything". The previous code emitted
+        # "No implicit N+1 patterns detected" in BOTH cases, which is
+        # the canonical Pattern-2 silent SAFE — agents reading only the
+        # verdict cannot tell the difference between "clean codebase"
+        # and "detector never ran on real input". Mirror cmd_taint W826:
+        # name the absent state explicitly + partial_success=True.
+        models_scanned = len(_find_model_classes(conn))
+        symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        empty_state: str | None = None
+        if symbol_count == 0:
+            empty_state = "empty_corpus"
+        elif models_scanned == 0:
+            empty_state = "no_models"
+
         # --- W110: mirror findings into the central findings registry ---
         # Runs ONLY with --persist. The persisted set is the FULL finding
         # list (independent of the --limit display slice) so re-running
@@ -1730,11 +1747,21 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
         conf_parts = [f"{by_confidence[c]} {c}" for c in ("high", "medium", "low") if by_confidence.get(c)]
         conf_str = ", ".join(conf_parts) if conf_parts else "none"
 
-        verdict = (
-            f"{total} implicit N+1 pattern{'s' if total != 1 else ''} found ({conf_str})"
-            if total
-            else "No implicit N+1 patterns detected"
-        )
+        if total:
+            verdict = f"{total} implicit N+1 pattern{'s' if total != 1 else ''} found ({conf_str})"
+        elif empty_state == "empty_corpus":
+            verdict = (
+                "no symbols to analyze (corpus empty; "
+                "run `roam index --force` to populate the graph before N+1 detection)"
+            )
+        elif empty_state == "no_models":
+            verdict = (
+                f"no ORM models found in framework={framework} (N+1 detection "
+                f"requires Laravel/Django/Rails/SQLAlchemy/JPA model classes; "
+                f"detector ran but had no input to analyze)"
+            )
+        else:
+            verdict = "No implicit N+1 patterns detected"
 
         # --- SARIF output (W1208) ---
         # Branches BEFORE json/text so the pre-existing paths stay
@@ -1768,6 +1795,9 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
                             "by_confidence": dict(by_confidence),
                             "truncated": truncated,
                             "findings_confidence_distribution": distribution,
+                            "state": empty_state or "scanned",
+                            "partial_success": empty_state is not None,
+                            "models_scanned": models_scanned,
                         },
                         findings=finding_triples,
                     )

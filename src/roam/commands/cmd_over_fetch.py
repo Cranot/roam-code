@@ -1278,6 +1278,17 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         findings = analyze_over_fetch(conn, threshold=threshold, limit=limit)
         endpoint_findings = analyze_endpoint_states(conn, find_project_root())
 
+        # W805 (Pattern 2: silent fallbacks) — over-fetch only fires on
+        # PHP/Laravel model files (path LIKE '%/Models/%'). On a
+        # Python/JS/Go codebase, _find_model_files returns 0 and BOTH
+        # finding lists come back empty. The historical verdict
+        # "No over-fetch patterns detected" was indistinguishable from
+        # "scan ran against a Laravel app and the models are clean".
+        # Capture the empty-input state so the empty-corpus branch
+        # below can name it explicitly.
+        _w805_model_files_count = len(_find_model_files(conn))
+        _w805_symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+
         # --- W114: mirror into the central findings registry ---
         # Runs ONLY with --persist. The persisted set is independent of
         # the --leaks-only display filter — we emit every classification
@@ -1363,6 +1374,18 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
     else:
         endpoint_verdict = ""
 
+    # W805 (Pattern 2: silent fallbacks) — distinguish detector-ran-clean
+    # from detector-had-no-input. The empty-state classification is set
+    # only when no model-level AND no endpoint-level findings exist,
+    # because either lane producing a finding proves the detector did
+    # meaningful work.
+    w805_empty_state: str | None = None
+    if not total and not endpoint_total:
+        if _w805_symbol_count == 0:
+            w805_empty_state = "empty_corpus"
+        elif _w805_model_files_count == 0:
+            w805_empty_state = "no_php_models"
+
     if total or endpoint_total:
         head_bits: list[str] = []
         if total:
@@ -1370,6 +1393,16 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         if endpoint_verdict:
             head_bits.append(endpoint_verdict)
         verdict = "; ".join(head_bits)
+    elif w805_empty_state == "empty_corpus":
+        verdict = (
+            "no symbols to analyze (corpus empty; "
+            "run `roam index --force` to populate the graph before over-fetch detection)"
+        )
+    elif w805_empty_state == "no_php_models":
+        verdict = (
+            "no PHP/Laravel model files found (over-fetch detection requires "
+            "files under Models/ or Model/; detector ran but had no input to analyze)"
+        )
     else:
         verdict = "No over-fetch patterns detected"
 
@@ -1400,7 +1433,16 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         # it separate from model-level `findings` so existing consumers
         # don't break. The summary carries the headline counts so agents
         # can read the verdict line and skip the full envelope.
+        # Pre-existing partial_success semantic (leaks present) is
+        # preserved for back-compat. W805 layers an additional
+        # detector-input-state field (`detector_state`) for the
+        # empty-input case + flips partial_success on empty-input
+        # branches per the canonical Pattern-2 convention. The legacy
+        # `state` ("ok"/"leak") is preserved unchanged so existing
+        # consumers don't break.
         partial_success = bare_count > 0 or unguarded_relation_count > 0
+        if w805_empty_state is not None:
+            partial_success = True
         click.echo(
             to_json(
                 json_envelope(
@@ -1420,8 +1462,10 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
                         "endpoint_total": endpoint_total,
                         "real_leak_count": real_leaks,
                         "state": "ok" if real_leaks == 0 else "leak",
+                        "detector_state": w805_empty_state or "scanned",
                         "partial_success": partial_success,
                         "leaks_only": leaks_only,
+                        "model_files_scanned": _w805_model_files_count,
                     },
                     findings=findings,
                     endpoint_findings=endpoint_findings,

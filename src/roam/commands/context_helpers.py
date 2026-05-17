@@ -1,7 +1,7 @@
 """Data-gathering helpers for the context command.
 
 Extracted from cmd_context.py to reduce file size.  These functions
-query the index DB and return plain dicts β€” no rendering or CLI I/O.
+query the index DB and return plain dicts — no rendering or CLI I/O.
 """
 
 from __future__ import annotations
@@ -445,7 +445,7 @@ def gather_annotations(conn: sqlite3.Connection, sym: dict | None = None, file_p
 
     if sym is not None:
         sym_id = sym["id"]
-        # sqlite3.Row lacks .get() β€” use try/except
+        # sqlite3.Row lacks .get() — use try/except
         try:
             qname = sym["qualified_name"] or sym["name"]
         except (KeyError, IndexError):
@@ -896,7 +896,7 @@ def gather_task_extras(conn, sym, ctx_data, task):
         extras["graph_centrality"] = get_graph_metrics(conn, sym_id)
 
     elif task == "understand":
-        # sqlite3.Row lacks .get() β€” use try/except for optional fields
+        # sqlite3.Row lacks .get() — use try/except for optional fields
         try:
             extras["docstring"] = sym["docstring"] or None
         except (KeyError, IndexError):

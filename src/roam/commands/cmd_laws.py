@@ -269,6 +269,13 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
 
+        # W805 (Pattern 2): pre-fetch symbol count INSIDE the open_db
+        # block so the empty-state verdict below has a real input shape
+        # to disclose. Cheap (one COUNT(*) over the symbols table) and
+        # only used when laws is empty, but always queried so the
+        # control flow stays linear.
+        _w805_symbol_count_laws = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+
     yaml_text = dump_laws_yaml(laws)
 
     if out_path:
@@ -284,16 +291,54 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
     high = sum(1 for law in laws if law.confidence == "high")
     medium = sum(1 for law in laws if law.confidence == "medium")
     low = sum(1 for law in laws if law.confidence == "low")
-    verdict = f"Mined {len(laws)} laws ({high} high-confidence)"
 
-    summary = {
-        "verdict": verdict,
-        "law_count": len(laws),
-        "high_confidence": high,
-        "medium_confidence": medium,
-        "low_confidence": low,
-        "partial_success": False,
-    }
+    # W805 (Pattern 2: silent fallbacks) — distinguish "mined zero laws
+    # from a populated graph + git history" from "mined zero laws because
+    # the corpus had no symbols / no git history to analyze". The
+    # previous verdict "Mined 0 laws (0 high-confidence)" + partial_success=False
+    # was a silent SAFE on a degraded run.
+    summary: dict
+    if not laws:
+        symbol_count = _w805_symbol_count_laws
+        if symbol_count == 0:
+            verdict = (
+                "no symbols to analyze (corpus empty; "
+                "run `roam index --force` to populate the graph before law mining)"
+            )
+            summary = {
+                "verdict": verdict,
+                "law_count": 0,
+                "high_confidence": 0,
+                "medium_confidence": 0,
+                "low_confidence": 0,
+                "partial_success": True,
+                "state": "empty_corpus",
+            }
+        else:
+            verdict = (
+                f"no laws met the conformance / sample thresholds "
+                f"(min_confidence={min_confidence or 'low'}, top={top}; "
+                f"detector ran across {symbol_count} symbols but produced 0 candidates)"
+            )
+            summary = {
+                "verdict": verdict,
+                "law_count": 0,
+                "high_confidence": 0,
+                "medium_confidence": 0,
+                "low_confidence": 0,
+                "partial_success": True,
+                "state": "no_laws_passed_thresholds",
+            }
+    else:
+        verdict = f"Mined {len(laws)} laws ({high} high-confidence)"
+        summary = {
+            "verdict": verdict,
+            "law_count": len(laws),
+            "high_confidence": high,
+            "medium_confidence": medium,
+            "low_confidence": low,
+            "partial_success": False,
+        }
     if out_msg:
         summary["written_to"] = str(out_path)
 
