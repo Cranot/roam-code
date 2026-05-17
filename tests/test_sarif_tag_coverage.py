@@ -51,13 +51,14 @@ from __future__ import annotations
 import ast
 import inspect
 import re
-from pathlib import Path
+
+from tests._helpers.repo_root import repo_root
 
 # ---------------------------------------------------------------------------
 # Source locations the lint scans.
 # ---------------------------------------------------------------------------
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = repo_root()
 _SARIF_PY = _REPO_ROOT / "src" / "roam" / "output" / "sarif.py"
 # cmd_*.py modules that define their own SARIF projection rather than
 # routing through src/roam/output/sarif.py. The W1062-followup-4 audit

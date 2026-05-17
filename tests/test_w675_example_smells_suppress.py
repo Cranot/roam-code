@@ -20,8 +20,9 @@ from roam.commands.smells_suppress import (
     load_smells_suppressions_typed,
 )
 from roam.policy.suppression_v2 import KindSymbolSuppression
+from tests._helpers.repo_root import repo_root
 
-EXAMPLE_PATH = Path(__file__).resolve().parent.parent / "templates" / "examples" / "smells.suppress.yml"
+EXAMPLE_PATH = repo_root() / "templates" / "examples" / "smells.suppress.yml"
 
 
 def _stage_example(tmp_path: Path) -> Path:

@@ -151,9 +151,9 @@ def test_cmd_math_task_filter_close_match_knobs_documented():
     typos). The inline ``W1083-followup`` marker must remain so the
     next audit doesn't flag the divergence from the canonical
     helper's 0.6/2."""
-    from pathlib import Path
+    from tests._helpers.repo_root import repo_root
 
-    src = Path(__file__).parent.parent / "src" / "roam" / "commands" / "cmd_math.py"
+    src = repo_root() / "src" / "roam" / "commands" / "cmd_math.py"
     text = src.read_text(encoding="utf-8")
     # The call signature stays at the chosen knobs.
     assert "n=3, cutoff=0.4" in text
