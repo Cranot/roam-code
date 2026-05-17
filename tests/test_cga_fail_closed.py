@@ -206,6 +206,158 @@ class TestVerifyHelpAdvertisesFailClosedDefault:
         assert "--no-cosign" in result.output, "verify --help must document the --no-cosign opt-out"
 
 
+class TestVerifyKeylessRequiresCertIdentity:
+    """Cosign >= 2.0 refuses keyless verification without
+    ``--certificate-identity`` / ``--certificate-oidc-issuer``. Roam mirrors
+    that gate at the CLI: if neither ``--cosign-key`` nor BOTH cert flags
+    are provided when a bundle is present, refuse with a clear error
+    instead of letting cosign emit its own confusing message buried inside
+    the envelope. Regression guard for the CGA-Attestation workflow break
+    on commits 18ef4318 / bb194972 (cosign verify-blob failed with
+    "--certificate-identity or --certificate-identity-regexp is required").
+    """
+
+    def test_verify_help_documents_cert_identity_flags(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["cga", "verify", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--cert-identity" in result.output, (
+            "verify --help must document --cert-identity for keyless mode"
+        )
+        assert "--cert-oidc-issuer" in result.output, (
+            "verify --help must document --cert-oidc-issuer for keyless mode"
+        )
+
+    def test_keyless_verify_without_cert_flags_fails_closed(
+        self, cga_project, tmp_path, monkeypatch
+    ):
+        """Bundle present, no --cosign-key, no --cert-identity — must refuse
+        before invoking cosign so the error is actionable, not the raw
+        cosign stderr.
+        """
+        import roam.attest.cga as cga_mod
+
+        out = tmp_path / "cga.json"
+        sig = tmp_path / "cga.sig"
+        bundle = tmp_path / "cga.bundle"
+
+        real_run = cga_mod.subprocess.run
+
+        def fake_cosign_available():
+            return True, "v2.4.0 (mocked)"
+
+        def fake_run(args, *a, **kw):
+            argv = args if isinstance(args, (list, tuple)) else [args]
+            cmd = argv[0] if argv else ""
+            if cmd == "git" or (isinstance(cmd, str) and cmd.endswith("git")):
+                return real_run(args, *a, **kw)
+            if "sign-blob" in argv:
+                sig.write_text("fake-sig\n", encoding="utf-8")
+                bundle.write_text('{"mock": "bundle"}', encoding="utf-8")
+
+            class _R:
+                returncode = 0
+                stdout = "Verified OK"
+                stderr = ""
+
+            return _R()
+
+        monkeypatch.setattr(cga_mod, "cosign_available", fake_cosign_available)
+        monkeypatch.setattr(cga_mod.subprocess, "run", fake_run)
+        # Strip any ambient env that could let the gate pass.
+        monkeypatch.delenv("ROAM_CGA_CERT_IDENTITY", raising=False)
+        monkeypatch.delenv("ROAM_CGA_CERT_OIDC_ISSUER", raising=False)
+
+        runner = CliRunner()
+        fake_key = tmp_path / "fake.key"
+        fake_key.write_text("# mock", encoding="utf-8")
+
+        emit = runner.invoke(
+            cli,
+            ["cga", "emit", "--sign", "--key", str(fake_key), "--output", str(out)],
+        )
+        assert emit.exit_code == 0, emit.output
+        assert bundle.exists()
+
+        # Verify with NO key + NO cert flags must refuse loudly.
+        verify = runner.invoke(cli, ["--json", "cga", "verify", str(out)])
+        assert verify.exit_code == 5, verify.output
+        data = json.loads(verify.output)
+        joined = " ".join(data.get("errors", []))
+        assert "cert-identity" in joined or "cert-oidc-issuer" in joined, (
+            f"refusal error must name the missing cert flag(s); got: {joined}"
+        )
+
+    def test_keyless_verify_with_env_cert_flags_passes_through(
+        self, cga_project, tmp_path, monkeypatch
+    ):
+        """ROAM_CGA_CERT_IDENTITY + ROAM_CGA_CERT_OIDC_ISSUER env vars
+        satisfy the gate without command-line flags (the workflow uses
+        env-var injection from GitHub context, see cga-attestation.yml)."""
+        import roam.attest.cga as cga_mod
+
+        out = tmp_path / "cga.json"
+        sig = tmp_path / "cga.sig"
+        bundle = tmp_path / "cga.bundle"
+        captured_argv: list[list] = []
+
+        real_run = cga_mod.subprocess.run
+
+        def fake_cosign_available():
+            return True, "v2.4.0 (mocked)"
+
+        def fake_run(args, *a, **kw):
+            argv = args if isinstance(args, (list, tuple)) else [args]
+            cmd = argv[0] if argv else ""
+            if cmd == "git" or (isinstance(cmd, str) and cmd.endswith("git")):
+                return real_run(args, *a, **kw)
+            if "sign-blob" in argv:
+                sig.write_text("fake-sig\n", encoding="utf-8")
+                bundle.write_text('{"mock": "bundle"}', encoding="utf-8")
+            if "verify-blob" in argv:
+                captured_argv.append(list(argv))
+
+            class _R:
+                returncode = 0
+                stdout = "Verified OK"
+                stderr = ""
+
+            return _R()
+
+        monkeypatch.setattr(cga_mod, "cosign_available", fake_cosign_available)
+        monkeypatch.setattr(cga_mod.subprocess, "run", fake_run)
+        monkeypatch.setenv(
+            "ROAM_CGA_CERT_IDENTITY",
+            "https://github.com/owner/repo/.github/workflows/cga.yml@refs/heads/main",
+        )
+        monkeypatch.setenv(
+            "ROAM_CGA_CERT_OIDC_ISSUER",
+            "https://token.actions.githubusercontent.com",
+        )
+
+        runner = CliRunner()
+        fake_key = tmp_path / "fake.key"
+        fake_key.write_text("# mock", encoding="utf-8")
+        emit = runner.invoke(
+            cli,
+            ["cga", "emit", "--sign", "--key", str(fake_key), "--output", str(out)],
+        )
+        assert emit.exit_code == 0, emit.output
+
+        verify = runner.invoke(cli, ["--json", "cga", "verify", str(out)])
+        assert verify.exit_code == 0, verify.output
+        # And the cosign verify-blob call must carry the env-supplied flags.
+        cosign_calls = [a for a in captured_argv if "verify-blob" in a]
+        assert cosign_calls, "cosign verify-blob must have been invoked"
+        flat = " ".join(cosign_calls[-1])
+        assert "--certificate-identity" in flat, (
+            f"cert-identity env must reach cosign args; got: {flat}"
+        )
+        assert "--certificate-oidc-issuer" in flat, (
+            f"cert-oidc-issuer env must reach cosign args; got: {flat}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Manual smoke for environments without git — skip silently.
 # ---------------------------------------------------------------------------

@@ -132,7 +132,17 @@ class TestPersonalizedPagerank:
         assert seeded[1] > global_pr[10]
 
     def test_alpha_override_accepted(self):
-        """Passing an explicit alpha works and changes the distribution."""
+        """Passing an explicit alpha works and changes the distribution.
+
+        Alpha differentiates scores only on the real ``nx.pagerank`` path,
+        which requires numpy/scipy. The degree-based fallback in
+        ``personalized_pagerank`` deliberately ignores alpha (see
+        ``TestPersonalizedPagerankAlphaIgnoredInFallback`` in
+        ``test_fallback_contracts.py`` — that's the documented constraint).
+        So this test only fires when the real solver is available; skip it
+        otherwise rather than asserting a property the fallback can't honour.
+        """
+        pytest.importorskip("numpy")
         G = _star(0, [1, 2, 3])
         a = personalized_pagerank(G, {1: 1.0}, alpha=0.5)
         b = personalized_pagerank(G, {1: 1.0}, alpha=0.95)
