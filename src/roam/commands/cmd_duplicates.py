@@ -612,9 +612,9 @@ def duplicates(
             # indistinguishable from "scan ran cleanly across 1000 funcs
             # and found no clusters". Disclose the absent input state so
             # agents see that the detector ran in a degraded mode.
-            symbol_count = conn.execute(
-                "SELECT COUNT(*) FROM symbols WHERE kind IN ('function', 'method')"
-            ).fetchone()[0]
+            symbol_count = conn.execute("SELECT COUNT(*) FROM symbols WHERE kind IN ('function', 'method')").fetchone()[
+                0
+            ]
             if symbol_count == 0:
                 w805_state = "empty_corpus"
                 verdict = (

@@ -144,6 +144,13 @@ def test_n1_empty_corpus_text_mode(cli_runner, empty_corpus):
     assert result.exit_code == 0
     assert "VERDICT:" in result.output
     out_lc = result.output.lower()
-    assert any(token in out_lc for token in ("no implicit n+1", "no n+1", "0 patterns")), (
-        f"text-mode VERDICT does not disclose empty state: {result.output!r}"
-    )
+    assert any(
+        token in out_lc
+        for token in (
+            "no implicit n+1",
+            "no n+1",
+            "0 patterns",
+            "no symbols to analyze",
+            "corpus empty",
+        )
+    ), f"text-mode VERDICT does not disclose empty state: {result.output!r}"

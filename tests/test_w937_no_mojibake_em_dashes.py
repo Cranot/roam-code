@@ -49,6 +49,5 @@ def test_src_roam_has_no_cp1253_mojibake_em_dashes() -> None:
     assert hits == [], (
         "Found cp1253-mojibake em-dashes (the byte sequence "
         f"{_MOJIBAKE_EM_DASH!r} == 'β€”'). Replace with the correct UTF-8 "
-        "em-dash (— / b'\\xe2\\x80\\x94'). Hits:\n  "
-        + "\n  ".join(f"{p}: {n} occurrences" for p, n in hits)
+        "em-dash (— / b'\\xe2\\x80\\x94'). Hits:\n  " + "\n  ".join(f"{p}: {n} occurrences" for p, n in hits)
     )
