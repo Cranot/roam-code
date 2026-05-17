@@ -80,7 +80,12 @@ def test_adversarial_pattern2_partial_when_check_errors(monkeypatch, tmp_path):
     summary = payload["summary"]
 
     assert summary["partial_success"] is True
-    assert summary["failed_checks"] == ["new_cycles"]
+    # ``new_cycles`` is the check we explicitly forced to error. On CI runners
+    # without a built index, the W1259 ``symbol_lookup`` substrate also reports
+    # ``errored:symbol_lookup:OperationalError`` (no ``symbols`` table). We
+    # only assert the forced failure is present — environment-incidental
+    # failures may co-occur and don't change the contract.
+    assert "new_cycles" in summary["failed_checks"]
     assert summary["state"] == "partial_adversarial"
     # The verdict must signal the cascade so an agent reading only
     # ``verdict`` (LAW 6) sees the partial state, never "clean".
@@ -103,6 +108,11 @@ def test_adversarial_clean_path_unchanged(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "get_changed_files", lambda *_a, **_kw: ["src/roam/cli.py"])
     monkeypatch.setattr(mod, "resolve_changed_to_db", lambda _conn, _changed: {"src/roam/cli.py": 1})
     monkeypatch.setattr(mod, "ensure_index", lambda: None)
+    # W1259 added a symbol_lookup substrate that runs `batched_in` against the
+    # `symbols` table. Without a built index (CI default), that query raises
+    # `no such table: symbols` and pollutes failed_checks. Stub it so the
+    # clean-path test reflects the contract it's testing.
+    monkeypatch.setattr(mod, "batched_in", lambda _conn, _sql, _ids: [])
 
     # Every check returns clean — explicitly mark "ran" in the status
     # so the assertion can pin shape. (The real helpers also do this;
