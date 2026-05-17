@@ -104,6 +104,13 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "why-fail",
         "why-slow",
         "workflow",
+        # W1289 — both are pure DB reads:
+        #   `weather` ranks files by churn × complexity (open_db readonly=True;
+        #   capability metadata declares side_effect=False).
+        #   `why` explains a symbol's role/reach/criticality (open_db
+        #   readonly=True; networkx compute on graph snapshot).
+        "weather",
+        "why",
     },
     "safe_edit": {
         "diff",
@@ -142,6 +149,12 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # init/resolve) is possible if/when the mode policy gains
         # subcommand-path granularity — left as a future refinement.
         "ws",
+        # W1289 — `watch` is a daemon that re-indexes on filesystem events
+        # (open_db readonly=False at cmd_watch.py:191). It writes to the
+        # main `.roam/index.db` like `init`/`index`, but it's not a
+        # bootstrap-deadlock path (an agent can still `init` instead), so
+        # it lives in safe_edit rather than `_MODE_ALWAYS_ALLOWED`.
+        "watch",
     },
     "migration": {
         "migration-plan",
