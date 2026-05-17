@@ -279,6 +279,18 @@ def test_high_blast_radius_warning_fires_on_widely_used_symbol(monkeypatch):
     assert r["summary"]["verdict"] == "needs-review"
 
 
+@pytest.mark.xfail(
+    reason=(
+        "W1276: monkeypatch on mcp._vp_blast_radius doesn't take effect on CI "
+        "Python 3.10-3.13 — same root cause as test_name_collision_warning "
+        "(W1273). Live blast count for analyze_n1 (27) leaks through and "
+        "MEDIUM_BLAST_RADIUS fires alongside (or instead of) FITNESS_VIOLATIONS. "
+        "The producer-side contract is still pinned by "
+        "test_preflight_summary_carries_fitness_violations_list (no monkeypatch). "
+        "Cannot reproduce locally on Python 3.14 due to fastmcp incompat."
+    ),
+    strict=False,
+)
 def test_fitness_violations_warning_fires_when_preflight_summary_lists_them(monkeypatch):
     """The FITNESS_VIOLATIONS branch reads ``summary['fitness_violations']`` /
     ``summary['violations']`` from ``roam preflight`` and only fires when the
