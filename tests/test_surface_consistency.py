@@ -338,6 +338,32 @@ def test_surface_envelope_mcp_unavailable_signals_match(monkeypatch):
     assert data["mcp_tool_count"] == expected_count
 
 
+def test_surface_mcp_unavailable_distinguishes_broken_fastmcp(monkeypatch):
+    """An installed-but-broken FastMCP import must not be reported as missing.
+
+    This is the Pattern-2 absent-vs-broken distinction: a dependency can be
+    present on disk but unusable because a transitive import failed. The
+    surface count stays AST-derived either way, but the remediation hint
+    should name transport unavailability instead of claiming the package is
+    not installed.
+    """
+    import roam.mcp_server as mcp_mod
+
+    monkeypatch.setattr(mcp_mod, "FastMCP", None)
+    monkeypatch.setattr(
+        mcp_mod,
+        "_FASTMCP_IMPORT_ERROR",
+        "ImportError: cannot import name '_coerce_tool_transform_configs' from 'fastmcp.mcp_config'",
+    )
+
+    data = _build_surface()
+    assert data["mcp_introspection_available"] is False
+    assert "mcp_introspection_error" in data
+    assert "_coerce_tool_transform_configs" in data["mcp_introspection_error"]
+    assert "fastmcp transport unavailable" in data["mcp_tools_note"].lower()
+    assert "not installed" not in data["mcp_tools_note"].lower()
+
+
 def test_surface_json_envelope_summary_exposes_mcp_introspection(monkeypatch):
     """The boolean must reach JSON consumers via ``summary.mcp_introspection_available``.
     This is the field CI runners read.
@@ -363,3 +389,15 @@ def test_surface_json_envelope_summary_exposes_mcp_introspection(monkeypatch):
 
     expected_count = mcp_surface_counts()["registered_tools"]
     assert summary["mcp_tool_count"] == expected_count
+
+
+def test_surface_command_rows_mark_mcp_exposed_tools():
+    """Command rows should not collapse the MCP exposure flag to all false."""
+    data = _build_surface()
+    by_name = {row["name"]: row for row in data["commands"]}
+
+    for command in ("ask", "health", "preflight", "impact", "dead", "complexity", "cga", "oracle"):
+        assert by_name[command]["mcp_exposed"] is True, f"{command} should be marked MCP-exposed"
+
+    exposed_count = sum(1 for row in data["commands"] if row["mcp_exposed"])
+    assert exposed_count >= 100, f"surface mcp_exposed collapsed unexpectedly: {exposed_count}"

@@ -13,11 +13,14 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import json
 import os
 import subprocess
 import sys
 import time as _time
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -26,12 +29,16 @@ from click.testing import CliRunner as _CliRunner
 
 from roam.ask.workflow import workflow_metadata_for_recipe
 
+_FASTMCP_IMPORT_ERROR: str | None = None
 try:
-    from fastmcp import Context as _Context
-    from fastmcp import FastMCP
-except ImportError:
+    with warnings.catch_warnings(), contextlib.redirect_stderr(io.StringIO()):
+        warnings.simplefilter("ignore")
+        from fastmcp import Context as _Context
+        from fastmcp import FastMCP
+except Exception as exc:
     _Context = None
     FastMCP = None
+    _FASTMCP_IMPORT_ERROR = f"{exc.__class__.__name__}: {exc}"
 
 try:
     from mcp.types import ToolAnnotations as _ToolAnnotations
@@ -39,9 +46,28 @@ except ImportError:
     _ToolAnnotations = None
 
 try:
-    from fastmcp.server.tasks.config import TaskConfig as _TaskConfig
+    with warnings.catch_warnings(), contextlib.redirect_stderr(io.StringIO()):
+        warnings.simplefilter("ignore")
+        from fastmcp.server.tasks.config import TaskConfig as _TaskConfig
 except Exception:
     _TaskConfig = None
+
+
+def _fastmcp_unavailable_message() -> str:
+    """Return the operator-facing message for an unavailable MCP transport."""
+    if _FASTMCP_IMPORT_ERROR and "No module named 'fastmcp'" not in _FASTMCP_IMPORT_ERROR:
+        return (
+            "fastmcp transport unavailable for the MCP server.\n"
+            f"import error: {_FASTMCP_IMPORT_ERROR}\n"
+            "repair it with:  pip install roam-code[mcp]\n"
+            "if this looks unexpected, run `roam doctor` to diagnose your install."
+        )
+    return (
+        "fastmcp is required for the MCP server.\n"
+        "install it with:  pip install roam-code[mcp]\n"
+        "if this looks unexpected, run `roam doctor` to diagnose your install."
+    )
+
 
 # MCP-native enhancements (sampling, watcher, session, progress, completions).
 # Each module is best-effort -- import failures degrade gracefully.
@@ -15848,12 +15874,7 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         raise SystemExit(1)
 
     if mcp is None:
-        click.echo(
-            "error: fastmcp is required for the MCP server.\n"
-            "install it with:  pip install roam-code[mcp]\n"
-            "if this looks unexpected, run `roam doctor` to diagnose your install.",
-            err=True,
-        )
+        click.echo(f"error: {_fastmcp_unavailable_message()}", err=True)
         raise SystemExit(1)
 
     if list_tools_json:
@@ -16132,9 +16153,5 @@ _TASK_OPTIONAL_TOOLS = frozenset(name for name, meta in _TOOL_METADATA.items() i
 
 if __name__ == "__main__":
     if mcp is None:
-        raise SystemExit(
-            "fastmcp is required for the MCP server.\n"
-            "Install it with:  pip install roam-code[mcp]\n"
-            "If this looks unexpected, run `roam doctor` to diagnose your install."
-        )
+        raise SystemExit(_fastmcp_unavailable_message())
     mcp.run()

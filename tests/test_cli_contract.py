@@ -423,6 +423,36 @@ def test_explain_command_surface_json(cli_runner, empty_dir):
     assert cmd_field["name"] == "surface"
 
 
+def test_explain_command_table_scan_ignores_docstrings_and_comments(tmp_path):
+    """The table scanner should read SQL literals, not prose."""
+    from roam.commands.cmd_explain_command import _scan_module_for_tables
+
+    module_path = tmp_path / "cmd_demo.py"
+    module_path.write_text(
+        '"""This command reads from the graph and writes into reports."""\n'
+        "# UPDATE the docs from time to time\n"
+        "SQL = '''\n"
+        "SELECT s.id\n"
+        "FROM symbols s\n"
+        "JOIN files f ON s.file_id = f.id\n"
+        "'''\n",
+        encoding="utf-8",
+    )
+
+    assert _scan_module_for_tables(module_path) == ["files", "symbols"]
+
+
+def test_explain_command_complexity_tables_are_sql_tables(cli_runner, empty_dir):
+    """Complexity command metadata should not include prose false positives."""
+    result = cli_runner.invoke(cli, ["--json", "explain-command", "complexity"])
+    assert result.exit_code == 0, result.output
+    data = _parse_json_strict(result, "explain-command complexity --json")
+
+    tables = set(data["command_info"]["db_tables_referenced"])
+    assert {"files", "symbol_metrics", "symbols"}.issubset(tables)
+    assert not {"the", "roam", "emitting", "rankings"}.intersection(tables)
+
+
 # ---------------------------------------------------------------------------
 # `roam db-check --json` shape (run on a real indexed project)
 # ---------------------------------------------------------------------------

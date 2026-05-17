@@ -111,6 +111,68 @@ def mcp_tool_names() -> list[str]:
     return sorted(names)
 
 
+_MCP_TOOL_ALIASES: dict[str, set[str]] = {
+    "annotate-symbol": {"roam_annotate_symbol"},
+    "bisect": {"roam_bisect_blame"},
+    "breaking": {"roam_breaking_changes"},
+    "budget": {"roam_budget_check"},
+    "capsule": {"roam_capsule_export"},
+    "cga": {"roam_cga_emit", "roam_cga_verify"},
+    "churn": {"roam_weather"},
+    "complexity": {"roam_complexity_report"},
+    "context": {"roam_context", "roam_ws_context"},
+    "dead": {"roam_dead_code"},
+    "digest": {"roam_trends"},
+    "file": {"roam_file_info"},
+    "findings": {"roam_findings_count", "roam_findings_list", "roam_findings_show"},
+    "oracle": {
+        "roam_oracle_is_clone_of",
+        "roam_oracle_is_reachable_from_entry",
+        "roam_oracle_is_test_only",
+        "roam_oracle_route_exists",
+        "roam_oracle_symbol_exists",
+    },
+    "refs": {"roam_uses"},
+    "review": {"roam_review_change"},
+    "rules": {"roam_check_rules", "roam_rules_check", "roam_rules_validate"},
+    "search": {"roam_search_semantic", "roam_search_symbol"},
+    "snapshot": {"roam_trends"},
+    "trend": {"roam_trends"},
+    "trends": {"roam_trends"},
+    "understand": {"roam_understand", "roam_ws_understand"},
+    "uses": {"roam_uses"},
+    "vulns": {"roam_vuln_map", "roam_vuln_reach"},
+    "weather": {"roam_weather"},
+}
+
+_MCP_TOOL_SUFFIXES: tuple[str, ...] = (
+    "blame",
+    "changes",
+    "check",
+    "code",
+    "emit",
+    "export",
+    "info",
+    "report",
+    "validate",
+    "verify",
+)
+
+
+def mcp_candidate_tool_names(command_name: str) -> set[str]:
+    """Return plausible MCP wrapper names for a CLI command.
+
+    Used by both ``roam surface`` and the MCP-wrapper coverage audit. Keep
+    the non-obvious aliases here so those two surfaces cannot drift apart
+    on names like ``dead`` -> ``roam_dead_code``.
+    """
+    base = command_name.replace("-", "_")
+    candidates = {f"roam_{base}"}
+    candidates.update(f"roam_{base}_{suffix}" for suffix in _MCP_TOOL_SUFFIXES)
+    candidates.update(_MCP_TOOL_ALIASES.get(command_name, set()))
+    return candidates
+
+
 def mcp_tool_descriptions() -> list[tuple[str, str]]:
     """Return ``(tool_name, description)`` for every ``@_tool(...)`` decoration.
 

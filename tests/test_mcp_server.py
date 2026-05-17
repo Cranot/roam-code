@@ -569,6 +569,24 @@ class TestMcpCmd:
             assert result.exit_code == 1
             assert "roam-code[mcp]" in result.output
 
+    def test_broken_fastmcp_reports_import_error(self):
+        """Installed-but-broken FastMCP should surface the import failure."""
+        from roam.mcp_server import mcp_cmd
+
+        runner = CliRunner()
+        with (
+            patch("roam.mcp_server.mcp", None),
+            patch(
+                "roam.mcp_server._FASTMCP_IMPORT_ERROR",
+                "ImportError: cannot import name '_coerce_tool_transform_configs' from 'fastmcp.mcp_config'",
+            ),
+        ):
+            result = runner.invoke(mcp_cmd, ["--no-auto-index"])
+            assert result.exit_code == 1
+            assert "fastmcp transport unavailable" in result.output.lower()
+            assert "_coerce_tool_transform_configs" in result.output
+            assert "roam-code[mcp]" in result.output
+
     def test_list_tools_flag(self):
         """--list-tools should print registered tools without starting server."""
         from roam.mcp_server import mcp_cmd

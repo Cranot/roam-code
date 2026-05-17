@@ -36,7 +36,7 @@ small set of plausible MCP tool names exists in the registered set:
 * ``roam_<command>_<suffix>`` for a known list of suffix patterns
   (``_check``, ``_report``, ``_export``, ``_verify``, ``_emit``,
   ``_validate``, ``_changes``, ``_code``, ``_info``, ``_blame``)
-* An explicit entry in ``_KNOWN_TOOL_ALIASES``
+* An explicit entry in ``roam.surface_counts.mcp_candidate_tool_names``
 
 The allowlists capture the four categories from the W22.4 skip-taxonomy
 in CLAUDE.md (setup/bootstrap, local-state, daemon, REPL helper). Names
@@ -138,89 +138,13 @@ _ALL_SKIPPED = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Tool-name aliases — CLI command -> set of plausible MCP tool names where
-# the underscore-form rule alone would miss the wrapper. Cross-checked by
-# grepping ``@_tool(name="roam_...")`` in ``mcp_server.py``.
-# ---------------------------------------------------------------------------
-
-_KNOWN_TOOL_ALIASES: dict[str, set[str]] = {
-    "dead": {"roam_dead_code"},
-    "complexity": {"roam_complexity_report"},
-    "bisect": {"roam_bisect_blame"},
-    "breaking": {"roam_breaking_changes"},
-    "budget": {"roam_budget_check"},
-    "capsule": {"roam_capsule_export"},
-    "cga": {"roam_cga_emit", "roam_cga_verify"},
-    "rules": {"roam_check_rules", "roam_rules_check", "roam_rules_validate"},
-    "trends": {"roam_trends"},
-    "trend": {"roam_trends"},
-    "snapshot": {"roam_trends"},
-    "digest": {"roam_trends"},
-    "churn": {"roam_weather"},
-    "weather": {"roam_weather"},
-    "uses": {"roam_uses"},
-    "refs": {"roam_uses"},
-    "vulns": {"roam_vuln_map", "roam_vuln_reach"},
-    "search": {"roam_search_symbol", "roam_search_semantic"},
-    "context": {"roam_context", "roam_ws_context"},
-    "understand": {"roam_understand", "roam_ws_understand"},
-    "file": {"roam_file_info"},
-    "review": {"roam_review_change"},
-    "annotate-symbol": {"roam_annotate_symbol"},
-    # W299: ``findings`` is a click group; per-subcommand wrappers match
-    # the audit-trail-* precedent (roam_audit_trail_verify /
-    # roam_audit_trail_export are separate wrappers, not collapsed).
-    "findings": {"roam_findings_list", "roam_findings_show", "roam_findings_count"},
-    # W305: ``oracle`` is a click group with 5 boolean-oracle subcommands.
-    # The advisory audit recognizes the group as wrapped when ANY of the
-    # per-subcommand wrappers is registered (same precedent as findings).
-    # ``oracle batch`` is intentionally NOT wrapped (takes a JSONL file
-    # path the agent would have to prepare on disk); the 5 boolean
-    # subcommands below are the MCP-idiomatic surface.
-    "oracle": {
-        "roam_oracle_symbol_exists",
-        "roam_oracle_route_exists",
-        "roam_oracle_is_test_only",
-        "roam_oracle_is_reachable_from_entry",
-        "roam_oracle_is_clone_of",
-    },
-}
-
-# A small set of suffixes that show up repeatedly in MCP tool names but
-# are not part of the CLI command name (e.g., ``roam_dead`` is registered
-# as ``roam_dead_code``; ``roam_complexity`` as ``roam_complexity_report``).
-_KNOWN_SUFFIXES: tuple[str, ...] = (
-    "check",
-    "report",
-    "export",
-    "verify",
-    "emit",
-    "validate",
-    "changes",
-    "code",
-    "info",
-    "blame",
-)
-
-
-def _candidate_tool_names(cli_cmd: str) -> set[str]:
-    """Return plausible ``roam_<X>`` names for a CLI command."""
-    base_under = cli_cmd.replace("-", "_")
-    out: set[str] = {f"roam_{cli_cmd}", f"roam_{base_under}"}
-    for sfx in _KNOWN_SUFFIXES:
-        out.add(f"roam_{base_under}_{sfx}")
-    out.update(_KNOWN_TOOL_ALIASES.get(cli_cmd, set()))
-    return out
-
-
 def _unwrapped_commands() -> list[str]:
     """Return CLI command names with no plausibly-matching MCP tool."""
-    from roam.surface_counts import cli_commands, mcp_tool_names
+    from roam.surface_counts import cli_commands, mcp_candidate_tool_names, mcp_tool_names
 
     mcp_tools = set(mcp_tool_names())
     cmds = cli_commands()
-    return sorted(c for c in cmds if not (_candidate_tool_names(c) & mcp_tools))
+    return sorted(c for c in cmds if not (mcp_candidate_tool_names(c) & mcp_tools))
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +201,7 @@ def test_mcp_wrapper_coverage_advisory() -> None:
         f"{len(real_gap)} CLI commands lack an MCP wrapper and are not "
         f"in any skip-taxonomy allowlist. Either:\n"
         f"  (a) add a wrapper in src/roam/mcp_server.py via @_tool(name=...),\n"
-        f"  (b) extend _KNOWN_TOOL_ALIASES if the wrapper exists under a\n"
+        f"  (b) extend mcp_candidate_tool_names if the wrapper exists under a\n"
         f"      non-obvious name (e.g., dead -> roam_dead_code), OR\n"
         f"  (c) add to one of the skip-taxonomy allowlists if the command\n"
         f"      legitimately doesn't need MCP exposure (with rationale).\n"
