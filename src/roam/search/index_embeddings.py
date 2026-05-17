@@ -289,7 +289,7 @@ def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 10) -> list[di
     try:
         rows = conn.execute(_FTS5_SEARCH_SQL, (fts_query, top_k)).fetchall()
     except Exception:
-        # FTS5 query syntax error β€” fall back to prefix match
+        # FTS5 query syntax error — fall back to prefix match
         try:
             fts_query = _build_fts_query(query, prefix_only=True)
             if fts_query:

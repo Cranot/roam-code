@@ -503,7 +503,15 @@ class TestEdgeCases:
         assert "VERDICT:" in result.output
 
     def test_single_function(self, tmp_path, cli_runner):
-        """Project with only one function should report no duplicates."""
+        """Project with only one function should report no duplicates.
+
+        W805 Pattern-2 sweep: the previous verdict ``"No duplicate
+        candidates found"`` was a silent SAFE on a degraded run (the
+        detector needs at least 2 candidates to compare). The new
+        verdict names the absent input state explicitly. Accept either
+        the legacy phrasing OR the new "only 1 candidate" / "no
+        candidates" wording.
+        """
         proj = tmp_path / "single_proj"
         proj.mkdir()
         (proj / ".gitignore").write_text(".roam/\n")
@@ -516,7 +524,12 @@ class TestEdgeCases:
 
         result = invoke_cli(cli_runner, ["duplicates"], cwd=proj)
         assert result.exit_code == 0
-        assert "No" in result.output or "0" in result.output
+        assert (
+            "No" in result.output
+            or "0" in result.output
+            or "only 1 candidate" in result.output
+            or "no candidates" in result.output
+        )
 
     def test_identical_functions_different_files(self, tmp_path, cli_runner):
         """Identical functions in different files should be top-similarity."""

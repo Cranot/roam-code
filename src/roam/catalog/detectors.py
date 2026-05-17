@@ -217,7 +217,7 @@ def _finding(
     reason: str,
     confidence: str = "medium",
     *,
-    evidence: Mapping[str, Any] | Any | None = None,
+    evidence: Mapping[str, Any] | None = None,
     fix: str | Mapping[str, Any] | None = None,
     match_line: int | None = None,
     snippet: str | None = None,
@@ -253,6 +253,16 @@ def _finding(
     that contributed to the verdict (e.g. ``["nested-loop", "sort+slice"]``
     for sort-to-select). Surfaces in evidence so users can see WHY a
     finding fired without grepping the detector source.
+
+    W932 (W925 follow-up): ``evidence`` is annotated as
+    ``Mapping[str, Any] | None``. Audited all 4 ``evidence=`` keyword
+    call-sites in this module — every one passes a dict literal; there
+    are no positional or non-dict callers (the ``*`` makes ``evidence``
+    keyword-only). The runtime defensive branch below
+    (``not isinstance(evidence, dict)``) is kept as belt-and-braces for
+    forward compatibility with future plugin detectors that may pass
+    non-Mapping shapes, but the static type stays narrow so misuse
+    surfaces at mypy time rather than at runtime as a silent rewrap.
     """
     bw = best_way(task_id)
     sym_line = sym["line_start"]
@@ -810,12 +820,12 @@ def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
     query_cost=QUERY_COST_MEDIUM,
 )
 def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
-    """Nested loops with equality comparisons β€” structural pattern for
+    """Nested loops with equality comparisons — structural pattern for
     O(n^2) membership testing regardless of function name.
 
     Note on the LIKE patterns: ``_`` is a single-char wildcard in SQL
     LIKE, so ``LIKE '%in_%'`` matches *any* identifier with "in" followed
-    by another char (``find_x``, ``intent``, ``something_else`` β€” all
+    by another char (``find_x``, ``intent``, ``something_else`` — all
     spurious hits). We use ``ESCAPE '\\'`` and double-write the literal
     ``\\_`` so we only match the intended idiomatic prefixes
     (``has_x``, ``is_in_y``, ``contains_z``).
@@ -970,7 +980,7 @@ def detect_manual_dedup(conn: sqlite3.Connection) -> list[dict]:
 def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
     """Loops with comparisons in max/min-named functions.
 
-    Same Big-O (both O(n)) β€” this is an idiom improvement, flagged at low
+    Same Big-O (both O(n)) — this is an idiom improvement, flagged at low
     confidence.
     """
     rows = conn.execute(
@@ -1019,7 +1029,7 @@ def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
 def detect_manual_accumulation(conn: sqlite3.Connection) -> list[dict]:
     """Loops with accumulator in sum/total-named functions.
 
-    Same Big-O (both O(n)) β€” idiom improvement, flagged at low confidence.
+    Same Big-O (both O(n)) — idiom improvement, flagged at low confidence.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -1294,7 +1304,7 @@ def detect_matrix_mult(conn: sqlite3.Connection) -> list[dict]:
 def detect_naive_fibonacci(conn: sqlite3.Connection) -> list[dict]:
     """Recursive functions named *fib* without memoization.
 
-    O(2^n) -> O(n) β€” one of the strongest algorithmic improvements.
+    O(2^n) -> O(n) — one of the strongest algorithmic improvements.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -1478,7 +1488,7 @@ def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
 def detect_manual_groupby(conn: sqlite3.Connection) -> list[dict]:
     """Loops in group/categorize-named functions without defaultdict/groupby.
 
-    Same Big-O (both O(n)) β€” idiom improvement.
+    Same Big-O (both O(n)) — idiom improvement.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -1523,10 +1533,10 @@ def detect_manual_groupby(conn: sqlite3.Connection) -> list[dict]:
     query_cost=QUERY_COST_LOW,
 )
 def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
-    """Loops that call sleep β€” polling / busy-wait pattern.
+    """Loops that call sleep — polling / busy-wait pattern.
 
     Suppresses intentional polling: functions named *poll*, *retry*,
-    *health_check*, *monitor*, *wait_for* β€” these are legitimate patterns.
+    *health_check*, *monitor*, *wait_for* — these are legitimate patterns.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -1538,7 +1548,7 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
         "AND ms.loop_depth >= 1"
     ).fetchall()
 
-    # Intentional polling patterns β€” suppress these
+    # Intentional polling patterns — suppress these
     _POLL_NAMES = {
         "poll",
         "retry",
@@ -1632,7 +1642,7 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
     query_cost=QUERY_COST_LOW,
 )
 def detect_regex_in_loop(conn: sqlite3.Connection) -> list[dict]:
-    """Regex compilation inside a loop β€” recompiles on every iteration.
+    """Regex compilation inside a loop — recompiles on every iteration.
 
     O(n*p) wasted compilation when O(p + n*m) is achievable by compiling
     once outside the loop.  Applies to all languages with regex engines.
@@ -1666,7 +1676,7 @@ def detect_regex_in_loop(conn: sqlite3.Connection) -> list[dict]:
         "MatchString",
     }
 
-    # Module-level regex prefixes β€” calls like `re.match()` recompile each time,
+    # Module-level regex prefixes — calls like `re.match()` recompile each time,
     # but `compiled_pattern.match()` does not.  Only flag the former.
     _REGEX_MODULE_PREFIXES = {"re.", "regexp.", "regex.", "Pattern."}
 
@@ -1677,7 +1687,7 @@ def detect_regex_in_loop(conn: sqlite3.Connection) -> list[dict]:
         calls = _iter_loop_calls(r)
         # Direct compile in loop is always bad
         compile_calls = _call_in(calls, _REGEX_COMPILE_CALLS)
-        # Convenience regex calls β€” only flag when called via the regex module
+        # Convenience regex calls — only flag when called via the regex module
         # (e.g. `re.findall`), NOT when called on a pre-compiled pattern object
         # (e.g. `_MY_RE.findall`).  Check qualified names for module prefix.
         qcalls = _json_list(_row_value(r, "calls_in_loops_qualified", ""))
@@ -2492,7 +2502,7 @@ def _io_emit_finding(
     query_cost=QUERY_COST_HIGH,
 )
 def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
-    """Database query, HTTP request, or file I/O inside a loop β€” N+1 pattern.
+    """Database query, HTTP request, or file I/O inside a loop — N+1 pattern.
 
     One of the most impactful performance anti-patterns in web applications.
     Each iteration incurs a full I/O round trip.
@@ -2612,7 +2622,7 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
     query_cost=QUERY_COST_MEDIUM,
 )
 def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
-    """insert(0, x), unshift(), or pop(0) inside a loop β€” O(n) per op
+    """insert(0, x), unshift(), or pop(0) inside a loop — O(n) per op
     due to array shifting, O(n^2) total."""
     try:
         rows = conn.execute(
@@ -2637,7 +2647,7 @@ def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
             "AND ms.loop_depth >= 1"
         ).fetchall()
 
-    # deque operations are O(1) β€” suppress when popleft/appendleft are the ops
+    # deque operations are O(1) — suppress when popleft/appendleft are the ops
     _DEQUE_OPS = {"popleft", "appendleft", "extendleft"}
 
     results = []
@@ -2648,7 +2658,7 @@ def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
         # If the only front-ops are deque methods, this is already optimal
         front_calls = _call_in(calls, {"insert", "unshift", "shift", "popleft", "appendleft", "extendleft"})
         if front_calls and all(_call_leaf(c) in _DEQUE_OPS for c in front_calls):
-            continue  # Already using deque β€” no issue
+            continue  # Already using deque — no issue
         # New indexes precompute the exact front-op signal.
         if _row_value(r, "front_ops_in_loop", None) == 1:
             results.append(
@@ -2662,7 +2672,7 @@ def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
             )
             continue
         # Fallback heuristic (conservative): only list front APIs.
-        # Note: appendleft/popleft are deque O(1) ops β€” do NOT flag those.
+        # Note: appendleft/popleft are deque O(1) ops — do NOT flag those.
         if _call_in(calls, {"insert", "unshift", "shift"}):
             results.append(
                 _finding(
@@ -3693,7 +3703,7 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     Generalizes fibonacci to any branching recursion: tree traversals,
     divide-and-conquer, DP problems.  O(2^n) -> O(n) with memoization.
     """
-    # self_call_count column may not exist in older DBs β€” fall back safely
+    # self_call_count column may not exist in older DBs — fall back safely
     try:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -3780,11 +3790,11 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
-        # Skip fibonacci β€” already covered by detect_naive_fibonacci
+        # Skip fibonacci — already covered by detect_naive_fibonacci
         name_lower = (r["name"] or "").lower()
         if "fib" in name_lower:
             continue
-        # Skip tree/AST walkers β€” recursive traversal of children is
+        # Skip tree/AST walkers — recursive traversal of children is
         # intentional and doesn't have overlapping subproblems
         _WALKER_NAMES = {
             "walk",
@@ -3857,7 +3867,7 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     query_cost=QUERY_COST_LOW,
 )
 def detect_quadratic_string(conn: sqlite3.Connection) -> list[dict]:
-    """String concatenation via += inside a loop β€” O(n^2) due to
+    """String concatenation via += inside a loop — O(n^2) due to
     immutable string reallocation in Python/Java/Go.
     """
     try:
@@ -4650,7 +4660,7 @@ def _iter_registered_detectors():
     for det in _MATH_DETECTORS:
         yield det
 
-    # Python pivot v12.4 β€” language-specific idiom detectors. Wrapped
+    # Python pivot v12.4 — language-specific idiom detectors. Wrapped
     # in try/except so a regex bug in one detector can't block the
     # algorithm pass.
     try:

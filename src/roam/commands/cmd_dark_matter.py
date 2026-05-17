@@ -297,22 +297,42 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist)
             # W805-followup-D: empty-state disclosure (Pattern 2 silent-
             # fallback fix). Zero dark-matter pairs can mean two things:
             # (a) the co-change graph was analyzed cleanly and produced
-            # no hidden couplings (real success), OR (b) the corpus had
-            # no co-change history to analyze (degraded — needs index
-            # populated). Distinguish via partial_success + state.
+            # no hidden couplings (real success — no `state` stamp), OR
+            # (b) the corpus had no co-change history to analyze
+            # (degraded — `state=no_cochange` + partial_success=True).
+            # Distinguish by actually querying git_cochange instead of
+            # inferring from the empty pairs result; the previous code
+            # always claimed (b) on zero pairs which is itself a silent
+            # Pattern-2 — a clean populated graph would be labelled
+            # "no co-change history" incorrectly.
+            cochange_count: int
+            if total == 0:
+                try:
+                    cochange_count = conn.execute(
+                        "SELECT COUNT(*) FROM git_cochange"
+                    ).fetchone()[0]
+                except sqlite3.OperationalError:
+                    cochange_count = 0
+            else:
+                cochange_count = -1  # unused when total > 0
+            if total > 0:
+                verdict_str = f"{total} dark-matter coupling{'s' if total != 1 else ''} found"
+            elif cochange_count == 0:
+                verdict_str = (
+                    "no co-change history to analyze (corpus has 0 cochange records — "
+                    "run `roam index --force` to populate)"
+                )
+            else:
+                verdict_str = "0 dark-matter couplings found"
             _summary: dict = {
-                "verdict": (
-                    f"{total} dark-matter coupling{'s' if total != 1 else ''} found"
-                    if total > 0
-                    else "no co-change history to analyze (corpus has 0 cochange records — run `roam index --force` to populate)"
-                ),
+                "verdict": verdict_str,
                 "total_dark_matter_edges": total,
                 "by_category": dict(by_cat),
             }
-            if total == 0:
+            if total == 0 and cochange_count == 0:
                 _summary["partial_success"] = True
                 _summary["state"] = "no_cochange"
-            elif parts:
+            elif total > 0 and parts:
                 _summary["verdict"] += f" ({', '.join(parts)})"
 
             click.echo(
@@ -341,7 +361,27 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist)
         total = len(pairs)
 
         if not pairs:
-            click.echo("VERDICT: 0 dark-matter couplings found")
+            # W805 (Pattern 2 propagation to text branch): the JSON branch
+            # above already distinguishes "0 pairs from a populated
+            # co-change graph" from "no co-change history to analyze".
+            # Mirror that disclosure on the text branch so agents reading
+            # the verdict line alone get the same lineage signal.
+            try:
+                cochange_count = conn.execute(
+                    "SELECT COUNT(*) FROM git_cochange"
+                ).fetchone()[0]
+            except sqlite3.OperationalError:
+                # git_cochange table missing (older schema) — treat as
+                # no-cochange state per the loud-fallback rule.
+                cochange_count = 0
+            if cochange_count == 0:
+                click.echo(
+                    "VERDICT: no co-change history to analyze "
+                    "(corpus has 0 cochange records — "
+                    "run `roam index --force` to populate)"
+                )
+            else:
+                click.echo("VERDICT: 0 dark-matter couplings found")
             return
 
         # Build verdict with category breakdown if hypotheses available

@@ -101,6 +101,10 @@ _GUARDED_DIRS: tuple[str, ...] = (
     # remaining 3 cryptographic-substrate isolation perimeters are
     # documented in ``_PRE_W662_PENDING`` below.
     "constitution",
+    "critique",  # W666: critique substrate (aggregator + checks). Programmer
+    # errors in the critique pipeline silently degrade the verdict envelope
+    # downstream agents consume — same fail-loud discipline as the rest of
+    # the evidence path.
     "db",
     "evidence",
     "leases",

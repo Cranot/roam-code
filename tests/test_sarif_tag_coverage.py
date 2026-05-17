@@ -51,6 +51,7 @@ from __future__ import annotations
 import ast
 import inspect
 import re
+from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
 
