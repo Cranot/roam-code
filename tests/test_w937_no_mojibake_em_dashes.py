@@ -24,12 +24,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from tests._helpers.repo_root import repo_root
+
 # The signature byte sequence of cp1253-mojibake-ed UTF-8 em-dashes.
 # Hard-coded as raw bytes so this test stays decoupled from any
 # encoding-related helper.
 _MOJIBAKE_EM_DASH: bytes = b"\xce\xb2\xe2\x82\xac\xe2\x80\x9d"
 
-_SRC_ROOT: Path = Path(__file__).parent.parent / "src" / "roam"
+_SRC_ROOT: Path = repo_root() / "src" / "roam"
 
 
 def test_src_roam_has_no_cp1253_mojibake_em_dashes() -> None:
