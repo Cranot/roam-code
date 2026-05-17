@@ -1966,7 +1966,7 @@ roam-code/
 │       ├── formatter.py               # Token-efficient formatting
 │       ├── sarif.py                   # SARIF 2.1.0 output
 │       └── schema_registry.py         # JSON envelope schema versioning
-└── tests/                             # ~7,500 tests across 267 test files
+└── tests/                             # 744 test files (run `pytest tests/`)
 ```
 
 </details>
