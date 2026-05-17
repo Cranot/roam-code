@@ -145,7 +145,12 @@ def build_fts_index(
         build_and_store_tfidf(conn)
         try:
             build_and_store_onnx_embeddings(conn, project_root=project_root)
-        except Exception:
+        except (ImportError, RuntimeError, OSError, sqlite3.Error):
+            # ImportError/RuntimeError: ONNX backend optional and may be
+            # absent (line 119 of onnx_embeddings.py raises RuntimeError on
+            # missing deps). OSError: missing model/tokenizer files.
+            # sqlite3.Error: embedding table write conflict.
+            # Programmer errors propagate per W531 fail-loud discipline.
             pass
         return
 
@@ -185,7 +190,8 @@ def build_fts_index(
         build_and_store_tfidf(conn)
         try:
             build_and_store_onnx_embeddings(conn, project_root=project_root)
-        except Exception:
+        except (ImportError, RuntimeError, OSError, sqlite3.Error):
+            # See narrowing rationale on the cold-start branch above.
             pass
         return
 

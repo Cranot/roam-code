@@ -193,6 +193,8 @@ _CONCRETE_NOUN_ANCHORS: frozenset[str] = frozenset(
         "presets",
         "tools",
         "diagnostics",
+        # W1280 — mirror formatter.concrete_plural_terminals addition.
+        "risks",
     }
 )
 
@@ -245,6 +247,8 @@ _MEASUREMENT_SUFFIXES: frozenset[str] = frozenset(
         "bytes",
         "kb",
         "mb",
+        # W1280 — mirror formatter.measurement_suffixes addition.
+        "cohesion",
     }
 )
 

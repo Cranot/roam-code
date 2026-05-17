@@ -682,10 +682,20 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
 
     changed = get_changed_files(root, staged=staged, commit_range=commit_range)
     if not changed:
+        # Pattern 1D / Pattern 2: no-changes is a degraded-resolution path,
+        # NOT a fully-assessed "safe to merge" verdict. An agent reading
+        # ``summary.safe_to_merge`` must not see ``True`` when the underlying
+        # check never ran (there was nothing to assess). Disclose state +
+        # partial_success explicitly so the verdict and the field agree.
         label = commit_range or ("staged" if staged else "uncommitted")
         _attest_empty_envelope = json_envelope(
             "attest",
-            summary={"verdict": f"no changes found for {label}", "safe_to_merge": True},
+            summary={
+                "verdict": f"no changes found for {label}",
+                "state": "no_changes",
+                "partial_success": True,
+                "safe_to_merge": None,
+            },
         )
         auto_log(_attest_empty_envelope, action="attest", target=label, repo_root=root)
         if json_mode or output_format == "json":

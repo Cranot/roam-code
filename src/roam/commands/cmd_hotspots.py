@@ -774,10 +774,23 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
     from roam.runtime.hotspots import compute_hotspots
 
     with open_db(readonly=not persist) as conn:
-        # Ensure table exists for query even in readonly mode
+        # Detect "no runtime data" state — collapses two prior branches
+        # into one: (a) ``runtime_stats`` table missing (pre-W21 schema)
+        # AND (b) table exists but is empty (the common case after
+        # ``roam init`` since the table is part of base schema). Both
+        # mean the same thing to a caller: traces have never been
+        # ingested. Pattern 2 — never emit a silent SAFE / 0-hotspots
+        # verdict on uninitialised runtime data. ``runtime_state``
+        # disambiguates which sub-state the caller is in.
+        runtime_state = "ready"
         try:
-            conn.execute("SELECT COUNT(*) FROM runtime_stats")
+            row = conn.execute("SELECT COUNT(*) FROM runtime_stats").fetchone()
+            if row is None or int(row[0] or 0) == 0:
+                runtime_state = "no_traces"
         except Exception:
+            runtime_state = "table_missing"
+
+        if runtime_state != "ready":
             if sarif_mode:
                 # No runtime data → emit a valid SARIF doc with zero
                 # results so a CI gate consumer sees the rules catalogue
@@ -787,6 +800,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
 
                 click.echo(write_sarif(hotspots_to_sarif([])))
                 return
+            verdict_no_data = "No runtime data. Run `roam ingest-trace` first."
             if json_mode:
                 click.echo(
                     to_json(
@@ -794,18 +808,32 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
                             "hotspots",
                             budget=token_budget,
                             summary={
-                                "verdict": "No runtime data. Run `roam ingest-trace` first.",
+                                "verdict": verdict_no_data,
                                 "total": 0,
                                 "upgrades": 0,
                                 "confirmed": 0,
                                 "downgrades": 0,
+                                # Pattern 2: the static-vs-runtime
+                                # correlation could not run, so flag
+                                # the result as partial / not a SAFE.
+                                "partial_success": True,
+                                "state": runtime_state,
+                            },
+                            agent_contract={
+                                "facts": [
+                                    verdict_no_data,
+                                    f"runtime_stats state: {runtime_state}; no traces ingested",
+                                ],
+                                "next_commands": [
+                                    "roam ingest-trace <trace-file>",
+                                ],
                             },
                             hotspots=[],
                         )
                     )
                 )
             else:
-                click.echo("VERDICT: No runtime data. Run `roam ingest-trace` first.")
+                click.echo(f"VERDICT: {verdict_no_data}")
             return
 
         items = compute_hotspots(conn)

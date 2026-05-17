@@ -375,6 +375,258 @@ def _pick_cycle_anchor(conn: sqlite3.Connection, member_ids: list[int]) -> tuple
     return int(top["id"]), str(top["name"] or ""), str(top["file_path"] or "")
 
 
+def _row_field(row, key: str):
+    """Read *key* from a dict OR ``sqlite3.Row``-like mapping; ``None`` on miss.
+
+    Both lookup paths are needed because callers may pass either a plain
+    ``dict`` (tests, in-memory v_lookup) or a ``sqlite3.Row`` (live DB
+    fetchone()). The original inline form repeated this dance four times
+    per layer-violation row (src_name, tgt_name, src_file, tgt_file) and
+    inflated the cognitive complexity of ``_emit_health_findings``.
+    """
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row.get(key)
+    # sqlite3.Row supports column-by-name access but only if the column
+    # exists; probe via .keys() to avoid IndexError.
+    if hasattr(row, "keys"):
+        try:
+            if key in row.keys():
+                return row[key]
+        except (TypeError, IndexError):
+            return None
+    return None
+
+
+def _lookup_endpoint_name_file(conn: sqlite3.Connection, symbol_id: int | None) -> tuple[str | None, str | None]:
+    """Best-effort ``(name, file_path)`` lookup for a layer-violation endpoint.
+
+    Returns ``(None, None)`` on missing id, missing row, or a benign DB
+    error. Extracted from the inline duplicate src/tgt lookup blocks in
+    the layer-violation emit path.
+    """
+    if symbol_id is None:
+        return None, None
+    try:
+        r = conn.execute(
+            "SELECT s.name AS name, f.path AS file_path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?",
+            (symbol_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None, None
+    if r is None:
+        return None, None
+    return _row_field(r, "name"), _row_field(r, "file_path")
+
+
+def _emit_cycle_finding(
+    conn: sqlite3.Connection,
+    scc_ids: list[int],
+    cyc: dict,
+    source_version: str,
+) -> int:
+    """Persist one ``arch.cycle`` finding; returns 1 on write, 0 on skip."""
+    from roam.db.findings import FindingRecord, emit_finding
+
+    symbols = cyc.get("symbols", []) or []
+    member_names = [s.get("name", "") for s in symbols if s.get("name")]
+    if not member_names:
+        return 0
+    anchor_id, anchor_name, anchor_file = _pick_cycle_anchor(conn, scc_ids)
+    finding_id = _health_cycle_finding_id(member_names)
+    evidence = {
+        "kind": "arch.cycle",
+        "size": cyc.get("size", len(member_names)),
+        "severity": _normalise_health_severity(cyc.get("severity")),
+        "actionable": bool(cyc.get("actionable")),
+        "local_only": bool(cyc.get("local_only")),
+        "has_test_file": bool(cyc.get("has_test_file")),
+        "file_count": cyc.get("file_count", len(set(cyc.get("files", [])))),
+        "files": list(cyc.get("files", [])),
+        "cycle_members": [
+            {
+                "id": s.get("id"),
+                "name": s.get("name"),
+                "kind": s.get("kind"),
+                "file_path": s.get("file_path"),
+            }
+            for s in symbols
+        ],
+        "anchor_symbol_id": anchor_id,
+        "anchor_symbol_name": anchor_name,
+        "anchor_file_path": anchor_file,
+    }
+    claim = (
+        f"arch.cycle: SCC of {cyc.get('size', len(member_names))} symbols "
+        f"across {len(cyc.get('files', []))} file(s); anchor "
+        f"{anchor_name or '?'}"
+    )
+    emit_finding(
+        conn,
+        FindingRecord(
+            finding_id_str=finding_id,
+            subject_kind="symbol" if anchor_id is not None else "cycle",
+            subject_id=anchor_id,
+            claim=claim,
+            evidence_json=_json.dumps(evidence, sort_keys=True),
+            confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.cycle"],
+            source_detector="health",
+            source_version=source_version,
+        ),
+    )
+    return 1
+
+
+def _emit_god_finding(conn: sqlite3.Connection, g: dict, source_version: str) -> int:
+    """Persist one ``arch.god_component`` finding; returns 1 on write, 0 on skip."""
+    from roam.db.findings import FindingRecord, emit_finding
+
+    name = g.get("name") or ""
+    file_path = g.get("file") or ""
+    if not name:
+        return 0
+    qname = _qname_for_symbol(file_path, name)
+    subject_id = _resolve_symbol_id_by_name(conn, name, file_path)
+    finding_id = _health_god_finding_id(qname)
+    evidence = {
+        "kind": "arch.god_component",
+        "name": name,
+        "symbol_kind": g.get("kind"),
+        "degree": g.get("degree"),
+        "file_path": file_path,
+        "severity": _normalise_health_severity(g.get("severity")),
+        "category": g.get("category", "actionable"),
+    }
+    claim = f"arch.god_component: {name} ({g.get('kind') or '?'}) — degree {g.get('degree')} in {file_path or '?'}"
+    emit_finding(
+        conn,
+        FindingRecord(
+            finding_id_str=finding_id,
+            subject_kind="symbol",
+            subject_id=subject_id,
+            claim=claim,
+            evidence_json=_json.dumps(evidence, sort_keys=True),
+            confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.god_component"],
+            source_detector="health",
+            source_version=source_version,
+        ),
+    )
+    return 1
+
+
+def _emit_bottleneck_finding(conn: sqlite3.Connection, b: dict, source_version: str) -> int:
+    """Persist one ``arch.bottleneck`` finding; returns 1 on write, 0 on skip."""
+    from roam.db.findings import FindingRecord, emit_finding
+
+    name = b.get("name") or ""
+    file_path = b.get("file") or ""
+    if not name:
+        return 0
+    qname = _qname_for_symbol(file_path, name)
+    subject_id = _resolve_symbol_id_by_name(conn, name, file_path)
+    finding_id = _health_bottleneck_finding_id(qname)
+    evidence = {
+        "kind": "arch.bottleneck",
+        "name": name,
+        "symbol_kind": b.get("kind"),
+        "betweenness": b.get("betweenness"),
+        "file_path": file_path,
+        "severity": _normalise_health_severity(b.get("severity")),
+        "category": b.get("category", "actionable"),
+    }
+    claim = (
+        f"arch.bottleneck: {name} ({b.get('kind') or '?'}) — betweenness {b.get('betweenness')} in {file_path or '?'}"
+    )
+    emit_finding(
+        conn,
+        FindingRecord(
+            finding_id_str=finding_id,
+            subject_kind="symbol",
+            subject_id=subject_id,
+            claim=claim,
+            evidence_json=_json.dumps(evidence, sort_keys=True),
+            confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.bottleneck"],
+            source_detector="health",
+            source_version=source_version,
+        ),
+    )
+    return 1
+
+
+def _emit_layer_violation_finding(
+    conn: sqlite3.Connection,
+    v: dict,
+    source_version: str,
+    *,
+    v_lookup: dict | None,
+) -> int:
+    """Persist one ``arch.layer_violation`` finding; returns 1 on write, 0 on skip.
+
+    Subject is an edge (``subject_kind="edge"``) so both endpoints are
+    encoded in ``evidence_json`` rather than the single-valued
+    ``subject_id`` column.
+    """
+    from roam.db.findings import FindingRecord, emit_finding
+
+    src_id = v.get("source")
+    tgt_id = v.get("target")
+    src_row = (v_lookup or {}).get(src_id, {})
+    tgt_row = (v_lookup or {}).get(tgt_id, {})
+
+    src_name = _row_field(src_row, "name")
+    tgt_name = _row_field(tgt_row, "name")
+    src_file = _row_field(src_row, "file_path")
+    tgt_file = _row_field(tgt_row, "file_path")
+
+    # Best-effort name lookup for source/target if v_lookup didn't carry them.
+    if not src_name:
+        src_name, src_file2 = _lookup_endpoint_name_file(conn, src_id)
+        src_file = src_file or src_file2
+    if not tgt_name:
+        tgt_name, tgt_file2 = _lookup_endpoint_name_file(conn, tgt_id)
+        tgt_file = tgt_file or tgt_file2
+
+    src_name = src_name or ""
+    tgt_name = tgt_name or ""
+    if not src_name or not tgt_name:
+        # Can't form a stable id without both endpoints — skip.
+        return 0
+
+    from_qname = _qname_for_symbol(src_file, src_name)
+    to_qname = _qname_for_symbol(tgt_file, tgt_name)
+    finding_id = _health_layer_violation_finding_id(from_qname, to_qname)
+    evidence = {
+        "kind": "arch.layer_violation",
+        "from_symbol_id": src_id,
+        "from_symbol_name": src_name,
+        "from_file_path": src_file or "",
+        "from_layer": v.get("source_layer"),
+        "to_symbol_id": tgt_id,
+        "to_symbol_name": tgt_name,
+        "to_file_path": tgt_file or "",
+        "to_layer": v.get("target_layer"),
+        "layer_distance": v.get("layer_distance"),
+        "severity": _normalise_health_severity(v.get("severity") or WARNING),
+        "edge_severity_score": v.get("severity"),
+    }
+    claim = f"arch.layer_violation: {src_name} (L{v.get('source_layer')}) -> {tgt_name} (L{v.get('target_layer')})"
+    emit_finding(
+        conn,
+        FindingRecord(
+            finding_id_str=finding_id,
+            subject_kind="edge",
+            subject_id=None,
+            claim=claim,
+            evidence_json=_json.dumps(evidence, sort_keys=True),
+            confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.layer_violation"],
+            source_detector="health",
+            source_version=source_version,
+        ),
+    )
+    return 1
+
+
 def _emit_health_findings(
     conn: sqlite3.Connection,
     cycles: list[dict],
@@ -422,12 +674,11 @@ def _emit_health_findings(
     raw_by_formatted_cycle
         Optional ``[(scc_ids, formatted_cycle), ...]`` pairing so we
         can recover the raw SCC member ids for anchor selection.
+
+    The four arch-level kinds (cycle, god_component, bottleneck,
+    layer_violation) are each emitted by a per-kind helper above; this
+    function is the dispatcher.
     """
-    from roam.db.findings import FindingRecord, emit_finding
-
-    written = 0
-
-    # --- arch.cycle ---
     # Anchor each cycle on the highest-PageRank SCC member; encode the
     # full member list in evidence_json so consumers can reconstruct
     # the SCC without joining the registry against ``symbols``.
@@ -440,212 +691,15 @@ def _emit_health_findings(
         # safety net for direct callers / tests.
         cycle_iter = [([s["id"] for s in cyc.get("symbols", []) if "id" in s], cyc) for cyc in cycles]
 
+    written = 0
     for scc_ids, cyc in cycle_iter:
-        symbols = cyc.get("symbols", []) or []
-        member_names = [s.get("name", "") for s in symbols if s.get("name")]
-        if not member_names:
-            continue
-        anchor_id, anchor_name, anchor_file = _pick_cycle_anchor(conn, scc_ids)
-        finding_id = _health_cycle_finding_id(member_names)
-        evidence = {
-            "kind": "arch.cycle",
-            "size": cyc.get("size", len(member_names)),
-            "severity": _normalise_health_severity(cyc.get("severity")),
-            "actionable": bool(cyc.get("actionable")),
-            "local_only": bool(cyc.get("local_only")),
-            "has_test_file": bool(cyc.get("has_test_file")),
-            "file_count": cyc.get("file_count", len(set(cyc.get("files", [])))),
-            "files": list(cyc.get("files", [])),
-            "cycle_members": [
-                {
-                    "id": s.get("id"),
-                    "name": s.get("name"),
-                    "kind": s.get("kind"),
-                    "file_path": s.get("file_path"),
-                }
-                for s in symbols
-            ],
-            "anchor_symbol_id": anchor_id,
-            "anchor_symbol_name": anchor_name,
-            "anchor_file_path": anchor_file,
-        }
-        claim = (
-            f"arch.cycle: SCC of {cyc.get('size', len(member_names))} symbols "
-            f"across {len(cyc.get('files', []))} file(s); anchor "
-            f"{anchor_name or '?'}"
-        )
-        emit_finding(
-            conn,
-            FindingRecord(
-                finding_id_str=finding_id,
-                subject_kind="symbol" if anchor_id is not None else "cycle",
-                subject_id=anchor_id,
-                claim=claim,
-                evidence_json=_json.dumps(evidence, sort_keys=True),
-                confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.cycle"],
-                source_detector="health",
-                source_version=source_version,
-            ),
-        )
-        written += 1
-
-    # --- arch.god_component ---
+        written += _emit_cycle_finding(conn, scc_ids, cyc, source_version)
     for g in god_items:
-        name = g.get("name") or ""
-        file_path = g.get("file") or ""
-        if not name:
-            continue
-        qname = _qname_for_symbol(file_path, name)
-        subject_id = _resolve_symbol_id_by_name(conn, name, file_path)
-        finding_id = _health_god_finding_id(qname)
-        evidence = {
-            "kind": "arch.god_component",
-            "name": name,
-            "symbol_kind": g.get("kind"),
-            "degree": g.get("degree"),
-            "file_path": file_path,
-            "severity": _normalise_health_severity(g.get("severity")),
-            "category": g.get("category", "actionable"),
-        }
-        claim = f"arch.god_component: {name} ({g.get('kind') or '?'}) — degree {g.get('degree')} in {file_path or '?'}"
-        emit_finding(
-            conn,
-            FindingRecord(
-                finding_id_str=finding_id,
-                subject_kind="symbol",
-                subject_id=subject_id,
-                claim=claim,
-                evidence_json=_json.dumps(evidence, sort_keys=True),
-                confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.god_component"],
-                source_detector="health",
-                source_version=source_version,
-            ),
-        )
-        written += 1
-
-    # --- arch.bottleneck ---
+        written += _emit_god_finding(conn, g, source_version)
     for b in bn_items:
-        name = b.get("name") or ""
-        file_path = b.get("file") or ""
-        if not name:
-            continue
-        qname = _qname_for_symbol(file_path, name)
-        subject_id = _resolve_symbol_id_by_name(conn, name, file_path)
-        finding_id = _health_bottleneck_finding_id(qname)
-        evidence = {
-            "kind": "arch.bottleneck",
-            "name": name,
-            "symbol_kind": b.get("kind"),
-            "betweenness": b.get("betweenness"),
-            "file_path": file_path,
-            "severity": _normalise_health_severity(b.get("severity")),
-            "category": b.get("category", "actionable"),
-        }
-        claim = (
-            f"arch.bottleneck: {name} ({b.get('kind') or '?'}) — "
-            f"betweenness {b.get('betweenness')} in {file_path or '?'}"
-        )
-        emit_finding(
-            conn,
-            FindingRecord(
-                finding_id_str=finding_id,
-                subject_kind="symbol",
-                subject_id=subject_id,
-                claim=claim,
-                evidence_json=_json.dumps(evidence, sort_keys=True),
-                confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.bottleneck"],
-                source_detector="health",
-                source_version=source_version,
-            ),
-        )
-        written += 1
-
-    # --- arch.layer_violation ---
-    # First edge-level subject_kind in the registry. The from/to
-    # symbol ids are encoded in evidence rather than the subject row
-    # because the registry's subject_id column is single-valued.
+        written += _emit_bottleneck_finding(conn, b, source_version)
     for v in violations:
-        src_id = v.get("source")
-        tgt_id = v.get("target")
-        src_row = (v_lookup or {}).get(src_id, {})
-        tgt_row = (v_lookup or {}).get(tgt_id, {})
-        src_name = src_row.get("name") if isinstance(src_row, dict) else None
-        if src_name is None and hasattr(src_row, "keys") and "name" in src_row.keys():
-            src_name = src_row["name"]
-        tgt_name = tgt_row.get("name") if isinstance(tgt_row, dict) else None
-        if tgt_name is None and hasattr(tgt_row, "keys") and "name" in tgt_row.keys():
-            tgt_name = tgt_row["name"]
-        src_file = src_row.get("file_path") if isinstance(src_row, dict) else None
-        if src_file is None and hasattr(src_row, "keys") and "file_path" in src_row.keys():
-            src_file = src_row["file_path"]
-        tgt_file = tgt_row.get("file_path") if isinstance(tgt_row, dict) else None
-        if tgt_file is None and hasattr(tgt_row, "keys") and "file_path" in tgt_row.keys():
-            tgt_file = tgt_row["file_path"]
-
-        # Best-effort name lookup for source/target if v_lookup didn't carry them.
-        if not src_name and src_id is not None:
-            try:
-                r = conn.execute(
-                    "SELECT s.name AS name, f.path AS file_path FROM symbols s "
-                    "JOIN files f ON s.file_id = f.id WHERE s.id = ?",
-                    (src_id,),
-                ).fetchone()
-                if r is not None:
-                    src_name = r["name"] if "name" in r.keys() else r[0]
-                    src_file = r["file_path"] if "file_path" in r.keys() else r[1]
-            except sqlite3.OperationalError:
-                pass
-        if not tgt_name and tgt_id is not None:
-            try:
-                r = conn.execute(
-                    "SELECT s.name AS name, f.path AS file_path FROM symbols s "
-                    "JOIN files f ON s.file_id = f.id WHERE s.id = ?",
-                    (tgt_id,),
-                ).fetchone()
-                if r is not None:
-                    tgt_name = r["name"] if "name" in r.keys() else r[0]
-                    tgt_file = r["file_path"] if "file_path" in r.keys() else r[1]
-            except sqlite3.OperationalError:
-                pass
-
-        src_name = src_name or ""
-        tgt_name = tgt_name or ""
-        if not src_name or not tgt_name:
-            # Can't form a stable id without both endpoints — skip.
-            continue
-
-        from_qname = _qname_for_symbol(src_file, src_name)
-        to_qname = _qname_for_symbol(tgt_file, tgt_name)
-        finding_id = _health_layer_violation_finding_id(from_qname, to_qname)
-        evidence = {
-            "kind": "arch.layer_violation",
-            "from_symbol_id": src_id,
-            "from_symbol_name": src_name,
-            "from_file_path": src_file or "",
-            "from_layer": v.get("source_layer"),
-            "to_symbol_id": tgt_id,
-            "to_symbol_name": tgt_name,
-            "to_file_path": tgt_file or "",
-            "to_layer": v.get("target_layer"),
-            "layer_distance": v.get("layer_distance"),
-            "severity": _normalise_health_severity(v.get("severity") or WARNING),
-            "edge_severity_score": v.get("severity"),
-        }
-        claim = f"arch.layer_violation: {src_name} (L{v.get('source_layer')}) -> {tgt_name} (L{v.get('target_layer')})"
-        emit_finding(
-            conn,
-            FindingRecord(
-                finding_id_str=finding_id,
-                subject_kind="edge",
-                subject_id=None,
-                claim=claim,
-                evidence_json=_json.dumps(evidence, sort_keys=True),
-                confidence=_HEALTH_KIND_TO_CONFIDENCE["arch.layer_violation"],
-                source_detector="health",
-                source_version=source_version,
-            ),
-        )
-        written += 1
+        written += _emit_layer_violation_finding(conn, v, source_version, v_lookup=v_lookup)
 
     return written
 

@@ -184,6 +184,12 @@ def annotations(ctx, target, tag, since):
         conditions = ["(expires_at IS NULL OR expires_at > datetime('now'))"]
         params = []
 
+        # W324 + dogfood — Pattern 1D: track resolution state for the read
+        # path so the envelope can distinguish a legitimate "0 annotations
+        # for a resolved target" from a degraded "target did not resolve, we
+        # are querying a dangling qualified_name" silent-success. Mirrors the
+        # write-path disclosure on ``annotate``.
+        resolution: str | None = None  # None when no target was supplied
         if target:
             # Try symbol resolution
             sym = find_symbol(conn, target)
@@ -192,6 +198,7 @@ def annotations(ctx, target, tag, since):
                 qname = sym["qualified_name"] or sym["name"]
                 conditions.append("(symbol_id = ? OR qualified_name = ?)")
                 params.extend([sym_id, qname])
+                resolution = "symbol"
             else:
                 # Try file path
                 frow = conn.execute(
@@ -201,10 +208,16 @@ def annotations(ctx, target, tag, since):
                 if frow:
                     conditions.append("file_path = ?")
                     params.append(frow["path"])
+                    resolution = "file"
                 else:
-                    # Try as qualified_name
+                    # Try as qualified_name. The target did NOT resolve as a
+                    # live symbol or file row; matching by literal qname can
+                    # still hit annotations stored on dangling names from
+                    # prior unresolved writes (relinks on reindex), but the
+                    # caller must be told this is degraded resolution.
                     conditions.append("qualified_name = ?")
                     params.append(target)
+                    resolution = "unresolved"
 
         if tag:
             conditions.append("tag = ?")
@@ -235,17 +248,39 @@ def annotations(ctx, target, tag, since):
             for r in rows
         ]
 
+        # Pattern 1D — silent-success guard. If the caller asked about a
+        # specific target and we fell through to the dangling-qualified_name
+        # path, the count we just returned is from the dangling-name shard
+        # of the table, not from a resolved subject. Mark the envelope
+        # partial_success and degrade the verdict so agents can tell.
+        partial = resolution == "unresolved"
+        if resolution == "unresolved":
+            # LAW 4 / Pattern 1D: lead with a non-digit subject so the long-
+            # sentence anchor rule fires, and surface that the count reflects
+            # only literal qualified_name matches on a target that did NOT
+            # resolve to a live symbol or file row.
+            plural = "s" if len(ann_list) != 1 else ""
+            verdict = f"target did not resolve to any symbol or file: {len(ann_list)} dangling-name annotation{plural}"
+        else:
+            verdict = f"{len(ann_list)} annotation{'s' if len(ann_list) != 1 else ''}"
+
+        summary: dict = {
+            "verdict": verdict,
+            "count": len(ann_list),
+            "target": target,
+            "tag_filter": tag,
+            "partial_success": partial,
+        }
+        if resolution is not None:
+            summary["resolution"] = resolution
+
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "annotations",
-                        summary={
-                            "verdict": f"{len(ann_list)} annotation{'s' if len(ann_list) != 1 else ''}",
-                            "count": len(ann_list),
-                            "target": target,
-                            "tag_filter": tag,
-                        },
+                        summary=summary,
+                        resolution=resolution,
                         annotations=ann_list,
                     )
                 )

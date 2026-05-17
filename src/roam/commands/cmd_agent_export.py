@@ -196,7 +196,11 @@ def _gather_key_files(conn, limit=15):
         results.append(
             {
                 "path": r["path"],
-                "pagerank": round(r["max_pr"] or 0, 4),
+                # W-dogfood (W336 sibling): 6-decimal precision —
+                # `max_pr` is the MAX symbol-level PR per file. On
+                # 5K+ symbol graphs the per-node PR floor is ~1.4e-05,
+                # so 4-decimal rounding zeroes ~72% of nonzero values.
+                "pagerank": round(r["max_pr"] or 0, 6),
                 "fan_in": r["max_in"] or 0,
                 "symbols": r["sym_count"],
             }

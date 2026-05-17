@@ -422,7 +422,12 @@ def _emit_duplicates_findings(
                     "file": r["file_path"],
                     "line_start": r["line_start"],
                     "line_count": r["line_count"] or 0,
-                    "pagerank": round(r["pagerank"] or 0.0, 4),
+                    # W-dogfood (W336 sibling family): 4-decimal rounding
+                    # collapses ~72% of nonzero PR values to 0.0 on
+                    # 5K+ symbol graphs (per-node floor ~1.4e-05).
+                    # Match cmd_search / cmd_intent / cmd_hover 6-decimal
+                    # precedent.
+                    "pagerank": round(r["pagerank"] or 0.0, 6),
                 }
             )
 
@@ -929,7 +934,11 @@ def duplicates(
                             "file": r["file_path"],
                             "line": r["line_start"],
                             "lines": r["line_count"] or 0,
-                            "pagerank": round(r["pagerank"] or 0, 4),
+                            # W-dogfood (W336 sibling family): 6-decimal
+                            # rounding (matches cmd_search / cmd_intent
+                            # / cmd_hover); 4-decimal collapsed ~72% of
+                            # nonzero PR values to 0.0 on 5K+ graphs.
+                            "pagerank": round(r["pagerank"] or 0, 6),
                         }
                         for r in c["functions"]
                     ],

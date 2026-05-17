@@ -497,6 +497,16 @@ _AGENT_CONTRACT_FACT_SKIP_KEYS = frozenset(
         "omitted_low_importance_nodes",
         "kept_highest_importance",
         "detail_available",
+        # Paging plumbing (W1142 --limit cap-disclosure). These mirror
+        # the analytical ``total`` / ``count`` keys for cap-hit reporting;
+        # surfacing them as facts produces redundant restatements
+        # (``"total 18"`` / ``"count 18"`` / ``"total count 18"``) and the
+        # nonsensical ``"0 limit findings"`` on the default-limit path.
+        # ``total`` and ``count`` stay surfaceable because some commands
+        # genuinely report only those; ``total_count`` and ``limit`` are
+        # paging-specific.
+        "total_count",
+        "limit",
         # Notice slots that some commands attach to ``summary`` — these
         # are advisory strings, not concrete facts about the analytical
         # subject.
@@ -581,6 +591,11 @@ def _humanize_summary_fact(key: str, value: int | float) -> str:
         "bytes",
         "kb",
         "mb",
+        # W1280 dogfood — `cohesion` is a 0..1 ratio metric emitted by
+        # `roam relate` summary.cohesion. Treated as a measurement-named
+        # key so the humanizer renders "cohesion 1.0" instead of the
+        # double-noun "1.0 cohesion findings" (LAW 4 anchoring).
+        "cohesion",
     )
     if last_token in measurement_suffixes or label.endswith("_id"):
         return f"{label} {value}"
@@ -660,6 +675,11 @@ def _humanize_summary_fact(key: str, value: int | float) -> str:
         "gaps",
         "movers",
         "kinds",
+        # W1280 dogfood — `roam relate` summary.conflict_risks emitted
+        # "0 conflict risks findings" because the terminal "risks" was
+        # not anchored. Adding it here yields "0 conflict risks" — clean
+        # count-noun form on a concrete-plural terminal (LAW 4).
+        "risks",
         # Retrieval-shape terminals (W1073 dogfood): `roam retrieve` summary
         # keys ``candidates`` / ``budget`` / ``seeds`` are inherently
         # count-noun concrete plurals; double-anchoring them with "findings"
@@ -715,6 +735,27 @@ def _humanize_summary_fact(key: str, value: int | float) -> str:
     return f"{value} {label} findings"
 
 
+def _truncate_fact(fact: str, limit: int = _AGENT_CONTRACT_STR_TRUNCATE) -> str:
+    """Truncate a fact at a word boundary, appending ``"..."`` when cut.
+
+    W-dogfood-K: the prior ``fact[:120]`` slice chopped strings
+    mid-word (``"...for ful"`` from ``"...for full radius)"``),
+    producing facts that are unintelligible to an agent and that
+    leave half-words trailing inside the LAW-4 lint's "long sentence
+    self-anchors" branch. Cutting at the last whitespace before the
+    limit and appending ``"..."`` keeps the fact readable AND
+    preserves the prior length budget (the ellipsis fits within the
+    same overall character cap because we cut at <= limit - 3).
+    """
+    if len(fact) <= limit:
+        return fact
+    head = fact[: limit - 3]
+    last_space = head.rfind(" ")
+    if last_space > limit // 2:
+        head = head[:last_space]
+    return head.rstrip() + "..."
+
+
 def _derive_agent_contract(out: dict, summary: dict) -> dict:
     """Build the bounded ``agent_contract`` derived block.
 
@@ -730,7 +771,7 @@ def _derive_agent_contract(out: dict, summary: dict) -> dict:
 
     verdict = summary.get("verdict")
     if isinstance(verdict, str) and verdict:
-        facts.append(verdict[:_AGENT_CONTRACT_STR_TRUNCATE])
+        facts.append(_truncate_fact(verdict))
 
     # Numeric counts / scores from summary become concrete-noun facts.
     # LAW 4 (CLAUDE.md): humanize ``critical: 5`` → ``"5 critical
@@ -750,7 +791,7 @@ def _derive_agent_contract(out: dict, summary: dict) -> dict:
         if key.endswith("_definition") or key.endswith("_distribution"):
             continue
         if isinstance(value, (int, float)):
-            facts.append(_humanize_summary_fact(key, value)[:_AGENT_CONTRACT_STR_TRUNCATE])
+            facts.append(_truncate_fact(_humanize_summary_fact(key, value)))
             if len(facts) >= _AGENT_CONTRACT_MAX_FACTS:
                 break
 
@@ -760,7 +801,7 @@ def _derive_agent_contract(out: dict, summary: dict) -> dict:
         if isinstance(items, list) and items:
             for item in items[:_AGENT_CONTRACT_MAX_RISKS]:
                 msg = _stringify_risk_item(item)
-                risks.append(msg[:_AGENT_CONTRACT_STR_TRUNCATE])
+                risks.append(_truncate_fact(msg))
             break
 
     # Confidence — pull from summary; either 0..1 float or a 0..100 int.
@@ -780,7 +821,7 @@ def _derive_agent_contract(out: dict, summary: dict) -> dict:
             else:
                 cmd = str(step)
             if cmd:
-                next_commands.append(cmd[:_AGENT_CONTRACT_STR_TRUNCATE])
+                next_commands.append(_truncate_fact(cmd))
 
     return {
         "facts": facts,

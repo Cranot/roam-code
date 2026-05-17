@@ -630,7 +630,28 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
 
     failed = sum(1 for r in rule_results if r["status"] == "FAIL")
     failed_names = [r["name"] for r in rule_results if r["status"] == "FAIL"]
-    severity = _fitness_severity(target_fail_count or failed)
+    # W-dogfood-K: target-only severity. When a target_paths scope is
+    # provided (the normal preflight call shape), the user asked "is
+    # editing THIS symbol risky?" — they did NOT ask "does the codebase
+    # have any cycle anywhere?". Falling back to the global ``failed``
+    # count when the target is clean is Pattern-2 silent-fallback
+    # territory: it paints every probe with the same codebase-wide
+    # severity, inflating MEDIUM symbols to CRITICAL and emitting an
+    # identical fitness_violations list against every target.
+    #
+    # When target_paths is empty (no scope provided — gate-mode), keep
+    # the legacy global rollup so the project-wide ``roam fitness``
+    # verdict path stays byte-identical.
+    if target_paths:
+        severity = _fitness_severity(target_fail_count)
+        # Names emitted as ``failed_rules`` describe what the TARGET
+        # violates. Sibling-only failures are still preserved in
+        # ``rules_failing_on_siblings`` + ``rule_details[*].violations_on_siblings``
+        # for callers that want global codebase signal.
+        failed_names_emit = [r["name"] for r in rule_results if r["status"] == "FAIL" and r["violations_on_target"] > 0]
+    else:
+        severity = _fitness_severity(target_fail_count or failed)
+        failed_names_emit = failed_names
 
     return {
         "rules_checked": len(rule_results),
@@ -639,7 +660,7 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
         "rules_failing_on_target": target_fail_count,
         "rules_failing_on_siblings": sibling_fail_count,
         "total_violations": len(all_violations),
-        "failed_rules": failed_names,
+        "failed_rules": failed_names_emit,
         "rule_details": rule_results,
         "severity": severity,
     }
@@ -906,6 +927,18 @@ def preflight(ctx, target, staged):
         # ``r['fitness']['failed_rules']`` untouched for existing
         # consumers.
         target_label_for_fitness = label.split(" (", 1)[0] if isinstance(label, str) else ""
+        # W-dogfood-K: surface ONLY rules the target actually violates.
+        # When ``violations_on_target == 0`` the rule is failing on
+        # sibling files (other code in the same files OR elsewhere in
+        # the codebase) — the target itself is clean. Listing sibling-
+        # only failures as if the target had broken them is the
+        # Pattern-2 silent-fallback shape: every preflight against a
+        # clean symbol emits the same global-codebase failures, training
+        # agents to ignore the field.
+        # Sibling-only failures remain visible in
+        # ``r['fitness']['rule_details'][*].violations_on_siblings``
+        # and ``r['fitness']['rules_failing_on_siblings']`` for callers
+        # that explicitly want global codebase signal.
         fitness_violations_list = [
             {
                 "symbol": target_label_for_fitness,
@@ -913,7 +946,7 @@ def preflight(ctx, target, staged):
                 "severity": fitns.get("severity", "warning"),
             }
             for detail in fitns.get("rule_details") or []
-            if detail.get("status") == "FAIL"
+            if detail.get("status") == "FAIL" and detail.get("violations_on_target", 0) > 0
         ]
 
         # Build the envelope once — used for JSON output and auto-log.

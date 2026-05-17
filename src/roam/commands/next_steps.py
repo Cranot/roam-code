@@ -68,7 +68,17 @@ def suggest_next_steps(command: str, context: dict) -> list[str]:
         top_suspect = context.get("top_suspect", "")
         sym_arg = f" {symbol}" if symbol else ""
         suspect_arg = f" {top_suspect}" if top_suspect else sym_arg
-        steps.append(f"Run `roam trace{sym_arg}` to trace execution paths leading to this symbol")
+        # CONSTRAINT 12: `roam trace` requires SOURCE TARGET (two args).
+        # Previously suggested `roam trace <symbol>` which Click rejects
+        # with "Missing argument 'TARGET'" — non-executable. Use the
+        # top-suspect -> symbol form when both names exist; otherwise
+        # fall back to `roam impact` (single-arg, gives caller chains).
+        if top_suspect and symbol:
+            steps.append(
+                f"Run `roam trace {top_suspect} {symbol}` to trace the execution path from the top suspect to this symbol"
+            )
+        elif symbol:
+            steps.append(f"Run `roam impact{sym_arg}` to see the transitive caller chain affected by this symbol")
         if top_suspect:
             steps.append(f"Run `roam impact{suspect_arg}` to see how many callers the top suspect affects")
         steps.append(f"Run `roam context{sym_arg}` to get the full caller/callee graph for focused investigation")

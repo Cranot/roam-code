@@ -228,47 +228,6 @@ def build_corpus(conn) -> dict[int, dict[str, float]]:
     return result
 
 
-def compute_tfidf_vectors(conn) -> list[dict]:
-    """Return list of ``{symbol_id, name, file_path, kind, vector}`` dicts."""
-    corpus = build_corpus(conn)
-    if not corpus:
-        return []
-
-    sym_ids = list(corpus.keys())
-    # Batch-fetch symbol metadata
-    meta: dict[int, dict] = {}
-    batch_size = 400
-    for i in range(0, len(sym_ids), batch_size):
-        batch = sym_ids[i : i + batch_size]
-        ph = ",".join("?" for _ in batch)
-        rows = conn.execute(
-            f"SELECT s.id, s.name, f.path as file_path, s.kind "
-            f"FROM symbols s JOIN files f ON s.file_id = f.id "
-            f"WHERE s.id IN ({ph})",
-            batch,
-        ).fetchall()
-        for r in rows:
-            meta[r["id"]] = {
-                "name": r["name"],
-                "file_path": r["file_path"],
-                "kind": r["kind"],
-            }
-
-    results = []
-    for sid, vec in corpus.items():
-        m = meta.get(sid, {})
-        results.append(
-            {
-                "symbol_id": sid,
-                "name": m.get("name", ""),
-                "file_path": m.get("file_path", ""),
-                "kind": m.get("kind", ""),
-                "vector": vec,
-            }
-        )
-    return results
-
-
 # ---------------------------------------------------------------------------
 # Similarity
 # ---------------------------------------------------------------------------

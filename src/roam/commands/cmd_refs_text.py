@@ -186,8 +186,29 @@ def refs_text_cmd(
 
     targets = [s for s in (*strings, *extra) if s]
     if not targets:
-        click.echo("VERDICT: no strings provided")
-        click.echo("Pass one or more strings as positional arguments or via -e.")
+        # Pattern 1B/1C discipline: emit a structured envelope in JSON mode
+        # so MCP wrappers see actionable state, not a raw COMMAND_FAILED.
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "refs-text",
+                        budget=token_budget,
+                        summary={
+                            "verdict": "no strings provided",
+                            "state": "usage_error",
+                            "partial_success": True,
+                            "load_bearing": 0,
+                        },
+                        hint="Pass one or more strings as positional arguments or via -e.",
+                        strings=[],
+                        results=[],
+                    )
+                )
+            )
+        else:
+            click.echo("VERDICT: no strings provided")
+            click.echo("Pass one or more strings as positional arguments or via -e.")
         raise SystemExit(2)
 
     ensure_index()
@@ -250,7 +271,31 @@ def refs_text_cmd(
         # Reachability set (or orphan fallback)
         reach_set = build_reachable_set(conn, reachable_from) if reachable_from else None
         if reachable_from and reach_set is None:
-            click.echo(f"VERDICT: entry symbol '{reachable_from}' not found in index")
+            # Pattern 1B/1D: degraded resolution — anchor symbol not in
+            # index. Emit a structured envelope so MCP wrappers see
+            # actionable state instead of a raw COMMAND_FAILED.
+            msg = f"entry symbol '{reachable_from}' not found in index"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "refs-text",
+                            budget=token_budget,
+                            summary={
+                                "verdict": msg,
+                                "state": "unresolved_entry",
+                                "partial_success": True,
+                                "resolution": "unresolved",
+                                "load_bearing": 0,
+                            },
+                            hint="Verify the symbol exists; try `roam search <name>` first.",
+                            strings=list(targets),
+                            results=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {msg}")
             raise SystemExit(1)
         orphans = build_orphan_set(conn) if reach_set is None else set()
 

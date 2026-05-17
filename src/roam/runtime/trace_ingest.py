@@ -52,7 +52,13 @@ def match_trace_to_symbol(
     Returns symbol_id or None.
     """
     if file_path:
-        # Normalize path separators for comparison
+        # Normalize path separators for comparison. ``files.path`` is
+        # always stored with forward slashes (git-style POSIX path)
+        # regardless of host OS, so we MUST match against the normalised
+        # form. The second fallback uses the basename of the normalised
+        # path so a trace file that carries an absolute system path
+        # (``C:/repo/api.py`` or ``/home/user/repo/api.py``) still
+        # matches a relative repo-rooted path stored in ``files.path``.
         norm = file_path.replace("\\", "/")
         rows = conn.execute(
             "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.name = ? AND f.path LIKE ?",
@@ -60,14 +66,17 @@ def match_trace_to_symbol(
         ).fetchall()
         if len(rows) == 1:
             return rows[0][0]
-        # Also try with the raw path
+        # Fallback: match on basename. Catches traces that record an
+        # absolute filesystem path rather than a repo-relative path.
         if not rows:
-            rows = conn.execute(
-                "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.name = ? AND f.path LIKE ?",
-                (function_name, f"%{file_path}"),
-            ).fetchall()
-            if len(rows) == 1:
-                return rows[0][0]
+            basename = norm.rsplit("/", 1)[-1]
+            if basename and basename != norm:
+                rows = conn.execute(
+                    "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.name = ? AND f.path LIKE ?",
+                    (function_name, f"%/{basename}"),
+                ).fetchall()
+                if len(rows) == 1:
+                    return rows[0][0]
 
     # Exact match on name only (must be unique)
     rows = conn.execute(
@@ -527,9 +536,24 @@ def auto_detect_format(trace_path: str) -> str:
     """Auto-detect trace format from JSON structure.
 
     Returns one of: "otel", "jaeger", "zipkin", "generic".
+
+    Raises ``ValueError`` (NOT raw ``OSError`` / ``JSONDecodeError``) on
+    a missing file or malformed JSON so the CLI bridge can produce a
+    structured error envelope instead of a stack trace. Mirrors the
+    "make fallback chains loud" rule — the underlying failure stays
+    typed but the wrapping is uniform for the caller.
     """
-    with open(trace_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with open(trace_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError as exc:
+        raise ValueError(f"{trace_path}: trace file not found") from exc
+    except OSError as exc:
+        raise ValueError(f"{trace_path}: cannot read trace file: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{trace_path}: not a valid JSON document (line {exc.lineno}, column {exc.colno}): {exc.msg}"
+        ) from exc
 
     if isinstance(data, dict):
         if "resourceSpans" in data or "resource_spans" in data:

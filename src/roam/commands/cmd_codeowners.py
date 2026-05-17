@@ -290,7 +290,13 @@ def codeowners(ctx, unowned, owner, limit):
                             (frow["id"],),
                         ).fetchone()
                         deps = dep_row["cnt"] if dep_row else 0
-                    owner_file_details.append({"path": fp, "pagerank": round(pr, 4), "dependents": deps})
+                    # W-dogfood (W336 sibling): 6-decimal rounding.
+                    # `pr` is MAX symbol-level PR for the file (see
+                    # line ~278). On 5K+ symbol graphs the symbol-PR
+                    # floor is ~1.4e-05, so 4-decimal rounding collapses
+                    # ~72% of nonzero values to 0.0. Matches cmd_search
+                    # / cmd_intent / cmd_hover precedent.
+                    owner_file_details.append({"path": fp, "pagerank": round(pr, 6), "dependents": deps})
 
                 click.echo(
                     to_json(
@@ -327,7 +333,10 @@ def codeowners(ctx, unowned, owner, limit):
                 items = [
                     {
                         "path": fo["path"],
-                        "pagerank": round(pagerank_map.get(fo["file_id"], 0), 4),
+                        # W-dogfood (W336 sibling): 6-decimal precision —
+                        # 4-decimal collapsed ~72% of nonzero PR values to
+                        # 0.0 on 5K+ symbol graphs.
+                        "pagerank": round(pagerank_map.get(fo["file_id"], 0), 6),
                         "dependents": dependents_map.get(fo["file_id"], 0),
                     }
                     for fo in unowned_ranked[:limit]
@@ -369,7 +378,10 @@ def codeowners(ctx, unowned, owner, limit):
             unowned_items = [
                 {
                     "path": fo["path"],
-                    "pagerank": round(pagerank_map.get(fo["file_id"], 0), 4),
+                    # W-dogfood (W336 sibling): 6-decimal precision —
+                    # 4-decimal collapsed ~72% of nonzero PR values to
+                    # 0.0 on 5K+ symbol graphs.
+                    "pagerank": round(pagerank_map.get(fo["file_id"], 0), 6),
                     "dependents": dependents_map.get(fo["file_id"], 0),
                 }
                 for fo in unowned_ranked[:limit]

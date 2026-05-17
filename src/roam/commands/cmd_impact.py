@@ -225,12 +225,12 @@ def _impact_verdict(dependents, affected_files, total_syms):
     reach_pct = (len(dependents) / total_syms * 100) if total_syms > 0 else 0
     if reach_pct >= 10 or len(dependents) >= 50:
         return (
-            f"Large blast radius — {len(dependents)} symbols ({reach_pct:.0f}%) in {len(affected_files)} files affected",
+            f"Large blast radius — {len(dependents)} symbols ({reach_pct:.1f}%) in {len(affected_files)} files affected",
             reach_pct,
         )
     if reach_pct >= 2 or len(dependents) >= 10:
         return (
-            f"Moderate blast radius — {len(dependents)} symbols ({reach_pct:.0f}%) in {len(affected_files)} files affected",
+            f"Moderate blast radius — {len(dependents)} symbols ({reach_pct:.1f}%) in {len(affected_files)} files affected",
             reach_pct,
         )
     if len(dependents) > 0:

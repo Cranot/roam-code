@@ -117,10 +117,10 @@ def orchestrate(ctx, n_agents, file_args, staged):
 
     \b
     Examples:
-      roam orchestrate --n-agents 3
-      roam orchestrate --n-agents 4 --staged
-      roam orchestrate --n-agents 5 --file src/api.py --file src/auth.py
-      roam --json orchestrate --n-agents 4
+      roam orchestrate --agents 3
+      roam orchestrate --agents 4 --staged
+      roam orchestrate --agents 5 --file src/api.py --file src/auth.py
+      roam --json orchestrate --agents 4
 
     See also ``partition`` (deeper analytical metrics + claude-teams
     output), ``agent-plan`` (dependency-ordered phases), and

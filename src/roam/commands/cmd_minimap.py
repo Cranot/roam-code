@@ -223,13 +223,22 @@ def _get_stack(conn) -> str:
 
 
 def _get_key_symbols(conn, limit: int = 5) -> list[str]:
-    """Top symbols by PageRank (most central to the call graph)."""
+    """Top symbols by PageRank (most central to the call graph).
+
+    Test-helper symbols (``invoke_cli``, ``cli_runner``, ``parse_json_output``)
+    have huge fan-in because every test imports them, so they outrank actual
+    source symbols on PageRank. They are test scaffolding, not project domain
+    — skip files classified as ``test``. Mirrors ``cmd_tour._top_symbols``.
+    """
     rows = conn.execute(
         """
         SELECT s.name, gm.pagerank
         FROM symbols s
         JOIN graph_metrics gm ON s.id = gm.symbol_id
-        WHERE s.is_exported = 1 AND gm.pagerank > 0
+        JOIN files f ON s.file_id = f.id
+        WHERE s.is_exported = 1
+          AND gm.pagerank > 0
+          AND COALESCE(f.file_role, 'source') != 'test'
         ORDER BY gm.pagerank DESC
         LIMIT ?
     """,
@@ -239,13 +248,21 @@ def _get_key_symbols(conn, limit: int = 5) -> list[str]:
 
 
 def _get_touch_carefully(conn, min_in_degree: int = 15) -> list[str]:
-    """Exported symbols with high fan-in — dangerous to rename or change signature."""
+    """Exported symbols with high fan-in — dangerous to rename or change signature.
+
+    Test-helper symbols are skipped via ``file_role != 'test'`` (see
+    ``_get_key_symbols``); they inflate fan-in via every test-file import
+    without being architecturally load-bearing.
+    """
     rows = conn.execute(
         """
         SELECT s.name, gm.in_degree
         FROM symbols s
         JOIN graph_metrics gm ON s.id = gm.symbol_id
-        WHERE gm.in_degree >= ? AND s.is_exported = 1
+        JOIN files f ON s.file_id = f.id
+        WHERE gm.in_degree >= ?
+          AND s.is_exported = 1
+          AND COALESCE(f.file_role, 'source') != 'test'
         ORDER BY gm.in_degree DESC
         LIMIT 8
     """,

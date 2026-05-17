@@ -89,8 +89,16 @@ _SECRET_PATTERN_DEFS: list[dict] = [
         "severity": "medium",
     },
     {
+        # W1075: bump min token-body length from 1 to 20 chars to stop matching
+        # the English phrase "Bearer Token" / "Bearer token." in docstrings,
+        # help text, and remediation-message constants. Real bearers (opaque
+        # tokens or JWTs) are always ≥20 chars; common forms are 32+. The
+        # `Token`/`token` English word is also explicitly excluded via the
+        # `(?!Token\b|token\b)` lookahead to catch any 20-char-aligned phrase
+        # ("Bearer token contains valid…" etc.). Tested in tests/test_secrets_v2.py
+        # via the cmd_secrets self-scan regression.
         "name": "Generic Bearer Token",
-        "pattern": r"(?i)bearer\s+[a-zA-Z0-9\-_.~+/]+=*",
+        "pattern": r"(?i)bearer\s+(?!Token\b|token\b)[a-zA-Z0-9\-_.~+/]{20,}=*",
         "severity": "medium",
     },
     {

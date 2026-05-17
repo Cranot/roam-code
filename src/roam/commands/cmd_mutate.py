@@ -121,8 +121,8 @@ def mutate(ctx):
     Examples:
       roam mutate move handle_login src/auth/login.py
       roam mutate rename handle_login authenticate_user --apply
-      roam mutate add-call payment_flow log_event
-      roam mutate extract big_function 42-78 small_helper
+      roam mutate add-call --from payment_flow --to log_event
+      roam mutate extract big_function --lines 42-78 --name small_helper
 
     See also ``simulate`` (predict metric impact without writing),
     ``preflight`` (check before mutating), and ``critique``

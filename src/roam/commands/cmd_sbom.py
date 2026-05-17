@@ -263,11 +263,17 @@ def _generate_cyclonedx(
         }
 
         # Add ecosystem as external reference
+        # W1075: stamp the original version_spec so SBOM consumers can
+        # recover the full constraint (e.g. ">=0.6,<1.6.3"). Without this,
+        # _version_from_spec strips comparison operators and emits only the
+        # first numeric token, silently dropping upper bounds that exclude
+        # known-broken releases — a supply-chain correctness gap.
         component["properties"] = [
             {"name": "roam:ecosystem", "value": dep.ecosystem},
             {"name": "roam:pin_status", "value": dep.pin_status},
             {"name": "roam:risk_level", "value": dep.risk_level},
             {"name": "roam:source_file", "value": dep.source_file},
+            {"name": "roam:version_spec", "value": dep.version_spec or ""},
         ]
 
         # Reachability enrichment
@@ -378,14 +384,22 @@ def _generate_spdx(
             ],
         }
 
+        # W1075: stamp the full version_spec on the SPDX comment so
+        # downstream tooling can recover constraints like ">=0.6,<1.6.3"
+        # that versionInfo (lower bound only) silently drops.
+        comment_parts: list[str] = []
+        if dep.version_spec and dep.version_spec != version:
+            comment_parts.append(f"roam:version_spec={dep.version_spec}")
         # Reachability as annotation
         if reachability is not None:
             reach_info = reachability.get(dep.name, {})
             is_reachable = reach_info.get("reachable", False)
             entry_points = reach_info.get("entry_points", [])
-            pkg["comment"] = f"roam:reachable={str(is_reachable).lower()}" + (
-                f" roam:entry_points={';'.join(entry_points[:10])}" if entry_points else ""
-            )
+            comment_parts.append(f"roam:reachable={str(is_reachable).lower()}")
+            if entry_points:
+                comment_parts.append(f"roam:entry_points={';'.join(entry_points[:10])}")
+        if comment_parts:
+            pkg["comment"] = " ".join(comment_parts)
 
         packages.append(pkg)
         relationships.append(

@@ -97,8 +97,53 @@ def _detect_frameworks(conn):
         r"|\bimport\s+([\w.]+)"  # Python/Go: import x
         r"|\bfrom\s+([\w.]+)\s+import"  # Python: from x import y
     )
+    # Restrict the scan to actual source-language files. Markdown / YAML /
+    # JSON / TOML often quote ``from django import ...`` inside documentation,
+    # rules, or changelog prose — counting those as project imports turns
+    # roam-on-roam into a false-positive react/django/flask/asp.net detection.
+    # Note: tree-sitter language ids use ``c_sharp`` not ``csharp``;
+    # mirror src/roam/languages/registry.py:_SUPPORTED_LANGUAGES.
+    _SOURCE_LANGUAGES = {
+        "python",
+        "javascript",
+        "typescript",
+        "tsx",
+        "jsx",
+        "java",
+        "go",
+        "rust",
+        "c",
+        "cpp",
+        "c_sharp",
+        "php",
+        "ruby",
+        "kotlin",
+        "swift",
+        "scala",
+        "sql",
+        "dart",
+        "vue",
+        "svelte",
+        "apex",
+        "aura",
+        "visualforce",
+        "sfxml",
+        "hcl",
+        "foxpro",
+    }
+    # Non-source directories that legitimately *describe* frameworks without
+    # *being* a user of them.
+    _DOC_DIRS = ("rules/", "docs/", "dev/", "internal/", "benchmarks/", "tests/")
     root = find_project_root()
-    for r in conn.execute("SELECT path FROM files WHERE language IS NOT NULL LIMIT 200").fetchall():
+    for r in conn.execute(
+        "SELECT path, language FROM files WHERE language IS NOT NULL ORDER BY path LIMIT 200"
+    ).fetchall():
+        lang = (r["language"] or "").lower()
+        if lang not in _SOURCE_LANGUAGES:
+            continue
+        norm_path = r["path"].replace("\\", "/").lower()
+        if any(norm_path.startswith(d) or ("/" + d) in norm_path for d in _DOC_DIRS):
+            continue
         file_path = root / r["path"]
         if not file_path.exists():
             continue

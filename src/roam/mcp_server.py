@@ -3783,7 +3783,10 @@ def _annotate_stale(result: dict, command: str) -> dict:
 # W325 — module-scope set of exit codes treated as "command completed normally".
 # Hoisted out of ``_run_roam_inprocess`` / ``_run_roam_subprocess`` (where it
 # was duplicated) so any future exit-code addition only edits one place.
-# Imported lazily to avoid a circular import on cold-start.
+# Imports are module-top-level; ``roam.exit_codes`` is a leaf module (depends
+# only on stdlib + click) and does not import ``roam.mcp_server`` (W907 hedge
+# audit verified — the prior "Imported lazily to avoid a circular import on
+# cold-start" comment was a false cycle claim).
 from roam.exit_codes import EXIT_GATE_FAILURE as _EXIT_GATE_FAILURE
 from roam.exit_codes import EXIT_SUCCESS as _EXIT_SUCCESS
 

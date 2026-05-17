@@ -244,7 +244,14 @@ def _top_key_symbols(nodes, node_meta, limit: int = 5) -> list[dict]:
             {
                 "name": m["name"],
                 "kind": abbrev_kind(m["kind"]),
-                "pagerank": round(m["pagerank"], 4),
+                # W-dogfood (W336 sibling family): round to 6 decimals.
+                # On graphs >~5K symbols the per-node PR floor sits around
+                # 1.4e-05, so 4-decimal rounding collapses ~72% of nonzero
+                # values to 0.0 (12,833 of 17,710 on roam-code itself).
+                # The displayed PR becomes useless for ranking introspection.
+                # Matches the 6-decimal precedent in cmd_search / cmd_intent /
+                # cmd_hover / cmd_metrics.
+                "pagerank": round(m["pagerank"], 6),
                 "file": m["path"],
             }
         )

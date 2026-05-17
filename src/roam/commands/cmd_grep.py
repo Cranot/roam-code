@@ -231,12 +231,50 @@ def grep_cmd(
         pats.extend(_read_patterns_file(patterns_from))
     pats = [p for p in pats if p]
     if not pats:
-        click.echo("VERDICT: no patterns provided")
-        click.echo("Pass a positional pattern, -e/--regex, or --patterns-from FILE.")
+        # Pattern 1B/1C discipline: emit a structured envelope in JSON mode
+        # so MCP wrappers see actionable state, not a raw COMMAND_FAILED.
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "grep",
+                        budget=token_budget,
+                        summary={
+                            "verdict": "no patterns provided",
+                            "state": "usage_error",
+                            "partial_success": True,
+                            "total": 0,
+                        },
+                        hint="Pass a positional pattern, -e/--regex, or --patterns-from FILE.",
+                        matches=[],
+                    )
+                )
+            )
+        else:
+            click.echo("VERDICT: no patterns provided")
+            click.echo("Pass a positional pattern, -e/--regex, or --patterns-from FILE.")
         raise SystemExit(2)
 
     if co_occur and len(pats) < 2:
-        click.echo("VERDICT: --co-occur requires at least two -e patterns")
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "grep",
+                        budget=token_budget,
+                        summary={
+                            "verdict": "--co-occur requires at least two -e patterns",
+                            "state": "usage_error",
+                            "partial_success": True,
+                            "total": 0,
+                        },
+                        hint="Pass two or more patterns via repeated -e flags.",
+                        matches=[],
+                    )
+                )
+            )
+        else:
+            click.echo("VERDICT: --co-occur requires at least two -e patterns")
         raise SystemExit(2)
 
     ensure_index()
@@ -308,7 +346,31 @@ def grep_cmd(
         if reachable_from:
             reach_set = build_reachable_set(conn, reachable_from)
             if reach_set is None:
-                click.echo(f"VERDICT: entry symbol '{reachable_from}' not found in index")
+                # Pattern 1B/1D: degraded resolution — anchor symbol not in
+                # index. Emit a structured envelope so MCP wrappers see
+                # actionable state instead of a raw COMMAND_FAILED.
+                msg = f"entry symbol '{reachable_from}' not found in index"
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "grep",
+                                budget=token_budget,
+                                summary={
+                                    "verdict": msg,
+                                    "state": "unresolved_entry",
+                                    "partial_success": True,
+                                    "resolution": "unresolved",
+                                    "total": 0,
+                                },
+                                hint="Verify the symbol exists; try `roam search <name>` first.",
+                                reachable_from=reachable_from,
+                                matches=[],
+                            )
+                        )
+                    )
+                else:
+                    click.echo(f"VERDICT: {msg}")
                 raise SystemExit(1)
         if reach_set is not None:
             for m in matches:

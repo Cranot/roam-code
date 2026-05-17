@@ -10,6 +10,15 @@ sources:
   - request.form
   - request.files
   - input
+  # CLI-tool sources. A ``--config-path``-style option flowing into
+  # ``open`` / ``pathlib.Path`` without ``os.path.normpath`` /
+  # ``os.path.abspath`` is path-traversal in any tool that processes
+  # user-supplied paths (CI, batch jobs, dev CLIs).
+  - sys.argv
+  - os.environ
+  - argparse.parse_args
+  - click.argument
+  - click.option
 sinks:
   - open
   - os.path.join

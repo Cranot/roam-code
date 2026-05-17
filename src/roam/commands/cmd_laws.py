@@ -457,6 +457,11 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
     laws = load_laws_yaml(laws_path.read_text(encoding="utf-8"))
     if not laws:
         verdict = f"{laws_path} contains no laws"
+        # Mirror the not_initialized branch above: an empty laws file is
+        # an actionable state, so emit an agent_contract that names the
+        # recovery command. Without this, MCP/agent consumers reaching
+        # the JSON envelope had a verdict but no next_commands, which
+        # forced them to guess (Pattern 2 silent-fallback adjacency).
         envelope = json_envelope(
             "laws-check",
             budget=token_budget,
@@ -467,6 +472,10 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
                 "state": "empty",
             },
             violations=[],
+            agent_contract={
+                "facts": [verdict],
+                "next_commands": ["roam laws mine --out roam-laws.yml"],
+            },
         )
         if sarif_mode:
             from roam.output.sarif import laws_to_sarif, write_sarif
@@ -588,6 +597,10 @@ def laws_list(ctx, laws_file):
     laws_path = find_laws_file(root, laws_file)
     if not laws_path:
         verdict = "no roam-laws.yml found"
+        # Pattern 1: text-mode emits a recovery hint; JSON-mode used to
+        # drop it. Stamp the same hint into agent_contract so MCP/agent
+        # consumers see the recovery command without re-parsing the
+        # verdict string.
         envelope = json_envelope(
             "laws-list",
             budget=token_budget,
@@ -598,6 +611,10 @@ def laws_list(ctx, laws_file):
                 "state": "not_initialized",
             },
             laws=[],
+            agent_contract={
+                "facts": [verdict],
+                "next_commands": ["roam laws mine --out roam-laws.yml"],
+            },
         )
         if json_mode:
             click.echo(to_json(envelope))
@@ -651,6 +668,9 @@ def laws_explain(ctx, law_id, laws_file):
     laws_path = find_laws_file(root, laws_file)
     if not laws_path:
         verdict = "no roam-laws.yml found"
+        # Pattern 1: parallel with laws-list / laws-check — JSON-mode
+        # consumers reaching the not_initialized branch get the same
+        # recovery hint that text-mode users see.
         envelope = json_envelope(
             "laws-explain",
             budget=token_budget,
@@ -661,6 +681,10 @@ def laws_explain(ctx, law_id, laws_file):
                 "state": "not_initialized",
             },
             law=None,
+            agent_contract={
+                "facts": [verdict],
+                "next_commands": ["roam laws mine --out roam-laws.yml"],
+            },
         )
         if json_mode:
             click.echo(to_json(envelope))

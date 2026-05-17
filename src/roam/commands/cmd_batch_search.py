@@ -76,7 +76,10 @@ def _run_one(conn, q: str, limit: int, include_paths: bool) -> list[dict]:
             "kind": r["kind"],
             "file_path": r["file_path"],
             "line_start": r["line_start"],
-            "pagerank": round(float(r["pagerank"] or 0), 4),
+            # W-dogfood (W336 sibling): 6-decimal precision —
+            # 4-decimal rounding zeroes ~72% of nonzero PR values on
+            # 5K+ symbol graphs (per-node PR floor ~1.4e-05).
+            "pagerank": round(float(r["pagerank"] or 0), 6),
         }
         for r in rows
     ]

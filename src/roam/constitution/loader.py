@@ -862,7 +862,13 @@ def check_constitution(repo_root: Path, constitution: Constitution) -> CheckRepo
 
 
 def _substitute_placeholders(template: str, vars: dict[str, str]) -> tuple[str, list[str]]:
-    """Substitute ``${name}`` placeholders. Returns (resolved, missing_vars)."""
+    """Substitute ``${name}`` placeholders. Returns (resolved, missing_vars).
+
+    Used for the recorded ``invocation`` string + missing-var detection
+    surfaced in :class:`ApplyResult`. The executed argv is produced by
+    :func:`_tokenize_and_substitute` so user-supplied variables CANNOT
+    introduce additional argv tokens.
+    """
     out = template
     missing: list[str] = []
     # Find every placeholder and substitute if we have the value.
@@ -875,6 +881,44 @@ def _substitute_placeholders(template: str, vars: dict[str, str]) -> tuple[str, 
             missing.append(name)
         else:
             out = out.replace(match.group(0), value)
+    return out, missing
+
+
+def _tokenize_and_substitute(template: str, vars: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Token-safe placeholder substitution.
+
+    Tokenizes the template FIRST (shlex.split), then replaces ``${name}``
+    occurrences inside each token with the matching variable's raw value.
+    This means a variable value like ``"useThemeClasses --evil-flag"``
+    becomes a SINGLE argv token, not two — closing the post-substitution
+    argv-injection vector where a value with whitespace would inject
+    extra command-line flags into the invoked subprocess.
+
+    Returns ``(argv, missing_vars)``. The argv may be empty (e.g. empty
+    template) — callers handle that as a separate condition.
+    """
+    import re
+
+    tokens = _split_invocation(template)
+    missing: list[str] = []
+    seen_missing: set[str] = set()
+    out: list[str] = []
+    placeholder_re = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+    for tok in tokens:
+        # Resolve every placeholder inside this single token. The token
+        # is the unit of argv-safety: substitution NEVER splits a token
+        # into multiple argv entries, regardless of the variable value.
+        def _replace(m: re.Match[str]) -> str:
+            name = m.group(1)
+            value = vars.get(name)
+            if value is None:
+                if name not in seen_missing:
+                    seen_missing.add(name)
+                    missing.append(name)
+                return m.group(0)
+            return value
+
+        out.append(placeholder_re.sub(_replace, tok))
     return out, missing
 
 
@@ -958,7 +1002,13 @@ def apply_constitution(
     results: list[ApplyResult] = []
     for template in items:
         bare = _bare_command_name(template)
-        resolved, missing = _substitute_placeholders(template, vars_in)
+        # Use token-safe substitution for the argv we actually execute so a
+        # variable value containing whitespace or shell metacharacters CANNOT
+        # introduce additional argv tokens (argv-injection guard). The
+        # human-readable ``invocation`` string is still produced from the
+        # legacy string-substitution helper for display purposes.
+        argv, missing = _tokenize_and_substitute(template, vars_in)
+        resolved, _ = _substitute_placeholders(template, vars_in)
         if missing:
             results.append(
                 ApplyResult(
@@ -972,7 +1022,6 @@ def apply_constitution(
             )
             continue
 
-        argv = _split_invocation(resolved)
         if not argv:
             results.append(
                 ApplyResult(

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +129,9 @@ def complete_symbols(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None
                     (match_expr, limit * 3),
                 )
                 rows = cur.fetchall()
-            except Exception:
+            except sqlite3.Error:
+                # FTS5 table missing / malformed query — fall through to
+                # the LIKE fallback. Programmer errors propagate per W531.
                 rows = []
         if not rows:
             try:
@@ -142,7 +145,9 @@ def complete_symbols(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None
                     (prefix + "%", limit * 3),
                 )
                 rows = cur.fetchall()
-            except Exception:
+            except sqlite3.Error:
+                # symbols table missing on a corrupt / pre-init DB.
+                # Programmer errors propagate per W531.
                 rows = []
 
         seen: set[str] = set()
