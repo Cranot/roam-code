@@ -808,9 +808,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
             # the legacy invocation-scoped suggestion list, while
             # ``agent_contract.next_commands`` is the LAW 2 imperative
             # surface that newer agents consume.
-            next_steps_legacy = suggest_next_steps(
-                "hotspots", {"total": 0, "upgrades": 0}
-            )
+            next_steps_legacy = suggest_next_steps("hotspots", {"total": 0, "upgrades": 0})
             if json_mode:
                 click.echo(
                     to_json(
