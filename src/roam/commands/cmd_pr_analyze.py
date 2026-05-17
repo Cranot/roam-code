@@ -1731,7 +1731,7 @@ def _emit_batch(
     # set.
     if total == 0:
         summary = {
-            "verdict": f"No diff files found in batch_dir: 0 files",
+            "verdict": "No diff files found in batch_dir: 0 files",
             "files_processed": 0,
             "verdict_counts": verdict_counts,
             "worst_verdict": None,

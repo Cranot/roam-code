@@ -10,7 +10,6 @@ _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
 from __future__ import annotations
 
 from difflib import SequenceMatcher
-from pathlib import Path
 
 import click
 
