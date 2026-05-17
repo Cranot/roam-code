@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from roam.atomic_io import atomic_write_text
 from roam.commands._command_utils import bare_command_name as _bare_command_name
 
 # ---------------------------------------------------------------------------
@@ -224,7 +225,17 @@ def _dump_yaml(doc: dict) -> str:
 
 
 def _load_yaml(text: str) -> dict:
-    """Parse YAML *text* into a dict. Returns ``{}`` on any error."""
+    """Parse YAML *text* into a dict. Returns ``{}`` on any error.
+
+    Lineage discipline: a parse error stashes a one-line reason on the
+    module-level ``_last_yaml_parse_error`` so callers can disclose
+    *why* the YAML was unreadable, instead of conflating "empty file"
+    with "syntactically broken file" (Pattern-2 silent fallback).
+    Callers must read the sentinel BEFORE the next ``_load_yaml`` call —
+    it is overwritten per invocation by design.
+    """
+    global _last_yaml_parse_error
+    _last_yaml_parse_error = None
     if not text or not text.strip():
         return {}
     try:
@@ -233,9 +244,19 @@ def _load_yaml(text: str) -> dict:
         data = yaml.safe_load(text)
     except ImportError:
         data = _fallback_parse(text)
-    except Exception:
+    except Exception as exc:
+        # Stash the parse error so ``load_constitution`` can stamp it
+        # onto the unparseable marker rather than throwing away the
+        # diagnostic. Pattern-2 fix: distinguish missing-file vs
+        # broken-file vs empty-file explicitly.
+        _last_yaml_parse_error = f"{type(exc).__name__}: {exc}"[:200]
         return {}
     return data if isinstance(data, dict) else {}
+
+
+# Sentinel populated by _load_yaml() on parse failure; consumed once by
+# load_constitution() to stamp the unparseable-marker metadata.
+_last_yaml_parse_error: Optional[str] = None
 
 
 def _fallback_dump(doc: Any, indent: int = 0) -> str:
@@ -549,12 +570,16 @@ def init_constitution(
         "metadata_signals": _default_metadata_signals(),
     }
 
-    path.parent.mkdir(parents=True, exist_ok=True)
     text = _dump_yaml(doc)
     # Always end with a trailing newline so the file is POSIX-clean.
     if not text.endswith("\n"):
         text += "\n"
-    path.write_text(text, encoding="utf-8")
+    # Atomic write: a crash mid-write would otherwise leave a torn YAML
+    # file at .roam/constitution.yml — Pattern-1C territory because the
+    # next ``load_constitution`` call would mark it ``unparseable`` and
+    # callers would lose the otherwise-valid prior state. atomic_write_text
+    # uses temp-file + os.replace, so the target file is never half-written.
+    atomic_write_text(path, text)
     return path
 
 
@@ -580,8 +605,16 @@ def load_constitution(repo_root: Path) -> Optional[Constitution]:
     data = _load_yaml(text)
     if not data:
         # Empty / unparseable -- still return a marker so callers know
-        # the file is there but unreadable.
-        c = Constitution(version=0, metadata={"unparseable": True}, _path=path)
+        # the file is there but unreadable. Stamp the parse-error reason
+        # when _load_yaml left one, so the diagnostic envelope can name
+        # WHY the file failed to parse instead of conflating it with the
+        # empty-file case (Pattern-2 lineage discipline).
+        meta: dict[str, Any] = {"unparseable": True}
+        if _last_yaml_parse_error:
+            meta["parse_error"] = _last_yaml_parse_error
+        elif not text.strip():
+            meta["reason"] = "empty_file"
+        c = Constitution(version=0, metadata=meta, _path=path)
         return c
 
     def _as_dict(v: Any) -> dict:

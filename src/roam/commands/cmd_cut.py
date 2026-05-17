@@ -117,7 +117,12 @@ def cut(ctx, between, leak_edges, top_n):
         G = build_symbol_graph(conn)
 
         if len(G) < 2:
-            verdict = "No cross-cluster boundaries found"
+            # W1010 Pattern 2: degenerate graph (<2 nodes). Pre-fix envelope
+            # said "No cross-cluster boundaries found" — indistinguishable
+            # from a clean multi-cluster graph with no leakage. Surface
+            # graph_too_small + partial_success so consumers can tell the
+            # difference between "couldn't analyze" and "analyzed cleanly".
+            verdict = f"Skipped cut analysis: graph has {len(G)} symbols (need >= 2)"
             if json_mode:
                 click.echo(
                     to_json(
@@ -128,9 +133,12 @@ def cut(ctx, between, leak_edges, top_n):
                                 "boundaries_analyzed": 0,
                                 "fragile_boundaries": 0,
                                 "leak_edges_found": 0,
+                                "partial_success": True,
+                                "state": "graph_too_small",
                             },
                             boundaries=[],
                             leak_edges=[],
+                            hint="Run 'roam init' to ensure the index has at least two symbols, or index a subdirectory.",
                         )
                     )
                 )

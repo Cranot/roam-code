@@ -15,6 +15,11 @@ ENVELOPE_SCHEMA = {
     },
     "optional_fields": {
         "_meta": "Non-deterministic metadata (timestamp, index_age_s) — separated for LLM cache stability",
+        "agent_contract": "Bounded ~200-token derived block (facts/risks/next_commands) for tight-context agents",
+        "warnings_out": "Pattern-2 silent-fallback disclosure list (always preserved by strip_list_payloads)",
+        "errors": "Hard-failure list (always preserved by strip_list_payloads)",
+        "redactions": "ChangeEvidence-style redaction marker list (always preserved by strip_list_payloads)",
+        "list_counts": "Top-level roll-up of dropped list-field sizes after strip_list_payloads",
         "Any additional keys": "Command-specific data fields",
     },
     "changelog": [

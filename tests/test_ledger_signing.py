@@ -408,3 +408,130 @@ def test_verify_all_populates_next_commands_on_unsigned(cli_runner, signed_proje
     assert next_commands[0].startswith("roam "), (
         f"W1091: next_commands[0] must be a copy-pasteable roam command, got: {next_commands[0]!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 14. CONSTRAINT 12: runs-verify next_commands must be literal copy-paste
+# executable — no trailing explanatory prose, no parenthetical hints
+# ---------------------------------------------------------------------------
+
+
+def _assert_bare_roam_command(cmd: str, context: str) -> None:
+    """Assert ``cmd`` is a literal ``roam <subcommand> [args...]`` string.
+
+    CONSTRAINT 12 (CLAUDE.md): next_command values must be copy-paste
+    executable. Trailing prose ("to inspect events"), parenthetical hints
+    ("(chain cannot be verified)"), or any natural-language suffix breaks
+    paste-into-shell.
+
+    Allowed: bare flags, ``--key value`` arg pairs, angle-bracketed
+    placeholders (``<name>``).  Forbidden: parentheses, the literal word
+    "to " followed by non-flag prose, free-form English clauses.
+    """
+    assert cmd.startswith("roam "), f"{context}: must start with 'roam ', got {cmd!r}"
+    # Parentheticals are always prose (the CLI doesn't take ``(...)`` args).
+    assert "(" not in cmd and ")" not in cmd, (
+        f"{context}: parenthetical prose breaks paste-to-shell; got {cmd!r}"
+    )
+    # "to <verb>" pattern is the classic trailing-prose anti-pattern
+    # ("roam runs show ID to inspect events around seq=2"). Allow the
+    # tokens themselves but block the verbose suffix construction.
+    tokens = cmd.split()
+    for i, tok in enumerate(tokens):
+        if tok == "to" and i > 1 and i < len(tokens) - 1:
+            following = tokens[i + 1]
+            # "to" inside a flag value or angle-bracket placeholder is fine;
+            # "to <verb>" prose is not.
+            if following[0].isalpha() and not following.startswith("--"):
+                raise AssertionError(
+                    f"{context}: trailing 'to {following}...' prose breaks "
+                    f"CONSTRAINT 12 (literal copy-paste); got {cmd!r}"
+                )
+
+
+def test_verify_all_tampered_next_command_is_bare_executable(
+    cli_runner, signed_project, monkeypatch
+):
+    """W1091 follow-up: when ``runs verify --all`` reports tampered state,
+    the suggested follow-up command must be literally executable — no
+    "to see the broken chain" trailing prose (CONSTRAINT 12).
+    """
+    monkeypatch.chdir(signed_project)
+
+    # Build one clean run + one tampered run so --all reports state=tampered.
+    clean_meta = start_run(signed_project, agent="claude-code")
+    log_event(signed_project, clean_meta.run_id, action="preflight", target="x")
+    end_run(signed_project, clean_meta.run_id, status="completed")
+
+    bad_meta = start_run(signed_project, agent="claude-code")
+    log_event(signed_project, bad_meta.run_id, action="preflight", target="useFoo")
+    log_event(signed_project, bad_meta.run_id, action="commit", target="useFoo")
+    bad_events_path = run_dir(signed_project, bad_meta.run_id) / "events.jsonl"
+    lines = bad_events_path.read_text(encoding="utf-8").splitlines()
+    parsed = json.loads(lines[1])
+    parsed["target"] = "evilTarget"
+    lines[1] = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+    bad_events_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result = invoke_cli(cli_runner, ["runs", "verify", "--all"], cwd=signed_project, json_mode=True)
+    raw = getattr(result, "stdout", None) or result.output
+    data = json.loads(raw)
+    assert_json_envelope(data, "runs-verify")
+    assert data["summary"]["state"] == "tampered"
+
+    next_commands = data["agent_contract"]["next_commands"]
+    assert next_commands, "tampered --all path must populate next_commands"
+    _assert_bare_roam_command(
+        next_commands[0],
+        context="runs verify --all tampered next_commands[0]",
+    )
+
+
+def test_verify_single_run_states_emit_bare_executable_commands(
+    cli_runner, signed_project, monkeypatch
+):
+    """Every state branch in ``runs verify <RUN_ID>`` must emit a literally
+    executable ``roam <subcommand>`` next_command (CONSTRAINT 12).
+
+    Covers state=ok (clean chain) + state=tampered (mutated event). The
+    state=unsigned / state=key_missing branches are exercised by the
+    --all variant above.
+    """
+    monkeypatch.chdir(signed_project)
+
+    # state=ok branch.
+    ok_meta = start_run(signed_project, agent="claude-code")
+    log_event(signed_project, ok_meta.run_id, action="preflight", target="x")
+    log_event(signed_project, ok_meta.run_id, action="commit", target="x")
+
+    result_ok = invoke_cli(
+        cli_runner, ["runs", "verify", ok_meta.run_id], cwd=signed_project, json_mode=True
+    )
+    data_ok = parse_json_output(result_ok, "runs-verify")
+    assert data_ok["summary"]["state"] == "ok"
+    ok_next = data_ok["agent_contract"]["next_commands"]
+    assert ok_next, "ok-state verify must suggest a next_command"
+    _assert_bare_roam_command(ok_next[0], context="runs verify <ok> next_commands[0]")
+
+    # state=tampered branch.
+    bad_meta = start_run(signed_project, agent="claude-code")
+    log_event(signed_project, bad_meta.run_id, action="preflight", target="x")
+    log_event(signed_project, bad_meta.run_id, action="commit", target="x")
+    bad_events_path = run_dir(signed_project, bad_meta.run_id) / "events.jsonl"
+    lines = bad_events_path.read_text(encoding="utf-8").splitlines()
+    parsed = json.loads(lines[1])
+    parsed["target"] = "evilTarget"
+    lines[1] = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+    bad_events_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    result_bad = invoke_cli(
+        cli_runner, ["runs", "verify", bad_meta.run_id], cwd=signed_project, json_mode=True
+    )
+    raw = getattr(result_bad, "stdout", None) or result_bad.output
+    data_bad = json.loads(raw)
+    assert data_bad["summary"]["state"] == "tampered"
+    bad_next = data_bad["agent_contract"]["next_commands"]
+    assert bad_next, "tampered-state verify must suggest a next_command"
+    _assert_bare_roam_command(
+        bad_next[0], context="runs verify <tampered> next_commands[0]"
+    )

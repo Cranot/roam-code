@@ -1980,6 +1980,18 @@ def doctor(ctx, strict, persist):
         "template_missing": ci_drift_check.get("_template_missing", []),
     }
 
+    # Pattern-2 playbook (W836 follow-up): surface explicit partial_success +
+    # state so downstream consumers don't need to count advisory_failed +
+    # blocking_failed themselves. partial_success is True whenever ANY check
+    # failed — both advisory and blocking degrade the run from "all clear".
+    # state vocabulary: all_passed | advisory_warnings | blocking_failures.
+    if blocking_failed:
+        state = "blocking_failures"
+    elif advisory_failed:
+        state = "advisory_warnings"
+    else:
+        state = "all_passed"
+
     if json_mode:
         click.echo(
             to_json(
@@ -1994,6 +2006,8 @@ def doctor(ctx, strict, persist):
                         "advisory_failed": len(advisory_failed),
                         "blocking_failed": len(blocking_failed),
                         "all_passed": len(failed) == 0,
+                        "partial_success": bool(failed),
+                        "state": state,
                         "strict": bool(strict),
                     },
                     checks=clean_checks,

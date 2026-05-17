@@ -47,9 +47,22 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from roam.evidence._vocabulary import REDACTION_REASONS
+from roam.evidence._vocabulary import POLICY_DECISIONS, REDACTION_REASONS
 
 #: Closed enumeration of policy-layer decisions on an MCP tool call.
+#:
+#: This is the **authority-gate subset** of the canonical
+#: :data:`roam.evidence._vocabulary.POLICY_DECISIONS` (8 verdicts). MCP
+#: tool-call decisions only span the authority-gate axis (allow / deny /
+#: escalate / redact / not_evaluated); the rule-evaluation verdicts
+#: (``pass`` / ``fail`` / ``unknown``) belong to the rules-engine layer
+#: and are not produced at the MCP boundary.
+#:
+#: Derived rather than hand-spelled to prevent Pattern 3a vocabulary
+#: drift — when the canonical frozenset grows a new authority-gate
+#: verdict, this subset participates automatically via the intersection
+#: at module-import time. The membership semantic (subset of canonical)
+#: is enforced by the assertion below.
 #:
 #: * ``allow``        - the call was permitted to run
 #: * ``deny``         - the call was refused outright
@@ -64,6 +77,16 @@ _POLICY_DECISIONS: frozenset[str] = frozenset(
         "redact",
         "not_evaluated",
     }
+) & POLICY_DECISIONS
+
+# Drift guard: every literal listed above must remain a member of the
+# canonical POLICY_DECISIONS. If a future edit drops one of these
+# verdicts from the canonical set, this assertion fires at import time
+# rather than at first construction of a McpDecisionReceipt with that
+# verdict.
+assert _POLICY_DECISIONS == {"allow", "deny", "escalate", "redact", "not_evaluated"}, (
+    f"_POLICY_DECISIONS drift: expected authority-gate subset of POLICY_DECISIONS, "
+    f"got {sorted(_POLICY_DECISIONS)}"
 )
 
 

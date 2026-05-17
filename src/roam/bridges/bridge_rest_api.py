@@ -85,6 +85,14 @@ _RUBY_ROUTE_RE = re.compile(
 class RestApiBridge(LanguageBridge):
     """Bridge between frontend HTTP calls and backend route definitions."""
 
+    # W81 / A6: bumped from inherited "1.0.0" because issue #17 (commit
+    # 2f175ecb) added Spring Boot class-level ``@RequestMapping`` prefix
+    # concatenation to the server-side URL extraction. Backend Java
+    # endpoints emitted by the older resolver lacked the class prefix
+    # (``/users`` rather than ``/api/v1/users``); the stamp lets consumers
+    # detect that drift and rebuild.
+    VERSION: str = "1.1.0"
+
     @property
     def name(self) -> str:
         return "rest-api"

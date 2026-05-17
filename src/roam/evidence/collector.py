@@ -2109,7 +2109,16 @@ def _collect_corroborated_ids_from_mcp_receipts(
                 redactions=tuple(data.get("redactions") or ()),
                 extra=data.get("extra") or {},
             )
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            # Honor the docstring promise: "Malformed JSON, missing
+            # required fields, or construction failures are absorbed
+            # into warnings." Pre-W907 the construction-failure branch
+            # silently swallowed the exception (Pattern 1B), so an
+            # unknown policy_decision literal or a redaction-reason
+            # drift would drop the receipt with no audit signal.
+            warnings.append(
+                f"corroboration: rejected receipt {file.name!r} ({type(exc).__name__}: {exc})"
+            )
             continue
         # tool_name + client_id are required (validated above); both
         # are non-empty strings here.

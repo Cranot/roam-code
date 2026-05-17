@@ -57,6 +57,87 @@ CONFIDENCE_STATIC_ANALYSIS = "static_analysis"  # taint / dataflow / type analys
 CONFIDENCE_RUNTIME = "runtime"  # observed at runtime (OTel / coverage)
 
 
+# Canonical detector name vocabulary --------------------------------------
+#
+# W1252 + W1255 sibling: ``count_by_detector(conn)`` returns ONLY detectors
+# that have already emitted rows on the local registry. On a fresh project
+# (or one where only a few detectors have run) that's a tiny set — so
+# ``roam findings list --detector taint`` was reporting "unknown detector"
+# even though ``taint`` is a perfectly valid detector that just hadn't been
+# invoked yet.
+#
+# The fix: maintain a static source-of-truth frozenset of every detector
+# name a roam command emits via ``emit_finding(conn, FindingRecord(...,
+# source_detector="<name>", ...))``. ``known_detector_names(conn)`` returns
+# the UNION of this canonical set + the runtime ``SELECT DISTINCT
+# source_detector FROM findings``. Two-state disclosure:
+#
+# * ``unknown_detector`` — truly not in the canonical vocabulary (typo /
+#   removed detector).
+# * ``not_yet_emitted`` — canonical detector that hasn't produced rows on
+#   this project yet (run the detector's command to populate).
+#
+# Mined from ``grep -n 'source_detector=' src/roam/commands/cmd_*.py`` +
+# ``src/roam/graph/clone_detect.py``. The two non-string-literal sites
+# (``cmd_fan`` toggles between ``"fan-symbol"`` and ``"fan-file"``;
+# ``cmd_pr_risk`` re-emits foreign rows under their original detector name
+# so contributes nothing of its own) are handled with explicit entries.
+#
+# Drift guard: ``tests/test_findings_canonical_detectors.py`` AST-scans
+# every ``cmd_*.py`` and fails when a literal ``source_detector=<X>`` lands
+# at a callsite but ``X`` is not in this frozenset. Extend the set + the
+# CLAUDE.md detector roster together.
+CANONICAL_DETECTOR_NAMES: frozenset[str] = frozenset(
+    {
+        "audit-trail-conformance",
+        "audit-trail-verify",
+        "auth-gaps",
+        "boundary",
+        "bus-factor",
+        "clones",
+        "complexity",
+        "conventions",
+        "critique",
+        "dark-matter",
+        "dead",
+        "doctor",
+        "duplicates",
+        "fan-file",
+        "fan-symbol",
+        "fingerprint",
+        "health",
+        "hotspots",
+        "laws",
+        "llm-smells",
+        "missing-index",
+        "n1",
+        "orphan-imports",
+        "over-fetch",
+        "pr-risk",
+        "smells",
+        "taint",
+        "test-hermeticity",
+        "vibe-check",
+        "vulns",
+    }
+)
+
+
+def known_detector_names(conn: sqlite3.Connection) -> set[str]:
+    """Return the closed vocabulary of detector names ``roam findings``
+    should recognise — UNION of canonical (source-truth) names and any
+    detector that has actually emitted rows on this project.
+
+    Two-state semantics live on the CALLER side (cmd_findings disambiguates
+    ``unknown_detector`` vs ``not_yet_emitted`` against this set + the
+    live ``count_by_detector(conn)`` result). The helper itself just
+    surfaces the closed vocabulary so callers can validate without
+    grepping the source tree at runtime.
+    """
+    live = set(count_by_detector(conn).keys())
+    return live | set(CANONICAL_DETECTOR_NAMES)
+
+
 # Finding ID derivation -----------------------------------------------------
 #
 # The canonical id shape across every detector is

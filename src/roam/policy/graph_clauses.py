@@ -25,10 +25,10 @@ field for ``target_not_indexed`` cases. Field names match
 
 from __future__ import annotations
 
-import fnmatch
-import re
 from collections import deque
 from typing import Any
+
+from roam._glob_match import matches_glob as _matches_glob
 
 # ---------------------------------------------------------------------------
 # Defaults — mirror W3.4 guardrails on cmd_impact._bounded_bfs.
@@ -38,52 +38,11 @@ DEFAULT_DEPTH = 3
 DEFAULT_MAX_NODES = 100
 
 
-# ---------------------------------------------------------------------------
-# Glob matching (matches the engine's variant — kept local so the policy
-# package has zero coupling to ``roam.rules.engine``).
-# ---------------------------------------------------------------------------
-
-
-def _matches_glob(file_path: str, pattern: str) -> bool:
-    """Glob match supporting ``**`` for directory wildcards.
-
-    Mirrors :func:`roam.rules.engine._matches_glob` semantics — kept
-    inlined here so the policy module can be imported without pulling
-    the full rules engine (lazy-import friendliness).
-    """
-    norm = (file_path or "").replace("\\", "/")
-    pat = (pattern or "").replace("\\", "/")
-    if not pat:
-        return False
-    if "**" not in pat:
-        return fnmatch.fnmatch(norm, pat)
-
-    parts: list[str] = []
-    i = 0
-    while i < len(pat):
-        c = pat[i]
-        if c == "*":
-            if i + 1 < len(pat) and pat[i + 1] == "*":
-                if i + 2 < len(pat) and pat[i + 2] == "/":
-                    parts.append("(?:.+/)?")
-                    i += 3
-                    continue
-                parts.append(".*")
-                i += 2
-                continue
-            parts.append("[^/]*")
-            i += 1
-        elif c == "?":
-            parts.append("[^/]")
-            i += 1
-        elif c in r".+^${}()|[]":
-            parts.append("\\" + c)
-            i += 1
-        else:
-            parts.append(c)
-            i += 1
-    regex = "".join(parts)
-    return re.match("^" + regex + "$", norm) is not None
+# ``_matches_glob`` is imported from ``roam._glob_match`` at the top of
+# this module (W856 hoist — was duplicated in ``rules/engine.py``;
+# leaf-module home keeps both packages independent and breaks the
+# ``policy → rules.engine`` cycle that the previous local copy hedged
+# against).
 
 
 # ---------------------------------------------------------------------------

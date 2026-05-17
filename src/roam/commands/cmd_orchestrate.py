@@ -169,9 +169,33 @@ def orchestrate(ctx, n_agents, file_args, staged):
         shared_interfaces = result["shared_interfaces"]
         write_conflicts = result["write_conflicts"]
 
-        verdict = f"{len(agents)} agents, {write_conflicts} write conflicts, {len(shared_interfaces)} shared interfaces"
+        # LAW 4 anchor + LAW 6 verdict-first: terminate verdict on a
+        # concrete-noun token (``agents``) so agents reading just the
+        # verdict get an analytical sentence rather than ending on
+        # ``interfaces`` (not in the concrete-noun anchor set).
+        verdict = (
+            f"orchestrated {len(agents)} agents with {write_conflicts} write conflicts "
+            f"across {len(shared_interfaces)} shared interfaces"
+        )
 
         if json_mode:
+            # Curated agent_contract overrides the auto-derive's ugly
+            # facts (``"4 n agents"`` / ``"0.0767 conflict probability
+            # findings"``) with LAW 4-anchored alternatives. See
+            # cmd_partition._partition_agent_contract for the canonical
+            # pattern.
+            facts = [
+                verdict,
+                f"orchestrated {len(agents)} agents",
+                f"flagged {write_conflicts} write conflicts",
+                f"conflict score {conflict_prob:.4f}",
+            ]
+            n_shared = len(shared_interfaces)
+            if n_shared:
+                facts.append(f"flagged {n_shared} shared interfaces")
+            next_commands = []
+            if conflict_prob >= 0.25 or write_conflicts >= 5:
+                next_commands.append("roam clusters")
             click.echo(
                 to_json(
                     json_envelope(
@@ -182,6 +206,12 @@ def orchestrate(ctx, n_agents, file_args, staged):
                             "write_conflicts": write_conflicts,
                             "shared_interfaces_count": len(shared_interfaces),
                             "conflict_probability": conflict_prob,
+                        },
+                        agent_contract={
+                            "facts": facts,
+                            "risks": [],
+                            "next_commands": next_commands,
+                            "confidence": None,
                         },
                         agents=agents,
                         merge_order=merge_order,

@@ -655,7 +655,13 @@ def _write_with_preserve(filepath, content):
     If the file already contains the auto-generated markers, only the
     section between markers is replaced.  Manual content before/after the
     markers is preserved.
+
+    Writes go through :func:`atomic_write_text` so an interrupted write
+    can NEVER truncate the user's manual content sitting outside the
+    markers — the temp file is replaced atomically or not at all.
     """
+    from roam.atomic_io import atomic_write_text
+
     if os.path.exists(filepath):
         try:
             with open(filepath, "r", encoding="utf-8") as _fh:
@@ -699,12 +705,10 @@ def _write_with_preserve(filepath, content):
                 parts.append(after)
 
             final = "\n".join(parts) + "\n"
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(final)
+            atomic_write_text(filepath, final)
             return
     # No existing markers or no existing file -- write fresh
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(content)
+    atomic_write_text(filepath, content)
 
 
 # ---------------------------------------------------------------------------

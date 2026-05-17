@@ -14,7 +14,15 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found_hint
 from roam.db.connection import open_db
+from roam.db.edge_kinds import CALL_EDGE_KINDS
 from roam.output.formatter import json_envelope, resolution_disclosure, to_json
+
+# Conflict-risk edge kinds: callers (W512 canonical union) + the
+# 'uses' / 'uses_trait' phantom-extender kinds documented in
+# roam.db.edge_kinds (Selection guide §"Sites that mix in additional
+# edge kinds"). Anchored on a named constant so a future writer adding
+# 'uses_imports' or similar can be added in one place.
+_CONFLICT_MODIFIER_EDGE_KINDS: frozenset[str] = frozenset(CALL_EDGE_KINDS) | {"uses", "uses_trait"}
 
 
 def _resolve_symbols_from_files(conn, file_paths):
@@ -147,7 +155,7 @@ def _detect_conflicts(G, input_ids, shared_deps, conn):
         for caller_id in callers:
             if G.has_edge(caller_id, dep_id):
                 edge_kind = G.edges[caller_id, dep_id].get("kind", "")
-                if edge_kind in ("call", "uses", "uses_trait"):
+                if edge_kind in _CONFLICT_MODIFIER_EDGE_KINDS:
                     modifiers.add(caller_id)
         if len(modifiers) >= 2:
             dep_info = _get_symbol_info(conn, dep_id)

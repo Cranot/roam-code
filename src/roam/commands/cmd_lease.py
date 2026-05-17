@@ -538,6 +538,22 @@ def lease_list(ctx, agent, include_expired, do_gc):
     if do_gc and freed:
         verdict = f"{verdict} (gc freed {len(freed)})"
 
+    # Explicit agent_contract: the auto-derive humanizer would render
+    # ``gc_freed: 0`` as "0 gc freed findings" because ``freed`` is not in
+    # the concrete-plural-terminal allowlist (LAW 4). Provide a hand-anchored
+    # facts list with terminal nouns ("leases", "agents") instead.
+    if total == 0:
+        agent_facts = [f"{total} leases"]
+    else:
+        agent_owners = sorted({lease.agent for lease in leases})
+        n_agents = len(agent_owners)
+        agent_facts = [f"{total} active leases"]
+        # Grammar: keep terminal "agents" plural for LAW-4 anchor; only emit
+        # the line when the count is >1 to avoid awkward "1 distinct agents".
+        if n_agents > 1:
+            agent_facts.append(f"{n_agents} distinct agents")
+        if do_gc and freed:
+            agent_facts.append(f"{len(freed)} expired leases")
     envelope = json_envelope(
         "lease-list",
         summary={
@@ -551,6 +567,12 @@ def lease_list(ctx, agent, include_expired, do_gc):
         leases=[lease.to_dict() for lease in leases],
         gc_freed_ids=freed,
         path=str(lroot),
+        agent_contract={
+            "facts": agent_facts,
+            "next_commands": (
+                ["roam lease claim --agent NAME --file PATH"] if total == 0 else []
+            ),
+        },
     )
 
     if json_mode:
@@ -675,6 +697,10 @@ def lease_gc(ctx):
 
     n = len(freed)
     verdict = f"gc freed {n} expired lease{'s' if n != 1 else ''}"
+    # Explicit agent_contract: the auto-derive humanizer renders
+    # ``gc_freed: N`` as "N gc freed findings" because ``freed`` is not in
+    # the concrete-plural-terminal allowlist (LAW 4). Hand-anchor on
+    # "leases" terminal.
     envelope = json_envelope(
         "lease-gc",
         summary={
@@ -685,6 +711,10 @@ def lease_gc(ctx):
         },
         budget=token_budget,
         freed_ids=freed,
+        agent_contract={
+            "facts": [f"{n} freed leases"],
+            "next_commands": ["roam lease list"],
+        },
     )
     try:
         auto_log(envelope, action="lease-gc", target="", repo_root=root)

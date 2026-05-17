@@ -801,8 +801,8 @@ def _agent_prompt_data(conn):
                 data["test_cmd"] = "npm test"
             else:
                 data["test_cmd"] = "pytest"
-    else:
-        data["test_cmd"] = ""
+        else:
+            data["test_cmd"] = ""
 
     return data
 

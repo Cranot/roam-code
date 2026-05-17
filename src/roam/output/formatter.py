@@ -466,7 +466,7 @@ def _stringify_risk_item(item) -> str:
     if isinstance(item, str):
         return item
     if isinstance(item, dict):
-        for key in ("message", "title", "description", "verdict", "observation", "rule_id"):
+        for key in ("claim", "message", "title", "description", "verdict", "observation", "rule_id"):
             v = item.get(key)
             if isinstance(v, str) and v:
                 return v
@@ -660,6 +660,16 @@ def _humanize_summary_fact(key: str, value: int | float) -> str:
         "gaps",
         "movers",
         "kinds",
+        # Retrieval-shape terminals (W1073 dogfood): `roam retrieve` summary
+        # keys ``candidates`` / ``budget`` / ``seeds`` are inherently
+        # count-noun concrete plurals; double-anchoring them with "findings"
+        # produced "10 candidates findings" / "4000 budget findings" which
+        # parse as garbage. Adding them here makes the humanizer emit
+        # "10 candidates" / "4000 budget" / "10 seeds" — readable and
+        # LAW 4-anchored on the terminal noun directly.
+        "candidates",
+        "budget",
+        "seeds",
         # Past-participle / state qualifiers used as terminal tokens
         # (``files_passed`` / ``symbols_failed`` / ``runs_skipped``).
         # The preceding noun is the analytical subject; appending
@@ -681,6 +691,11 @@ def _humanize_summary_fact(key: str, value: int | float) -> str:
         "confirmed",
         "upgrades",
         "downgrades",
+        # W1073 dogfood — `budget_used`, `bytes_used`, `slots_used` and
+        # peers all use ``used`` as a state qualifier. Adding it here
+        # makes "2900 budget used" the natural anchored form instead of
+        # the awkward "2900 budget used findings".
+        "used",
         # Time units used as terminal nouns (``window_days`` etc.).
         "days",
         "weeks",

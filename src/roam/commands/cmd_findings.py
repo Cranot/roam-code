@@ -34,7 +34,12 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.db.findings import count_by_detector, get_finding, list_findings
+from roam.db.findings import (
+    count_by_detector,
+    get_finding,
+    known_detector_names,
+    list_findings,
+)
 from roam.output.formatter import format_table, json_envelope, to_json
 from roam.output.structured_unknowns import (
     structured_unknown_filter,
@@ -126,11 +131,27 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
         # from a clean codebase. Pattern-1D silent-success on degraded
         # filter resolution. W1080: delegated to the shared
         # ``structured_unknown_filter`` helper.
-        known_detectors = count_by_detector(conn)
+        #
+        # W1259 sibling-fix: ``count_by_detector(conn)`` alone returns ONLY
+        # the detectors that have ALREADY emitted rows on THIS project,
+        # which was rejecting ``--detector taint`` (etc.) as "unknown"
+        # even though ``taint`` is a perfectly valid detector that just
+        # hadn't been invoked yet. Validate against the canonical vocabulary
+        # UNION live counts (see ``known_detector_names``), then disambiguate
+        # the two states:
+        #
+        #   * ``unknown_detector``   — truly not in the canonical vocabulary
+        #   * ``not_yet_emitted``    — canonical detector, 0 rows on this project
+        #
+        # The agent now knows the difference between "fix the typo" and
+        # "run the detector first" instead of being told both are equally
+        # unknown.
+        live_counts = count_by_detector(conn)
+        full_vocabulary = known_detector_names(conn)
         frag = (
             structured_unknown_filter(
                 requested=detector,
-                known=known_detectors,
+                known=full_vocabulary,
                 state="unknown_detector",
                 requested_field="requested_detector",
                 known_field="known_detectors",
@@ -140,6 +161,17 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
             if detector is not None
             else None
         )
+        # W1259: canonical-but-not-yet-emitted is a distinct second state.
+        # The structured_unknown_filter call above only fires when ``detector``
+        # is NOT in the union — so reaching this branch means ``detector``
+        # IS canonical. If it has 0 rows we still want to emit a disclosure
+        # envelope (different state, different verdict) rather than dropping
+        # into the generic empty-result branch.
+        canonical_empty = (
+            detector is not None
+            and frag is None
+            and detector not in live_counts
+        )
         if frag is not None:
             # W1082: ``did_you_mean_omit_when_empty=True`` makes the helper
             # omit the field when empty so the splice stays unconditional.
@@ -148,7 +180,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
             # as a separate ``click.echo`` text line + as a summary
             # ``did_you_mean`` field) — leave ``frag['verdict_suffix']``
             # unused here.
-            verdict_unknown = f"unknown detector {detector!r} ({len(known_detectors)} known)"
+            verdict_unknown = f"unknown detector {detector!r} ({len(full_vocabulary)} known)"
             close_matches = frag.get("did_you_mean", [])
             if json_mode:
                 # W1083: ``to_summary_payload`` extracts the splice subset
@@ -187,10 +219,57 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
             if close_matches:
                 quoted = " or ".join(f"'{m}'" for m in close_matches)
                 click.echo(f"Did you mean: {quoted}?")
-            if known_detectors:
-                click.echo("Known detectors: " + ", ".join(sorted(known_detectors)))
+            if full_vocabulary:
+                click.echo("Known detectors: " + ", ".join(sorted(full_vocabulary)))
             else:
                 click.echo("Registry is empty (no detectors have emitted yet).")
+            return
+
+        # W1259 second state: canonical detector with 0 rows on this project.
+        if canonical_empty:
+            verdict_not_emitted = (
+                f"detector {detector!r} is canonical but has not emitted "
+                f"findings on this project yet (run `roam {detector}` first)"
+            )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "findings-list",
+                            summary={
+                                "verdict": verdict_not_emitted,
+                                "partial_success": True,
+                                "state": "not_yet_emitted",
+                                "requested_detector": detector,
+                                "known_detectors": sorted(full_vocabulary),
+                                "total_findings": 0,
+                                "filters": {
+                                    "detector": detector,
+                                    "subject_kind": subject_kind,
+                                    "subject_id": subject_id,
+                                },
+                            },
+                            budget=token_budget,
+                            findings=[],
+                            agent_contract={
+                                "facts": [
+                                    f"0 {detector} findings",
+                                    f"{len(full_vocabulary)} canonical detectors",
+                                ],
+                                "next_commands": [
+                                    f"roam {detector}",
+                                    "roam findings count",
+                                ],
+                            },
+                        )
+                    )
+                )
+                return
+            click.echo(f"VERDICT: {verdict_not_emitted}")
+            click.echo(
+                f"Run `roam {detector}` to populate the registry, then re-run "
+                f"`roam findings list --detector {detector}`."
+            )
             return
 
         rows = list_findings(

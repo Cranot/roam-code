@@ -351,6 +351,7 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
         click.echo(f"VERDICT: {verdict}")
         click.echo(f"  path:    {path}")
         click.echo(f"  records: {len(records)}")
+        click.echo(f"  state:   {state}")
         if records:
             click.echo(f"  first:   {records[0].get('timestamp')}")
             click.echo(f"  last:    {records[-1].get('timestamp')}")
@@ -364,6 +365,21 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
                     click.echo(f"    computed: {i['computed_prev']}")
             if len(issues) > 10:
                 click.echo(f"  ... and {len(issues) - 10} more (use --json for full list)")
+        # W829 disclosure — surface the bootstrap path in text mode when
+        # the trail is uninitialized AND name the gate exit explicitly when
+        # ``--gate`` will fail-closed below. Without these hints a CI run
+        # would log "exit 5" with no in-band cue distinguishing tamper
+        # (state=broken) from "no trail yet" (state=uninitialized), and a
+        # human reader of the text envelope had no remediation step.
+        # JSON consumers read summary.state directly; this only adds
+        # parity for text-mode consumers.
+        if state == "uninitialized":
+            click.echo(
+                "  fix:     run `roam pr-analyze --audit-trail` to append the first record, "
+                "or `roam runs start --agent <name>` to open a run."
+            )
+        if gate and not chain_valid:
+            click.echo(f"  gate:    --gate set; exiting {EXIT_GATE_FAILURE} (state={state}).")
 
     # W830 — Gate is fail-closed on both ``broken`` AND ``uninitialized``.
     # The structured envelope has already been emitted above (Pattern 2

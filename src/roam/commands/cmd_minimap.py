@@ -495,11 +495,16 @@ def minimap(ctx, update_claude, output_file, init_notes):
         (root / ".roam").mkdir(exist_ok=True)
         if notes_path.exists():
             if json_mode:
+                # LAW 6: verdict works without any other field.
                 click.echo(
                     to_json(
                         json_envelope(
                             "minimap",
-                            summary={"verdict": "exists", "path": str(notes_path)},
+                            summary={
+                                "verdict": f"minimap notes file already exists at {notes_path}",
+                                "action": "exists",
+                                "path": str(notes_path),
+                            },
                         )
                     )
                 )
@@ -509,11 +514,16 @@ def minimap(ctx, update_claude, output_file, init_notes):
         else:
             notes_path.write_text(_NOTES_TEMPLATE, encoding="utf-8")
             if json_mode:
+                # LAW 6: verdict works without any other field.
                 click.echo(
                     to_json(
                         json_envelope(
                             "minimap",
-                            summary={"verdict": "created", "path": str(notes_path)},
+                            summary={
+                                "verdict": f"minimap notes file created at {notes_path}",
+                                "action": "created",
+                                "path": str(notes_path),
+                            },
                         )
                     )
                 )

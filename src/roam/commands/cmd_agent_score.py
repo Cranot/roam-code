@@ -378,11 +378,19 @@ def agent_score_cmd(ctx, agent, since, top):
     if json_mode:
         # W1142-followup-B: cap-hit disclosure. Surface whether the
         # agent's --limit collapsed the scored agent list.
+        #
+        # ``count`` / ``total_count`` go into ``summary`` so the
+        # formatter's auto-derive emits sensible LAW-4 facts
+        # (``"16 agents scored"`` / ``"16 total count"``). The
+        # CLI ``--limit`` value is a query parameter — humanizing
+        # it produces semantically-broken ``"0 limit findings"`` /
+        # ``"10 limit findings"`` strings, so keep it out of summary
+        # and stamp it as a top-level meta field for consumers that
+        # need to reason about the cap.
         _cap_summary = {
             "count": len(scored),
             "total_count": total_scored_full,
             "truncated": scored_truncated,
-            "limit": top,
         }
         _warnings_out: list[str] = []
         if scored_truncated:
@@ -412,6 +420,7 @@ def agent_score_cmd(ctx, agent, since, top):
                         "formula": "round(completion_rate*70 + (1-partial_success_rate)*20 + min(unique_actions/5,1.0)*10, 1)",
                     },
                     facts_extra=facts,
+                    cap_limit=top,
                 )
             )
         )

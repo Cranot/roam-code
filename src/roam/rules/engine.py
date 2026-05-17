@@ -10,6 +10,7 @@ import fnmatch
 import re
 from pathlib import Path
 
+from roam._glob_match import matches_glob as _matches_glob
 from roam.db.connection import find_project_root
 from roam.index.parser import detect_language, parse_file
 from roam.output.formatter import WarningsOut
@@ -450,48 +451,8 @@ def _is_exempt(symbol_name: str, file_path: str, exempt: dict) -> bool:
     return False
 
 
-def _matches_glob(file_path: str, pattern: str) -> bool:
-    """Check if a file path matches a glob pattern.
-
-    Supports ``**`` for matching zero or more directories, unlike plain
-    ``fnmatch`` which treats ``*`` as matching everything including ``/``.
-    """
-    norm = file_path.replace("\\", "/")
-    pat = pattern.replace("\\", "/")
-
-    if "**" not in pat:
-        return fnmatch.fnmatch(norm, pat)
-
-    # Convert glob pattern with ** to regex
-    parts: list[str] = []
-    i = 0
-    while i < len(pat):
-        c = pat[i]
-        if c == "*":
-            if i + 1 < len(pat) and pat[i + 1] == "*":
-                if i + 2 < len(pat) and pat[i + 2] == "/":
-                    parts.append("(?:.+/)?")
-                    i += 3
-                    continue
-                else:
-                    parts.append(".*")
-                    i += 2
-                    continue
-            else:
-                parts.append("[^/]*")
-                i += 1
-        elif c == "?":
-            parts.append("[^/]")
-            i += 1
-        elif c in r".+^${}()|[]":
-            parts.append("\\" + c)
-            i += 1
-        else:
-            parts.append(c)
-            i += 1
-
-    regex = "".join(parts)
-    return re.match("^" + regex + "$", norm) is not None
+# ``_matches_glob`` is imported from ``roam._glob_match`` at the top of
+# this module (W856 hoist — was duplicated in ``policy/graph_clauses.py``).
 
 
 def _matches_kind(kind: str, kind_filter: list | str | None) -> bool:

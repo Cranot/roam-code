@@ -137,13 +137,20 @@ BLAME_FOR_FILE = """
     ORDER BY gc.timestamp DESC
 """
 
-# Dead code
+# Dead code.
+#
+# Uses NOT EXISTS rather than NOT IN to (a) avoid the classic SQL footgun
+# where any NULL in the subquery makes NOT IN return zero rows -- the
+# schema currently declares edges.target_id NOT NULL but a future
+# migration relaxing that would silently break dead-code detection -- and
+# (b) let SQLite plan a correlated index lookup against idx_edges_target
+# rather than materializing the full target_id set.
 UNREFERENCED_EXPORTS = """
     SELECT s.*, f.path as file_path
     FROM symbols s
     JOIN files f ON s.file_id = f.id
     WHERE s.is_exported = 1
-    AND s.id NOT IN (SELECT target_id FROM edges)
+    AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.target_id = s.id)
     AND s.kind IN ('function', 'class', 'method')
     ORDER BY f.path, s.line_start
 """

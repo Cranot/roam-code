@@ -51,20 +51,16 @@ def resolve_base_commit(root: Path, base_ref: str) -> str | None:
 
 
 def _git_show(root: Path, ref: str, filepath: str) -> bytes | None:
-    """Return the content of *filepath* at *ref*, or None if it didn't exist."""
-    cmd = ["git", "show", f"{ref}:{filepath}"]
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(root),
-            capture_output=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return None
-        return result.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
+    """Return the content of *filepath* at *ref*, or None if it didn't exist.
+
+    Thin delegating alias for :func:`roam.commands.changed_files.git_show_at_ref`.
+    Kept under the original private name so the module-internal call sites stay
+    grep-stable; the canonical implementation lives in ``changed_files`` per
+    the W-vibe-check DRY consolidation.
+    """
+    from roam.commands.changed_files import git_show_at_ref
+
+    return git_show_at_ref(root, ref, filepath)
 
 
 def _extract_old_symbols(source: bytes, file_path: str) -> list[dict]:

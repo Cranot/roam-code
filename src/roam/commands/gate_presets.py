@@ -183,6 +183,9 @@ def detect_preset(file_paths: list[str]) -> GatePreset | None:
     return None
 
 
+_VALID_SEVERITIES = frozenset({"error", "warning"})
+
+
 def load_gates_config(config_path: str) -> list[GateRule]:
     """Load gate rules from a .roam-gates.yml file.
 
@@ -195,28 +198,61 @@ def load_gates_config(config_path: str) -> list[GateRule]:
             exclude: ["**/__init__.py"]
             min_tests: 3
             severity: error
+
+    W706 family: every fallback path is loud. Missing PyYAML, missing
+    file, malformed YAML, wrong top-level shape, and per-rule type
+    errors all return ``[]`` rather than raise. Callers that need to
+    distinguish "no rules" from "config broken" should ``Path.exists()``
+    check first. Encoding is pinned to UTF-8 so non-ASCII descriptions
+    on Windows don't blow up on the system codepage.
     """
     try:
         import yaml
     except ImportError:
         return []
 
-    with open(config_path) as f:
-        data = yaml.safe_load(f)
-
-    if not data or "rules" not in data:
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except (OSError, UnicodeDecodeError):
+        return []
+    except yaml.YAMLError:
         return []
 
-    rules = []
-    for r in data["rules"]:
+    # W886/W1029 family: data may be None (empty YAML), a list, a scalar,
+    # or any shape — only a mapping with a "rules" key is usable.
+    if not isinstance(data, dict) or "rules" not in data:
+        return []
+
+    raw_rules = data.get("rules")
+    if not isinstance(raw_rules, list):
+        return []
+
+    rules: list[GateRule] = []
+    for r in raw_rules:
+        if not isinstance(r, dict):
+            continue  # skip non-mapping entries (e.g. a bare string in the list)
+        include = r.get("include", [])
+        exclude = r.get("exclude", [])
+        if not isinstance(include, list):
+            include = []
+        if not isinstance(exclude, list):
+            exclude = []
+        try:
+            min_tests = int(r.get("min_tests", 1))
+        except (TypeError, ValueError):
+            min_tests = 1
+        severity = r.get("severity", "warning")
+        if severity not in _VALID_SEVERITIES:
+            severity = "warning"
         rules.append(
             GateRule(
-                name=r.get("name", "unnamed"),
-                description=r.get("description", ""),
-                include_patterns=r.get("include", []),
-                exclude_patterns=r.get("exclude", []),
-                min_test_count=r.get("min_tests", 1),
-                severity=r.get("severity", "warning"),
+                name=str(r.get("name", "unnamed")),
+                description=str(r.get("description", "")),
+                include_patterns=[str(p) for p in include],
+                exclude_patterns=[str(p) for p in exclude],
+                min_test_count=min_tests,
+                severity=severity,
             )
         )
     return rules

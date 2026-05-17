@@ -200,8 +200,18 @@ def ingest_npm_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                 if isinstance(via, list):
                     for v in via:
                         if isinstance(v, dict):
-                            cve_id = cve_id or v.get("url", "").split("/")[-1] if "url" in v else None
-                            title = title or v.get("title")
+                            # REAL BUG (operator precedence): the prior
+                            # ``cve_id or v.get("url", "").split("/")[-1] if "url" in v else None``
+                            # parsed as ``(cve_id or X) if "url" in v else None`` —
+                            # so any *later* via-entry lacking ``url`` would
+                            # wipe a previously-found CVE back to ``None``.
+                            # Fix: only attempt to derive cve_id from this
+                            # entry's ``url``; preserve the running cve_id
+                            # when this entry has none.
+                            if not cve_id and "url" in v:
+                                cve_id = v.get("url", "").split("/")[-1] or None
+                            if not title:
+                                title = v.get("title")
                 results.append(_insert_vuln(conn, cve_id, pkg_name, severity, title, "npm-audit"))
 
         # npm audit v1: {"advisories": {"id": {...}}}

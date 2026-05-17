@@ -257,9 +257,13 @@ def test_envelope_includes_by_classification(project_factory, monkeypatch, cli_r
 
     ac = data["agent_contract"]
     assert "facts" in ac and len(ac["facts"]) > 0
-    # LAW 4: facts should anchor on concrete-noun ("functions with ...").
-    assert any("functions" in f or "function" in f for f in ac["facts"]), (
-        f"Expected concrete-noun facts, got {ac['facts']}"
+    # LAW 4: facts must anchor on a concrete-noun terminal. The rollup
+    # facts now terminate on "symbols" (canonical anchor in
+    # tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS); the worst-symbol
+    # fact terminates on a parenthetical-stripped "<symbol> classified
+    # <kind>" form (analytical verb anchors it).
+    assert any("symbols" in f or "classified" in f for f in ac["facts"]), (
+        f"Expected concrete-noun-anchored facts, got {ac['facts']}"
     )
     # LAW 2: next_commands use imperative voice.
     assert any(nc.startswith("roam ") for nc in ac["next_commands"])

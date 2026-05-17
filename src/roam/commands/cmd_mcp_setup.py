@@ -289,7 +289,21 @@ def mcp_setup(ctx, platform, preset, write):
                 "error": f"no config_path defined for platform {platform!r}",
             }
         else:
-            target = _resolve_config_path(config_path)
+            # Project-local configs (./.mcp.json, ./.cursor/mcp.json,
+            # ./.vscode/mcp.json) must anchor on the project root, not the
+            # current working dir — running `roam mcp-setup vscode --write`
+            # from a subdirectory previously wrote into `<subdir>/.vscode/`
+            # instead of `<project>/.vscode/`, a silent-write-to-wrong-dir
+            # footgun in the spirit of W554.
+            project_root: Path | None = None
+            if config_path.startswith("./"):
+                try:
+                    from roam.db.connection import find_project_root
+
+                    project_root = find_project_root()
+                except Exception:
+                    project_root = None
+            target = _resolve_config_path(config_path, project_root)
             write_result = _write_config(target, json_config)
 
     if json_mode:

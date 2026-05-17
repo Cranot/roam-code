@@ -161,10 +161,11 @@ class YamlExtractor(LanguageExtractor):
     # ------------------------------------------------------------------
 
     def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
-        try:
-            text = source.decode("utf-8", errors="replace")
-        except Exception:
-            return []
+        # `errors="replace"` cannot raise — every undecodable byte maps to
+        # U+FFFD. Earlier `try/except Exception: return []` here was a W907
+        # false-hedge; surface real (non-decode) errors instead of silently
+        # dropping the whole file.
+        text = source.decode("utf-8", errors="replace")
         lines = text.splitlines()
         flavor = _detect_yaml_flavor(lines)
 
@@ -175,10 +176,8 @@ class YamlExtractor(LanguageExtractor):
         return self._generic_symbols(lines, file_path)
 
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
-        try:
-            text = source.decode("utf-8", errors="replace")
-        except Exception:
-            return []
+        # See extract_symbols for rationale (W907 false-hedge cleanup).
+        text = source.decode("utf-8", errors="replace")
         lines = text.splitlines()
         flavor = _detect_yaml_flavor(lines)
 

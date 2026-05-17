@@ -142,3 +142,32 @@ def index(ctx, force, verbose, quiet):
                     click.echo(f"  Health: {snap['health_score']}/100 (snapshot saved)")
             except Exception:
                 pass  # Don't fail indexing if snapshot fails
+    else:
+        # Pattern 1C (CLAUDE.md): never emit empty stdout. If the indexer ran
+        # but the DB isn't visible (race with cloud-sync, write to a different
+        # location, etc.) emit a structured envelope so MCP wrappers and
+        # piped consumers don't crash on json.loads("").
+        _index_verdict = "indexer ran but no index database is visible"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "index",
+                        summary={
+                            "verdict": _index_verdict,
+                            "state": "no_db_after_index",
+                            "partial_success": True,
+                        },
+                        elapsed_s=round(elapsed, 1),
+                        partial_success=True,
+                        resolution="unresolved",
+                    )
+                )
+            )
+        elif not quiet:
+            click.echo(f"VERDICT: {_index_verdict}")
+            click.echo(f"  Completed in {elapsed:.1f}s")
+            click.echo(
+                "  Hint: check ROAM_DB_DIR / cloud-sync; run `roam doctor` "
+                "for a diagnostic dump."
+            )

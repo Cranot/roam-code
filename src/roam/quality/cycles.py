@@ -73,25 +73,47 @@ class CyclesSummary:
         not architectural defects.
     definition : str
         The :data:`DEFINITION` string for downstream consumers.
+    fallback_used : bool
+        ``True`` when the all-zero result is a swallowed-exception
+        fallback (graph build failed, networkx import failed, etc.)
+        rather than a genuine cycle-free codebase. Per CLAUDE.md
+        "Make fallback chains loud" — agents must be able to
+        distinguish "0 cycles because clean" from "0 cycles because
+        the computation crashed". Default ``False`` so existing call
+        sites stay byte-identical when the computation succeeds.
+    fallback_reason : str
+        Short identifier of the failure class (``""`` when
+        ``fallback_used`` is ``False``). One of: ``"import_failed"``,
+        ``"graph_build_failed"``, or ``""``.
     """
 
     total: int
     actionable: int
     informational: int
     definition: str = DEFINITION
+    fallback_used: bool = False
+    fallback_reason: str = ""
 
     def as_envelope_dict(self) -> dict:
         """Render as a dict suitable for embedding in a JSON envelope.
 
         Includes the definition label inline so consumers that only
         read this nested dict still see the source-of-truth label.
+        The ``fallback_used`` / ``fallback_reason`` keys are emitted
+        ONLY when the fallback fired — keeping the happy-path envelope
+        byte-identical to the pre-W17 shape so stored content hashes
+        don't drift.
         """
-        return {
+        out: dict = {
             "total": self.total,
             "actionable": self.actionable,
             "informational": self.informational,
             "cycles_definition": self.definition,
         }
+        if self.fallback_used:
+            out["fallback_used"] = True
+            out["fallback_reason"] = self.fallback_reason
+        return out
 
 
 def cycles_summary(conn) -> CyclesSummary:
@@ -126,7 +148,12 @@ def cycles_summary(conn) -> CyclesSummary:
         # Defensive: if networkx / graph module isn't importable we
         # return all-zero rather than crashing the caller. Cycles is an
         # advisory metric — its absence shouldn't break health/describe.
-        return CyclesSummary(total=0, actionable=0, informational=0)
+        # Stamp the fallback flag so consumers can distinguish this from
+        # a real cycle-free codebase (CLAUDE.md "Make fallback chains loud").
+        return CyclesSummary(
+            total=0, actionable=0, informational=0,
+            fallback_used=True, fallback_reason="import_failed",
+        )
 
     try:
         G = build_symbol_graph(conn)
@@ -134,7 +161,10 @@ def cycles_summary(conn) -> CyclesSummary:
         formatted = format_cycles(raw, conn) if raw else []
         mark_actionable_cycles(formatted)
     except Exception:
-        return CyclesSummary(total=0, actionable=0, informational=0)
+        return CyclesSummary(
+            total=0, actionable=0, informational=0,
+            fallback_used=True, fallback_reason="graph_build_failed",
+        )
 
     total = len(formatted)
     actionable = sum(1 for c in formatted if c.get("actionable"))

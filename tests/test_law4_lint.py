@@ -141,6 +141,11 @@ _CONCRETE_NOUN_ANCHORS: frozenset[str] = frozenset(
         "gaps",
         "movers",
         "kinds",
+        # W1073 dogfood — `roam retrieve` retrieval-shape terminals.
+        # Mirrors formatter.py: candidates / budget / seeds.
+        "candidates",
+        "budget",
+        "seeds",
         "passed",
         "failed",
         "scanned",
@@ -158,6 +163,8 @@ _CONCRETE_NOUN_ANCHORS: frozenset[str] = frozenset(
         "confirmed",
         "upgrades",
         "downgrades",
+        # W1073 dogfood — past-participle state qualifier.
+        "used",
         "days",
         "weeks",
         "months",

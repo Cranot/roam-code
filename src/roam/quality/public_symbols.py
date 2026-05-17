@@ -71,18 +71,34 @@ class PublicSymbolsSummary:
         ``docs-coverage`` rule).
     definition : str
         :data:`DEFINITION` string.
+    fallback_used : bool
+        ``True`` when EITHER count came back as a swallowed-exception
+        fallback rather than a real zero. The pre-W17 shape silently
+        returned 0/0 on any query failure — indistinguishable from a
+        genuinely empty index. Per CLAUDE.md "Make fallback chains loud",
+        agents now see the lineage.
+    fallback_reason : str
+        Short identifier (``"no_underscore_query_failed"`` /
+        ``"export_marker_query_failed"`` / ``"both_queries_failed"`` /
+        ``""``).
     """
 
     by_no_underscore: int
     by_export_marker: int
     definition: str = DEFINITION
+    fallback_used: bool = False
+    fallback_reason: str = ""
 
     def as_envelope_dict(self) -> dict:
-        return {
+        out: dict = {
             "by_no_underscore_prefix": self.by_no_underscore,
             "by_export_marker": self.by_export_marker,
             "public_symbols_definition": self.definition,
         }
+        if self.fallback_used:
+            out["fallback_used"] = True
+            out["fallback_reason"] = self.fallback_reason
+        return out
 
 
 def public_symbols_summary(conn) -> PublicSymbolsSummary:
@@ -113,10 +129,12 @@ def public_symbols_summary(conn) -> PublicSymbolsSummary:
         "AND COALESCE(f.file_role, 'source') NOT IN ('test', 'tests') "
         "AND f.path NOT LIKE 'tests/%'"
     )
+    no_us_failed = False
     try:
         n_no_us = conn.execute(no_us_sql, kinds).fetchone()[0]
     except Exception:
         n_no_us = 0
+        no_us_failed = True
 
     # CRITERION_HAS_EXPORT_MARKER — what `roam docs-coverage` reports.
     exp_sql = (
@@ -128,12 +146,25 @@ def public_symbols_summary(conn) -> PublicSymbolsSummary:
         "AND f.path NOT LIKE '%test\\_%' ESCAPE '\\' "
         "AND f.path NOT LIKE '%\\_test.%' ESCAPE '\\'"
     )
+    exp_failed = False
     try:
         n_exp = conn.execute(exp_sql, kinds).fetchone()[0]
     except Exception:
         n_exp = 0
+        exp_failed = True
+
+    if no_us_failed and exp_failed:
+        reason = "both_queries_failed"
+    elif no_us_failed:
+        reason = "no_underscore_query_failed"
+    elif exp_failed:
+        reason = "export_marker_query_failed"
+    else:
+        reason = ""
 
     return PublicSymbolsSummary(
         by_no_underscore=n_no_us,
         by_export_marker=n_exp,
+        fallback_used=(no_us_failed or exp_failed),
+        fallback_reason=reason,
     )

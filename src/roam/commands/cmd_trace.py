@@ -15,6 +15,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
 from roam.db.connection import open_db
+from roam.db.edge_kinds import CALL_EDGE_KINDS
 from roam.output.formatter import (
     abbrev_kind,
     json_envelope,
@@ -27,6 +28,13 @@ from roam.output.formatter import (
 # above this threshold. Bounded BFS is always available; the exhaustive code
 # path is gated behind --exhaustive on graphs this size.
 _MAX_EXHAUSTIVE_GRAPH_SYMBOLS = 18000
+
+# W493-family edge-kind union: call/calls (singular+plural writer drift) plus
+# the 'uses'/'uses_trait' phantom-extender kinds documented in
+# roam.db.edge_kinds. The classifier treats any of these as a runtime-coupling
+# edge ("direct call chain"). Pre-W512 this site inlined ("call", "uses",
+# "uses_trait") and silently mis-classified plural-'calls' rows as imports.
+_STRONG_COUPLING_EDGE_KINDS: frozenset[str] = frozenset(CALL_EDGE_KINDS) | {"uses", "uses_trait"}
 
 
 def _combine_resolution(src_tier: str, tgt_tier: str) -> str:
@@ -115,7 +123,7 @@ def _classify_coupling(hops):
         if len(hops) == 2:
             return "structural (file import)"
         return "unknown"
-    call_count = sum(1 for k in kinds if k in ("call", "uses", "uses_trait"))
+    call_count = sum(1 for k in kinds if k in _STRONG_COUPLING_EDGE_KINDS)
     ratio = call_count / total
     if ratio == 1.0:
         return "strong (direct call chain)"
@@ -160,7 +168,7 @@ def _path_quality(hops, hubs):
     kinds = [h.get("edge_kind", "") for h in hops[1:] if h.get("edge_kind")]
     if kinds:
         total = len(kinds)
-        coupling = sum(1 for k in kinds if k in ("call", "uses", "uses_trait")) / total
+        coupling = sum(1 for k in kinds if k in _STRONG_COUPLING_EDGE_KINDS) / total
     else:
         # No edge kind info — file-level import shortcut paths.
         # These represent intentional structural dependencies (someone wrote

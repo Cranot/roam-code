@@ -93,7 +93,18 @@ def _extract_symbol_names(line: str) -> list[str]:
     return out
 
 
-def _git_diff(root: Path, source: str, base_ref: str, commit_range: str | None) -> str:
+# CP45/CP46 fail-loud sentinels. ``_git_diff`` previously collapsed
+# git-missing, git-timeout, and git-returned-error into the same ``""``
+# shape used for "the diff is empty" — a CI runner with no git installed
+# would receive a silent SAFE verdict from the gate. ``_git_diff`` now
+# returns ``(diff_text, error_kind)`` so the command can surface the
+# unavailability instead of treating it as a clean tree.
+_GIT_MISSING = "git_not_available"
+_GIT_TIMEOUT = "git_timeout"
+_GIT_ERROR = "git_error"
+
+
+def _git_diff(root: Path, source: str, base_ref: str, commit_range: str | None) -> tuple[str, str | None]:
     cmd = ["git", "diff", "--unified=0"]
     if commit_range:
         cmd.append(commit_range)
@@ -115,9 +126,13 @@ def _git_diff(root: Path, source: str, base_ref: str, commit_range: str | None) 
             errors="replace",
             env=worktree_git_env(root),
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return ""
-    return result.stdout if result.returncode == 0 else ""
+    except FileNotFoundError:
+        return "", _GIT_MISSING
+    except subprocess.TimeoutExpired:
+        return "", _GIT_TIMEOUT
+    if result.returncode != 0:
+        return "", _GIT_ERROR
+    return result.stdout, None
 
 
 def _parse_deletions(diff_text: str) -> tuple[list[str], list[tuple[str, int, str, str]]]:
@@ -232,7 +247,38 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
     ensure_index()
     root = find_project_root()
 
-    diff = _git_diff(root, source, base_ref, commit_range)
+    diff, git_err = _git_diff(root, source, base_ref, commit_range)
+    if git_err is not None:
+        # CP45/CP46 fail-loud: a CI gate that cannot read its diff MUST NOT
+        # report SAFE. Surface the unavailability and (when --ci is set) exit
+        # with the gate-failure code so the job fails rather than silently
+        # passing on a host with no git installed.
+        verdict = f"diff unavailable: {git_err} — cannot gate"
+        if sarif_mode:
+            from roam.output.sarif import delete_check_to_sarif, write_sarif
+
+            click.echo(write_sarif(delete_check_to_sarif({"command": "delete-check", "deletions": []})))
+        elif json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "delete-check",
+                        budget=token_budget,
+                        summary={
+                            "verdict": verdict,
+                            "deletions": 0,
+                            "partial_success": True,
+                            "git_error": git_err,
+                        },
+                        deletions=[],
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+        if ci:
+            raise SystemExit(EXIT_GATE_FAILURE)
+        return
     if not diff.strip():
         if sarif_mode:
             # W1192: SARIF projection for CI / GitHub Code Scanning
@@ -355,12 +401,34 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
     # Verdict per target
     decorated = []
     any_break = False
+    # Evidence-first ordering for the truncated [:5] survivors view (LAW 4 /
+    # Pattern-1D): when the verdict is BREAK-RISK because of "N surviving
+    # reachable code reference(s)", the first 5 rendered survivors must BE
+    # those reachable code refs — otherwise an agent reading the truncated
+    # JSON sees `reachable: false` everywhere and disbelieves the verdict.
+    # Rank: reachable code (0) < unreachable code (1) < test (2) < other (3).
+    def _evidence_rank(m: dict) -> tuple[int, str, int]:
+        surface = m.get("surface", "other")
+        reachable = bool(m.get("reachable"))
+        if surface == "code" and reachable:
+            band = 0
+        elif surface == "code":
+            band = 1
+        elif surface == "test":
+            band = 2
+        else:
+            band = 3
+        return (band, m.get("path", ""), m.get("line", 0))
+
     for t in targets:
         items = per_target.get(t["name"], [])
         verdict, reason = _verdict(items)
         if verdict == "BREAK-RISK":
             any_break = True
-        decorated.append({**t, "verdict": verdict, "reason": reason, "matches": items})
+        # Sort matches so the truncated [:5] view foregrounds the evidence
+        # supporting the verdict. Stable across SARIF / JSON / text paths.
+        items_sorted = sorted(items, key=_evidence_rank)
+        decorated.append({**t, "verdict": verdict, "reason": reason, "matches": items_sorted})
 
     # Sort: BREAK-RISK first, then LIKELY-SAFE, then SAFE
     rank = {"BREAK-RISK": 0, "LIKELY-SAFE": 1, "SAFE": 2}

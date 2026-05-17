@@ -15,12 +15,57 @@ from __future__ import annotations
 import math
 import sqlite3
 
+# Score weights — keep these two consumers (`runtime_score`, the bulk
+# variant `runtime_score_max_for_symbols`, and the classification
+# thresholds in `compute_hotspots`) reading from the same constants so a
+# weight change cannot silently drift one path vs another.
+_CALL_VOLUME_WEIGHT = 0.6
+_LATENCY_WEIGHT = 0.3
+_ERROR_WEIGHT = 0.1
+# 1000ms p99 maps to latency=1.0; anything slower is clipped.
+_LATENCY_SATURATION_MS = 1000.0
+# Default log baseline: a symbol with 1k+ calls saturates call_volume.
+_DEFAULT_LOG_BASELINE = 1000.0
+# Batched IN-clause size to stay under SQLite's parameter cap (cf.
+# `roam.db.connection.batched_in`).
+_BULK_FETCH_CHUNK = 400
+
+
+def _score_from_metrics(
+    call_count: float,
+    p99_ms: float,
+    error_rate: float,
+    *,
+    log_baseline: float = _DEFAULT_LOG_BASELINE,
+) -> float:
+    """Compose the runtime score from already-normalised numeric inputs.
+
+    Pulled out of ``runtime_score`` / ``runtime_score_max_for_symbols``
+    so both code paths share one weight/saturation contract. Inputs are
+    expected to be non-negative finite numbers; the function clamps
+    rather than raising on out-of-range values so a corrupt row cannot
+    crash the reranker.
+    """
+    call_count = max(0.0, call_count)
+    p99_ms = max(0.0, p99_ms)
+    if log_baseline <= 1:
+        log_baseline = _DEFAULT_LOG_BASELINE
+    log_div = math.log10(log_baseline) or 1.0
+    call_volume = min(1.0, math.log10(call_count + 1) / log_div)
+    latency = min(1.0, p99_ms / _LATENCY_SATURATION_MS)
+    err = max(0.0, min(1.0, error_rate))
+    return (
+        _CALL_VOLUME_WEIGHT * call_volume
+        + _LATENCY_WEIGHT * latency
+        + _ERROR_WEIGHT * err
+    )
+
 
 def runtime_score(
     conn: sqlite3.Connection,
     symbol_id: int,
     *,
-    log_baseline: float = 1000.0,
+    log_baseline: float = _DEFAULT_LOG_BASELINE,
 ) -> float:
     """Return a [0, 1] runtime-importance score for a symbol.
 
@@ -43,18 +88,15 @@ def runtime_score(
     if not row:
         return 0.0
 
-    call_count = max(0.0, float(row[0] or 0))
-    p99_ms = max(0.0, float(row[1] or 0))
-    error_rate = float(row[2] or 0)
-
-    if log_baseline <= 1:
-        log_baseline = 1000.0
-    log_div = math.log10(log_baseline) or 1.0
-    call_volume = min(1.0, math.log10(call_count + 1) / log_div)
-    latency = min(1.0, p99_ms / 1000.0)
-    err = max(0.0, min(1.0, error_rate))
-
-    return round(0.6 * call_volume + 0.3 * latency + 0.1 * err, 4)
+    return round(
+        _score_from_metrics(
+            float(row[0] or 0),
+            float(row[1] or 0),
+            float(row[2] or 0),
+            log_baseline=log_baseline,
+        ),
+        4,
+    )
 
 
 def runtime_score_max_for_symbols(
@@ -66,14 +108,15 @@ def runtime_score_max_for_symbols(
     Used by ``roam critique`` to bump the severity of an impact finding
     when at least one direct caller of the changed symbol is on a hot
     code-path. Returns 0.0 for an empty set or when none of the symbols
-    have runtime data.
+    have runtime data. Uses the canonical ``_DEFAULT_LOG_BASELINE`` so
+    the bulk path and the per-symbol path agree on what saturates.
     """
     seen = list(set(symbol_ids))
     if not seen:
         return 0.0
     best = 0.0
-    for chunk_start in range(0, len(seen), 400):
-        chunk = seen[chunk_start : chunk_start + 400]
+    for chunk_start in range(0, len(seen), _BULK_FETCH_CHUNK):
+        chunk = seen[chunk_start : chunk_start + _BULK_FETCH_CHUNK]
         rows = conn.execute(
             f"SELECT symbol_id, call_count, p99_latency_ms, error_rate "
             f"FROM runtime_stats "
@@ -81,14 +124,11 @@ def runtime_score_max_for_symbols(
             chunk,
         ).fetchall()
         for row in rows:
-            call_count = max(0.0, float(row[1] or 0))
-            p99_ms = max(0.0, float(row[2] or 0))
-            error_rate = float(row[3] or 0)
-            log_div = math.log10(1000.0) or 1.0
-            call_volume = min(1.0, math.log10(call_count + 1) / log_div)
-            latency = min(1.0, p99_ms / 1000.0)
-            err = max(0.0, min(1.0, error_rate))
-            s = 0.6 * call_volume + 0.3 * latency + 0.1 * err
+            s = _score_from_metrics(
+                float(row[1] or 0),
+                float(row[2] or 0),
+                float(row[3] or 0),
+            )
             if s > best:
                 best = s
     return round(best, 4)

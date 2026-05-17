@@ -17,6 +17,7 @@ from roam.commands.gate_presets import (
     GateRule,
     detect_preset,
     get_preset,
+    load_gates_config,
 )
 
 
@@ -134,3 +135,85 @@ class TestGatePresetStructure:
         p = get_preset("python")
         for rule in p.rules:
             assert len(rule.include_patterns) >= 1, f"Rule {rule.name!r} in python preset has no include_patterns"
+
+
+class TestLoadGatesConfig:
+    """W706-family: load_gates_config must return [] on every broken-input
+    path rather than raising. Loud-fallback semantics: ambiguous => empty."""
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        assert load_gates_config(str(tmp_path / "does-not-exist.yml")) == []
+
+    def test_malformed_yaml_returns_empty(self, tmp_path):
+        cfg = tmp_path / "bad.yml"
+        cfg.write_text("rules:\n  - name: x\n  bad-indent-here\n", encoding="utf-8")
+        assert load_gates_config(str(cfg)) == []
+
+    def test_top_level_list_returns_empty(self, tmp_path):
+        cfg = tmp_path / "list.yml"
+        cfg.write_text("- name: foo\n- name: bar\n", encoding="utf-8")
+        assert load_gates_config(str(cfg)) == []
+
+    def test_missing_rules_key_returns_empty(self, tmp_path):
+        cfg = tmp_path / "norules.yml"
+        cfg.write_text("other_key: value\n", encoding="utf-8")
+        assert load_gates_config(str(cfg)) == []
+
+    def test_rules_not_a_list_returns_empty(self, tmp_path):
+        cfg = tmp_path / "rules-dict.yml"
+        cfg.write_text("rules:\n  name: foo\n", encoding="utf-8")
+        assert load_gates_config(str(cfg)) == []
+
+    def test_non_dict_rule_entries_skipped(self, tmp_path):
+        cfg = tmp_path / "mixed.yml"
+        cfg.write_text(
+            "rules:\n"
+            "  - just_a_string\n"
+            "  - name: valid\n"
+            "    include: ['src/**/*.py']\n",
+            encoding="utf-8",
+        )
+        rules = load_gates_config(str(cfg))
+        assert len(rules) == 1
+        assert rules[0].name == "valid"
+
+    def test_invalid_severity_falls_back_to_warning(self, tmp_path):
+        cfg = tmp_path / "sev.yml"
+        cfg.write_text(
+            "rules:\n  - name: x\n    severity: catastrophic\n",
+            encoding="utf-8",
+        )
+        rules = load_gates_config(str(cfg))
+        assert len(rules) == 1
+        assert rules[0].severity == "warning"
+
+    def test_non_integer_min_tests_falls_back(self, tmp_path):
+        cfg = tmp_path / "min.yml"
+        cfg.write_text(
+            "rules:\n  - name: x\n    min_tests: not-a-number\n",
+            encoding="utf-8",
+        )
+        rules = load_gates_config(str(cfg))
+        assert len(rules) == 1
+        assert rules[0].min_test_count == 1
+
+    def test_happy_path(self, tmp_path):
+        cfg = tmp_path / "ok.yml"
+        cfg.write_text(
+            "rules:\n"
+            "  - name: api\n"
+            "    description: API modules\n"
+            "    include: ['src/api/**/*.py']\n"
+            "    exclude: ['**/__init__.py']\n"
+            "    min_tests: 3\n"
+            "    severity: error\n",
+            encoding="utf-8",
+        )
+        rules = load_gates_config(str(cfg))
+        assert len(rules) == 1
+        r = rules[0]
+        assert r.name == "api"
+        assert r.min_test_count == 3
+        assert r.severity == "error"
+        assert r.include_patterns == ["src/api/**/*.py"]
+        assert r.exclude_patterns == ["**/__init__.py"]

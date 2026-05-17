@@ -422,12 +422,17 @@ def _read_final_signature(events_path: Path) -> Optional[str]:
 
 
 def _write_meta(repo_root: Path, meta: RunMeta) -> None:
+    # Route through atomic_write_json so a crash mid-write can never leave
+    # a torn meta.json on disk. Readers ``json.loads`` this file on every
+    # ``read_run_meta`` call — a torn write would be Pattern 1 variant C
+    # (empty/corrupt stdout crashes the consumer). The atomic_io module's
+    # docstring calls the run ledger out as the primary motivation for
+    # the temp-file + os.replace pattern; ``meta.json`` is the missing
+    # half (signing.py already routes the key write through it).
+    from roam.atomic_io import atomic_write_json
+
     path = _meta_path(repo_root, meta.run_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = meta.to_dict()
-    with path.open("w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False, sort_keys=True, indent=2)
-        fh.write("\n")
+    atomic_write_json(path, meta.to_dict(), indent=2, sort_keys=True)
 
 
 def _count_events(events_path: Path) -> int:

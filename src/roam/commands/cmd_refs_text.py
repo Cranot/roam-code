@@ -199,6 +199,7 @@ def refs_text_cmd(
     fixed_mode = fixed and not regexp_mode
 
     engine = detect_engine()
+    used_engine = engine
     all_matches = run_search(
         patterns=targets,
         root=root,
@@ -208,7 +209,12 @@ def refs_text_cmd(
         engine=engine,
     )
 
-    # Engine fallback to indexed-file scan
+    # Engine fallback to indexed-file scan.
+    # W1010 lineage: when ``detect_engine`` returns ``"fallback"`` (no rg/git
+    # on PATH) AND the indexed scan actually runs, relabel ``used_engine``
+    # to ``"indexed_scan"`` so the envelope discloses which engine produced
+    # the results. Mirrors the equivalent fix in ``cmd_grep`` so both
+    # commands report the same engine vocabulary.
     if engine == "fallback":
         import re
 
@@ -216,12 +222,13 @@ def refs_text_cmd(
         compiled = [re.compile(re.escape(s) if fixed_mode else s, flags) for s in targets]  # W421
         with open_db(readonly=True) as conn_tmp:
             all_matches = indexed_file_scan(compiled, conn_tmp, root, glob_filter)
+        used_engine = "indexed_scan"
 
     # Tag each match with which target string(s) it matches (literal/case-aware).
     _tag_matches(all_matches, targets, fixed=fixed_mode, ci=ci)  # W421
 
     if not all_matches:
-        _emit_empty(json_mode, targets, token_budget, engine)
+        _emit_empty(json_mode, targets, token_budget, used_engine)
         return
 
     with open_db(readonly=True) as conn:
@@ -287,7 +294,7 @@ def refs_text_cmd(
 
     # --- Emit ---
     if json_mode:
-        _emit_json(analyses, targets, token_budget, engine, reachable_from, per_match_detail)
+        _emit_json(analyses, targets, token_budget, used_engine, reachable_from, per_match_detail)
         return
     _emit_text(analyses, targets, reachable_from)
 

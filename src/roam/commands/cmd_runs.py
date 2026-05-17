@@ -958,9 +958,12 @@ def runs_verify(ctx, run_id, verify_all):
         if state == "ok":
             next_commands = [f"roam runs show {run_id}"]
         elif state == "tampered":
-            next_commands = [f"roam runs show {run_id} to inspect events around seq={first_tamper}"]
+            # CONSTRAINT 12: bare ``roam <subcommand>`` only; the verdict
+            # / facts list already names the tamper seq for context.
+            next_commands = [f"roam runs show {run_id}"]
         elif state == "unsigned":
-            next_commands = [f"roam runs show {run_id} (chain cannot be verified)"]
+            # CONSTRAINT 12: drop parenthetical prose so paste-to-shell works.
+            next_commands = [f"roam runs show {run_id}"]
         elif state == "key_missing":
             next_commands = ["roam runs start --agent <name>"]
 
@@ -1067,9 +1070,16 @@ def runs_verify(ctx, run_id, verify_all):
     if tampered:
         first_bad = next((r for r in results if r["state"] == "tampered"), None)
         if first_bad is not None:
-            next_commands.append(f"roam runs verify {first_bad['run_id']} to see the broken chain")
+            # CONSTRAINT 12 (CLAUDE.md): next_command must be a literal
+            # copy-paste-executable ``roam <subcommand>`` string. Trailing
+            # explanatory prose ("to see the broken chain") breaks paste
+            # into a shell — keep the command bare; the surrounding
+            # verdict already names the failure mode.
+            next_commands.append(f"roam runs verify {first_bad['run_id']}")
     elif state == "ok":
-        next_commands.append("roam runs list to inspect run metadata")
+        # CONSTRAINT 12: drop the trailing "to inspect run metadata" prose;
+        # the verbose suffix is non-executable.
+        next_commands.append("roam runs list")
     elif state == "unsigned":
         # W1091: populate next_commands on every state branch (LAW 4)
         next_commands.append("roam runs list --detail")

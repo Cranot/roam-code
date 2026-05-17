@@ -96,7 +96,9 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
 
     moves = _parse_target_spec(target_path, moves_inline)
     if not moves:
-        click.echo("VERDICT: NO PLAN  (no target moves provided)", err=False)
+        # JSON mode emits only the envelope (no text noise contaminating
+        # stdout for Cloud Lite / MCP / agent consumers). Text mode emits
+        # the human-readable line.
         if json_mode:
             click.echo(
                 to_json(
@@ -107,6 +109,8 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
                     )
                 )
             )
+        else:
+            click.echo("VERDICT: NO PLAN  (no target moves provided)")
         return
 
     with open_db(readonly=True) as conn:
@@ -156,6 +160,15 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
                         "high_risk_steps": sum(1 for s in plan if s["risk"] == "high"),
                         "medium_risk_steps": sum(1 for s in plan if s["risk"] == "medium"),
                         "low_risk_steps": sum(1 for s in plan if s["risk"] == "low"),
+                        # Pattern 2: when the gate skipped moves, the user's
+                        # intent was only partially honoured. Disclose it
+                        # explicitly so agents don't read step_count=N as
+                        # "all N moves planned".
+                        "partial_success": bool(skipped),
+                        # Pattern 1D: closed-enum risk-level summary of what
+                        # actually emerges, so the verdict doesn't have to
+                        # carry every detail.
+                        "risk_definition": "max(callers,cross_layer) -> low|medium|high",
                     },
                     steps=plan,
                     skipped=skipped,

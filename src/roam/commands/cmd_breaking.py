@@ -9,13 +9,17 @@ _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
 
 from __future__ import annotations
 
-import subprocess
 from difflib import SequenceMatcher
 from pathlib import Path
 
 import click
 
 from roam.capability import roam_capability
+from roam.commands.changed_files import (
+    git_changed_files_against_ref as _git_changed_files,
+    git_show_at_ref as _git_show,
+    parse_source_with_grammar as _parse_source_bytes,
+)
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
@@ -26,75 +30,14 @@ from roam.output.formatter import (
 )
 
 # ---------------------------------------------------------------------------
-# Git helpers
+# Git + parsing helpers
+#
+# ``_git_changed_files`` / ``_git_show`` / ``_parse_source_bytes`` are hoisted
+# to ``roam.commands.changed_files`` so api-changes, breaking, and
+# semantic-diff share one implementation (W-vibe-check DRY). Imported above;
+# aliased to keep the original private names for back-compat with downstream
+# importers (notably ``cmd_attest`` which imports ``_git_*`` from this module).
 # ---------------------------------------------------------------------------
-
-
-def _git_changed_files(root: Path, ref: str) -> list[str]:
-    """Return files changed between *ref* and the working tree (indexed state)."""
-    cmd = ["git", "diff", "--name-only", ref]
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            encoding="utf-8",
-            errors="replace",
-        )
-        if result.returncode != 0:
-            return []
-        return [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
-
-
-def _git_show(root: Path, ref: str, filepath: str) -> bytes | None:
-    """Return the content of *filepath* at *ref*, or None if it didn't exist."""
-    cmd = ["git", "show", f"{ref}:{filepath}"]
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(root),
-            capture_output=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return None
-        return result.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Parsing helpers — parse raw bytes with tree-sitter
-# ---------------------------------------------------------------------------
-
-
-def _parse_source_bytes(source: bytes, language: str):
-    """Parse *source* bytes with tree-sitter for the given language.
-
-    Returns (tree, source_bytes, effective_language) or (None, None, None).
-    """
-    from roam.index.parser import GRAMMAR_ALIASES
-
-    # Resolve grammar alias (e.g. apex -> java)
-    grammar = GRAMMAR_ALIASES.get(language, language)
-
-    try:
-        from tree_sitter_language_pack import get_parser
-
-        parser = get_parser(grammar)
-    except Exception:
-        return None, None, None
-
-    try:
-        tree = parser.parse(source)
-    except Exception:
-        return None, None, None
-
-    return tree, source, language
 
 
 def _extract_old_symbols(source: bytes, file_path: str) -> list[dict]:

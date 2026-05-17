@@ -365,7 +365,13 @@ def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):
     markdown_text = _render_markdown_report(results, project_root)
 
     if output_path:
-        Path(output_path).write_text(markdown_text, encoding="utf-8")
+        # Atomic write — the Article 12 readiness report is a compliance
+        # artifact reviewers cite; a torn write could leave a half-rendered
+        # markdown file on disk that misrepresents the verdict. Route
+        # through atomic_io.
+        from roam.atomic_io import atomic_write_text
+
+        atomic_write_text(Path(output_path), markdown_text)
 
     pdf_written = False
     if pdf_path:

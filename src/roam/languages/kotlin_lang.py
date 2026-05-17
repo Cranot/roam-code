@@ -54,10 +54,12 @@ class KotlinExtractor(GenericExtractor):
         gets corrected to ``enum``.
         """
         symbols = super().extract_symbols(tree, source, file_path)
-        try:
-            text = source.decode("utf-8", errors="replace")
-        except Exception:
-            return symbols
+        # `errors="replace"` cannot raise UnicodeDecodeError — every byte maps
+        # to U+FFFD on failure. The previous `try/except Exception` here was a
+        # W907 false-hedge (dead defensive code); a real failure would be a
+        # bytes-object type error, which should propagate, not silently
+        # short-circuit symbol promotion.
+        text = source.decode("utf-8", errors="replace")
 
         by_name = {s.get("name"): s for s in symbols if s.get("name")}
 

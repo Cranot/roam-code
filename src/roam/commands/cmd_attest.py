@@ -698,7 +698,34 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
         file_map = resolve_changed_to_db(conn, changed)
 
         if not file_map:
-            click.echo("Changed files not found in index. Run `roam index` first.")
+            # Pattern-1C / Pattern-1D: emit a structured envelope on the
+            # degraded-resolution path so JSON consumers see a non-empty
+            # response (not empty stdout) and the verdict discloses that
+            # none of the changed files resolved against the index. Mirrors
+            # the empty-changeset envelope above at L686-694.
+            label = commit_range or ("staged" if staged else "uncommitted")
+            _attest_unresolved_envelope = json_envelope(
+                "attest",
+                summary={
+                    "verdict": (
+                        f"{len(changed)} changed files unresolved against the index "
+                        f"({label}); run `roam index` then re-attest"
+                    ),
+                    "safe_to_merge": False,
+                    "partial_success": True,
+                    "resolution": "unresolved",
+                    "unresolved_file_count": len(changed),
+                },
+                unresolved_files=sorted(changed),
+            )
+            auto_log(_attest_unresolved_envelope, action="attest", target=label, repo_root=root)
+            if json_mode or output_format == "json":
+                click.echo(to_json(_attest_unresolved_envelope))
+            else:
+                click.echo(
+                    f"{len(changed)} changed files not found in index ({label}). "
+                    "Run `roam index` first."
+                )
             return
 
         # ── Collect all evidence ──────────────────────────────────────
@@ -790,7 +817,13 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
         if output_format == "markdown":
             output = _format_markdown(attestation, evidence, verdict)
             if output_file:
-                Path(output_file).write_text(output, encoding="utf-8")
+                # Atomic write: attestations are auditable artifacts —
+                # a torn file mid-write defeats downstream verification.
+                # Mirrors the `atomic_write_text` discipline in cmd_cga.py
+                # (the R28 substrate's `unsafe_mutation` guard).
+                from roam.atomic_io import atomic_write_text
+
+                atomic_write_text(Path(output_file), output)
                 click.echo(f"Attestation written to {output_file}")
             else:
                 click.echo(output)
@@ -799,7 +832,10 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
         if json_mode or output_format == "json":
             output = to_json(attest_envelope)
             if output_file:
-                Path(output_file).write_text(output, encoding="utf-8")
+                # Atomic write — see markdown branch above.
+                from roam.atomic_io import atomic_write_text
+
+                atomic_write_text(Path(output_file), output)
                 click.echo(f"Attestation written to {output_file}")
             else:
                 click.echo(output)
@@ -947,7 +983,11 @@ def _emit_text(
     text = "\n".join(lines)
 
     if output_file:
-        Path(output_file).write_text(text, encoding="utf-8")
+        # Atomic write — see other attest output branches. Attestation
+        # files are auditable artifacts; never leave a torn file behind.
+        from roam.atomic_io import atomic_write_text
+
+        atomic_write_text(Path(output_file), text)
         click.echo(f"Attestation written to {output_file}")
     else:
         click.echo(text)

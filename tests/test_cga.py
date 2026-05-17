@@ -652,6 +652,34 @@ class TestCosignWiring:
         assert "exit 7" in result.skipped_reason
         assert "key not found" in result.skipped_reason
 
+    def test_sign_exit_zero_but_no_outputs_does_not_claim_signed(self, tmp_path, monkeypatch):
+        """Pattern-2 discipline: cosign exits 0 but neither the .sig nor
+        the .bundle lands on disk (write race, exotic FS, perms). The
+        well-behaved path always writes both; only this degraded path
+        must refuse to silently report ``signed=True``. Before this
+        guard a downstream verifier looking at ``signature_path=None``
+        on a ``signed=True`` result would fail confusingly.
+        """
+        import roam.attest.cga as cga_mod
+
+        statement = tmp_path / "cga.json"
+        statement.write_text("{}", encoding="utf-8")
+
+        # Fake cosign that returns 0 but DOES NOT write the sig/bundle.
+        def fake_run(args, *_a, **_kw):
+            class _R:
+                returncode = 0
+                stdout = "ok"
+                stderr = ""
+
+            return _R()
+
+        monkeypatch.setattr(cga_mod, "cosign_available", lambda: (True, "v2.4.0"))
+        monkeypatch.setattr(cga_mod.subprocess, "run", fake_run)
+        result = cga_mod.cosign_sign_statement(statement, key_path=tmp_path / "fake.key")
+        assert result.signed is False, "Pattern-2: must not claim signed when no outputs landed"
+        assert "neither signature nor bundle" in result.skipped_reason
+
     def test_emit_with_sign_no_write_skips_signing(self, cga_project):
         """--sign + --no-write must not attempt to sign — there's no file
         to point cosign at. Reports a clear skip reason."""

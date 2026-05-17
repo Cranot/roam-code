@@ -30,10 +30,19 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import click
+
+# Maximum age (seconds) for a `.roam/responses/*.json` envelope to still
+# win the `from_prior` branch. Default 24h: agent sessions rarely span
+# longer, and a week-old envelope has almost certainly been superseded
+# by working-tree changes that the router's other branches will catch.
+# Override via the ROAM_NEXT_ENVELOPE_MAX_AGE_SEC env var; values <=0
+# disable the cutoff and restore pre-W19.1 behavior.
+_DEFAULT_ENVELOPE_MAX_AGE_SEC = 24 * 60 * 60
 
 from roam.capability import roam_capability
 from roam.commands._command_utils import bare_command_name as _bare_command_name
@@ -189,12 +198,28 @@ def _read_recent_memory_commands(root: Path, limit: int = 5) -> list[str]:
     return subjects
 
 
+def _envelope_max_age_sec() -> int:
+    """Resolve the envelope age cutoff. Env var overrides the default."""
+    raw = os.environ.get("ROAM_NEXT_ENVELOPE_MAX_AGE_SEC")
+    if raw is None:
+        return _DEFAULT_ENVELOPE_MAX_AGE_SEC
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return _DEFAULT_ENVELOPE_MAX_AGE_SEC
+
+
 def _read_recent_envelope_next_command(root: Path) -> tuple[str | None, str | None]:
     """Look at the newest envelope in ``.roam/responses/`` for a next-command hint.
 
     Returns ``(command_string, source_file_name)`` or ``(None, None)`` if
     nothing useful is found. We only consult the single newest file —
     older envelopes are likely stale.
+
+    W19.1: envelopes older than ``_envelope_max_age_sec()`` are skipped
+    entirely. A week-old `next_commands[0]` is almost never the right
+    next step, and surfacing it ahead of the uncommitted-changes /
+    constitution-pending branches misroutes agents to do-nothing work.
     """
     responses_dir = root / ".roam" / "responses"
     if not responses_dir.is_dir():
@@ -209,6 +234,16 @@ def _read_recent_envelope_next_command(root: Path) -> tuple[str | None, str | No
         newest = max(entries, key=lambda p: p.stat().st_mtime)
     except (OSError, ValueError):
         return (None, None)
+    # W19.1: skip stale envelopes. Cutoff is configurable via env var
+    # so the test suite can pin it deterministically (set to 0 to disable).
+    max_age = _envelope_max_age_sec()
+    if max_age > 0:
+        try:
+            age = time.time() - newest.stat().st_mtime
+        except OSError:
+            return (None, None)
+        if age > max_age:
+            return (None, None)
     try:
         data = json.loads(newest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):

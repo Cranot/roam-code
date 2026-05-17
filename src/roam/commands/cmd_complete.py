@@ -16,11 +16,15 @@ _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
 
 from __future__ import annotations
 
+import logging
+
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.output.formatter import json_envelope, to_json
+
+log = logging.getLogger(__name__)
 
 _VALID_KINDS = ("symbol", "path", "command", "all")
 _DEFAULT_LIMIT = 30
@@ -128,13 +132,17 @@ def complete(ctx, prefix, kind, limit):
     # already return ``[]`` when the DB is absent. Still, run
     # ``ensure_index`` so the first call after ``git init`` does the
     # right thing rather than silently returning empty.
+    index_ready = True
     try:
         ensure_index()
-    except Exception:
+    except Exception as err:
         # Index failures shouldn't abort completion — agents call this
         # speculatively during typing; emit a partial-success envelope
-        # rather than a fatal error.
-        pass
+        # rather than a fatal error. CP45/CP46 fail-loud: log the
+        # underlying error so the lineage is observable instead of an
+        # invisible swallow.
+        log.warning("complete: ensure_index failed (%s); returning best-effort results", err)
+        index_ready = False
 
     # We deliberately do NOT go through ``mcp_extras.completions``'s
     # FTS5 path for ``kind == 'symbol'``. The FTS5 indexer expands
@@ -174,6 +182,7 @@ def complete(ctx, prefix, kind, limit):
                         "total": total,
                         "match_mode": "prefix",
                         "partial_success": partial,
+                        "index_ready": index_ready,
                     },
                     prefix=prefix,
                     kind=kind_norm,

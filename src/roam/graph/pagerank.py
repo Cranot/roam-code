@@ -50,6 +50,12 @@ def compute_pagerank(G: nx.DiGraph, alpha: float | None = None) -> dict[int, flo
         raw = {n: G.degree(n) for n in G}
         total = sum(raw.values()) or 1.0
         return {n: v / total for n, v in raw.items()}
+    except nx.PowerIterationFailedConvergence:
+        # Rare on real graphs but possible on pathological cyclic
+        # topologies when ``_optimal_alpha`` picks a low damping factor.
+        # Mirror the ``personalized_pagerank`` fallback (lineage rule):
+        # retry with a more tolerant solver before propagating the error.
+        return nx.pagerank(G, alpha=alpha, max_iter=300, tol=1e-04)
 
 
 def personalized_pagerank(

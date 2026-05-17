@@ -41,7 +41,6 @@ NON-GOALS
 from __future__ import annotations
 
 import dataclasses
-import datetime as _dt
 import json
 import re
 from collections.abc import Mapping
@@ -49,6 +48,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from roam.atomic_io import atomic_write_json
+from roam.evidence.approval import _parse_iso
 
 # ---------------------------------------------------------------------------
 # Closed-enumeration vocabulary
@@ -413,23 +413,13 @@ def aggregate_dismissal_reasons(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _parse_iso(value: str) -> _dt.datetime:
-    """Parse an ISO-8601 string into a tz-aware UTC ``datetime``.
-
-    Same contract as :func:`roam.evidence.approval._parse_iso`: accepts
-    the trailing-``Z`` form and explicit offsets; treats naive
-    timestamps as UTC. Centralising would create a cross-module import
-    just for one helper, so we keep a tiny local copy.
-    """
-    normalised = value
-    if normalised.endswith("Z"):
-        normalised = normalised[:-1] + "+00:00"
-    parsed = _dt.datetime.fromisoformat(normalised)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
-    return parsed
+#
+# W907 sealed: ``_parse_iso`` is shared with :mod:`roam.evidence.approval`.
+# An earlier local copy here claimed "centralising would create a cross-module
+# import just for one helper" — but no such cycle exists (approval has no
+# dependency on feedback; both are leaf modules under roam.evidence). The
+# false-cycle hedge is exactly the W907 cargo-cult pattern called out in
+# CLAUDE.md "Verify the cycle before hedging". Import directly from approval.
 
 
 __all__ = [

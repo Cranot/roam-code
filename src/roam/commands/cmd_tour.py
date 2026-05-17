@@ -137,7 +137,10 @@ def _top_symbols(conn, G, limit=10):
                 "role": role,
                 "fan_in": in_d,
                 "fan_out": out_d,
-                "pagerank": round(r["pagerank"] or 0, 4),
+                # W361 — match W336's 6-decimal rounding for cmd_impact.
+                # Tour symbols on a 25k-symbol graph have per-symbol
+                # PageRank in the 1e-5 range; 4 decimals truncated to 0.
+                "pagerank": round(r["pagerank"] or 0, 6),
                 "location": loc(r["path"], r["line_start"]),
                 "summary": first_line,
             }
@@ -226,7 +229,10 @@ def _reading_order(conn, G):
                 {
                     "layer": layer_num,
                     "file": fp,
-                    "importance": round(file_pr[fp], 4),
+                    # W361 — file importance is a PageRank value; 4
+                    # decimals truncated to 0 for low-rank files. Match
+                    # W336's cmd_impact 6-decimal rounding.
+                    "importance": round(file_pr[fp], 6),
                 }
             )
 

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import posixpath
+
+_log = logging.getLogger(__name__)
 
 
 def detect_language(file_path: str) -> str:
@@ -11,6 +14,11 @@ def detect_language(file_path: str) -> str:
 
     Uses the roam language registry when available, falls back to
     extension-based detection for common languages.
+
+    Fallback discipline (CLAUDE.md "Make fallback chains loud" /
+    CP45-46-52-53): an unexpected registry failure is logged at DEBUG so
+    repeat occurrences are not silently lost. A clean ``return None``
+    from the registry is NOT a failure and stays quiet.
     """
     try:
         from roam.languages.registry import get_language_for_file
@@ -18,8 +26,8 @@ def detect_language(file_path: str) -> str:
         lang = get_language_for_file(file_path)
         if lang:
             return lang
-    except Exception:
-        pass
+    except Exception as exc:  # pragma: no cover -- registry is best-effort
+        _log.debug("language-registry lookup failed for %s: %s", file_path, exc)
 
     ext = os.path.splitext(file_path)[1].lower()
     ext_map = {
@@ -102,5 +110,21 @@ def generate_import(language: str, from_file: str, symbol_name: str, target_file
             pkg_path = "."
         return f'import "{pkg_path}"'
 
-    # Default fallback
-    return f"# import {symbol_name} from {from_file}"
+    # Default fallback: emit a comment in a syntax appropriate for the
+    # target language so the generated text is at least syntactically
+    # valid where roam can guess the comment prefix. Pattern-2 "make
+    # fallback chains loud" — the TODO marker signals a human-review
+    # touchpoint rather than silently shipping a Python-style ``#`` into
+    # a Rust/Java/C/PHP file (where ``#`` is the start of a preprocessor
+    # directive or a syntax error, not a comment).
+    #
+    # ``go``, ``javascript``, ``typescript``, ``tsx`` are NOT in this set
+    # because they have dedicated branches above; listing them here would
+    # be dead code that drifts the moment a branch is removed.
+    slash_comment_langs = {
+        "rust", "java", "c", "cpp", "csharp",
+        "swift", "kotlin", "scala", "dart",
+    }
+    if language in slash_comment_langs:
+        return f"// TODO: import {symbol_name} from {from_file}"
+    return f"# TODO: import {symbol_name} from {from_file}"

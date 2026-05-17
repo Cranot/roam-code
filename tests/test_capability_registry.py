@@ -126,6 +126,32 @@ def test_phase0_commands_register() -> None:
         assert "phase0" in cap.tags
 
 
+def test_populate_registry_sweeps_full_cmd_tree() -> None:
+    """``_populate_registry`` must surface ALL decorated commands, not a hardcoded 6.
+
+    Regression: pre-fix the populator hardcoded only the 6 Phase 0
+    modules, so end users running ``roam capabilities`` saw 10 entries
+    while ``tests/test_capability_decoration.py`` asserted 200+ decorated
+    commands existed. The fix sweeps every module backing
+    ``cli._COMMANDS``, keeping the runtime view and the test contract in
+    lockstep.
+
+    The lower bound (50) is intentionally loose so the test doesn't
+    drift as new commands land — the point is "much more than 10",
+    not "exactly N".
+    """
+    from roam.capability import REGISTRY
+    from roam.commands.cmd_capabilities import _populate_registry
+
+    _populate_registry()
+    n = len(REGISTRY.all())
+    assert n > 50, (
+        f"_populate_registry surfaced only {n} capabilities; expected the "
+        f"full _COMMANDS sweep. The populator likely reverted to the "
+        f"hardcoded 6-module list."
+    )
+
+
 def test_collision_raises() -> None:
     reg = CapabilityRegistry()
     cap1 = Capability(name="X", category="c", summary="s", module="mod-a")

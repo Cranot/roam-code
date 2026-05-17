@@ -96,7 +96,7 @@ Add the following to your project's `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Cranot/roam-code
-    rev: v13.1            # pin to a release tag
+    rev: v13.2            # pin to a release tag
     hooks:
       - id: roam-secrets        # secret scanning -- no index required
       - id: roam-syntax-check   # tree-sitter syntax validation -- no index required
@@ -297,7 +297,7 @@ wrangler pages deploy templates/distribution/landing-page \
 ```
 
 PyPI publishes from a tag (`.github/workflows/publish.yml`). After a
-version-bump commit lands on main: `git tag v12.50 && git push origin v12.50`.
+version-bump commit lands on main: `git tag v13.2 && git push origin v13.2`.
 
 ## PR Guidelines
 
@@ -329,7 +329,7 @@ roam-code is organized into these key areas:
 | `src/roam/bridges/` | Cross-language symbol resolution |
 | `src/roam/output/` | Formatting, JSON envelopes, SARIF output |
 | `src/roam/mcp_server.py` | MCP server with 224 tools (57 in the default `core` preset) |
-| `tests/` | Test suite (408 test files) |
+| `tests/` | Test suite (740 test files) |
 
 For full architectural details, see the [Architecture Guide](https://roam-code.com/docs/architecture).
 

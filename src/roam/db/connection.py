@@ -545,11 +545,37 @@ def _ensure_fts5_table(conn: sqlite3.Connection):
 
 
 def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str):
-    """Add a column to a table if it doesn't exist."""
+    """Add a column to a table if it doesn't exist.
+
+    Pattern-2 discipline (W740): the legacy form swallowed every
+    ``sqlite3.OperationalError`` (locked DB, syntax error, missing table,
+    FK constraint, duplicate column) and pretended the migration had
+    applied. Narrowed to the actual idempotent signal:
+
+    1. Pre-check via ``PRAGMA table_info`` — skip the ALTER when the
+       column is already there. This is the common idempotent case
+       (re-running ``ensure_schema``) and now never throws.
+    2. Catch only the residual "duplicate column" race (another
+       connection added the column between the PRAGMA read and the
+       ALTER). Every other ``OperationalError`` (missing table,
+       syntax, locked DB) propagates — those are real bugs that the
+       silent swallow would have masked.
+    """
+    try:
+        existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    except sqlite3.OperationalError:
+        existing = set()
+    if column in existing:
+        return
     try:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
+    except sqlite3.OperationalError as exc:
+        # Narrow to the duplicate-column race; let other operational
+        # errors (locked DB, syntax error, missing table) propagate so
+        # they show up as real migration failures rather than silent
+        # no-ops. SQLite's canonical message is "duplicate column name".
+        if "duplicate column" not in str(exc).lower():
+            raise
 
 
 # ---------------------------------------------------------------------------

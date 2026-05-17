@@ -563,7 +563,17 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
 
         # -- Export --
         if export_path:
-            Path(export_path).write_text(_json.dumps(fp, indent=2, default=str), encoding="utf-8")
+            # Atomic write via temp + os.replace so an interrupted write
+            # cannot leave a half-truncated JSON fixture in place — the
+            # fingerprint export feeds `--compare` round-trips and CI
+            # comparison, so partial-file silent corruption would surface
+            # downstream as a confusing parse error.
+            from roam.atomic_io import atomic_write_text
+
+            atomic_write_text(
+                Path(export_path),
+                _json.dumps(fp, indent=2, default=str),
+            )
             if not json_mode and not compact:
                 click.echo(f"Fingerprint written to {export_path}")
 

@@ -201,15 +201,15 @@ def tx_boundaries_cmd(ctx, symbol, classification, top):
             f"confidence={worst.confidence})"
         )
     if by_classification.get("unsafe_mutation"):
-        facts.append(f"{by_classification['unsafe_mutation']} functions with mutations outside any transaction")
+        facts.append(f"tx-boundaries flagged {by_classification['unsafe_mutation']} unsafe_mutation symbols")
     if by_classification.get("unmatched_begin"):
-        facts.append(f"{by_classification['unmatched_begin']} functions have unmatched_begin (transaction leak — bug)")
+        facts.append(f"tx-boundaries flagged {by_classification['unmatched_begin']} unmatched_begin symbols (transaction leak)")
     if by_classification.get("unmatched_commit"):
-        facts.append(f"{by_classification['unmatched_commit']} functions have unmatched_commit (stray commit — bug)")
+        facts.append(f"tx-boundaries flagged {by_classification['unmatched_commit']} unmatched_commit symbols (stray commit)")
     if by_classification.get("partial_transactional"):
-        facts.append(f"{by_classification['partial_transactional']} functions mix inside-and-outside-scope mutations")
+        facts.append(f"tx-boundaries flagged {by_classification['partial_transactional']} partial_transactional symbols")
     if by_classification.get("transactional"):
-        facts.append(f"{by_classification['transactional']} functions are properly transactional")
+        facts.append(f"tx-boundaries confirmed {by_classification['transactional']} transactional symbols")
     if not facts:
         facts.append("tx-boundaries scan found no functions to classify")
 

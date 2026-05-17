@@ -554,6 +554,93 @@ class TestPrBundleEmitSlsaL3:
 
 
 # ---------------------------------------------------------------------------
+# Pattern-2 regression: ROAM_RUN_ID="   " must NOT reach read_run_meta
+# (whitespace normalisation parity between pr-bundle and cga sibling paths)
+# ---------------------------------------------------------------------------
+
+
+class TestEmitPrBundleSlsaL3RunIdNormalisation:
+    """Pattern-2 silent-fallback guard for ``emit_pr_bundle_slsa_l3``.
+
+    A whitespace-only ``ROAM_RUN_ID`` (``"   "``) is malformed; before
+    the normalisation it passed the ``if run_id:`` truthy check and
+    reached ``read_run_meta``, which returned ``None`` because the
+    bogus run-id maps to no directory. The emit path then surfaced a
+    misleading ``"run-ledger HMAC chain not signed"`` skip reason —
+    the chain isn't unsigned, the env var is just malformed.
+
+    The cga sibling path always normalised via ``.strip() or None`` on
+    its hash-kwargs path; this test pins the parity for the pr-bundle
+    path too.
+    """
+
+    def test_whitespace_run_id_routes_to_not_set_reason(self, tmp_path, monkeypatch):
+        import subprocess
+
+        subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=str(tmp_path),
+            check=True,
+        )
+        subprocess.run(["git", "config", "user.name", "test"], cwd=str(tmp_path), check=True)
+        (tmp_path / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(tmp_path), check=True)
+
+        from roam.attest.emit_vsa import emit_pr_bundle_slsa_l3
+
+        monkeypatch.setenv("ROAM_RUN_ID", "   ")  # whitespace only
+
+        # Sentinel: if normalisation ever regresses and the whitespace
+        # reaches read_run_meta, this monkeypatch surfaces it.
+        seen_run_ids: list[str] = []
+        import roam.runs.ledger as ledger_mod
+
+        original = ledger_mod.read_run_meta
+
+        def _spy(repo_root, run_id):
+            seen_run_ids.append(run_id)
+            return original(repo_root, run_id)
+
+        monkeypatch.setattr(ledger_mod, "read_run_meta", _spy)
+
+        envelope = {
+            "intent": "demo",
+            "context_cmd": "roam preflight f",
+            "affected_symbols": [],
+            "tests": [],
+            "verdict": "PASS",
+            "risk_level": "low",
+        }
+        result = emit_pr_bundle_slsa_l3(
+            root=tmp_path,
+            envelope=envelope,
+            sign=False,
+            sign_key=None,
+            sign_keyless=False,
+        )
+
+        # Normalised whitespace MUST NOT reach read_run_meta. Other
+        # callers (e.g. W1279 ``gather_hash_kwargs``) may legitimately
+        # enumerate stored runs in this process, so filter the spy
+        # records to whitespace-only entries — those are the only ones
+        # that prove the regression.
+        whitespace_only = [r for r in seen_run_ids if r != r.strip()]
+        assert whitespace_only == [], (
+            f"ROAM_RUN_ID='   ' leaked to read_run_meta: {whitespace_only!r}"
+        )
+        # The "not set" skip reason wins over the misleading
+        # "chain not signed" one.
+        assert any("ROAM_RUN_ID not set" in r for r in result["skipped_reasons"]), result[
+            "skipped_reasons"
+        ]
+        assert not any(
+            "HMAC chain not signed" in r for r in result["skipped_reasons"]
+        ), f"Pattern-2 regression: whitespace ROAM_RUN_ID surfaced misleading chain-not-signed reason: {result['skipped_reasons']!r}"
+
+
+# ---------------------------------------------------------------------------
 # W472 - `roam cga emit --also-vsa` flag (follow-up to W451)
 # ---------------------------------------------------------------------------
 

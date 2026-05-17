@@ -123,26 +123,12 @@ class SalesforceBridge(LanguageBridge):
                     }
                 )
 
-        # Strategy 3: Check for Visualforce controller references
-        # Visualforce pages specify controller="ClassName" in <apex:page>
-        # The VF extractor already extracts these as "controller" references,
-        # but we create x-lang edges for them here
-        for tpath, tsymbols in target_files.items():
-            text_ext = os.path.splitext(tpath)[1].lower()
-            if text_ext not in (".page", ".component"):
-                continue
-            target_basename = os.path.basename(tpath).rsplit(".", 1)[0]
-            # Check if any symbol in the target references this Apex class
-            # We look for the component-level symbol whose name matches
-            for sym in tsymbols:
-                # Visualforce pages are top-level symbols of kind "page"/"component"
-                if sym.get("kind") in ("page", "component"):
-                    # The VF extractor creates controller references; check if
-                    # this Apex class is referenced by name in the target path
-                    # (We rely on naming convention or explicit controller attr)
-                    if self._names_match(apex_class_name, target_basename):
-                        # Already handled by strategy 1 above; skip duplicate
-                        pass
+        # Strategy 3 (Visualforce controller references via ``<apex:page
+        # controller="...">``) is fully covered by Strategy 1 above: the VF
+        # extractor emits the controller= attribute as a reference, and the
+        # naming-convention match in Strategy 1 produces the x-lang edge.
+        # The duplicate loop that previously lived here has been removed
+        # (it walked target_files but only ever fell through to ``pass``).
 
         return edges
 

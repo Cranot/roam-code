@@ -54,7 +54,7 @@ These are language-model behavioral laws (validated on Haiku/Sonnet/Opus 4.5/4.6
 
 4. **[LAW] "Code" nouns activate analytical mode on any input.** (D15) — In roam: `agent_contract.facts` strings should anchor on concrete nouns ("`useThemeClasses` has 528 callers") not abstract ones ("this symbol has many callers"). Concrete nouns activate analytical processing; abstract nouns activate summary mode.
 
-   **Concrete-noun anchor vocabulary**: the LAW 4 lint at `tests/test_law4_lint.py` accepts a fact string as concrete-noun-anchored if its terminal token (last word, punctuation stripped) is in a known anchor set. Authoritative sources: `src/roam/output/formatter.py:concrete_plural_terminals` (91 entries, drives the humanizer's "skip findings suffix" rule) and `tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS` (108 entries = 91 shared with the formatter + 17 SBOM/registry additions; mirrors the formatter set per the `# Keep these two lists in sync.` comment, and the count drift is pinned by `tests/test_law4_anchor_counts.py`). Representative entries — consult the source files for the full list:
+   **Concrete-noun anchor vocabulary**: the LAW 4 lint at `tests/test_law4_lint.py` accepts a fact string as concrete-noun-anchored if its terminal token (last word, punctuation stripped) is in a known anchor set. Authoritative sources: `src/roam/output/formatter.py:concrete_plural_terminals` (98 entries, drives the humanizer's "skip findings suffix" rule) and `tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS` (115 entries = 98 shared with the formatter + 17 SBOM/registry additions; mirrors the formatter set per the `# Keep these two lists in sync.` comment, and the count drift is pinned by `tests/test_law4_anchor_counts.py`). Representative entries — consult the source files for the full list:
 
    - **Code structure**: `files`, `symbols`, `edges`, `nodes`, `cycles`, `clusters`, `layers`, `modules`, `commands`, `tools`, `capabilities`, `imports`, `endpoints`, `dependencies`, `packages`, `routes`
    - **Findings**: `findings`, `hotspots`, `smells`, `violations`, `warnings`, `errors`, `alerts`, `issues`, `gaps`, `leaks`, `secrets`, `vulnerabilities`
@@ -62,7 +62,7 @@ These are language-model behavioral laws (validated on Haiku/Sonnet/Opus 4.5/4.6
    - **Past participles / state qualifiers**: `passed`, `failed`, `scanned`, `checked`, `affected`, `scored`, `confirmed`, `analyzed`, `skipped`, `reached`
    - **Time units**: `days`, `weeks`, `months`, `years`, `hours`, `minutes`, `seconds`, `milliseconds`
 
-   When writing a new fact, ensure the terminal token is in the anchor set. If not, either rephrase to anchor on a different terminal OR add the new noun to BOTH `src/roam/output/formatter.py:concrete_plural_terminals` AND `tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS`. The test set is a deliberate superset of the formatter set (formatter has 91 entries; the test mirrors all of them and adds 17 SBOM/registry-domain terminals — `capabilities`, `commands`, `tools`, `packages`, `phantom`, `reachable`, etc.). The mirror is hand-maintained rather than imported so the lint stays decoupled from `roam.output.formatter` — see the `# Keep these two lists in sync.` comment in the test file.
+   When writing a new fact, ensure the terminal token is in the anchor set. If not, either rephrase to anchor on a different terminal OR add the new noun to BOTH `src/roam/output/formatter.py:concrete_plural_terminals` AND `tests/test_law4_lint.py:_CONCRETE_NOUN_ANCHORS`. The test set is a deliberate superset of the formatter set (formatter has 98 entries; the test mirrors all of them and adds 17 SBOM/registry-domain terminals — `capabilities`, `commands`, `tools`, `packages`, `phantom`, `reachable`, etc.). The mirror is hand-maintained rather than imported so the lint stays decoupled from `roam.output.formatter` — see the `# Keep these two lists in sync.` comment in the test file.
 
    Example:
    - WRONG: `"7 of 10 capabilities are AI-safe"` (ends on `AI-safe`, not anchored)
@@ -139,8 +139,8 @@ roam health
 
 ```
 src/roam/
-  cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 217 commands surfaced.
-  mcp_server.py       # FastMCP server (58 tools in core preset; up to 149 in `full`) + `roam mcp` CLI command
+  cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 241 command names (234 canonical + 7 aliases).
+  mcp_server.py       # FastMCP server (57 tools in core preset; up to 224 in `full`) + `roam mcp` CLI command
   mcp_extras/         # MCP-native enhancements: sampling, watcher, session, progress, completions
     sampling.py       # Sampling-driven result compression (summarize=True) via Context.sample
     watcher.py        # watchdog observer + notifications/resources/updated (opt-in via ROAM_MCP_WATCH)
@@ -218,12 +218,12 @@ src/roam/
     gate_presets.py    # Framework-specific gate rules + .roam-gates.yml loader
     graph_helpers.py   # Shared graph utilities (adjacency builders, BFS helpers)
     context_helpers.py # Data-gathering helpers extracted from cmd_context.py
-    cmd_*.py           # One module per CLI command (201 modules, 211 commands)
+    cmd_*.py           # One module per CLI command family (232 modules backing 241 command names)
   output/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
     schema_registry.py # JSON envelope schema versioning + validation
-tests/                 # 267 test files
+tests/                 # 740 test_*.py files
   # Core & legacy
   test_basic.py, test_comprehensive.py, test_fixes.py, test_performance.py,
   test_resolve.py, test_salesforce.py, test_v6_features.py,
@@ -305,12 +305,13 @@ ledger, and (c) compose proof bundles a human reviewer can trust. Everything
 below is repo-local (stored under `.roam/`), zero-network, and additive to the
 analysis core.
 
-### The 10 substrate packages
+### The 11 substrate packages
 
 ```
 src/roam/atomic_io.py     - atomic_write_text/bytes/json (os.replace; POSIX+Windows safe)
 src/roam/agents_md/       - AGENTS.md generator (compositional; consumes the rest)
 src/roam/constitution/    - capstone .roam/constitution.yml unifying laws+rules+memory+gates
+src/roam/db/findings.py   - cross-detector finding registry (roam findings list/show/count); USER_VERSION 17 schema
 src/roam/laws/            - invariant mining (roam laws mine/check) - self-installing
 src/roam/leases/          - multi-agent coordination (roam lease claim/release/list)
 src/roam/memory/          - repo-local agent memory (.roam/memory.jsonl)
@@ -518,5 +519,5 @@ Index-aware text search (added on top of grep / refs):
 - `roam delete-check [--source working|staged|pr|head] [--ci]` — gates the diff on surviving references; exits 5 on BREAK-RISK with `--ci`.
 - `roam history-grep <pattern> [--polarity]` — git pickaxe (-S/-G) with author/date and introduced/removed annotation.
 
-Run `roam --help` for the 5-verb core; `roam --help-all` for all 217 commands; `roam surface --json` for the machine-readable inventory. Use `roam --json <cmd>` for structured output.
+Run `roam --help` for the 5-verb core; `roam --help-all` for all 241 command names; `roam surface --json` for the machine-readable inventory. Use `roam --json <cmd>` for structured output.
 Use `roam --sarif health` for CI integration (SARIF 2.1.0).
