@@ -304,7 +304,38 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                 results.append(_discover_invariants(conn, sym["id"], dict(sym)))
 
         if not results and not target and not public_api and not breaking_risk:
-            click.echo("Provide a TARGET symbol/file, or use --public-api or --breaking-risk.")
+            # Pattern 1 Variant C: in JSON mode, emit a structured
+            # envelope so MCP/wrapper consumers don't try to json.loads()
+            # plain text. The state name + verdict are machine-parseable
+            # and the next_commands suggest exactly how to recover.
+            verdict = "Provide a TARGET symbol/file, or use --public-api or --breaking-risk."
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "invariants",
+                            summary={
+                                "verdict": verdict,
+                                "symbols_analyzed": 0,
+                                "total_invariants": 0,
+                                "high_risk_count": 0,
+                                "partial_success": True,
+                                "state": "usage_error",
+                            },
+                            symbols=[],
+                            agent_contract={
+                                "facts": [verdict],
+                                "next_commands": [
+                                    "roam invariants <symbol-or-file>",
+                                    "roam invariants --public-api",
+                                    "roam invariants --breaking-risk",
+                                ],
+                            },
+                        )
+                    )
+                )
+            else:
+                click.echo(verdict)
             raise SystemExit(1)
 
         # Sort by breaking risk if requested

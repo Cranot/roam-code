@@ -170,6 +170,34 @@ def _finding(
     )
 
 
+def _markers_and_union(
+    subs: list[tuple[int, str, Optional[str], Optional[int]]],
+    super_name: str,
+) -> tuple[list[tuple[str, set[str]]], set[str]]:
+    """Build the per-subclass marker sets + their union for one hierarchy.
+
+    Each subclass name is tokenised; tokens that overlap with the
+    superclass name are stripped so the comparison signal lives on the
+    *variant* portion (``US``/``UK``/``Payroll``) rather than the shared
+    root (``Employee``). Subclasses with no remaining markers are
+    dropped — they can't contribute to the Jaccard signal.
+
+    The A-side and B-side inner loops in ``detect_parallel_hierarchy``
+    are byte-identical apart from variable suffixes; this helper is the
+    extracted common form.
+    """
+    super_toks = _tokenize(super_name)
+    markers: list[tuple[str, set[str]]] = []
+    for _sid, name, _p, _l in subs:
+        toks = _strip_super_token_overlap(_tokenize(name), super_toks)
+        if toks:
+            markers.append((name, toks))
+    union: set[str] = set()
+    for _n, toks in markers:
+        union |= toks
+    return markers, union
+
+
 def detect_parallel_hierarchy(
     conn: sqlite3.Connection,
     *,
@@ -242,35 +270,14 @@ def detect_parallel_hierarchy(
     eligible.sort(key=lambda t: t[0])
     for i in range(len(eligible)):
         super_a_id, super_a_name, subs_a = eligible[i]
-        super_a_toks = _tokenize(super_a_name)
-        # Build marker sets per subclass (parent tokens stripped).
-        markers_a: list[tuple[str, set[str]]] = []
-        for _sid, name, _p, _l in subs_a:
-            markers = _strip_super_token_overlap(_tokenize(name), super_a_toks)
-            if markers:
-                markers_a.append((name, markers))
-        if len(markers_a) < min_subclasses:
-            continue
-        union_a: set[str] = set()
-        for _n, toks in markers_a:
-            union_a |= toks
-        if not union_a:
+        markers_a, union_a = _markers_and_union(subs_a, super_a_name)
+        if len(markers_a) < min_subclasses or not union_a:
             continue
 
         for j in range(i + 1, len(eligible)):
             super_b_id, super_b_name, subs_b = eligible[j]
-            super_b_toks = _tokenize(super_b_name)
-            markers_b: list[tuple[str, set[str]]] = []
-            for _sid, name, _p, _l in subs_b:
-                markers = _strip_super_token_overlap(_tokenize(name), super_b_toks)
-                if markers:
-                    markers_b.append((name, markers))
-            if len(markers_b) < min_subclasses:
-                continue
-            union_b: set[str] = set()
-            for _n, toks in markers_b:
-                union_b |= toks
-            if not union_b:
+            markers_b, union_b = _markers_and_union(subs_b, super_b_name)
+            if len(markers_b) < min_subclasses or not union_b:
                 continue
 
             similarity = _jaccard(union_a, union_b)

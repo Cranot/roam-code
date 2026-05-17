@@ -240,7 +240,14 @@ def _reading_order(conn, G):
 
 
 def _entry_points(conn):
-    """Fetch entry points as starting exploration targets."""
+    """Fetch entry points as starting exploration targets.
+
+    Test-file symbols are excluded: ``test_*`` functions and ``TestX.test_y``
+    methods have no callers in the production graph (``in_degree = 0`` by
+    construction) which would otherwise inflate the entry-points list with
+    test scaffolding instead of newcomer-relevant production code. Mirrors
+    the test-file filter applied to ``_top_symbols``.
+    """
     rows = conn.execute(
         """SELECT s.name, s.qualified_name, s.kind, f.path, s.line_start
            FROM symbols s
@@ -249,6 +256,7 @@ def _entry_points(conn):
            WHERE (gm.in_degree IS NULL OR gm.in_degree = 0)
            AND s.kind IN ('function', 'method', 'class')
            AND s.is_exported = 1
+           AND COALESCE(f.file_role, 'source') != 'test'
            ORDER BY gm.pagerank DESC
            LIMIT 15"""
     ).fetchall()

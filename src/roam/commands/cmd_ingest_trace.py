@@ -14,12 +14,59 @@ plan + W1224-audit memo.
 
 from __future__ import annotations
 
+import json
+
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.exit_codes import EXIT_ERROR
 from roam.output.formatter import format_table, json_envelope, to_json
+
+
+def _emit_parse_error(json_mode: bool, trace_path: str, message: str) -> None:
+    """Emit a structured error envelope on a parse / IO failure.
+
+    Pattern 1B — the underlying failure already carried structured
+    signal (the message names the file and the parse error). The CLI
+    bridge must preserve that signal rather than letting a raw
+    traceback escape and triggering the wrapper's generic
+    ``COMMAND_FAILED`` envelope. Pattern 2 — disclose the partial /
+    failed state explicitly; never silent-fallback to a SUCCESS verdict.
+    """
+    verdict = f"Failed to parse trace file: {trace_path}"
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ingest-trace",
+                    summary={
+                        "verdict": verdict,
+                        "total": 0,
+                        "matched": 0,
+                        "unmatched": 0,
+                        "partial_success": True,
+                        "state": "parse_error",
+                    },
+                    error=message,
+                    hint="Verify the file is valid JSON and matches the declared --otel/--jaeger/--zipkin/--generic format.",
+                    agent_contract={
+                        "facts": [
+                            verdict,
+                            f"trace ingestion aborted on {trace_path}",
+                        ],
+                        "next_commands": [
+                            "roam ingest-trace --help",
+                        ],
+                    },
+                    spans=[],
+                )
+            )
+        )
+    else:
+        click.echo(f"VERDICT: {verdict}")
+        click.echo(message)
 
 
 @roam_capability(
@@ -86,7 +133,12 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
         path, fmt = generic_file, "generic"
     elif trace_file:
         path = trace_file
-        fmt = auto_detect_format(trace_file)
+        try:
+            fmt = auto_detect_format(trace_file)
+        except ValueError as exc:
+            _emit_parse_error(json_mode, trace_file, str(exc))
+            ctx.exit(EXIT_ERROR)
+            return
     else:
         click.echo("Error: provide a trace file (positional or via --otel/--jaeger/--zipkin/--generic)")
         from roam.exit_codes import EXIT_USAGE
@@ -104,7 +156,17 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
     with open_db(readonly=False) as conn:
         ensure_runtime_table(conn)
         ingester = ingesters[fmt]
-        results = ingester(conn, path)
+        # Wrap the ingester call so malformed JSON / OSError become a
+        # structured error envelope rather than a raw traceback. The
+        # specific ingesters can also raise ``ValueError`` on a
+        # type-mismatched root (e.g. an OTel doc handed to the generic
+        # ingester); both surfaces are routed through the same envelope.
+        try:
+            results = ingester(conn, path)
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
+            _emit_parse_error(json_mode, path, str(exc))
+            ctx.exit(EXIT_ERROR)
+            return
 
     total = len(results)
     matched = sum(1 for r in results if r["matched"])

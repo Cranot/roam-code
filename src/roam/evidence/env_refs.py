@@ -75,6 +75,7 @@ import os
 import socket
 from collections.abc import Mapping
 
+from roam.evidence.collector import _detect_ci_env_id
 from roam.evidence.refs import EnvironmentRef
 
 
@@ -122,12 +123,12 @@ def build_environment_refs(
     * Duplicate ``(env_kind, env_id)`` pairs cannot occur given the
       ordered, single-source construction; no de-dup pass is needed.
     """
-    # Delegate CI detection to the collector helper so the
+    # CI detection is delegated to the collector helper so the
     # ``_CI_PROVIDER_ENV_VARS`` table stays the single source of truth.
-    # Local import avoids a circular dep between env_refs.py and
-    # collector.py.
-    from roam.evidence.collector import _detect_ci_env_id
-
+    # The import is module-top-level: ``collector`` does not import
+    # ``env_refs`` (W907 hedge audit verified — no edge collector->env_refs
+    # at module load), so the prior "Local import avoids a circular dep"
+    # claim was a false cycle.
     refs: list[EnvironmentRef] = []
 
     ci_env_id = _detect_ci_env_id(env)

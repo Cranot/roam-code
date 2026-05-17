@@ -269,6 +269,12 @@ def diagnose(ctx, name, depth, batch_input):
         results = []
         any_degraded = False
         with open_db(readonly=True) as conn:
+            # Hoisted from inside the per-symbol loop: distribution stats
+            # scan four full tables (commit_count, complexity, health,
+            # entropy) and the result is invariant across the batch. Doing
+            # it once instead of per-symbol turns O(N) full-table scans
+            # into one.
+            dist = _build_distribution_stats(conn)
             for nm in names:
                 sym, _alts = find_symbol_with_alternatives(conn, nm)
                 if sym is None:
@@ -285,7 +291,6 @@ def diagnose(ctx, name, depth, batch_input):
                     )
                     continue
                 metrics = _get_symbol_metrics(conn, sym["id"])
-                dist = _build_distribution_stats(conn)
                 risk = _risk_score(metrics, dist)
                 # W1244 / W1249 Pattern-2 variant-D: ``find_symbol_with_alternatives``
                 # stamps ``_resolution_tier`` on each returned row; we read it
@@ -391,11 +396,45 @@ def diagnose(ctx, name, depth, batch_input):
         G = build_symbol_graph(conn)
 
         if sym_id not in G:
-            click.echo(
-                f"Symbol '{name}' is not in the dependency graph.\n"
-                "  Tip: Run `roam index` to rebuild the graph. If the symbol has no\n"
-                "       callers or callees, it may not appear in the graph."
+            # Pattern 1B/1C: must emit structured JSON in --json mode rather
+            # than dumping plain text + SystemExit(1) which strips the
+            # structured signal at the MCP wrapper. The symbol resolved
+            # cleanly -- it's just disconnected from the call graph (no
+            # callers/callees indexed). Treat as partial_success: the
+            # resolution worked but the ranking degraded to empty.
+            sym_name = sym["qualified_name"] or sym["name"]
+            verdict = f"Symbol '{sym_name}' resolved but is not connected in the dependency graph"
+            hint_text = (
+                "Run `roam index` to rebuild the graph. If the symbol has no "
+                "callers or callees, it may not appear in the graph."
             )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "diagnose",
+                            summary={
+                                "target": sym_name,
+                                "verdict": verdict,
+                                "partial_success": True,
+                                "state": "isolated_in_graph",
+                                **resolution_block,
+                            },
+                            symbol=sym_name,
+                            hint=hint_text,
+                            target_metrics=_get_symbol_metrics(conn, sym_id),
+                            upstream=[],
+                            downstream=[],
+                            cochange_partners=[],
+                            recent_commits=[],
+                            did_you_mean=did_you_mean,
+                            **resolution_block,
+                        )
+                    )
+                )
+                return
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(f"  Tip: {hint_text}")
             raise SystemExit(1)
 
         target_metrics = _get_symbol_metrics(conn, sym_id)

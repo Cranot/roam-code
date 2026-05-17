@@ -201,31 +201,3 @@ def is_framework_alias(name: str | None, kind: str | None = None, file_path: str
                 return True
 
     return False
-
-
-def filter_framework_rows(rows, *, name_key="name", kind_key="kind", file_key="file_path"):
-    """Drop rows whose symbol looks like a framework type alias.
-
-    Accepts sqlite3.Row, dicts, or any mapping-style row. Missing keys are
-    treated as empty so callers can pass partial result sets.
-    """
-
-    def _get(row, key):
-        try:
-            return row[key]
-        except (KeyError, IndexError, TypeError):
-            return None
-
-    return [r for r in rows if not is_framework_alias(_get(r, name_key), _get(r, kind_key), _get(r, file_key))]
-
-
-def count_filtered(rows, *, name_key="name", kind_key="kind", file_key="file_path") -> int:
-    """Count how many rows would be filtered without consuming the iterable."""
-
-    def _get(row, key):
-        try:
-            return row[key]
-        except (KeyError, IndexError, TypeError):
-            return None
-
-    return sum(1 for r in rows if is_framework_alias(_get(r, name_key), _get(r, kind_key), _get(r, file_key)))

@@ -260,3 +260,33 @@ class TestHypothesisEngine:
         result = engine.hypothesize("a.py", "b.py")
         assert result["category"] == "SHARED_API"
         assert "/api/users/list" in result["detail"]
+
+    def test_hypothesis_python_imports_not_shared_db(self, tmp_path):
+        """Regression: `from __future__ import annotations` and other Python
+        `from X import Y` lines must not be classified as SHARED_DB. The
+        naive SQL `FROM <name>` regex previously matched the import keyword
+        and caused every Python file to "share tables" with every other.
+        """
+        (tmp_path / "a.py").write_text(
+            "from __future__ import annotations\nfrom typing import Any\nfrom pathlib import Path\ndef f(): pass\n"
+        )
+        (tmp_path / "b.py").write_text(
+            "from __future__ import annotations\nfrom typing import List\nfrom pathlib import PurePath\nclass G: ...\n"
+        )
+        engine = HypothesisEngine(tmp_path)
+        result = engine.hypothesize("a.py", "b.py")
+        assert result["category"] != "SHARED_DB", f"Python imports must not classify as SHARED_DB; got {result}"
+
+    def test_hypothesis_js_imports_not_shared_db(self, tmp_path):
+        """Regression: ES6 `import ... from "module"` must not be classified
+        as SHARED_DB on the `from` keyword.
+        """
+        (tmp_path / "a.js").write_text(
+            'import React from "react";\nimport { useState } from "react";\nfunction App() { return null; }\n'
+        )
+        (tmp_path / "b.js").write_text(
+            'import React from "react";\nimport axios from "axios";\nfunction api() { return null; }\n'
+        )
+        engine = HypothesisEngine(tmp_path)
+        result = engine.hypothesize("a.js", "b.js")
+        assert result["category"] != "SHARED_DB", f"JS imports must not classify as SHARED_DB; got {result}"

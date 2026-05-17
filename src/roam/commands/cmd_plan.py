@@ -234,6 +234,35 @@ def _build_read_order(conn, sym_ids, file_paths, task, depth):
 # ---------------------------------------------------------------------------
 
 
+def _trim_signature(sig: str) -> str:
+    """Strip leading decorator lines from a captured signature.
+
+    Python's symbol extractor stores the signature as the entire span from the
+    first decorator through the ``def``/``class`` declaration. For decorated
+    functions this can run hundreds of characters (whole ``@roam_capability(...)``
+    + ``@click.command(...)`` + option blocks), dwarfing the actual signature
+    and bloating ``invariants[].signature`` in the plan envelope (Pattern 6
+    response-volume risk). Return only the first non-decorator line(s).
+    """
+    if not sig:
+        return ""
+    lines = sig.splitlines()
+    # Drop leading decorator lines plus their continuations (paren-balanced).
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].lstrip()
+        if not stripped.startswith("@"):
+            break
+        # Walk forward until the decorator's parentheses are balanced.
+        depth = 0
+        while i < len(lines):
+            depth += lines[i].count("(") - lines[i].count(")")
+            i += 1
+            if depth <= 0:
+                break
+    return "\n".join(lines[i:]).strip() or sig.strip()
+
+
 def _build_invariants(conn, sym_ids, task):
     """Gather invariants to preserve: caller signatures + target signatures."""
     invariants = []
@@ -253,7 +282,7 @@ def _build_invariants(conn, sym_ids, task):
                 {
                     "name": row["name"],
                     "kind": row["kind"],
-                    "signature": row["signature"] or "",
+                    "signature": _trim_signature(row["signature"] or ""),
                     "callers": row["caller_count"],
                     "location": loc(row["file_path"], row["line_start"]),
                     "role": "target",
@@ -284,7 +313,7 @@ def _build_invariants(conn, sym_ids, task):
             {
                 "name": row["name"],
                 "kind": row["kind"],
-                "signature": row["signature"] or "",
+                "signature": _trim_signature(row["signature"] or ""),
                 "callers": row["caller_count"],
                 "location": loc(row["file_path"], row["line_start"]),
                 "role": "caller",

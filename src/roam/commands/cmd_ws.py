@@ -244,7 +244,7 @@ def ws_status(ctx) -> None:
     """Show workspace status: repos, index ages, cross-repo edges."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    ws_root, config = _require_workspace()
+    ws_root, config = _require_workspace(ctx, "ws-status")
 
     from roam.workspace.config import get_repo_paths
     from roam.workspace.db import get_cross_edges, open_workspace_db
@@ -303,7 +303,7 @@ def ws_resolve(ctx) -> None:
     """Detect cross-repo API connections between frontend and backend repos."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    ws_root, config = _require_workspace()
+    ws_root, config = _require_workspace(ctx, "ws-resolve")
 
     from roam.workspace.api_scanner import (
         build_cross_repo_edges,
@@ -574,7 +574,7 @@ def ws_understand(ctx) -> None:
     """Full workspace overview: repos, stats, cross-repo connections."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    ws_root, config = _require_workspace()
+    ws_root, config = _require_workspace(ctx, "ws-understand")
 
     from roam.workspace.aggregator import aggregate_understand
     from roam.workspace.config import get_repo_paths
@@ -643,7 +643,7 @@ def ws_health(ctx) -> None:
     """Workspace-wide health report."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    ws_root, config = _require_workspace()
+    ws_root, config = _require_workspace(ctx, "ws-health")
 
     from roam.workspace.aggregator import aggregate_health
     from roam.workspace.config import get_repo_paths
@@ -700,7 +700,7 @@ def ws_context(ctx, symbol: str) -> None:
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    ws_root, config = _require_workspace()
+    ws_root, config = _require_workspace(ctx, "ws-context")
 
     from roam.workspace.aggregator import cross_repo_context
     from roam.workspace.config import get_repo_paths
@@ -777,7 +777,7 @@ def ws_trace(ctx, source: str, target: str) -> None:
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
-    ws_root, config = _require_workspace()
+    ws_root, config = _require_workspace(ctx, "ws-trace")
 
     from roam.workspace.aggregator import cross_repo_trace
     from roam.workspace.config import get_repo_paths
@@ -835,19 +835,56 @@ def ws_trace(ctx, source: str, target: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _require_workspace():
-    """Find and load workspace config, or exit with error.
+def _require_workspace(ctx=None, command_name: str = "ws"):
+    """Find and load workspace config, or emit a Pattern-1 envelope and exit.
 
-    Returns (ws_root, config).
+    Returns (ws_root, config). When no workspace exists, emits a canonical
+    Pattern-1A failure envelope (CLAUDE.md "Pattern-1 family — (A) Hang on
+    missing prerequisite") so JSON consumers get a structured
+    ``state: not_initialized`` + ``isError: true`` + ``next_command``
+    response instead of plaintext stderr + exit 1. Text consumers continue
+    to see a one-line VERDICT + Next command line.
     """
     from roam.workspace.config import find_workspace_root, load_workspace_config
 
     ws_root = find_workspace_root()
     if ws_root is None:
-        click.echo(
-            "No workspace found. Run `roam ws init <repo1> <repo2> ...` first.",
-            err=True,
+        json_mode = bool(ctx and ctx.obj and ctx.obj.get("json"))
+        verdict = "No workspace initialized — run `roam ws init <repo1> <repo2> ...`"
+        envelope = json_envelope(
+            command_name,
+            summary={
+                "verdict": verdict,
+                "level": "warning",
+                "partial_success": False,
+                "state": "not_initialized",
+            },
+            status="index_not_built",
+            isError=True,
+            error_code="WORKSPACE_NOT_INITIALIZED",
+            error="No .roam-workspace.json found in cwd or any parent directory",
+            hint="Run `roam ws init <repo1> <repo2> ...` from the directory that contains the repos",
+            next_command="roam ws init <repo1> <repo2>",
+            agent_contract={
+                "facts": [
+                    "no .roam-workspace.json found in cwd or any parent directories",
+                    "ws subcommands cannot run until a workspace is initialized",
+                ],
+                "next_commands": [
+                    "roam ws init <repo1> <repo2>",
+                    "# then re-run the ws subcommand",
+                ],
+            },
         )
+        if json_mode:
+            click.echo(to_json(envelope))
+        else:
+            click.echo(f"VERDICT: {verdict}", err=True)
+            click.echo(
+                "Hint:         No .roam-workspace.json found in cwd or any parent directory",
+                err=True,
+            )
+            click.echo("Next command: roam ws init <repo1> <repo2>", err=True)
         raise SystemExit(1)
 
     config = load_workspace_config(ws_root)

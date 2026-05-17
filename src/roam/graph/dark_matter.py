@@ -248,6 +248,33 @@ _RE_TABLE = re.compile(
     r'\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+[`"\']?(\w+)[`"\']?',
     re.IGNORECASE,
 )
+# Negative filter: Python `from X import` and JS/TS `import ... from "X"` look
+# identical to the SQL `FROM` verb under a naive regex. Drop lines that match
+# either shape before declaring a "shared table" — otherwise every Python file
+# co-occurs on `__future__`, `typing`, etc. and the SHARED_DB classifier
+# fires false positives on 100% of Python-only co-changing pairs.
+_RE_PYTHON_IMPORT_LINE = re.compile(r"^\s*from\s+[\w.]+\s+import\b", re.MULTILINE)
+_RE_JS_IMPORT_LINE = re.compile(r'^\s*import\b[^;\n]*\bfrom\s+[`"\']', re.MULTILINE)
+
+
+def _extract_sql_tables(text: str) -> set[str]:
+    """Extract candidate SQL table names from `text`, excluding lines that are
+    Python `from X import` or JS/TS `import ... from "X"` statements (which the
+    naive _RE_TABLE regex would otherwise classify as SQL).
+    """
+    if not text:
+        return set()
+    # Strip lines that look like Python/JS imports before scanning.
+    stripped_lines = []
+    for line in text.splitlines():
+        if _RE_PYTHON_IMPORT_LINE.match(line):
+            continue
+        if _RE_JS_IMPORT_LINE.match(line):
+            continue
+        stripped_lines.append(line)
+    return set(_RE_TABLE.findall("\n".join(stripped_lines)))
+
+
 _RE_EVENT_EMIT = re.compile(
     r'\.\s*(?:emit|dispatch|publish)\s*\(\s*["\']([^"\']+)["\']',
 )
@@ -289,8 +316,8 @@ class HypothesisEngine:
             return {"category": "UNKNOWN", "detail": "files not readable", "confidence": 0.3}
 
         # SHARED_DB
-        tables_a = set(_RE_TABLE.findall(text_a))
-        tables_b = set(_RE_TABLE.findall(text_b))
+        tables_a = _extract_sql_tables(text_a)
+        tables_b = _extract_sql_tables(text_b)
         shared_tables = tables_a & tables_b
         if shared_tables:
             names = ", ".join(sorted(shared_tables)[:3])

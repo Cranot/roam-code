@@ -387,6 +387,61 @@ def _indexed_python_modules(conn) -> set[str]:
     return out
 
 
+def _indexed_python_subtree_modules(conn, subtree: str) -> set[str]:
+    """Return dotted-module names derivable from Python files under ``subtree``.
+
+    W161 — companion to :func:`_indexed_python_modules`. The default
+    indexed-modules set deliberately excludes ``tests/`` and
+    ``benchmarks/`` so src-level imports of those paths don't masquerade
+    as internal modules. But test-to-test imports (e.g.
+    ``from tests._helpers.repo_root import …``) and benchmark-to-
+    benchmark imports (``from prompts import …``) ARE valid and must
+    resolve. This helper returns the subtree's own module set so the
+    orphan scanner can merge it in when scanning a file in that subtree.
+
+    For ``tests`` / ``benchmarks`` specifically, also adds the BARE
+    filenames (without the subtree prefix). Pytest puts the test
+    directory on ``sys.path`` at collection time, so a sibling
+    ``from test_law4_lint import …`` resolves cleanly even though the
+    indexed file path is ``tests/test_law4_lint.py``. Same for
+    ``benchmarks/`` (script-style sibling imports run with the
+    directory on the path).
+
+    ``subtree`` is a literal path prefix like ``"tests"`` or
+    ``"benchmarks"``. Returns an empty set when no files under that
+    prefix are indexed.
+    """
+    out: set[str] = set()
+    rows = conn.execute(
+        "SELECT path FROM files WHERE language = 'python' AND (path LIKE ? OR path LIKE ?)",
+        (f"{subtree}/%", f"{subtree}\\%"),
+    ).fetchall()
+
+    def _add(rel: str) -> None:
+        _modules_from_path(rel, out)
+        # Strip the subtree prefix and re-derive — covers bare sibling
+        # imports under pytest's added-to-sys.path discovery.
+        norm = rel.replace("\\", "/")
+        if norm.startswith(f"{subtree}/"):
+            inner = norm[len(subtree) + 1 :]
+            if inner:
+                _modules_from_path(inner, out)
+
+    for r in rows:
+        _add(r[0])
+
+    # Filesystem fallback for newly-added files in the subtree.
+    subtree_root = Path(subtree)
+    if subtree_root.is_dir():
+        for py in subtree_root.rglob("*.py"):
+            try:
+                rel = py.relative_to(Path(".")).as_posix()
+            except ValueError:
+                rel = py.as_posix()
+            _add(rel)
+    return out
+
+
 def _indexed_js_modules(conn) -> set[str]:
     """Return path-style module identifiers for indexed JS/TS/Vue/Svelte files.
 
@@ -443,10 +498,123 @@ def _indexed_go_packages(conn) -> set[str]:
     return out
 
 
-def _is_external_python_package(module: str) -> bool:
+# W161 — distribution-name → import-name overrides for the pyproject filter
+# below. PEP 621 metadata lists *distribution* names (the ``pip install X``
+# string); ``import`` statements use the *import* name. Most packages match
+# (``click`` ↔ ``click``) but a small set deliberately doesn't. The map
+# below covers the high-frequency cases that surfaced as orphan-import
+# false positives on real projects when roam runs in a sibling venv that
+# lacks the project's dev/optional deps installed.
+#
+# Source: PyPI metadata + common Python ecosystem conventions. Keep this
+# list tight — every entry below is documented as a real distribution
+# name whose top-level package is named differently.
+_PEP621_DIST_TO_IMPORT_NAME: dict[str, tuple[str, ...]] = {
+    "pyyaml": ("yaml",),
+    "pillow": ("PIL",),
+    "python-dateutil": ("dateutil",),
+    "beautifulsoup4": ("bs4",),
+    "msgpack-python": ("msgpack",),
+    "scikit-learn": ("sklearn",),
+    "opencv-python": ("cv2",),
+    "ipython": ("IPython",),
+    "attrs": ("attr", "attrs"),
+    "pyjwt": ("jwt",),
+    "pycryptodome": ("Crypto",),
+    "protobuf": ("google",),  # imports as ``google.protobuf``
+    "grpcio": ("grpc",),
+    "grpcio-tools": ("grpc_tools",),
+    "tree-sitter-language-pack": ("tree_sitter_language_pack",),
+    "tree-sitter": ("tree_sitter",),
+}
+
+
+def _declared_python_dependencies(project_root: Path) -> frozenset[str]:
+    """Return the set of top-level import names declared in ``pyproject.toml``.
+
+    Reads ``[project.dependencies]`` and ``[project.optional-dependencies]``
+    and converts each PEP 508 requirement string into the importable
+    top-level package name (head of the dotted module). Distribution
+    names that differ from their import name are translated via
+    :data:`_PEP621_DIST_TO_IMPORT_NAME`.
+
+    Use case (W161): roam may be installed via ``uv tool install`` /
+    ``pipx`` into an isolated venv that does NOT have the project's
+    dev/optional dependencies. ``importlib.util.find_spec("pytest")``
+    returns ``None`` in that venv, so every ``import pytest`` in the
+    project's test suite would be flagged as a missing-package orphan.
+    This helper short-circuits that by trusting what the project itself
+    declares as its dependency surface.
+
+    Returns an empty set when ``pyproject.toml`` is absent or
+    unparseable — the existing ``importlib`` + indexed-modules fallback
+    in :func:`_is_external_python_package` still applies, so a broken
+    pyproject doesn't suppress real orphan detection.
+    """
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return frozenset()
+    try:
+        import tomllib
+
+        with pyproject.open("rb") as f:
+            data = tomllib.load(f)
+    except Exception:
+        return frozenset()
+
+    project = data.get("project", {}) or {}
+    requirement_strings: list[str] = list(project.get("dependencies", []) or [])
+    optional = project.get("optional-dependencies", {}) or {}
+    for group in optional.values():
+        if isinstance(group, list):
+            requirement_strings.extend(group)
+
+    names: set[str] = set()
+    for req in requirement_strings:
+        if not isinstance(req, str):
+            continue
+        # PEP 508 — extract the distribution name (everything before the
+        # first ``[``, ``(``, version specifier, or whitespace marker).
+        # We only need the *name*, not the version, so a cheap regex
+        # split is enough.
+        name = re.split(r"[\s\[\(=<>!~;]", req.strip(), maxsplit=1)[0].strip().lower()
+        if not name:
+            continue
+        # Map known distribution-vs-import-name mismatches.
+        mapped = _PEP621_DIST_TO_IMPORT_NAME.get(name)
+        if mapped is not None:
+            names.update(mapped)
+        else:
+            # Default: distribution name == import name with ``-`` → ``_``.
+            names.add(name.replace("-", "_"))
+    return frozenset(names)
+
+
+# Module-level cache so repeated calls in the same scan don't re-read +
+# re-parse pyproject.toml. Keyed on the resolved project root so the
+# cache stays valid when tests run with chdir'd CWDs.
+_DECLARED_DEPS_CACHE: dict[Path, frozenset[str]] = {}
+
+
+def _is_external_python_package(module: str, project_root: Path | None = None) -> bool:
     head = module.split(".", 1)[0]
     if head in sys.builtin_module_names:
         return True
+    # W161 — trust the project's declared dependencies before falling
+    # back to ``importlib.util.find_spec``. This catches the case where
+    # roam runs in a sibling venv (uv tool install / pipx) that doesn't
+    # have the project's dev / optional deps installed.
+    if project_root is not None:
+        try:
+            resolved = project_root.resolve()
+        except OSError:
+            resolved = project_root
+        cached = _DECLARED_DEPS_CACHE.get(resolved)
+        if cached is None:
+            cached = _declared_python_dependencies(resolved)
+            _DECLARED_DEPS_CACHE[resolved] = cached
+        if head.lower() in cached or head in cached:
+            return True
     try:
         return importlib.util.find_spec(head) is not None
     except Exception:
@@ -662,6 +830,13 @@ def _resolve_relative_import(dotted: str, importing_file: Path, project_root: Pa
 
 def _scan_python(conn) -> tuple[list[dict], int]:
     indexed = _indexed_python_modules(conn)
+    # W161 — subtree-scoped indexed-modules sets. Test-to-test and
+    # benchmark-to-benchmark imports are valid and must resolve, but
+    # they're excluded from the default ``indexed`` set so they don't
+    # leak into the src-level orphan check. We merge the right subtree
+    # set in below based on the importing file's location.
+    tests_modules: set[str] | None = None
+    benchmarks_modules: set[str] | None = None
     project_root = Path(".").resolve()
     rows = conn.execute("SELECT path FROM files WHERE language = 'python' ORDER BY path").fetchall()
     orphans: list[dict] = []
@@ -676,6 +851,19 @@ def _scan_python(conn) -> tuple[list[dict], int]:
         except OSError:
             continue
         files_scanned += 1
+        # W161 — choose the per-file indexed set. Lazy: only build the
+        # subtree sets if we actually scan a file in that subtree.
+        norm_path = rel_path.replace("\\", "/")
+        if norm_path.startswith("tests/") or norm_path == "tests":
+            if tests_modules is None:
+                tests_modules = _indexed_python_subtree_modules(conn, "tests")
+            scoped_indexed = indexed | tests_modules
+        elif norm_path.startswith("benchmarks/") or norm_path == "benchmarks":
+            if benchmarks_modules is None:
+                benchmarks_modules = _indexed_python_subtree_modules(conn, "benchmarks")
+            scoped_indexed = indexed | benchmarks_modules
+        else:
+            scoped_indexed = indexed
         # W159: scan a copy with triple-quoted strings + comments masked
         # so prose like "...not visible from any\nimport or call edge..."
         # inside a docstring doesn't produce phantom ``or`` orphans. Line
@@ -693,7 +881,7 @@ def _scan_python(conn) -> tuple[list[dict], int]:
             if _PY_RELATIVE_PREFIX_RE.match(line):
                 continue
             mod = m.group(1) or m.group(2)
-            if not mod or mod in indexed:
+            if not mod or mod in scoped_indexed:
                 continue
             line_no = scan_text.count("\n", 0, line_start) + 1
             # W160 fix 2 — skip imports inside ``try: ... except ImportError:``.
@@ -711,7 +899,7 @@ def _scan_python(conn) -> tuple[list[dict], int]:
             if _is_conftest_path(mod, project_root, full):
                 continue
             head = mod.split(".", 1)[0]
-            if head in indexed:
+            if head in scoped_indexed:
                 orphans.append(
                     {
                         "language": "python",
@@ -723,7 +911,7 @@ def _scan_python(conn) -> tuple[list[dict], int]:
                     }
                 )
                 continue
-            if _is_external_python_package(mod):
+            if _is_external_python_package(mod, project_root):
                 continue
             orphans.append(
                 {

@@ -388,7 +388,30 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         # Reachability annotation
         reach_set = build_reachable_set(conn, reachable_from) if reachable_from else None
         if reachable_from and reach_set is None:
-            click.echo(f"VERDICT: entry symbol '{reachable_from}' not found in index")
+            # Pattern 1B/1D: degraded resolution — anchor symbol not in
+            # index. Emit a structured envelope so MCP wrappers see
+            # actionable state instead of a raw COMMAND_FAILED.
+            msg = f"entry symbol '{reachable_from}' not found in index"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "delete-check",
+                            budget=token_budget,
+                            summary={
+                                "verdict": msg,
+                                "state": "unresolved_entry",
+                                "partial_success": True,
+                                "resolution": "unresolved",
+                                "deletions": 0,
+                            },
+                            hint="Verify the symbol exists; try `roam search <name>` first.",
+                            deletions=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {msg}")
             raise SystemExit(1)
         orphans = build_orphan_set(conn) if reach_set is None else set()
         for m in surviving:

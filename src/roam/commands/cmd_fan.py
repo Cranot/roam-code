@@ -442,8 +442,18 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                 (fetch_limit,),
             ).fetchall()
 
+            # Pattern 2 silent-fallback fix: track WHY rows can end up empty
+            # so the verdict and hint name the actual cause. The pre-fix path
+            # emitted ``state: "no_symbols"`` + "corpus empty — run roam index
+            # --force" regardless of whether the raw query returned zero rows
+            # (genuinely empty corpus) OR whether the tooling/framework
+            # filters wiped them all (corpus had rows, all filtered out).
+            # The lying hint sent users to reindex when their filters were
+            # the issue.
+            _raw_row_count = len(rows)
             if not include_tooling:
                 rows = _filter_tooling_rows(rows)
+            _after_tooling = len(rows)
             rows = rows[:count]
 
             if no_framework:
@@ -452,6 +462,27 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
             scope_meta = _file_scope_metrics(conn, [r["id"] for r in rows])
 
             if not rows:
+                # Lineage: classify the empty-state into a closed enum so
+                # the verdict/hint reflect the real cause.
+                if _raw_row_count == 0:
+                    _empty_state = "no_symbols"
+                    _empty_verdict = "no graph metrics available (corpus empty — run `roam index --force` to populate)"
+                    _empty_hint = "Run `roam index --force` to populate symbols and graph_metrics."
+                elif _after_tooling == 0:
+                    _empty_state = "all_filtered_tooling"
+                    _empty_verdict = (
+                        f"no graph metrics survived tooling exclusion ({_raw_row_count} raw rows; "
+                        "re-run with --include-tooling to see CI/dev/generated files)"
+                    )
+                    _empty_hint = "Re-run with `--include-tooling` to include CI/dev/generated files."
+                else:
+                    _empty_state = "all_filtered_framework"
+                    _empty_verdict = (
+                        f"no graph metrics survived framework exclusion ({_after_tooling} rows pre-filter; "
+                        "drop --no-framework to see framework primitives)"
+                    )
+                    _empty_hint = "Drop `--no-framework` to include framework primitive names."
+
                 if sarif_mode:
                     # W1209: SARIF output with empty results (rules catalogue
                     # still emitted so consumers can introspect the closed enum).
@@ -461,29 +492,30 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                     return
                 if json_mode:
                     # W805-followup-C: empty-state disclosure (Pattern 2
-                    # silent-fallback fix). Zero rows on a symbol-mode
-                    # query means the symbols/degrees corpus is empty —
-                    # not a clean run. Surface via partial_success +
-                    # closed-enum state.
+                    # silent-fallback fix). State is now classified — the
+                    # pre-fix path collapsed three distinct causes into one
+                    # misleading "corpus empty" verdict.
                     click.echo(
                         to_json(
                             json_envelope(
                                 "fan",
                                 budget=token_budget,
                                 summary={
-                                    "verdict": "no graph metrics available (corpus empty — run `roam index --force` to populate)",
+                                    "verdict": _empty_verdict,
                                     "mode": mode,
                                     "items": 0,
                                     "partial_success": True,
-                                    "state": "no_symbols",
+                                    "state": _empty_state,
                                 },
                                 mode=mode,
                                 items=[],
+                                hint=_empty_hint,
                             )
                         )
                     )
                 else:
-                    click.echo("No graph metrics available. Run `roam index` first.")
+                    click.echo(f"VERDICT: {_empty_verdict}")
+                    click.echo(f"HINT: {_empty_hint}")
                 return
 
             # Build the symbol-mode items list once — reused by JSON emit,

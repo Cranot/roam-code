@@ -406,6 +406,187 @@ def test_conftest_filter_does_not_swallow_real_orphans(tmp_path):
         os.chdir(old_cwd)
 
 
+# ---------------------------------------------------------------------------
+# W161 — pyproject-declared dependencies + tests-subtree resolution
+# ---------------------------------------------------------------------------
+
+
+def _write_pyproject(
+    proj: Path, dependencies: list[str] | None = None, optional_groups: dict[str, list[str]] | None = None
+) -> None:
+    """Helper: write a minimal pyproject.toml at the project root.
+
+    ``_make_project`` only writes files under ``src/``; pyproject.toml
+    needs to live at the project root. This helper writes it there.
+    """
+    parts = ["[project]\n", 'name = "demo"\n', 'version = "0.1"\n']
+    if dependencies:
+        deps_str = ", ".join(f'"{d}"' for d in dependencies)
+        parts.append(f"dependencies = [{deps_str}]\n")
+    if optional_groups:
+        parts.append("\n[project.optional-dependencies]\n")
+        for group, deps in optional_groups.items():
+            deps_str = ", ".join(f'"{d}"' for d in deps)
+            parts.append(f"{group} = [{deps_str}]\n")
+    (proj / "pyproject.toml").write_text("".join(parts), encoding="utf-8")
+
+
+def test_w161_declared_pyproject_dependency_is_not_orphan(tmp_path):
+    """A package declared in pyproject.toml's dependencies is NOT flagged.
+
+    Roam runs in an isolated venv (uv tool install / pipx) that doesn't
+    have the project's runtime/dev/optional deps installed. Pre-W161 this
+    meant ``importlib.util.find_spec`` returned ``None`` for every test
+    file's ``import pytest`` line and flagged ~156 false positives on
+    roam-code itself. The pyproject filter trusts the project's declared
+    dependency surface.
+    """
+    proj = _make_project(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/uses_dep.py": "import a_declared_pkg_xyzzy\n",
+        },
+    )
+    _write_pyproject(proj, dependencies=["a-declared-pkg-xyzzy>=1.0"])
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        count = _orphan_count(proj, runner)
+        assert count == 0, f"expected 0 orphans (pyproject declares dep); got {count}"
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_w161_declared_optional_dependency_is_not_orphan(tmp_path):
+    """An optional-dependencies group declaration also counts.
+
+    Dev deps (pytest, pytest-xdist, …) and feature-flag extras (mcp,
+    semantic, …) all live in ``[project.optional-dependencies]``. They
+    should be treated as known-external just like top-level deps.
+    """
+    proj = _make_project(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/uses_dev.py": "import a_dev_only_pkg_xyzzy\n",
+        },
+    )
+    _write_pyproject(proj, optional_groups={"dev": ["a-dev-only-pkg-xyzzy>=1.0"]})
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        count = _orphan_count(proj, runner)
+        assert count == 0, f"expected 0 orphans (optional-deps); got {count}"
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_w161_dist_to_import_name_translation(tmp_path):
+    """PyYAML ↔ yaml import-name vs distribution-name mismatch is handled.
+
+    Some distributions don't share their package name (``pyyaml`` →
+    ``yaml``, ``pillow`` → ``PIL``, ``beautifulsoup4`` → ``bs4``).
+    The W161 filter translates via a small static lookup table; this
+    test pins the high-frequency case.
+    """
+    proj = _make_project(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+            "pkg/uses_yaml.py": "import yaml\n",
+        },
+    )
+    _write_pyproject(proj, dependencies=["pyyaml>=6.0"])
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        count = _orphan_count(proj, runner)
+        assert count == 0, f"expected 0 orphans (pyyaml↔yaml); got {count}"
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_w161_test_to_test_sibling_import_resolves(tmp_path):
+    """A test file importing a sibling test helper resolves cleanly.
+
+    Pytest puts the test directory on ``sys.path`` at collection time,
+    so ``from test_helpers import X`` or ``from tests._helpers.X import …``
+    work at runtime. The W161 subtree-merge fix gives the orphan-imports
+    scanner the same view of the test package.
+    """
+    proj = _make_project(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+        },
+    )
+    (proj / "tests").mkdir()
+    (proj / "tests" / "__init__.py").write_text("", encoding="utf-8")
+    (proj / "tests" / "_helpers").mkdir()
+    (proj / "tests" / "_helpers" / "__init__.py").write_text("", encoding="utf-8")
+    (proj / "tests" / "_helpers" / "repo_root.py").write_text("def find_repo_root(): return None\n", encoding="utf-8")
+    (proj / "tests" / "test_thing.py").write_text(
+        textwrap.dedent(
+            """
+            from tests._helpers.repo_root import find_repo_root  # noqa: F401
+
+            def test_pass():
+                assert True
+            """
+        ),
+        encoding="utf-8",
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        count = _orphan_count(proj, runner)
+        assert count == 0, f"expected 0 orphans (tests._helpers should resolve); got {count}"
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_w161_bare_sibling_import_in_tests_resolves(tmp_path):
+    """A test file importing a sibling test via bare name resolves.
+
+    Pytest adds the test directory to ``sys.path``, so
+    ``from test_law4_lint import _is_concrete_anchored`` works
+    even though the file is ``tests/test_law4_lint.py``.
+    """
+    proj = _make_project(
+        tmp_path,
+        {
+            "pkg/__init__.py": "",
+        },
+    )
+    (proj / "tests").mkdir()
+    (proj / "tests" / "__init__.py").write_text("", encoding="utf-8")
+    (proj / "tests" / "test_lint_helper.py").write_text("def _check(): return True\n", encoding="utf-8")
+    (proj / "tests" / "test_uses_helper.py").write_text(
+        textwrap.dedent(
+            """
+            from test_lint_helper import _check  # noqa: F401
+
+            def test_pass():
+                assert True
+            """
+        ),
+        encoding="utf-8",
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        count = _orphan_count(proj, runner)
+        assert count == 0, f"expected 0 orphans (bare sibling import in tests); got {count}"
+    finally:
+        os.chdir(old_cwd)
+
+
 def test_optional_filter_does_not_swallow_unguarded_imports(tmp_path):
     """An unguarded ``import not_a_real_pkg`` near a try/except is NOT filtered."""
     proj = _make_project(

@@ -236,7 +236,10 @@ def map_cmd(ctx, count, full, budget, seed_path, seed_depth):
                         "kind": s["kind"],
                         "signature": s["signature"] or "",
                         "location": loc(s["file_path"], s["line_start"]),
-                        "pagerank": round(s["pagerank"] or 0, 4),
+                        # W-dogfood (W336 sibling): 6-decimal precision
+                        # — 4-decimal zeroed ~72% of nonzero PR values
+                        # on 5K+ symbol graphs (floor ~1.4e-05).
+                        "pagerank": round(s["pagerank"] or 0, 6),
                     }
                     for s in top
                 ],

@@ -1042,7 +1042,13 @@ def runs_verify(ctx, run_id, verify_all):
         state = "key_missing"
         verdict = f"ledger key missing for {key_missing}/{total} run(s)"
     elif unsigned:
-        state = "unsigned" if ok == 0 else "ok"
+        # Pattern 2 (silent fallback): when ANY runs are unsigned, the
+        # overall state must reflect that — even if some other runs are
+        # ok. The verdict already names the mix ("X ok, Y unsigned"), so
+        # collapsing state="ok" on a mixed scan would contradict the
+        # verdict and let an agent reading only summary.state miss the
+        # advisory. ``partial_success=True`` is already set below.
+        state = "unsigned"
         verdict = f"verified {total} run(s): {ok} ok, {unsigned} unsigned (legacy)"
     else:
         state = "ok"

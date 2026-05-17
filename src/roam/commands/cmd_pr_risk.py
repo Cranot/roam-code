@@ -522,7 +522,12 @@ def _get_file_stat(root, path, *, staged=False, commit_range=None):
             added = int(parts[0]) if parts[0] != "-" else 0
             removed = int(parts[1]) if parts[1] != "-" else 0
             return added, removed
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # OSError: git binary missing / permission denied.
+        # SubprocessError: timeout / non-zero handling at run() layer.
+        # ValueError: non-numeric numstat token (e.g. unexpected git output).
+        # Programmer errors (NameError/TypeError/AttributeError) propagate
+        # per W531 fail-loud discipline.
         pass
     return 0, 0
 
@@ -540,7 +545,9 @@ def _detect_author():
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
+        # Git not installed / config missing — fall through to None.
+        # Programmer errors propagate per W531.
         pass
     return None
 

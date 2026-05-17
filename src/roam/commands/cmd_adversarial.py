@@ -17,6 +17,7 @@ from __future__ import annotations
 import click
 
 from roam.capability import roam_capability
+from roam.catalog._shared import is_test_path as _is_test_path
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
@@ -268,15 +269,36 @@ def _check_anti_patterns(conn, changed_file_ids, status=None):
 
     changed_fids = set(changed_file_ids)
 
+    # W1259 dogfood fix (CHALLENGE 57 HIGH loop-query): the original loop ran
+    # one ``SELECT file_id FROM symbols WHERE id = ?`` per finding. On
+    # roam-code itself ``run_detectors`` emits ~7900 findings, producing
+    # ~7900 SQL round-trips here just to filter to the small set of changed
+    # files. Pre-fetch the symbol->file_id map for ALL referenced symbols in
+    # one batched query, then filter in Python.
+    candidate_sids = {f.get("symbol_id") for f in findings if f.get("symbol_id")}
+    sym_to_file: dict[int, int] = {}
+    if candidate_sids:
+        try:
+            rows = batched_in(
+                conn,
+                "SELECT id, file_id FROM symbols WHERE id IN ({ph})",
+                list(candidate_sids),
+            )
+            sym_to_file = {r["id"]: r["file_id"] for r in rows}
+        except Exception as exc:  # noqa: BLE001
+            # Lineage: degrade loudly. If the batched lookup fails we
+            # cannot safely scope findings to changed files, so mark the
+            # check as errored rather than emit a misleading clean result.
+            if status is not None:
+                status["anti_patterns"] = f"errored:symbol_file_lookup:{type(exc).__name__}"
+            return challenges
+
     for f in findings:
         sym_id = f.get("symbol_id")
         if not sym_id:
             continue
-        try:
-            row = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (sym_id,)).fetchone()
-        except Exception:
-            continue
-        if not row or row["file_id"] not in changed_fids:
+        file_id = sym_to_file.get(sym_id)
+        if file_id is None or file_id not in changed_fids:
             continue
 
         confidence = f.get("confidence", "medium")
@@ -437,9 +459,15 @@ def _check_orphaned_symbols(conn, changed_sym_ids, status=None):
         file_path = (sym["file_path"] or "").replace("\\", "/")
         name = sym["name"] or ""
 
-        # Skip test files and private symbols
-        is_test = file_path.startswith("test") or "tests/" in file_path or "test/" in file_path or "spec/" in file_path
-        if is_test:
+        # W1259 dogfood fix (W907 cargo-cult guard + parity): the original
+        # ad-hoc check (``startswith("test")`` + ``"tests/" in``) missed
+        # ``_test.go`` / ``_test.py`` suffix files, ``__tests__/``
+        # directories, and camelCase ``UserTest.java`` / ``UserSpec.scala``
+        # / ``UserTests.cs`` basenames — all of which the canonical
+        # ``roam.catalog._shared.is_test_path`` detects. Delegate to the
+        # canonical helper so multi-language repos don't see test
+        # symbols flagged as orphans here.
+        if _is_test_path(file_path):
             continue
         if name.startswith("_"):
             continue
@@ -758,16 +786,28 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # ------------------------------------------------------------------
         # Gather symbol IDs and file IDs for changed files
         # ------------------------------------------------------------------
+        # W1259 dogfood fix (CHALLENGE 71/77/88 silent-swallow at line 769):
+        # the original loop ran one ``SELECT id FROM symbols WHERE file_id =
+        # ?`` per changed file and silently swallowed any failure. A SQLite
+        # error here would leave ``changed_sym_ids`` partial, making every
+        # downstream check (cycles / layers / cross-cluster / orphaned /
+        # fan-out) emit degraded results indistinguishable from a clean
+        # pass — the canonical Pattern-2 silent-fallback hole. Batch the
+        # lookup into one query AND degrade loudly via ``check_status``
+        # when it fails.
         changed_sym_ids: set[int] = set()
-        changed_file_ids: set[int] = set()
-
-        for path, fid in file_map.items():
-            changed_file_ids.add(fid)
+        changed_file_ids: set[int] = set(file_map.values())
+        sym_lookup_status = "ran"
+        if changed_file_ids:
             try:
-                syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
-                changed_sym_ids.update(s["id"] for s in syms)
-            except Exception:
-                pass
+                rows = batched_in(
+                    conn,
+                    "SELECT id FROM symbols WHERE file_id IN ({ph})",
+                    list(changed_file_ids),
+                )
+                changed_sym_ids = {r["id"] for r in rows}
+            except Exception as exc:  # noqa: BLE001
+                sym_lookup_status = f"errored:symbol_lookup:{type(exc).__name__}"
 
         # ------------------------------------------------------------------
         # Run all challenge generators
@@ -777,6 +817,10 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # "changes look clean" when any check errored. Same shape as the
         # W832 cmd_critique guard and the X4 cmd_pr_prep guard.
         check_status: dict[str, str] = {}
+        # W1259 dogfood: also surface the changed-symbol lookup status so a
+        # SQL failure here cannot silently produce empty downstream results.
+        if sym_lookup_status != "ran":
+            check_status["symbol_lookup"] = sym_lookup_status
         challenges: list[dict] = []
         challenges.extend(_check_new_cycles(conn, changed_sym_ids, status=check_status))
         challenges.extend(_check_layer_violations(conn, changed_sym_ids, status=check_status))
@@ -810,6 +854,13 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         errored_checks = sorted(name for name, s in check_status.items() if s.startswith("errored:"))
         partial_success = bool(errored_checks)
 
+        # W1259 dogfood fix (LAW 4): the original verdicts ended on
+        # ``critical`` / ``severity`` / ``info`` — none of which are in
+        # ``_CONCRETE_NOUN_ANCHORS``. Static lint missed it because
+        # ``facts = [verdict]`` is a Name reference, not a literal. At
+        # runtime the verdict (which fact[0] copies) failed LAW 4
+        # anchoring. Rephrase each verdict to terminate on ``challenges``
+        # (anchored).
         if not challenges:
             if partial_success:
                 verdict = (
@@ -820,13 +871,13 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
             else:
                 verdict = "No architectural challenges found -- changes look clean"
         elif critical > 0:
-            verdict = f"{len(challenges)} challenge(s), {critical} critical"
+            verdict = f"{critical} critical of {len(challenges)} challenges"
         elif high > 0:
-            verdict = f"{len(challenges)} challenge(s), {high} high severity"
+            verdict = f"{high} high-severity of {len(challenges)} challenges"
         elif warning > 0:
-            verdict = f"{len(challenges)} challenge(s), {warning} warning(s)"
+            verdict = f"{warning} warning(s) across {len(challenges)} challenges"
         else:
-            verdict = f"{len(challenges)} challenge(s), {info} info"
+            verdict = f"{info} info-level of {len(challenges)} challenges"
         if partial_success and challenges:
             # Append partial qualifier so consumers see BOTH the findings
             # count AND the cascade. Matches the W832 cmd_critique shape.

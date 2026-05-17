@@ -104,14 +104,19 @@ def _run_postmortem(commit_range: str, *, limit: int) -> dict:
 
     Returns the parsed JSON envelope. On any error, returns an envelope
     with empty ``commits`` so the renderer can still emit a sensible
-    "no findings" report rather than crashing on the buyer.
+    "no findings" report rather than crashing on the buyer. Defends in
+    depth against argv injection by passing ``--`` between the option
+    list and the positional ``commit_range`` so a value beginning with
+    ``-`` cannot be re-interpreted as a Click flag of ``postmortem``.
+    The top-level ``pr-replay`` command pre-validates ``--range`` with
+    :func:`_is_safe_commit_range`; this is the second layer.
     """
     from roam.cli import cli
 
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["--json", "postmortem", commit_range, "--limit", str(limit)],
+        ["--json", "postmortem", "--limit", str(limit), "--", commit_range],
         catch_exceptions=False,
     )
     if not result.output:
@@ -545,16 +550,43 @@ def _git_head_sha() -> str | None:
     return sha or None
 
 
+def _is_safe_commit_range(commit_range: str) -> bool:
+    """Reject argv-injection-shaped ranges.
+
+    The ``--range`` flag flows into ``git diff``, ``git diff --name-only``,
+    and an in-process ``roam postmortem`` invocation as a POSITIONAL
+    argument. A value beginning with ``-`` would be re-interpreted by the
+    receiving argument parser as an option flag (e.g. ``--upload-pack=evil``
+    on git, or a Click option on the postmortem CLI). Reject any value that
+    starts with ``-`` so the only allowed inputs are real git revspec strings
+    (``HEAD~30..HEAD``, ``v1.0..main``, branch names, SHAs, …). Empty / None
+    is rejected at the call site, not here.
+    """
+    if not commit_range:
+        return False
+    return not commit_range.lstrip().startswith("-")
+
+
 def _diff_hash_for_range(commit_range: str) -> str | None:
     """Deterministic hash of the unified diff for ``commit_range``.
 
     Used as the ``ChangeEvidence.diff_hash`` field. Falls back to ``None``
     when git isn't reachable so the packet stays well-formed. Captures in
     binary mode so the Windows codepage decoder never sees the bytes.
+
+    Refuses to invoke ``git`` when ``commit_range`` fails the argv-shape
+    guard so a value beginning with ``-`` cannot be re-interpreted by git
+    as an option flag.
     """
+    if not _is_safe_commit_range(commit_range):
+        return None
     try:
         result = _subprocess.run(
-            ["git", "diff", commit_range],
+            # ``--`` separates revisions from paths; pinning the range
+            # before ``--`` and an empty path list after ``--`` makes the
+            # argv unambiguous to git's argument parser even if a future
+            # refactor changes the value's shape.
+            ["git", "diff", commit_range, "--"],
             capture_output=True,
             timeout=30,
         )
@@ -914,9 +946,16 @@ def _gather_context_files(
     # an empty list rather than calling git for no reason.
     if not commit_range or not commits:
         return []
+    if not _is_safe_commit_range(commit_range):
+        warnings.append(f"_gather_context_files: refusing argv-injection-shaped commit_range ({commit_range!r})")
+        return []
     try:
         result = _subprocess.run(
-            ["git", "diff", "--name-only", commit_range],
+            # ``--`` pins ``commit_range`` as a revision; the empty path
+            # list after ``--`` is implicit. Defense in depth against
+            # the same argv-injection shape ``_diff_hash_for_range``
+            # already guards.
+            ["git", "diff", "--name-only", commit_range, "--"],
             capture_output=True,
             timeout=15,
         )
@@ -3379,6 +3418,17 @@ def pr_replay_cmd(
     tier_meta = _TIERS[tier]
     if commit_range is None:
         commit_range = f"HEAD~{tier_meta['default_count']}..HEAD"
+    elif not _is_safe_commit_range(commit_range):
+        # ``--range`` flows positionally into ``git diff`` and the
+        # in-process ``roam postmortem`` invocation. A value beginning
+        # with ``-`` would be re-interpreted as an option flag by the
+        # receiving parser. Fail fast at the CLI boundary rather than
+        # downstream where the failure mode is silent (None hash) or
+        # misleading (Click's "no such option" error from postmortem).
+        raise click.UsageError(
+            f"--range value must not start with '-' (got {commit_range!r}); "
+            "use a git revspec like 'HEAD~30..HEAD', 'v1.0..main', or a branch name."
+        )
 
     if tier == "sample":
         # Sample never carries a client name — that would imply paid framing.

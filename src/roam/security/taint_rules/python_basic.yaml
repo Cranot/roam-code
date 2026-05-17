@@ -13,10 +13,22 @@ sources:
   - request.json
   - input
   - sys.stdin
+  # CLI-tool sources. argparse + click are the dominant Python CLI
+  # frameworks; both surface every user-supplied option/argument value
+  # to the program. A CLI option flowing into ``subprocess.run`` /
+  # ``os.system`` / ``eval`` / ``exec`` is a real command-injection
+  # vector even without a web framework.
+  - sys.argv
+  - os.environ
+  - argparse.parse_args
+  - click.argument
+  - click.option
 sinks:
   - subprocess.run
   - subprocess.call
   - subprocess.Popen
+  - subprocess.check_output
+  - subprocess.check_call
   - os.system
   - os.popen
   - eval

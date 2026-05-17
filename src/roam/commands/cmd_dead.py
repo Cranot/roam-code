@@ -13,6 +13,7 @@ from statistics import median
 
 import click
 
+from roam._signature_utils import parse_param_names as _parse_param_names
 from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
@@ -1587,24 +1588,6 @@ def _detect_unused_returns(conn, project_root) -> list[dict]:
                 }
             )
     return findings
-
-
-def _parse_param_names(sig: str) -> list[str]:
-    """extract concrete parameter names from a signature string."""
-    m = re.search(r"\(([^)]*)\)", sig or "")
-    if not m:
-        return []
-    params_str = m.group(1).strip()
-    if not params_str:
-        return []
-    out: list[str] = []
-    for part in params_str.split(","):
-        token = part.strip().split(":")[0].split("=")[0].strip()
-        while token.startswith("*"):
-            token = token[1:]
-        if token and token not in ("self", "cls", "_"):
-            out.append(token)
-    return out
 
 
 def _detect_dead_param_chains(conn) -> list[dict]:

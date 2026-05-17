@@ -505,6 +505,26 @@ def math_cmd(
         else:
             verdict = f"{total} algorithmic improvement{'s' if total != 1 else ''} found ({conf_str}{category_hint})"
 
+        # W-dogfood: LAW 6 (verdict-works-alone) + Pattern 2 (silent
+        # fallback). When --only/--exclude contained unknown detector
+        # names the run was degraded — either to zero detectors or to a
+        # silently-broader scan. The structured summary already carries
+        # ``partial_success`` + ``state`` + ``only_unknown`` /
+        # ``exclude_unknown``, but the verdict line previously read
+        # ``No algorithmic issues detected — 0 detector(s) ran cleanly``
+        # or ``30 algorithmic improvements found``, indistinguishable
+        # from a clean run. Prepend an explicit warning so an agent
+        # that consumes only the verdict (LAW 6) sees the degradation.
+        only_unknown_names = detector_meta.get("only_unknown") or []
+        exclude_unknown_names = detector_meta.get("exclude_unknown") or []
+        if only_unknown_names or exclude_unknown_names:
+            parts: list[str] = []
+            if only_unknown_names:
+                parts.append(f"unknown --only: {', '.join(only_unknown_names)}")
+            if exclude_unknown_names:
+                parts.append(f"unknown --exclude: {', '.join(exclude_unknown_names)}")
+            verdict = f"WARNING ({'; '.join(parts)}) — {verdict}"
+
         if sarif_mode:
             from roam.output.sarif import algo_to_sarif, write_sarif
 

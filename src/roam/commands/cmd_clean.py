@@ -12,6 +12,7 @@ W1148 audit memo.
 from __future__ import annotations
 
 import os
+import sqlite3
 
 import click
 
@@ -131,7 +132,10 @@ def clean(ctx):
             try:
                 conn.execute("VACUUM")
                 vacuumed = True
-            except Exception:
+            except sqlite3.OperationalError:
+                # VACUUM can fail on an active transaction or locked DB
+                # — that's the only legitimate failure mode here.
+                # Programmer errors (NameError, etc.) propagate per W531.
                 pass
 
         verdict = (

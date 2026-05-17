@@ -33,6 +33,17 @@ _HARD_CAP_SYMBOLS = 100_000
 # we still run the analysis. Pre-v12 this was the hard refusal threshold.
 _WARN_THRESHOLD_SYMBOLS = 20_000
 
+# Envelope-size cap on the clusters list. Pattern 6 (response volume):
+# on roam-code itself the fingerprint emits ~9300 clusters of which only
+# ~110 carry size_pct >= 0.1% — the trailing ~99% are singleton "clusters"
+# of one symbol that bloat the JSON envelope to >300K tokens / 2.1MB.
+# Text mode already shows top 5 only (line 641 below); JSON mode now
+# emits up to this many to keep the envelope under the W333 / Pattern 6
+# 50KB handle threshold while preserving every cluster that crossed the
+# 0.1%-of-graph bar. compute_fingerprint sorts clusters descending by
+# member count, so the kept slice is always the meaningful head.
+_CLUSTERS_JSON_TOP_N = 100
+
 
 # W155 (W93 follow-up): fingerprint is the next detector migrating onto the
 # central findings registry (after ``clones`` in W95, ``dead`` in W99,
@@ -587,6 +598,26 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
         if json_mode:
             from roam.quality.god_components import definition as _gc_def_local
 
+            # Pattern 6 (response volume) — cap the clusters list to
+            # _CLUSTERS_JSON_TOP_N. compute_fingerprint sorts clusters
+            # descending by size so the kept slice is the meaningful
+            # head; the trailing tail on roam-code itself is ~9200
+            # singleton clusters (one-symbol "islands") that bloat the
+            # envelope to >300K tokens. Disclose lineage via
+            # ``clusters_total`` / ``clusters_truncated_to`` so a
+            # downstream reader can tell "cap hit" apart from "graph
+            # actually has 100 clusters". The on-disk export (``--export``)
+            # is unaffected — it still emits the full ``fp`` dict above
+            # so cross-repo compares stay lossless.
+            _all_clusters = fp.get("clusters", []) or []
+            _clusters_total = len(_all_clusters)
+            _clusters_truncated = _clusters_total > _CLUSTERS_JSON_TOP_N
+            _envelope_fp = dict(fp)
+            if _clusters_truncated:
+                _envelope_fp["clusters"] = _all_clusters[:_CLUSTERS_JSON_TOP_N]
+                _envelope_fp["clusters_total"] = _clusters_total
+                _envelope_fp["clusters_truncated_to"] = _CLUSTERS_JSON_TOP_N
+
             envelope = json_envelope(
                 "fingerprint",
                 summary={
@@ -600,8 +631,11 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
                         fp.get("antipatterns", {}).get("god_objects", 0),
                     ),
                     "god_components_definition": _gc_def_local(),
+                    "clusters_total": _clusters_total,
+                    "clusters_emitted": min(_clusters_total, _CLUSTERS_JSON_TOP_N),
+                    "clusters_truncated": _clusters_truncated,
                 },
-                fingerprint=fp,
+                fingerprint=_envelope_fp,
             )
             if comparison:
                 envelope["comparison"] = comparison
@@ -661,8 +695,19 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
         click.echo("\nSIGNATURE:")
         click.echo(f"  Hub/bridge ratio: {fp['hub_bridge_ratio']:.2f}")
         click.echo(f"  PageRank Gini: {fp['pagerank_gini']:.2f}")
-        click.echo(f"  God objects: {fp['antipatterns']['god_objects']}")
-        click.echo(f"  Cyclic clusters: {fp['antipatterns']['cyclic_clusters']}")
+        # Text/JSON parity fix: surface the canonical god_components count
+        # (degree-thresholded, utility-aware, agrees with `roam health`).
+        # The legacy `god_objects` stat (avg_degree*2) over-reports by ~40x
+        # on roam-code (2153 vs 50) — keep it visible but labelled as legacy
+        # so readers can spot the divergence rather than silently absorbing
+        # the larger number. Mirrors the JSON envelope's summary.god_components.
+        _ap = fp.get("antipatterns", {})
+        _gc_count = _ap.get("god_components")
+        if _gc_count is not None:
+            click.echo(f"  God components: {_gc_count} (legacy god_objects: {_ap.get('god_objects', 0)})")
+        else:
+            click.echo(f"  God objects: {_ap.get('god_objects', 0)}")
+        click.echo(f"  Cyclic clusters: {_ap.get('cyclic_clusters', 0)}")
 
         # Comparison section
         if comparison:

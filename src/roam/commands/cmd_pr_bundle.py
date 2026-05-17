@@ -1595,7 +1595,14 @@ def _build_envelope(
             # Prepend the unresolved warning so agents see it before the
             # missing-proofs list (which can be long).
             prefix = unresolved_phrase.lstrip(" ·").strip() + "; " + prefix
-        verdict = f"PR proof bundle incomplete -- {prefix}missing: {', '.join(missing)}"
+        # LAW 6: verdict must work standalone but also stay short enough to
+        # survive the agent_contract's 120-char truncation (LAW 4 / W1100).
+        # The full hint text for each missing proof lives in
+        # ``summary.missing_proofs`` for full-envelope consumers; the verdict
+        # only needs the bare proof-name (token before the first " (" ).
+        # Example: "affected_symbols (run: roam pr-bundle add ...)" -> "affected_symbols".
+        missing_names = [m.split(" (", 1)[0] for m in missing]
+        verdict = f"PR proof bundle incomplete -- {prefix}missing: {', '.join(missing_names)}"
 
     summary = {
         "verdict": verdict,

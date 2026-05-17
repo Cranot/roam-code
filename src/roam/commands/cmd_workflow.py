@@ -40,6 +40,13 @@ def _recipe_payload(recipe: Recipe, query: str = "") -> dict:
 def _emit_recipe_list(json_mode: bool) -> None:
     payloads = [_recipe_payload(recipe) for recipe in RECIPES]
     if json_mode:
+        # CONSTRAINT 12: populate next_commands so agents reading
+        # `agent_contract.next_commands` get a copy-paste-executable
+        # follow-up. The first three recipes are a representative sample;
+        # `roam workflow --list` is always offered as the broad followup.
+        sample_recipes = [p["recipe"] for p in payloads[:3]]
+        next_commands = ["roam workflow --list"]
+        next_commands.extend(f"roam workflow {name}" for name in sample_recipes)
         click.echo(
             to_json(
                 json_envelope(
@@ -49,6 +56,12 @@ def _emit_recipe_list(json_mode: bool) -> None:
                         "recipe_count": len(payloads),
                     },
                     recipes=payloads,
+                    agent_contract={
+                        "facts": [
+                            f"{len(payloads)} workflow recipes available",
+                        ],
+                        "next_commands": next_commands,
+                    },
                 )
             )
         )
@@ -66,6 +79,16 @@ def _emit_recipe_list(json_mode: bool) -> None:
 def _emit_recipe_detail(recipe: Recipe, query: str, json_mode: bool) -> None:
     payload = _recipe_payload(recipe, query)
     if json_mode:
+        # CONSTRAINT 12: surface the recipe's commands + followups via
+        # `agent_contract.next_commands` so the canonical follow-up field
+        # is non-empty. Steps appear first (the ordered DAG to execute),
+        # then the recipe's `followups` after.
+        step_invocations = [f"roam {item['cmd']} {' '.join(item['args'])}".rstrip() for item in payload["commands"]]
+        followups = list(payload.get("followups") or [])
+        next_commands: list[str] = []
+        for cmd in step_invocations + followups:
+            if cmd and cmd not in next_commands:
+                next_commands.append(cmd)
         click.echo(
             to_json(
                 json_envelope(
@@ -74,6 +97,12 @@ def _emit_recipe_detail(recipe: Recipe, query: str, json_mode: bool) -> None:
                         "verdict": f"workflow recipe '{recipe.name}'",
                         "recipe": recipe.name,
                         "phase": recipe.phase,
+                    },
+                    agent_contract={
+                        "facts": [
+                            f"recipe '{recipe.name}' has {len(step_invocations)} commands",
+                        ],
+                        "next_commands": next_commands,
                     },
                     **payload,
                 )
@@ -162,12 +191,22 @@ def workflow(ctx, recipe_name, list_recipes, query, next_after):
             else f"no canned next-command for `roam {next_after}`"
         )
         if json_mode:
+            # CONSTRAINT 12: surface the suggestions in
+            # ``agent_contract.next_commands`` so agents reading the
+            # canonical follow-up field get a copy-paste-executable list.
+            # When no canned hint exists, point them at the recipe list
+            # instead of leaving the field empty.
+            next_commands = list(suggestions) if suggestions else ["roam workflow --list"]
             click.echo(
                 to_json(
                     json_envelope(
                         "workflow",
                         summary={"verdict": verdict, "after": next_after},
                         suggestions=suggestions,
+                        agent_contract={
+                            "facts": [verdict],
+                            "next_commands": next_commands,
+                        },
                     )
                 )
             )
