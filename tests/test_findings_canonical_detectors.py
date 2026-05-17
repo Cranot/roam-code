@@ -35,7 +35,6 @@ from roam.db.connection import open_db
 from roam.db.findings import (
     CANONICAL_DETECTOR_NAMES,
     FindingRecord,
-    count_by_detector,
     emit_finding,
     known_detector_names,
 )
