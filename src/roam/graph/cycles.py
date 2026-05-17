@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import warnings
 from collections import Counter
 
 import networkx as nx
@@ -54,7 +55,13 @@ def algebraic_connectivity(G: nx.DiGraph) -> float:
       high  → robust, well-connected structure
 
     Uses the undirected projection of the dependency graph.
-    Returns 0.0 if scipy is unavailable or the graph is too small.
+    Returns 0.0 when:
+      * the graph is too small (len(G) < 3 or largest CC < 3) — domain-legitimate "no signal"
+      * scipy is unavailable or the spectral solve crashed — emits a
+        ``RuntimeWarning`` with category ``algebraic_connectivity_failed``
+        so the lineage-rule disclosure isn't silent. Callers that need
+        to distinguish "tiny graph" from "compute failed" should attach
+        a warnings filter rather than infer from the float alone.
 
     Reference: Fiedler (1973), "Algebraic connectivity of graphs."
     """
@@ -72,8 +79,15 @@ def algebraic_connectivity(G: nx.DiGraph) -> float:
                 cached = _json.loads(cache_path.read_text(encoding="utf-8"))
                 if cached.get("fingerprint") == fp:
                     return float(cached.get("value", 0.0))
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            # Cache miss is not fatal — fall through and recompute. Loud
+            # the lineage so a corrupt cache file doesn't masquerade as a
+            # legitimately-recomputed 0.0 forever (CLAUDE.md lineage rule).
+            warnings.warn(
+                f"algebraic_connectivity cache read failed ({type(exc).__name__}): {exc}; recomputing",
+                category=RuntimeWarning,
+                stacklevel=2,
+            )
     try:
         undirected = G.to_undirected()
         # Only compute on the largest connected component
@@ -83,7 +97,19 @@ def algebraic_connectivity(G: nx.DiGraph) -> float:
         if len(undirected) < 3:
             return 0.0
         value = round(nx.algebraic_connectivity(undirected, method="tracemin_lu", tol=1e-3), 6)
-    except Exception:
+    except Exception as exc:
+        # scipy missing, eigensolver divergence, or OOM. Returning 0.0
+        # keeps the float contract but downstream consumers (cmd_health
+        # treats fiedler as architectural-fragility signal; fingerprint
+        # ingests it into a hash) would otherwise see "graph disconnected"
+        # rather than "compute unavailable". Emit a loud sentinel so the
+        # failure is at least observable in stderr / pytest warnings.
+        warnings.warn(
+            f"algebraic_connectivity compute failed ({type(exc).__name__}): {exc}; "
+            "returning 0.0 sentinel — value is NOT a legitimate disconnected-graph reading",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
         return 0.0
     # X10 — persist for next run.
     if cache_path is not None and fp is not None:
@@ -91,8 +117,14 @@ def algebraic_connectivity(G: nx.DiGraph) -> float:
             import json as _json
 
             cache_path.write_text(_json.dumps({"fingerprint": fp, "value": value}), encoding="utf-8")
-        except OSError:
-            pass
+        except OSError as exc:
+            # Persist failures aren't fatal but should be loud so a
+            # read-only filesystem doesn't silently kill the cache benefit.
+            warnings.warn(
+                f"algebraic_connectivity cache write failed ({type(exc).__name__}): {exc}",
+                category=RuntimeWarning,
+                stacklevel=2,
+            )
     return value
 
 

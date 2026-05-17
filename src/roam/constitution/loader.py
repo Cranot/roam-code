@@ -657,11 +657,15 @@ def load_constitution(repo_root: Path) -> Optional[Constitution]:
 def _known_commands() -> set[str]:
     """Return the set of currently-registered roam command names.
 
-    Imports lazily inside the function so this module stays import-cycle
-    safe (``roam.cli`` is the LazyGroup entry point).
+    Lazy import inside the function: ``roam.cli`` is ~100ms to load
+    (LazyGroup with 241 commands) and most ``load_constitution`` callers
+    never hit this code path. No cycle exists with ``roam.cli`` — W902 /
+    W878 verified the prior "avoid import cycle" hedge was false; the
+    laziness is purely a cold-start cost optimisation. (Pattern-2
+    lineage rule: name WHY it's lazy specifically.)
     """
     try:
-        from roam.cli import _COMMANDS  # type: ignore
+        from roam.cli import _COMMANDS  # lazy: roam.cli is ~100ms to import
 
         return set(_COMMANDS.keys())
     except Exception:

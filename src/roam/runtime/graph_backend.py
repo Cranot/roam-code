@@ -17,10 +17,23 @@ when rustworkx isn't installed or the algorithm isn't supported.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 import networkx as nx
+
+_log = logging.getLogger(__name__)
+
+# Lineage-rule sentinel (CLAUDE.md §"Make fallback chains loud"): records the
+# most recent backend that actually executed ``pagerank()``. When rustworkx
+# is selected but raises (version skew, numpy mismatch, API drift) the
+# function falls back to NetworkX — this sentinel makes that lineage visible
+# instead of leaving ``active_backend()`` claiming "rustworkx" while NetworkX
+# is doing the work. Set per call; ``None`` until first invocation.
+_LAST_PAGERANK_BACKEND: str | None = None
+# Records the exception type when rustworkx fell back. Empty when no fallback.
+_LAST_PAGERANK_FALLBACK_REASON: str | None = None
 
 
 def _backend_choice() -> str:
@@ -46,8 +59,37 @@ def _backend_choice() -> str:
 
 
 def active_backend() -> str:
-    """Public name of the active backend (``networkx`` or ``rustworkx``)."""
+    """Public name of the *selected* backend (``networkx`` or ``rustworkx``).
+
+    NOTE: this is the *intended* backend per env-var / auto-detect; the
+    actual backend that ran ``pagerank()`` may differ when rustworkx
+    silently fell back to NetworkX on a version mismatch. See
+    :func:`last_pagerank_backend` / :func:`last_pagerank_fallback_reason`
+    for the loud-fallback sentinels.
+    """
     return _backend_choice()
+
+
+def last_pagerank_backend() -> str | None:
+    """Return the backend that actually executed the most recent ``pagerank()``.
+
+    ``None`` until the first call. Distinct from :func:`active_backend`
+    so callers can detect silent fallback (W-loud-lineage). When
+    ``last_pagerank_backend() != active_backend()`` rustworkx was selected
+    but degraded to NetworkX — inspect
+    :func:`last_pagerank_fallback_reason` for the exception type.
+    """
+    return _LAST_PAGERANK_BACKEND
+
+
+def last_pagerank_fallback_reason() -> str | None:
+    """Return the exception class name from the last rustworkx fallback.
+
+    ``None`` when no fallback occurred (or rustworkx was never selected).
+    Lineage marker per CLAUDE.md §"Make fallback chains loud" — pairs
+    with :func:`last_pagerank_backend` to disclose silent degradation.
+    """
+    return _LAST_PAGERANK_FALLBACK_REASON
 
 
 def pagerank(G: nx.DiGraph, alpha: float = 0.85, personalization: dict[int, float] | None = None) -> dict[int, float]:
@@ -58,6 +100,8 @@ def pagerank(G: nx.DiGraph, alpha: float = 0.85, personalization: dict[int, floa
     back to NetworkX on any incompatibility (rustworkx's PageRank API
     differs slightly between versions).
     """
+    global _LAST_PAGERANK_BACKEND, _LAST_PAGERANK_FALLBACK_REASON
+
     if len(G) == 0:
         return {}
 
@@ -83,10 +127,23 @@ def pagerank(G: nx.DiGraph, alpha: float = 0.85, personalization: dict[int, floa
             scores = rustworkx.pagerank(rx_g, alpha=alpha, personalization=pers_rx)
             # rustworkx returns a numpy-array-shaped result keyed by index.
             inv = {idx: orig for orig, idx in node_for.items()}
+            _LAST_PAGERANK_BACKEND = "rustworkx"
+            _LAST_PAGERANK_FALLBACK_REASON = None
             return {inv[idx]: float(score) for idx, score in scores.items()}
-        except Exception:
-            # rustworkx version skew or numpy missing — fall back cleanly.
-            pass
+        except Exception as exc:  # noqa: BLE001 — version skew / numpy / API drift
+            # rustworkx version skew or numpy missing — fall back cleanly to
+            # NetworkX, but RECORD the lineage so callers can distinguish a
+            # "selected rustworkx and got rustworkx" run from a "selected
+            # rustworkx and silently degraded" run (CLAUDE.md §"Make fallback
+            # chains loud"). Log at WARNING so the degradation is visible in
+            # CI logs without being noisy on the happy path.
+            _LAST_PAGERANK_FALLBACK_REASON = type(exc).__name__
+            _log.warning(
+                "rustworkx pagerank failed (%s: %s); falling back to NetworkX",
+                type(exc).__name__,
+                exc,
+            )
 
     # NetworkX path
+    _LAST_PAGERANK_BACKEND = "networkx"
     return nx.pagerank(G, alpha=alpha, personalization=personalization)

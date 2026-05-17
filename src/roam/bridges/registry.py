@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from roam.bridges.base import LanguageBridge
+
+log = logging.getLogger(__name__)
 
 _BRIDGES: list[LanguageBridge] = []
 
@@ -28,31 +32,31 @@ def _auto_discover():
     if _BRIDGES:
         return
 
-    # Import built-in bridges -- each registers itself on import
-    try:
-        from roam.bridges import bridge_salesforce  # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from roam.bridges import bridge_protobuf  # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from roam.bridges import bridge_rest_api  # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from roam.bridges import bridge_template  # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from roam.bridges import bridge_config  # noqa: F401
-    except ImportError:
-        pass
-    try:
-        from roam.bridges import bridge_django  # noqa: F401
-    except ImportError:
-        pass
+    # Import built-in bridges -- each registers itself on import.
+    # W907/Pattern-2 discipline: built-in bridges ship inside this package,
+    # so ImportError here means a real install / syntax / dependency bug —
+    # NOT an optional-feature absence. Emit a WARN so the bridge surface
+    # silently degrading is observable (the bridges later return [] to
+    # downstream consumers, which is indistinguishable from "no work to do"
+    # without this sentinel).
+    for _builtin in (
+        "bridge_salesforce",
+        "bridge_protobuf",
+        "bridge_rest_api",
+        "bridge_template",
+        "bridge_config",
+        "bridge_django",
+    ):
+        try:
+            __import__(f"roam.bridges.{_builtin}")
+        except ImportError as exc:
+            log.warning(
+                "built-in bridge roam.bridges.%s failed to import (%s: %s); "
+                "cross-language resolution for this bridge will be inactive",
+                _builtin,
+                type(exc).__name__,
+                exc,
+            )
 
     # Plugin-contributed bridges (roam-plugin-* packages).
     #
