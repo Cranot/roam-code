@@ -85,10 +85,7 @@ def cut(ctx, between, leak_edges, top_n):
             # LAW 4: terminal token must hit the concrete-noun anchor set
             # (formatter.concrete_plural_terminals -> "symbols"). Put the
             # cap clause first so the sentence ends on "symbols".
-            verdict = (
-                f"Skipped cut above cap {_MAX_GRAPH_SYMBOLS:,}: "
-                f"graph has {sym_count:,} symbols"
-            )
+            verdict = f"Skipped cut above cap {_MAX_GRAPH_SYMBOLS:,}: graph has {sym_count:,} symbols"
             hint = (
                 "Index a subdirectory with `roam index <path>` to narrow the "
                 "analyzed subset, or raise `_MAX_GRAPH_SYMBOLS` in "

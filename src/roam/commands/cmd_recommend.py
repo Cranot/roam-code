@@ -58,7 +58,9 @@ def _candidate_init() -> dict:
 )
 @click.command()
 @click.argument("symbol")
-@click.option("--limit", "--top", "limit", type=int, default=10, show_default=True, help="Top N recommendations.")  # W1142: --top alias
+@click.option(
+    "--limit", "--top", "limit", type=int, default=10, show_default=True, help="Top N recommendations."
+)  # W1142: --top alias
 @click.pass_context
 def recommend(ctx, symbol, limit) -> None:
     """Recommend related symbols using call-graph, co-change, and clone signals."""
@@ -214,8 +216,7 @@ def recommend(ctx, symbol, limit) -> None:
         }
         if items_truncated:
             _summary["warnings_out"] = [
-                f"truncated to {len(enriched)} of {total_count_full} — "
-                "pass --limit larger to see more"
+                f"truncated to {len(enriched)} of {total_count_full} — pass --limit larger to see more"
             ]
             _summary["partial_success"] = True
         click.echo(

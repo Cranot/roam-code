@@ -355,7 +355,14 @@ class TestDebtBudget:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "debt"
-        assert "truncated" not in data["summary"]
+        # W1142-followup: cap-hit disclosure is symmetric — ``truncated`` is
+        # ALWAYS emitted (``False`` when nothing was capped) so consumers can
+        # tell "no truncation occurred" from "key absent". The pre-W1142
+        # contract that elided the key on no-truncation was the silent
+        # absent-vs-empty hole that Pattern 2 calls out. Assert the new
+        # symmetric shape: key present, value False, count == total_count.
+        assert data["summary"].get("truncated") is False
+        assert data["summary"].get("count") == data["summary"].get("total_count")
 
     def test_debt_with_large_budget(self, basic_project):
         runner = CliRunner()

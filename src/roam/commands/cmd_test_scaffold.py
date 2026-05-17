@@ -734,10 +734,7 @@ def test_scaffold(ctx, name, write, framework):
             # substring origin so agents can spot a wrong-file drift before
             # acting on the "no work to do" verdict.
             if resolution_tier == "file_substring":
-                msg = (
-                    f"Substring matched {source_path} (from {name!r}) with no "
-                    f"testable symbols"
-                )
+                msg = f"Substring matched {source_path} (from {name!r}) with no testable symbols"
             else:
                 msg = f"No testable symbols found in {source_path or name}"
             disclosure_empty = resolution_disclosure(

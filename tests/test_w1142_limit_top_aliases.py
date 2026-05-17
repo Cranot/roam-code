@@ -99,10 +99,7 @@ def test_w1142_dual_flag_alias_registered(
         f"{primary!r} and {alias!r}, got params: "
         f"{[(p.name, p.opts) for p in command.params if isinstance(p, click.Option)]}"
     )
-    assert option.name == dest, (
-        f"{command.name}: dual-flag option must keep dest={dest!r}, "
-        f"got dest={option.name!r}"
-    )
+    assert option.name == dest, f"{command.name}: dual-flag option must keep dest={dest!r}, got dest={option.name!r}"
 
 
 @pytest.mark.parametrize(
@@ -125,12 +122,8 @@ def test_w1142_alias_in_help_text(
     runner = click.testing.CliRunner()
     result = runner.invoke(command, ["--help"])
     assert result.exit_code == 0, result.output
-    assert primary in result.output, (
-        f"{command.name} --help missing primary flag {primary!r}"
-    )
-    assert alias in result.output, (
-        f"{command.name} --help missing alias flag {alias!r}"
-    )
+    assert primary in result.output, f"{command.name} --help missing primary flag {primary!r}"
+    assert alias in result.output, f"{command.name} --help missing alias flag {alias!r}"
 
 
 @pytest.mark.parametrize(
@@ -167,12 +160,8 @@ def test_w1142_primary_and_alias_parse_identically(
         if isinstance(param, click.Argument) and param.required:
             extras.append("PLACEHOLDER")
 
-    ctx_primary = command.make_context(
-        command.name, [primary, test_str, *extras], resilient_parsing=True
-    )
-    ctx_alias = command.make_context(
-        command.name, [alias, test_str, *extras], resilient_parsing=True
-    )
+    ctx_primary = command.make_context(command.name, [primary, test_str, *extras], resilient_parsing=True)
+    ctx_alias = command.make_context(command.name, [alias, test_str, *extras], resilient_parsing=True)
 
     assert ctx_primary.params[dest] == test_value, (
         f"{command.name}: {primary} {test_str} did not bind dest "

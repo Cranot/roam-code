@@ -138,24 +138,18 @@ def _assert_truncated(envelope, *, where: str):
     assert "truncated" in s, f"{where}: summary missing 'truncated'"
     assert "limit" in s, f"{where}: summary missing 'limit'"
     assert s["truncated"] is True, f"{where}: expected truncated=True, got summary={s}"
-    assert s["total_count"] > s["count"], (
-        f"{where}: total_count {s['total_count']} should exceed count {s['count']}"
-    )
+    assert s["total_count"] > s["count"], f"{where}: total_count {s['total_count']} should exceed count {s['count']}"
     assert "warnings_out" in s, f"{where}: truncated envelope missing warnings_out"
     assert any(_TRUNCATION_PHRASE_TAIL in w for w in s["warnings_out"]), (
         f"{where}: canonical truncation phrase missing from warnings_out={s['warnings_out']}"
     )
-    assert s.get("partial_success") is True, (
-        f"{where}: truncated envelope must mark partial_success=True"
-    )
+    assert s.get("partial_success") is True, f"{where}: truncated envelope must mark partial_success=True"
 
 
 def _assert_not_truncated(envelope, *, where: str):
     """Assert the envelope summary indicates no cap-hit."""
     s = envelope["summary"]
-    assert s.get("truncated") is False, (
-        f"{where}: expected truncated=False, got summary={s}"
-    )
+    assert s.get("truncated") is False, f"{where}: expected truncated=False, got summary={s}"
     assert "warnings_out" not in s or not s["warnings_out"], (
         f"{where}: non-truncated envelope must not carry a truncation warning"
     )
@@ -169,17 +163,13 @@ def _assert_not_truncated(envelope, *, where: str):
 def test_clones_cap_hit_disclosure(tmp_path):
     """``roam --json clones --limit 1`` discloses truncation; --limit 50 does not."""
     proj = _make_clones_project(tmp_path)
-    env_trunc = _index_and_invoke(
-        proj, "clones", "--threshold", "0.50", "--limit", "1"
-    )
+    env_trunc = _index_and_invoke(proj, "clones", "--threshold", "0.50", "--limit", "1")
     # Only assert truncation when the engine found >1 cluster; on small
     # corpora the detector may collapse pairs into a single cluster.
     if env_trunc["summary"]["total_count"] > 1:
         _assert_truncated(env_trunc, where="clones --limit 1")
 
-    env_full = _index_and_invoke(
-        proj, "clones", "--threshold", "0.50", "--limit", "50"
-    )
+    env_full = _index_and_invoke(proj, "clones", "--threshold", "0.50", "--limit", "50")
     _assert_not_truncated(env_full, where="clones --limit 50")
 
 
@@ -239,8 +229,7 @@ def test_test_impact_cap_hit_disclosure_envelope_shape():
     }
     if items_truncated:
         summary["warnings_out"] = [
-            f"truncated to {len(items)} of {total_tests_full} -- "
-            "pass --limit larger to see more"
+            f"truncated to {len(items)} of {total_tests_full} -- pass --limit larger to see more"
         ]
         summary["partial_success"] = True
 

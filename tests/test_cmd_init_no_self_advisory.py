@@ -28,11 +28,7 @@ def fresh_project(tmp_path):
     proj = tmp_path / "init_proj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "app.py").write_text(
-        "def main():\n"
-        '    """Entry point."""\n'
-        '    print("hello")\n'
-    )
+    (proj / "app.py").write_text('def main():\n    """Entry point."""\n    print("hello")\n')
     git_init(proj)
     return proj
 
@@ -80,6 +76,5 @@ class TestInitNoSelfAdvisory:
         # The advisory is informational, not fatal -- health auto-builds.
         # We only assert the cold-start text appears in the (combined) output.
         assert _SELF_RECOMMEND_FRAGMENT in result.output, (
-            f"Expected cold-start advisory on `roam health` against an unindexed "
-            f"project, got:\n{result.output}"
+            f"Expected cold-start advisory on `roam health` against an unindexed project, got:\n{result.output}"
         )

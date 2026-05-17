@@ -2647,9 +2647,7 @@ class TestSmellsCLI:
         try:
             os.chdir(str(project_with_smells))
             baseline = runner.invoke(cli, ["--json", "smells"])
-            critical_only = runner.invoke(
-                cli, ["--json", "smells", "--min-severity", "critical"]
-            )
+            critical_only = runner.invoke(cli, ["--json", "smells", "--min-severity", "critical"])
         finally:
             os.chdir(old_cwd)
         assert baseline.exit_code == 0
@@ -2669,9 +2667,7 @@ class TestSmellsCLI:
         try:
             os.chdir(str(project_with_smells))
             baseline = runner.invoke(cli, ["--json", "smells"])
-            info_floor = runner.invoke(
-                cli, ["--json", "smells", "--min-severity", "info"]
-            )
+            info_floor = runner.invoke(cli, ["--json", "smells", "--min-severity", "info"])
         finally:
             os.chdir(old_cwd)
         assert baseline.exit_code == 0

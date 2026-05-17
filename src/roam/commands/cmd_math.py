@@ -346,8 +346,7 @@ def math_cmd(
             )
             msg = (
                 f"--only: unknown detector name(s): {', '.join(only_unknown)}. "
-                "Run `roam math --list-detectors` to see registered names."
-                + _only_frag["verdict_suffix"]
+                "Run `roam math --list-detectors` to see registered names." + _only_frag["verdict_suffix"]
             )
             click.echo(f"NOTE: {msg}", err=True)
             _filter_warnings.append(msg)
@@ -361,8 +360,7 @@ def math_cmd(
             )
             msg = (
                 f"--exclude: unknown detector name(s): {', '.join(exclude_unknown)}. "
-                "Run `roam math --list-detectors` to see registered names."
-                + _exclude_frag["verdict_suffix"]
+                "Run `roam math --list-detectors` to see registered names." + _exclude_frag["verdict_suffix"]
             )
             click.echo(f"NOTE: {msg}", err=True)
             _filter_warnings.append(msg)
@@ -582,9 +580,7 @@ def math_cmd(
             # adds per-unknown ``did_you_mean`` suggestions and the new
             # ``state`` + ``unknown_<group>_detectors`` echo fields.
             if _only_frag is not None:
-                _math_summary.update(
-                    to_summary_payload_many(_only_frag, include_known=False)
-                )
+                _math_summary.update(to_summary_payload_many(_only_frag, include_known=False))
             if _exclude_frag is not None:
                 # When BOTH --only and --exclude have unknowns, the second
                 # splice overwrites the first ``state`` + ``partial_success``
@@ -592,9 +588,7 @@ def math_cmd(
                 # similarly overwritten — we re-merge it below to retain
                 # both unknown-source suggestion maps under disambiguated
                 # keys so the consumer can tell which group a typo came from.
-                _exclude_payload = to_summary_payload_many(
-                    _exclude_frag, include_known=False
-                )
+                _exclude_payload = to_summary_payload_many(_exclude_frag, include_known=False)
                 # Re-key did_you_mean per source so both groups survive the
                 # merge (one common Pattern-3a antidote: don't let the
                 # second splice silently overwrite the first).

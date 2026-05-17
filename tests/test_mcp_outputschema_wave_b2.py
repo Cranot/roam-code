@@ -68,9 +68,7 @@ def _validate(instance, schema, path: str = "") -> list[str]:
         props = schema.get("properties", {})
         for key, sub_schema in props.items():
             if key in instance:
-                errors.extend(
-                    _validate(instance[key], sub_schema, f"{path}.{key}" if path else key)
-                )
+                errors.extend(_validate(instance[key], sub_schema, f"{path}.{key}" if path else key))
 
     if isinstance(instance, list):
         item_schema = schema.get("items")
@@ -270,11 +268,7 @@ def test_health_and_understand_wired_in_decorators() -> None:
     for entry in _REGISTERED_TOOLS:
         name = entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", None)
         if name in {"roam_health", "roam_understand"}:
-            schema = (
-                entry.get("output_schema")
-                if isinstance(entry, dict)
-                else getattr(entry, "output_schema", None)
-            )
+            schema = entry.get("output_schema") if isinstance(entry, dict) else getattr(entry, "output_schema", None)
             found[name] = schema
 
     if not found:

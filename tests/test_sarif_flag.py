@@ -555,8 +555,7 @@ class TestW1062DashboardFilterTags:
         # Rule descriptor carries family + category + kind + tier
         # (no severity — that's per-result).
         rule_tags_by_id = {
-            r["id"]: r.get("properties", {}).get("tags", [])
-            for r in doc["runs"][0]["tool"]["driver"]["rules"]
+            r["id"]: r.get("properties", {}).get("tags", []) for r in doc["runs"][0]["tool"]["driver"]["rules"]
         }
         assert rule_tags_by_id["auth-gaps/direct-unauthenticated-handler"] == [
             "security",
@@ -695,8 +694,7 @@ class TestW1062DashboardFilterTags:
         # dashboard grouping by rule still gets the hygiene chips
         # even before any results land.
         rule_tags_by_id = {
-            r["id"]: r.get("properties", {}).get("tags", [])
-            for r in doc["runs"][0]["tool"]["driver"]["rules"]
+            r["id"]: r.get("properties", {}).get("tags", []) for r in doc["runs"][0]["tool"]["driver"]["rules"]
         }
         assert rule_tags_by_id["clones/pair"] == ["hygiene", "duplication", "pair"]
         assert rule_tags_by_id["clones/cluster"] == [
@@ -749,8 +747,7 @@ class TestW1062DashboardFilterTags:
         # even before any results land. Pick the god-class rule out of
         # the full 24-rule catalogue.
         rule_tags_by_id = {
-            r["id"]: r.get("properties", {}).get("tags", [])
-            for r in doc["runs"][0]["tool"]["driver"]["rules"]
+            r["id"]: r.get("properties", {}).get("tags", []) for r in doc["runs"][0]["tool"]["driver"]["rules"]
         }
         assert rule_tags_by_id["smells/god-class"] == [
             "hygiene",
@@ -891,8 +888,7 @@ class TestW1062DashboardFilterTags:
         # rule in the closed enum so dashboards grouping by rule see
         # the performance chips even before any results land.
         rule_tags_by_id = {
-            r["id"]: r.get("properties", {}).get("tags", [])
-            for r in doc["runs"][0]["tool"]["driver"]["rules"]
+            r["id"]: r.get("properties", {}).get("tags", []) for r in doc["runs"][0]["tool"]["driver"]["rules"]
         }
         for rule_id, tags in rule_tags_by_id.items():
             assert tags == ["performance", "n1-query"], rule_id
@@ -952,8 +948,7 @@ class TestW1062DashboardFilterTags:
         # rule in the closed enum so dashboards grouping by rule see
         # the performance chips even on a clean run.
         rule_tags_by_id = {
-            r["id"]: r.get("properties", {}).get("tags", [])
-            for r in doc["runs"][0]["tool"]["driver"]["rules"]
+            r["id"]: r.get("properties", {}).get("tags", []) for r in doc["runs"][0]["tool"]["driver"]["rules"]
         }
         for rule_id, tags in rule_tags_by_id.items():
             assert tags == ["performance", "missing-index"], rule_id
@@ -1023,8 +1018,7 @@ class TestW1062DashboardFilterTags:
         # every rule in the closed enum so dashboards grouping by rule
         # see the hygiene chips even on a clean run.
         rule_tags_by_id = {
-            r["id"]: r.get("properties", {}).get("tags", [])
-            for r in doc["runs"][0]["tool"]["driver"]["rules"]
+            r["id"]: r.get("properties", {}).get("tags", []) for r in doc["runs"][0]["tool"]["driver"]["rules"]
         }
         assert rule_tags_by_id["orphan-imports/internal-typo"] == [
             "hygiene",

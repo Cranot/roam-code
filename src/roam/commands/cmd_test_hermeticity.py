@@ -96,9 +96,7 @@ _KIND_RANDOM = "random"
 _KIND_FILESYSTEM = "filesystem"
 _KIND_ENV = "env"
 _KIND_SUBPROCESS = "subprocess"
-_VALID_KINDS = frozenset(
-    {_KIND_NETWORK, _KIND_TIME, _KIND_RANDOM, _KIND_FILESYSTEM, _KIND_ENV, _KIND_SUBPROCESS}
-)
+_VALID_KINDS = frozenset({_KIND_NETWORK, _KIND_TIME, _KIND_RANDOM, _KIND_FILESYSTEM, _KIND_ENV, _KIND_SUBPROCESS})
 
 
 # --- Per-kind AST predicates -------------------------------------------------
@@ -112,9 +110,7 @@ _VALID_KINDS = frozenset(
 # Network module roots whose .get/.post/.put/.delete/.request/.urlopen
 # calls (or `socket.socket(...)`) reach the real network when invoked.
 _NETWORK_ROOTS = frozenset({"requests", "urllib3", "httpx", "aiohttp"})
-_NETWORK_URLLIB_ATTRS = frozenset(
-    {"urlopen", "Request", "build_opener", "install_opener", "urlretrieve"}
-)
+_NETWORK_URLLIB_ATTRS = frozenset({"urlopen", "Request", "build_opener", "install_opener", "urlretrieve"})
 _NETWORK_HTTPCLIENT_ROOTS = frozenset({"http"})  # http.client.HTTPConnection etc
 
 _TIME_TIME_ATTRS = frozenset({"time", "monotonic", "perf_counter", "process_time", "time_ns"})
@@ -143,9 +139,7 @@ _FS_TEMPFILE_ATTRS = frozenset({"gettempdir", "gettempprefix"})
 
 _ENV_OS_ATTRS = frozenset({"getenv", "putenv", "unsetenv"})
 
-_SUBPROCESS_ATTRS = frozenset(
-    {"run", "call", "Popen", "check_call", "check_output", "getoutput", "getstatusoutput"}
-)
+_SUBPROCESS_ATTRS = frozenset({"run", "call", "Popen", "check_call", "check_output", "getoutput", "getstatusoutput"})
 
 
 def _attr_chain(node: ast.AST) -> list[str] | None:
@@ -396,9 +390,7 @@ def _emit_findings(conn: sqlite3.Connection, findings: list[dict]) -> int:
         kind = f["kind"]
         evidence = f["evidence"]
         subject_id = _resolve_subject_id(conn, file_path)
-        finding_id = make_finding_id(
-            "test-hermeticity", kind, kind, file_path, evidence, int(line or 0)
-        )
+        finding_id = make_finding_id("test-hermeticity", kind, kind, file_path, evidence, int(line or 0))
         # AST-derived call-site detection is structurally evident
         # (the call literally appears in the file) but the dataflow
         # to a real network / clock / etc. is inferred from the
@@ -510,9 +502,7 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
 
     non_hermetic = len(non_hermetic_files)
     hermetic = max(0, total_test_files - non_hermetic)
-    hermeticity_rate = (
-        round(100.0 * hermetic / total_test_files, 1) if total_test_files else 100.0
-    )
+    hermeticity_rate = round(100.0 * hermetic / total_test_files, 1) if total_test_files else 100.0
 
     # W805: empty-corpus disclosure (Pattern 2 silent-fallback fix).
     # When no Python test files are indexed the check did not actually

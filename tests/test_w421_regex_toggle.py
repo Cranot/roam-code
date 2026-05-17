@@ -80,9 +80,7 @@ class TestRefsTextRegexToggle:
         assert len(results) == 1
         assert results[0]["string"] == "setItem|removeItem"
         # Total references should be > 0 — both identifiers appear in src/storage.py
-        assert results[0]["total"] > 0, (
-            f"Regex alternation should match both setItem and removeItem; got {results[0]}"
-        )
+        assert results[0]["total"] > 0, f"Regex alternation should match both setItem and removeItem; got {results[0]}"
 
     def test_default_literal_mode_does_not_match_alternation(self, cli_runner, regex_project, monkeypatch):
         """Without -E, `setItem|removeItem` is a literal substring — no source line contains the pipe."""
@@ -98,9 +96,7 @@ class TestRefsTextRegexToggle:
         assert len(results) == 1
         # Literal mode: the alternation pipe is taken verbatim. No source line
         # contains the substring "setItem|removeItem".
-        assert results[0]["total"] == 0, (
-            f"Default literal mode should NOT match alternation; got {results[0]}"
-        )
+        assert results[0]["total"] == 0, f"Default literal mode should NOT match alternation; got {results[0]}"
         assert results[0]["verdict"] == "SAFE-TO-REMOVE"
 
     def test_default_literal_mode_still_matches_plain_identifier(self, cli_runner, regex_project, monkeypatch):

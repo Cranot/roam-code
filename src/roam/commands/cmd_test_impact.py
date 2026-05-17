@@ -58,7 +58,9 @@ def _changed_files(commit_range: str | None) -> list[str]:
 @click.command(name="test-impact")
 @click.argument("commit_range", required=False, default=None)
 @click.option("--max-hops", type=int, default=5, show_default=True, help="BFS depth from each changed symbol.")
-@click.option("--limit", "--top", "limit", type=int, default=20, show_default=True, help="Top N tests to surface.")  # W1142: --top alias
+@click.option(
+    "--limit", "--top", "limit", type=int, default=20, show_default=True, help="Top N tests to surface."
+)  # W1142: --top alias
 @click.pass_context
 def test_impact(ctx, commit_range, max_hops, limit) -> None:
     """List tests transitively reachable from symbols changed in <range>."""
@@ -206,8 +208,7 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
         }
         if items_truncated:
             _summary["warnings_out"] = [
-                f"truncated to {len(items)} of {total_tests_full} — "
-                "pass --limit larger to see more"
+                f"truncated to {len(items)} of {total_tests_full} — pass --limit larger to see more"
             ]
             _summary["partial_success"] = True
         click.echo(

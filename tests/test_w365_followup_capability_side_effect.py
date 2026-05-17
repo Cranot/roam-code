@@ -72,9 +72,7 @@ def test_w365_followup_pinned_decorations(cap_name):
     caps = _load_full_capability_registry()
     cap = caps.get(cap_name)
     assert cap is not None, f"capability {cap_name!r} not registered"
-    assert cap.destructive is True, (
-        f"{cap_name}: expected destructive=True (W365 confirmed); got {cap.destructive!r}"
-    )
+    assert cap.destructive is True, f"{cap_name}: expected destructive=True (W365 confirmed); got {cap.destructive!r}"
     assert cap.side_effect is True, (
         f"{cap_name}: expected side_effect=True (W365-followup fix); got "
         f"{cap.side_effect!r}. Deleting / mutating the index DB IS a side "

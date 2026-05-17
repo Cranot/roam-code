@@ -6,7 +6,7 @@ counts in README.md, CLAUDE.md, llms-install.md, and the public MCP server
 card had to be hand-bumped, and the test only caught the discrepancy after
 the fact.
 
-redacted — close the W563 auto-rotate gap. The card writer used to
+W844 [landed 2026-05-17] — close the W563 auto-rotate gap. The card writer used to
 update 2 of the 4 card paths (bundled + flat well-known .json) and leave the
 SEP-1649 nested + SEP-2127 no-suffix mirrors stale, plus the SHA-256 pin in
 ``tests/test_mcp_server_card_hash.py`` had to be hand-bumped after every

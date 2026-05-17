@@ -259,9 +259,7 @@ def _iter_invocation_calls(
                 # Only treat as a roam-argv seed when the literal contains
                 # ``"--json"`` somewhere up front (rules out unrelated
                 # ``args = [...]`` assignments).
-                has_json = any(
-                    isinstance(e, ast.Constant) and e.value == "--json" for e in elts[:3]
-                )
+                has_json = any(isinstance(e, ast.Constant) and e.value == "--json" for e in elts[:3])
                 if has_json:
                     yield ("args_assign", node)
             continue
@@ -489,8 +487,7 @@ def test_discovery_finds_compound_recipe_invocations() -> None:
     # The recipe registry alone should contribute >= 10 hits.
     recipe_hits = _scan_recipe_commands()
     assert len(recipe_hits) >= 10, (
-        f"Recipe-commands extractor only found {len(recipe_hits)} entries — "
-        "_scan_recipe_commands has likely regressed."
+        f"Recipe-commands extractor only found {len(recipe_hits)} entries — _scan_recipe_commands has likely regressed."
     )
 
 
@@ -576,12 +573,9 @@ def test_lint_catches_synthetic_runner_invoke_typo() -> None:
         name = _extract_command_name_from_call(kind, call)
         if name is not None:
             found_names.append(name)
-    assert found_names == ["vuln"], (
-        f"Extractor failed to pick up the synthetic runner.invoke call: got {found_names!r}"
-    )
+    assert found_names == ["vuln"], f"Extractor failed to pick up the synthetic runner.invoke call: got {found_names!r}"
     assert "vuln" not in VALID_COMMAND_NAMES, (
-        "'vuln' unexpectedly appeared in _COMMANDS — pick a new known-bad "
-        "token for the synthetic-break harness."
+        "'vuln' unexpectedly appeared in _COMMANDS — pick a new known-bad token for the synthetic-break harness."
     )
 
 

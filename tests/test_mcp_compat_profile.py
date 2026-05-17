@@ -73,14 +73,8 @@ def test_compat_defaults_are_strict_and_advertise_schemas(monkeypatch: pytest.Mo
     assert mod._COMPAT_STRICT is True
     # Sanity: registered tools all carry ``output_schema_stripped=False``
     # in their metadata — Wave B schemas still ride on the wire.
-    stripped = [
-        name
-        for name, meta in mod._TOOL_METADATA.items()
-        if meta.get("output_schema_stripped") is True
-    ]
-    assert stripped == [], (
-        f"Default env should leave schemas declared, got {len(stripped)} stripped tools"
-    )
+    stripped = [name for name, meta in mod._TOOL_METADATA.items() if meta.get("output_schema_stripped") is True]
+    assert stripped == [], f"Default env should leave schemas declared, got {len(stripped)} stripped tools"
 
 
 def test_strip_output_schema_drops_schemas_at_registration(
@@ -102,14 +96,8 @@ def test_strip_output_schema_drops_schemas_at_registration(
     # too — metadata population is orthogonal to whether the MCP transport
     # can actually serve (see decorator-top ``_TOOL_METADATA[name] = {...}``
     # block + Wave C1 sidecar hoist).
-    not_stripped = [
-        name
-        for name, meta in mod._TOOL_METADATA.items()
-        if meta.get("output_schema_stripped") is not True
-    ]
-    assert not_stripped == [], (
-        f"STRIP=1 should mark every catalogued tool stripped, missed: {not_stripped[:5]}"
-    )
+    not_stripped = [name for name, meta in mod._TOOL_METADATA.items() if meta.get("output_schema_stripped") is not True]
+    assert not_stripped == [], f"STRIP=1 should mark every catalogued tool stripped, missed: {not_stripped[:5]}"
     # Sanity: at least some tools are actually catalogued (so the
     # invariant isn't vacuously satisfied on an empty registry).
     assert len(mod._TOOL_METADATA) > 0
@@ -176,10 +164,13 @@ def test_compat_strict_default_one_enforces_required_keys(
     )
     assert any("verdict" in e for e in errs), f"expected missing-verdict error, got {errs}"
     # Optional field absence is fine (no schema-required key missing).
-    assert mod._strict_validate_envelope(
-        {"command": "impact", "summary": {"verdict": "ok"}},
-        schema,
-    ) == []
+    assert (
+        mod._strict_validate_envelope(
+            {"command": "impact", "summary": {"verdict": "ok"}},
+            schema,
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(
@@ -194,9 +185,7 @@ def test_compat_strict_default_one_enforces_required_keys(
         "roam_understand",
     ],
 )
-def test_strip_does_not_break_tool_registration(
-    monkeypatch: pytest.MonkeyPatch, tool_name: str
-) -> None:
+def test_strip_does_not_break_tool_registration(monkeypatch: pytest.MonkeyPatch, tool_name: str) -> None:
     """STRIP=1 invariant: every core tool stays registered + dispatchable.
 
     The compat shim must drop ``output_schema=`` *only*; the
@@ -212,9 +201,7 @@ def test_strip_does_not_break_tool_registration(
     # gate); ``_REGISTERED_TOOLS`` is only populated when the MCP
     # transport is available. We assert on the metadata path so the
     # test runs in fastmcp-less environments too.
-    assert tool_name in mod._TOOL_METADATA, (
-        f"{tool_name} dropped from catalog under STRIP=1 — registration broken"
-    )
+    assert tool_name in mod._TOOL_METADATA, f"{tool_name} dropped from catalog under STRIP=1 — registration broken"
     meta = mod._TOOL_METADATA[tool_name]
     assert meta.get("output_schema_stripped") is True
     assert meta.get("version"), f"{tool_name} lost version stamp under STRIP=1"

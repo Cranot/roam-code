@@ -57,9 +57,7 @@ def test_baseline_vs_self_no_regressions(tmp_path):
     baseline = _live_baseline(tmp_path)
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--json", "compatibility", "--baseline", str(baseline)]
-    )
+    result = runner.invoke(cli, ["--json", "compatibility", "--baseline", str(baseline)])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
 
@@ -105,9 +103,7 @@ def test_synthetic_command_removal_is_breaking(tmp_path):
     baseline = _write(tmp_path / "baseline.json", snap)
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--json", "compatibility", "--baseline", str(baseline)]
-    )
+    result = runner.invoke(cli, ["--json", "compatibility", "--baseline", str(baseline)])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["summary"]["verdict"] == "breaking changes"
@@ -122,22 +118,15 @@ def test_synthetic_flag_removal_is_breaking(tmp_path):
     snap = _build_snapshot()
     # Pick any existing command.
     target = next(iter(sorted(snap["commands"].keys())))
-    snap["commands"][target]["flags"] = sorted(
-        set(snap["commands"][target]["flags"]) | {"--_fake_dropped_flag_w1293"}
-    )
+    snap["commands"][target]["flags"] = sorted(set(snap["commands"][target]["flags"]) | {"--_fake_dropped_flag_w1293"})
     baseline = _write(tmp_path / "baseline.json", snap)
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--json", "compatibility", "--baseline", str(baseline)]
-    )
+    result = runner.invoke(cli, ["--json", "compatibility", "--baseline", str(baseline)])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["summary"]["verdict"] == "breaking changes"
-    assert any(
-        e["command"] == target and e["flag"] == "--_fake_dropped_flag_w1293"
-        for e in payload["removed_flags"]
-    )
+    assert any(e["command"] == target and e["flag"] == "--_fake_dropped_flag_w1293" for e in payload["removed_flags"])
 
 
 def test_synthetic_envelope_field_removal_is_breaking(tmp_path):
@@ -145,15 +134,11 @@ def test_synthetic_envelope_field_removal_is_breaking(tmp_path):
     build lists only the canonical fields, so the injected one appears
     under ``removed_envelope_fields``."""
     snap = _build_snapshot()
-    snap["envelope_summary_keys"] = list(snap["envelope_summary_keys"]) + [
-        "_fake_dropped_field_w1293"
-    ]
+    snap["envelope_summary_keys"] = list(snap["envelope_summary_keys"]) + ["_fake_dropped_field_w1293"]
     baseline = _write(tmp_path / "baseline.json", snap)
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--json", "compatibility", "--baseline", str(baseline)]
-    )
+    result = runner.invoke(cli, ["--json", "compatibility", "--baseline", str(baseline)])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["summary"]["verdict"] == "breaking changes"
@@ -168,9 +153,7 @@ def test_synthetic_mcp_tool_removal_is_breaking(tmp_path):
     baseline = _write(tmp_path / "baseline.json", snap)
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--json", "compatibility", "--baseline", str(baseline)]
-    )
+    result = runner.invoke(cli, ["--json", "compatibility", "--baseline", str(baseline)])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["summary"]["verdict"] == "breaking changes"
@@ -203,9 +186,7 @@ def test_alias_rename_is_not_breaking():
         "commands": {
             "newname": {"module": "x", "function": "y", "flags": []},
         },
-        "deprecated_aliases": {
-            "oldname": {"replacement": "newname", "reason": "alias for newname"}
-        },
+        "deprecated_aliases": {"oldname": {"replacement": "newname", "reason": "alias for newname"}},
         "mcp_tools": [],
         "mcp_preset_counts": {},
         "categories": [],
@@ -235,9 +216,7 @@ def test_ci_exits_5_on_breaking(tmp_path):
     baseline = _write(tmp_path / "baseline.json", snap)
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["compatibility", "--baseline", str(baseline), "--ci"]
-    )
+    result = runner.invoke(cli, ["compatibility", "--baseline", str(baseline), "--ci"])
     assert result.exit_code == 5, (result.exit_code, result.output)
 
 
@@ -245,9 +224,7 @@ def test_ci_exits_0_on_clean(tmp_path):
     """``--ci`` exits 0 when no breaking entries are detected."""
     baseline = _live_baseline(tmp_path)
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["compatibility", "--baseline", str(baseline), "--ci"]
-    )
+    result = runner.invoke(cli, ["compatibility", "--baseline", str(baseline), "--ci"])
     assert result.exit_code == 0, result.output
 
 
@@ -262,15 +239,11 @@ def test_write_baseline_then_diff_clean(tmp_path):
     build, reports ``no regressions``."""
     baseline = tmp_path / "snap.json"
     runner = CliRunner()
-    write_result = runner.invoke(
-        cli, ["compatibility", "--write-baseline", str(baseline)]
-    )
+    write_result = runner.invoke(cli, ["compatibility", "--write-baseline", str(baseline)])
     assert write_result.exit_code == 0, write_result.output
     assert baseline.exists()
 
-    diff_result = runner.invoke(
-        cli, ["--json", "compatibility", "--baseline", str(baseline)]
-    )
+    diff_result = runner.invoke(cli, ["--json", "compatibility", "--baseline", str(baseline)])
     assert diff_result.exit_code == 0, diff_result.output
     payload = json.loads(diff_result.output)
     assert payload["summary"]["verdict"] == "no regressions"
@@ -288,9 +261,7 @@ def test_missing_baseline_emits_structured_envelope(tmp_path):
     next_command instructing how to capture one. No empty stdout."""
     missing = tmp_path / "does-not-exist.json"
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["--json", "compatibility", "--baseline", str(missing)]
-    )
+    result = runner.invoke(cli, ["--json", "compatibility", "--baseline", str(missing)])
     # No --ci, so exit 0 even on missing baseline.
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)

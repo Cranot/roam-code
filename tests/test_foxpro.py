@@ -521,12 +521,8 @@ class TestFoxProIntegration:
         subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
 
         # Create .prg files
-        (tmp_path / "main.prg").write_text(
-            "SET PROCEDURE TO utils.prg\nDO backup\n", encoding="utf-8"
-        )
-        (tmp_path / "utils.prg").write_text(
-            "FUNCTION backup\n  RETURN .T.\nENDFUNC\n", encoding="utf-8"
-        )
+        (tmp_path / "main.prg").write_text("SET PROCEDURE TO utils.prg\nDO backup\n", encoding="utf-8")
+        (tmp_path / "utils.prg").write_text("FUNCTION backup\n  RETURN .T.\nENDFUNC\n", encoding="utf-8")
 
         # Add files to git
         subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
@@ -1064,14 +1060,10 @@ class TestSCXIntegration:
         subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
 
         # main.prg calls DO FORM myform
-        (tmp_path / "main.prg").write_text(
-            "FUNCTION Main\n  DO FORM myform\nENDFUNC\n", encoding="utf-8"
-        )
+        (tmp_path / "main.prg").write_text("FUNCTION Main\n  DO FORM myform\nENDFUNC\n", encoding="utf-8")
 
         # backup.prg has a function
-        (tmp_path / "backup.prg").write_text(
-            "FUNCTION backup\n  RETURN .T.\nENDFUNC\n", encoding="utf-8"
-        )
+        (tmp_path / "backup.prg").write_text("FUNCTION backup\n  RETURN .T.\nENDFUNC\n", encoding="utf-8")
 
         # myform.scx/sct — form with a button that calls DO backup
         methods = "PROCEDURE Click\n  DO backup\nENDPROC\n"

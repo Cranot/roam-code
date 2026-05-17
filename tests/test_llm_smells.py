@@ -645,8 +645,7 @@ def test_llm_smells_min_severity_info_is_passthrough(tmp_path):
         explicit_kinds = {f["kind"] for f in explicit_envelope.get("findings", [])}
 
         assert explicit_kinds == baseline_kinds, (
-            f"--min-severity info should be pass-through; "
-            f"baseline={baseline_kinds} explicit={explicit_kinds}"
+            f"--min-severity info should be pass-through; baseline={baseline_kinds} explicit={explicit_kinds}"
         )
         # Sanity: at least one finding kind survived (otherwise the test
         # would pass trivially on an empty set).

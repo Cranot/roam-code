@@ -264,9 +264,7 @@ def test_edge_digest_id_tiebreaker_separates_duplicates(tmp_path):
 
     conn = sqlite3.connect(str(db_path))
     try:
-        rows = conn.execute(
-            "SELECT source_id, target_id, kind, id FROM edges"
-        ).fetchall()
+        rows = conn.execute("SELECT source_id, target_id, kind, id FROM edges").fetchall()
         actual_digest, count = _edge_bundle_digest(conn)
     finally:
         conn.close()

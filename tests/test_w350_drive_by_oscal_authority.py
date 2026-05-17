@@ -148,17 +148,11 @@ def test_ar_authority_observations_one_per_kind():
 
     # Filter to authority-axis observations: those whose props carry
     # ``authority_kind`` under the roam namespace.
-    authority_obs = [
-        o for o in observations if "authority_kind" in _ns_props(o.get("props") or [])
-    ]
+    authority_obs = [o for o in observations if "authority_kind" in _ns_props(o.get("props") or [])]
     # Packet has 5 distinct kinds populated (mode/permit/lease/policy_rule/approval).
-    assert len(authority_obs) == 5, [
-        _ns_props(o.get("props") or []).get("authority_kind") for o in authority_obs
-    ]
+    assert len(authority_obs) == 5, [_ns_props(o.get("props") or []).get("authority_kind") for o in authority_obs]
 
-    kinds_observed = sorted(
-        _ns_props(o.get("props") or [])["authority_kind"][0] for o in authority_obs
-    )
+    kinds_observed = sorted(_ns_props(o.get("props") or [])["authority_kind"][0] for o in authority_obs)
     assert kinds_observed == [
         "approval",
         "lease",
@@ -169,11 +163,7 @@ def test_ar_authority_observations_one_per_kind():
 
     # The permit observation must carry 2 subjects (perm_001 + perm_002)
     # and report total_count=2.
-    permit_obs = next(
-        o
-        for o in authority_obs
-        if _ns_props(o.get("props") or [])["authority_kind"][0] == "permit"
-    )
+    permit_obs = next(o for o in authority_obs if _ns_props(o.get("props") or [])["authority_kind"][0] == "permit")
     assert len(permit_obs["subjects"]) == 2
     permit_props = _ns_props(permit_obs.get("props") or [])
     assert permit_props["authority_refs_total"] == ["2"]
@@ -189,9 +179,7 @@ def test_ar_authority_observation_subject_props_are_canonical():
         now=FIXED_CLOCK,
     )
     obs = doc["assessment-results"]["results"][0]["observations"]
-    permit_obs = next(
-        o for o in obs if _ns_props(o.get("props") or []).get("authority_kind") == ["permit"]
-    )
+    permit_obs = next(o for o in obs if _ns_props(o.get("props") or []).get("authority_kind") == ["permit"])
     first = permit_obs["subjects"][0]
     sp = _ns_props(first.get("props") or [])
     assert sp.get("authority_kind") == ["permit"]
@@ -204,9 +192,7 @@ def test_ar_authority_observation_truncates_at_cap():
     """Per-kind cap of 10 subjects with ``truncated`` prop + ``total_count``."""
     packet = _packet_with_mixed_authority_refs()
     # Inject 15 permits so the cap fires.
-    packet["authority_refs"] = [
-        r for r in packet["authority_refs"] if r["authority_kind"] != "permit"
-    ]
+    packet["authority_refs"] = [r for r in packet["authority_refs"] if r["authority_kind"] != "permit"]
     for i in range(15):
         packet["authority_refs"].append(
             {
@@ -219,9 +205,7 @@ def test_ar_authority_observation_truncates_at_cap():
         )
     doc = build_oscal_assessment_results(packet, now=FIXED_CLOCK)
     obs = doc["assessment-results"]["results"][0]["observations"]
-    permit_obs = next(
-        o for o in obs if _ns_props(o.get("props") or []).get("authority_kind") == ["permit"]
-    )
+    permit_obs = next(o for o in obs if _ns_props(o.get("props") or []).get("authority_kind") == ["permit"])
     # Cap is 10 subjects.
     assert len(permit_obs["subjects"]) == 10
     op = _ns_props(permit_obs.get("props") or [])
@@ -240,16 +224,12 @@ def test_ar_authority_observation_wording_is_lint_compliant():
         now=FIXED_CLOCK,
     )
     observations = doc["assessment-results"]["results"][0].get("observations") or []
-    authority_obs = [
-        o for o in observations if "authority_kind" in _ns_props(o.get("props") or [])
-    ]
+    authority_obs = [o for o in observations if "authority_kind" in _ns_props(o.get("props") or [])]
     assert authority_obs, "no authority observations were emitted"
     for o in authority_obs:
         for s in _walk_strings(o):
             violations = scan_for_overclaims(s)
-            assert not violations, (
-                f"compliance overclaim in authority observation string: {violations!r}\nstring={s!r}"
-            )
+            assert not violations, f"compliance overclaim in authority observation string: {violations!r}\nstring={s!r}"
 
 
 def test_ar_empty_authority_refs_emits_no_authority_observations():
@@ -266,9 +246,7 @@ def test_ar_empty_authority_refs_emits_no_authority_observations():
     packet["authority_refs"] = []
     doc = build_oscal_assessment_results(packet, now=FIXED_CLOCK)
     observations = doc["assessment-results"]["results"][0].get("observations") or []
-    authority_obs = [
-        o for o in observations if "authority_kind" in _ns_props(o.get("props") or [])
-    ]
+    authority_obs = [o for o in observations if "authority_kind" in _ns_props(o.get("props") or [])]
     assert authority_obs == []
 
 

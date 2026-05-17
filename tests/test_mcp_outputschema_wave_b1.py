@@ -72,9 +72,7 @@ def _validate(instance, schema, path: str = "") -> list[str]:
         props = schema.get("properties", {})
         for key, sub_schema in props.items():
             if key in instance:
-                errors.extend(
-                    _validate(instance[key], sub_schema, f"{path}.{key}" if path else key)
-                )
+                errors.extend(_validate(instance[key], sub_schema, f"{path}.{key}" if path else key))
 
     if isinstance(instance, list):
         item_schema = schema.get("items")
@@ -241,9 +239,7 @@ def test_preflight_schema_structure() -> None:
         assert key in props, f"_SCHEMA_PREFLIGHT missing top-level {key!r}"
     # Each dimension declares a ``severity`` field (the agent's decision-bit).
     for dim in ("blast_radius", "tests", "complexity", "coupling", "conventions", "fitness"):
-        assert "severity" in props[dim]["properties"], (
-            f"_SCHEMA_PREFLIGHT.{dim} missing severity"
-        )
+        assert "severity" in props[dim]["properties"], f"_SCHEMA_PREFLIGHT.{dim} missing severity"
 
 
 def test_impact_schema_required_summary_does_not_lie_on_not_found() -> None:
@@ -281,11 +277,7 @@ def test_impact_and_preflight_wired_in_decorators() -> None:
     for entry in _REGISTERED_TOOLS:
         name = entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", None)
         if name in {"roam_impact", "roam_preflight"}:
-            schema = (
-                entry.get("output_schema")
-                if isinstance(entry, dict)
-                else getattr(entry, "output_schema", None)
-            )
+            schema = entry.get("output_schema") if isinstance(entry, dict) else getattr(entry, "output_schema", None)
             found[name] = schema
 
     # Note: registry shape varies across roam versions; if the tools aren't

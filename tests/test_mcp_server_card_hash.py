@@ -35,7 +35,7 @@ from tests._helpers.repo_root import repo_root
 # v13.1 (2026-05-15): version bump 13.0 → 13.1.
 # v13.2 (2026-05-16, W1307+W1308): version bump 13.1 → 13.2; LF
 # normalization fixed CRLF/LF hash divergence between Windows + CI Linux.
-# redacted: added SEP-2127-ready icons[] field (favicon.svg +
+# W794 [landed 2026-05-16]: added SEP-2127-ready icons[] field (favicon.svg +
 # og.png pointing at deployed assets on roam-code.com). All 3
 # .well-known card path variants stay byte-identical per the W792
 # invariant.

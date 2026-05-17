@@ -135,12 +135,12 @@ def test_deprecated_bool_matches_maturity_enum():
             violations.append((name, deprecated, cap.maturity))
     assert not violations, (
         f"{len(violations)} @roam_capability decoration(s) violate the "
-        f"deprecated ↔ maturity==\"deprecated\" bi-conditional:\n"
+        f'deprecated ↔ maturity=="deprecated" bi-conditional:\n'
         f"  {violations[:20]}\n\n"
         f"Each row: (capability_name, deprecated_bool, maturity_str).\n"
         f"The two fields are semantically redundant by construction "
-        f"(maturity has \"deprecated\" as one of its four tiers). Either "
-        f"flip ``deprecated=True`` to match ``maturity=\"deprecated\"`` OR "
+        f'(maturity has "deprecated" as one of its four tiers). Either '
+        f'flip ``deprecated=True`` to match ``maturity="deprecated"`` OR '
         f"flip ``maturity`` to one of the non-deprecated tiers "
         f"(experimental | beta | stable) to match ``deprecated=False``."
     )

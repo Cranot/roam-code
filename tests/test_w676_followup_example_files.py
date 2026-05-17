@@ -58,9 +58,7 @@ def test_ignore_findings_example_parses_clean(tmp_path: Path) -> None:
     assert warnings_out == [], f"Example must parse clean; got: {warnings_out}"
     assert len(rules) >= 4, f"Expected >=4 example rules; got {len(rules)}"
     for rule in rules:
-        assert rule.get("task_id") or rule.get("path_glob"), (
-            f"Rule must declare task_id or path_glob: {rule}"
-        )
+        assert rule.get("task_id") or rule.get("path_glob"), f"Rule must declare task_id or path_glob: {rule}"
 
 
 def test_suppressions_json_example_exists() -> None:

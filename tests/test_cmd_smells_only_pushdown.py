@@ -68,10 +68,7 @@ def test_run_all_detectors_only_dispatches_subset(monkeypatch, tmp_path: Path) -
     finally:
         conn.close()
 
-    assert invoked == {"brain-method"}, (
-        f"Expected only brain-method to dispatch under --only; "
-        f"got {sorted(invoked)}"
-    )
+    assert invoked == {"brain-method"}, f"Expected only brain-method to dispatch under --only; got {sorted(invoked)}"
 
 
 def test_run_all_detectors_only_none_dispatches_all(monkeypatch, tmp_path: Path) -> None:

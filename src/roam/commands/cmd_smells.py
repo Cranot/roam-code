@@ -504,8 +504,7 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
         if unknown_only:
             valid_listing = ", ".join(sorted(dispatchable_kinds))
             raise click.UsageError(
-                f"--only: unknown smell id(s): {', '.join(unknown_only)}. "
-                f"Valid ids: {valid_listing}"
+                f"--only: unknown smell id(s): {', '.join(unknown_only)}. Valid ids: {valid_listing}"
             )
         only_dispatch: frozenset[str] | None = frozenset(k for k in only_kinds if k)
     else:
@@ -729,19 +728,13 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
             # still a deliberate BAIL because the disable semantic is
             # finding-level not rule-level (rules emit mixed severities).
             rule_disabled: list[tuple[str, dict]] = []
-            kinds_active = sanitised_kinds or (
-                set(only_dispatch) if only_dispatch else set()
-            )
+            kinds_active = sanitised_kinds or (set(only_dispatch) if only_dispatch else set())
             if kinds_active:
                 from roam.catalog.registry import kind_to_confidence
 
                 all_kinds = sorted(kind_to_confidence().keys())
                 disabled_kinds = [k for k in all_kinds if k not in kinds_active]
-                filter_source = (
-                    "--only"
-                    if (only_dispatch and not sanitised_kinds)
-                    else "--kind"
-                )
+                filter_source = "--only" if (only_dispatch and not sanitised_kinds) else "--kind"
                 for k in disabled_kinds:
                     rule_disabled.append(
                         (
@@ -756,13 +749,7 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
                 rule_ids_disabled=rule_disabled,
             )
 
-            click.echo(
-                write_sarif(
-                    smells_to_sarif(
-                        findings, runtime_overrides=sarif_overrides or None
-                    )
-                )
-            )
+            click.echo(write_sarif(smells_to_sarif(findings, runtime_overrides=sarif_overrides or None)))
             return
 
         if json_mode:
@@ -810,9 +797,7 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
             # the partition + per-unknown ``did_you_mean`` map without
             # parsing the warnings_out strings.
             if _kind_frag is not None and _kind_frag.get("unknown_kinds"):
-                summary.update(
-                    to_summary_payload_many(_kind_frag, include_known=False)
-                )
+                summary.update(to_summary_payload_many(_kind_frag, include_known=False))
             envelope = json_envelope(
                 "smells",
                 budget=token_budget,

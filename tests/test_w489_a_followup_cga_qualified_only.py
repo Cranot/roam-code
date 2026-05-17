@@ -134,22 +134,14 @@ def test_w489_a_followup_cga_envelope_surfaces_violating_rule(cga_project, tmp_p
     summary = envelope["summary"]
     assert "rules_lint" in summary, f"missing rules_lint in summary: {summary!r}"
     rl = summary["rules_lint"]
-    assert rl["qualified_only_violations"] == 2, (
-        f"expected 2 violations (bareSource + bareSink), got {rl!r}"
-    )
+    assert rl["qualified_only_violations"] == 2, f"expected 2 violations (bareSource + bareSink), got {rl!r}"
     assert rl["total_rules"] == 2, f"expected total_rules=2, got {rl!r}"
-    assert summary.get("partial_success") is True, (
-        f"expected partial_success=True with violations, got {summary!r}"
-    )
+    assert summary.get("partial_success") is True, f"expected partial_success=True with violations, got {summary!r}"
     warnings_out = summary.get("warnings_out") or []
-    assert any("qualified_only lint" in w for w in warnings_out), (
-        f"expected warnings_out entry, got {warnings_out!r}"
-    )
+    assert any("qualified_only lint" in w for w in warnings_out), f"expected warnings_out entry, got {warnings_out!r}"
 
     violations = envelope.get("qualified_only_violations")
-    assert violations, (
-        f"expected top-level qualified_only_violations list, got envelope keys: {sorted(envelope)!r}"
-    )
+    assert violations, f"expected top-level qualified_only_violations list, got envelope keys: {sorted(envelope)!r}"
     assert len(violations) == 2
 
     by_name = {v["name"]: v for v in violations}
@@ -175,14 +167,11 @@ def test_w489_a_followup_cga_envelope_clean_no_top_level_list(cga_project, tmp_p
     assert rl["qualified_only_violations"] == 0, f"expected 0 violations, got {rl!r}"
     assert rl["total_rules"] == 1, f"expected total_rules=1, got {rl!r}"
     assert "qualified_only_violations" not in envelope, (
-        f"top-level qualified_only_violations should be absent when N=0, "
-        f"got {sorted(envelope)!r}"
+        f"top-level qualified_only_violations should be absent when N=0, got {sorted(envelope)!r}"
     )
     # W489-A-followup must NOT contribute a partial_success flip or a
     # warnings_out entry on the clean path.
-    assert summary.get("partial_success") is not True, (
-        f"partial_success leaked on clean rules: {summary!r}"
-    )
+    assert summary.get("partial_success") is not True, f"partial_success leaked on clean rules: {summary!r}"
     warnings_out = summary.get("warnings_out") or []
     assert not any("qualified_only lint" in w for w in warnings_out), (
         f"qualified_only warnings_out leaked on clean rules: {warnings_out!r}"
@@ -213,9 +202,7 @@ def test_w489_a_followup_default_taint_pack_no_violations(cga_project):
     envelope = json.loads(result.output)
 
     summary = envelope["summary"]
-    assert "rules_lint" in summary, (
-        f"shipped-pack path missing rules_lint disclosure: {summary!r}"
-    )
+    assert "rules_lint" in summary, f"shipped-pack path missing rules_lint disclosure: {summary!r}"
     rl = summary["rules_lint"]
     assert rl["total_rules"] > 0, f"shipped pack should have rules, got {rl!r}"
     assert rl["qualified_only_violations"] == 0, (
@@ -238,12 +225,9 @@ def test_w489_a_followup_no_rules_lint_without_include_taint(cga_project):
     assert result.exit_code == 0, f"non-zero exit: {result.exit_code}\n{result.output}"
     envelope = json.loads(result.output)
     summary = envelope["summary"]
-    assert "rules_lint" not in summary, (
-        f"rules_lint must only appear under --include-taint; got {summary!r}"
-    )
+    assert "rules_lint" not in summary, f"rules_lint must only appear under --include-taint; got {summary!r}"
     assert "qualified_only_violations" not in envelope, (
-        f"top-level qualified_only_violations leaked without --include-taint: "
-        f"{sorted(envelope)!r}"
+        f"top-level qualified_only_violations leaked without --include-taint: {sorted(envelope)!r}"
     )
 
 

@@ -266,10 +266,7 @@ def _fetch_candidate_files(conn: sqlite3.Connection, scope: str | None):
     allowlist so both detectors see the same candidate set.
     """
     placeholders = ",".join("?" * len(_CLONE_ELIGIBLE_LANGUAGES))
-    sql = (
-        f"SELECT f.id, f.path, f.language FROM files f "
-        f"WHERE f.language IN ({placeholders})"
-    )
+    sql = f"SELECT f.id, f.path, f.language FROM files f WHERE f.language IN ({placeholders})"
     params: list = sorted(_CLONE_ELIGIBLE_LANGUAGES)
     if scope:
         scope_norm = scope.replace("\\", "/")

@@ -199,9 +199,7 @@ def _collect_emitter_funcs(
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
     emitters: dict[str, ast.FunctionDef] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and re.fullmatch(
-            r"_?\w*_to_sarif", node.name
-        ):
+        if isinstance(node, ast.FunctionDef) and re.fullmatch(r"_?\w*_to_sarif", node.name):
             emitters[node.name] = node
     return emitters
 
@@ -221,10 +219,7 @@ def _calls_derive_finding_tags(func_node: ast.FunctionDef) -> bool:
         func = sub.func
         if isinstance(func, ast.Name) and func.id == "_derive_finding_tags":
             return True
-        if (
-            isinstance(func, ast.Attribute)
-            and func.attr == "_derive_finding_tags"
-        ):
+        if isinstance(func, ast.Attribute) and func.attr == "_derive_finding_tags":
             return True
     return False
 
@@ -292,9 +287,7 @@ def test_every_emitter_is_wired_or_exempt() -> None:
         untracked.append(name)
     assert not untracked, (
         f"{len(untracked)} SARIF emitter(s) are neither WIRED nor "
-        f"EXEMPT:\n  "
-        + "\n  ".join(untracked)
-        + "\n\nEvery ``*_to_sarif`` function must be either (a) on the "
+        f"EXEMPT:\n  " + "\n  ".join(untracked) + "\n\nEvery ``*_to_sarif`` function must be either (a) on the "
         "_WIRED roster with a ``_derive_finding_tags()`` call in the "
         "body, OR (b) in _TAG_COVERAGE_EXEMPT with a 1-line rationale "
         "explaining why family tags don't apply (compound aggregator / "
@@ -363,8 +356,7 @@ def test_derive_finding_tags_helper_still_exists() -> None:
     # parameter (e.g. removing ``family``) doesn't silently pass.
     expected_params = {"cwe", "owasp_top10", "severity", "family", "extra"}
     assert expected_params.issubset(sig.parameters.keys()), (
-        f"_derive_finding_tags signature changed: "
-        f"expected at least {expected_params}, got {set(sig.parameters)}"
+        f"_derive_finding_tags signature changed: expected at least {expected_params}, got {set(sig.parameters)}"
     )
 
 

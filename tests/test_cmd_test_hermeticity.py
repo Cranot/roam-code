@@ -173,8 +173,7 @@ class TestScanner:
 
         f = tmp_path / "test_x.py"
         f.write_text(
-            "import time\nfrom datetime import datetime\n"
-            "def test_a():\n    return time.time(), datetime.now()\n",
+            "import time\nfrom datetime import datetime\ndef test_a():\n    return time.time(), datetime.now()\n",
             encoding="utf-8",
         )
         findings = _scan_test_file(str(f))
@@ -186,8 +185,7 @@ class TestScanner:
 
         f = tmp_path / "test_x.py"
         f.write_text(
-            "import random\nrandom.seed(42)\n"
-            "def test_a():\n    return random.randint(1, 10)\n",
+            "import random\nrandom.seed(42)\ndef test_a():\n    return random.randint(1, 10)\n",
             encoding="utf-8",
         )
         findings = _scan_test_file(str(f))
@@ -200,10 +198,7 @@ class TestScanner:
 
         f = tmp_path / "test_x.py"
         f.write_text(
-            "import os\n"
-            "def test_a(monkeypatch):\n"
-            "    monkeypatch.setenv('FOO', 'bar')\n"
-            "    return os.environ['FOO']\n",
+            "import os\ndef test_a(monkeypatch):\n    monkeypatch.setenv('FOO', 'bar')\n    return os.environ['FOO']\n",
             encoding="utf-8",
         )
         findings = _scan_test_file(str(f))
@@ -216,8 +211,7 @@ class TestScanner:
 
         f = tmp_path / "test_x.py"
         f.write_text(
-            "import time\nimport freezegun\n"
-            "def test_a():\n    return time.time()\n",
+            "import time\nimport freezegun\ndef test_a():\n    return time.time()\n",
             encoding="utf-8",
         )
         findings = _scan_test_file(str(f))
@@ -228,8 +222,7 @@ class TestScanner:
 
         f = tmp_path / "test_pure.py"
         f.write_text(
-            "def test_a():\n    assert 1 + 1 == 2\n"
-            "def test_b():\n    xs = [1, 2, 3]\n    assert sum(xs) == 6\n",
+            "def test_a():\n    assert 1 + 1 == 2\ndef test_b():\n    xs = [1, 2, 3]\n    assert sum(xs) == 6\n",
             encoding="utf-8",
         )
         findings = _scan_test_file(str(f))
@@ -244,9 +237,7 @@ class TestScanner:
 class TestCommand:
     def test_json_envelope_shape(self, hermeticity_project):
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "test-hermeticity"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["--json", "test-hermeticity"], catch_exceptions=False)
         assert result.exit_code == 0, result.output
         env = json.loads(result.stdout if hasattr(result, "stdout") else result.output)
         assert env["command"] == "test-hermeticity"
@@ -261,40 +252,29 @@ class TestCommand:
 
     def test_findings_cover_every_closed_enum_kind(self, hermeticity_project):
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "test-hermeticity"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["--json", "test-hermeticity"], catch_exceptions=False)
         assert result.exit_code == 0, result.output
         env = json.loads(result.stdout if hasattr(result, "stdout") else result.output)
         kinds_found = {f["kind"] for f in env["findings"]}
         expected = {"network", "time", "random", "filesystem", "env", "subprocess"}
         missing = expected - kinds_found
         assert not missing, (
-            f"non-hermetic fixture should light up every closed-enum kind; "
-            f"missing: {missing}; got={kinds_found}"
+            f"non-hermetic fixture should light up every closed-enum kind; missing: {missing}; got={kinds_found}"
         )
 
     def test_findings_only_target_the_leaky_file(self, hermeticity_project):
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "test-hermeticity"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["--json", "test-hermeticity"], catch_exceptions=False)
         assert result.exit_code == 0, result.output
         env = json.loads(result.stdout if hasattr(result, "stdout") else result.output)
         leaky_findings = [f for f in env["findings"] if "test_leaky" in f["file"]]
-        hermetic_findings = [
-            f for f in env["findings"] if "test_hermetic" in f["file"]
-        ]
+        hermetic_findings = [f for f in env["findings"] if "test_hermetic" in f["file"]]
         assert leaky_findings, "expected findings in test_leaky.py"
-        assert not hermetic_findings, (
-            f"hermetic test file should be clean; got: {hermetic_findings}"
-        )
+        assert not hermetic_findings, f"hermetic test file should be clean; got: {hermetic_findings}"
 
     def test_kind_counts_match_findings(self, hermeticity_project):
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "test-hermeticity"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["--json", "test-hermeticity"], catch_exceptions=False)
         assert result.exit_code == 0, result.output
         env = json.loads(result.stdout if hasattr(result, "stdout") else result.output)
         kc = env["kind_counts"]
@@ -307,14 +287,10 @@ class TestCommand:
     def test_persist_writes_into_findings_registry(self, hermeticity_project):
         runner = CliRunner()
         # First persist.
-        result = runner.invoke(
-            cli, ["test-hermeticity", "--persist"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["test-hermeticity", "--persist"], catch_exceptions=False)
         assert result.exit_code == 0, result.output
         # Then query the registry via `roam findings count`.
-        count_result = runner.invoke(
-            cli, ["--json", "findings", "count"], catch_exceptions=False
-        )
+        count_result = runner.invoke(cli, ["--json", "findings", "count"], catch_exceptions=False)
         assert count_result.exit_code == 0, count_result.output
         env = json.loads(count_result.stdout if hasattr(count_result, "stdout") else count_result.output)
         counts = env.get("counts", {})
@@ -324,10 +300,6 @@ class TestCommand:
 
     def test_ci_mode_exits_5_on_findings(self, hermeticity_project):
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["test-hermeticity", "--ci"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["test-hermeticity", "--ci"], catch_exceptions=False)
         # `--ci` exits 5 when any non-hermetic test is detected.
-        assert result.exit_code == 5, (
-            f"--ci should exit 5 when findings exist; got {result.exit_code}\n{result.output}"
-        )
+        assert result.exit_code == 5, f"--ci should exit 5 when findings exist; got {result.exit_code}\n{result.output}"

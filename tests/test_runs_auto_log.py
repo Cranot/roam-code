@@ -292,10 +292,7 @@ def test_impact_unresolved_auto_logs_provenance(
     # surfaces the attempt instead of silence.
     events = list(read_run_events(Path(indexed_project), meta.run_id))
     impact_events = [e for e in events if e.get("action") == "impact"]
-    assert impact_events, (
-        "W1277: unresolved path must auto-log for replay-narration provenance; "
-        f"got events: {events}"
-    )
+    assert impact_events, f"W1277: unresolved path must auto-log for replay-narration provenance; got events: {events}"
     ev = impact_events[0]
     assert ev["envelope_command"] == "impact"
     assert ev["target"] == typo, f"target should be the typo'd input {typo!r}, got {ev.get('target')!r}"

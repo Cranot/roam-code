@@ -55,24 +55,18 @@ def _assert_truncated(envelope, *, where: str):
     assert "truncated" in s, f"{where}: summary missing 'truncated'"
     assert "limit" in s, f"{where}: summary missing 'limit'"
     assert s["truncated"] is True, f"{where}: expected truncated=True, got summary={s}"
-    assert s["total_count"] > s["count"], (
-        f"{where}: total_count {s['total_count']} should exceed count {s['count']}"
-    )
+    assert s["total_count"] > s["count"], f"{where}: total_count {s['total_count']} should exceed count {s['count']}"
     assert "warnings_out" in s, f"{where}: truncated envelope missing warnings_out"
     assert any(_TRUNCATION_PHRASE_TAIL in w for w in s["warnings_out"]), (
         f"{where}: canonical truncation phrase missing from warnings_out={s['warnings_out']}"
     )
-    assert s.get("partial_success") is True, (
-        f"{where}: truncated envelope must mark partial_success=True"
-    )
+    assert s.get("partial_success") is True, f"{where}: truncated envelope must mark partial_success=True"
 
 
 def _assert_not_truncated(envelope, *, where: str):
     """Assert the envelope summary indicates no cap-hit."""
     s = envelope["summary"]
-    assert s.get("truncated") is False, (
-        f"{where}: expected truncated=False, got summary={s}"
-    )
+    assert s.get("truncated") is False, f"{where}: expected truncated=False, got summary={s}"
     assert "warnings_out" not in s or not s["warnings_out"], (
         f"{where}: non-truncated envelope must not carry a truncation warning"
     )
@@ -89,9 +83,7 @@ def test_supply_chain_cap_hit_disclosure(tmp_path):
     proj.mkdir()
     # A python requirements.txt with many unpinned deps so top_risky has
     # plenty of candidates -- guarantees --limit 1 triggers cap-hit.
-    (proj / "requirements.txt").write_text(
-        "\n".join(f"pkg_{i}" for i in range(8)) + "\n"
-    )
+    (proj / "requirements.txt").write_text("\n".join(f"pkg_{i}" for i in range(8)) + "\n")
     git_init(proj)
 
     runner = CliRunner()

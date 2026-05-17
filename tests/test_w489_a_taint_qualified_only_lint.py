@@ -135,17 +135,11 @@ def test_w489_a_envelope_surfaces_violating_rule(tmp_path: Path) -> None:
     summary = envelope["summary"]
     assert "rules_lint" in summary, f"missing rules_lint in summary: {summary!r}"
     rl = summary["rules_lint"]
-    assert rl["qualified_only_violations"] == 2, (
-        f"expected 2 violations (bareSource + bareSink), got {rl!r}"
-    )
+    assert rl["qualified_only_violations"] == 2, f"expected 2 violations (bareSource + bareSink), got {rl!r}"
     assert rl["total_rules"] == 2, f"expected total_rules=2, got {rl!r}"
-    assert summary.get("partial_success") is True, (
-        f"expected partial_success=True with violations, got {summary!r}"
-    )
+    assert summary.get("partial_success") is True, f"expected partial_success=True with violations, got {summary!r}"
     warnings_out = summary.get("warnings_out") or []
-    assert any("qualified_only lint" in w for w in warnings_out), (
-        f"expected warnings_out entry, got {warnings_out!r}"
-    )
+    assert any("qualified_only lint" in w for w in warnings_out), f"expected warnings_out entry, got {warnings_out!r}"
 
     violations = envelope.get("qualified_only_violations")
     assert violations, f"expected top-level qualified_only_violations list, got envelope keys: {sorted(envelope)!r}"
@@ -223,9 +217,7 @@ def test_w489_a_default_rules_pack_surfaces_lint(tmp_path: Path) -> None:
         os.chdir(cwd)
 
     summary = envelope["summary"]
-    assert "rules_lint" in summary, (
-        f"shipped-pack path missing rules_lint disclosure: {summary!r}"
-    )
+    assert "rules_lint" in summary, f"shipped-pack path missing rules_lint disclosure: {summary!r}"
     rl = summary["rules_lint"]
     assert rl["total_rules"] > 0, f"shipped pack should have rules, got {rl!r}"
     assert rl["qualified_only_violations"] == 0, (
