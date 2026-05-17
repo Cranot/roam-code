@@ -147,12 +147,32 @@ def pr_prep(ctx, commit_range, high_callers) -> None:
 
     pr_risk_payload = _capture_json_subcommand(["pr-risk"])
 
+    # Pattern-2 guard — name any subcommand that failed (no parseable
+    # ``summary`` block) so we never emit "READY" on a silent fallback
+    # where ``high_severity`` and ``pr_risk_score`` defaulted to 0
+    # because the upstream payload was an error envelope. The compound
+    # contract per CLAUDE.md §Pattern-2: when ANY subcommand fails,
+    # set ``partial_success: true`` + name the failed subcommands in
+    # the verdict.
+    failed_subcommands: list[str] = []
+    if not isinstance(diff_payload.get("summary"), dict):
+        failed_subcommands.append("diff")
+    if not isinstance(critique_payload.get("summary"), dict):
+        failed_subcommands.append("critique")
+    if not isinstance(pr_risk_payload.get("summary"), dict):
+        failed_subcommands.append("pr-risk")
+
     high_severity = (critique_payload.get("summary") or {}).get("high_severity", 0) or 0
     pr_risk_score = (pr_risk_payload.get("summary") or {}).get("risk_score") or 0
     diff_summary = diff_payload.get("summary") or {}
 
-    ready = high_severity == 0 and pr_risk_score < 70
-    if ready:
+    partial_success = bool(failed_subcommands)
+    ready = (not partial_success) and high_severity == 0 and pr_risk_score < 70
+    if partial_success:
+        # Degraded verdict — names the failed subcommands so the agent
+        # sees the cascade rather than a fabricated READY/NOT-READY.
+        verdict = "PARTIAL — failed subcommands: " + ", ".join(failed_subcommands)
+    elif ready:
         verdict = (
             f"READY — diff: {diff_summary.get('changed_files', 0)} files / "
             f"{diff_summary.get('affected_symbols', 0)} affected; "
@@ -170,6 +190,8 @@ def pr_prep(ctx, commit_range, high_callers) -> None:
         "summary": {
             "verdict": verdict,
             "ready_to_open": ready,
+            "partial_success": partial_success,
+            "failed_subcommands": failed_subcommands,
             "high_severity_findings": high_severity,
             "pr_risk_score": pr_risk_score,
             "changed_files": diff_summary.get("changed_files"),

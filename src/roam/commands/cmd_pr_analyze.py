@@ -1721,16 +1721,38 @@ def _emit_batch(
             break
 
     cache_hits = sum(1 for r in per_file if r.get("cache_hit"))
-    summary = {
-        "verdict": f"batch worst: {worst_verdict}",
-        "files_processed": len(per_file),
-        "verdict_counts": verdict_counts,
-        "worst_verdict": worst_verdict,
-        "batch_dir": str(base),
-        "parallel_workers": parallel if parallel > 1 else 1,
-        "cache_hits": cache_hits,
-        "cache_hit_rate": round(cache_hits / len(per_file), 3) if per_file else 0,
-    }
+    # W807 Pattern-2 empty-corpus fix: when no .diff/.patch files exist in
+    # batch_dir, ``len(per_file) == 0`` and the worst-verdict scan stays at
+    # its initialiser "SAFE" — producing a misleading
+    # ``verdict: "batch worst: SAFE"`` that's indistinguishable from a real
+    # batch that found zero blocking changes. Disclose the empty state
+    # explicitly via a degenerate verdict + partial_success + closed-enum
+    # state. LAW 4: terminal token ``files`` is in the concrete-noun anchor
+    # set.
+    if total == 0:
+        summary = {
+            "verdict": f"No diff files found in batch_dir: 0 files",
+            "files_processed": 0,
+            "verdict_counts": verdict_counts,
+            "worst_verdict": None,
+            "batch_dir": str(base),
+            "parallel_workers": parallel if parallel > 1 else 1,
+            "cache_hits": 0,
+            "cache_hit_rate": 0,
+            "partial_success": True,
+            "state": "empty_batch",
+        }
+    else:
+        summary = {
+            "verdict": f"batch worst: {worst_verdict}",
+            "files_processed": len(per_file),
+            "verdict_counts": verdict_counts,
+            "worst_verdict": worst_verdict,
+            "batch_dir": str(base),
+            "parallel_workers": parallel if parallel > 1 else 1,
+            "cache_hits": cache_hits,
+            "cache_hit_rate": round(cache_hits / len(per_file), 3) if per_file else 0,
+        }
     bundle = {"summary": summary, "files": per_file}
 
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

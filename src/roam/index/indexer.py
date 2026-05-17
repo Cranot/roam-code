@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import sys
 import time
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from roam.db.connection import find_project_root, get_db_path, open_db
 from roam.index.discovery import discover_files
@@ -267,8 +270,16 @@ def _compute_file_health_scores(conn, G=None):
                     list(cycle_symbol_ids),
                 )
                 cycle_files = {r[0] for r in rows_cyc}
-        except Exception:
-            pass
+        except Exception as exc:
+            # Pattern-2 lineage: SCC-based cycle detection failed. The score
+            # below proceeds as if no files participate in a cycle; warn so
+            # the degraded health-score axis is observable rather than silent.
+            log.warning(
+                "_compute_file_health_scores: SCC cycle detection failed (%s: %s); "
+                "Factor 3 (cycle membership) will read as zero across all files",
+                type(exc).__name__,
+                exc,
+            )
     else:
         # Fallback: SQL 2-cycle self-join (only catches A→B→A patterns)
         try:
@@ -279,8 +290,13 @@ def _compute_file_health_scores(conn, G=None):
                 "WHERE e1.target_id IN (SELECT source_id FROM edges WHERE target_id = s.id)"
             ).fetchall()
             cycle_files = {r["file_id"] for r in cycle_rows}
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning(
+                "_compute_file_health_scores: 2-cycle SQL fallback failed (%s: %s); "
+                "Factor 3 (cycle membership) will read as zero across all files",
+                type(exc).__name__,
+                exc,
+            )
 
     # God components: files with symbols having degree > 20
     god_files = set()
@@ -291,8 +307,13 @@ def _compute_file_health_scores(conn, G=None):
             "WHERE (gm.in_degree + gm.out_degree) > 20"
         ).fetchall()
         god_files = {r["file_id"] for r in god_rows}
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning(
+            "_compute_file_health_scores: god-component query failed (%s: %s); "
+            "Factor 4 (god component) will read as zero across all files",
+            type(exc).__name__,
+            exc,
+        )
 
     # Dead exports per file
     dead_by_file = {}
@@ -310,8 +331,13 @@ def _compute_file_health_scores(conn, G=None):
             total = r["total_exports"] or 1
             dead = r["dead"] or 0
             dead_by_file[r["file_id"]] = dead / total
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning(
+            "_compute_file_health_scores: dead-export query failed (%s: %s); "
+            "Factor 5 (dead export ratio) will read as zero across all files",
+            type(exc).__name__,
+            exc,
+        )
 
     # File stats (churn, complexity, entropy)
     stats = {}
@@ -1099,7 +1125,20 @@ class Indexer:
                 return []
             rows = conn.execute("SELECT * FROM annotations").fetchall()
             result = [dict(r) for r in rows]
-        except Exception:
+        except Exception as exc:
+            # Pattern-2 lineage: this is a data-loss path. force-reindex is
+            # about to unlink the DB (see _reset_index_for_force, ~line 1158);
+            # if we silently return [] here, user annotations vanish with no
+            # signal. Emit a WARN so an operator can see WHY annotations went
+            # missing after a force rebuild.
+            log.warning(
+                "_backup_annotations: failed to read annotations from %s "
+                "(%s: %s); force-reindex may proceed and existing annotations "
+                "will not be restored",
+                db_path,
+                type(exc).__name__,
+                exc,
+            )
             return []
         finally:
             if conn is not None:
@@ -1119,8 +1158,18 @@ class Indexer:
                 json.dumps(result, default=str),
                 encoding="utf-8",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            # Pattern-2 lineage: secondary crash-safety backup failed. The
+            # primary in-memory copy is still returned for restore, but the
+            # on-disk JSON safety net is now empty — warn so an operator who
+            # later relies on the JSON backup learns why it's missing.
+            log.warning(
+                "_backup_annotations: failed to write JSON crash-safety backup "
+                "to %s (%s: %s); in-memory restore path is still active",
+                backup_path,
+                type(exc).__name__,
+                exc,
+            )
 
         return result
 

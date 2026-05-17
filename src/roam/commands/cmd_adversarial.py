@@ -73,29 +73,50 @@ def _challenge(ctype, severity, title, description, question, location=None):
 # ---------------------------------------------------------------------------
 
 
-def _check_new_cycles(conn, changed_sym_ids):
-    """Check if changed symbols are part of any SCC (cycle)."""
+def _check_new_cycles(conn, changed_sym_ids, status=None):
+    """Check if changed symbols are part of any SCC (cycle).
+
+    ``status``: optional mutable dict; when provided, the helper records
+    its run state as ``status["new_cycles"] = "ran" | "skipped:<reason>"
+    | "errored:<ExcClass>"``. This is the Pattern-2 (silent fallback)
+    guard at the orchestration boundary — the verdict-builder can then
+    refuse to emit ``"changes look clean"`` when a check silently
+    degraded. Helpers stay structurally unchanged when ``status`` is
+    None so out-of-tree callers keep working.
+    """
     challenges = []
     if not changed_sym_ids:
+        if status is not None:
+            status["new_cycles"] = "skipped:no_changed_symbols"
         return challenges
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import find_cycles
     except ImportError:
+        if status is not None:
+            status["new_cycles"] = "skipped:missing_graph_module"
         return challenges
 
     try:
         G = build_symbol_graph(conn)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        if status is not None:
+            status["new_cycles"] = f"errored:build_symbol_graph:{type(exc).__name__}"
         return challenges
 
     if len(G) == 0:
+        if status is not None:
+            status["new_cycles"] = "skipped:empty_graph"
         return challenges
 
     try:
         sccs = find_cycles(G, min_size=2)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        if status is not None:
+            status["new_cycles"] = f"errored:find_cycles:{type(exc).__name__}"
         return challenges
+    if status is not None:
+        status["new_cycles"] = "ran"
 
     for scc in sccs:
         overlap = set(scc) & changed_sym_ids
@@ -134,29 +155,45 @@ def _check_new_cycles(conn, changed_sym_ids):
     return challenges
 
 
-def _check_layer_violations(conn, changed_sym_ids):
-    """Check if changed symbols violate layer boundaries (gap > 1)."""
+def _check_layer_violations(conn, changed_sym_ids, status=None):
+    """Check if changed symbols violate layer boundaries (gap > 1).
+
+    See :func:`_check_new_cycles` for ``status`` semantics (Pattern-2
+    silent-fallback guard).
+    """
     challenges = []
     if not changed_sym_ids:
+        if status is not None:
+            status["layer_violations"] = "skipped:no_changed_symbols"
         return challenges
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.layers import detect_layers
     except ImportError:
+        if status is not None:
+            status["layer_violations"] = "skipped:missing_graph_module"
         return challenges
 
     try:
         G = build_symbol_graph(conn)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        if status is not None:
+            status["layer_violations"] = f"errored:build_symbol_graph:{type(exc).__name__}"
         return challenges
 
     if len(G) == 0:
+        if status is not None:
+            status["layer_violations"] = "skipped:empty_graph"
         return challenges
 
     try:
         layers = detect_layers(G)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        if status is not None:
+            status["layer_violations"] = f"errored:detect_layers:{type(exc).__name__}"
         return challenges
+    if status is not None:
+        status["layer_violations"] = "ran"
 
     seen = set()
     for sid in changed_sym_ids:
@@ -203,20 +240,31 @@ def _check_layer_violations(conn, changed_sym_ids):
     return challenges
 
 
-def _check_anti_patterns(conn, changed_file_ids):
-    """Run anti-pattern detectors scoped to changed files."""
+def _check_anti_patterns(conn, changed_file_ids, status=None):
+    """Run anti-pattern detectors scoped to changed files.
+
+    See :func:`_check_new_cycles` for ``status`` semantics.
+    """
     challenges = []
     if not changed_file_ids:
+        if status is not None:
+            status["anti_patterns"] = "skipped:no_changed_files"
         return challenges
     try:
         from roam.catalog.detectors import run_detectors
     except ImportError:
+        if status is not None:
+            status["anti_patterns"] = "skipped:missing_detectors_module"
         return challenges
 
     try:
         findings = run_detectors(conn)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        if status is not None:
+            status["anti_patterns"] = f"errored:run_detectors:{type(exc).__name__}"
         return challenges
+    if status is not None:
+        status["anti_patterns"] = "ran"
 
     changed_fids = set(changed_file_ids)
 
@@ -251,29 +299,44 @@ def _check_anti_patterns(conn, changed_file_ids):
     return challenges
 
 
-def _check_cross_cluster(conn, changed_sym_ids):
-    """Check for cross-cluster edges introduced by changed symbols."""
+def _check_cross_cluster(conn, changed_sym_ids, status=None):
+    """Check for cross-cluster edges introduced by changed symbols.
+
+    See :func:`_check_new_cycles` for ``status`` semantics.
+    """
     challenges = []
     if not changed_sym_ids:
+        if status is not None:
+            status["cross_cluster"] = "skipped:no_changed_symbols"
         return challenges
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.clusters import detect_clusters
     except ImportError:
+        if status is not None:
+            status["cross_cluster"] = "skipped:missing_graph_module"
         return challenges
 
     try:
         G = build_symbol_graph(conn)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        if status is not None:
+            status["cross_cluster"] = f"errored:build_symbol_graph:{type(exc).__name__}"
         return challenges
 
     if len(G) == 0:
+        if status is not None:
+            status["cross_cluster"] = "skipped:empty_graph"
         return challenges
 
     try:
         clusters = detect_clusters(G)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        if status is not None:
+            status["cross_cluster"] = f"errored:detect_clusters:{type(exc).__name__}"
         return challenges
+    if status is not None:
+        status["cross_cluster"] = "ran"
 
     if not clusters:
         return challenges
@@ -329,26 +392,37 @@ def _check_cross_cluster(conn, changed_sym_ids):
     return challenges
 
 
-def _check_orphaned_symbols(conn, changed_sym_ids):
+def _check_orphaned_symbols(conn, changed_sym_ids, status=None):
     """Check for symbols in changed files with zero incoming edges.
 
     single batched query for in-degree + symbol metadata
     instead of two queries per changed symbol.
+
+    See :func:`_check_new_cycles` for ``status`` semantics.
     """
     challenges = []
     if not changed_sym_ids:
+        if status is not None:
+            status["orphaned_symbols"] = "skipped:no_changed_symbols"
         return challenges
 
     sid_list = list(changed_sym_ids)
     # One query per batch instead of two queries per symbol.
-    rows = batched_in(
-        conn,
-        "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start, "
-        "       (SELECT COUNT(*) FROM edges WHERE target_id = s.id) AS in_degree "
-        "  FROM symbols s JOIN files f ON s.file_id = f.id "
-        " WHERE s.id IN ({ph})",
-        sid_list,
-    )
+    try:
+        rows = batched_in(
+            conn,
+            "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start, "
+            "       (SELECT COUNT(*) FROM edges WHERE target_id = s.id) AS in_degree "
+            "  FROM symbols s JOIN files f ON s.file_id = f.id "
+            " WHERE s.id IN ({ph})",
+            sid_list,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if status is not None:
+            status["orphaned_symbols"] = f"errored:batched_in:{type(exc).__name__}"
+        return challenges
+    if status is not None:
+        status["orphaned_symbols"] = "ran"
     sym_by_id = {r["id"]: r for r in rows if r["in_degree"] == 0}
 
     for sid in changed_sym_ids:
@@ -387,24 +461,36 @@ def _check_orphaned_symbols(conn, changed_sym_ids):
     return challenges
 
 
-def _check_high_fan_out(conn, changed_sym_ids):
-    """Check for changed symbols with unusually high fan-out (>10 outgoing edges)."""
+def _check_high_fan_out(conn, changed_sym_ids, status=None):
+    """Check for changed symbols with unusually high fan-out (>10 outgoing edges).
+
+    See :func:`_check_new_cycles` for ``status`` semantics.
+    """
     challenges = []
     if not changed_sym_ids:
+        if status is not None:
+            status["high_fan_out"] = "skipped:no_changed_symbols"
         return challenges
 
     _FAN_OUT_THRESHOLD = 10
 
     # single batched query for fan-out + metadata.
     sid_list = list(changed_sym_ids)
-    rows = batched_in(
-        conn,
-        "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start, "
-        "       (SELECT COUNT(*) FROM edges WHERE source_id = s.id) AS fan_out "
-        "  FROM symbols s JOIN files f ON s.file_id = f.id "
-        " WHERE s.id IN ({ph})",
-        sid_list,
-    )
+    try:
+        rows = batched_in(
+            conn,
+            "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start, "
+            "       (SELECT COUNT(*) FROM edges WHERE source_id = s.id) AS fan_out "
+            "  FROM symbols s JOIN files f ON s.file_id = f.id "
+            " WHERE s.id IN ({ph})",
+            sid_list,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if status is not None:
+            status["high_fan_out"] = f"errored:batched_in:{type(exc).__name__}"
+        return challenges
+    if status is not None:
+        status["high_fan_out"] = "ran"
     sym_by_id = {r["id"]: r for r in rows if r["fan_out"] > _FAN_OUT_THRESHOLD}
 
     for sid in changed_sym_ids:
@@ -686,13 +772,18 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # ------------------------------------------------------------------
         # Run all challenge generators
         # ------------------------------------------------------------------
+        # SYNTHESIS Pattern 2 (silent fallback) — each helper records its
+        # outcome in ``check_status``; the verdict-builder refuses to emit
+        # "changes look clean" when any check errored. Same shape as the
+        # W832 cmd_critique guard and the X4 cmd_pr_prep guard.
+        check_status: dict[str, str] = {}
         challenges: list[dict] = []
-        challenges.extend(_check_new_cycles(conn, changed_sym_ids))
-        challenges.extend(_check_layer_violations(conn, changed_sym_ids))
-        challenges.extend(_check_anti_patterns(conn, changed_file_ids))
-        challenges.extend(_check_cross_cluster(conn, changed_sym_ids))
-        challenges.extend(_check_orphaned_symbols(conn, changed_sym_ids))
-        challenges.extend(_check_high_fan_out(conn, changed_sym_ids))
+        challenges.extend(_check_new_cycles(conn, changed_sym_ids, status=check_status))
+        challenges.extend(_check_layer_violations(conn, changed_sym_ids, status=check_status))
+        challenges.extend(_check_anti_patterns(conn, changed_file_ids, status=check_status))
+        challenges.extend(_check_cross_cluster(conn, changed_sym_ids, status=check_status))
+        challenges.extend(_check_orphaned_symbols(conn, changed_sym_ids, status=check_status))
+        challenges.extend(_check_high_fan_out(conn, changed_sym_ids, status=check_status))
 
         # ------------------------------------------------------------------
         # Filter by minimum severity

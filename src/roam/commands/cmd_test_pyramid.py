@@ -86,11 +86,23 @@ def test_pyramid(ctx) -> None:
     verdict = _verdict(counts)
 
     if json_mode:
+        # W807 Pattern-2 empty-corpus disclosure: when the test corpus is
+        # degenerate (no test files indexed) the verdict already names the
+        # state via ``_verdict`` ("no test files indexed"), but the
+        # summary doesn't otherwise mark this run as partial. Stamp
+        # partial_success + closed-enum state so downstream CI consumers
+        # can distinguish "OK pyramid" from "no tests to count". LAW 4:
+        # terminal anchor ``indexed`` (past participle) is in the
+        # concrete-noun set.
+        summary: dict = {"verdict": verdict, "total": total, **counts}
+        if total == 0:
+            summary["partial_success"] = True
+            summary["state"] = "no_test_files"
         click.echo(
             to_json(
                 json_envelope(
                     "test-pyramid",
-                    summary={"verdict": verdict, "total": total, **counts},
+                    summary=summary,
                     counts=counts,
                     samples=samples,
                 )

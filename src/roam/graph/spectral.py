@@ -12,6 +12,7 @@ Key functions:
 from __future__ import annotations
 
 import math
+import warnings
 from collections import defaultdict
 
 import networkx as nx
@@ -128,14 +129,29 @@ def _bisect_recursive(UG, nodes, max_depth, depth, partition_map, counter):
 
 
 def _compute_algebraic_connectivity(G: nx.Graph) -> float:
-    """Return algebraic connectivity (lambda2) of G, or 0.0 on failure."""
+    """Return algebraic connectivity (lambda2) of G, or 0.0 on failure.
+
+    The 0.0 return is overloaded across three cases:
+      * ``len(G) < 2`` — domain-legitimate (trivial graph).
+      * ``not nx.is_connected(G)`` — domain-legitimate (disconnected).
+      * scipy missing / eigensolver crash — compute-unavailable; emits a
+        ``RuntimeWarning`` so the lineage isn't silent. ``fiedler_partition``
+        treats 0.0 as "stop bisecting" which is the right *behaviour* on
+        compute failure even though the *signal* is now degraded.
+    """
     if len(G) < 2:
         return 0.0
     if not nx.is_connected(G):
         return 0.0
     try:
         return float(nx.linalg.algebraicconnectivity.algebraic_connectivity(G))
-    except Exception:
+    except Exception as exc:
+        warnings.warn(
+            f"_compute_algebraic_connectivity failed ({type(exc).__name__}): {exc}; "
+            "returning 0.0 sentinel — bisection will halt at this subgraph",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
         return 0.0
 
 
