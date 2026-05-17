@@ -81,7 +81,6 @@ def _match_glob(path: str, pattern: str | None) -> bool:
 # covers all of those via ``test_conventions.is_test_file``.
 from roam.commands.changed_files import is_test_file as _is_test_path
 
-
 # ``_parse_param_names`` is imported from ``roam._signature_utils`` at
 # the top of this module (W856 hoist — was duplicated in
 # ``analysis/taint.py``).

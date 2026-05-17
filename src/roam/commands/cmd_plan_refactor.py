@@ -24,6 +24,8 @@ from roam.commands.context_helpers import (
     get_blast_radius,
     get_graph_metrics,
     get_symbol_metrics,
+)
+from roam.commands.context_helpers import (
     summarize_tests as _summarize_tests,
 )
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
@@ -36,7 +38,6 @@ from roam.output.formatter import (
     to_json,
 )
 from roam.output.metric_definitions import CALLER_METRIC_RAW
-
 
 # ``_summarize_tests`` is imported from ``context_helpers`` at the top
 # of this module (W856 hoist — was duplicated in cmd_guard).

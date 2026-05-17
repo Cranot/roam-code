@@ -23,7 +23,11 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
     git_changed_files_against_ref as _git_changed_files,
+)
+from roam.commands.changed_files import (
     git_show_at_ref as _git_show,
+)
+from roam.commands.changed_files import (
     parse_source_with_grammar as _parse_source_bytes,
 )
 from roam.commands.resolve import ensure_index

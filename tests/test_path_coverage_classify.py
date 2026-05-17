@@ -25,7 +25,6 @@ from roam.commands.cmd_path_coverage import (
     _suggest_test_points,
 )
 
-
 # ---------------------------------------------------------------------------
 # _classify_risk — closed-enum band assignment
 # ---------------------------------------------------------------------------
