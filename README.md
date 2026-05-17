@@ -14,6 +14,8 @@
 
 <sub>241 commands · 224 MCP tools (57 in the default `core` preset) · 28 languages</sub>
 
+![roam terminal demo](docs/assets/roam-terminal-demo.gif)
+
 </div>
 
 ---
@@ -430,6 +432,9 @@ roam health
 | `roam evidence-diff <old> <new>` | Diff two `ChangeEvidence` packets: hash drift, schema drift, added/removed refs, missing/new findings, 8-question completeness regressions vs improvements |
 | `roam evidence-doctor [PACKET]` | Read-only health diagnostic for a `ChangeEvidence` packet: schema validity, content-hash integrity, W259 completeness banner (STRONG / PARTIAL / INSUFFICIENT), suggested producer to lift the lowest-scoring question |
 | `roam evidence-oscal` | Emit OSCAL v1.2 Control Mapping (or Assessment Results with --kind assessment-results). |
+| `roam boundary [--changed-range R] [--json]` | Detect cross-layer boundary violations: wrong-direction imports, public-by-accident exports, and layer-boundary import cycles |
+| `roam compatibility [--baseline B] [--json]` | Compare current API surface against a baseline JSON snapshot: classify each symbol as added / removed / breaking-change / non-breaking-change |
+| `roam test-hermeticity [--json]` | Detect non-hermetic tests: tests that depend on wallclock, env vars, network, or filesystem state outside the test fixture root |
 | `roam api-changes [REV_RANGE]` | API change classifier: breaking/non-breaking changes, severity, and affected contracts |
 | `roam semantic-diff [REV_RANGE]` | Structural change summary: symbols added/removed/modified and changed call edges |
 | `roam test-gaps [REV_RANGE]` | Changed-symbol test gap detection: what changed and what still lacks test coverage |
