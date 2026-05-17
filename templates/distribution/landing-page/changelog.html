@@ -75,6 +75,180 @@
 <!-- BEGIN auto-changelog -->
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
+<h2>[Unreleased]</h2>
+<h3>Added — W1103-arc + W489-family-closed + capability-invariants + structured_unknown_filter-FULLY-CLOSED + symmetric-emission-COMPLETE batch (post-CONSOLIDATE-21, 2026-05-17 /loop iteration N+22)</h3>
+<p>&gt; <strong>~17 SHIPPED + 3 BAIL/SHIPPED + 1 RESEARCH MEMO + 2 REAL BUGS &gt; fixed across 7 themes: regex CLI toggle (W421), taint qualified_only &gt; lint family FULLY CLOSED (W489-A + W489-A-followup), capability-axis &gt; invariant lint + 2 REAL BUGS fixed (W365 family), <code>structured_unknown_filter</code> &gt; family FULLY CLOSED (W1083-followup-3 multi-value sibling), &gt; symmetric-emission family COMPLETE (W1100 + W1101 + W1102), 2 &gt; test-rot diagnoses (W844-drive-by-2 + W1084), and pruning + W1117 &gt; placeholder family FULLY CLOSED (W507 + W1117-followup-4).</strong> Plus 5 &gt; stale-BACKLOG hits doc-pinned (W844 + W1007 + W1008 + W851 + W414b) &gt; — discipline rule re-affirmed at operational cadence.</p>
+<ul>
+<li><strong>W421</strong> — feat(cli): <code>-E/--regexp</code> flag on <code>roam history-grep</code> + <code>roam refs-text</code>; regex toggle threaded to underlying matcher. +25 LOC; 53 tests pass.</li>
+<li><strong>W489-A + W489-A-followup</strong> — feat(taint): qualified_only lint wired into envelope on <code>cmd_taint</code> (Option A: catch_warnings capture) + helper hoisted to shared <code>src/roam/security/taint_rules_lint.py</code> + wired on <code>cmd_cga</code>. 62 + 107 tests pass. <strong>W489 family fully closed.</strong></li>
+<li><strong>W365 family</strong> — test(mcp-lint): <code>_TOOL_METADATA</code> ↔ ToolAnnotations parity lint + 3rd-surface capability-registry cross-check (2854 pass) + 3 logical-entailment invariants (destructive→NOT ai_safe; deprecated↔maturity; task_required→mcp_expose; 46 pass). <strong>Entailment surface exhausted.</strong></li>
+<li><strong>W1083-followup-3</strong> — feat(structured_unknown_filter): multi-value <code>structured_unknown_filter_many</code> sibling + <code>cmd_math</code> + <code>cmd_smells</code> migration; +302 helper / +113-53 cmd_math / +193-42 cmd_smells / +336 tests; 366 broader pass. <strong><code>structured_unknown_filter</code> family FULLY CLOSED</strong> (single + multi + CLI dispatcher).</li>
+<li><strong>W1083-RESEARCH</strong> — docs(research): multi-value helper design memo at <code>dev/W1083-RESEARCH-multi-value-2026-05-17.md</code>.</li>
+<li><strong>W1117-followup-4</strong> — feat(help): final 2 placeholder normalizations on <code>cmd_clones</code>; <strong>W1117 family fully closed</strong> — ~32 normalizations across 5-wave arc.</li>
+</ul>
+<h3>Fixed — W1103-arc batch</h3>
+<ul>
+<li><strong>W365-followup</strong> — fix(capability): <code>roam_reset</code> + <code>roam_clean</code> destructive flag corrected at the capability-decorator layer (2 REAL BUGS surfaced by W365 parity lint). +9/-10 LOC + 85 LOC test; 42 pass.</li>
+<li><strong>W1100</strong> — fix(envelope): <code>partial_success: true</code> on malformed <code>agent_contract:[]</code> (sibling to the CONSOLIDATE-21 <code>schema_violations[]</code> envelope-root ship). +30 LOC; 6 new + 142 broader pass.</li>
+<li><strong>W1101 + W1102</strong> — fix(envelope): symmetric <code>list_counts: {}</code> + <code>preserved_list_truncations</code> always-emit on zero-cardinality paths. +14 effective LOC; 369 + 381 pass. <strong>Symmetric-emission family complete</strong> across the 3 envelope-root array slots.</li>
+<li><strong>W507</strong> — fix(enum): prune dead <code>'self-hosted'</code> enum value (0 consumers). 91 tests pass.</li>
+<li><strong>W1084</strong> — fix(test): refresh <code>test_test_scaffold_unknown_symbol_passes_through</code> for W1278a Pattern-2c migration; 39/39 pass sequential + parallel. W-number-collision target separate from the W1084 cmd_ai_readiness / cmd_fitness arc at CONSOLIDATE-20.</li>
+<li><strong>W844-drive-by-2</strong> — fix(docs): 3 stale README-headline references swept across tests + docs. 186 tests pass.</li>
+</ul>
+<h3>Changed — W1103-arc batch</h3>
+<ul>
+<li><strong><code>structured_unknown_filter</code> family FULLY CLOSED</strong> — the helper-substrate arc that opened at CONSOLIDATE-18 (W1068-W1083 Phase 2) and propagated through CONSOLIDATE-21 (W1083-followup Phase 3) closes cleanly at CONSOLIDATE-22 with the W1083-followup-3 multi-value sibling. Single + multi + CLI dispatcher all aligned on the same <code>did_you_mean: [...]</code> envelope shape.</li>
+<li><strong>Symmetric-emission family COMPLETE</strong> — the 3 envelope-root array slots that previously omitted on zero-cardinality paths (<code>list_counts</code> + <code>preserved_list_truncations</code> + <code>schema_violations</code>) now always-emit <code>{}</code> / <code>[]</code> for envelope-shape symmetry. Pairs with the W1101 CONSOLIDATE-21 ship — this batch verifies the symmetry across the family.</li>
+<li><strong>W489 qualified_only family FULLY CLOSED</strong> — the taint qualified_only lint that opened at W489 propagates end-to-end: lint wired into envelope on <code>cmd_taint</code> (Option A catch_warnings); helper hoisted to shared <code>src/roam/security/taint_rules_lint.py</code>; <code>cmd_cga</code> wired alongside.</li>
+<li><strong>W1117 placeholder family FULLY CLOSED</strong> — the <code>[VALUE]</code> → <code>&lt;value&gt;</code> normalization sweep that opened at CONSOLIDATE-21 closes the final 2 sites on <code>cmd_clones</code>; ~32 normalizations across the 5-wave arc.</li>
+<li><strong>Capability-axis entailment surface EXHAUSTED</strong> — the 3 logical-entailment invariants (W365-followup-2) close the capability-decorator surface; 2 REAL BUGS fixed at the surface (W365-followup).</li>
+<li><strong>BACKLOG-drift discipline re-affirmed</strong> — 5 stale-pending hits this session (W844 + W1007 + W1008 + W851 + W414b); all 5 doc-pinned SHIPPED-PRE-CONSOLIDATE-22 with retro note. Discipline rule from CONSOLIDATE-21 holds: verify code state before dispatching from a <code>[pending]</code> flag alone.</li>
+</ul>
+<h3>Added — W1067 → W1102 arc batch (post-CONSOLIDATE-20, 2026-05-17 /loop iteration N+21)</h3>
+<p>&gt; <strong>~30 completions consolidating the W1067 → W1102 wave-arc.</strong> Seven &gt; themes carry the batch: Pattern-1D helper Phase 2/3 propagation &gt; (7 callsites), W1142 cap-hit disclosure family closure (7 commands), &gt; Pattern 3a severity widening on cmd_smells + cmd_adversarial (family &gt; TERMINAL), W1117 placeholder normalization sweep (22 commands), &gt; symmetric envelope emission (W1100 + W1101), W350 OSCAL &gt; authority_refs projection (closes evidence-question Q2 coverage), &gt; and permit-vs-lease asymmetry documented in CLAUDE.md (W1071).</p>
+<ul>
+<li><strong>W1142-followup-A/-B</strong> — feat(disclosure): cap-hit on 7 list-truncating commands (cmd_clones + cmd_debt + cmd_recommend + cmd_test_impact + cmd_supply_chain + cmd_agent_score + cmd_runs). Canonical em-dash text uniform across all 7. cmd_search_semantic BAILED.</li>
+<li><strong>W1068-W1083 + W1083-followup</strong> — feat(filter): structured "did you mean X?" suggestions across 7 unknown-name handlers (5 adopt <code>structured_unknown_filter</code> + 2 adopt <code>to_summary_payload</code>).</li>
+<li><strong>W350</strong> — feat(evidence): OSCAL Assessment Results projects <code>authority_refs[]</code> as EXAMINE observations; closes evidence-question Q2 coverage on the OSCAL projection axis.</li>
+<li><strong>W1005 + W1005-followup-B</strong> — feat(severity): <code>cmd_smells</code> + <code>cmd_adversarial</code> accept the W547 7-token canonical severity vocabulary. <strong>Pattern 3a severity family TERMINAL.</strong></li>
+<li><strong>W1117 + W1117-followup-2/-3</strong> — feat(help): 22 commands normalize <code>[VALUE]</code> → <code>&lt;value&gt;</code> placeholder convention end-to-end.</li>
+</ul>
+<h3>Fixed — W1067 → W1102 arc batch</h3>
+<ul>
+<li><strong>W1100 + W1101</strong> — fix(envelope): symmetric <code>list_counts: {}</code> emission on zero-truncation paths + <code>schema_violations[]</code> envelope-root surfacing on malformed <code>agent_contract:[]</code>.</li>
+<li><strong>W844-drive-by</strong> — fix(docs): README hero <code>pytest tests/test_basic.py</code> example rotted by W405 shallow-git default; refreshed.</li>
+<li><strong>W844-drive-by-2</strong> — fix(docs): 3 stale headline references swept across README + landing-page + docs.</li>
+<li><strong>W414d</strong> — bail(probes): git_repo + python_project module-scope BAIL-BOTH; both probes are structurally inapplicable at module scope (captured with rationale).</li>
+</ul>
+<h3>Changed — W1067 → W1102 arc batch</h3>
+<ul>
+<li><strong>Pattern 3a severity family TERMINAL</strong> — the W1005 arc that opened at CONSOLIDATE-18 with cmd_smells primary + cmd_llm_smells followup-A now sweeps cmd_adversarial as the third (and final) high-signal site. All three commands accept the W547 7-token canonical severity vocabulary (info / low / medium / high / critical / blocker / unknown).</li>
+<li><strong>CLAUDE.md "Permit-vs-lease expiry-filtering asymmetry (W1067)" sub-section</strong> — codifies why permits load expired entries (audit-completeness semantic — proof that authority was exercised at the time the bundle was emitted) and leases filter them (live conflict-resolution semantic — an expired lease no longer holds a subject).</li>
+<li><strong>BACKLOG-drift discipline codified</strong> — W1007 / W1008 / W844 / W1100 surfaced as shipped-but-pending instances; discipline rule going forward: verify code state before dispatching from a <code>[pending]</code> flag alone.</li>
+</ul>
+<h3>Added — W1086-arc + Wave-B-TERMINAL + W478 + Pattern-1A-family batch (post-CONSOLIDATE-19, 2026-05-17 /loop iteration N+20)</h3>
+<p>&gt; <strong>~20 completions since CONSOLIDATE-19 (Section 65).</strong> SARIF &gt; dashboard family TERMINAL milestone — the W1062 + W1062-followup &gt; trio + W1062-followup-2/3/4 fan-out + W1087 lint substitute arc &gt; that kicked off at CONSOLIDATE-18 closes cleanly across 12 wired &gt; emitters + 39 catalogued emitters end-to-end. Four themes carry &gt; the batch: (a) <strong>SARIF dashboard family TERMINAL</strong> at 12 wired &gt; emitters + W1087 lint substitute (W1062-followup-3 + &gt; W1062-followup-4 wire 6 more emitters; W1087 catalogues 13 WIRED &gt; + 26 EXEMPT = 39 emitters end-to-end). (b) <strong>MCP outputSchema &gt; 13-tool Wave B TERMINAL carry-forward + Wave C1 implementation &gt; kickoff</strong> — Wave C1 lands the first compat-profile env-vars &gt; (<code>ROAM_MCP_COMPAT_STRIP_OUTPUT_SCHEMA</code> + <code>ROAM_MCP_COMPAT_STRICT</code>) &gt; plus a sidecar hoist drive-by; pairs with the new &gt; MCP-COMPAT-PROFILE-ROADMAP planning memo. (c) <strong>Pattern-2 + &gt; Pattern-1A empty-state arc closure</strong> — 8 detectors + 2 hard-cap &gt; commands sealed (W805-followup-bundle + W1085 + W1086 + W1084). &gt; (d) <strong>3 research memos drafted across the arc</strong> — MCP-COMPAT- &gt; PROFILE-ROADMAP new this session, MCP-OUTPUTSCHEMA-EVOLUTION + &gt; DETECTOR-FP-RATE-METHODOLOGY carry-forward. Plus 10 stand-alone &gt; polish items (W365 + W459 + W478 + W844 + W847 + W759 + W986 + &gt; W462 + W1088 + W1038) + 1 BAIL (W851). Parallel in stature to &gt; the Wave B TERMINAL milestone that CONSOLIDATE-19 carried.</p>
+<ul>
+<li><strong>W1062-followup-3</strong> — feat(sarif): wire <code>_derive_finding_tags()</code> on <code>clones_to_sarif</code> + <code>smells_to_sarif</code> + <code>over_fetch_to_sarif</code> (11 tests pass). <code>pr_risk_to_sarif</code> found N/A (deliberate W1147/W1148 omission).</li>
+<li><strong>W1062-followup-4</strong> — feat(sarif): wire <code>_derive_finding_tags()</code> on <code>n1_to_sarif</code> + <code>missing_index_to_sarif</code> + <code>orphan_imports_to_sarif</code> (12 tests pass; 12 emitters wired end-to-end). <strong>W1087 captured</strong> as substitute-rather-than-wire ship for the long tail.</li>
+<li><strong>W1087</strong> — feat(sarif-lint): NEW <code>tests/test_sarif_tag_coverage.py</code> (6 tests pass). Two-part PIN + ALLOWLIST drift guard; 13 WIRED + 26 EXEMPT = 39 emitters catalogued. <strong>SARIF dashboard family TERMINAL.</strong></li>
+<li><strong>Wave-C1</strong> — feat(mcp): MCP compat env-vars <code>ROAM_MCP_COMPAT_STRIP_OUTPUT_SCHEMA</code> + <code>ROAM_MCP_COMPAT_STRICT</code> (7 focused + 188 broader tests pass). <strong>Drive-by sidecar hoist</strong> — audit-metadata <code>_meta</code> block had escaped the fastmcp gate; hoisted to canonical wrapper path.</li>
+<li><strong>MCP-COMPAT-PROFILE-ROADMAP</strong> — docs(research): Wave-C planning memo at <code>(internal memo)</code> (compat-profile-emit + <code>roam mcp doctor</code> probe surface for client-side capability negotiation).</li>
+<li><strong>W805-followup-bundle</strong> — feat(detectors): Pattern-2 empty-state migration across 5 detectors (cmd_vibe_check + cmd_fingerprint + cmd_fan + cmd_dark_matter + cmd_conventions); 25 tests pass. Pattern-2 detector empty-state coverage now 8/8 effective sites.</li>
+<li><strong>W1085</strong> — feat(fingerprint): Pattern-1A hard-cap disclosure on <code>cmd_fingerprint</code> empty-state path (19 tests pass; W-number-collision target separate from the W1085 cmd_fitness arc).</li>
+<li><strong>W1086</strong> — feat(cut): Pattern-1A hard-cap disclosure on <code>cmd_cut</code> empty-state path (4 tests pass; mirror to W1085 fingerprint).</li>
+<li><strong>W365</strong> — test(mcp-lint): NEW CI lint cross-check <code>_TOOL_METADATA</code> ↔ ToolAnnotations (10 tests pass). Finding: ToolAnnotations FULLY wired today — W363 materially less critical than the -18 audit feared.</li>
+<li><strong>W986</strong> — docs(claude-md): codify "First hypothesis" test-failure-triage discipline rule (W978 + W851 + W1005 incidents cited as worked examples).</li>
+<li><strong>W462</strong> — test(landing): NEW landing-page tool-count drift-guard test (11 integers asserted across header/body/footer/docs/about; 1 pass).</li>
+<li><strong>W844</strong> — feat(build): auto-rotate <code>_EXPECTED_CARD_SHA256</code> in <code>dev/build_readme_counts.py</code> (10 tests pass; <strong>closes W1308 manual-sync gap</strong> as a drive-by).</li>
+<li><strong>W1038</strong> — feat(yaml-loader): NEW <code>extract_typed</code> helper + <code>validator</code> kwarg follow-up (4 callsites migrated; 11 + 447 tests pass; cmd_alerts:961 <code>== 0</code> clause clarification — NOT dead code).</li>
+</ul>
+<h3>Fixed — W1086-arc + Wave-B-TERMINAL + W478 + Pattern-1A-family batch</h3>
+<ul>
+<li><strong>W1084</strong> — fix(ai-readiness): <code>cmd_ai_readiness</code> denominator-clamp probe-breaking fix — clamped to minimum-1 floor with insufficient-data disclosure (10 tests pass; W-number-collision target separate from the W1084 cmd_fitness arc).</li>
+<li><strong>W478</strong> — fix(tests): 4 SQLite fd-leak fixes in <code>_make_db()</code> test helpers — wrapped each in try/finally + explicit <code>conn.close()</code> (135 tests pass).</li>
+<li><strong>W459</strong> — refactor(mcp): normalize 17 MCP wrappers to <code>description=</code> kwarg for AST-walk consistency (2895 tests pass; carry-forward W449/W458/W459/W460 batch).</li>
+<li><strong>W847</strong> — fix(preflight): cmd_preflight UPPER-case scope clarification — W759 scope reduced 86% (30 → 4 sites).</li>
+<li><strong>W759</strong> — fix(envelope): 4 envelope-slot UPPER-case sites cleaned across cmd_preflight (13 tests pass; W762 cmd_preflight allowlist now empty).</li>
+<li><strong>W1088</strong> — fix(preflight): cmd_preflight <code>_SEVERITY_ORDER</code> lookup-miss belt-and-suspenders fix — lower-case canonical + UPPER-case aliases + <code>.lower()</code> at lookup (64 tests pass; W-number-collision target separate from the W1088 CI hardening arc).</li>
+<li><strong>W851 BAIL</strong> — verify(tests): <code>test_w596_confidence_level_rank_round_trip</code> pre-existing failure, not reproducible in isolation; likely cross-worker <code>warnings.resetwarnings()</code> leak under xdist; captured for re-triage.</li>
+</ul>
+<h3>Changed — W1086-arc + Wave-B-TERMINAL batch</h3>
+<ul>
+<li><strong>SARIF dashboard family TERMINAL</strong> — the W1062 + W1062-followup + W1062-followup-2/3/4 fan-out + W1087 lint substitute arc closes cleanly. 12 wired emitters + 27 exempt (compound aggregators + thin advisories + invocation-scoped signals exempted by rationale) = 39 catalogued emitters pinned end-to-end. The W1062-followup-4 substitute-rather-than-wire recommendation realized.</li>
+<li><strong>MCP outputSchema roadmap</strong> — Wave B TERMINAL closes the W767 5-wave specialized-schema propagation (CONSOLIDATE-19); Wave C1 opens the compat-profile arc at the env-var tier. Wave C2+ (<code>roam mcp doctor</code> probe surface) queues as the next MCP-roadmap milestone.</li>
+<li><strong>Pattern-2 + Pattern-1A empty-state arc</strong> — closes at 8 detectors + 2 hard-cap commands sealed. Pattern-2 detector empty-state coverage now 8/8 effective sites; the 2 Pattern-1A hard-cap disclosure fixes (W1085 fingerprint + W1086 cut) follow the mirror-fix template established by the W1085 cmd_fitness SARIF advisory-plumb arc at CONSOLIDATE-17.</li>
+<li><strong>Research-memo cluster</strong> — MCP outputSchema + compat-profile + FP-rate research memos now span 3 dated memos (one per consolidation pass since -18): MCP-OUTPUTSCHEMA-EVOLUTION (-18), DETECTOR-FP-RATE-METHODOLOGY (-19), MCP-COMPAT-PROFILE-ROADMAP (-20).</li>
+</ul>
+<h3>Added — Wave-B-TERMINAL + W794 + W1028 + W805 batch (post-CONSOLIDATE-18, 2026-05-16 /loop iteration N+19)</h3>
+<p>&gt; <strong>~18 completions since CONSOLIDATE-18 (Section 64).</strong> Wave B &gt; TERMINAL milestone — the W767 5-wave outputSchema roadmap that &gt; kicked off at CONSOLIDATE-18 closes cleanly across 13 MCP tools + &gt; ~113 envelope-validation tests. Three themes carry the batch: &gt; (a) <strong>Wave B TERMINAL — 13 MCP tools specialized across 5 &gt; sub-ships</strong> (Wave B2 / B3 / B4 / B5-partial / B5b TERMINAL). &gt; (b) <strong>MCP server card SEP-2127 readiness (W794)</strong> — <code>icons[]</code> &gt; field across 4 .well-known path variants, carries the W792 + W793 &gt; work to a clean SEP-2127-ready posture. (c) <strong>Pattern-2 &gt; empty-state audit arc closure (W805)</strong> — 3 detectors migrated &gt; (cmd_test_hermeticity + cmd_llm_smells + cmd_boundary) + 5 &gt; followups captured + 1 real bug fixed (cmd_boundary SQL outside &gt; <code>with open_db</code> block). Plus 3 stand-alone polish items &gt; (W1061-followup-2 + W1008 carry-forward + the &gt; DETECTOR-FP-RATE-METHODOLOGY research memo). Parallel in stature &gt; to the W1255 architectural-decision-and-implementation arc that &gt; CONSOLIDATE-16 carried.</p>
+<ul>
+<li><strong>Wave-B2</strong> — feat(mcp): specialized <code>_SCHEMA_HEALTH</code> + <code>_SCHEMA_UNDERSTAND</code> outputSchemas on roam_health + roam_understand wrappers (25 tests pass).</li>
+<li><strong>Wave-B3</strong> — feat(mcp): bundled <code>_SCHEMA_ORACLE</code> across 6 oracle wrappers (37 tests pass; single shared schema for the uniform oracle envelope shape).</li>
+<li><strong>Wave-B4</strong> — feat(mcp): specialized <code>_SCHEMA_TIMELINE</code> + <code>_SCHEMA_TEST_IMPACT</code> outputSchemas on roam_timeline + roam_test_impact wrappers (7 tests pass).</li>
+<li><strong>Wave-B5-partial</strong> — feat(mcp): specialized <code>_SCHEMA_AUDIT_TRAIL_VERIFY</code> + <code>_SCHEMA_DIAGNOSE</code> outputSchemas (5 tests pass).</li>
+<li><strong>Wave-B5b</strong> — feat(mcp): <strong>TERMINAL.</strong> Specialized <code>_SCHEMA_FETCH_HANDLE</code> + <code>_SCHEMA_VALIDATE_PLAN</code> + <code>_SCHEMA_AUDIT_TRAIL_CONFORMANCE</code> outputSchemas (39 tests pass). Closes the W767 5-wave outputSchema roadmap end-to-end across 13 MCP tools.</li>
+<li><strong>W794</strong> — feat(mcp-card): wire <code>icons[]</code> field across 4 .well-known path variants — <code>mcp-server-card.json</code> + <code>.well-known/mcp-server-card</code> + SEP-1649 mirror + SEP-2127 mirror (22 tests pass; SEP-2127 ready).</li>
+<li><strong>W1028</strong> — feat(formatter): <code>_ALWAYS_PRESERVED_LIST_FIELDS</code> expansion audit — 4 candidates marked DEFER + drift-guard test pinning the current set (162 tests pass; carry-forward CONSOLIDATE-17 → -18 → -19).</li>
+<li><strong>W1008</strong> — feat(formatter): surface <code>list_counts</code> top-level in <code>strip_list_payloads</code> so callers see how many items were stripped when <code>--detail</code> is off (234 tests pass; carry-forward W1000 drive-by).</li>
+<li><strong>W1061-followup-2</strong> — refactor(sarif): extract <code>runtime_filter_disclosure()</code> shared helper from 4 SARIF callers (cmd_smells + cmd_check_rules + cmd_taint + cmd_vulns); -36 LOC consolidation (17 tests pass).</li>
+<li><strong>DETECTOR-FP-RATE-METHODOLOGY</strong> — docs(research): memo at <code>(internal memo)</code> (674 words, 12 sources cited; methodology for measuring detector false-positive rates).</li>
+</ul>
+<h3>Fixed — Wave-B-TERMINAL + W794 + W1028 + W805 batch</h3>
+<ul>
+<li><strong>W805</strong> — fix(detectors): Pattern-2 empty-state audit on cmd_test_hermeticity + cmd_llm_smells + cmd_boundary — all 3 detectors migrated to emit explicit <code>partial_success: true</code> on empty-state branches (13 tests pass; 5 followups captured as W805-followup-A/B/C/D/E).</li>
+<li><strong>W805 real-bug fix</strong> — fix(boundary): cmd_boundary had a SQL execution block outside the <code>with open_db</code> context manager (resource-leak-on-error path); fixed inline during the W805 Pattern-2 migration.</li>
+</ul>
+<h3>Changed — Wave-B-TERMINAL batch</h3>
+<ul>
+<li><strong>MCP outputSchema roadmap</strong> — Wave B TERMINAL. The W767 5-wave specialized-schema propagation that kicked off with Wave B1 (CONSOLIDATE-18) lands on 13 MCP tools end-to-end (~113 cumulative envelope-validation tests pass). Wave C (compatibility profile + <code>roam mcp doctor</code> probe) queues as the next major MCP-roadmap milestone.</li>
+<li><strong>MCP server card SEP-2127 readiness</strong> — W792 (3 .well-known path variants) + W793 (display_name → title rename) + W794 (icons[]) collectively land a clean SEP-2127-ready posture; W795 (<code>_meta</code> privacy posture stanza) remains BLOCKED on SEP-2127 upstream merge.</li>
+<li><strong>Pattern-2 empty-state audit arc</strong> — closes at W805. The W802 → W836 sweep (CONSOLIDATE-17 + -18) covered the bulk of the detector roster; W805 adds the 3 remaining branches (cmd_test_hermeticity + cmd_llm_smells + cmd_boundary). Pattern-2 empty-state coverage on the detector roster is structurally complete; the 5 captured followups are surface-level disclosure-consistency polish.</li>
+</ul>
+<h3>Added — W1275-W1312-arc + Wave-B1 + sarif-disclosure batch (post-CONSOLIDATE-17, 2026-05-16 /loop iteration N+18)</h3>
+<p>&gt; <strong>~15 completions since CONSOLIDATE-17 (Section 63).</strong> Fast-follow- &gt; through batch — 5 themes carry the dispatch tail: (a) Pattern-2c &gt; carry-forward closures (W1275 / W1276-fix / W1277 / W1278a / W1309 &gt; — the Pattern-2c CONSOLIDATE-16 → -17 → -18 chain closes cleanly, &gt; Pattern-2c roster now 31/31 effective). (b) SARIF dashboard- &gt; filtering trio (W1060 + W1061 + W1062 + 2 followups — OASIS 2.1.0 &gt; § 3.51 + § 3.52 + properties.tags[] plumbed across cmd_smells + &gt; cmd_check_rules + cmd_taint + cmd_vulns + cmd_health + cmd_complexity &gt; + secrets emitter). (c) MCP outputSchema roadmap kickoff (W767 &gt; inventory + Wave B1 specialized schemas on roam_impact + &gt; roam_preflight + W1311 decorator normalization + W1312 redundancy &gt; drops + the EVOLUTION research memo). (d) Pattern-1D file-substring &gt; disclosure (W1309). (e) Pattern-3a severity widening (W1005 + &gt; W1005-followup-A + W1007 <code>agent_contract:[]</code> preservation).</p>
+<ul>
+<li><strong>W767</strong> — docs(mcp): outputSchema inventory at <code>(internal memo)</code> (57 core tools catalogued, 5-wave Wave B roadmap).</li>
+<li><strong>MCP-OUTPUTSCHEMA-EVOLUTION</strong> — docs(mcp): research memo at <code>(internal memo)</code> (Claude Code #25081 status shifted; 3-wave roadmap).</li>
+<li><strong>Wave-B1</strong> — feat(mcp): specialized <code>_SCHEMA_IMPACT</code> + <code>_SCHEMA_PREFLIGHT</code> outputSchemas on roam_impact + roam_preflight wrappers (18 tests pass).</li>
+<li><strong>W1060</strong> — test(sarif): runtime-notifications activation tests on cmd_health + cmd_complexity (12 tests pass; cmd_doctor BAIL — no <code>--sarif</code> flag).</li>
+<li><strong>W1061</strong> — feat(sarif): <code>ruleConfigurationOverrides[]</code> on cmd_smells (OASIS 2.1.0 § 3.51 compliant, default-off, 38 tests pass).</li>
+<li><strong>W1061-followup</strong> — feat(sarif): extend <code>ruleConfigurationOverrides[]</code> + add <code>notificationConfigurationOverrides[]</code> on cmd_check_rules + cmd_taint + cmd_vulns (11 tests pass).</li>
+<li><strong>W1062</strong> — feat(sarif): <code>result.properties.tags[]</code> on taint + vulns + audit-trail-conformance (21 tests pass).</li>
+<li><strong>W1062-followup</strong> — feat(sarif): <code>result.properties.tags[]</code> on secrets_to_sarif emitter (60 tests pass).</li>
+<li><strong>W1278a</strong> — feat(test-scaffold): Convention-c migration for <code>cmd_test_scaffold</code> (Pattern-2c roster now 31/31 effective; 22 tests pass).</li>
+<li><strong>W1309</strong> — feat(test-scaffold): Pattern-1D file-substring <code>resolution: "file_substring"</code> enum disclosure on <code>cmd_test_scaffold</code> (31 tests pass).</li>
+</ul>
+<h3>Fixed — W1275-W1312-arc + Wave-B1 + sarif-disclosure batch</h3>
+<ul>
+<li><strong>W1005</strong> — fix(smells): widen <code>cmd_smells --min-severity</code> from 3-tier to W547 7-tier canonical via <code>severity_rank</code> lookup (Pattern 3a; 236 tests pass).</li>
+<li><strong>W1005-followup-A</strong> — fix(llm-smells): parallel 7-tier widening on <code>cmd_llm_smells --min-severity</code> (Pattern 3a vocabulary uniformity; 2 tests pass).</li>
+<li><strong>W1007</strong> — fix(formatter): <code>strip_list_payloads</code> now preserves <code>agent_contract:[]</code> without <code>--detail</code> (closes W1006 audit finding; 89 tests pass).</li>
+<li><strong>W1275</strong> — fix(tests): harden 3 remaining dogfood-brittle assertions in <code>test_validate_plan.py</code> (carry-forward CONSOLIDATE-16 → -17 → closed at -18; 27 tests pass).</li>
+<li><strong>W1276-fix</strong> — NO-OP verified: fix already landed during W1272 Pattern-2c batch (structural verification only).</li>
+<li><strong>W1277</strong> — fix(impact): restore <code>auto_log</code> provenance on <code>cmd_impact</code> unresolved-attempt path so <code>roam replay</code> narrates the unresolved-attempt event (W1272 standardization had removed it; 8 tests pass).</li>
+<li><strong>W1311</strong> — refactor(mcp): normalize 5 oracle multi-line <code>@_tool(</code> decorators so inventory script AST-walks cleanly (-37 LOC; 131 tests pass).</li>
+<li><strong>W1312</strong> — refactor(mcp): drop 3 redundant <code>output_schema=_ENVELOPE_SCHEMA</code> declarations + queue 2 for Wave B (142 tests pass).</li>
+<li><strong>sarif-disclosure</strong> — fix(docs): <code>cmd_boundary</code> + <code>cmd_compatibility</code> + <code>cmd_test_hermeticity</code> docstrings add <code>--sarif</code> flag disclosure (closes CI-blocking drift-guard gap; 103 tests pass).</li>
+</ul>
+<h3>Changed — W1275-W1312-arc batch</h3>
+<ul>
+<li><strong>Pattern-2c roster</strong> — effective 31/31 closed (30 from CONSOLIDATE-15 + W1278a at CONSOLIDATE-18). The CONSOLIDATE-16 → -17 → -18 carry-forward chain (W1275 / W1276-fix / W1277 / W1278) closes cleanly.</li>
+<li><strong>SARIF emitter coverage</strong> — dashboard-filtering plumb (rule + notification config overrides + result tags) now lands across 7 emitter surfaces. The OASIS 2.1.0 § 3.51 + § 3.52 plumb is structurally complete on the high-signal-tier emitters.</li>
+<li><strong>MCP outputSchema roadmap</strong> — Wave A (default <code>_ENVELOPE_SCHEMA</code>) inventory catalogued; Wave B specialized-schema propagation kicked off with Wave B1 on the 2 highest-frequency wrappers (roam_impact + roam_preflight).</li>
+</ul>
+<h3>Added — W1284-W1308 batch (post-CONSOLIDATE-16, 2026-05-16 /loop iteration N+17)</h3>
+<p>&gt; <strong>~25 completions since CONSOLIDATE-16 (Section 62).</strong> Post-v13.2-release &gt; hardening batch — first ~25 W#s after the release-merge land cleanly &gt; without re-opening flagship arcs. Four themes carry the batch: (a) init / &gt; cold-start UX fixes (W1288 / W1289 / W1290 / W1291). (b) SARIF advisory- &gt; warning plumb carry-forward bundle (W1084 + W1113 + W1114 + W1115 in one &gt; commit + W1236 chore drop of orphan emitters). (c) CGA edge-bundle &gt; stability + post-merge CI hardening (W1285 / W1284-G3 / W1286 / W1287 + &gt; W1297-W1302 / W1303-W1305). (d) MCP card v13.2 sync + CI infrastructure &gt; (W1306 / W1307 / W1308 / W1088 / W1089).</p>
+<ul>
+<li><strong>W1287</strong> — feat(test-hermeticity): non-hermetic test detector (new smell-detector family member).</li>
+<li><strong>W1292</strong> — docs(plugin): close Gap 3 — 3-hook copy-fork template under <code>dev/example-plugin/</code>.</li>
+</ul>
+<h3>Fixed — W1284-W1308 batch</h3>
+<ul>
+<li><strong>W1084</strong> — feat(sarif): plumb advisory warnings into <code>cmd_fitness</code> emitter (shipped via 96d31bd0 with W1113/W1114/W1115).</li>
+<li><strong>W1113</strong> — feat(sarif): plumb advisory warnings into <code>cmd_flag_dead</code> emitter.</li>
+<li><strong>W1114</strong> — feat(sarif): plumb advisory warnings into <code>cmd_rules</code> emitter.</li>
+<li><strong>W1115</strong> — feat(sarif): plumb advisory warnings into <code>cmd_health</code> emitter.</li>
+<li><strong>W1236</strong> — chore(sarif): drop orphan breaking + conventions emitters (no registry consumers post-W1232).</li>
+<li><strong>W1284-G3</strong> — fix(relations): SFC synthetic-component anchor for module-scope imports.</li>
+<li><strong>W1285</strong> — fix(cga): <code>edge_bundle_digest</code> sort-stability — append <code>id</code> tiebreaker.</li>
+<li><strong>W1286</strong> — perf(clones): language allowlist on candidate fetch (~3-5× candidate-set reduction on multi-language repos).</li>
+<li><strong>W1288</strong> — fix(init): drop misleading "Health: N/100" banner on cold-start (was always 100/100 on 0-symbol corpus).</li>
+<li><strong>W1289</strong> — fix(mcp-status): canonical Pattern-1A envelope on fastmcp import fail (was raw ImportError).</li>
+<li><strong>W1290</strong> — fix(surface): AST-derived <code>mcp_tool_count</code> survives <code>[mcp]</code> extras gap (cold install without fastmcp).</li>
+<li><strong>W1291</strong> — test(init): regression — <code>cmd_init</code> must not self-recommend <code>roam init</code> (silent advisory-loop prevention).</li>
+<li><strong>W1297 (follow-up)</strong> — fix(format): ruff format 6 drift-guard test files left unformatted by v13.2 merge.</li>
+<li><strong>W1298-W1302</strong> — fix: 6 CI failures on main — drift-guard re-pins + CGA <code>dirty_tree=true</code> propagation through pr-bundle integration tests.</li>
+<li><strong>W1303-W1305</strong> — fix: doc-hygiene drift + ruff I001 + W792 server-card mirror sync.</li>
+<li><strong>W1306</strong> — fix: <code>server.json</code> + <code>changelog.html</code> v13.2 catchup (landing page was pinned at v13.1).</li>
+<li><strong>W1307</strong> — fix(test): bump <code>_EXPECTED_CARD_SHA256</code> to v13.2 card digest.</li>
+<li><strong>W1308</strong> — fix: LF-normalize 3 MCP card files (<code>mcp-server-card.json</code> + <code>.well-known/</code> mirror + SEP-1649 variant); content-sync resolves CRLF-drift footgun on Windows checkouts.</li>
+</ul>
+<h3>Changed — CI infrastructure</h3>
+<ul>
+<li><strong>W1088</strong> — ci: SHA-pin credential-bearing third-party actions (immutable SHAs on <code>publish.yml</code> + release pipeline).</li>
+<li><strong>W1089</strong> — ci(publish): replace sleep-45 smoke-job with retry-backoff (intermittent v13.0 / v13.1 publish-failure root cause).</li>
+</ul>
 <h2>[13.2] — 2026-05-16</h2>
 <h3>Highlights — wip/v13.2-session-2026-05-16 ship (W1255-W1297)</h3>
 <p>The 2026-05-16 session that landed:</p>

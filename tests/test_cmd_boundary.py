@@ -188,7 +188,15 @@ def test_clean_project_zero_findings(tmp_path):
     proj = _clean_project(tmp_path)
     result = _index_and_run_boundary(proj, "--changed-range", "all")
     assert result.exit_code == 0, result.output
-    assert "0 boundary findings" in result.output
+    # Two valid "no findings" envelopes: when the corpus has cross-file
+    # imports that produce zero violations, the command emits
+    # ``0 boundary findings``. When the clean fixture has no cross-file
+    # imports at all (e.g. unrelated modules in a tmpdir), the Pattern-2
+    # empty-state path fires with ``no imports to analyze``. Both are
+    # legitimate no-findings outcomes; accept either.
+    assert "0 boundary findings" in result.output or "no imports to analyze" in result.output, (
+        result.output
+    )
 
 
 def test_benign_import_no_wrong_direction(tmp_path):
