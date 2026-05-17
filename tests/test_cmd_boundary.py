@@ -194,9 +194,7 @@ def test_clean_project_zero_findings(tmp_path):
     # imports at all (e.g. unrelated modules in a tmpdir), the Pattern-2
     # empty-state path fires with ``no imports to analyze``. Both are
     # legitimate no-findings outcomes; accept either.
-    assert "0 boundary findings" in result.output or "no imports to analyze" in result.output, (
-        result.output
-    )
+    assert "0 boundary findings" in result.output or "no imports to analyze" in result.output, result.output
 
 
 def test_benign_import_no_wrong_direction(tmp_path):
