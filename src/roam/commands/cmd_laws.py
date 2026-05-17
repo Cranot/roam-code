@@ -302,8 +302,7 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
         symbol_count = _w805_symbol_count_laws
         if symbol_count == 0:
             verdict = (
-                "no symbols to analyze (corpus empty; "
-                "run `roam index --force` to populate the graph before law mining)"
+                "no symbols to analyze (corpus empty; run `roam index --force` to populate the graph before law mining)"
             )
             summary = {
                 "verdict": verdict,

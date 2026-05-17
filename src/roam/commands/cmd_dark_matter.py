@@ -308,9 +308,7 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist)
             cochange_count: int
             if total == 0:
                 try:
-                    cochange_count = conn.execute(
-                        "SELECT COUNT(*) FROM git_cochange"
-                    ).fetchone()[0]
+                    cochange_count = conn.execute("SELECT COUNT(*) FROM git_cochange").fetchone()[0]
                 except sqlite3.OperationalError:
                     cochange_count = 0
             else:
@@ -367,9 +365,7 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category, persist)
             # Mirror that disclosure on the text branch so agents reading
             # the verdict line alone get the same lineage signal.
             try:
-                cochange_count = conn.execute(
-                    "SELECT COUNT(*) FROM git_cochange"
-                ).fetchone()[0]
+                cochange_count = conn.execute("SELECT COUNT(*) FROM git_cochange").fetchone()[0]
             except sqlite3.OperationalError:
                 # git_cochange table missing (older schema) — treat as
                 # no-cochange state per the loud-fallback rule.
