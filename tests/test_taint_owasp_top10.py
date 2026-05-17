@@ -142,9 +142,13 @@ def test_sarif_taint_result_tags_include_owasp_and_cwe():
     assert len(results) == 1
     result = results[0]
     tags = result["properties"]["tags"]
-    # Both CWE and OWASP must travel through to the result tags.
-    assert "CWE-89" in tags
-    assert "A03:2021_Injection" in tags
+    # CWE + OWASP travel through under the W1062 URL-safe normalised
+    # vocabulary (``cwe-89`` / ``owasp-a03``). Raw producer strings
+    # like ``CWE-89`` / ``A03:2021_Injection`` are intentionally
+    # NOT emitted — see _derive_finding_tags + the
+    # TestW1062DashboardFilterTags suite in tests/test_sarif_flag.py.
+    assert "cwe-89" in tags
+    assert "owasp-a03" in tags
     # Baseline categorisation tags are always present so consumers
     # filtering by "security" or "taint" pick the result up even when
     # the rule lacks owasp / cwe metadata.
@@ -178,8 +182,11 @@ def test_sarif_taint_rule_tags_include_owasp_and_cwe():
     assert len(driver_rules) == 1
     rule = driver_rules[0]
     rule_tags = rule["properties"]["tags"]
-    assert "CWE-89" in rule_tags
-    assert "A03:2021_Injection" in rule_tags
+    # W1062 canonical normalised vocabulary on rule.properties.tags[]
+    # as well — same shape as result.properties.tags[] so filter
+    # parity is preserved across both surfaces.
+    assert "cwe-89" in rule_tags
+    assert "owasp-a03" in rule_tags
     assert "security" in rule_tags
     assert "taint" in rule_tags
 
