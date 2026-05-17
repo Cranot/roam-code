@@ -362,12 +362,24 @@ def layers(ctx, mermaid_mode):
         layer_map = detect_layers(G)
 
         if not layer_map:
+            # W807 Pattern-2 empty-corpus disclosure: surface an explicit
+            # empty-state verdict + partial_success + state field so machine
+            # consumers can distinguish "scanned a graph and found no layering"
+            # from "graph is empty / no symbols indexed". LAW 6 — verdict must
+            # work without any other field. LAW 4 anchored on the
+            # ``symbols``/``layers`` concrete-noun terminals.
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "layers",
-                            summary={"total_layers": 0, "violations": 0},
+                            summary={
+                                "verdict": "No layers detected: 0 graph nodes",
+                                "state": "no_graph_nodes",
+                                "partial_success": True,
+                                "total_layers": 0,
+                                "violations": 0,
+                            },
                             budget=token_budget,
                             layers=[],
                             violations=[],
@@ -375,6 +387,7 @@ def layers(ctx, mermaid_mode):
                     )
                 )
             else:
+                click.echo("VERDICT: No layers detected: 0 graph nodes")
                 click.echo("No layers detected (graph is empty).")
             return
 

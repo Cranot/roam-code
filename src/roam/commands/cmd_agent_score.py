@@ -391,6 +391,7 @@ def agent_score_cmd(ctx, agent, since, top):
             "count": len(scored),
             "total_count": total_scored_full,
             "truncated": scored_truncated,
+            "limit": top,
         }
         _warnings_out: list[str] = []
         if scored_truncated:

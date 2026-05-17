@@ -11,9 +11,7 @@ from datetime import datetime, timezone
 # different producers emit different shapes. Centralised here so the
 # OTel parser stays a one-liner and the discipline is visible to
 # auditors.
-_OTEL_ERROR_STATUS_CODES: frozenset[object] = frozenset(
-    {2, "STATUS_CODE_ERROR", "ERROR"}
-)
+_OTEL_ERROR_STATUS_CODES: frozenset[object] = frozenset({2, "STATUS_CODE_ERROR", "ERROR"})
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -286,10 +284,7 @@ def ingest_generic_trace(conn: sqlite3.Connection, trace_path: str) -> list[dict
     results = []
     for i, entry in enumerate(data):
         if not isinstance(entry, dict):
-            raise ValueError(
-                f"{trace_path}: generic trace entry {i} must be an object, "
-                f"got {type(entry).__name__}"
-            )
+            raise ValueError(f"{trace_path}: generic trace entry {i} must be an object, got {type(entry).__name__}")
         fn_name = entry.get("function", "")
         file_path = entry.get("file")
         call_count = entry.get("call_count", 0)

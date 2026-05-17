@@ -266,6 +266,12 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
     Tampering with any record (or splicing a record into the middle)
     breaks the chain — this command surfaces the affected line.
     """
+    # W107/W120 composition: global `roam --ci` also flips the local
+    # `--gate` flag so a chain-broken audit trail fails the CI job
+    # without needing a separate --gate. LAW 11: explicit local flag
+    # (`--gate`) still wins (no-op when already True).
+    if not gate and ctx.obj and ctx.obj.get("ci_mode"):
+        gate = True
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
     path = Path(input_path) if input_path else DEFAULT_AUDIT_TRAIL_PATH

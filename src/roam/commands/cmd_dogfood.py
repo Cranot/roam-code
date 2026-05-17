@@ -159,9 +159,7 @@ def dogfood(
     # envelope is carried as ``_subcommand_failed=True`` by _run_subcommand.
     # Surface those on the compound envelope so the verdict doesn't read as
     # green when an underlying step crashed.
-    failed_sections = sorted(
-        k for k, v in sections.items() if isinstance(v, dict) and v.get("_subcommand_failed")
-    )
+    failed_sections = sorted(k for k, v in sections.items() if isinstance(v, dict) and v.get("_subcommand_failed"))
 
     parts = []
     if health_score is not None:

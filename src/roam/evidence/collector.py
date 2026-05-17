@@ -2116,9 +2116,7 @@ def _collect_corroborated_ids_from_mcp_receipts(
             # silently swallowed the exception (Pattern 1B), so an
             # unknown policy_decision literal or a redaction-reason
             # drift would drop the receipt with no audit signal.
-            warnings.append(
-                f"corroboration: rejected receipt {file.name!r} ({type(exc).__name__}: {exc})"
-            )
+            warnings.append(f"corroboration: rejected receipt {file.name!r} ({type(exc).__name__}: {exc})")
             continue
         # tool_name + client_id are required (validated above); both
         # are non-empty strings here.

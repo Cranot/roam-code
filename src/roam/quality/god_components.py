@@ -160,8 +160,12 @@ def god_components(
         # crashed query from a clean codebase (CLAUDE.md "Make
         # fallback chains loud").
         return GodComponentsSummary(
-            total=0, critical=0, actionable=0, utility=0,
-            fallback_used=True, fallback_reason="query_failed",
+            total=0,
+            critical=0,
+            actionable=0,
+            utility=0,
+            fallback_used=True,
+            fallback_reason="query_failed",
         )
 
     god_items: list[dict] = []

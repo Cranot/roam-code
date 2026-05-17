@@ -569,9 +569,7 @@ def lease_list(ctx, agent, include_expired, do_gc):
         path=str(lroot),
         agent_contract={
             "facts": agent_facts,
-            "next_commands": (
-                ["roam lease claim --agent NAME --file PATH"] if total == 0 else []
-            ),
+            "next_commands": (["roam lease claim --agent NAME --file PATH"] if total == 0 else []),
         },
     )
 

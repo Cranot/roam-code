@@ -573,10 +573,7 @@ def risk(ctx, count, domain_keywords, explain, include_tests, show_suppressed):
                                 "0-10) * max(name|callee|zone) domain_weight; "
                                 "UI files dampened *0.5 when non-zone match"
                             ),
-                            "static_risk_definition": (
-                                "(total_degree/max_total)*5 + "
-                                "(betweenness/max_betweenness)*5"
-                            ),
+                            "static_risk_definition": ("(total_degree/max_total)*5 + (betweenness/max_betweenness)*5"),
                         },
                         **envelope_extra,
                     )

@@ -34,6 +34,7 @@ from typing import Any, Callable, Literal, Mapping, TypeVar, overload
 from roam.output.formatter import WarningsOut
 
 __all__ = [
+    "LOAD_STATUSES",
     "WarningsOut",
     "append_warning",
     "extract_typed",
@@ -42,6 +43,45 @@ __all__ = [
 ]
 
 T = TypeVar("T")
+
+# W1030 — closed-enum disambiguation for the load_yaml_with_warnings status
+# kwarg. Surfaces what the helper actually saw on disk so callers can tell
+# "missing file" / "intentional empty config" / "truncated/malformed file"
+# apart instead of conflating all three on the empty-container return path.
+#
+# - "ok"               — file existed, parsed cleanly, root type + schema OK.
+# - "missing"          — path did not exist (file-not-present is not an error).
+# - "empty_file"       — file existed but its on-disk bytes are zero-length
+#                        (or whitespace-only). Distinct from "all comments,
+#                        zero documented entries" which is "empty_yaml".
+# - "empty_yaml"       — file had content but the YAML parser returned None
+#                        (e.g. "# only comments\n"). Documented shape is
+#                        intentionally empty.
+# - "read_error"       — OSError on read_text (permissions / encoding).
+# - "parse_error"      — PyYAML / JSON / tiny-parser raised on parse.
+# - "wrong_root_type"  — parsed object's root is the wrong shape (list when
+#                        a mapping was expected, scalar when either, ...).
+# - "schema_invalid"   — schema_validator returned a non-empty warning list.
+LOAD_STATUSES: tuple[str, ...] = (
+    "ok",
+    "missing",
+    "empty_file",
+    "empty_yaml",
+    "read_error",
+    "parse_error",
+    "wrong_root_type",
+    "schema_invalid",
+)
+LoadStatus = Literal[
+    "ok",
+    "missing",
+    "empty_file",
+    "empty_yaml",
+    "read_error",
+    "parse_error",
+    "wrong_root_type",
+    "schema_invalid",
+]
 
 # Per-callsite schema validator. Receives the parsed object (dict, or
 # top-level list when ``allow_list_root=True``), returns an empty list on
@@ -273,6 +313,7 @@ def load_yaml_with_warnings(
     warnings_out: WarningsOut = ...,
     parse_error_label: str = ...,
     force_tiny_parser: bool = ...,
+    return_status: Literal[False] = False,
 ) -> Mapping[str, Any] | None: ...
 
 
@@ -287,7 +328,38 @@ def load_yaml_with_warnings(
     warnings_out: WarningsOut = ...,
     parse_error_label: str = ...,
     force_tiny_parser: bool = ...,
+    return_status: Literal[False] = False,
 ) -> Mapping[str, Any] | list[Any] | None: ...
+
+
+@overload
+def load_yaml_with_warnings(
+    path: Path,
+    *,
+    schema_validator: SchemaValidator | None = ...,
+    tiny_parser: TinyParser | None = ...,
+    allow_list_root: Literal[False] = False,
+    config_label: str = ...,
+    warnings_out: WarningsOut = ...,
+    parse_error_label: str = ...,
+    force_tiny_parser: bool = ...,
+    return_status: Literal[True],
+) -> tuple[Mapping[str, Any] | None, LoadStatus]: ...
+
+
+@overload
+def load_yaml_with_warnings(
+    path: Path,
+    *,
+    schema_validator: SchemaValidator | None = ...,
+    tiny_parser: TinyParser | None = ...,
+    allow_list_root: Literal[True],
+    config_label: str = ...,
+    warnings_out: WarningsOut = ...,
+    parse_error_label: str = ...,
+    force_tiny_parser: bool = ...,
+    return_status: Literal[True],
+) -> tuple[Mapping[str, Any] | list[Any] | None, LoadStatus]: ...
 
 
 def load_yaml_with_warnings(
@@ -300,7 +372,8 @@ def load_yaml_with_warnings(
     warnings_out: WarningsOut = None,
     parse_error_label: str = "YAML",
     force_tiny_parser: bool = False,
-) -> Mapping[str, Any] | list[Any] | None:
+    return_status: bool = False,
+) -> Any:
     """Load a YAML file and surface every silent-fallback path as a warning.
 
     Returns
@@ -393,6 +466,28 @@ def load_yaml_with_warnings(
                 warnings_out=warnings,
                 force_tiny_parser=True,
             )
+    return_status
+        When ``True`` (W1030), the helper returns ``(value, status)``
+        instead of just ``value``. ``status`` is a closed enum drawn from
+        :data:`LOAD_STATUSES`: ``"ok"`` / ``"missing"`` / ``"empty_file"``
+        / ``"empty_yaml"`` / ``"read_error"`` / ``"parse_error"`` /
+        ``"wrong_root_type"`` / ``"schema_invalid"``. The status
+        disambiguates the empty-container return path so callers can
+        tell "file is intentionally empty" (``empty_yaml`` -- file has
+        bytes but parses to None, e.g. comments-only) from "file is
+        truncated / zero-byte" (``empty_file``) from "file is missing"
+        (``missing`` -- same as the bare ``None`` return). Default
+        ``False`` preserves the legacy single-value return shape so every
+        pre-W1030 callsite stays byte-identical.
+
+        Example use::
+
+            data, status = load_yaml_with_warnings(
+                path, config_label="alerts", warnings_out=warnings,
+                return_status=True,
+            )
+            if status == "empty_file":
+                warnings.append("alerts: file is empty; using defaults.")
     """
     if force_tiny_parser and tiny_parser is None:
         raise ValueError(
@@ -402,11 +497,19 @@ def load_yaml_with_warnings(
 
     empty: dict[str, Any] | list[Any] = [] if allow_list_root else {}
 
+    def _ret(value: Any, status: LoadStatus) -> Any:
+        # W1030 centralised exit. Pre-W1030 callers see the bare value
+        # (return_status default False); opt-in callers see
+        # ``(value, status)`` so they can distinguish "file is
+        # intentionally empty" from "file is missing" from "file is
+        # malformed" without re-statting the path.
+        return (value, status) if return_status else value
+
     if not path.exists():
-        # Absence is not an error — it's the default state. No warning;
+        # Absence is not an error -- it's the default state. No warning;
         # callers distinguish "no config" from "broken config" via the
-        # None return.
-        return None
+        # None return (or status=="missing" when return_status=True).
+        return _ret(None, "missing")
 
     # ---- Read ------------------------------------------------------------
     try:
@@ -418,7 +521,16 @@ def load_yaml_with_warnings(
             path,
             f"could not read file: {exc}. Treating as empty; fix file permissions / encoding to re-enable.",
         )
-        return empty
+        return _ret(empty, "read_error")
+
+    # W1030 -- empty-file disambiguation. A zero-byte (or whitespace-only)
+    # file is a distinct on-disk state from "file with content that parses
+    # to None" (comments-only YAML). Detect it BEFORE parsing so the
+    # opt-in caller can act on it. No warning here -- an empty file is a
+    # valid (if unhelpful) input; the caller decides whether to warn
+    # based on whether the config is required.
+    if not text.strip():
+        return _ret(empty, "empty_file")
 
     # ---- Parse: PyYAML -> JSON -> tiny_parser ----------------------------
     data: Any
@@ -439,7 +551,7 @@ def load_yaml_with_warnings(
             force=True,
         )
         if not ok:
-            return value
+            return _ret(value, "parse_error")
         data = value
     else:
         try:
@@ -455,7 +567,7 @@ def load_yaml_with_warnings(
                     f"malformed {parse_error_label}: {exc}. Treating as empty; "
                     f"fix the file or remove it to clear this warning.",
                 )
-                return empty
+                return _ret(empty, "parse_error")
         except ImportError:
             # No PyYAML: try strict JSON first (every well-formed JSON is also
             # well-formed YAML 1.2, so JSON files on disk still load), then a
@@ -471,12 +583,15 @@ def load_yaml_with_warnings(
                 force=False,
             )
             if not ok:
-                return value
+                return _ret(value, "parse_error")
             data = value
 
-    # yaml.safe_load("") returns None; normalise that to empty container.
+    # W1030: empty-yaml (file had content, parser returned None) -- e.g.
+    # comments-only YAML. Distinct from empty_file (zero-byte input
+    # handled above). Both collapse to the empty container on the legacy
+    # return path; status enum keeps them separable for opt-in callers.
     if data is None:
-        return empty
+        return _ret(empty, "empty_yaml")
 
     # ---- Root-type check -------------------------------------------------
     if allow_list_root:
@@ -487,7 +602,7 @@ def load_yaml_with_warnings(
                 path,
                 f"root is {type(data).__name__!r}, expected a mapping or a list. Treating as empty.",
             )
-            return empty
+            return _ret(empty, "wrong_root_type")
     else:
         if not isinstance(data, dict):
             append_warning(
@@ -496,7 +611,7 @@ def load_yaml_with_warnings(
                 path,
                 f"root is {type(data).__name__!r}, expected a mapping. Treating as empty.",
             )
-            return empty
+            return _ret(empty, "wrong_root_type")
 
     # ---- Schema validation ----------------------------------------------
     if schema_validator is not None:
@@ -510,17 +625,17 @@ def load_yaml_with_warnings(
                 f"schema validator raised {type(exc).__name__}: {exc}. "
                 f"Treating as empty; fix the validator or the file.",
             )
-            return empty
+            return _ret(empty, "schema_invalid")
         if schema_warnings:
             if warnings_out is not None:
-                # Validator strings are already fully-formatted — the
+                # Validator strings are already fully-formatted -- the
                 # validator owns its vocabulary. Append as-is so the
                 # caller can preserve callsite-specific wording (e.g.
                 # "rules[2] has neither task_id nor path_glob").
                 warnings_out.extend(schema_warnings)
-            return empty
+            return _ret(empty, "schema_invalid")
 
-    return data
+    return _ret(data, "ok")
 
 
 def parse_rule_list(text: str) -> list[dict[str, Any]]:

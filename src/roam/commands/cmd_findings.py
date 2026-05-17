@@ -167,11 +167,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
         # IS canonical. If it has 0 rows we still want to emit a disclosure
         # envelope (different state, different verdict) rather than dropping
         # into the generic empty-result branch.
-        canonical_empty = (
-            detector is not None
-            and frag is None
-            and detector not in live_counts
-        )
+        canonical_empty = detector is not None and frag is None and detector not in live_counts
         if frag is not None:
             # W1082: ``did_you_mean_omit_when_empty=True`` makes the helper
             # omit the field when empty so the splice stays unconditional.

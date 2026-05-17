@@ -1160,6 +1160,12 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     detail = ctx.obj.get("detail", False) if ctx.obj else False
+    # W107/W120 composition: global `roam --ci` also flips on the local
+    # --gate flag so `roam --ci health` exits 5 on quality-gate failure
+    # without having to repeat the per-command toggle. LAW 11: explicit
+    # local --gate still wins (no-op when already True).
+    if not gate and ctx.obj and ctx.obj.get("ci_mode"):
+        gate = True
     ensure_index()
     with open_db(readonly=not persist) as conn:
         # W834 — empty-corpus carve-out (Pattern 2 silent-fallback fix).

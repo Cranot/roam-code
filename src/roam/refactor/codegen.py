@@ -122,8 +122,15 @@ def generate_import(language: str, from_file: str, symbol_name: str, target_file
     # because they have dedicated branches above; listing them here would
     # be dead code that drifts the moment a branch is removed.
     slash_comment_langs = {
-        "rust", "java", "c", "cpp", "csharp",
-        "swift", "kotlin", "scala", "dart",
+        "rust",
+        "java",
+        "c",
+        "cpp",
+        "csharp",
+        "swift",
+        "kotlin",
+        "scala",
+        "dart",
     }
     if language in slash_comment_langs:
         return f"// TODO: import {symbol_name} from {from_file}"

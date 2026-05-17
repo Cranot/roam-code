@@ -430,9 +430,7 @@ def _assert_bare_roam_command(cmd: str, context: str) -> None:
     """
     assert cmd.startswith("roam "), f"{context}: must start with 'roam ', got {cmd!r}"
     # Parentheticals are always prose (the CLI doesn't take ``(...)`` args).
-    assert "(" not in cmd and ")" not in cmd, (
-        f"{context}: parenthetical prose breaks paste-to-shell; got {cmd!r}"
-    )
+    assert "(" not in cmd and ")" not in cmd, f"{context}: parenthetical prose breaks paste-to-shell; got {cmd!r}"
     # "to <verb>" pattern is the classic trailing-prose anti-pattern
     # ("roam runs show ID to inspect events around seq=2"). Allow the
     # tokens themselves but block the verbose suffix construction.
@@ -449,9 +447,7 @@ def _assert_bare_roam_command(cmd: str, context: str) -> None:
                 )
 
 
-def test_verify_all_tampered_next_command_is_bare_executable(
-    cli_runner, signed_project, monkeypatch
-):
+def test_verify_all_tampered_next_command_is_bare_executable(cli_runner, signed_project, monkeypatch):
     """W1091 follow-up: when ``runs verify --all`` reports tampered state,
     the suggested follow-up command must be literally executable — no
     "to see the broken chain" trailing prose (CONSTRAINT 12).
@@ -487,9 +483,7 @@ def test_verify_all_tampered_next_command_is_bare_executable(
     )
 
 
-def test_verify_single_run_states_emit_bare_executable_commands(
-    cli_runner, signed_project, monkeypatch
-):
+def test_verify_single_run_states_emit_bare_executable_commands(cli_runner, signed_project, monkeypatch):
     """Every state branch in ``runs verify <RUN_ID>`` must emit a literally
     executable ``roam <subcommand>`` next_command (CONSTRAINT 12).
 
@@ -504,9 +498,7 @@ def test_verify_single_run_states_emit_bare_executable_commands(
     log_event(signed_project, ok_meta.run_id, action="preflight", target="x")
     log_event(signed_project, ok_meta.run_id, action="commit", target="x")
 
-    result_ok = invoke_cli(
-        cli_runner, ["runs", "verify", ok_meta.run_id], cwd=signed_project, json_mode=True
-    )
+    result_ok = invoke_cli(cli_runner, ["runs", "verify", ok_meta.run_id], cwd=signed_project, json_mode=True)
     data_ok = parse_json_output(result_ok, "runs-verify")
     assert data_ok["summary"]["state"] == "ok"
     ok_next = data_ok["agent_contract"]["next_commands"]
@@ -524,14 +516,10 @@ def test_verify_single_run_states_emit_bare_executable_commands(
     lines[1] = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
     bad_events_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    result_bad = invoke_cli(
-        cli_runner, ["runs", "verify", bad_meta.run_id], cwd=signed_project, json_mode=True
-    )
+    result_bad = invoke_cli(cli_runner, ["runs", "verify", bad_meta.run_id], cwd=signed_project, json_mode=True)
     raw = getattr(result_bad, "stdout", None) or result_bad.output
     data_bad = json.loads(raw)
     assert data_bad["summary"]["state"] == "tampered"
     bad_next = data_bad["agent_contract"]["next_commands"]
     assert bad_next, "tampered-state verify must suggest a next_command"
-    _assert_bare_roam_command(
-        bad_next[0], context="runs verify <tampered> next_commands[0]"
-    )
+    _assert_bare_roam_command(bad_next[0], context="runs verify <tampered> next_commands[0]")

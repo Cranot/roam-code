@@ -66,8 +66,7 @@ def test_canonical_detector_names_includes_well_known_detectors():
     }
     missing = expected - set(CANONICAL_DETECTOR_NAMES)
     assert not missing, (
-        f"CANONICAL_DETECTOR_NAMES is missing {missing} — extend the "
-        f"frozenset in src/roam/db/findings.py."
+        f"CANONICAL_DETECTOR_NAMES is missing {missing} — extend the frozenset in src/roam/db/findings.py."
     )
 
 
