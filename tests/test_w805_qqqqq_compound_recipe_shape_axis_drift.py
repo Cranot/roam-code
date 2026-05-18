@@ -159,7 +159,7 @@ def _iter_safe_run_cr_sites(tree: ast.AST) -> Iterator[tuple[int, str, list[ast.
        attribute the call to the FIRST ``_safe_run(<name>, root)`` we
        see.
     """
-    # redactedinline literals.
+    # Stage 1 — inline literals.
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -186,7 +186,7 @@ def _iter_safe_run_cr_sites(tree: ast.AST) -> Iterator[tuple[int, str, list[ast.
         recipe_key = head.args[0].value
         yield node.lineno, recipe_key, list(argv.elts[1:])
 
-    # redactedincremental builds inside a FunctionDef.
+    # Stage 2 — incremental builds inside a FunctionDef.
     for func_node in ast.walk(tree):
         if not isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -271,7 +271,7 @@ def _iter_safe_run_cr_sites(tree: ast.AST) -> Iterator[tuple[int, str, list[ast.
                 continue
             yield consumed_at[var], recipe_key, appends.get(var, [])
 
-    # redactedW607-AG/AJ wrapper-bridge variant. The compound-recipe W607
+    # Stage 3 — W607-AG/AJ wrapper-bridge variant. The compound-recipe W607
     # waves (W607-AG cmd_for_refactor, W607-AJ cmd_for_security_review,
     # and likely future for_bug_fix / for_new_feature) wrap each
     # ``_safe_run`` invocation in a per-recipe ``_run_check`` /

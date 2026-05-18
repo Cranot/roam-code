@@ -130,64 +130,11 @@ Pick the path that matches your role:
   `loop_eq_with_dependent_write` column that backs the new algo
   nested-lookup dataflow predicate.
 
-Full release notes in [CHANGELOG.md](CHANGELOG.md#132--2026-05-16).
-
-## What's New in v12
-
-### v12.1+ -- Boolean oracles, IDOR classifier, index portability + Django bridge
-- **`roam oracle <name>`**: 5 boolean oracles for agents — 1-token yes/no answers (`symbol-exists`, `route-exists`, `is-test-only`, `is-reachable-from-entry`, `is-clone-of`). Direct counter to CKB v9.2's `symbolExists` pattern. MCP tools: `roam_oracle_*`.
-- **`roam_taint_classify` (MCP only)**: LLM-augmented taint classification — runs `roam taint` then asks the agent's own model (via MCP sampling) to label each reachable finding as IDOR/AUTHZ/SQLI/XSS/etc. with confidence + reasoning. Counter to Semgrep Multimodal — same LLM-reasoning narrative without a hosted API key. Sequential for v12.1; concurrency-bounded gather lands in v12.2.
-- **`roam index-export` / `roam index-import`**: portable, integrity-checked tarball format with manifest sha256 round-trip + optional cosign signing. Counter to Cursor's "92% similar codebase = reuse teammate's index" without a vendor cloud. Tamper-evident (manifest verifies index.db sha256 on import).
-- **`roam eval-retrieve --emit-format coderag|beir`**: bench-portable JSONL emit for public leaderboard submission. CodeRAG-Bench-compatible `ctxs` array + BEIR-style trec_eval run files.
-- **Django bridge**: full implicit-relationship resolution (admin→model, serializer→model, FK transitive, signal handlers, URL configs, Celery tasks, DRF routers). Ported from `upstream fork/roam-code` — credit upstream fork author. New schema columns: `framework_type`, `field_type`, `field_metadata`. Post-resolver runs after graph metrics.
-- **`worktree_git_env()`** (`git_utils.py`): `GIT_INDEX_FILE` override fixes `.git/index.lock` contention when parallel agents run roam in sibling worktrees. Wired into `discovery.py`, `git_stats.py`, `changed_files.py`. Ported from `upstream fork/roam-code-sf` — credit upstream fork author.
-
-### v12.0 (released 2026-05-01) -- Retrieval substrate + patch verifier
-- **`roam retrieve "<task>"`**: graph-aware context server. Hybrid first stage (FTS5) + structural reranker (personalised PageRank + clone-canonical signal + lexical baseline) + token-budget cap. Returns ranked spans with justification tags (`pagerank=...`, `clone_cluster=...`, `fts=...`) so callers can see *why* each span ranked. MCP tool: `roam_retrieve(task, budget, k, rerank, seed_files)`.
-- **`roam critique`**: graph-grounded patch verifier. Pipe `git diff | roam critique` to get findings ranked by severity. The killer signal is **clones-not-edited**: for every changed symbol with persisted clone siblings outside the diff, we flag the sibling as a likely missed change. Plus a blast-radius caller-count finding. Exits 5 on high severity (CI-gateable). MCP tool: `roam_critique(diff_text)`.
-- **`roam clones --persist`**: populate the `clone_pairs` and `clone_clusters` tables so downstream consumers (critique, retrieve) can query clones in O(1) instead of re-running detection.
-- **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
-- **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
-- **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
-- **211 CLI commands, 145 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 57-tool `core` preset is the default for token-budget-conscious clients.
+Full release notes in [CHANGELOG.md](CHANGELOG.md).
 
 ## What's New in v11
 
-### v11.2 -- AST Clone Detection + Debug Artifact Rules
-- **`roam clones`**: New AST structural clone detection via subtree hashing. Finds Type-2 clones (identical control flow, different identifiers/literals) with Jaccard similarity scoring, Union-Find clustering, and automated refactoring suggestions. More precise than the metric-based `duplicates` command.
-- **9 debug artifact rules** (COR-560 through COR-568): Detect leftover `print()`, `breakpoint()`, `pdb.set_trace()`, `console.log()`, `debugger`, and `System.out.println()` in Python, JavaScript, TypeScript, and Java code. All use `ast_match` type with test file exemptions.
-- **140 commands, 102 MCP tools** (at v11.2.0 release).
-
-### v11.1.2 -- SQL + Scala Tier 1, 27 Languages
-- **SQL DDL promoted to Tier 1** with dedicated `SqlExtractor` -- tables, columns, views, functions, triggers, schemas, types (enums), sequences, ALTER TABLE ADD COLUMN. Foreign keys produce graph edges; views and triggers reference source tables. Database-schema projects now work with `roam health`, `roam layers`, `roam impact`, `roam coupling` and all graph commands.
-- **Scala promoted to Tier 1** with dedicated `ScalaExtractor` -- classes, traits, objects, case classes, sealed hierarchies, val/var properties, type aliases, imports, and inheritance. Full `extends` + `with` trait mixin resolution.
-- **28 languages** with 17 dedicated Tier 1 extractors.
-- `server.json` for official MCP Registry submission.
-
-### v11.1.1 -- Command Quality Audit
-- **Full command audit**: all 152 commands reviewed for usefulness, duplicates, and test coverage. ~20 bugs fixed, 21 new test files (700+ tests), every command docstring updated with cross-references to related commands.
-- **Kotlin promoted to Tier 1** via new YAML-based declarative extractor architecture. Classes, interfaces, enums, objects, functions, methods, properties, and inheritance fully extracted.
-- **7 new commands**: `roam congestion`, `roam adrs`, `roam flag-dead`, `roam test-scaffold`, `roam sbom`, `roam triage`, `roam ci-setup`.
-- **CI templates**: `roam ci-setup` generates pipelines for GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, and Bitbucket.
-- **Bug fixes**: `--undocumented` mode in `intent` (wrong DB table), `--changed` flag in `verify` (was permanently dead), lazy-load violation in `visualize` (~500ms penalty), exit code inconsistency in `rules`, VERDICT-first convention enforced across all commands.
-- **Code quality**: 15 unused variables removed, dead code swept (4 orphaned cmd files, 2 dead helper functions), algo detector false-positive rate reduced (regex-in-loop: 7 to 1, list-prepend deque suppression), 6 regex patterns pre-compiled for loop performance.
-
-### v11.0 -- MCP v2 for Agent-First Workflows
-- In-process MCP execution removes per-call subprocess overhead.
-- 4 compound operations (`roam_explore`, `roam_prepare_change`, `roam_review_change`, `roam_diagnose_issue`) reduce multi-step agent workflows to single calls.
-- Preset-based tool surfacing (`core`, `review`, `refactor`, `debug`, `architecture`, `full`) keeps default tool choice tight for agents while retaining full depth on demand.
-- MCP tools now expose structured schemas and richer annotations for safer planner behavior.
-- MCP token overhead for default core context dropped from ~36K to <3K tokens (about 92% reduction).
-
-### Performance and Retrieval
-- Symbol search moved to SQLite FTS5/BM25: typical search moved from seconds to tens of milliseconds on the indexed cohort (mileage varies by repo size and query selectivity — see `bench/retrieve/` for the methodology).
-- Incremental indexing shifted from O(N) full-edge rebuild behavior to O(changed) updates.
-- DB/runtime optimizations (`mmap_size`, safer large-graph guards, batched writes) reduce first-run and reindex friction on larger repos.
-
-### CI, Governance, and Delivery
-- GitHub Action supports quality gates, SARIF upload, sticky PR comments, and cache-aware execution.
-- CI hardening includes changed-only analysis mode, trend-aware gates, and SARIF pre-upload guardrails (size/result caps + truncation signaling).
-- Agent governance expanded with verification and AI-quality tooling (`roam verify`, `roam vibe-check`, `roam ai-readiness`, `roam ai-ratio`) for teams managing agent-written code.
+The 11.0 release introduced **MCP v2**: in-process tool execution, 4 compound operations (`roam_explore` / `roam_prepare_change` / `roam_review_change` / `roam_diagnose_issue`), and preset-based tool surfacing. MCP token overhead for the default `core` context dropped from ~36K to <3K tokens — a 92% reduction. Symbol search moved to SQLite FTS5/BM25, with typical searches in tens of milliseconds on the indexed cohort; incremental indexing shifted from O(N) full-edge rebuild to O(changed) updates. The GitHub Action gained quality gates, SARIF upload, sticky PR comments, and cache-aware execution. v12 then added the `roam retrieve` graph-aware context server, `roam critique` patch verifier, boolean oracles, and the Django bridge — see [CHANGELOG.md](CHANGELOG.md) for the full v11/v12 history.
 
 ## Best for
 
@@ -245,33 +192,22 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md#132--2026-05-16).
 
 </details>
 
-## Install
+## Install (alternate methods)
 
 ```bash
-pip install roam-code
+pipx install roam-code                                 # isolated environment (recommended)
+uv tool install roam-code                              # uv-managed tool
+pip install git+https://github.com/Cranot/roam-code.git  # from source
 
-# Recommended: isolated environment
-pipx install roam-code
-# or
-uv tool install roam-code
-
-# From source
-pip install git+https://github.com/Cranot/roam-code.git
-```
-
-Requires Python 3.10+. Works on Linux, macOS, and Windows.
-
-> **Windows:** If `roam` is not found after installing with `uv`, run `uv tool update-shell` and restart your terminal.
-
-### Docker (alpine-based)
-
-```bash
+# Docker (alpine-based)
 docker build -t roam-code .
 docker run --rm -v "$PWD:/workspace" roam-code index
 docker run --rm -v "$PWD:/workspace" roam-code health
 ```
 
-## Quick Start
+Works on Linux, macOS, and Windows. **Windows:** if `roam` is not found after installing with `uv`, run `uv tool update-shell` and restart your terminal.
+
+## Running locally
 
 ```bash
 cd your-project
@@ -281,14 +217,13 @@ roam understand            # full codebase briefing
 
 First index takes ~5s for 200 files, ~15s for 1,000 files. Subsequent runs are incremental and near-instant.
 
-**Next steps:**
+**Common next steps:**
 
-- **Set up your AI agent:** `roam describe --write` (auto-detects CLAUDE.md, AGENTS.md, .cursor/rules, etc. — see [integration instructions](#integration-with-ai-coding-tools))
+- **Set up your AI agent:** `roam describe --write` (auto-detects CLAUDE.md, AGENTS.md, .cursor/rules, etc. — see [integration](#integration-with-ai-coding-tools))
 - **Explore:** `roam health` → `roam weather` → `roam map`
-- **Run the v2 stack on every PR:** `git diff | roam pr-analyze --explain` (gates AI-generated risk; pair with `roam pr-comment-render` for sticky GitHub comments — see [Roam Review](#roam-review-pr-bot-for-ai-generated-changes))
-- **First-touch demo:** `roam dogfood` (audit + pr-analyze + audit-trail + governance checks in one envelope)
-- **Add to CI:** `roam init` already generated a GitHub Action
-- **Customer-facing artifacts:** see starter rule packs at [`templates/rules/`](templates/rules/), the agent change packet at [`templates/examples/agent-change-packet.md`](templates/examples/agent-change-packet.md), the audit-report template + redacted sample at [`templates/audit-report/`](templates/audit-report/), and the security/procurement packet at [`templates/legal/security-procurement-packet.md`](templates/legal/security-procurement-packet.md).
+- **Gate every PR:** `git diff | roam pr-analyze --explain` (AI-risk scoring; pair with `roam pr-comment-render` for sticky GitHub comments)
+- **First-touch demo:** `roam dogfood` — audit + pr-analyze + audit-trail + governance checks in one envelope
+- **Templates:** starter [rule packs](templates/rules/), [agent change packet](templates/examples/agent-change-packet.md), [audit-report template](templates/audit-report/), [security/procurement packet](templates/legal/security-procurement-packet.md)
 
 <details>
 <summary><strong>Try it on Roam itself</strong></summary>
@@ -297,29 +232,10 @@ First index takes ~5s for 200 files, ~15s for 1,000 files. Subsequent runs are i
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-roam init
-roam understand
-roam health
+roam init && roam understand && roam health
 ```
 
 </details>
-
-## Works With
-
-<p align="center">
-  <a href="#integration-with-ai-coding-tools">Claude Code</a> &bull;
-  <a href="#integration-with-ai-coding-tools">Cursor</a> &bull;
-  <a href="#integration-with-ai-coding-tools">Windsurf</a> &bull;
-  <a href="#integration-with-ai-coding-tools">GitHub Copilot</a> &bull;
-  <a href="#integration-with-ai-coding-tools">Aider</a> &bull;
-  <a href="#integration-with-ai-coding-tools">Cline</a> &bull;
-  <a href="#integration-with-ai-coding-tools">Gemini CLI</a> &bull;
-  <a href="#integration-with-ai-coding-tools">OpenAI Codex CLI</a> &bull;
-  <a href="#mcp-server">MCP</a> &bull;
-  <a href="#cicd-integration">GitHub Actions</a> &bull;
-  <a href="#cicd-integration">GitLab CI</a> &bull;
-  <a href="#cicd-integration">Azure DevOps</a>
-</p>
 
 ## Commands
 
