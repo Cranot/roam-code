@@ -68,9 +68,7 @@ def _package_file(filename: str) -> Path:
     dev_path = _repo_root() / "src" / "roam" / filename
     if dev_path.exists():
         return dev_path
-    raise RuntimeError(
-        f"Could not locate {filename} via importlib.resources or dev-tree walk"
-    )
+    raise RuntimeError(f"Could not locate {filename} via importlib.resources or dev-tree walk")
 
 
 def _load_ast(path: Path) -> ast.Module:

@@ -238,8 +238,11 @@ def test_pr_analyze_audit_trail_break_escalates_verdict_to_block(tmp_path, tiny_
         ["--json", "pr-analyze", "--audit-trail", "--input", str(diff)],
     )
     env = _last_json_object(result.output)
-    # Verdict should be BLOCK because the chain was broken before append.
-    assert env["summary"]["verdict"] == "BLOCK"
+    # Verdict should start with BLOCK because the chain was broken before append.
+    # W641: pr-risk now appends a "(risk_level <tier>)" suffix to the BLOCK
+    # verdict; startswith preserves the original BLOCK semantic while tolerating
+    # the suffix.
+    assert env["summary"]["verdict"].startswith("BLOCK")
     # Pre-chain verdict should be preserved for transparency.
     assert "verdict_pre_chain_break" in env["summary"]
     assert env["audit_trail"]["chain_status"]["pre_emission_chain_valid"] is False
