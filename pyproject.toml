@@ -73,7 +73,7 @@ leiden = [
     # communities). Auto-detected at runtime; falls back to seeded Louvain
     # when these aren't installed.
     "igraph>=0.11",
-    "leidenalg>=0.10",
+    "leidenalg>=0.11.0",
 ]
 graph-fast = [
     # rustworkx is a Rust-backed drop-in for many NetworkX algorithms;
