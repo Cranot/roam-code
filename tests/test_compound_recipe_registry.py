@@ -95,9 +95,12 @@ _SRC = _REPO_ROOT / "src" / "roam"
 # recipe DAG / ``section["command"]`` from the preset table) and contain
 # zero literal command-name strings at the call site. Treat the
 # specialized parsers as their lint coverage; do NOT re-add them here.
+# NOTE: cmd_audit.py and cmd_dogfood.py were refactored in 5b5e137e to
+# delegate via the recipe DAG / report PRESETS table instead of literal
+# subprocess invocations. Their compound-invocation coverage now lives in
+# the specialized parsers below (_RECIPES_FILE / _REPORT_FILE), so they
+# are intentionally NOT in this tuple anymore.
 _COMPOUND_INVOKERS: tuple[pathlib.Path, ...] = (
-    _SRC / "commands" / "cmd_audit.py",
-    _SRC / "commands" / "cmd_dogfood.py",
     _SRC / "commands" / "cmd_metrics_push.py",
     _SRC / "commands" / "cmd_permit.py",
     _SRC / "commands" / "cmd_postmortem.py",
