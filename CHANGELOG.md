@@ -1102,7 +1102,7 @@ The 2026-05-16 session that landed:
 - **`(internal memo)`** (W765) — MCP Server Card readiness vs SEP-2127 draft. 7 gaps; 4 ready (W792-W794); 1 BLOCKED on SEP-2127 merge (W795). 10 sources cited.
 - **`(internal memo)`** (W766) — MCP Tasks primitive evaluation. **CRITICAL: 8 sync tools falsely declared in `_TASK_OPTIONAL_TOOLS`** (W785 captured). 10 candidate tools; 6 prerequisites; 3-tool migration order.
 - **`(internal memo)`** (W768) — Top-3 elicitation candidates: `roam_mutate`, `roam_cga_emit`, `roam_annotate_symbol`. 4 prerequisites; 4 runner-up candidates. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
-- **`(internal memo)`** (W480) — FP-rate methodology: hybrid (OWASP Benchmark / public corpora / internal dogfood). **CRITICAL: 93% of BigCloneBench's Weak Type-3/4 pairs are mislabeled** per arXiv 2505.04311 (W797 captured). 13 sources cited.
+- **`(internal memo)`** (W480) — FP-rate methodology: hybrid (OWASP Benchmark / public corpora / internal dogfood). **CRITICAL: 93% of BigCloneBench's Weak Type-3/4 pairs are mislabeled** per arXiv 2505.04311 (W797 captured). 13 sources cited. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 
 ### Operational findings (pending fix / decision)
 - **W797 — CRITICAL caveat: BigCloneBench Type-3/4 93% mislabeled.** Any clones-detector FP-rate claim citing BigCloneBench must exclude Type-3/4 OR cite the caveat.
