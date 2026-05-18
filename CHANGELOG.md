@@ -2056,7 +2056,7 @@ The 2026-05-16 session that landed:
 > source-cache handoff: `effects_taint` moved from 91.0s → 84.7s = **7%
 > reduction** (modest vs the 15-30s predicted by W433-research). 216 tests
 > pass. W441 + W485 follow-ons queued. (5) **Detector FP-rate methodology
-> research** — **W470-research** (`(internal memo)`)
+> research** — **W470-research** (`(internal memo)`) <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 > scoped FP-rate measurement for 3 first-to-measure detectors (smells 3047
 > findings, vibe-check 831, taint). **Surprise finding: OWASP Benchmark is
 > community-rejected** — task-specific real-codebase corpora are now
@@ -2105,7 +2105,7 @@ The 2026-05-16 session that landed:
 
 ### Research / planning — W491 batch
 - **W470-research — Detector FP-rate measurement methodology.**
-  Memo at `(internal memo)`. Three
+  Memo at `(internal memo)`. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. --> Three
   first-to-measure detectors scoped: **smells (3047 findings)**,
   **vibe-check (831)**, **taint**. **Surprise: OWASP Benchmark is
   community-rejected** — task-specific real-codebase corpora are now
@@ -3248,7 +3248,7 @@ The 2026-05-16 session that landed:
 - **OWASP 2026 taint rule pack research** (W372-research). Sonnet+web
   pass that surveyed the OWASP 2026 top-10 against the current
   in-tree taint rule set. Memo at
-  `(internal memo)`. Identified 3
+  `(internal memo)`. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. --> Identified 3
   first-ship rules ranked by precision-vs-effort: **W373**
   (`python-ssti` — Jinja2 server-side template injection), **W374**
   (`java-sqli` — JDBC string-concat SQL injection), **W375**
@@ -3271,7 +3271,7 @@ The 2026-05-16 session that landed:
   (`effects_taint` optimization) ahead of W423.
 - **Standards crosswalk additions research** (W360-research).
   Sonnet+web pass that surveyed standards-update activity since the
-  W341 audit. Memo at `(internal memo)`.
+  W341 audit. Memo at `(internal memo)`. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   Proposes 5 new YAML entries: 4 NIST AI 600-1 controls + 1 NIST SP
   800-218A control. CAISI (US AI Safety Institute) is held until H2
   2026 — its standards remain in concept-paper form and adding
