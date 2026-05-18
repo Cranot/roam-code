@@ -65,7 +65,7 @@ mcp = [
 ]
 semantic = [
     "numpy>=1.24",
-    "onnxruntime>=1.16",
+    "onnxruntime>=1.24.3",
     "tokenizers>=0.15",
 ]
 leiden = [
