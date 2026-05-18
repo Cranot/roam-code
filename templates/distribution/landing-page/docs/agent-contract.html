@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>The Agent Contract — Roam Docs · How agents should call Roam</title>
-  <meta name="description" content="Five rules plus the JSON envelope shape for AI coding agents using Roam: read context, check impact, critique diffs, simulate refactors, ask algorithmic-risk questions, and parse a single canonical envelope.">
+  <meta name="description" content="Five rules plus the JSON envelope shape for AI coding agents using Roam: read context, check impact, critique diffs, simulate refactors, and parse a canonical envelope.">
   <link rel="canonical" href="https://roam-code.com/docs/agent-contract">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -89,6 +89,23 @@
         accidental O(n²), risky refactors, hidden coupling.
       </p>
 
+      <h2 id="surface-at-a-glance">Surface at a glance</h2>
+      <p>
+        Authoritative counts from <code>roam surface --json</code>
+        (v13.2). The MCP server exposes a tunable preset surface so the
+        agent sees what it needs, not the entire registry.
+      </p>
+      <table>
+        <thead><tr><th>Surface</th><th>Count</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>CLI commands</td><td>241</td><td>234 canonical + 7 aliases.</td></tr>
+          <tr><td>MCP tools registered</td><td>227</td><td>Full registry — pick a subset via preset.</td></tr>
+          <tr><td>MCP tools in <code>core</code> preset</td><td>57</td><td>Default for new agent integrations.</td></tr>
+          <tr><td>Languages</td><td>28</td><td>Tier-1 extractors plus tree-sitter fallback.</td></tr>
+          <tr><td>Canonical envelope</td><td>1</td><td>One JSON shape across all 227 tools — parse once, branch on <code>status</code>.</td></tr>
+        </tbody>
+      </table>
+
       <h2>1. Before editing — ask for context</h2>
       <pre class="terminal" aria-label="Roam context command"><span class="t-prompt">$</span> <span class="t-cmd">roam context &lt;symbol-or-file&gt;</span></pre>
       <p>
@@ -171,9 +188,9 @@
         Every <code>roam --json &lt;cmd&gt;</code> call and every MCP tool
         response is shaped by one canonical envelope. Marshal against
         this shape and the same code handles success, partial success,
-        and the four Pattern-1 failure variants (missing prerequisite,
-        intermediate-layer signal loss, empty stdout, degraded
-        resolution).
+        and the four failure modes Roam treats as first-class signal:
+        missing prerequisite, intermediate-layer signal loss, empty
+        stdout, and degraded resolution.
       </p>
 <pre class="terminal" aria-label="Canonical roam JSON envelope shape"><span class="t-cmd">{
   "command": "&lt;tool_name&gt;",
@@ -294,6 +311,125 @@
         for the external GRC tool of your choice.
       </p>
 
+      <h2 id="mcp-boundary-security">MCP boundary security</h2>
+      <p>
+        Roam owns the <strong>inside-server</strong> half of the agent's
+        trust boundary: it runs locally as the same user as the editor,
+        gates writes through a four-mode policy, and emits a
+        tamper-evident decision receipt on every sensitive call. It is
+        explicitly <em>not</em> a network gateway and does not proxy
+        model traffic — gateway-class defences (semantic prompt-injection
+        scanning, response interception, cross-server aggregation) are a
+        complementary layer owned by your MCP host. See the
+        <a href="https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163">Discussion #37 reply</a>
+        for the full inside-server-vs-gateway framing, and
+        <a href="/docs/mcp-usage#security-stance">/docs/mcp-usage#security-stance</a>
+        for the public stance.
+      </p>
+
+      <h3 id="egress-redaction">Egress secret redaction</h3>
+      <p>
+        Every MCP tool response passes through a structural secret-pattern
+        scan on the egress path
+        (<code>redact_secrets_in_string</code> /
+        <code>redact_secrets_in_value</code>) before the bytes leave the
+        server. Hits replace the secret with a stable placeholder and
+        stamp the receipt's <code>redactions</code> field with the
+        closed-enum reason — today the only emitted reason on the MCP
+        path is <code>secret</code>; the canonical vocabulary admits
+        <code>secret</code>, <code>pii</code>,
+        <code>sensitive_content</code>, <code>size_limit</code>,
+        <code>policy</code>, <code>user_opt_in_required</code>,
+        <code>machine_local_path</code>, <code>schema_strict</code>,
+        and <code>producer_not_available</code>. Patterns cover GitHub
+        PAT (classic and fine-grained), OpenAI / Anthropic
+        <code>sk-</code> keys, AWS AKIA, Bearer tokens, PEM private-key
+        markers, and JWT. Per-pattern hit counts ride in
+        <code>extra["redaction_details"]</code> as
+        <code>{pattern_id: hit_count}</code>.
+      </p>
+
+      <h3 id="four-mode-policy">Four-mode policy enforcement</h3>
+      <p>
+        Every MCP wrapper resolves the caller's mode
+        (<code>read_only</code> / <code>safe_edit</code> /
+        <code>migration</code> / <code>autonomous_pr</code>) and checks
+        the tool's <code>required_mode</code> before dispatch. The
+        receipt's <code>policy_decision</code> is a closed enum —
+        <code>allow</code> / <code>deny</code> /
+        <code>not_evaluated</code> — reflecting an actual enforcement
+        decision at the MCP boundary, not a hard-coded allow. Resolution
+        priority (highest wins): explicit <code>--mode</code> flag,
+        <code>ROAM_AGENT_MODE</code> env var,
+        <code>.roam/active_mode</code> file, default
+        <code>safe_edit</code>. A gateway can map external roles to
+        Roam modes and pass the resolved mode in per call.
+      </p>
+
+      <h3 id="hmac-linked-receipts">HMAC-linked decision receipts</h3>
+      <p>
+        Each receipt's sha256 content hash is linked into the
+        HMAC-chained run ledger at
+        <code>.roam/runs/&lt;run_id&gt;/events.jsonl</code>, so receipt
+        tampering is detectable offline.
+        <code>verify_chain_with_receipts()</code> in
+        <code>src/roam/runs/signing.py</code> extends the standard
+        four-state run-verify envelope
+        (<code>ok</code> / <code>tampered</code> /
+        <code>unsigned</code> / empty) with a
+        <code>receipt_integrity</code> closed enum:
+        <code>ok</code> (every linked receipt's on-disk sha256 matches),
+        <code>missing</code> (a ledger event names a receipt file no
+        longer on disk), <code>tampered</code> (a receipt file no longer
+        hashes to the value the chain anchors), and
+        <code>not_linked</code> (receipts exist on disk that no ledger
+        event anchors). Pre-link chains hash byte-identical to before —
+        no migration is needed.
+      </p>
+
+      <h3 id="receipt-schema-export">Receipt schema export</h3>
+      <p>
+        The <code>McpDecisionReceipt</code> dataclass exports to a
+        Draft 2020-12 JSON Schema via
+        <code>scripts/export_mcp_receipt_schema.py</code>. Gateway and
+        policy-enforcement-point developers can validate emitted
+        receipts against the schema before tailing them into SIEM. The
+        schema is schema-stable; field additions are additive.
+      </p>
+
+      <h3 id="receipt-fields">What every <code>McpDecisionReceipt</code> carries</h3>
+      <p>
+        One JSON file per sensitive tool call, stored at
+        <code>.roam/mcp_receipts/&lt;run_id&gt;/&lt;tool_call&gt;.json</code>.
+        Frozen dataclass; canonical-JSON serialisation; stable sha256
+        content hash. Raw inputs and outputs are never stored — only
+        their digests.
+      </p>
+      <table>
+        <thead><tr><th>Field</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>tool_call</code></td><td>Opaque per-invocation id (<code>&lt;tool&gt;_&lt;12-hex&gt;</code>).</td></tr>
+          <tr><td><code>client_id</code></td><td>MCP client process id from <code>ROAM_MCP_CLIENT_ID</code>.</td></tr>
+          <tr><td><code>tool_name</code></td><td>Canonical tool name (e.g. <code>roam_preflight</code>).</td></tr>
+          <tr><td><code>actor_ref_id</code></td><td>Agent id from <code>ROAM_AGENT_ID</code>; ties to the <code>ActorRef</code> vocabulary.</td></tr>
+          <tr><td><code>declared_side_effects</code></td><td>Tuple of <code>read_only</code> / <code>write_filesystem</code> / etc. from the tool registry.</td></tr>
+          <tr><td><code>required_mode</code></td><td><code>read_only</code> / <code>safe_edit</code> / <code>migration</code> / <code>autonomous_pr</code>.</td></tr>
+          <tr><td><code>input_hash</code></td><td>sha256 of canonical-JSON input args. Never the args themselves.</td></tr>
+          <tr><td><code>policy_decision</code></td><td>Closed enum: <code>allow</code> / <code>deny</code> / <code>not_evaluated</code>.</td></tr>
+          <tr><td><code>output_ref</code> / <code>output_hash</code></td><td>Artifact id for large output, or sha256 for small. Mutually exclusive.</td></tr>
+          <tr><td><code>run_event_id</code></td><td>Link to <code>.roam/runs/&lt;id&gt;/events.jsonl</code> row.</td></tr>
+          <tr><td><code>redactions</code></td><td>Closed-enum tuple of redaction reasons; stable across versions.</td></tr>
+          <tr><td><code>extra</code></td><td>Free-form structured detail (e.g. <code>redaction_details</code> per-pattern counts).</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Reviewers and gateways consume receipts alongside the eight
+        evidence questions on
+        <a href="/docs/architecture#eight-evidence-questions">/docs/architecture#eight-evidence-questions</a>
+        and the worked PR-Replay packet under
+        <a href="/audit#evidence">/audit#evidence</a>.
+      </p>
+
       <h2>Wire it into your agent</h2>
       <p>
         Roam ships a Model Context Protocol server and an auto-generated
@@ -346,6 +482,14 @@
         <li><a href="/docs/mcp-usage">/docs/mcp-usage</a> &mdash;
           the MCP-specific call patterns: cold-start envelope, slow-tool
           handle pattern, typical agent flow, parameter aliases.</li>
+        <li><a href="/docs/mcp-usage#security-stance">/docs/mcp-usage#security-stance</a> &mdash;
+          the public inside-server-vs-gateway stance and which class of
+          defence Roam owns versus which class belongs to the host.</li>
+        <li><a href="/docs/architecture#eight-evidence-questions">/docs/architecture#eight-evidence-questions</a> &mdash;
+          the eight questions every <code>ChangeEvidence</code> packet
+          answers about an AI-assisted change.</li>
+        <li><a href="/audit#evidence">/audit#evidence</a> &mdash;
+          a worked PR-Replay evidence packet on a real repo.</li>
         <li><a href="/docs/architecture">/docs/architecture</a> &mdash;
           how the call graph, evidence layer, and detector registry fit
           together. Read once; agents do not need it per call.</li>
