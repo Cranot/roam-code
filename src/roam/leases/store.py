@@ -450,17 +450,58 @@ def release_lease(
     released or already-expired lease is a no-op that returns True --
     idempotence makes "agent retries release on flaky network" safe.
 
-    W589: when *warnings_out* is supplied, malformed-on-disk drops
-    (corrupt JSON, non-dict root, schema-invalid) bubble up from the
-    underlying :func:`read_lease` call so callers see WHY an existing
-    file failed to round-trip rather than treating it as "lease not
-    found". A missing path is NOT a warning. ``None`` (default)
-    preserves pre-W589 silent behaviour.
+    W589: when *warnings_out* is supplied, each silent-error site emits
+    one structured kind string into the bucket so callers can tell
+    "lease vanished" from "lease was already released" from "lease file
+    is on disk but malformed". The release-site kinds DIVERGE from the
+    W448 ``read_lease`` free-form format intentionally — release-call
+    semantics are different (a missing lease IS a release-time anomaly
+    worth disclosing, whereas a missing lease on a direct ``read_lease``
+    lookup is just "not found"). ``None`` (default) preserves the
+    pre-W589 silent behaviour.
+
+    Emitted kinds (closed enum):
+
+      * ``lease_not_found:<path>`` — the on-disk path does not exist.
+      * ``lease_already_released:<lease_id>`` — the lease loaded clean
+        but its ``state`` is already ``released``.
+      * ``lease_corrupt:<path>:<exc_class>`` — the on-disk file is
+        unreadable / unparseable / schema-invalid. ``<exc_class>``
+        names the failure mode (``OSError`` / ``JSONDecodeError`` /
+        ``NotAJsonObject`` / ``SchemaInvalid``).
     """
-    lease = read_lease(repo_root, lease_id, warnings_out=warnings_out)
-    if lease is None:
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
+    path = _lease_path(repo_root, lease_id)
+    if not path.exists():
+        _emit(f"lease_not_found:{path.name}")
         return False
+
+    # Re-parse here (instead of delegating to ``read_lease``) so the
+    # release-site can identify WHICH failure mode fired and emit the
+    # structured kind. ``read_lease`` returns ``None`` for all three
+    # corrupt sub-cases without distinguishing them at the call site.
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        _emit(f"lease_corrupt:{path.name}:{type(exc).__name__}")
+        return False
+    except (json.JSONDecodeError, ValueError) as exc:
+        _emit(f"lease_corrupt:{path.name}:{type(exc).__name__}")
+        return False
+    if not isinstance(raw, dict):
+        _emit(f"lease_corrupt:{path.name}:NotAJsonObject")
+        return False
+    lease = _lease_from_dict(raw, repo_root)
+    if lease is None:
+        _emit(f"lease_corrupt:{path.name}:SchemaInvalid")
+        return False
+
     if lease.state == "released":
+        _emit(f"lease_already_released:{lease.lease_id}")
         return True
     lease.state = "released"
     _write_lease(lease)
@@ -515,12 +556,36 @@ def list_leases(
     return out
 
 
-def gc_expired_leases(repo_root: Path) -> list[str]:
+def gc_expired_leases(
+    repo_root: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> list[str]:
     """Mark every wall-clock-expired lease as ``state: expired``.
 
     Returns the list of lease_ids that transitioned from ``active`` to
     ``expired`` on this pass. Already-released and already-expired
     leases are skipped (they don't need rewriting).
+
+    W592: when *warnings_out* is supplied, each silently-swallowed
+    per-lease write failure emits one structured marker rather than a
+    bare ``continue``. Before W592 a partial GC pass left stale lease
+    files on disk with NO signal to the operator, making "GC ran clean"
+    indistinguishable from "GC ran, hit 3 OSErrors, left 3 stale
+    leases blocking future claims".
+
+    The ``continue`` semantic is PRESERVED on purpose — a single I/O
+    failure must NOT abort the whole sweep (best-effort contract). The
+    marker just surfaces WHICH lease couldn't be cleaned so the caller
+    can decide whether to retry, alert, or escalate.
+
+    Emitted kind (closed enum):
+
+      * ``lease_gc_failed:<lease_id>.json:<exc_class>:<detail>`` — the
+        per-lease ``_write_lease`` raised ``OSError``. ``<exc_class>``
+        names the failure mode (typically ``PermissionError`` /
+        ``FileNotFoundError`` / ``OSError``); ``<detail>`` carries the
+        exception's str().
     """
     now = _utc_now()
     transitioned: list[str] = []
@@ -532,8 +597,14 @@ def gc_expired_leases(repo_root: Path) -> list[str]:
         lease.state = "expired"
         try:
             _write_lease(lease)
-        except OSError:
+        except OSError as exc:
             # A write failure shouldn't drop the whole pass — keep going.
+            # W592: surface the per-failure marker so callers can see
+            # WHICH expired lease couldn't be cleaned (Pattern-2 silent
+            # fallback fix). ``continue`` is preserved — best-effort
+            # sweep semantic is the contract.
+            if warnings_out is not None:
+                warnings_out.append(f"lease_gc_failed:{lease.lease_id}.json:{type(exc).__name__}:{exc}")
             continue
         transitioned.append(lease.lease_id)
     return transitioned

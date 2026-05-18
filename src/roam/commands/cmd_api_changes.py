@@ -8,6 +8,17 @@ emitted because api-changes outputs are invocation-scoped API-surface
 delta summaries — not per-location violations. See action.yml
 _SUPPORTED_SARIF allowlist + W1175-RESEARCH Bucket B propagation plan
 + W1148 audit memo.
+
+Severity vocabulary (W1005-followup-F). The EMIT vocabulary is the SemVer
+3-tier ``{breaking, warning, info}`` -- semantically a contract-change
+tier, NOT a CVSS-style finding severity. Per Pattern 3a (cross-command
+metric divergence), the ``--severity`` Click.Choice also accepts the
+W547 canonical 7-token vocab (``critical / error / high / warning /
+medium / low / info``) so canonical-aware agents pass any of those
+without hitting a click usage error. Canonical tokens project onto the
+SemVer tier order via :data:`_CANONICAL_TO_SEMVER` before the filter
+rank lookup; emit-side strings stay SemVer for back-compat with
+downstream consumers reading ``change["severity"]``.
 """
 
 from __future__ import annotations
@@ -47,7 +58,61 @@ SEVERITY_BREAKING = "breaking"
 SEVERITY_WARNING = "warning"
 SEVERITY_INFO = "info"
 
+# SemVer tier order (lower numeric = worse). Polarity is opposite to
+# :func:`roam.output._severity.severity_rank` (higher = worse), so we
+# keep this LOCAL table for the ``<= min_severity`` floor comparator
+# below. The shape stays SemVer-3-tier because that's the emit
+# vocabulary and the back-compat contract for downstream consumers.
 _SEVERITY_ORDER = {SEVERITY_BREAKING: 0, SEVERITY_WARNING: 1, SEVERITY_INFO: 2}
+
+# Pattern 3a alias map (W1005-followup-F): canonical W547 severity tokens
+# projected onto the SemVer 3-tier {breaking, warning, info}. Lets a
+# canonical-aware agent pass ``--severity high`` (or ``critical``,
+# ``error``, ``medium``, ``low``, ``note``) without hitting a click
+# usage error. Projection rationale:
+#
+# * ``critical`` / ``error`` / ``high`` -> ``breaking`` -- the W547 tiers
+#   that gate CI by default (SARIF level=error or rank>=4) map onto the
+#   SemVer "breaking change" tier (REMOVED / SIGNATURE_CHANGED /
+#   VISIBILITY_REDUCED).
+# * ``warning`` -- identity (both vocabs use the same word; W547
+#   ``warning`` ranks 3, the canonical mid-tier, which lines up with
+#   the SemVer ``warning`` tier for RENAMED / TYPE_CHANGED).
+# * ``medium`` -- W547 mid-tier (rank 2) below ``warning``. The
+#   SemVer 3-tier has no slot between warning and info, so we project
+#   ``medium`` -> ``warning`` (the wider of the two adjacent slots —
+#   monotone, the lookup never demotes a tier).
+# * ``info`` / ``low`` / ``note`` -- the W547 floor tier maps onto the
+#   SemVer ``info`` tier (ADDED / PARAM_ADDED_OPTIONAL / DEPRECATED).
+#
+# This is a one-way projection: emit strings stay SemVer, only INPUT
+# parsing is widened. See module docstring for the Pattern 3a rationale.
+_CANONICAL_TO_SEMVER: dict[str, str] = {
+    "critical": SEVERITY_BREAKING,
+    "error": SEVERITY_BREAKING,
+    "high": SEVERITY_BREAKING,
+    "warning": SEVERITY_WARNING,
+    "medium": SEVERITY_WARNING,
+    "info": SEVERITY_INFO,
+    "low": SEVERITY_INFO,
+    "note": SEVERITY_INFO,
+}
+
+
+def _project_severity_input(severity: str) -> str:
+    """Project a ``--severity`` input token onto the SemVer 3-tier vocab.
+
+    Accepts SemVer tokens (``breaking`` / ``warning`` / ``info``) as
+    identity AND the W547 canonical 7-token vocab via
+    :data:`_CANONICAL_TO_SEMVER`. Case-insensitive. Unknown labels
+    collapse to ``warning`` (the default floor) so a typo never
+    accidentally hides every change.
+    """
+    key = severity.strip().lower()
+    if key in _SEVERITY_ORDER:
+        return key
+    return _CANONICAL_TO_SEMVER.get(key, SEVERITY_WARNING)
+
 
 # Change categories and their default severities
 _CHANGE_CATEGORIES = {
@@ -594,9 +659,31 @@ def _format_change_text(change: dict) -> str:
 )
 @click.option(
     "--severity",
-    type=click.Choice(["breaking", "warning", "info"], case_sensitive=False),
+    type=click.Choice(
+        # SemVer 3-tier (emit vocab) + W547 canonical 7-tier (input only,
+        # projected via _CANONICAL_TO_SEMVER). Pattern 3a alias widening
+        # per W1005-followup-F -- agents fluent in canonical severity
+        # tokens can pass any of them without hitting click usage error 2.
+        [
+            "breaking",
+            "warning",
+            "info",
+            "critical",
+            "error",
+            "high",
+            "medium",
+            "low",
+            "note",
+        ],
+        case_sensitive=False,
+    ),
     default="warning",
-    help="Minimum severity to report (default: warning).",
+    help=(
+        "Minimum severity to report (default: warning). Accepts SemVer "
+        "tokens {breaking, warning, info} OR W547 canonical tokens "
+        "{critical, error, high, warning, medium, low, info, note} -- "
+        "canonical tokens project onto the SemVer tier order."
+    ),
 )
 @click.option(
     "--changed",
@@ -614,6 +701,14 @@ def api_changes(ctx, base, severity, changed_only):
     (BREAKING/WARNING/INFO) with rename detection and visibility tracking.
     Use --severity=breaking to see only breaking changes, or --severity=info
     to see all changes including additions.
+
+    ``--severity`` accepts both the SemVer 3-tier ``{breaking, warning,
+    info}`` (emit vocab) and the W547 canonical 7-token vocab
+    ``{critical, error, high, warning, medium, low, info, note}`` --
+    canonical tokens project onto the SemVer tier order
+    (``critical/error/high -> breaking``, ``medium -> warning``,
+    ``low/note -> info``). Emit-side ``severity`` field stays SemVer
+    for back-compat with downstream consumers.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
@@ -624,7 +719,9 @@ def api_changes(ctx, base, severity, changed_only):
     if base is None:
         base = _git_default_branch(root)
 
-    min_severity = _SEVERITY_ORDER.get(severity.lower(), 1)
+    # Pattern 3a alias map (W1005-followup-F): canonical W547 tokens
+    # project onto the SemVer 3-tier order before the floor lookup.
+    min_severity = _SEVERITY_ORDER[_project_severity_input(severity)]
 
     # 1. Find changed files
     changed = _git_changed_files(root, base)

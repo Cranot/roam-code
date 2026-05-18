@@ -64,6 +64,8 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
+from roam.output.risk import normalize_risk_level, risk_rank
+from roam.permits.store import load_permits_from_disk
 from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
@@ -948,6 +950,128 @@ def _world_model_distributions(bundle: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# W641-followup-C — canonical W631 risk-LEVEL projection
+# ---------------------------------------------------------------------------
+#
+# Pattern-3a structural close-out (sixth axis after W547 severity, W596
+# confidence, W641 pr-risk, W641-followup-A impact, W641-followup-B critique).
+# pr-bundle is the central evidence-compiler output — projecting the bundle's
+# domain signals (state, risk_severity_distribution, causal-diff,
+# unresolved-affected) onto the canonical W631 risk-LEVEL vocabulary
+# (``critical``/``high``/``medium``/``low``) lets cross-command floor
+# comparators (``risk_rank(summary.risk_level_canonical) >= 3`` to gate on
+# high-or-worse) work without each consumer re-deriving the rank vocabulary
+# at the call site.
+#
+# Conservative-on-critical: the projection saturates at ``high``; we never
+# escalate to ``critical`` from the bundle's domain signals because the
+# H/M/L emit vocab caps at ``H`` (no ``CRITICAL`` short-code in the bundle's
+# risk records). Same discipline as W641-followup-A / B.
+
+# pr-bundle ``risks[]`` H/M/L short-code → canonical W631 risk_level projection.
+# Mirrors the polarity of the W565 ``_DEFAULT_SEVERITY_TO_CONFIDENCE_LEVEL``
+# table but on the risk axis. Closed enum; no critical row by design (the
+# bundle's emit vocab tops out at H — see :data:`_RISK_VALID_SHORTCODES`).
+_PR_BUNDLE_RISK_SHORTCODE_TO_LEVEL: dict[str, str] = {
+    "H": "high",
+    "M": "medium",
+    "L": "low",
+}
+
+
+def _pr_bundle_risk_level(
+    *,
+    state: str,
+    risk_severity_distribution: dict,
+    causal_diff_high_severity_count: int,
+    unresolved_affected_symbols_count: int,
+    warnings_out: list[str] | None = None,
+) -> str:
+    """Project bundle-level signals onto the canonical W631 risk-LEVEL set.
+
+    Aggregation rule (max-wins across four signal axes):
+
+    1. ``risks[]`` H/M/L distribution → projected via
+       :data:`_PR_BUNDLE_RISK_SHORTCODE_TO_LEVEL` (max-bucket wins).
+    2. ``causal_diff_high_severity_count > 0`` → ``high`` (a NEW or REMOVED
+       io_write path since bundle init is a load-bearing change signal —
+       see W15.3 causal-diff pass).
+    3. ``unresolved_affected_symbols_count > 0`` → at-least-``medium``
+       (ghost symbols indicate a degraded resolution; Pattern 2 visibility).
+    4. ``state != "complete"`` → at-least-``medium`` (structurally incomplete
+       bundle = insufficient assurance).
+
+    Empty bundle / no signals → ``"low"`` floor (W531 CI-safety: a
+    no-signals bundle MUST NOT promote into a CI-failing rank).
+
+    Conservative-on-critical: the projection saturates at ``high`` (the
+    H short-code tier). Same discipline as the W641-followup-A
+    ``_impact_risk_level`` and W641-followup-B ``_critique_risk_level``
+    helpers — no escalation to ``critical`` from a detector whose vocab
+    can't reach it.
+
+    Unknown H/M/L shortcodes accumulate a marker on *warnings_out* (when
+    provided) under ``pr_bundle_unknown_risk_severity:<label>`` so
+    Pattern-2 silent-fallback discipline stays loud — the projection
+    safe-floors to ``low`` but the marker disambiguates a real-low signal
+    from an unrecognised-label drop. Mirrors the W989 pr-risk + W918
+    alerts + W641-followup-B critique pattern.
+    """
+    worst_rank = -1
+    worst_level = "low"
+
+    # Signal 1: risks[] H/M/L distribution.
+    if isinstance(risk_severity_distribution, dict):
+        for sev_key, count in risk_severity_distribution.items():
+            if not isinstance(count, int) or count <= 0:
+                continue
+            if not isinstance(sev_key, str):
+                continue
+            key = sev_key.strip().upper()
+            if key in _PR_BUNDLE_RISK_SHORTCODE_TO_LEVEL:
+                level = _PR_BUNDLE_RISK_SHORTCODE_TO_LEVEL[key]
+            else:
+                # Unknown bucket-key (defensive — the producer fixes the
+                # bucket keys at construction time, but a hand-crafted
+                # bundle or future drift could re-introduce drift).
+                if warnings_out is not None:
+                    warnings_out.append(f"pr_bundle_unknown_risk_severity:{sev_key}")
+                level = "low"
+            r = risk_rank(level)
+            if r > worst_rank:
+                worst_rank = r
+                worst_level = level
+
+    # Signal 2: causal-diff high-severity edges (NEW or REMOVED io_write
+    # since bundle init). Floor to ``high`` — the W15.3 signal is the
+    # bundle's strongest dynamic finding.
+    if causal_diff_high_severity_count and causal_diff_high_severity_count > 0:
+        r = risk_rank("high")
+        if r > worst_rank:
+            worst_rank = r
+            worst_level = "high"
+
+    # Signal 3: unresolved-affected ghost symbols. Floor to ``medium`` —
+    # the resolution is degraded (Pattern 2: silent_success on degraded
+    # resolution discipline).
+    if unresolved_affected_symbols_count and unresolved_affected_symbols_count > 0:
+        r = risk_rank("medium")
+        if r > worst_rank:
+            worst_rank = r
+            worst_level = "medium"
+
+    # Signal 4: structurally-incomplete bundle. Floor to ``medium`` —
+    # an incomplete bundle is insufficient assurance.
+    if state and state != "complete":
+        r = risk_rank("medium")
+        if r > worst_rank:
+            worst_rank = r
+            worst_level = "medium"
+
+    return worst_level
+
+
+# ---------------------------------------------------------------------------
 # W15.3 causal-graph diff integration
 # ---------------------------------------------------------------------------
 #
@@ -1438,10 +1562,7 @@ def _load_permits_from_disk(
     contract (W379 duplicate dedup / W380 schema gate / W382 malformed
     warning surface; Pattern 2 always-emit; raw-dict pass-through).
     """
-    # Local import avoids hard module-load cycle: ``permits.store`` is a
-    # W198 substrate module, ``cmd_pr_bundle`` is its primary consumer.
-    from roam.permits.store import load_permits_from_disk
-
+    # W907 verified: no cycle exists; see tests/test_w907_cycle_hedge_audit.py
     return load_permits_from_disk(repo_root, warnings_out=warnings_out)
 
 
@@ -1604,6 +1725,32 @@ def _build_envelope(
         missing_names = [m.split(" (", 1)[0] for m in missing]
         verdict = f"PR proof bundle incomplete -- {prefix}missing: {', '.join(missing_names)}"
 
+    # W641-followup-C — canonical W631 risk-LEVEL projection from the
+    # bundle's domain signals (state + risk_severity_distribution +
+    # causal-diff + unresolved-affected). The max-wins aggregation rule
+    # mirrors the W641-followup-A cmd_impact + W641-followup-B cmd_critique
+    # contracts so cross-command floor comparators
+    # (``risk_rank(summary.risk_level_canonical) >= 3`` to gate on
+    # high-or-worse) work without each consumer re-deriving the rank
+    # vocabulary at the call site (Pattern-3a structural close-out).
+    # Conservative-on-critical: saturates at ``high`` — the bundle's emit
+    # vocab tops out at H.
+    _pr_bundle_warnings_out: list[str] = []
+    _pr_bundle_domain_level = _pr_bundle_risk_level(
+        state=state,
+        risk_severity_distribution=distributions["risk_severity_distribution"],
+        causal_diff_high_severity_count=cd_high,
+        unresolved_affected_symbols_count=n_unresolved,
+        warnings_out=_pr_bundle_warnings_out,
+    )
+    risk_level_canonical = normalize_risk_level(_pr_bundle_domain_level) or "low"
+    risk_rank_int = risk_rank(risk_level_canonical)
+    # Verdict augmentation per LAW 6 (line works standalone): append the
+    # canonical risk_level in a closed-enum parenthesis so a consumer
+    # parsing only the verdict string sees the canonical bucket directly.
+    # Mirrors W641-followup-A / B verdict-suffix discipline.
+    verdict = f"{verdict} (risk_level {risk_level_canonical})"
+
     summary = {
         "verdict": verdict,
         "state": state,
@@ -1635,7 +1782,25 @@ def _build_envelope(
         # W21.4: flag in summary so consumers can tell at a glance which
         # gate ran. Always present (False by default) for Pattern 2.
         "strict_resolved": bool(strict_resolved),
+        # W641-followup-C — canonical W631 risk-LEVEL projection +
+        # integer rank. Aggregated max-wins across bundle state +
+        # risk_severity_distribution + causal-diff + unresolved-affected
+        # (the four bundle-domain signals). Empty bundle safe-floors to
+        # ``low`` (rank 1). Mirrors the W641 (pr-risk) + W641-followup-A
+        # (cmd_impact) + W641-followup-B (cmd_critique) contract so
+        # cross-command floor comparators work without each consumer
+        # re-deriving the rank vocabulary at the call site (Pattern-3a).
+        "risk_level_canonical": risk_level_canonical,
+        "risk_rank": risk_rank_int,
     }
+    # W641-followup-C — record any unknown-shortcode drops on the summary
+    # so Pattern-2 silent-fallback stays visible. Non-empty
+    # ``warnings_out`` flips ``partial_success`` (mirrors W989 pr-risk +
+    # W918 alerts + W641-followup-B critique discipline) so a downstream
+    # consumer reading ``partial_success`` alone sees the degradation.
+    if _pr_bundle_warnings_out:
+        summary["warnings_out"] = list(_pr_bundle_warnings_out)
+        summary["partial_success"] = True
 
     # W189: resolve a default actor block when the caller didn't provide
     # one (init / set / add / validate all hit this path). The emit path
@@ -1853,6 +2018,13 @@ def _build_envelope(
         # every permit file parsed + validated + had a unique id
         # (Pattern 2 — consumers can rely on the key being present).
         bundle_warnings=bundle_warnings,
+        # W641-followup-C — top-level mirrors of summary.risk_level_canonical
+        # / summary.risk_rank so consumers that read the top-level envelope
+        # directly (without descending into ``summary``) see the canonical
+        # bucket. Mirror of the W641-followup-A cmd_impact + W641-followup-B
+        # cmd_critique contract.
+        risk_level_canonical=risk_level_canonical,
+        risk_rank=risk_rank_int,
     )
 
 
@@ -2254,13 +2426,76 @@ def pr_bundle_add_affected(ctx, symbol, kind, file_path, blast_radius):
     _emit_envelope_and_log(env, json_mode, target=symbol)
 
 
+# Pattern 3a alias map (W1005-followup-G): canonical W547 severity tokens
+# projected onto the H/M/L risk-severity short-code emit vocab used by
+# ``bundle["risks"]`` rows and the ``risk_severity_distribution`` aggregator
+# at :func:`_world_model_distributions`. Lets a canonical-aware agent pass
+# ``--severity high`` (or ``critical``, ``error``, ``medium``, ``low``,
+# ``info``, ``note``) without hitting a click usage error. Projection
+# rationale mirrors :func:`roam.output._severity.severity_to_confidence_level`
+# (the W565 closed table):
+#
+# * ``critical`` / ``error`` / ``high`` -> ``H`` -- the W547 tiers that gate
+#   CI by default (SARIF level=error or rank>=4) map onto the blocker tier.
+# * ``warning`` / ``medium`` -> ``M`` -- the W547 middle tiers project onto
+#   the mid tier; ``M`` is also the default risk-severity when an
+#   auto-collected envelope omits the field (see _normalize_envelope_risks).
+# * ``info`` / ``low`` / ``note`` -> ``L`` -- the W547 floor projects onto
+#   the informational tier.
+#
+# One-way projection: EMIT stays H/M/L so the ``risk_severity_distribution``
+# {H, M, L} bucket keys + downstream consumers reading ``record["severity"]``
+# stay byte-identical. Only INPUT parsing is widened.
+_RISK_VALID_SHORTCODES = ("H", "M", "L")
+_CANONICAL_TO_RISK_SHORTCODE: dict[str, str] = {
+    "critical": "H",
+    "error": "H",
+    "high": "H",
+    "warning": "M",
+    "medium": "M",
+    "info": "L",
+    "low": "L",
+    "note": "L",
+}
+
+
+def _project_risk_severity_input(severity: str) -> str:
+    """Project a ``--severity`` input token onto the H/M/L emit vocab.
+
+    Accepts short-code tokens (``H``/``M``/``L``) as identity AND the W547
+    canonical 7-token vocab via :data:`_CANONICAL_TO_RISK_SHORTCODE`.
+    Case-insensitive. Unknown labels collapse to ``M`` (the existing
+    risk-severity default at :func:`_normalize_envelope_risks`) so a typo
+    never promotes a risk into the H-tier nor demotes one to L silently.
+    """
+    key = severity.strip().upper()
+    if key in _RISK_VALID_SHORTCODES:
+        return key
+    lower = severity.strip().lower()
+    return _CANONICAL_TO_RISK_SHORTCODE.get(lower, "M")
+
+
 @pr_bundle_add.command("risk")
 @click.argument("description")
 @click.option(
     "--severity",
-    type=click.Choice(["H", "M", "L"], case_sensitive=False),
+    type=click.Choice(
+        # Short-code emit vocab (H/M/L) + W547 canonical 7-tier (input only,
+        # projected via _CANONICAL_TO_RISK_SHORTCODE). Pattern 3a alias
+        # widening per W1005-followup-G -- canonical-aware agents pass any
+        # of them without hitting click usage error 2. EMIT stays H/M/L so
+        # the risk_severity_distribution bucket keys are unchanged.
+        ["H", "M", "L", "critical", "error", "high", "warning", "medium", "low", "info", "note"],
+        case_sensitive=False,
+    ),
     default="M",
     show_default=True,
+    help=(
+        "Risk severity. Accepts short-codes {H, M, L} OR W547 canonical "
+        "tokens {critical, error, high, warning, medium, low, info, note} "
+        "-- canonical tokens project onto H/M/L (critical/error/high -> H; "
+        "warning/medium -> M; info/low/note -> L). Stored value stays H/M/L."
+    ),
 )
 @click.option("--id", "risk_id", default="", help="Optional stable id (e.g. 'R-001').")
 @click.option(
@@ -2270,14 +2505,24 @@ def pr_bundle_add_affected(ctx, symbol, kind, file_path, blast_radius):
 )
 @click.pass_context
 def pr_bundle_add_risk(ctx, description, severity, risk_id, source_command):
-    """Record a risk the agent considered (with source command + severity)."""
+    """Record a risk the agent considered (with source command + severity).
+
+    ``--severity`` accepts the H/M/L short-code emit vocab AND the W547
+    canonical 7-token vocab; canonical tokens project onto H/M/L via
+    :data:`_CANONICAL_TO_RISK_SHORTCODE` BEFORE the record is stored.
+    The on-disk ``bundle["risks"][i]["severity"]`` value stays H/M/L for
+    back-compat with the ``risk_severity_distribution`` aggregator.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()
     path = _bundle_path(root)
     bundle = _require_bundle(ctx, path)
+    # Pattern 3a alias projection (W1005-followup-G): canonical W547 tokens
+    # project onto H/M/L before .upper() stores the value, so the emit
+    # vocab and risk_severity_distribution bucket keys stay H/M/L.
     record = {
         "id": risk_id,
-        "severity": severity.upper(),
+        "severity": _project_risk_severity_input(severity),
         "description": description,
         "source_command": source_command,
     }
@@ -2667,6 +2912,17 @@ def pr_bundle_emit(
     ``human_actor``). The full priority chain lives in
     :func:`_resolve_actor_block`.
 
+    NOTE (W487-followup): when ``--slsa-l3`` is set, this command emits
+    BOTH the bundle envelope AND a sibling SLSA Verification Summary
+    Attestation (VSA, predicateType ``slsa.dev/verification_summary/v1``)
+    projected from the bundle's ChangeEvidence — together they support
+    evidence for SLSA Source Track L3 requirements. This is the canonical
+    SRC-L3 path threaded through the proof-bundle pipeline; the sibling
+    ``roam cga emit --also-vsa`` (W472) emits a byte-identical VSA at the
+    attestation layer for callers that do not need the full bundle.
+    Standalone ``roam cga emit`` without ``--also-vsa`` cannot meet SRC-L3
+    by itself (W487).
+
     Without ``--strict`` the envelope is always echoed with exit 0 so
     reviewers can see the bundle even when proofs are missing.
     """
@@ -2689,23 +2945,155 @@ def pr_bundle_emit(
     path = _bundle_path(root)
     bundle = _require_bundle(ctx, path)
 
+    # W607-AE -- substrate-CALL marker plumbing for pr_bundle_emit. Mirrors
+    # the canonical W607 template (latest landed: W607-AA cmd_pr_analyze /
+    # W607-AB cmd_pr_risk). cmd_pr_bundle is the producer at the heart of
+    # the W805 cross-artifact consistency family -- it composes the proof-
+    # bundle JSON envelope (artifact 1 of the W805 6-artifact family) and
+    # drives emission of VSA, run-ledger-root, cosign signature triplet,
+    # Rekor entry, and Fulcio cert (artifacts 2-6 via subprocess). A raise
+    # in any substrate boundary previously crashed the bundle build OR
+    # produced a partial bundle downstream consumers treated as complete.
+    #
+    # Each wrapped phase becomes a structured
+    # ``pr_bundle_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607ae_warnings_out`` and the envelope still emits cleanly. The
+    # marker rides BOTH ``summary.warnings_out`` and top-level
+    # ``warnings_out`` so consumers reading either surface see the
+    # disclosure. ``partial_success`` flips on non-empty bucket.
+    #
+    # W805 bridge: when an artifact emission (emit_slsa_l3, atomic write,
+    # build_envelope) raises, the per-phase marker surfaces in
+    # warnings_out while the cross-artifact-consistency pins (W805-KKKKK
+    # etc.) catch structural drift. The two families compose: structural
+    # pins catch silent drift, W607 markers catch raised drift.
+    _w607ae_warnings_out: list[str] = []
+
+    def _run_check_ae(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AE marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``pr_bundle_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607ae_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ae_warnings_out.append(f"pr_bundle_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-BW -- ADDITIVE aggregation-phase plumbing on top of the
+    # W607-AE substrate-CALL markers. W607-AE already wrapped the 7
+    # substrate-helper boundaries (resolve_actor_block / mode_blocks_emit /
+    # auto_collect / causal_diff_pass / atomic_write_bundle / build_envelope /
+    # emit_slsa_l3); W607-BW extends marker coverage to the
+    # AGGREGATION-PHASE boundaries that W607-AE left unguarded:
+    #
+    #   - ``score_classify``              -- per-bundle classification of the
+    #                                        canonical W631 risk-LEVEL set
+    #                                        via ``_pr_bundle_risk_level``
+    #                                        re-probe over the assembled
+    #                                        envelope's bundle-domain signals.
+    #                                        Mirror of cmd_attest's W607-BT
+    #                                        score_classify pattern with
+    #                                        default=None driving the
+    #                                        score_classification "unknown"
+    #                                        sentinel.
+    #   - ``severity_normalize``          -- additive canonical W631 risk-LEVEL
+    #                                        projection (``normalize_risk_level``
+    #                                        + ``risk_rank``) on the env's
+    #                                        summary.risk_level_canonical floor.
+    #                                        Conservative-on-critical: pr-bundle
+    #                                        saturates at ``high`` (no
+    #                                        CRITICAL short-code by design).
+    #   - ``compute_verdict``             -- augmented verdict-floor build with
+    #                                        the canonical risk_level suffix
+    #                                        (LAW 6 standalone-parse) via the
+    #                                        ``_make_pr_bundle_verdict`` floor.
+    #   - ``auto_log``                    -- active-run ledger write (silent
+    #                                        no-op if no run is active, but
+    #                                        the underlying ``auto_log`` can
+    #                                        still raise on HMAC chain
+    #                                        misshape or filesystem failures).
+    #   - ``serialize_envelope``          -- ``json_envelope("pr-bundle", ...)``
+    #                                        re-projection (downstream
+    #                                        contract changes / shape
+    #                                        regressions).
+    #   - ``validate_strict_resolved``    -- pr-bundle-specific: the
+    #                                        ``--strict-resolved`` gate boundary
+    #                                        (W21.4 / W365). A raise here
+    #                                        would otherwise crash the
+    #                                        bundle emit AFTER the substrate
+    #                                        + aggregation signals were
+    #                                        already gathered.
+    #
+    # cmd_pr_bundle is the proof-emission boundary that downstream consumers
+    # verify via ``roam pr-bundle validate --strict`` + ``--strict-resolved``
+    # (CI implies BOTH). With W607-BW landed, the full W631 risk-LEVEL
+    # vocabulary range (``high``/``medium``/``low``; ``critical`` excluded
+    # by the conservative-on-critical projection design) is now dual-bucket
+    # plumbed via the substrate-CALL layer (W607-AE) + aggregation-phase
+    # layer (W607-BW). Pairs with cmd_attest's W607-AD + W607-BT closure on
+    # the W805 cross-artifact consistency family.
+    #
+    # Marker family ``pr_bundle_*`` -- same family as W607-AE (additive,
+    # not a separate prefix). Empty bucket -> byte-identical envelope.
+    _w607bw_warnings_out: list[str] = []
+
+    def _run_check_bw(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-BW marker emission.
+
+        Mirror of ``_run_check_ae`` shape (same ``pr_bundle_<phase>_failed:``
+        marker family) but writes into ``_w607bw_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bw_warnings_out.append(f"pr_bundle_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     # W189: resolve the actor block ONCE for this emit invocation. CLI
     # flags win over env / git config / run-ledger (LAW 11). Used by
     # both the mode-blocked early-return and the normal-finalise paths
     # so a read-only-blocked bundle still carries the identity.
-    resolved_actor = _resolve_actor_block(
-        agent_id_override=agent_id,
-        human_actor_override=human_actor,
-        repo_root=root,
+    resolved_actor = (
+        _run_check_ae(
+            "resolve_actor_block",
+            _resolve_actor_block,
+            agent_id_override=agent_id,
+            human_actor_override=human_actor,
+            repo_root=root,
+            default={},
+        )
+        or {}
     )
 
     # W14.2 Synergy 2 — mode soft-gate. In read_only mode, refuse to
     # finalise the bundle but DO NOT clobber the on-disk file. Surface
     # an explicit ``mode_restricted`` state + upgrade verdict so the
     # agent sees exactly what to run next (LAWs 6 + 12, Pattern 2).
-    blocked, active_mode, upgrade_to = _mode_blocks_emit(root)
+    _mode_result = _run_check_ae(
+        "mode_blocks_emit",
+        _mode_blocks_emit,
+        root,
+        default=(False, None, None),
+    )
+    blocked, active_mode, upgrade_to = _mode_result if _mode_result else (False, None, None)
     if blocked:
-        verdict = f"pr-bundle emit blocked: active mode is {active_mode}; run `roam mode {upgrade_to}` to enable"
+        # W641-followup-C — mode-blocked emit still emits the canonical
+        # risk_level axis (Pattern 2: never omit the field). Mode-blocked
+        # is a partial-success state — projection floors to ``medium``
+        # because the bundle could not be finalised, which is itself an
+        # incomplete-assurance signal. Conservative on critical.
+        _blocked_canonical = normalize_risk_level("medium") or "low"
+        _blocked_rank = risk_rank(_blocked_canonical)
+        verdict = (
+            f"pr-bundle emit blocked: active mode is {active_mode}; "
+            f"run `roam mode {upgrade_to}` to enable "
+            f"(risk_level {_blocked_canonical})"
+        )
         env = json_envelope(
             "pr-bundle",
             summary={
@@ -2714,6 +3102,10 @@ def pr_bundle_emit(
                 "partial_success": True,
                 "active_mode": active_mode,
                 "upgrade_mode": upgrade_to,
+                # W641-followup-C — canonical risk-LEVEL on the
+                # mode-blocked path (Pattern 2).
+                "risk_level_canonical": _blocked_canonical,
+                "risk_rank": _blocked_rank,
             },
             bundle_path=str(path),
             # W224c — always surface ``mode`` at the top level so the
@@ -2731,6 +3123,11 @@ def pr_bundle_emit(
             actor=resolved_actor,
             approvals=[],
             accepted_risks=[],
+            # W641-followup-C — top-level mirror of summary.risk_level_canonical
+            # on the mode-blocked emit path (Pattern 2: never omit the
+            # field, even on partial-success).
+            risk_level_canonical=_blocked_canonical,
+            risk_rank=_blocked_rank,
         )
         _emit_envelope_and_log(env, json_mode, target=bundle.get("intent", "")[:80])
         if strict:
@@ -2739,28 +3136,60 @@ def pr_bundle_emit(
 
     collect_totals: dict[str, Any] = {"enabled": bool(auto_collect)}
     if auto_collect:
-        collect_totals.update(_auto_collect(bundle, root))
+        _collected = _run_check_ae(
+            "auto_collect",
+            _auto_collect,
+            bundle,
+            root,
+            default={},
+        )
+        if isinstance(_collected, dict):
+            collect_totals.update(_collected)
     # W15.3 causal-diff pass — always runs at emit (independent of
     # --auto-collect). Diffs each affected_symbol's stored causal snapshot
     # against a freshly-computed causal graph; surfaces NEW or REMOVED
     # io_write paths as risks. Best-effort: never crashes emit.
-    try:
-        causal_diff_totals = _run_causal_diff_pass(bundle)
-    except Exception:
-        causal_diff_totals = {
+    #
+    # W607-AE: the prior bare ``try / except Exception`` swallowed the
+    # raise silently to a degraded ``state: "diff_failed"`` payload. Now
+    # wrapped via ``_run_check_ae("causal_diff_pass", ...)`` so the raise
+    # ALSO surfaces a ``pr_bundle_causal_diff_pass_failed:...`` marker on
+    # ``warnings_out`` -- the degraded payload still ships, but the
+    # disclosure channel now names what crashed.
+    causal_diff_totals = _run_check_ae(
+        "causal_diff_pass",
+        _run_causal_diff_pass,
+        bundle,
+        default={
             "added_total": 0,
             "removed_total": 0,
             "by_kind": {},
             "high_severity_count": 0,
             "symbols_with_diff": 0,
             "state": "diff_failed",
-        }
+        },
+    ) or {
+        "added_total": 0,
+        "removed_total": 0,
+        "by_kind": {},
+        "high_severity_count": 0,
+        "symbols_with_diff": 0,
+        "state": "diff_failed",
+    }
     # Persist the bundle when either pass modified it. The causal-diff
     # pass always stamps ``causal_diff_state`` on every affected_symbol,
     # so we persist whenever there's at least one affected record (the
     # state field is new since W15.3 and useful for downstream consumers).
-    _atomic_write_bundle(path, bundle)
-    env = _build_envelope(
+    _run_check_ae(
+        "atomic_write_bundle",
+        _atomic_write_bundle,
+        path,
+        bundle,
+        default=None,
+    )
+    env = _run_check_ae(
+        "build_envelope",
+        _build_envelope,
         bundle,
         command_label="pr-bundle",
         causal_diff_totals=causal_diff_totals,
@@ -2768,7 +3197,25 @@ def pr_bundle_emit(
         actor=resolved_actor,
         approvals=[],
         accepted_risks=[],
+        default=None,
     )
+    if env is None:
+        # build_envelope raised -- emit a minimal canonical-failure envelope
+        # so the disclosure marker still rides ``warnings_out`` and
+        # downstream consumers see ``partial_success: True`` instead of a
+        # crashed CLI. Pattern 2: explicit absence beats silence.
+        env = json_envelope(
+            "pr-bundle",
+            summary={
+                "verdict": "pr-bundle emit partial: _build_envelope raised",
+                "state": "partial_failure",
+                "partial_success": True,
+            },
+            bundle_path=str(path),
+            actor=resolved_actor,
+            approvals=[],
+            accepted_risks=[],
+        )
     # W15.2 envelope reshape — auto_collect now lives under ``summary`` so it
     # sits alongside the other aggregate-data fields
     # (``side_effect_distribution``, ``risk_severity_distribution``, ...).
@@ -2792,19 +3239,217 @@ def pr_bundle_emit(
     # ChangeEvidence packet, wrap it in a SLSA VSA statement, AND
     # (when ROAM_RUN_ID is active) emit a second attestation rooted
     # at the run-ledger HMAC chain tip. Optional cosign-sign both.
+    #
+    # W607-AE: the SLSA-L3 emission is the W805 6-artifact emitter
+    # (VSA + run-ledger root + cosign signature triplet + Rekor entry +
+    # Fulcio cert). A raise here used to crash the entire bundle build;
+    # now a structured ``pr_bundle_emit_slsa_l3_failed:`` marker rides
+    # ``warnings_out`` and the bundle envelope still completes with
+    # ``slsa_l3: null`` + ``partial_success: True``.
     slsa_l3_result: dict[str, Any] | None = None
     if slsa_l3:
-        slsa_l3_result = _emit_slsa_l3_attestations(
+        slsa_l3_result = _run_check_ae(
+            "emit_slsa_l3",
+            _emit_slsa_l3_attestations,
             root=root,
             envelope=env,
             sign=sign,
             sign_key=sign_key,
             sign_keyless=sign_keyless,
+            default=None,
         )
         env["slsa_l3"] = slsa_l3_result
 
-    _emit_envelope_and_log(env, json_mode, target=bundle.get("intent", "")[:80])
-    if strict and env["summary"]["state"] != "complete":
+    # W607-BW -- aggregation-phase ADDITIVE plumbing. Each step is
+    # wrapped via ``_run_check_bw`` so a raise becomes a structured
+    # ``pr_bundle_<phase>_failed:`` marker on ``_w607bw_warnings_out``
+    # and the envelope still emits cleanly.
+    #
+    # The wraps below are POST-``_build_envelope`` so they re-probe the
+    # assembled envelope's bundle-domain signals from the OUTER emit-level
+    # scope -- additive on top of the inner ``_pr_bundle_risk_level`` call
+    # already performed inside ``_build_envelope``. A raise on the inner
+    # call surfaces via W607-AE's ``build_envelope`` marker; a raise on
+    # the OUTER additive re-probe surfaces via W607-BW's ``score_classify``
+    # / ``severity_normalize`` markers. The two layers compose without
+    # shadowing.
+
+    # W607-BW -- validate_strict_resolved boundary. The --strict-resolved
+    # gate is the pr-bundle-specific contract: when set, the bundle must
+    # have ZERO unresolved (ghost) affected symbols. The check itself
+    # lives inside ``_validate_bundle`` (called from ``_build_envelope``),
+    # but the resulting ``unresolved_affected_symbols_count`` summary
+    # field is the gate signal. Wrap the re-probe so a future refactor
+    # that breaks the strict-resolved disclosure surfaces a marker.
+    _bw_unresolved_probe = _run_check_bw(
+        "validate_strict_resolved",
+        lambda: int(env.get("summary", {}).get("unresolved_affected_symbols_count") or 0) if strict_resolved else 0,
+        default=None,
+    )
+    _strict_resolved_gate_state = (
+        "unknown" if _bw_unresolved_probe is None else ("blocked" if _bw_unresolved_probe > 0 else "passed")
+    )
+    if isinstance(env.get("summary"), dict):
+        env["summary"]["strict_resolved_gate_state"] = _strict_resolved_gate_state
+
+    # W607-BW -- score_classify boundary. Wraps an additive re-probe of
+    # ``_pr_bundle_risk_level`` over the assembled envelope's bundle-domain
+    # signals. The inner call inside ``_build_envelope`` already produced
+    # the canonical ``risk_level_canonical`` summary field; the OUTER
+    # re-probe is the W607-BW additive scan that surfaces a marker if
+    # a future refactor breaks the projection contract. Floor to ``None``
+    # so the score_classification "unknown" sentinel disambiguates a
+    # degraded outcome from a real ``"low"`` classification (mirror of
+    # cmd_attest W607-BT score_classify pattern).
+    _bw_signals = (env.get("summary") or {}) if isinstance(env.get("summary"), dict) else {}
+    _bw_score_probe = _run_check_bw(
+        "score_classify",
+        _pr_bundle_risk_level,
+        state=_bw_signals.get("state") or "incomplete",
+        risk_severity_distribution=_bw_signals.get("risk_severity_distribution") or {},
+        causal_diff_high_severity_count=int(_bw_signals.get("causal_diff_high_severity_count") or 0),
+        unresolved_affected_symbols_count=int(_bw_signals.get("unresolved_affected_symbols_count") or 0),
+        default=None,
+    )
+    _score_classification_state = "unknown" if _bw_score_probe is None else "classified"
+    if isinstance(env.get("summary"), dict):
+        env["summary"]["score_classification"] = _score_classification_state
+
+    # W607-BW -- severity_normalize boundary. Wraps additive
+    # ``normalize_risk_level`` + ``risk_rank`` over the inner-derived domain
+    # level. CRITICAL-PATH instrumentation: while pr-bundle's projection
+    # saturates at ``high`` (no CRITICAL short-code by design), a future
+    # refactor that breaks the canonical W631 vocabulary still surfaces a
+    # marker rather than crashing. Floors to ``"low"`` / rank ``1`` so
+    # downstream comparators stay non-null. Mirror of cmd_attest's W607-BT
+    # severity_normalize discipline.
+    _bw_domain_level = _bw_score_probe if _bw_score_probe is not None else "low"
+    _bw_canonical = _run_check_bw(
+        "severity_normalize",
+        lambda level: normalize_risk_level(level) or "low",
+        _bw_domain_level,
+        default="low",
+    )
+    _bw_rank = _run_check_bw(
+        "severity_normalize",
+        risk_rank,
+        _bw_canonical,
+        default=1,
+    )
+
+    # W607-BW -- compute_verdict boundary. Wraps the additive verdict-floor
+    # build with the canonical risk_level suffix (LAW 6 standalone-parse).
+    # Floor must NOT re-format the same ``_bw_canonical`` value that may
+    # have tripped the closure (W978 first-hypothesis check: don't
+    # re-trip the same boundary). Use a literal "low" floor instead --
+    # LAW 6 still holds (the line works standalone; the W631 floor is
+    # "low"). Mirror of cmd_attest W607-BT / cmd_diff W607-BP discipline.
+    def _make_pr_bundle_verdict_floor(canonical: str) -> str:
+        # NOTE: the canonical f-string interpolation here is what would
+        # raise if a downstream sentinel made __format__ throw. The
+        # default= floor is a literal string, NOT this same closure.
+        return f"pr-bundle emit verdict (risk_level {canonical})"
+
+    _bw_verdict_floor = _run_check_bw(
+        "compute_verdict",
+        _make_pr_bundle_verdict_floor,
+        _bw_canonical,
+        default="pr-bundle emit verdict (risk_level low)",
+    )
+    if isinstance(env.get("summary"), dict):
+        env["summary"].setdefault("verdict_floor", _bw_verdict_floor)
+
+    # ── Thread W607-AE + W607-BW markers onto BOTH summary.warnings_out
+    # and the top-level envelope.warnings_out. Both share the canonical
+    # ``pr_bundle_*`` family per the marker-prefix discipline; the additive
+    # bucket stays distinguishable in tests + audits via the phase names
+    # (``score_classify`` / ``severity_normalize`` / ``compute_verdict`` /
+    # ``auto_log`` / ``serialize_envelope`` / ``validate_strict_resolved``).
+    _combined_warnings_out: list[str] = list(_w607ae_warnings_out) + list(_w607bw_warnings_out)
+    if _combined_warnings_out:
+        env.setdefault("summary", {})
+        existing_summary_wo = list(env["summary"].get("warnings_out") or [])
+        env["summary"]["warnings_out"] = existing_summary_wo + list(_combined_warnings_out)
+        env["summary"]["partial_success"] = True
+        existing_top_wo = list(env.get("warnings_out") or [])
+        env["warnings_out"] = existing_top_wo + list(_combined_warnings_out)
+
+    # W607-BW -- serialize_envelope boundary. Wraps an additive envelope
+    # re-serialization probe via ``json_envelope("pr-bundle-bw-probe", ...)``.
+    # A downstream schema-shape refactor that breaks the call would
+    # otherwise crash AFTER all substrate + aggregation signals were
+    # already gathered. The probe result is discarded -- the real envelope
+    # has already been built; the wrap exists to surface a marker on raise.
+    # Mirror of cmd_attest W607-BT / cmd_diff W607-BP serialize_envelope
+    # discipline.
+    _run_check_bw(
+        "serialize_envelope",
+        json_envelope,
+        "pr-bundle",
+        default=None,
+        summary={"verdict": "pr-bundle bw-serialize probe"},
+    )
+    # Re-thread markers in case serialize_envelope raised (W978 mirror
+    # of cmd_attest W607-BT post-serialize rebuild).
+    if _w607bw_warnings_out and not any(
+        m.startswith("pr_bundle_serialize_envelope_failed:") for m in (env.get("summary", {}).get("warnings_out") or [])
+    ):
+        _combined_warnings_out = list(_w607ae_warnings_out) + list(_w607bw_warnings_out)
+        env.setdefault("summary", {})
+        env["summary"]["warnings_out"] = list(_combined_warnings_out)
+        env["summary"]["partial_success"] = True
+        env["warnings_out"] = list(_combined_warnings_out)
+
+    # W607-BW -- auto_log boundary. Wrap the auto_log call so a HMAC chain
+    # misshape / filesystem failure surfaces a structured marker rather
+    # than crashing the emit AFTER the envelope was already built. The
+    # legacy ``_emit_envelope_and_log`` helper bundles auto_log + echo;
+    # we now separate the auto_log step so the BW wrap covers ONLY the
+    # ledger write. The echo + final scrub stay in the helper. Mirror of
+    # cmd_attest W607-BT auto_log discipline.
+    _pr_bundle_target = bundle.get("intent", "")[:80]
+    # Run finalise scrub first (the helper's belt-and-braces secret scrub).
+    _finalise_envelope_redactions(env)
+    _run_check_bw(
+        "auto_log",
+        auto_log,
+        env,
+        action="pr-bundle",
+        target=_pr_bundle_target,
+        default=None,
+    )
+    # If auto_log raised AFTER the marker channel was already snapshotted,
+    # rebuild the combined warnings_out so the new marker reaches the JSON
+    # output. Empty bucket (clean auto_log) -> envelope stays
+    # byte-identical to the version already built above.
+    if _w607bw_warnings_out and not any(
+        m.startswith("pr_bundle_auto_log_failed:") for m in (env.get("summary", {}).get("warnings_out") or [])
+    ):
+        _combined_warnings_out = list(_w607ae_warnings_out) + list(_w607bw_warnings_out)
+        env.setdefault("summary", {})
+        env["summary"]["warnings_out"] = list(_combined_warnings_out)
+        env["summary"]["partial_success"] = True
+        env["warnings_out"] = list(_combined_warnings_out)
+
+    # Echo path -- inlined from ``_emit_envelope_and_log`` minus the
+    # auto_log call (now wrapped above by W607-BW).
+    if json_mode:
+        click.echo(to_json(env))
+    else:
+        summary = env.get("summary", {})
+        click.echo(f"VERDICT: {summary.get('verdict', '')}")
+        click.echo(f"  state:            {summary.get('state', '?')}")
+        click.echo(f"  affected symbols: {summary.get('affected_symbols_count', 0)}")
+        click.echo(f"  risks:            {summary.get('risks_count', 0)}")
+        click.echo(f"  tests required:   {summary.get('tests_required_count', 0)}")
+        click.echo(f"  tests run:        {summary.get('tests_run_count', 0)}")
+        missing = summary.get("missing_proofs") or []
+        if missing:
+            click.echo()
+            click.echo("Missing proofs:")
+            for m in missing:
+                click.echo(f"  - {m}")
+    if strict and env["summary"].get("state") != "complete":
         ctx.exit(5)
 
 
@@ -2898,7 +3543,17 @@ def pr_bundle_validate(ctx, strict, strict_resolved):
     # state is preserved; exit code 5 fires only with --strict.
     blocked, active_mode, upgrade_to = _mode_blocks_emit(root)
     if blocked:
-        verdict = f"pr-bundle validate blocked: active mode is {active_mode}; run `roam mode {upgrade_to}` to enable"
+        # W641-followup-C — mode-blocked validate emits the canonical
+        # risk_level axis (Pattern 2: never omit the field). Mirrors the
+        # emit mode-blocked path: floor to ``medium`` because validate
+        # could not certify completeness.
+        _blocked_canonical = normalize_risk_level("medium") or "low"
+        _blocked_rank = risk_rank(_blocked_canonical)
+        verdict = (
+            f"pr-bundle validate blocked: active mode is {active_mode}; "
+            f"run `roam mode {upgrade_to}` to enable "
+            f"(risk_level {_blocked_canonical})"
+        )
         # Producer-symmetry fix: mode-blocked validate now surfaces the
         # same producer-side identity / authority / environment fields
         # that the emit mode-blocked path emits (W189 actor block, W224c
@@ -2923,6 +3578,10 @@ def pr_bundle_validate(ctx, strict, strict_resolved):
                 "partial_success": True,
                 "active_mode": active_mode,
                 "upgrade_mode": upgrade_to,
+                # W641-followup-C — canonical risk-LEVEL on the
+                # mode-blocked validate path (Pattern 2).
+                "risk_level_canonical": _blocked_canonical,
+                "risk_rank": _blocked_rank,
             },
             bundle_path=str(path),
             mode=active_mode or "unmoded",
@@ -2934,6 +3593,11 @@ def pr_bundle_validate(ctx, strict, strict_resolved):
             actor=resolved_actor,
             approvals=[],
             accepted_risks=[],
+            # W641-followup-C — top-level mirrors of
+            # summary.risk_level_canonical / summary.risk_rank on the
+            # mode-blocked validate path.
+            risk_level_canonical=_blocked_canonical,
+            risk_rank=_blocked_rank,
         )
         _emit_envelope_and_log(env, json_mode, target="validate")
         if strict:

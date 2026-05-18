@@ -126,67 +126,200 @@ def dogfood(
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
+    # W607-D: Pattern-2 consumer-layer wiring — thread a ``warnings_out``
+    # bucket through the dogfood aggregation path. cmd_dogfood is a
+    # cross-detector aggregator: it invokes subcommands (audit / pr-analyze
+    # / audit-trail-conformance-check) via ``_run_subcommand`` and composes
+    # their envelopes. ``_run_subcommand`` already returns
+    # ``_subcommand_failed`` sentinels for parse failures (Pattern-2 silent
+    # fallback disclosure), but exceptions raised during the aggregation
+    # itself (git_metadata, summary composition, subcommand invocation)
+    # historically bubbled as Click tracebacks. The outer-guard boundary
+    # surfaces those via the canonical
+    # ``dogfood_aggregation_failed:<exc_class>:<detail>`` marker family,
+    # mirroring cmd_findings W607-C ``findings_query_failed:...`` and
+    # cmd_retrieve W607-B ``retrieve_pipeline_failed:...`` idioms.
+    # Empty bucket -> byte-identical envelope (hash-stable per
+    # ``json_envelope`` W817 always-emit discipline).
+    warnings_out: list[str] = []
+
+    # W607-AV: per-phase substrate-CALL marker plumbing (additive to W607-D's
+    # outer-guard). cmd_dogfood is a high-traffic aggregator invoked in
+    # dogfood eval loops where silent helper failures are highest-cost. The
+    # outer-guard only catches the aggregation block wholesale; W607-AV adds
+    # a per-phase ``_run_check_av`` wrapper that surfaces
+    # ``dogfood_<phase>_failed:<exc_class>:<detail>`` markers for each
+    # substrate boundary (git_metadata, audit_subcommand,
+    # pr_analyze_subcommand, conformance_subcommand, compose_summary,
+    # serialize_envelope). A raise in one phase no longer aborts the
+    # remaining phases — degraded but consistent envelope emission. Mirrors
+    # the canonical W607-AQ ``_run_check_aq`` template (cmd_vulns).
+    _w607av_warnings_out: list[str] = []
+
+    def _run_check_av(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AV marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``dogfood_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607av_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607av_warnings_out.append(f"dogfood_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     sections: dict = {}
-    git_meta = git_metadata()
+    git_meta: dict = {}
+    try:
+        # NOTE: git_metadata is intentionally NOT wrapped in _run_check_av --
+        # it is owned by the W607-D outer-guard's
+        # ``dogfood_aggregation_failed:`` marker family (preserved for
+        # contract parity with cmd_findings W607-C / cmd_retrieve W607-B
+        # outer-guard idioms). W607-AV's per-phase plumbing covers the
+        # subcommand-dispatch substrates downstream of git_metadata.
+        git_meta = git_metadata()
 
-    # 1. roam audit — health / debt / dead / danger zone
-    if audit:
-        sections["audit"] = _run_subcommand(["--json", "audit"])
+        # 1. roam audit — health / debt / dead / danger zone
+        if audit:
+            sections["audit"] = _run_check_av(
+                "audit_subcommand",
+                _run_subcommand,
+                ["--json", "audit"],
+                default={"_subcommand_failed": True, "error": "audit substrate raised"},
+            )
 
-    # 2. roam pr-analyze on uncommitted diff (with audit-trail when requested)
-    if pr_analyze_on:
-        pr_args = ["--json", "pr-analyze"]
-        if rules_file:
-            pr_args.extend(["--rules", rules_file])
-        if audit_trail_on:
-            pr_args.append("--audit-trail")
-        sections["pr_analyze"] = _run_subcommand(pr_args)
+        # 2. roam pr-analyze on uncommitted diff (with audit-trail when requested)
+        if pr_analyze_on:
+            pr_args = ["--json", "pr-analyze"]
+            if rules_file:
+                pr_args.extend(["--rules", rules_file])
+            if audit_trail_on:
+                pr_args.append("--audit-trail")
+            sections["pr_analyze"] = _run_check_av(
+                "pr_analyze_subcommand",
+                _run_subcommand,
+                pr_args,
+                default={"_subcommand_failed": True, "error": "pr_analyze substrate raised"},
+            )
 
-    # 3. audit-trail-conformance-check (only meaningful if a trail exists)
-    if audit_trail_on and DEFAULT_AUDIT_TRAIL_PATH.exists():
-        sections["conformance"] = _run_subcommand(["--json", "audit-trail-conformance-check"])
+        # 3. audit-trail-conformance-check (only meaningful if a trail exists)
+        if audit_trail_on and DEFAULT_AUDIT_TRAIL_PATH.exists():
+            sections["conformance"] = _run_check_av(
+                "conformance_subcommand",
+                _run_subcommand,
+                ["--json", "audit-trail-conformance-check"],
+                default={"_subcommand_failed": True, "error": "conformance substrate raised"},
+            )
+    except Exception as exc:  # noqa: BLE001 — W607-D outer-guard
+        # W607-D outer-guard: aggregation raised before sections completed
+        # (git_metadata failure, subcommand-invocation crash, unexpected I/O
+        # error). Disclose loudly via the canonical
+        # ``dogfood_aggregation_failed:<exc_class>:<detail>`` marker and fall
+        # back to empty git_meta + whatever sections were populated so the
+        # envelope still emits a consistent contract.
+        warnings_out.append(f"dogfood_aggregation_failed:{type(exc).__name__}:{exc}")
+        git_meta = {}
 
     # ---- Compose the summary line ----
-    audit_summary = (sections.get("audit") or {}).get("summary") or {}
-    pr_summary = (sections.get("pr_analyze") or {}).get("summary") or {}
-    conf_summary = (sections.get("conformance") or {}).get("summary") or {}
+    def _compose_summary():
+        """Compose the verdict + summary scaffold from gathered sections.
 
-    health_score = audit_summary.get("health_score") or audit_summary.get("score")
-    pr_verdict = pr_summary.get("verdict")
-    conf_score = conf_summary.get("score")
+        Wrapped in ``_run_check_av("compose_summary", ...)`` so a raise here
+        (e.g. an unexpected envelope shape that broke `.get` chaining)
+        becomes a structured marker instead of a Click traceback.
+        """
+        audit_summary = (sections.get("audit") or {}).get("summary") or {}
+        pr_summary = (sections.get("pr_analyze") or {}).get("summary") or {}
+        conf_summary = (sections.get("conformance") or {}).get("summary") or {}
 
-    # Pattern 2 disclosure: any subcommand that failed to produce a parseable
-    # envelope is carried as ``_subcommand_failed=True`` by _run_subcommand.
-    # Surface those on the compound envelope so the verdict doesn't read as
-    # green when an underlying step crashed.
-    failed_sections = sorted(k for k, v in sections.items() if isinstance(v, dict) and v.get("_subcommand_failed"))
+        health_score = audit_summary.get("health_score") or audit_summary.get("score")
+        pr_verdict = pr_summary.get("verdict")
+        conf_score = conf_summary.get("score")
 
-    parts = []
-    if health_score is not None:
-        parts.append(f"health {health_score}")
-    if pr_verdict:
-        parts.append(f"pr-analyze {pr_verdict}")
-    if conf_score is not None:
-        parts.append(f"conformance {conf_score}/100")
-    if failed_sections:
-        parts.append(f"{len(failed_sections)} section(s) failed: {', '.join(failed_sections)}")
-    verdict_text = " · ".join(parts) if parts else "no sections enabled"
+        failed_sections = sorted(k for k, v in sections.items() if isinstance(v, dict) and v.get("_subcommand_failed"))
 
-    summary = {
-        "verdict": verdict_text,
-        "health_score": health_score,
-        "pr_verdict": pr_verdict,
-        "conformance_score": conf_score,
-        "git_sha": git_meta.get("git_sha"),
-        "git_branch": git_meta.get("git_branch"),
-        "sections_run": sorted(sections.keys()),
-    }
-    if failed_sections:
+        parts = []
+        if health_score is not None:
+            parts.append(f"health {health_score}")
+        if pr_verdict:
+            parts.append(f"pr-analyze {pr_verdict}")
+        if conf_score is not None:
+            parts.append(f"conformance {conf_score}/100")
+        if failed_sections:
+            parts.append(f"{len(failed_sections)} section(s) failed: {', '.join(failed_sections)}")
+        verdict_text = " · ".join(parts) if parts else "no sections enabled"
+
+        summary = {
+            "verdict": verdict_text,
+            "health_score": health_score,
+            "pr_verdict": pr_verdict,
+            "conformance_score": conf_score,
+            "git_sha": git_meta.get("git_sha"),
+            "git_branch": git_meta.get("git_branch"),
+            "sections_run": sorted(sections.keys()),
+        }
+        if failed_sections:
+            summary["partial_success"] = True
+            summary["failed_sections"] = failed_sections
+        return summary, verdict_text, pr_summary, conf_summary, health_score, pr_verdict, conf_score
+
+    composed = _run_check_av(
+        "compose_summary",
+        _compose_summary,
+        default=(
+            {"verdict": "compose_summary substrate raised", "sections_run": sorted(sections.keys())},
+            "compose_summary substrate raised",
+            {},
+            {},
+            None,
+            None,
+            None,
+        ),
+    )
+    summary, verdict_text, pr_summary, conf_summary, health_score, pr_verdict, conf_score = composed
+
+    # W607-AV: merge the per-phase marker bucket into the canonical
+    # warnings_out channel (alongside any W607-D outer-guard markers).
+    combined_warnings = list(warnings_out) + list(_w607av_warnings_out)
+
+    if combined_warnings:
+        # W607-D / W607-AV Pattern-2 disclosure: surface markers AND flip
+        # partial_success so consumers can distinguish "clean dogfood
+        # run" from "dogfood aggregation hit a substrate fault".
+        summary["warnings_out"] = list(combined_warnings)
         summary["partial_success"] = True
-        summary["failed_sections"] = failed_sections
 
     if json_mode:
-        click.echo(to_json(json_envelope("dogfood", summary=summary, sections=sections)))
+        envelope_text = _run_check_av(
+            "serialize_envelope",
+            lambda: to_json(
+                json_envelope(
+                    "dogfood",
+                    summary=summary,
+                    sections=sections,
+                    **({"warnings_out": list(combined_warnings)} if combined_warnings else {}),
+                )
+            ),
+            default=None,
+        )
+        if envelope_text is None:
+            # serialize_envelope raised — re-merge bucket (it may have grown)
+            # and produce a minimal manually-crafted envelope so the contract
+            # still holds.
+            combined_warnings = list(warnings_out) + list(_w607av_warnings_out)
+            summary["warnings_out"] = list(combined_warnings)
+            summary["partial_success"] = True
+            envelope_text = to_json(
+                json_envelope(
+                    "dogfood",
+                    summary=summary,
+                    sections={},
+                    warnings_out=list(combined_warnings),
+                )
+            )
+        click.echo(envelope_text)
     else:
         click.echo(f"VERDICT: {verdict_text}")
         click.echo()

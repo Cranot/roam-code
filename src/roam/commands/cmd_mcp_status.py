@@ -111,10 +111,40 @@ def mcp_status(ctx) -> None:
     registered = len(_REGISTERED_TOOLS)
     core_count = sum(1 for n in _REGISTERED_TOOLS if n in _CORE_TOOLS)
 
-    verdict = (
-        f"MCP ready — preset={preset}, {registered} tools registered "
-        f"({core_count} core), max_concurrent={bp.get('max_concurrent')}"
-    )
+    # W420 dual-source: the runtime ``_REGISTERED_TOOLS`` count above is
+    # SEMANTICALLY CORRECT for "what's active under the current preset",
+    # which is the whole point of ``roam mcp-status``. But surfacing only
+    # the active number hides the ceiling — an operator on the ``core``
+    # preset sees "57 tools registered" with no signal that widening to
+    # ``full`` would unlock 224. Mirror the cmd_doctor:430 Option B pattern:
+    # keep the live runtime numbers AND emit the AST-sourced ceiling
+    # side-by-side so plugin-loading / preset-state drift is visible at a
+    # glance. Additive only — existing ``tools_registered`` /
+    # ``core_tool_count`` fields and the human text layout stay unchanged.
+    tools_shipped_ceiling: int | None = None
+    core_tools_shipped_ceiling: int | None = None
+    try:
+        from roam.surface_counts import mcp_surface_counts  # noqa: PLC0415
+
+        _mcp_counts = mcp_surface_counts()
+        tools_shipped_ceiling = int(_mcp_counts.get("registered_tools") or 0) or None
+        core_tools_shipped_ceiling = int(_mcp_counts.get("core_tools") or 0) or None
+    except Exception:
+        # AST helper unavailable (minimal install / sdist edge case);
+        # silently fall back to runtime-only — old behaviour preserved.
+        pass
+
+    if tools_shipped_ceiling and tools_shipped_ceiling != registered:
+        verdict = (
+            f"MCP ready — preset={preset}, {registered} active / "
+            f"{tools_shipped_ceiling} shipped tools registered "
+            f"({core_count} core), max_concurrent={bp.get('max_concurrent')}"
+        )
+    else:
+        verdict = (
+            f"MCP ready — preset={preset}, {registered} tools registered "
+            f"({core_count} core), max_concurrent={bp.get('max_concurrent')}"
+        )
 
     if json_mode:
         click.echo(
@@ -126,6 +156,11 @@ def mcp_status(ctx) -> None:
                         "preset": preset,
                         "tools_registered": registered,
                         "core_tool_count": core_count,
+                        # W420 dual-source: AST-sourced ceiling fields are
+                        # additive — consumers pinning the older field
+                        # names keep working unchanged.
+                        "tools_shipped_ceiling": tools_shipped_ceiling,
+                        "core_tools_shipped_ceiling": core_tools_shipped_ceiling,
                         "max_concurrent": bp.get("max_concurrent"),
                         "in_flight": bp.get("in_flight"),
                         "busy_responses_total": bp.get("busy_responses_total"),
@@ -141,8 +176,14 @@ def mcp_status(ctx) -> None:
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     click.echo(f"Preset:                    {preset}")
-    click.echo(f"Tools registered:          {registered}")
-    click.echo(f"  of which core preset:    {core_count}")
+    if tools_shipped_ceiling and tools_shipped_ceiling != registered:
+        click.echo(f"Tools registered:          {registered} (of {tools_shipped_ceiling} shipped)")
+    else:
+        click.echo(f"Tools registered:          {registered}")
+    if core_tools_shipped_ceiling and core_tools_shipped_ceiling != core_count:
+        click.echo(f"  of which core preset:    {core_count} (of {core_tools_shipped_ceiling} shipped)")
+    else:
+        click.echo(f"  of which core preset:    {core_count}")
     click.echo(f"Max concurrent:            {bp.get('max_concurrent')}")
     click.echo(f"In flight (now):           {bp.get('in_flight')}")
     click.echo(f"Busy responses total:      {bp.get('busy_responses_total')}")

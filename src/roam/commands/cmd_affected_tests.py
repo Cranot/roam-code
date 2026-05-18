@@ -13,7 +13,7 @@ from roam.commands.changed_files import (
     is_test_file,
     resolve_changed_to_db,
 )
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.commands.resolve import ensure_index, find_symbol, resolve_file_symbols
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.index.test_conventions import find_test_candidates
 from roam.output.formatter import (
@@ -221,18 +221,34 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths):
 
 
 def _resolve_file_symbols(conn, path):
-    """Return all symbol IDs and the canonical path for a file."""
-    frow = conn.execute("SELECT id, path FROM files WHERE path = ?", (path,)).fetchone()
-    if frow is None:
-        frow = conn.execute(
-            "SELECT id, path FROM files WHERE path LIKE ? LIMIT 1",
-            (f"%{path}",),
-        ).fetchone()
-    if frow is None:
-        return set(), set()
+    """Return ``(sym_ids, fpaths, tier)`` for a file-path-like target.
 
-    syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)).fetchall()
-    return {s["id"] for s in syms}, {frow["path"]}
+    Pattern-1 Variant D Wave B shim (audit reference:
+    ``(internal memo)``). Delegates to
+    :func:`roam.commands.resolve.resolve_file_symbols` so the silent
+    LIKE %name substring fallback is surfaced via a tier discriminator
+    rather than collapsed into the same shape as an exact-path match.
+
+    Returns a 3-tuple ``(sym_ids, fpaths, tier)``:
+
+    - ``sym_ids``: ``set[int]`` of symbol ids owned by the resolved file
+      (empty on miss).
+    - ``fpaths``: ``set[str]`` containing the canonical file path
+      (empty on miss).
+    - ``tier``: ``"file"`` (exact match), ``"file_substring"`` (LIKE
+      fallback), or ``None`` (no match). Pass directly to
+      :func:`roam.output.formatter.resolution_disclosure` so callers
+      flip ``partial_success: true`` on the substring path.
+
+    Pre-Wave-B this helper returned a 2-tuple ``(sym_ids, fpaths)`` and
+    silently collapsed both tiers — the canonical Variant D failure
+    shape. ``cmd_preflight`` and ``cmd_plan`` import this name; both
+    are updated to consume the new 3-tuple shape in the same wave.
+    """
+    _file_id, sym_ids, file_path, tier = resolve_file_symbols(conn, path)
+    if file_path is None:
+        return set(), set(), None
+    return sym_ids, {file_path}, tier
 
 
 def _looks_like_file(target):
@@ -332,12 +348,27 @@ def affected_tests(ctx, target, staged, show_command):
         if target:
             target_norm = target.replace("\\", "/")
             if _looks_like_file(target_norm):
-                sym_ids, fpaths = _resolve_file_symbols(conn, target_norm)
-                if not sym_ids:
+                sym_ids, fpaths, file_tier = _resolve_file_symbols(conn, target_norm)
+                # Pattern-1 Variant D Wave B: ``file_tier`` distinguishes
+                # an exact-path resolution (``"file"``) from a degraded
+                # LIKE %name substring fallback (``"file_substring"``).
+                # An empty sym_ids set on a successful ``file`` resolution
+                # is a valid shape (file indexed with zero symbols), so
+                # gate the not-found branch on tier=None rather than
+                # ``not sym_ids`` — preserves the resolved-but-empty
+                # tier-disclosable shape.
+                if file_tier is None:
                     click.echo(f"File not found in index: {target}")
                     raise SystemExit(1)
+                resolution_tier = file_tier
                 all_sym_ids.update(sym_ids)
                 all_file_paths.update(fpaths)
+                # ``resolved_target_label`` echoes the canonical path that
+                # was actually resolved (post-substring-match). Surfaces
+                # the substring drift in the disclosure.target field so
+                # agents see the gap between input and resolved file.
+                if fpaths:
+                    resolved_target_label = next(iter(fpaths))
             else:
                 sym = find_symbol(conn, target)
                 if sym is None:
@@ -438,9 +469,14 @@ def affected_tests(ctx, target, staged, show_command):
             # target resolved through a degraded tier so LAW-6 single-line
             # consumers still see the disclosure. The --staged + file paths
             # stay implicit ``symbol`` (set-build aggregations are not
-            # fallback resolutions).
+            # fallback resolutions). Pattern-1 Variant D Wave B adds the
+            # ``file_substring`` case: distinct from the exact-``file``
+            # tier so agents can tell a substring LIKE-fallback match from
+            # a fully-resolved exact-path success.
             if resolution_tier == "fuzzy":
                 verdict = f"{verdict} [fuzzy resolution]"
+            elif resolution_tier == "file_substring":
+                verdict = f"{verdict} [file substring match]"
             disclosure = resolution_disclosure(
                 resolution_tier,
                 target=resolved_target_label if resolved_target_label is not None else target_label,

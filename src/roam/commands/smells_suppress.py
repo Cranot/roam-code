@@ -346,7 +346,8 @@ def load_smells_suppressions_typed(
     surface to the CLI envelope. Same semantics as the dict-shaped loader.
     """
     return [
-        KindSymbolSuppression.from_dict(d) for d in load_smells_suppressions(project_root, warnings_out=warnings_out)
+        KindSymbolSuppression.from_dict(d, warnings_out=warnings_out)
+        for d in load_smells_suppressions(project_root, warnings_out=warnings_out)
     ]
 
 

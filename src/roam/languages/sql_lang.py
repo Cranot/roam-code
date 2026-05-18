@@ -9,6 +9,15 @@ class SqlExtractor(LanguageExtractor):
     Extracts tables, columns, views, functions, triggers, schemas,
     types (enums), sequences, and ALTER TABLE ADD COLUMN statements.
     Foreign keys (inline and constraint-level) produce graph edges.
+
+    W539 — Foreign-key edges emit ``kind="reference"`` (singular) to
+    match the canonical writer vocabulary in
+    :mod:`roam.db.edge_kinds`. Earlier revisions emitted the plural
+    ``"references"`` (matching the SQL keyword), which forced every
+    reader to union both forms via ``REFERENCE_EDGE_KINDS``. The
+    singular form keeps SQL aligned with every other language
+    extractor while remaining accepted by readers that still pull
+    the canonical set.
     """
 
     @property
@@ -267,7 +276,7 @@ class SqlExtractor(LanguageExtractor):
                     self._pending_refs.append(
                         self._make_reference(
                             target_name=ref_table,
-                            kind="references",
+                            kind="reference",  # W539
                             line=child.start_point[0] + 1,
                             source_name=table_name,
                         )
@@ -294,7 +303,7 @@ class SqlExtractor(LanguageExtractor):
                     self._pending_refs.append(
                         self._make_reference(
                             target_name=ref_table,
-                            kind="references",
+                            kind="reference",  # W539
                             line=child.start_point[0] + 1,
                             source_name=table_name,
                         )
@@ -595,7 +604,7 @@ class SqlExtractor(LanguageExtractor):
                     self._pending_refs.append(
                         self._make_reference(
                             target_name=table_name,
-                            kind="references",
+                            kind="reference",  # W539
                             line=child.start_point[0] + 1,
                             source_name=idx_name,
                         )

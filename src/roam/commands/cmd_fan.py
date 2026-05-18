@@ -420,27 +420,117 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W607-X: per-substrate raise -> ``fan_<phase>_failed:<exc_class>:<detail>``
+    # marker accumulator. Threaded onto the success-path JSON envelope at the
+    # bottom of each mode branch. Empty-bucket -> envelope omits warnings_out
+    # (hash-stable on the clean path, mirrors W607-A..W contract).
+    _w607x_warnings_out: list[str] = []
+
+    def _run_check(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-X marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception (the helper itself raised before producing its own
+        floor value), surface a ``fan_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607x_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607x_warnings_out.append(f"fan_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-CY -- ADDITIVE aggregation-phase plumbing on top of the W607-X
+    # substrate-CALL markers. W607-X already wraps the 6 substrate-helper
+    # boundaries (fetch_symbol_rows / filter_tooling / file_scope_metrics /
+    # emit_findings_symbol / fetch_file_rows / emit_findings_file); W607-CY
+    # extends marker coverage to the AGGREGATION-PHASE boundaries that
+    # W607-X left unguarded:
+    #
+    #   - ``score_classify``      -- run-state bucketing from the per-item
+    #                                flag distribution (HIGH-RISK / hub /
+    #                                spreader / local-* / empty). Floors
+    #                                to ``{"state": "DEGRADED",
+    #                                "scanned": <int>}`` mirroring
+    #                                cmd_dark_matter's W607-CZ
+    #                                score_classify floor shape so the
+    #                                run_state field stays non-null on
+    #                                the envelope. (W607-DJ extension on
+    #                                the W607-CY plumbing -- the prefix
+    #                                stays ``CY`` at the source-level;
+    #                                the ``DJ`` label is reserved for the
+    #                                test-file naming axis.)
+    #   - ``compute_predicate``   -- per-mode extraction of fan-count
+    #                                predicate fields (top_fan_in /
+    #                                top_fan_out / counts) used to compose
+    #                                the verdict string. A future schema
+    #                                refactor that drops or renames the
+    #                                row fields would otherwise crash the
+    #                                envelope post-fetch.
+    #   - ``compute_verdict``     -- verdict string assembly. Floor to a
+    #                                literal "fan analysis completed"
+    #                                string per LAW 6 (standalone-parse)
+    #                                + W978 first-hypothesis discipline
+    #                                (no re-interpolation of the same
+    #                                values that just raised).
+    #   - ``serialize_envelope``  -- ``json_envelope("fan", ...)``
+    #                                projection (downstream contract
+    #                                changes / shape regressions).
+    #
+    # cmd_fan is NOT a risk scorer (unlike cmd_attest / cmd_pr_bundle), but
+    # it IS a flag-emitting detector with cross-file architectural buckets.
+    # The W607-DJ extension restores ``score_classify`` to capture that
+    # bucketing step explicitly (HUBS_DETECTED / SPREADERS_DETECTED /
+    # HIGH_RISK_DETECTED / BALANCED / ISOLATED state labels). The phase
+    # set drops ``severity_normalize`` (no risk_level emission) and
+    # ``auto_log`` (cmd_fan does not write to the active run ledger in
+    # this codepath). Mirror of cmd_dark_matter's W607-CZ score_classify
+    # adapted for the dual-mode aggregator.
+    #
+    # Marker family ``fan_*`` -- same family as W607-X (additive, not a
+    # separate prefix). Empty bucket -> byte-identical envelope on the
+    # success path.
+    _w607cy_warnings_out: list[str] = []
+
+    def _run_check_cy(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CY marker emission.
+
+        Mirror of ``_run_check`` shape (same ``fan_<phase>_failed:``
+        marker family) but writes into ``_w607cy_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cy_warnings_out.append(f"fan_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
         # Pull more rows than ``count`` when filtering, so the displayed
         # top-N still has ``count`` entries after exclusions. 5x is a
         # comfortable safety factor for typical tooling shares.
         fetch_limit = count * 5 if not include_tooling else count
         if mode == "symbol":
-            rows = conn.execute(
-                """
-                SELECT s.id, s.name, s.kind, f.path as file_path, s.line_start,
-                       gm.in_degree, gm.out_degree,
-                       (gm.in_degree + gm.out_degree) as total,
-                       gm.betweenness, gm.pagerank
-                FROM graph_metrics gm
-                JOIN symbols s ON gm.symbol_id = s.id
-                JOIN files f ON s.file_id = f.id
-                WHERE gm.in_degree + gm.out_degree > 0
-                ORDER BY total DESC
-                LIMIT ?
-            """,
-                (fetch_limit,),
-            ).fetchall()
+
+            def _fetch_symbol_rows():
+                return conn.execute(
+                    """
+                    SELECT s.id, s.name, s.kind, f.path as file_path, s.line_start,
+                           gm.in_degree, gm.out_degree,
+                           (gm.in_degree + gm.out_degree) as total,
+                           gm.betweenness, gm.pagerank
+                    FROM graph_metrics gm
+                    JOIN symbols s ON gm.symbol_id = s.id
+                    JOIN files f ON s.file_id = f.id
+                    WHERE gm.in_degree + gm.out_degree > 0
+                    ORDER BY total DESC
+                    LIMIT ?
+                """,
+                    (fetch_limit,),
+                ).fetchall()
+
+            rows = _run_check("fetch_symbol_rows", _fetch_symbol_rows, default=[]) or []
 
             # Pattern 2 silent-fallback fix: track WHY rows can end up empty
             # so the verdict and hint name the actual cause. The pre-fix path
@@ -452,14 +542,23 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
             # the issue.
             _raw_row_count = len(rows)
             if not include_tooling:
-                rows = _filter_tooling_rows(rows)
+                rows = _run_check("filter_tooling", _filter_tooling_rows, rows, default=rows) or []
             _after_tooling = len(rows)
             rows = rows[:count]
 
             if no_framework:
                 rows = [r for r in rows if r["name"] not in _FRAMEWORK_NAMES]
 
-            scope_meta = _file_scope_metrics(conn, [r["id"] for r in rows])
+            scope_meta = (
+                _run_check(
+                    "file_scope_metrics",
+                    _file_scope_metrics,
+                    conn,
+                    [r["id"] for r in rows],
+                    default={},
+                )
+                or {}
+            )
 
             if not rows:
                 # Lineage: classify the empty-state into a closed enum so
@@ -549,21 +648,31 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
             # findings registry. Runs ONLY with --persist. Local-only
             # flags (local-hub, local-spreader) are skipped per the
             # W150 audit recommendation.
+            #
+            # W607-X: pre-W89 schema (no ``findings`` table) is the
+            # expected sqlite3.OperationalError -- caught locally so it
+            # does NOT surface as a marker (graceful degradation). All
+            # OTHER raise classes flow through _run_check and surface as
+            # ``fan_emit_findings_symbol_failed:<exc_class>:<detail>``.
             if persist:
-                try:
-                    _emit_fan_findings(
-                        conn,
-                        {
-                            "summary": {"caller_metric_definition": "direct_in_degree"},
-                            "items": symbol_items,
-                        },
-                        mode="symbol",
-                        source_version=FAN_DETECTOR_VERSION,
-                    )
-                    conn.commit()
-                except sqlite3.OperationalError:
-                    # findings table missing (pre-W89 schema) — degrade gracefully.
-                    pass
+
+                def _persist_symbol():
+                    try:
+                        _emit_fan_findings(
+                            conn,
+                            {
+                                "summary": {"caller_metric_definition": "direct_in_degree"},
+                                "items": symbol_items,
+                            },
+                            mode="symbol",
+                            source_version=FAN_DETECTOR_VERSION,
+                        )
+                        conn.commit()
+                    except sqlite3.OperationalError:
+                        # findings table missing (pre-W89 schema) — degrade gracefully.
+                        return None
+
+                _run_check("emit_findings_symbol", _persist_symbol, default=None)
 
             # --- W1209: SARIF projection (symbol mode) ---
             # Branches BEFORE json/text so the pre-existing paths stay
@@ -577,28 +686,210 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                 return
 
             if json_mode:
-                _top_in = max(rows, key=lambda r: r["in_degree"] or 0)
-                _top_out = max(rows, key=lambda r: r["out_degree"] or 0)
-                _verdict = (
-                    f"top fan-in: {_top_in['name']}({_top_in['in_degree'] or 0}), "
-                    f"top fan-out: {_top_out['name']}({_top_out['out_degree'] or 0})"
+                # W607-CY -- score_classify boundary (symbol mode). Wraps
+                # the run-state bucketing from the per-item flag
+                # distribution (HIGH-RISK / hub / spreader / local-* /
+                # empty) into a state label so a downstream refactor of
+                # the bucket-selection logic surfaces a marker rather than
+                # crashing. Floor returns ``DEGRADED`` matching
+                # cmd_dark_matter W607-CZ's documented score_classify
+                # shape so downstream readers stay non-null. (W607-DJ
+                # extension on the W607-CY accumulator -- shared bucket,
+                # shared helper, distinct phase name.)
+                #
+                # W978 KWARG-DEFAULT EAGERNESS TRAP: ``symbol_items`` is
+                # passed as a raw arg; the bucket logic lives INSIDE the
+                # closure (cmd_taint W607-CJ 5th-discipline anchor:
+                # no len() at kwarg-bind).
+                _symbol_items_count = len(symbol_items)
+
+                def _score_classify_symbol(items_local):
+                    _high_risk = 0
+                    _hubs = 0
+                    _spreaders = 0
+                    _local_only = 0
+                    _empty = 0
+                    for _it in items_local:
+                        _flag = _it["flag"]
+                        if _flag == "HIGH-RISK":
+                            _high_risk += 1
+                        elif _flag == "hub":
+                            _hubs += 1
+                        elif _flag == "spreader":
+                            _spreaders += 1
+                        elif _flag in ("local-hub", "local-spreader"):
+                            _local_only += 1
+                        else:
+                            _empty += 1
+                    if _high_risk > 0:
+                        _state = "HIGH_RISK_DETECTED"
+                    elif _hubs > 0 and _spreaders > 0:
+                        _state = "HUBS_AND_SPREADERS_DETECTED"
+                    elif _hubs > 0:
+                        _state = "HUBS_DETECTED"
+                    elif _spreaders > 0:
+                        _state = "SPREADERS_DETECTED"
+                    elif _local_only > 0:
+                        _state = "LOCAL_ONLY"
+                    else:
+                        _state = "BALANCED"
+                    return {
+                        "state": _state,
+                        "scanned": len(items_local),
+                        "high_risk": _high_risk,
+                        "hubs": _hubs,
+                        "spreaders": _spreaders,
+                        "local_only": _local_only,
+                        "empty": _empty,
+                    }
+
+                _score_dict = _run_check_cy(
+                    "score_classify",
+                    _score_classify_symbol,
+                    symbol_items,
+                    default={
+                        "state": "DEGRADED",
+                        "scanned": _symbol_items_count,
+                        "high_risk": 0,
+                        "hubs": 0,
+                        "spreaders": 0,
+                        "local_only": 0,
+                        "empty": 0,
+                    },
                 )
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "fan",
-                            budget=token_budget,
-                            summary={
-                                "verdict": _verdict,
-                                "mode": mode,
-                                "items": len(rows),
-                                "caller_metric_definition": "direct_in_degree",
-                            },
-                            mode=mode,
-                            items=symbol_items,
-                        )
+
+                # W607-CY -- compute_predicate boundary (symbol mode). Wraps
+                # the per-row predicate-field extraction so a future schema
+                # refactor that drops/renames ``in_degree``/``out_degree``/
+                # ``name`` would surface a marker rather than crashing the
+                # envelope. Floor to a documented empty-shape dict so the
+                # downstream verdict / summary fields stay non-null.
+                def _compute_symbol_predicate(rows_local):
+                    top_in_local = max(rows_local, key=lambda r: r["in_degree"] or 0)
+                    top_out_local = max(rows_local, key=lambda r: r["out_degree"] or 0)
+                    return {
+                        "top_in_name": top_in_local["name"],
+                        "top_in_degree": top_in_local["in_degree"] or 0,
+                        "top_out_name": top_out_local["name"],
+                        "top_out_degree": top_out_local["out_degree"] or 0,
+                        "item_count": len(rows_local),
+                    }
+
+                _symbol_predicate = _run_check_cy(
+                    "compute_predicate",
+                    _compute_symbol_predicate,
+                    rows,
+                    default={
+                        "top_in_name": "",
+                        "top_in_degree": 0,
+                        "top_out_name": "",
+                        "top_out_degree": 0,
+                        "item_count": len(rows),
+                    },
+                )
+
+                # W607-CY -- compute_verdict boundary (symbol mode). Wraps
+                # the verdict-string f-string assembly so a __format__-
+                # raising sentinel under test (e.g. via the predicate
+                # extraction floor) surfaces a marker rather than crashing
+                # the envelope. Floor must NOT re-interpolate the same
+                # values that tripped the closure (W978 first-hypothesis
+                # discipline: re-using an f-string on the same predicate
+                # fields would re-raise inside the default floor).
+                # Use a literal ``"fan analysis completed"`` floor instead
+                # (LAW 6 still holds: the line works standalone).
+                def _build_symbol_verdict(pred):
+                    return (
+                        f"top fan-in: {pred['top_in_name']}({pred['top_in_degree']}), "
+                        f"top fan-out: {pred['top_out_name']}({pred['top_out_degree']})"
                     )
+
+                _verdict = _run_check_cy(
+                    "compute_verdict",
+                    _build_symbol_verdict,
+                    _symbol_predicate,
+                    default="fan analysis completed",
                 )
+
+                _summary: dict = {
+                    "verdict": _verdict,
+                    "mode": mode,
+                    "items": len(rows),
+                    "caller_metric_definition": "direct_in_degree",
+                    # W607-CY (W607-DJ extension): surface score_classify
+                    # result on the envelope so consumers can read the
+                    # run state without re-deriving from the flag column.
+                    # W978 7th-discipline anchor: bare
+                    # ``_score_dict["state"]`` lookup (floor dict
+                    # guarantees the key) -- NOT
+                    # ``.get("state", expensive_default)``.
+                    "run_state": _score_dict["state"],
+                }
+                _kwargs: dict = {
+                    "budget": token_budget,
+                    "summary": _summary,
+                    "mode": mode,
+                    "items": symbol_items,
+                }
+                # W607-X / W607-CY -- surface BOTH substrate-CALL markers
+                # AND aggregation-phase markers on the success path.
+                # partial_success flips so consumers can distinguish a clean
+                # fan analysis from one that ran with substrate degradation
+                # (e.g., file_scope_metrics raised but the headline rows still
+                # produced) OR aggregation degradation (compute_predicate /
+                # compute_verdict / serialize_envelope). Mirror both top-
+                # level and summary slots so default-detail-mode envelope
+                # stripping preserves the marker channel.
+                _combined_warnings_out: list[str] = list(_w607x_warnings_out) + list(_w607cy_warnings_out)
+                if _combined_warnings_out:
+                    _summary["warnings_out"] = list(_combined_warnings_out)
+                    _summary["partial_success"] = True
+                    _kwargs["warnings_out"] = list(_combined_warnings_out)
+                    _kwargs["partial_success"] = True
+
+                # W607-CY -- serialize_envelope boundary (symbol mode).
+                # Wraps the envelope serialization itself. A downstream
+                # schema-shape refactor that breaks
+                # ``json_envelope("fan", ...)`` would otherwise crash
+                # AFTER all substrate + aggregation signals were already
+                # gathered. Floor to a minimal envelope stub so consumers
+                # still receive a parseable JSON object with the marker
+                # attached + the canonical command name. Mirror of
+                # cmd_cga's W607-BZ serialize_envelope floor pattern.
+                _envelope_floor: dict = {
+                    "command": "fan",
+                    "schema_version": "1.0.0",
+                    "summary": {
+                        "verdict": _verdict,
+                        "mode": mode,
+                        "items": len(rows),
+                        "partial_success": True,
+                        "warnings_out": list(_combined_warnings_out),
+                    },
+                    "warnings_out": list(_combined_warnings_out),
+                }
+                fan_envelope = _run_check_cy(
+                    "serialize_envelope",
+                    json_envelope,
+                    "fan",
+                    default=_envelope_floor,
+                    **_kwargs,
+                )
+                # W607-CY -- if ``serialize_envelope`` raised AFTER the
+                # combined bucket was already snapshotted, the new
+                # ``fan_serialize_envelope_failed:`` marker was appended
+                # to ``_w607cy_warnings_out`` and the floor stub carries
+                # only the pre-raise combined list. Rebuild so the new
+                # marker reaches the JSON output. Clean path -> envelope
+                # is the real json_envelope return value, no rebuild
+                # needed.
+                if fan_envelope is _envelope_floor and _w607cy_warnings_out:
+                    _combined_warnings_out = list(_w607x_warnings_out) + list(_w607cy_warnings_out)
+                    _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+                    _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+                    fan_envelope = _envelope_floor
+
+                click.echo(to_json(fan_envelope))
                 return
 
             table_rows = []
@@ -652,21 +943,25 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
             )
 
         else:  # file mode
-            rows = conn.execute(
-                """
-                SELECT f.path,
-                       COUNT(DISTINCT CASE WHEN fe_in.target_file_id = f.id THEN fe_in.source_file_id END) as fan_in,
-                       COUNT(DISTINCT CASE WHEN fe_out.source_file_id = f.id THEN fe_out.target_file_id END) as fan_out
-                FROM files f
-                LEFT JOIN file_edges fe_in ON fe_in.target_file_id = f.id
-                LEFT JOIN file_edges fe_out ON fe_out.source_file_id = f.id
-                GROUP BY f.id
-                HAVING fan_in + fan_out > 0
-                ORDER BY fan_in + fan_out DESC
-                LIMIT ?
-            """,
-                (count,),
-            ).fetchall()
+
+            def _fetch_file_rows():
+                return conn.execute(
+                    """
+                    SELECT f.path,
+                           COUNT(DISTINCT CASE WHEN fe_in.target_file_id = f.id THEN fe_in.source_file_id END) as fan_in,
+                           COUNT(DISTINCT CASE WHEN fe_out.source_file_id = f.id THEN fe_out.target_file_id END) as fan_out
+                    FROM files f
+                    LEFT JOIN file_edges fe_in ON fe_in.target_file_id = f.id
+                    LEFT JOIN file_edges fe_out ON fe_out.source_file_id = f.id
+                    GROUP BY f.id
+                    HAVING fan_in + fan_out > 0
+                    ORDER BY fan_in + fan_out DESC
+                    LIMIT ?
+                """,
+                    (count,),
+                ).fetchall()
+
+            rows = _run_check("fetch_file_rows", _fetch_file_rows, default=[]) or []
 
             if not rows:
                 if sarif_mode:
@@ -725,23 +1020,33 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
 
             # W152: mirror cross-file architectural flags into the
             # findings registry. Runs ONLY with --persist.
+            #
+            # W607-X: pre-W89 schema (no ``findings`` table) is the
+            # expected sqlite3.OperationalError -- caught locally so it
+            # does NOT surface as a marker (graceful degradation). All
+            # OTHER raise classes flow through _run_check and surface as
+            # ``fan_emit_findings_file_failed:<exc_class>:<detail>``.
             if persist:
-                try:
-                    _emit_fan_findings(
-                        conn,
-                        {
-                            "summary": {
-                                "caller_metric_definition": ("direct_in_degree (file-level: distinct source files)")
+
+                def _persist_file():
+                    try:
+                        _emit_fan_findings(
+                            conn,
+                            {
+                                "summary": {
+                                    "caller_metric_definition": ("direct_in_degree (file-level: distinct source files)")
+                                },
+                                "items": file_items,
                             },
-                            "items": file_items,
-                        },
-                        mode="file",
-                        source_version=FAN_DETECTOR_VERSION,
-                    )
-                    conn.commit()
-                except sqlite3.OperationalError:
-                    # findings table missing (pre-W89 schema) — degrade gracefully.
-                    pass
+                            mode="file",
+                            source_version=FAN_DETECTOR_VERSION,
+                        )
+                        conn.commit()
+                    except sqlite3.OperationalError:
+                        # findings table missing (pre-W89 schema) — degrade gracefully.
+                        return None
+
+                _run_check("emit_findings_file", _persist_file, default=None)
 
             # --- W1209: SARIF projection (file mode) ---
             # Branches BEFORE json/text so the pre-existing paths stay
@@ -755,30 +1060,172 @@ def fan(ctx, mode, count, no_framework, include_tooling, persist):
                 return
 
             if json_mode:
-                _top_in_r = max(rows, key=lambda r: r["fan_in"])
-                _top_out_r = max(rows, key=lambda r: r["fan_out"])
-                _top_in_name = _top_in_r["path"].split("/")[-1]
-                _top_out_name = _top_out_r["path"].split("/")[-1]
-                _verdict = (
-                    f"top fan-in: {_top_in_name}({_top_in_r['fan_in']}), "
-                    f"top fan-out: {_top_out_name}({_top_out_r['fan_out']})"
+                # W607-CY -- score_classify boundary (file mode). Same
+                # bucketing as the symbol-mode branch but adapted for the
+                # file-level flag vocabulary (HIGH-RISK / hub / spreader /
+                # empty -- no local-* in file mode). Floor matches
+                # cmd_dark_matter W607-CZ's documented score_classify
+                # shape so downstream readers stay non-null.
+                #
+                # W978 KWARG-DEFAULT EAGERNESS TRAP: ``file_items`` is
+                # passed as a raw arg; bucket logic lives INSIDE the
+                # closure (5th-discipline anchor: no len() at kwarg-bind).
+                _file_items_count = len(file_items)
+
+                def _score_classify_file(items_local):
+                    _high_risk = 0
+                    _hubs = 0
+                    _spreaders = 0
+                    _empty = 0
+                    for _it in items_local:
+                        _flag = _it["flag"]
+                        if _flag == "HIGH-RISK":
+                            _high_risk += 1
+                        elif _flag == "hub":
+                            _hubs += 1
+                        elif _flag == "spreader":
+                            _spreaders += 1
+                        else:
+                            _empty += 1
+                    if _high_risk > 0:
+                        _state = "HIGH_RISK_DETECTED"
+                    elif _hubs > 0 and _spreaders > 0:
+                        _state = "HUBS_AND_SPREADERS_DETECTED"
+                    elif _hubs > 0:
+                        _state = "HUBS_DETECTED"
+                    elif _spreaders > 0:
+                        _state = "SPREADERS_DETECTED"
+                    else:
+                        _state = "BALANCED"
+                    return {
+                        "state": _state,
+                        "scanned": len(items_local),
+                        "high_risk": _high_risk,
+                        "hubs": _hubs,
+                        "spreaders": _spreaders,
+                        "empty": _empty,
+                    }
+
+                _score_dict = _run_check_cy(
+                    "score_classify",
+                    _score_classify_file,
+                    file_items,
+                    default={
+                        "state": "DEGRADED",
+                        "scanned": _file_items_count,
+                        "high_risk": 0,
+                        "hubs": 0,
+                        "spreaders": 0,
+                        "empty": 0,
+                    },
                 )
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "fan",
-                            budget=token_budget,
-                            summary={
-                                "verdict": _verdict,
-                                "mode": mode,
-                                "items": len(rows),
-                                "caller_metric_definition": "direct_in_degree (file-level: distinct source files)",
-                            },
-                            mode=mode,
-                            items=file_items,
-                        )
+
+                # W607-CY -- compute_predicate boundary (file mode). Wraps
+                # the per-row predicate-field extraction so a future schema
+                # refactor that drops/renames ``fan_in``/``fan_out``/
+                # ``path`` would surface a marker rather than crashing the
+                # envelope. Floor to a documented empty-shape dict so the
+                # downstream verdict / summary fields stay non-null.
+                def _compute_file_predicate(rows_local):
+                    top_in_local = max(rows_local, key=lambda r: r["fan_in"])
+                    top_out_local = max(rows_local, key=lambda r: r["fan_out"])
+                    return {
+                        "top_in_name": top_in_local["path"].split("/")[-1],
+                        "top_in_count": top_in_local["fan_in"],
+                        "top_out_name": top_out_local["path"].split("/")[-1],
+                        "top_out_count": top_out_local["fan_out"],
+                        "item_count": len(rows_local),
+                    }
+
+                _file_predicate = _run_check_cy(
+                    "compute_predicate",
+                    _compute_file_predicate,
+                    rows,
+                    default={
+                        "top_in_name": "",
+                        "top_in_count": 0,
+                        "top_out_name": "",
+                        "top_out_count": 0,
+                        "item_count": len(rows),
+                    },
+                )
+
+                # W607-CY -- compute_verdict boundary (file mode). Same
+                # W978 first-hypothesis discipline as the symbol-mode
+                # branch: literal floor, never re-interpolate the
+                # predicate fields that just raised.
+                def _build_file_verdict(pred):
+                    return (
+                        f"top fan-in: {pred['top_in_name']}({pred['top_in_count']}), "
+                        f"top fan-out: {pred['top_out_name']}({pred['top_out_count']})"
                     )
+
+                _verdict = _run_check_cy(
+                    "compute_verdict",
+                    _build_file_verdict,
+                    _file_predicate,
+                    default="fan analysis completed",
                 )
+
+                _summary: dict = {
+                    "verdict": _verdict,
+                    "mode": mode,
+                    "items": len(rows),
+                    "caller_metric_definition": "direct_in_degree (file-level: distinct source files)",
+                    # W607-CY (W607-DJ extension): surface score_classify
+                    # result. Bare ``_score_dict["state"]`` lookup (floor
+                    # dict guarantees the key) per W978 7th-discipline.
+                    "run_state": _score_dict["state"],
+                }
+                _kwargs: dict = {
+                    "budget": token_budget,
+                    "summary": _summary,
+                    "mode": mode,
+                    "items": file_items,
+                }
+                # W607-X / W607-CY -- mirror file-mode warnings_out the
+                # same way as symbol-mode. partial_success flips if ANY
+                # substrate raised (fetch_file_rows, emit_findings_file)
+                # OR ANY aggregation phase raised (compute_predicate /
+                # compute_verdict / serialize_envelope). Local-degradation
+                # paths (pre-W89 schema sqlite3.OperationalError on
+                # persist) are caught BELOW _run_check and do NOT surface
+                # as markers.
+                _combined_warnings_out: list[str] = list(_w607x_warnings_out) + list(_w607cy_warnings_out)
+                if _combined_warnings_out:
+                    _summary["warnings_out"] = list(_combined_warnings_out)
+                    _summary["partial_success"] = True
+                    _kwargs["warnings_out"] = list(_combined_warnings_out)
+                    _kwargs["partial_success"] = True
+
+                # W607-CY -- serialize_envelope boundary (file mode).
+                # Same shape + floor discipline as the symbol-mode branch.
+                _envelope_floor: dict = {
+                    "command": "fan",
+                    "schema_version": "1.0.0",
+                    "summary": {
+                        "verdict": _verdict,
+                        "mode": mode,
+                        "items": len(rows),
+                        "partial_success": True,
+                        "warnings_out": list(_combined_warnings_out),
+                    },
+                    "warnings_out": list(_combined_warnings_out),
+                }
+                fan_envelope = _run_check_cy(
+                    "serialize_envelope",
+                    json_envelope,
+                    "fan",
+                    default=_envelope_floor,
+                    **_kwargs,
+                )
+                if fan_envelope is _envelope_floor and _w607cy_warnings_out:
+                    _combined_warnings_out = list(_w607x_warnings_out) + list(_w607cy_warnings_out)
+                    _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+                    _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+                    fan_envelope = _envelope_floor
+
+                click.echo(to_json(fan_envelope))
                 return
 
             table_rows = []

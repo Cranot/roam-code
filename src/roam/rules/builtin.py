@@ -263,13 +263,14 @@ def _check_no_deep_inheritance(conn, G, threshold):
     # PHP/Rust trait composition (PHP ``use``, generic_lang ``uses_trait``).
     # ``extends`` was a phantom kind that never matched a row — kept the
     # query NULL-safe but produced silent zero-violation runs even on deep
-    # hierarchies. Aligned with the indexer's canonical set in
-    # ``index/indexer.py`` and ``catalog/parallel_hierarchy.py``.
-    _kinds = ("inherits", "implements", "uses_trait")
-    _ks = ", ".join(chr(39) + k + chr(39) for k in _kinds)
+    # hierarchies. W543 promoted the canonical set to
+    # :data:`roam.db.edge_kinds.INHERITANCE_EDGE_KINDS` so future readers
+    # don't re-introduce the phantom ``'extends'``.
+    from roam.db.edge_kinds import inheritance_in_clause
+
     try:
         edge_rows = conn.execute(
-            "SELECT e.source_id, e.target_id FROM edges e WHERE e.kind IN ({})".format(_ks)
+            f"SELECT e.source_id, e.target_id FROM edges e WHERE {inheritance_in_clause('e.kind')}"
         ).fetchall()
     except Exception:
         return []

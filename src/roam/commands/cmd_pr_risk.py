@@ -33,6 +33,8 @@ from roam.commands.cmd_coupling import _compute_surprise
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import WarningsOut, format_table, json_envelope, to_json
+from roam.output.risk import normalize_risk_level, risk_rank
+from roam.runs.helpers import auto_log
 
 # W134 — pr-risk is the sixth detector migrating onto the central findings
 # registry (after clones W95, dead W99, complexity W102, smells W109,
@@ -828,18 +830,230 @@ def pr_risk(ctx, commit_range, staged, author, persist):
     ensure_index()
     root = find_project_root()
 
-    changed = get_changed_files(root, staged=staged, commit_range=commit_range)
+    # W607-Q: per-phase warnings_out accumulator + helper-CALL wrapper.
+    # Seventeenth-in-batch W607 consumer-layer arc; sixth DB-shape
+    # aggregator after W607-K (describe), -L (minimap), -M (health),
+    # -N (doctor), -O (dashboard), -P (audit). cmd_pr_risk is the
+    # PR-time risk aggregator that composes ~9 substrate helpers
+    # (get_changed_files / resolve_changed_to_db / _detect_author /
+    # build_symbol_graph / _compute_surprise / detect_layers /
+    # _author_familiarity / _minor_contributor_risk / _emit_pr_risk_findings).
+    #
+    # W978 first-hypothesis finding: helper-CALL boundary is the dominant
+    # raise axis. Each substrate has its own internal try/except returning
+    # safe defaults (``get_changed_files`` returns ``[]`` on
+    # FileNotFoundError/TimeoutExpired; ``_get_file_stat`` returns
+    # ``(0, 0)`` on OSError/SubprocessError/ValueError;
+    # ``_detect_author`` returns ``None`` on git missing). But a helper
+    # itself can still raise BEFORE reaching that floor (e.g., a downstream
+    # refactor changes the SQL shape, or networkx blows up during
+    # ``build_symbol_graph``, or a third-party patch surfaces an unexpected
+    # raise). The outer call sites in ``pr_risk()`` previously had no
+    # guards, so the envelope crashed whole.
+    #
+    # W805-EEEE intersection: ``get_changed_files`` is the shared helper
+    # that the W805-EEEE pin documented as silently returning ``[]`` on
+    # subprocess failure. W607-Q is ADDITIVE — for the FileNotFoundError /
+    # TimeoutExpired axes the helper still floors to ``[]`` (pin preserved);
+    # for any OTHER raise that escapes the helper's own try/except,
+    # W607-Q surfaces ``pr_risk_get_changed_files_failed:<exc_class>:<detail>``
+    # via warnings_out and the envelope still emits cleanly. The shared
+    # helper's silent-floor contract is preserved verbatim.
+    #
+    # Marker family ``pr_risk_*`` — distinct from W607-P's ``audit_*``,
+    # W607-O's ``dashboard_*``, W607-N's ``doctor_*``, W607-M's ``health_*``,
+    # W607-L's ``minimap_*``, W607-K's ``describe_*``. The marker-prefix
+    # discipline test pins this closed-enum distinction.
+    #
+    # Empty bucket → byte-identical envelope (no warnings_out key in
+    # either summary or top-level, no partial_success key from W607-Q;
+    # the pre-existing W989 ``_warnings_out`` accumulator still flips
+    # partial_success on its own — see merge at envelope construction).
+    _w607q_warnings_out: list[str] = []
+
+    def _run_check(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-Q marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception (the helper itself raised before producing its own
+        floor value), surface a ``pr_risk_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607q_warnings_out`` and return *default* — the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607q_warnings_out.append(f"pr_risk_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-AB -- substrate-CALL marker plumbing for the findings-emission
+    # boundaries that W607-Q intentionally left uncovered. cmd_pr_risk is
+    # the canonical SHARED-HELPER family sibling of cmd_diff (W607-Z) on
+    # the get_changed_files axis; W607-Q wrapped the upstream substrates
+    # (get_changed_files / resolve_changed_to_db / build_symbol_graph /
+    # _compute_surprise / detect_layers / _author_familiarity /
+    # _minor_contributor_risk) but did NOT wrap the per-PR findings-write
+    # path. W607-AB extends the canonical W607 plumbing to the two
+    # remaining boundaries:
+    #
+    # * ``_build_pr_risk_finding_rows`` -- the SINGLE SOURCE OF TRUTH row
+    #   builder used by BOTH the ``--persist`` registry write AND the
+    #   envelope ``findings[]`` array. A raise here would previously
+    #   crash the entire envelope whole; W607-AB surfaces it as
+    #   ``pr_risk_build_pr_risk_finding_rows_failed:<exc>:<detail>``
+    #   and degrades the envelope ``findings[]`` to ``[]`` so the
+    #   composite risk-score, breakdown, and reviewer suggestions still
+    #   emit cleanly.
+    # * ``_emit_pr_risk_findings`` -- the registry-write boundary. The
+    #   pre-existing ``try/except sqlite3.OperationalError`` at the call
+    #   site preserves the pre-W89-schema silent-floor; W607-AB wraps
+    #   the wider Exception axis so e.g. a malformed FindingRecord
+    #   construction or an unexpected DB error surfaces as
+    #   ``pr_risk_emit_pr_risk_findings_failed:...`` rather than
+    #   crashing the read path.
+    #
+    # The accumulator is intentionally DISTINCT from ``_w607q_warnings_out``
+    # so a future audit can tell the two waves apart by source-grep --
+    # but BOTH ride the same ``pr_risk_*`` marker-prefix family and merge
+    # into a single ``warnings_out`` channel on envelope emission. The
+    # bucket-merge mirrors the W607-Z cmd_diff + W607-Y cmd_critique
+    # pattern (multiple warnings buckets, one channel).
+    _w607ab_warnings_out: list[str] = []
+
+    def _run_check_ab(phase: str, fn, *args, default=None, **kwargs):
+        """Run one W607-AB substrate helper with marker emission.
+
+        Mirror of ``_run_check`` (W607-Q) but accumulates into the
+        distinct W607-AB bucket. Marker prefix stays ``pr_risk_*`` -- the
+        bucket separation is for source-grep auditability, not for
+        consumer-side demux. On a clean call the result is returned
+        as-is; on an uncaught exception, surface a
+        ``pr_risk_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607ab_warnings_out`` and return *default*.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607ab_warnings_out.append(f"pr_risk_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-BU -- ADDITIVE aggregation-phase plumbing on top of the
+    # W607-Q substrate-CALL + W607-AB findings-emission markers.
+    # W607-Q already wrapped the upstream substrates (get_changed_files /
+    # resolve_changed_to_db / build_symbol_graph / _compute_surprise /
+    # detect_layers / _author_familiarity / _minor_contributor_risk);
+    # W607-AB wrapped the findings-emission boundaries
+    # (_build_pr_risk_finding_rows / _emit_pr_risk_findings); W607-BU
+    # extends marker coverage to the AGGREGATION-PHASE boundaries that
+    # both prior waves left unguarded:
+    #
+    #   - ``score_classify``       -- per-factor classification of the
+    #                                 internal pr-risk 4-tier bucket
+    #                                 (``low``/``moderate``/``high``/
+    #                                 ``critical``) via the score-bucketing
+    #                                 logic at ~line 1320. Mirror of
+    #                                 cmd_attest W607-BT score_classify
+    #                                 pattern with default=None driving the
+    #                                 score_classification "unknown" sentinel.
+    #   - ``score_normalize``      -- canonical W631 risk-LEVEL projection
+    #                                 (``normalize_risk_level`` + ``risk_rank``).
+    #                                 CRITICAL-PATH instrumentation: cmd_pr_risk
+    #                                 is the canonical risk-LEVEL emitter per
+    #                                 the W641 follow-up; the projection
+    #                                 legitimately reaches the full 4-tier
+    #                                 vocabulary (low/medium/high/critical),
+    #                                 mirroring cmd_attest W607-BT but without
+    #                                 saturation-at-high (unlike cmd_diff /
+    #                                 cmd_critique).
+    #   - ``compute_verdict``      -- augmented verdict text build with the
+    #                                 canonical risk_level suffix (LAW 6
+    #                                 standalone-parse) -- 4-tier verdict
+    #                                 string + driver_label augmentation.
+    #   - ``auto_log``             -- active-run ledger write (silent no-op
+    #                                 if no run is active, but the underlying
+    #                                 ``auto_log`` can still raise on HMAC
+    #                                 chain misshape or filesystem failures).
+    #                                 cmd_pr_risk did NOT previously call
+    #                                 auto_log; W607-BU adds the call inside
+    #                                 the wrap so the run-ledger contract
+    #                                 catches up with cmd_diff (W607-BP) and
+    #                                 cmd_attest (W607-BT).
+    #   - ``serialize_envelope``   -- ``json_envelope("pr-risk", ...)``
+    #                                 projection (downstream contract changes
+    #                                 / shape regressions).
+    #
+    # cmd_pr_risk is the canonical risk-LEVEL emitter per the W641
+    # ``normalize_risk_level`` follow-up. With W607-BU landed, the risk-
+    # LEVEL emitter trio is W607-plumbed end-to-end on both layers:
+    #
+    #   - substrate-CALL layer: cmd_diff (W607-Z), cmd_attest (W607-AD),
+    #                           cmd_pr_risk (W607-Q + W607-AB)
+    #   - aggregation-phase layer: cmd_diff (W607-BP), cmd_attest
+    #                              (W607-BT), cmd_pr_risk (W607-BU)
+    #
+    # Marker family ``pr_risk_*`` -- same family as W607-Q + W607-AB
+    # (additive, not a separate prefix). Empty bucket -> byte-identical
+    # envelope.
+    _w607bu_warnings_out: list[str] = []
+
+    def _run_check_bu(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-BU marker emission.
+
+        Mirror of ``_run_check_ab`` shape (same ``pr_risk_<phase>_failed:``
+        marker family) but writes into ``_w607bu_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bu_warnings_out.append(f"pr_risk_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    changed = _run_check(
+        "get_changed_files",
+        get_changed_files,
+        root,
+        staged=staged,
+        commit_range=commit_range,
+        default=[],
+    )
     if not changed:
         label = commit_range or ("staged" if staged else "unstaged")
         if json_mode:
             # R9 API recheck: every --json exit must go through json_envelope
             # so consumers see schema_version + summary.verdict — not bare dicts.
+            _nochange_summary: dict[str, Any] = {
+                "verdict": "no-changes",
+                "risk_score": 0,
+                "risk_level": "low",
+                "risk_level_canonical": "low",
+                "risk_rank": risk_rank("low"),
+                "label": label,
+            }
+            _nochange_envelope_kwargs: dict[str, Any] = {
+                "summary": _nochange_summary,
+                "message": f"No changes found for {label}.",
+            }
+            # W607-Q: surface warnings_out only on the disclosure path so
+            # the clean no-changes envelope stays byte-identical. If
+            # ``get_changed_files`` raised an unexpected exception and
+            # floored to ``[]`` (vs. the W805-EEEE-pinned silent floor for
+            # FileNotFoundError/TimeoutExpired), the agent reading the
+            # envelope sees the marker and partial_success=True.
+            if _w607q_warnings_out:
+                _nochange_summary["partial_success"] = True
+                _nochange_summary["warnings_out"] = list(_w607q_warnings_out)
+                _nochange_envelope_kwargs["warnings_out"] = list(_w607q_warnings_out)
             click.echo(
                 to_json(
                     json_envelope(
                         "pr-risk",
-                        summary={"verdict": "no-changes", "risk_score": 0, "label": label},
-                        message=f"No changes found for {label}.",
+                        # W641 — emit canonical risk fields even on the
+                        # no-changes branch so consumers can call
+                        # ``risk_rank(summary["risk_level_canonical"])``
+                        # unconditionally. A zero-change diff is trivially
+                        # ``low`` risk (rank 1) under the W631 polarity.
+                        **_nochange_envelope_kwargs,
                     )
                 )
             )
@@ -849,21 +1063,47 @@ def pr_risk(ctx, commit_range, staged, author, persist):
 
     with open_db(readonly=not persist) as conn:
         # Map changed files to DB
-        file_map = resolve_changed_to_db(conn, changed)
+        file_map = _run_check(
+            "resolve_changed_to_db",
+            resolve_changed_to_db,
+            conn,
+            changed,
+            default={},
+        )
 
         if not file_map:
             if json_mode:
                 # R9 API recheck: same as above — wrap with json_envelope.
+                _stale_summary: dict[str, Any] = {
+                    "verdict": "index-stale",
+                    "risk_score": 0,
+                    "risk_level": "low",
+                    "risk_level_canonical": "low",
+                    "risk_rank": risk_rank("low"),
+                    "hint": "Changed files not in index — run `roam index`.",
+                }
+                _stale_envelope_kwargs: dict[str, Any] = {
+                    "summary": _stale_summary,
+                    "message": "Changed files not found in index. Run `roam index` first.",
+                }
+                # W607-Q: surface warnings_out only on the disclosure path
+                # so the clean index-stale envelope stays byte-identical.
+                # If ``resolve_changed_to_db`` raised and floored to ``{}``
+                # (vs. a genuine pre-W89 / unindexed corpus), the agent
+                # reads the marker and partial_success=True.
+                if _w607q_warnings_out:
+                    _stale_summary["partial_success"] = True
+                    _stale_summary["warnings_out"] = list(_w607q_warnings_out)
+                    _stale_envelope_kwargs["warnings_out"] = list(_w607q_warnings_out)
                 click.echo(
                     to_json(
                         json_envelope(
                             "pr-risk",
-                            summary={
-                                "verdict": "index-stale",
-                                "risk_score": 0,
-                                "hint": "Changed files not in index — run `roam index`.",
-                            },
-                            message="Changed files not found in index. Run `roam index` first.",
+                            # W641 — emit canonical risk fields even on
+                            # the index-stale branch so consumers always
+                            # see ``risk_level_canonical`` + ``risk_rank``
+                            # on every pr-risk envelope shape.
+                            **_stale_envelope_kwargs,
                         )
                     )
                 )
@@ -875,14 +1115,23 @@ def pr_risk(ctx, commit_range, staged, author, persist):
         diff_stats = {path: _get_file_stat(root, path, staged=staged, commit_range=commit_range) for path in file_map}
 
         # --- Resolve author for familiarity/minor-contributor factors ---
-        resolved_author = author or _detect_author()
+        # W607-Q: ``_detect_author`` has its own try/except returning None
+        # on missing git; the wrapper catches anything that escapes that
+        # floor (e.g., a third-party monkeypatch surfacing an unexpected
+        # raise).
+        resolved_author = author or _run_check("detect_author", _detect_author, default=None)
 
         # --- 1. Blast radius ---
         import networkx as nx
 
         from roam.graph.builder import build_symbol_graph
 
-        G = build_symbol_graph(conn)
+        # W607-Q: ``build_symbol_graph`` is a heavy substrate (DB read +
+        # networkx graph build). A schema drift or networkx upgrade
+        # incompatibility would raise here; the wrapper surfaces the
+        # marker and substitutes an empty graph so the remaining
+        # composite factors degrade to zero rather than crashing.
+        G = _run_check("build_symbol_graph", build_symbol_graph, conn, default=nx.DiGraph())
         RG = G.reverse()
 
         all_affected = set()
@@ -986,8 +1235,18 @@ def pr_risk(ctx, commit_range, staged, author, persist):
                 coupling_score = min(1.0, cross_edges / max_possible)
 
         # --- 6. Hypergraph novelty ---
+        # W607-Q: ``_compute_surprise`` reads from coupling tables — a
+        # missing column or pre-migration schema would raise here. The
+        # wrapper defaults to a no-novelty triple so the composite still
+        # produces a usable score.
         change_fids = list(file_map.values())
-        novelty, closest_pattern, closest_sim = _compute_surprise(conn, change_fids)
+        novelty, closest_pattern, closest_sim = _run_check(
+            "compute_surprise",
+            _compute_surprise,
+            conn,
+            change_fids,
+            default=(0.0, None, 0.0),
+        )
 
         # --- 7. Structural spread (cluster + layer) ---
         cluster_ids = set()
@@ -1004,7 +1263,13 @@ def pr_risk(ctx, commit_range, staged, author, persist):
         # Layer spread
         from roam.graph.layers import detect_layers
 
-        layer_map = detect_layers(G)
+        # W607-Q: ``detect_layers`` operates on the networkx graph from
+        # ``build_symbol_graph``. A topological-sort failure (e.g., the
+        # graph reaches detect_layers in an inconsistent state) would
+        # raise here; the wrapper defaults to an empty {node_id: layer}
+        # map so the layer-spread metric degrades to zero rather than
+        # crashing the envelope.
+        layer_map = _run_check("detect_layers", detect_layers, G, default={})
         touched_layers = set()
         if layer_map:
             for sym_id in changed_sym_ids:
@@ -1029,23 +1294,43 @@ def pr_risk(ctx, commit_range, staged, author, persist):
                 new_dead.append({"name": e["name"], "kind": e["kind"], "file": path})
 
         # --- 9. Author familiarity ---
+        # W607-Q: ``_author_familiarity`` reads git_commits + git_file_changes
+        # — a missing column (pre-W405 migration) or a malformed timestamp
+        # would raise. The wrapper defaults to the empty-familiarity tuple
+        # so the composite stays computable.
         familiarity_risk = 0.0
-        familiarity_details = {"avg_familiarity": 1.0, "files_assessed": 0, "files": []}
+        familiarity_details: dict[str, Any] = {
+            "avg_familiarity": 1.0,
+            "files_assessed": 0,
+            "files": [],
+        }
         if resolved_author:
-            familiarity_risk, familiarity_details = _author_familiarity(
+            familiarity_risk, familiarity_details = _run_check(
+                "author_familiarity",
+                _author_familiarity,
                 conn,
                 resolved_author,
                 file_map,
+                default=(0.0, familiarity_details),
             )
 
         # --- 10. Minor contributor risk ---
+        # W607-Q: ``_minor_contributor_risk`` mirrors the familiarity
+        # substrate's DB shape. Same wrapper discipline.
         minor_risk = 0.0
-        minor_details = {"minor_files": 0, "files_assessed": 0, "files": []}
+        minor_details: dict[str, Any] = {
+            "minor_files": 0,
+            "files_assessed": 0,
+            "files": [],
+        }
         if resolved_author:
-            minor_risk, minor_details = _minor_contributor_risk(
+            minor_risk, minor_details = _run_check(
+                "minor_contributor_risk",
+                _minor_contributor_risk,
                 conn,
                 resolved_author,
                 file_map,
+                default=(0.0, minor_details),
             )
 
         # --- Composite risk score (0-100) ---
@@ -1092,14 +1377,38 @@ def pr_risk(ctx, commit_range, staged, author, persist):
         # envelope, the findings registry, and the ``_PR_RISK_LEVEL_TO_SEVERITY``
         # lookup. ``moderate`` stays as a distinct pr-risk bucket label
         # (25 < risk ≤ 50) that projects to canonical ``medium`` severity.
-        if risk <= 25:
-            level = "low"
-        elif risk <= 50:
-            level = "moderate"
-        elif risk <= 75:
-            level = "high"
-        else:
-            level = "critical"
+        #
+        # W607-BU -- score_classify boundary. The bucketing logic is now
+        # wrapped in ``_run_check_bu`` so a future closed-enum vocabulary
+        # refactor (or an unexpected ``risk`` type) surfaces a marker rather
+        # than crashing the envelope. Floors to ``None`` so the
+        # ``score_classification: "unknown"`` sentinel disambiguates a
+        # degraded outcome from a real ``"low"`` classification (mirror of
+        # cmd_attest W607-BT / cmd_diff W607-BP score_classify pattern).
+        def _classify_pr_risk_level(_risk: int) -> str:
+            if _risk <= 25:
+                return "low"
+            elif _risk <= 50:
+                return "moderate"
+            elif _risk <= 75:
+                return "high"
+            else:
+                return "critical"
+
+        _bu_score_probe = _run_check_bu(
+            "score_classify",
+            _classify_pr_risk_level,
+            risk,
+            default=None,
+        )
+        # When the BU probe raised (None floor), mark classification unknown.
+        # Clean path -> classification is "classified". This sentinel rides
+        # the summary block below alongside the canonical ``"low"`` floor.
+        _score_classification_state = "unknown" if _bu_score_probe is None else "classified"
+        # Use the BU probe result when clean; on raise fall back to the
+        # CI-safety floor ("low" per the W531 lesson — a typo'd / raised
+        # label MUST NOT promote a finding into a CI-failing rank).
+        level = _bu_score_probe if _bu_score_probe is not None else "low"
 
         # --- Per-file risk breakdown ---
         per_file = []
@@ -1159,17 +1468,80 @@ def pr_risk(ctx, commit_range, staged, author, persist):
         top_driver = max(_named_factors, key=lambda x: x[1])
         driver_label = top_driver[0] if top_driver[1] > 0.05 else None
 
-        # Verdict
-        if level == "low":
-            verdict = f"Low risk ({risk}/100) — safe to merge"
-        elif level == "moderate":
-            verdict = f"Moderate risk ({risk}/100) — review recommended"
-        elif level == "high":
-            verdict = f"High risk ({risk}/100) — careful review needed"
-        else:
-            verdict = f"Critical risk ({risk}/100) — significant blast radius, thorough review required"
-        if driver_label:
-            verdict += f" (driver: {driver_label})"
+        # W641 — project the local 4-bucket label onto the canonical
+        # risk-LEVEL vocabulary (``roam.output.risk.normalize_risk_level``,
+        # W631). The local bucket ``moderate`` (25 < risk ≤ 50) maps to
+        # canonical ``medium`` per the W631 ``RISK_ALIASES`` table; the
+        # other three buckets pass through unchanged. The W531 CI-safety
+        # floor ``or "low"`` mirrors the helper's documented ``None`` -on-
+        # unknown polarity — a typo'd label MUST NOT promote a finding into
+        # a CI-failing rank.
+        #
+        # W607-BU -- score_normalize boundary. Wraps the canonical W631
+        # ``normalize_risk_level`` + ``risk_rank`` projections so a future
+        # signature change / closed-enum vocabulary drift surfaces a marker
+        # rather than crashing the envelope. CRITICAL-PATH instrumentation:
+        # cmd_pr_risk is the canonical risk-LEVEL emitter per the W641
+        # follow-up — the projection legitimately reaches the full 4-tier
+        # vocabulary (low/medium/high/critical). Floors to ``"low"`` / rank
+        # ``1`` so downstream comparators stay non-null. Pattern 3a
+        # discipline: route through ``normalize_risk_level`` (the W631
+        # canonical helper) -- NOT through a separate inline severity map.
+        risk_level_canonical = _run_check_bu(
+            "score_normalize",
+            lambda _level: normalize_risk_level(_level) or "low",
+            level,
+            default="low",
+        )
+        # Integer floor via the canonical W631 rank table (higher = worse;
+        # critical=4, high=3, medium=2, low=1, unknown=-1). Floor-comparator
+        # consumers (e.g. ``risk_rank(summary.risk_level_canonical) >= 3``
+        # to gate on high-or-worse) read this without re-deriving the rank
+        # vocabulary at the call site — same Pattern-3a discipline as W632.
+        risk_rank_int = _run_check_bu(
+            "score_normalize",
+            risk_rank,
+            risk_level_canonical,
+            default=1,
+        )
+
+        # Verdict — LAW 6: line works standalone without any other field.
+        # The canonical risk_level is appended in parentheses so a
+        # downstream agent reading only the verdict string still sees the
+        # canonical bucket (the leading ``Moderate``/``High``/etc. labels
+        # use the pr-risk domain vocabulary that includes ``moderate`` as
+        # a distinct bucket label — see the W718 comment at the
+        # ``_PR_RISK_LEVEL_TO_SEVERITY`` table).
+        #
+        # W607-BU -- compute_verdict boundary. Wraps the canonical verdict
+        # build so a future format-spec regression on the components
+        # (e.g. non-string risk_level_canonical from a vocabulary refactor)
+        # surfaces a marker rather than crashing the envelope. Floor must
+        # NOT re-format ``risk_level_canonical`` -- the same value that
+        # tripped the closure (e.g. a __format__-raising sentinel under
+        # test) would re-raise inside the default f-string. Use a literal
+        # "low" floor instead (LAW 6 still holds: the line works standalone;
+        # the W631 floor is "low"). W978 first-hypothesis discipline mirror
+        # of cmd_diff W607-BP / cmd_attest W607-BT.
+        def _build_pr_risk_verdict() -> str:
+            if level == "low":
+                _v = f"Low risk ({risk}/100) — safe to merge"
+            elif level == "moderate":
+                _v = f"Moderate risk ({risk}/100) — review recommended"
+            elif level == "high":
+                _v = f"High risk ({risk}/100) — careful review needed"
+            else:
+                _v = f"Critical risk ({risk}/100) — significant blast radius, thorough review required"
+            _v += f" (risk_level {risk_level_canonical})"
+            if driver_label:
+                _v += f" (driver: {driver_label})"
+            return _v
+
+        verdict = _run_check_bu(
+            "compute_verdict",
+            _build_pr_risk_verdict,
+            default="pr-risk completed (risk_level low)",
+        )
 
         # --- W134 / W242: build the shared finding-row payload ---
         # INVOCATION-SCOPED: pr-risk runs against a specific diff, so the
@@ -1222,11 +1594,22 @@ def pr_risk(ctx, commit_range, staged, author, persist):
         # happy path; non-empty means the canonical-level invariant got
         # broken upstream and the envelope MUST flip ``partial_success``.
         _warnings_out: list[str] = []
-        finding_rows = _build_pr_risk_finding_rows(
+        # W607-AB: ``_build_pr_risk_finding_rows`` is the single-source row
+        # builder used by BOTH the envelope ``findings[]`` array and the
+        # ``--persist`` registry write. A raise here previously crashed
+        # the whole envelope; W607-AB surfaces it via ``_w607ab_warnings_out``
+        # and defaults to ``[]`` so the composite score, breakdown, and
+        # suggested reviewers still emit cleanly.
+        finding_rows = _run_check_ab(
+            "build_pr_risk_finding_rows",
+            _build_pr_risk_finding_rows,
             _pr_risk_data,
             PR_RISK_DETECTOR_VERSION,
             warnings_out=_warnings_out,
+            default=[],
         )
+        if finding_rows is None:
+            finding_rows = []
 
         # --- W134: mirror into the central findings registry ---
         # Reruns on the same diff upsert in place; reruns on a different
@@ -1235,10 +1618,20 @@ def pr_risk(ctx, commit_range, staged, author, persist):
         # pre-W89 schema (no ``findings`` table) degrades cleanly.
         if persist:
             try:
-                _emit_pr_risk_findings(
+                # W607-AB: wrap the wider Exception axis (e.g. malformed
+                # FindingRecord construction) via ``_run_check_ab`` so an
+                # unexpected raise inside ``_emit_pr_risk_findings``
+                # surfaces as a structured marker rather than crashing
+                # the read path. The pre-W89-schema silent-floor
+                # (``sqlite3.OperationalError``) stays handled by the
+                # outer try/except so the existing W134 contract holds.
+                _run_check_ab(
+                    "emit_pr_risk_findings",
+                    _emit_pr_risk_findings,
                     conn,
                     _pr_risk_data,
                     PR_RISK_DETECTOR_VERSION,
+                    default=None,
                 )
                 conn.commit()
             except sqlite3.OperationalError:
@@ -1249,83 +1642,262 @@ def pr_risk(ctx, commit_range, staged, author, persist):
             # W989 (Pattern 2): surface accumulated silent-fallback warnings
             # on the envelope. ``partial_success`` flips True iff any warning
             # fired — mirrors the cmd_alerts ``warnings_out`` discipline.
+            # W607-Q: combine W989's canonical-level warnings with the
+            # substrate-CALL warnings into a single ``_combined_warnings_out``
+            # list. The two accumulators carry distinct marker prefixes —
+            # W989 warnings have the canonical "Config field 'level' value..."
+            # prefix; W607-Q warnings have the three-segment
+            # ``pr_risk_<phase>_failed:<exc_class>:<detail>`` shape — so
+            # consumers can demux without ambiguity.
+            # W607-AB: extend the bucket-merge with the findings-emission
+            # axis (``_build_pr_risk_finding_rows`` /
+            # ``_emit_pr_risk_findings``). Same ``pr_risk_*`` marker prefix
+            # family -- consumers continue to demux by marker shape (W989
+            # canonical-level vs. ``pr_risk_<phase>_failed:`` substrate);
+            # the bucket separation is for source-grep auditability.
+            # W607-BU: extend the bucket-merge with the aggregation-phase
+            # axis (score_classify / score_normalize / compute_verdict /
+            # auto_log / serialize_envelope). Same ``pr_risk_*`` marker
+            # prefix family -- the additive bucket stays distinguishable
+            # in tests + audits via its phase names.
+            _combined_warnings_out: list[str] = (
+                list(_warnings_out)
+                + list(_w607q_warnings_out)
+                + list(_w607ab_warnings_out)
+                + list(_w607bu_warnings_out)
+            )
             _summary: dict[str, Any] = {
                 "verdict": verdict,
                 "risk_score": risk,
+                # W718 — pr-risk's domain vocabulary
+                # (``low``/``moderate``/``high``/``critical``). ``moderate``
+                # is a distinct bucket label that maps to canonical
+                # ``medium`` via W631 ``RISK_ALIASES`` — kept on the
+                # envelope for back-compat with pre-W641 consumers.
                 "risk_level": level,
+                # W641 — canonical W631 risk-LEVEL vocabulary
+                # (``low``/``medium``/``high``/``critical``). Projected via
+                # ``normalize_risk_level`` so cross-command floor
+                # comparators ("is this risk worse than migration_plan's
+                # ``--max-risk medium``?") work without each consumer
+                # re-deriving the alias table. The ``or "low"`` floor
+                # preserves the W531 CI-safety lesson — unknown labels
+                # collapse to ``low``, never to a CI-gating tier.
+                "risk_level_canonical": risk_level_canonical,
+                # W641 — integer floor via the canonical W631 rank table
+                # (``critical=4``/``high=3``/``medium=2``/``low=1``).
+                # Floor-comparator consumers read this directly instead
+                # of re-deriving the rank vocabulary at the call site.
+                "risk_rank": risk_rank_int,
+                # W607-BU -- SCORE-CLASSIFY DEGRADATION sentinel. When the
+                # ``score_classify`` boundary raises (and the classify
+                # result floors to ``None``), surface
+                # ``score_classification: "unknown"`` so the agent sees
+                # the degraded outcome alongside the canonical floor
+                # ("low") rather than mistaking the floor for a real
+                # classification. Clean path -> ``"classified"``. Mirror
+                # of cmd_attest W607-BT ``score_classification`` /
+                # cmd_diff W607-BP ``severity_classification`` sentinel.
+                "score_classification": _score_classification_state,
                 "changed_files": len(file_map),
                 "change_shape": "reductive" if reductive_change else "mixed",
                 "lines_added": total_added,
                 "lines_removed": total_removed,
                 "findings_count": len(finding_rows),
             }
-            if _warnings_out:
+            # W989 + W607-Q + W607-AB + W607-BU: flip partial_success iff
+            # ANY bucket fired. warnings_count remains W989's canonical
+            # accumulator count for back-compat with pre-W607-Q consumers;
+            # warnings_out carries the combined list (W607-P parity).
+            if _combined_warnings_out:
                 _summary["partial_success"] = True
                 _summary["warnings_count"] = len(_warnings_out)
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "pr-risk",
-                        summary=_summary,
-                        # W242: top-level ``findings[]`` carrying the W134
-                        # row shape — the same rows ``--persist`` writes to
-                        # the central findings registry. Built from a single
-                        # source (``_build_pr_risk_finding_rows``) so the
-                        # envelope and the registry can never drift. The
-                        # collector's ``pr_risk_envelope`` kwarg expects
-                        # exactly this key.
-                        findings=finding_rows,
-                        label=label,
-                        risk_score=risk,
-                        risk_level=level,
-                        changed_files=len(file_map),
-                        change_shape="reductive" if reductive_change else "mixed",
-                        reductive_change=reductive_change,
-                        reductive_discount_applied=bool(reductive_discount),
-                        lines_added=total_added,
-                        lines_removed=total_removed,
-                        blast_radius_pct=round(blast_pct, 1),
-                        hotspot_score=round(hotspot_score, 2),
-                        test_coverage_pct=round(test_coverage * 100, 1),
-                        bus_factor_risk=round(bus_factor_risk, 2),
-                        coupling_score=round(coupling_score, 2),
-                        novelty_score=novelty,
-                        closest_similarity=closest_sim,
-                        closest_historical_pattern=closest_pattern,
-                        cluster_spread=round(cluster_spread, 2),
-                        clusters_touched=len(cluster_ids),
-                        total_clusters=total_clusters,
-                        layer_spread=round(layer_spread, 2),
-                        layers_touched=len(touched_layers),
-                        total_layers=total_layers,
-                        dead_exports=len(new_dead),
-                        familiarity=familiarity_details,
-                        minor_risk=minor_details,
-                        # W198 vocabulary drift fix: ``author`` is the
-                        # git-blame term kept for back-compat; ``actor``
-                        # mirrors the W182 ``ActorRef`` crosswalk
-                        # vocabulary so ``ChangeEvidence`` collectors
-                        # don't carry two synonyms downstream.
-                        author=resolved_author,
-                        actor=resolved_author,
-                        per_file=per_file,
-                        # W198: each reviewer row carries both ``author``
-                        # (git-blame) and ``actor`` (crosswalk) for the
-                        # same identity. See composite envelope above.
-                        suggested_reviewers=[{"author": a, "actor": a, "lines": l} for a, l in top_authors],
-                        dead_code=new_dead[:10],
-                        # W989 (Pattern 2): structured silent-fallback
-                        # warnings. Empty list on the happy path; non-empty
-                        # means the canonical-level invariant got broken
-                        # upstream (level NOT in
-                        # {"low","moderate","high","critical"}) — the row
-                        # severity defaulted to "info" and ``summary.
-                        # partial_success`` flipped True. Mirrors the
-                        # cmd_alerts ``warnings_out`` discipline.
-                        warnings_out=list(_warnings_out),
-                    )
-                )
+                # W607-P parity: mirror the combined warnings_out into
+                # summary so consumers reading only summary still see
+                # the substrate-degradation lineage.
+                _summary["warnings_out"] = list(_combined_warnings_out)
+
+            # W607-BU -- serialize_envelope boundary. Wraps the envelope
+            # serialization itself. A downstream schema-shape refactor
+            # that breaks ``json_envelope("pr-risk", ...)`` would otherwise
+            # crash AFTER all substrate + aggregation signals were already
+            # gathered. Floor to a minimal envelope stub so consumers still
+            # receive a parseable JSON object with the marker attached + the
+            # canonical command name. Mirror of cmd_diff's W607-BP
+            # serialize_envelope floor pattern.
+            _envelope_floor: dict = {
+                "command": "pr-risk",
+                "schema_version": "1.0.0",
+                "summary": {
+                    "verdict": verdict,
+                    "partial_success": True,
+                    "warnings_out": list(_combined_warnings_out),
+                },
+                "warnings_out": list(_combined_warnings_out),
+            }
+            pr_risk_envelope = _run_check_bu(
+                "serialize_envelope",
+                json_envelope,
+                "pr-risk",
+                default=_envelope_floor,
+                summary=_summary,
+                # W242: top-level ``findings[]`` carrying the W134
+                # row shape — the same rows ``--persist`` writes to
+                # the central findings registry. Built from a single
+                # source (``_build_pr_risk_finding_rows``) so the
+                # envelope and the registry can never drift. The
+                # collector's ``pr_risk_envelope`` kwarg expects
+                # exactly this key.
+                findings=finding_rows,
+                label=label,
+                risk_score=risk,
+                risk_level=level,
+                # W641 — canonical W631 risk-LEVEL projection +
+                # integer rank. Mirror of ``summary.risk_level_canonical``
+                # / ``summary.risk_rank`` so consumers that read the
+                # top-level envelope (not just ``summary``) get the
+                # same canonical bucket without re-deriving it.
+                risk_level_canonical=risk_level_canonical,
+                risk_rank=risk_rank_int,
+                changed_files=len(file_map),
+                change_shape="reductive" if reductive_change else "mixed",
+                reductive_change=reductive_change,
+                reductive_discount_applied=bool(reductive_discount),
+                lines_added=total_added,
+                lines_removed=total_removed,
+                blast_radius_pct=round(blast_pct, 1),
+                hotspot_score=round(hotspot_score, 2),
+                test_coverage_pct=round(test_coverage * 100, 1),
+                bus_factor_risk=round(bus_factor_risk, 2),
+                coupling_score=round(coupling_score, 2),
+                novelty_score=novelty,
+                closest_similarity=closest_sim,
+                closest_historical_pattern=closest_pattern,
+                cluster_spread=round(cluster_spread, 2),
+                clusters_touched=len(cluster_ids),
+                total_clusters=total_clusters,
+                layer_spread=round(layer_spread, 2),
+                layers_touched=len(touched_layers),
+                total_layers=total_layers,
+                dead_exports=len(new_dead),
+                familiarity=familiarity_details,
+                minor_risk=minor_details,
+                # W198 vocabulary drift fix: ``author`` is the
+                # git-blame term kept for back-compat; ``actor``
+                # mirrors the W182 ``ActorRef`` crosswalk
+                # vocabulary so ``ChangeEvidence`` collectors
+                # don't carry two synonyms downstream.
+                author=resolved_author,
+                actor=resolved_author,
+                per_file=per_file,
+                # W198: each reviewer row carries both ``author``
+                # (git-blame) and ``actor`` (crosswalk) for the
+                # same identity. See composite envelope above.
+                suggested_reviewers=[{"author": a, "actor": a, "lines": l} for a, l in top_authors],
+                dead_code=new_dead[:10],
+                # W989 (Pattern 2) + W607-Q + W607-AB + W607-BU:
+                # structured warnings. Combined list carries:
+                # - W989's canonical-level silent-fallback warnings;
+                # - W607-Q's substrate-CALL failure markers;
+                # - W607-AB's findings-emission failure markers;
+                # - W607-BU's aggregation-phase failure markers
+                #   (score_classify / score_normalize / compute_verdict /
+                #   auto_log / serialize_envelope).
+                # ALL flip ``summary.partial_success=True``;
+                # consumers demux by marker shape.
+                warnings_out=list(_combined_warnings_out),
             )
+            # W607-BU -- if ``serialize_envelope`` raised AFTER the
+            # combined bucket was already snapshotted, the new
+            # ``pr_risk_serialize_envelope_failed:`` marker was appended
+            # to ``_w607bu_warnings_out`` and the floor stub carries
+            # only the old combined list. Rebuild the floor stub's
+            # warnings_out so the new marker reaches the JSON output.
+            # Clean path -> envelope is the real json_envelope return
+            # value, no rebuild needed.
+            if pr_risk_envelope is _envelope_floor and _w607bu_warnings_out:
+                _combined_warnings_out = (
+                    list(_warnings_out)
+                    + list(_w607q_warnings_out)
+                    + list(_w607ab_warnings_out)
+                    + list(_w607bu_warnings_out)
+                )
+                _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+                _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+                pr_risk_envelope = _envelope_floor
+
+            # W607-BU -- auto_log boundary. Silent no-op if no active run;
+            # the wrap surfaces HMAC chain-misshape / filesystem failures
+            # as ``pr_risk_auto_log_failed:...`` markers instead of
+            # crashing the envelope after it was already built. Mirror of
+            # cmd_diff's W607-BP / cmd_attest's W607-BT auto_log pattern.
+            _run_check_bu(
+                "auto_log",
+                auto_log,
+                pr_risk_envelope,
+                action="pr-risk",
+                target=label,
+                repo_root=root,
+                default=None,
+            )
+            # W607-BU -- if ``auto_log`` raised, rebuild the envelope so
+            # the marker reaches the JSON output. Empty bucket (clean
+            # auto_log) -> envelope stays byte-identical to the version
+            # already built above.
+            _existing_summary_wo = _summary.get("warnings_out") or []
+            if _w607bu_warnings_out and not any(m.startswith("pr_risk_auto_log_failed:") for m in _existing_summary_wo):
+                _combined_warnings_out = (
+                    list(_warnings_out)
+                    + list(_w607q_warnings_out)
+                    + list(_w607ab_warnings_out)
+                    + list(_w607bu_warnings_out)
+                )
+                _summary["partial_success"] = True
+                _summary["warnings_out"] = list(_combined_warnings_out)
+                pr_risk_envelope = _run_check_bu(
+                    "serialize_envelope",
+                    json_envelope,
+                    "pr-risk",
+                    default=_envelope_floor,
+                    summary=_summary,
+                    findings=finding_rows,
+                    label=label,
+                    risk_score=risk,
+                    risk_level=level,
+                    risk_level_canonical=risk_level_canonical,
+                    risk_rank=risk_rank_int,
+                    changed_files=len(file_map),
+                    change_shape="reductive" if reductive_change else "mixed",
+                    reductive_change=reductive_change,
+                    reductive_discount_applied=bool(reductive_discount),
+                    lines_added=total_added,
+                    lines_removed=total_removed,
+                    blast_radius_pct=round(blast_pct, 1),
+                    hotspot_score=round(hotspot_score, 2),
+                    test_coverage_pct=round(test_coverage * 100, 1),
+                    bus_factor_risk=round(bus_factor_risk, 2),
+                    coupling_score=round(coupling_score, 2),
+                    novelty_score=novelty,
+                    closest_similarity=closest_sim,
+                    closest_historical_pattern=closest_pattern,
+                    cluster_spread=round(cluster_spread, 2),
+                    clusters_touched=len(cluster_ids),
+                    total_clusters=total_clusters,
+                    layer_spread=round(layer_spread, 2),
+                    layers_touched=len(touched_layers),
+                    total_layers=total_layers,
+                    dead_exports=len(new_dead),
+                    familiarity=familiarity_details,
+                    minor_risk=minor_details,
+                    author=resolved_author,
+                    actor=resolved_author,
+                    per_file=per_file,
+                    suggested_reviewers=[{"author": a, "actor": a, "lines": l} for a, l in top_authors],
+                    dead_code=new_dead[:10],
+                    warnings_out=list(_combined_warnings_out),
+                )
+
+            click.echo(to_json(pr_risk_envelope))
             return
 
         # --- Text output ---

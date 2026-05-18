@@ -392,7 +392,15 @@ class TestMigrationSafetyFilters:
             )
 
     def test_confidence_medium_filter(self, cli_runner, php_migration_project, monkeypatch):
-        """--confidence medium returns only medium-confidence findings."""
+        """--confidence medium returns medium-or-higher findings.
+
+        W1005-followup-D: equality→floor semantic change. Pre-fix kept only
+        findings with EXACTLY ``confidence == "medium"``; post-fix keeps
+        every finding where ``severity_rank(f.confidence) >=
+        severity_rank("medium")`` — i.e. high AND medium pass.
+        """
+        from roam.output._severity import severity_rank
+
         monkeypatch.chdir(php_migration_project)
         result = invoke_cli(
             cli_runner,
@@ -401,13 +409,24 @@ class TestMigrationSafetyFilters:
             json_mode=True,
         )
         data = parse_json_output(result, "migration-safety")
+        floor = severity_rank("medium")
         for finding in data["findings"]:
-            assert finding["confidence"] == "medium", (
-                f"Expected only 'medium' confidence findings, got: {finding['confidence']}"
+            assert severity_rank(finding["confidence"]) >= floor, (
+                f"Expected confidence at or above 'medium' floor (rank {floor}), "
+                f"got: {finding['confidence']} (rank "
+                f"{severity_rank(finding['confidence'])})"
             )
 
     def test_confidence_low_filter(self, cli_runner, php_migration_project, monkeypatch):
-        """--confidence low returns only low-confidence findings."""
+        """--confidence low returns low-or-higher findings (i.e. everything).
+
+        W1005-followup-D: equality→floor semantic change. Pre-fix kept only
+        findings with EXACTLY ``confidence == "low"``; post-fix keeps every
+        finding where ``severity_rank(f.confidence) >= severity_rank("low")``
+        — i.e. high AND medium AND low all pass.
+        """
+        from roam.output._severity import severity_rank
+
         monkeypatch.chdir(php_migration_project)
         result = invoke_cli(
             cli_runner,
@@ -416,9 +435,12 @@ class TestMigrationSafetyFilters:
             json_mode=True,
         )
         data = parse_json_output(result, "migration-safety")
+        floor = severity_rank("low")
         for finding in data["findings"]:
-            assert finding["confidence"] == "low", (
-                f"Expected only 'low' confidence findings, got: {finding['confidence']}"
+            assert severity_rank(finding["confidence"]) >= floor, (
+                f"Expected confidence at or above 'low' floor (rank {floor}), "
+                f"got: {finding['confidence']} (rank "
+                f"{severity_rank(finding['confidence'])})"
             )
 
     def test_limit_restricts_findings(self, cli_runner, php_migration_project, monkeypatch):

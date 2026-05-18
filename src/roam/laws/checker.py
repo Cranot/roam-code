@@ -537,13 +537,22 @@ def _check_testing_law(law: Law, parsed: dict, syms_added: list[dict]) -> list[V
     if not target_kind:
         return []
 
+    # W898-followup-B: delegate to the canonical changed_files.is_test_file
+    # (which factors through file_roles + the 22-language test_conventions
+    # adapter framework). Lazy-imported intra-function because the
+    # _check_testing_law function is called per-law during diff-driven
+    # checking, not at module-import time — keeping the import lazy
+    # matches the sibling _check_naming_law pattern in this same file
+    # and avoids paying the file_roles import cost on every `roam laws`
+    # cold start. No import cycle exists between roam.laws and
+    # roam.commands.changed_files (verified W898-followup-B); the
+    # try/except guards against future packaging or partial-install
+    # breakage and degrades gracefully by skipping the law rather than
+    # silently re-introducing a narrower test-path heuristic.
     try:
         from roam.commands.changed_files import is_test_file
     except Exception:
-
-        def is_test_file(p: str) -> bool:  # type: ignore[no-redef]
-            low = (p or "").lower()
-            return "test" in low or "spec" in low
+        return []
 
     # Build the set of test-file basenames touched by the diff.
     diff_test_basenames: set[str] = set()

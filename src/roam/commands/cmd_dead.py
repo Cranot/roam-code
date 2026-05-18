@@ -15,7 +15,18 @@ import click
 
 from roam._signature_utils import parse_param_names as _parse_param_names
 from roam.capability import roam_capability
-from roam.commands.changed_files import is_test_file
+
+# W898-followup: delegate ``_is_test_path`` to the canonical
+# ``changed_files.is_test_file`` (mirrors the W881/W886 pattern in
+# ``cmd_over_fetch.py`` / ``metrics_history.py``). Pre-delegation the
+# local wrapper at line ~430 was already a 1-line forwarder; the import
+# alias collapses the indirection. The canonical helper covers test
+# files across 22 language-specific conventions plus case-insensitive
+# ``Tests/`` / ``__TESTS__/`` / ``SPEC/`` / ``TESTING/`` directories.
+# No import cycle: ``commands.changed_files`` transitively imports
+# only ``roam.git_utils``, ``roam.index.file_roles``, and
+# ``roam.index.test_conventions`` — no back-edge into ``cmd_dead``.
+from roam.commands.changed_files import is_test_file as _is_test_path
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
@@ -425,11 +436,6 @@ def _is_mcp_tool_symbol(name: str, file_path: str) -> bool:
     if base != "mcp_server.py":
         return False
     return name in _load_mcp_tool_names()
-
-
-def _is_test_path(file_path):
-    """Check if a file is a test file (discovered by pytest, not imported)."""
-    return is_test_file(file_path)
 
 
 # Scaffolding signal patterns — when a dead-export's docstring carries one of
@@ -1823,27 +1829,142 @@ def dead(
     # caller explicitly asked for the summary-only fast path.
     compute_decay = not summary_only
 
+    # W607-BX -- substrate-boundary plumbing for cmd_dead.
+    # ``_run_check_bx`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607bx_warnings_out`` rather than
+    # crashing the dead-code detector outright (W99 foundational
+    # detector; W802 / W804 sealed the Pattern-2 empty-state regression
+    # but did NOT install substrate isolation -- this wave adds it).
+    #
+    # Marker family ``dead_<phase>_failed:<exc_class>:<detail>``. The
+    # bucket starts empty so a clean dead run keeps producing a
+    # byte-identical envelope on the happy path. Substrates wrapped:
+    #
+    #   * extinction_predict                -- --extinction mode helper
+    #   * analyze_dead                      -- core 6-tuple aggregation
+    #   * collect_dataflow_findings         -- unused_assignments
+    #   * oracle_reachable_filter           -- --reachable-only intersect
+    #   * analyze_dataflow_dead             -- experimental dataflow path
+    #   * emit_findings                     -- W96 findings-registry mirror
+    #   * serialize_to_sarif                -- SARIF projection
+    #   * find_dead_clusters                -- cluster detection (Tarjan)
+    #   * compute_extended_data             -- aging/effort/decay
+    #   * group_dead                        -- --by-directory / --by-kind
+    _w607bx_warnings_out: list[str] = []
+
+    def _run_check_bx(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BX marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``dead_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607bx_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bx_warnings_out.append(f"dead_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-DL -- aggregation-LAYER plumbing for cmd_dead. Sits ON TOP of
+    # the W607-BX substrate-CALL layer. Where BX wraps the substrate
+    # helpers (analyze_dead / collect_dataflow_findings / SARIF projection
+    # / etc.), DL wraps the four canonical aggregation phases that take
+    # the substrate output and assemble the envelope:
+    #
+    #   * score_classify     -- bucket dead_count into a run-state label
+    #                            (NO_DEAD / DEAD_LIGHT / DEAD_HEAVY)
+    #   * compute_predicate  -- roll up by_kind / by_role / files_affected
+    #   * compute_verdict    -- single-line verdict string (LAW 6 floor)
+    #   * serialize_envelope -- json_envelope("dead", ...) projection
+    #
+    # Same marker family ``dead_<phase>_failed:<exc_class>:<detail>`` as
+    # W607-BX -- the phase names listed above DO NOT collide with the
+    # 10 substrate phase names already in use (extinction_predict /
+    # analyze_dead / oracle_reachable_filter / collect_dataflow_findings /
+    # analyze_dataflow_dead / emit_findings / serialize_to_sarif /
+    # find_dead_clusters / compute_extended_data / group_dead).
+    # ``serialize_envelope`` is deliberately distinct from
+    # ``serialize_to_sarif`` so an agent can tell which serializer raised.
+    #
+    # W978 7-DISCIPLINE applies to every ``_run_check_dl(...)`` call:
+    #   1. f-string verdict floor: NEVER re-interpolate the same values
+    #      that tripped the closure inside the ``default=`` floor.
+    #   2. kwarg-default eagerness: ``default=`` must be a literal
+    #      constant, never a computed expression.
+    #   3. json.dumps(default=str) sentinel: the serialize_envelope
+    #      floor must be JSON-serializable with the standard encoder
+    #      (no non-str-coercible sentinels).
+    #   4. phase-name collision: verified above against BX's 10 phases.
+    #   5. len() at kwarg-bind: move len() INSIDE the closure, never at
+    #      the ``_run_check_dl(...)`` call site.
+    #   6. unguarded len()/if on poisoned object: the floor MUST be a
+    #      concrete dict/str/None, never a sentinel that may
+    #      __len__-raise downstream.
+    #   7. dict.get(key, expensive_default): use bare ``dict[key]`` when
+    #      the floor guarantees the key.
+    _w607dl_warnings_out: list[str] = []
+
+    def _run_check_dl(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-DL marker emission.
+
+        Mirror of ``_run_check_bx`` shape (same
+        ``dead_<phase>_failed:`` marker family) but writes into
+        ``_w607dl_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607dl_warnings_out.append(f"dead_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
         # --- Extinction mode (separate flow) ---
         if extinction_target:
-            sym, cascade = _predict_extinction(conn, extinction_target)
+            # W607-BX: wrap extinction_predict so a raise inside the
+            # cascade traversal degrades to (None, []) and surfaces a
+            # ``dead_extinction_predict_failed:`` marker. The unresolved
+            # path below already handles ``sym is None``.
+            _ext_result = _run_check_bx(
+                "extinction_predict",
+                _predict_extinction,
+                conn,
+                extinction_target,
+                default=(None, []),
+            )
+            sym, cascade = _ext_result if _ext_result is not None else (None, [])
             if sym is None:
                 # W1245 — Pattern-2 variant-D: surface resolution=unresolved
                 # on the extinction-mode envelope so MCP consumers see the
                 # same disclosure shape as the resolved branch below.
                 unresolved_block = resolution_disclosure("unresolved", target=extinction_target)
                 if json_mode:
+                    _ext_summary_unresolved = {
+                        "verdict": f"Symbol not found: {extinction_target}",
+                        "error": f"Symbol not found: {extinction_target}",
+                        **unresolved_block,
+                    }
+                    # W607-BX: surface markers on the unresolved
+                    # extinction envelope too (the extinction_predict
+                    # substrate may have raised even when sym ends up
+                    # being None via the empty-floor default).
+                    if _w607bx_warnings_out:
+                        _ext_summary_unresolved["warnings_out"] = list(_w607bx_warnings_out)
+                        _ext_summary_unresolved["partial_success"] = True
+                    _ext_env_kwargs: dict = {
+                        "summary": _ext_summary_unresolved,
+                        "mode": "extinction",
+                        **unresolved_block,
+                    }
+                    if _w607bx_warnings_out:
+                        _ext_env_kwargs["warnings_out"] = list(_w607bx_warnings_out)
                     click.echo(
                         to_json(
                             json_envelope(
                                 "dead",
-                                summary={
-                                    "verdict": f"Symbol not found: {extinction_target}",
-                                    "error": f"Symbol not found: {extinction_target}",
-                                    **unresolved_block,
-                                },
-                                mode="extinction",
-                                **unresolved_block,
+                                **_ext_env_kwargs,
                             )
                         )
                     )
@@ -1875,15 +1996,22 @@ def dead(
                     "extinction_cascade": cascade,
                 }
                 envelope_kwargs.update(resolution_block)
+                _ext_summary_resolved = {
+                    "verdict": extinction_verdict,
+                    "extinction_cascade": len(cascade),
+                    **resolution_block,
+                }
+                # W607-BX: mirror substrate markers on the resolved
+                # extinction-mode envelope too.
+                if _w607bx_warnings_out:
+                    _ext_summary_resolved["warnings_out"] = list(_w607bx_warnings_out)
+                    _ext_summary_resolved["partial_success"] = True
+                    envelope_kwargs["warnings_out"] = list(_w607bx_warnings_out)
                 click.echo(
                     to_json(
                         json_envelope(
                             "dead",
-                            summary={
-                                "verdict": extinction_verdict,
-                                "extinction_cascade": len(cascade),
-                                **resolution_block,
-                            },
+                            summary=_ext_summary_resolved,
                             **envelope_kwargs,
                         )
                     )
@@ -1913,7 +2041,20 @@ def dead(
             return
 
         # --- Standard dead code analysis ---
-        high, low, imported_files, consumer_meta, file_import_meta, sibling_meta = _analyze_dead(conn)
+        # W607-BX: ``_analyze_dead`` is the foundational 6-tuple core.
+        # A raise here used to crash the dead command outright; with the
+        # wrap, we degrade to an empty result + ``dead_analyze_dead_failed:``
+        # marker and let the empty-state Pattern-2 envelope path (W804)
+        # take over.
+        _analyze_result = _run_check_bx(
+            "analyze_dead",
+            _analyze_dead,
+            conn,
+            default=([], [], set(), {}, {}, {}),
+        )
+        high, low, imported_files, consumer_meta, file_import_meta, sibling_meta = (
+            _analyze_result if _analyze_result is not None else ([], [], set(), {}, {}, {})
+        )
         all_items = high + low
 
         # Round 4 feature A: --reachable-only intersects with the
@@ -1924,26 +2065,45 @@ def dead(
         if reachable_only:
             from roam.commands.cmd_oracle import oracle_is_reachable_from_entry
 
-            reachable_oracle_results = {}
-            kept_items = []
-            for item in all_items:
-                name = item["qualified_name"] or item["name"]
-                result = oracle_is_reachable_from_entry(conn, name, max_hops=10)
-                reachable_oracle_results[name] = {
-                    "reason_class": result.reason_class,
-                    "reason": result.reason,
-                }
-                if result.value is False and result.reason_class == "unreachable_dead":
-                    kept_items.append(item)
-            all_items = kept_items
+            def _do_oracle_filter():
+                results = {}
+                kept = []
+                for item in all_items:
+                    name = item["qualified_name"] or item["name"]
+                    result = oracle_is_reachable_from_entry(conn, name, max_hops=10)
+                    results[name] = {
+                        "reason_class": result.reason_class,
+                        "reason": result.reason,
+                    }
+                    if result.value is False and result.reason_class == "unreachable_dead":
+                        kept.append(item)
+                return results, kept
+
+            # W607-BX: the oracle traversal can blow up on a malformed
+            # graph row; degrade to the unfiltered set ({}, all_items).
+            _oracle_result = _run_check_bx(
+                "oracle_reachable_filter",
+                _do_oracle_filter,
+                default=({}, list(all_items)),
+            )
+            reachable_oracle_results, all_items = (
+                _oracle_result if _oracle_result is not None else ({}, list(all_items))
+            )
             high = [r for r in high if r in all_items]
             low = [r for r in low if r in all_items]
 
-        unused_assignments = collect_dataflow_findings(
+        # W607-BX: dataflow ``dead_assignment`` collection -- degrade to
+        # ``[]`` on raise so the dead-export verdict still composes.
+        unused_assignments = _run_check_bx(
+            "collect_dataflow_findings",
+            collect_dataflow_findings,
             conn,
             patterns=["dead_assignment"],
             max_matches=500,
+            default=[],
         )
+        if unused_assignments is None:
+            unused_assignments = []
 
         # Dataflow-based dead code findings
         dataflow_dead = []
@@ -1958,14 +2118,29 @@ def dead(
                 "many DOM/event APIs. Expect false positives.",
                 err=True,
             )
-            dataflow_dead = _analyze_dataflow_dead(conn)
+            # W607-BX: experimental dataflow analyser -- degrade to []
+            # on raise so the standard dead path keeps reporting.
+            _dataflow_result = _run_check_bx(
+                "analyze_dataflow_dead",
+                _analyze_dataflow_dead,
+                conn,
+                default=[],
+            )
+            dataflow_dead = _dataflow_result if _dataflow_result is not None else []
 
         if not all_items:
             if sarif_mode:
-                from roam.output.sarif import dead_to_sarif, write_sarif
+                # W607-BX: SARIF projection substrate -- a raise in
+                # ``dead_to_sarif`` degrades to an empty result body so
+                # the SARIF emitter keeps producing valid output even
+                # if the projection helper bugs.
+                def _emit_empty_sarif():
+                    from roam.output.sarif import dead_to_sarif, write_sarif
 
-                sarif = dead_to_sarif([])
-                click.echo(write_sarif(sarif))
+                    sarif = dead_to_sarif([])
+                    click.echo(write_sarif(sarif))
+
+                _run_check_bx("serialize_to_sarif", _emit_empty_sarif, default=None)
                 return
             if json_mode:
                 summary = {
@@ -1980,15 +2155,33 @@ def dead(
                     "dead_export_definition": DEAD_EXPORT_DEFINITION,
                     "action_definition": DEAD_EXPORT_ACTION_DEFINITION,
                 }
+                # W607-BX + W607-DL: mirror BOTH the substrate-CALL
+                # and aggregation-LAYER markers into the top-level
+                # envelope ``warnings_out`` AND ``summary.warnings_out``
+                # on the empty path so MCP consumers can tell a clean
+                # empty corpus apart from a degraded ``_analyze_dead``
+                # raise OR a degraded aggregation phase. W804
+                # partial_success discipline preserved: if no markers
+                # fired in EITHER bucket, the empty envelope still says
+                # partial_success=False (default added by json_envelope).
+                _combined_warnings_empty = list(_w607bx_warnings_out) + list(_w607dl_warnings_out)
+                if _combined_warnings_empty:
+                    summary["warnings_out"] = list(_combined_warnings_empty)
+                    summary["partial_success"] = True
+                envelope_kwargs: dict = {
+                    "summary": summary,
+                    "high_confidence": [],
+                    "low_confidence": [],
+                    "unused_assignments": unused_assignments[:10],
+                    "dataflow_dead": dataflow_dead,
+                }
+                if _combined_warnings_empty:
+                    envelope_kwargs["warnings_out"] = list(_combined_warnings_empty)
                 click.echo(
                     to_json(
                         json_envelope(
                             "dead",
-                            summary=summary,
-                            high_confidence=[],
-                            low_confidence=[],
-                            unused_assignments=unused_assignments[:10],
-                            dataflow_dead=dataflow_dead,
+                            **envelope_kwargs,
                         )
                     )
                 )
@@ -2059,29 +2252,41 @@ def dead(
                         "scaffolding_evidence": scaffolding_evidence or {},
                     }
                 )
+            # W607-BX: ``_emit_dead_findings`` substrate boundary. The
+            # pre-W89 schema path (sqlite3.OperationalError on missing
+            # ``findings`` table) is the EXPECTED degraded path -- the
+            # try/except below maintains the W96 silent no-op contract
+            # for that case. Generic exceptions surface via the
+            # ``dead_emit_findings_failed:<exc>:<detail>`` marker.
             try:
                 _emit_dead_findings(conn, dead_records_for_emit)
                 conn.commit()
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-BX disclosure
+                _w607bx_warnings_out.append(f"dead_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
         # --- SARIF output ---
         if sarif_mode:
-            from roam.output.sarif import dead_to_sarif, write_sarif
+            # W607-BX: SARIF projection substrate on the populated path.
+            def _emit_populated_sarif():
+                from roam.output.sarif import dead_to_sarif, write_sarif
 
-            dead_exports = []
-            for r, action, confidence in all_dead:
-                dead_exports.append(
-                    {
-                        "name": r["name"],
-                        "kind": r["kind"],
-                        "location": loc(r["file_path"], r["line_start"]),
-                        "action": action,
-                    }
-                )
-            sarif = dead_to_sarif(dead_exports)
-            click.echo(write_sarif(sarif))
+                dead_exports = []
+                for r, action, confidence in all_dead:
+                    dead_exports.append(
+                        {
+                            "name": r["name"],
+                            "kind": r["kind"],
+                            "location": loc(r["file_path"], r["line_start"]),
+                            "action": action,
+                        }
+                    )
+                sarif = dead_to_sarif(dead_exports)
+                click.echo(write_sarif(sarif))
+
+            _run_check_bx("serialize_to_sarif", _emit_populated_sarif, default=None)
             return
 
         # --- Cluster detection (also needed for extended data) ---
@@ -2089,7 +2294,16 @@ def dead(
         raw_clusters = []
         if show_clusters or need_extended:
             dead_ids = {r["id"] for r in all_items}
-            raw_clusters = _find_dead_clusters(conn, dead_ids)
+            # W607-BX: cluster detection (Tarjan SCC over dead subgraph)
+            # -- degrade to [] on raise so the dead command still emits.
+            _clusters = _run_check_bx(
+                "find_dead_clusters",
+                _find_dead_clusters,
+                conn,
+                dead_ids,
+                default=[],
+            )
+            raw_clusters = _clusters if _clusters is not None else []
             if show_clusters:
                 id_to_info = {}
                 if raw_clusters:
@@ -2123,8 +2337,21 @@ def dead(
         extended_data = {}
         ext_summary = {}
         if need_extended or compute_decay:
-            extended_data = _compute_extended_data(conn, all_items, raw_clusters)
-            ext_summary = _extended_summary(extended_data)
+            # W607-BX: aging/effort/decay computation -- a blame raise
+            # used to crash the dead command; now degrades to {} so the
+            # core dead-export counts still emit with extended metadata
+            # absent (the decay-distribution block is gated by
+            # ``ext_summary`` truthiness below).
+            _ext_data = _run_check_bx(
+                "compute_extended_data",
+                _compute_extended_data,
+                conn,
+                all_items,
+                raw_clusters,
+                default={},
+            )
+            extended_data = _ext_data if _ext_data is not None else {}
+            ext_summary = _extended_summary(extended_data) if extended_data else {}
 
         # --- Sorting by extended fields ---
         if sort_by_age and extended_data:
@@ -2161,7 +2388,17 @@ def dead(
             group_by = "kind"
 
         if group_by:
-            grouped = _group_dead(all_items, group_by)
+            # W607-BX: ``_group_dead`` -- by-directory / by-kind rollup.
+            # A raise here degrades to [] so the standard table still
+            # emits (the ``groups_data`` block is skipped on empty).
+            _grouped = _run_check_bx(
+                "group_dead",
+                _group_dead,
+                all_items,
+                group_by,
+                default=[],
+            )
+            grouped = _grouped if _grouped is not None else []
             for key, items in grouped:
                 verdicts = [
                     _dead_action(
@@ -2226,10 +2463,94 @@ def dead(
                 return d
 
             total = n_safe + n_review + n_intent
-            verdict = (
-                f"{total} dead export(s): {n_safe} safe, {n_review} review, {n_intent} intentional"
-                if total
-                else "no dead exports"
+
+            # W607-DL -- score_classify boundary. Buckets the run into
+            # one of three state labels based on dead_count:
+            #   * NO_DEAD       -- total == 0 (clean surface)
+            #   * DEAD_LIGHT    -- 0 < total <= 10
+            #   * DEAD_HEAVY    -- total > 10
+            # Floor returns the documented NO_DEAD shape so downstream
+            # consumers still find ``state`` + ``scanned`` on the
+            # envelope. W978 5th-discipline: ``total`` passed as raw
+            # arg; no ``len()`` at kwarg-bind site.
+            def _score_classify_run(_total):
+                if _total == 0:
+                    _state = "NO_DEAD"
+                elif _total <= 10:
+                    _state = "DEAD_LIGHT"
+                else:
+                    _state = "DEAD_HEAVY"
+                return {"state": _state, "scanned": _total}
+
+            _score_dict = _run_check_dl(
+                "score_classify",
+                _score_classify_run,
+                total,
+                default={"state": "DEGRADED", "scanned": 0},
+            )
+
+            # W607-DL -- compute_predicate boundary. Rollup metrics
+            # dict surfacing aggregate dimensions (by_kind / by_role /
+            # files_affected) so a downstream refactor of the rollup
+            # logic surfaces a marker rather than crashing.
+            # W978 5th-discipline: ``high`` / ``low`` lists passed as
+            # raw args; counting / iteration lives INSIDE the closure.
+            def _compute_predicate_fields(_high, _low):
+                _by_kind: dict[str, int] = {}
+                _files: set[str] = set()
+                for _r in _high:
+                    _k = _r["kind"] if "kind" in _r.keys() else "unknown"
+                    _by_kind[_k] = _by_kind.get(_k, 0) + 1
+                    _fp = _r["file_path"] if "file_path" in _r.keys() else None
+                    if _fp:
+                        _files.add(_fp)
+                for _r in _low:
+                    _k = _r["kind"] if "kind" in _r.keys() else "unknown"
+                    _by_kind[_k] = _by_kind.get(_k, 0) + 1
+                    _fp = _r["file_path"] if "file_path" in _r.keys() else None
+                    if _fp:
+                        _files.add(_fp)
+                return {
+                    "total_count": len(_high) + len(_low),
+                    "by_kind": dict(_by_kind),
+                    "files_affected": len(_files),
+                }
+
+            _pred_fields = _run_check_dl(
+                "compute_predicate",
+                _compute_predicate_fields,
+                high,
+                low,
+                default={
+                    "total_count": 0,
+                    "by_kind": {},
+                    "files_affected": 0,
+                },
+            )
+
+            # W607-DL -- compute_verdict boundary. Wraps the verdict
+            # string assembly so a downstream f-string refactor (non-int
+            # totals from a vocabulary refactor, or a __format__-raising
+            # sentinel) surfaces a marker rather than crashing the
+            # envelope. Literal "dead completed" floor (LAW 6 still
+            # holds: the line works standalone).
+            #
+            # W978 1st-discipline: the floor MUST NOT re-interpolate
+            # the same values that tripped the closure. W978 2nd-
+            # discipline: ``default=`` is a literal constant.
+            def _build_verdict_str(_total, _n_safe, _n_review, _n_intent):
+                if _total == 0:
+                    return "no dead exports"
+                return f"{_total} dead export(s): {_n_safe} safe, {_n_review} review, {_n_intent} intentional"
+
+            verdict = _run_check_dl(
+                "compute_verdict",
+                _build_verdict_str,
+                total,
+                n_safe,
+                n_review,
+                n_intent,
+                default="dead completed",
             )
             summary = {
                 "verdict": verdict,
@@ -2246,6 +2567,18 @@ def dead(
                 # them with unreachable-from-entry or unused-assignments.
                 "dead_export_definition": DEAD_EXPORT_DEFINITION,
                 "action_definition": DEAD_EXPORT_ACTION_DEFINITION,
+                # W607-DL: surface score_classify result on the envelope
+                # so consumers can read the run state without re-deriving
+                # from raw counts. W978 7th-discipline anchor: bare
+                # ``_score_dict["state"]`` lookup (floor dict guarantees
+                # the key) -- NOT ``.get("state", expensive_default)``.
+                "run_state": _score_dict["state"],
+                # W607-DL: surface compute_predicate rollup on the
+                # envelope so consumers can read the aggregate
+                # dimensions without rebuilding from the raw lists.
+                # W978 7th-discipline anchor: bare key lookups.
+                "by_kind": _pred_fields["by_kind"],
+                "files_affected": _pred_fields["files_affected"],
             }
             if show_dataflow:
                 summary["dataflow_warning"] = (
@@ -2277,16 +2610,73 @@ def dead(
             summary["findings_confidence_distribution"] = distribution
             if "verdict" in summary:
                 summary["verdict"] = verdict_with_high_count(summary["verdict"], distribution)
-            envelope = json_envelope(
+            # W607-BX + W607-DL: combine substrate-CALL markers
+            # (``_w607bx_warnings_out``) with aggregation-LAYER markers
+            # (``_w607dl_warnings_out``) into a single ``warnings_out``
+            # bucket. Both prefix with ``dead_*`` so the consumer's
+            # marker-prefix filter still groups them together; the
+            # phase name distinguishes substrate (``analyze_dead`` /
+            # ``serialize_to_sarif`` / etc.) from aggregation
+            # (``score_classify`` / ``compute_predicate`` /
+            # ``compute_verdict`` / ``serialize_envelope``).
+            # partial_success flips True whenever EITHER bucket is
+            # non-empty (canonical Pattern-2 discipline).
+            _combined_warnings = list(_w607bx_warnings_out) + list(_w607dl_warnings_out)
+            if _combined_warnings:
+                summary["warnings_out"] = list(_combined_warnings)
+                summary["partial_success"] = True
+            envelope_kwargs: dict = {
+                "summary": summary,
+                "budget": token_budget,
+                "high_confidence": high_triples,
+                "low_confidence": low_triples,
+                "unused_assignments": (unused_assignments if detail else unused_assignments[:10]),
+                "dataflow_dead": dataflow_dead,
+                "next_steps": _next_steps,
+            }
+            if _combined_warnings:
+                envelope_kwargs["warnings_out"] = list(_combined_warnings)
+
+            # W607-DL -- serialize_envelope boundary. Wraps the
+            # envelope serialization itself. A downstream schema-shape
+            # refactor that breaks ``json_envelope("dead", ...)`` would
+            # otherwise crash AFTER all substrate + aggregation signals
+            # were already gathered. Floor to a minimal envelope stub
+            # so consumers still receive a parseable JSON object with
+            # the marker attached + the canonical command name. Mirror
+            # of cmd_dark_matter's W607-CZ serialize_envelope floor
+            # pattern. W978 6th-discipline: floor is a concrete dict,
+            # not a sentinel that may __len__-raise downstream.
+            _envelope_floor: dict = {
+                "command": "dead",
+                "schema_version": "1.0.0",
+                "summary": {
+                    "verdict": verdict,
+                    "partial_success": True,
+                    "warnings_out": list(_combined_warnings),
+                },
+                "warnings_out": list(_combined_warnings),
+            }
+            envelope = _run_check_dl(
+                "serialize_envelope",
+                json_envelope,
                 "dead",
-                summary=summary,
-                budget=token_budget,
-                high_confidence=high_triples,
-                low_confidence=low_triples,
-                unused_assignments=(unused_assignments if detail else unused_assignments[:10]),
-                dataflow_dead=dataflow_dead,
-                next_steps=_next_steps,
+                default=_envelope_floor,
+                **envelope_kwargs,
             )
+            # W607-DL -- if ``serialize_envelope`` raised AFTER the
+            # combined bucket was already snapshotted, the new
+            # ``dead_serialize_envelope_failed:`` marker was appended
+            # to ``_w607dl_warnings_out`` and the floor stub carries
+            # only the pre-raise combined list. Rebuild the floor
+            # stub's warnings_out so the new marker reaches the JSON
+            # output. Clean path -> envelope is the real json_envelope
+            # return value, no rebuild needed.
+            if envelope is _envelope_floor and _w607dl_warnings_out:
+                _combined_warnings = list(_w607bx_warnings_out) + list(_w607dl_warnings_out)
+                _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
+                _envelope_floor["warnings_out"] = list(_combined_warnings)
+                envelope = _envelope_floor
             if group_by:
                 envelope["grouping"] = group_by
                 envelope["groups"] = groups_data

@@ -2,7 +2,7 @@
 
 roam-code is the local CLI that runs pre-change gates before every agent edit and compiles post-change evidence packets that hash-verify offline.
 <!-- BEGIN auto-count:llms-install-headline -->
-241 commands, 224 MCP tools, 28 languages, 100% local, zero API keys.
+241 commands, 227 MCP tools, 28 languages, 100% local, zero API keys.
 <!-- END auto-count:llms-install-headline -->
 
 ## Documentation Hub

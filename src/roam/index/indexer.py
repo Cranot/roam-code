@@ -1650,9 +1650,16 @@ class Indexer:
                 and self._has_existing_clusters(conn)
             ):
                 self._log("Computing clusters...")
+                # W985-incremental: cluster-cache log already names the
+                # source-of-truth (graph signature) + counts (nodes/edges).
+                # Add the ``--force`` opt-out to match the W985-followup
+                # canonical shape so an operator who expects fresh Louvain
+                # labels (e.g. after editing cluster heuristics) can see the
+                # opt-out without grepping the source.
                 self._log(
                     f"  cached: graph signature unchanged "
-                    f"({live_sig['n']} nodes, {live_sig['m']} edges) — skipping Louvain"
+                    f"({live_sig['n']} nodes, {live_sig['m']} edges) "
+                    f"— skipping Louvain; pass --force to re-cluster anyway"
                 )
                 self._record_step("clustering", "ok:cached")
                 return
@@ -1982,7 +1989,24 @@ class Indexer:
 
             total_changed = len(added) + len(modified) + len(removed)
             if total_changed == 0:
-                self._log("Index is up to date.")
+                # W985-incremental: surface the source-of-truth (mtime+hash via
+                # ``get_changed_files``), the file count covered by the check,
+                # AND the ``--force`` opt-out so an operator running ``roam
+                # index`` / ``roam health`` and expecting fresh metrics can
+                # disambiguate "nothing to do" from "broken / stale index"
+                # without re-reading the files table. Same diagnosis-shadowing
+                # shape as the W985 shallow-history filter and the W985-followup
+                # HEAD-unchanged skip in git_stats.py: the existing "Index is
+                # up to date." line was technically correct but did not name
+                # WHY the skip happened nor the opt-out, so a reader who saw
+                # zero progress had no way to know whether the mtime+hash check
+                # had agreed or whether discovery had silently dropped files.
+                file_count = len(all_files)
+                self._log(
+                    f"Index is up to date "
+                    f"({_format_count(file_count)} files unchanged by mtime+hash) "
+                    f"— pass --force to re-index anyway"
+                )
                 self.summary = {
                     "files": 0,
                     "symbols": 0,

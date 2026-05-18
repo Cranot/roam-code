@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **W420** — test(invariant): NEW `tests/test_w420_surface_count_plugin_invariant.py` (85 LOC) pins the `command_count` headline equal across plugin-loading triggers. Plugin discovery no longer changes the published headline.
+- **Phantom-annotation CI lint** — test(changelog): NEW `tests/test_changelog_phantoms.py` (237 LOC, 6 tests). Mechanically blocks future `dev/*.md` phantom references in CHANGELOG; 3-line annotation radius.
+- **Phantom-CLI doc gate** — test(docs): NEW `tests/test_doc_no_phantom_cli.py` (~215 LOC). Scans 9 phantom-CLI patterns across 3 tracked agent-visible doc surfaces (AGENTS.md / README.md / CONTRIBUTING.md); mutation-test validated.
+- **W391** — feat(ci): GitHub Actions roam-sarif + CodeQL co-deploy sample at `src/roam/templates/ci/roam-sarif-with-codeql.yml` (77 LOC). Discovery wired through `cmd_doctor._github_template_registry()` + `cmd_ci_setup` docstring cross-link; reachability 10/10.
+
+### Fixed
+
+- **W420** — fix(surface): `cmd_surface.py` `command_count` no longer changes under plugin loading. Migrated from runtime `_COMMANDS` to AST helper `roam.surface_counts.cli_commands()`. Published count headlines unchanged.
+- **agents_md generator phantom** — fix(agents-md): `src/roam/agents_md/generator.py:962` emitted phantom `roam rules check --strict` (rules is flat, has no `check` subcommand). Corrected to canonical `roam rules --ci`. Protects downstream-user scaffolds.
+- **README findings-registry gap** — fix(docs): `dark-matter` aggregator missing from README's findings-registry list (architecture.html had 7 names; README had 6). Re-aligned.
+
+### Changed
+
+- **Detector cohort 26 → 28 persisters** — `cmd_boundary` + `cmd_test_hermeticity` reclassified as legitimate persisters; 5 doc surfaces updated (CLAUDE.md cohort + rule + README + architecture.html + evidence-checklist.md).
+- **Substrate package count 11 → 12** — CLAUDE.md + AGENTS.md "11 substrate packages" corrected to "12" matching the 12-entry body (atomic_io / agents_md / constitution / db.findings / laws / leases / memory / modes / policy / quality / runs / world_model).
+- **Rule-pack uniformity** — 7 mainstream + NOTE-tier packs (python / typescript / kotlin / go / java / rust / swift) share imperative-voice + WHY-block discipline. README rule-count table corrected: rust 12 → 30, swift row backfilled, 6 severity-tier miscounts fixed.
+- **Phantom-memo annotation campaign closed** — 34 phantom `dev/*.md` references annotated. Combined with the new CI lint, the failure class is sealed.
+
+### Closed
+
+- **W847 + W759-W761** — cmd_preflight + cmd_attest + cmd_risk + cmd_invariants + cmd_bus_factor + cmd_complexity UPPER-case audits all internal-vocab (W762 drift-guard pins discipline; 54 hits / 0 envelope-slot bugs).
+
 ### Added — W1103-arc + W489-family-closed + capability-invariants + structured_unknown_filter-FULLY-CLOSED + symmetric-emission-COMPLETE batch (post-CONSOLIDATE-21, 2026-05-17 /loop iteration N+22)
 
 > **~17 SHIPPED + 3 BAIL/SHIPPED + 1 RESEARCH MEMO + 2 REAL BUGS
@@ -25,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **W365 family** — test(mcp-lint): `_TOOL_METADATA` ↔ ToolAnnotations parity lint + 3rd-surface capability-registry cross-check (2854 pass) + 3 logical-entailment invariants (destructive→NOT ai_safe; deprecated↔maturity; task_required→mcp_expose; 46 pass). **Entailment surface exhausted.**
 - **W1083-followup-3** — feat(structured_unknown_filter): multi-value `structured_unknown_filter_many` sibling + `cmd_math` + `cmd_smells` migration; +302 helper / +113-53 cmd_math / +193-42 cmd_smells / +336 tests; 366 broader pass. **`structured_unknown_filter` family FULLY CLOSED** (single + multi + CLI dispatcher).
 - **W1083-RESEARCH** — docs(research): multi-value helper design memo at `dev/W1083-RESEARCH-multi-value-2026-05-17.md`.
+<!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **W1117-followup-4** — feat(help): final 2 placeholder normalizations on `cmd_clones`; **W1117 family fully closed** — ~32 normalizations across 5-wave arc.
 
 ### Fixed — W1103-arc batch
@@ -104,7 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **W1062-followup-4** — feat(sarif): wire `_derive_finding_tags()` on `n1_to_sarif` + `missing_index_to_sarif` + `orphan_imports_to_sarif` (12 tests pass; 12 emitters wired end-to-end). **W1087 captured** as substitute-rather-than-wire ship for the long tail.
 - **W1087** — feat(sarif-lint): NEW `tests/test_sarif_tag_coverage.py` (6 tests pass). Two-part PIN + ALLOWLIST drift guard; 13 WIRED + 26 EXEMPT = 39 emitters catalogued. **SARIF dashboard family TERMINAL.**
 - **Wave-C1** — feat(mcp): MCP compat env-vars `ROAM_MCP_COMPAT_STRIP_OUTPUT_SCHEMA` + `ROAM_MCP_COMPAT_STRICT` (7 focused + 188 broader tests pass). **Drive-by sidecar hoist** — audit-metadata `_meta` block had escaped the fastmcp gate; hoisted to canonical wrapper path.
-- **MCP-COMPAT-PROFILE-ROADMAP** — docs(research): Wave-C planning memo at `(internal memo)` (compat-profile-emit + `roam mcp doctor` probe surface for client-side capability negotiation).
+- **MCP-COMPAT-PROFILE-ROADMAP** — docs(research): Wave-C planning memo at `(internal memo)` (compat-profile-emit + `roam mcp doctor` probe surface for client-side capability negotiation). <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **W805-followup-bundle** — feat(detectors): Pattern-2 empty-state migration across 5 detectors (cmd_vibe_check + cmd_fingerprint + cmd_fan + cmd_dark_matter + cmd_conventions); 25 tests pass. Pattern-2 detector empty-state coverage now 8/8 effective sites.
 - **W1085** — feat(fingerprint): Pattern-1A hard-cap disclosure on `cmd_fingerprint` empty-state path (19 tests pass; W-number-collision target separate from the W1085 cmd_fitness arc).
 - **W1086** — feat(cut): Pattern-1A hard-cap disclosure on `cmd_cut` empty-state path (4 tests pass; mirror to W1085 fingerprint).
@@ -160,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **W1028** — feat(formatter): `_ALWAYS_PRESERVED_LIST_FIELDS` expansion audit — 4 candidates marked DEFER + drift-guard test pinning the current set (162 tests pass; carry-forward CONSOLIDATE-17 → -18 → -19).
 - **W1008** — feat(formatter): surface `list_counts` top-level in `strip_list_payloads` so callers see how many items were stripped when `--detail` is off (234 tests pass; carry-forward W1000 drive-by).
 - **W1061-followup-2** — refactor(sarif): extract `runtime_filter_disclosure()` shared helper from 4 SARIF callers (cmd_smells + cmd_check_rules + cmd_taint + cmd_vulns); -36 LOC consolidation (17 tests pass).
-- **DETECTOR-FP-RATE-METHODOLOGY** — docs(research): memo at `(internal memo)` (674 words, 12 sources cited; methodology for measuring detector false-positive rates).
+- **DETECTOR-FP-RATE-METHODOLOGY** — docs(research): memo at `(internal memo)` (674 words, 12 sources cited; methodology for measuring detector false-positive rates). <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 
 ### Fixed — Wave-B-TERMINAL + W794 + W1028 + W805 batch
 
@@ -190,8 +215,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > disclosure (W1309). (e) Pattern-3a severity widening (W1005 +
 > W1005-followup-A + W1007 `agent_contract:[]` preservation).
 
-- **W767** — docs(mcp): outputSchema inventory at `(internal memo)` (57 core tools catalogued, 5-wave Wave B roadmap).
-- **MCP-OUTPUTSCHEMA-EVOLUTION** — docs(mcp): research memo at `(internal memo)` (Claude Code #25081 status shifted; 3-wave roadmap).
+- **W767** — docs(mcp): outputSchema inventory at `(internal memo)` (57 core tools catalogued, 5-wave Wave B roadmap). <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
+- **MCP-OUTPUTSCHEMA-EVOLUTION** — docs(mcp): research memo at `(internal memo)` (Claude Code #25081 status shifted; 3-wave roadmap). <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **Wave-B1** — feat(mcp): specialized `_SCHEMA_IMPACT` + `_SCHEMA_PREFLIGHT` outputSchemas on roam_impact + roam_preflight wrappers (18 tests pass).
 - **W1060** — test(sarif): runtime-notifications activation tests on cmd_health + cmd_complexity (12 tests pass; cmd_doctor BAIL — no `--sarif` flag).
 - **W1061** — feat(sarif): `ruleConfigurationOverrides[]` on cmd_smells (OASIS 2.1.0 § 3.51 compliant, default-off, 38 tests pass).
@@ -447,7 +472,9 @@ The 2026-05-16 session that landed:
 > convention + W1252 findings-registry decision + W1258+W1259
 > 16 → 26 detector count + `emit_finding(conn, record)` API name)
 > and two new research memos (`(internal memo)`
+> <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 > already shipped in CONSOLIDATE-13; `(internal memo)`
+> <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 > 773 LOC false-positive rate benchmarks across the 26 emitting
 > detectors).
 
@@ -458,7 +485,7 @@ The 2026-05-16 session that landed:
 - **State-vocab substrate (W1235).** Landed the `_STATE_FAMILY_ALIASES` registry at substrate level for state-name normalization across closed-vocab Pattern-2g sites. Captures the W1077/W1080 `structured_unknown_filter` precedent — closed-vocabulary state-name divergence (`"idle"` vs `"waiting"` vs `"pending"` etc.) gets canonicalized at the substrate boundary rather than each detector hand-rolling its own alias table. The registry is the substrate-first equivalent of the W1018 YAML loader substrate (W965-CONSOLIDATE) and the W1241 `resolution_disclosure()` helper (CONSOLIDATE-13). 45-site bulk migration (W1251) captured for next session — same substrate-first sequencing.
 - **SARIF rule rename (W1232).** Renamed the `flag-constant-default` rule under the `flag-*` namespace to `flag-suspect` per the W1226 SHIP scope-discipline follow-up. The rename aligns `cmd_flag_dead`'s closed-enum rule set closer to W1227 / W1229 naming convention — flag-*` rules now express "what the SARIF row claims about the flag" (`flag-staleness` / `flag-single-reference` / `flag-suspect`) rather than mixing claims with antecedent conditions (`flag-constant-default` named the cause rather than the consequence). Hash-stable for the rule-set rename via the SARIF wrapper's `rule_id` field — no persisted finding rows touched.
 - **CLAUDE.md doc-drift refresh (W1247 + W1252 + W1258 + W1259).** Four small but load-bearing CLAUDE.md updates: W1247 added the module-local SARIF convention note (`_to_sarif()` helpers live in the cmd module per SHIP emitter — not centralized — per W1236-audit BENIGN verdict); W1252 captured the findings-registry decision (`emit_finding(conn, record)` as canonical API name — supersedes the older `findings_store.persist(...)` snake_case spelling that drifted into early docs); W1258 + W1259 refreshed the detector count from "16 detectors persist findings" (W146 vintage) to "26 detectors persist findings as of 2026-05-16" with the 10 newly-emitting detectors enumerated (critique, doctor, fan, fingerprint, health, llm-smells, etc. — predominantly aggregator / consumer commands that re-emit derived findings from upstream detectors).
-- **Research memo — `(internal memo)` (773 LOC).** False-positive rate benchmarks across the 26 emitting detectors. Reference for the next per-detector confidence-tier tuning pass (W1256 captured for next session). Companion to `(internal memo)` (884 LOC, shipped CONSOLIDATE-13) — together the two memos cover the W2026-05-16 detector-quality landscape. No source changes; sequencing decisions are Cranot's.
+- **Research memo — `(internal memo)` (773 LOC).** False-positive rate benchmarks across the 26 emitting detectors. Reference for the next per-detector confidence-tier tuning pass (W1256 captured for next session). Companion to `(internal memo)` (884 LOC, shipped CONSOLIDATE-13) — together the two memos cover the W2026-05-16 detector-quality landscape. No source changes; sequencing decisions are Cranot's. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **Drift-guard remediation (W1239 + W1240) — hygiene clean.** W1239 (drift-guard hygiene follow-up A from W1231-audit) shipped — stale audit assertion cleaned up. W1240 (drift-guard hygiene follow-up B) shipped — BACKLOG.md table-of-pendings cleaned to match the post-CONSOLIDATE-13 ground truth.
 
 ### Audits / verdicts — W1242-W1259 batch
@@ -514,6 +541,7 @@ The 2026-05-16 session that landed:
 > discipline; previously-grandfathered `_PRE_W662_PENDING` entries
 > dropped to zero in that file). Plus a 884-LOC research memo
 > (`(internal memo)`) cataloguing the
+> <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 > seven-variant Pattern-2 family taxonomy and seven open gaps.
 
 - **SARIF SHIP family grew from 34 to 37 emitters (W1226+W1227+W1229).** Added `cmd_flag_dead` (35th SHIP, three closed-enum rules under `flag-*` namespace — `flag-staleness` / `flag-single-reference` / `flag-constant-default`; staleness-banded per-result `level` with a **warning ceiling** — heuristic detector, never escalates to error), `cmd_orphan_routes` (36th SHIP, per-route dead-endpoint projection; single closed-enum rule `orphan-route`; confidence-banded per-result `level` — high + medium → warning, low → note; warning ceiling — heuristic detector, never escalates to error; the `used` bucket is filtered upstream so SARIF consumers never see non-actionable rows), `cmd_verify_imports` (37th SHIP, **first SHIP emitter that escalates to error** — two closed-enum rules: `invalid-import` (warning) for unresolved with FTS5 fuzzy-match candidates, `hallucination-import` (error) for unresolved with no candidates; verify-imports is the canonical "hallucination firewall" detector for LLM-era code and the only verify-imports rule that escalates to error per the W1229 scope discipline; `resolved` rows are filtered upstream so SARIF consumers never see non-actionable rows). All three wrappers hash-stable additive; no persisted finding rows touched. Hash-stability invariant held across all 37 emitters.
@@ -521,6 +549,7 @@ The 2026-05-16 session that landed:
 - **SKIP-disclosure propagation — pin-list 20 → 17 via SHIP-promotes (no new docstring waves).** Each of W1226 + W1227 + W1229 decremented `_KNOWN_MISSING` in-batch via the `tests/test_known_missing_pin_is_current` inverse-drift guard — no second-pass stale-pin sweep required, continuing the W1222 hygiene discipline (CONSOLIDATE-11) and the CONSOLIDATE-12 "every SHIP landing decrements `_KNOWN_MISSING`" pattern. The propagation arc is now **~91% complete from the original 196-file gap (179 commands closed; 196 → 17).** The 17 surviving pin-list entries are all the long-tail audit-needed commands flagged by W1175-RESEARCH (`cmd_debt` + `cmd_entry_points` + `cmd_guard` + `cmd_map` + `cmd_metrics` + `cmd_path_coverage` + `cmd_patterns` + `cmd_plan_refactor` + `cmd_pytest_fixtures` + `cmd_risk` + `cmd_safe_delete` + `cmd_safe_zones` + `cmd_simulate_departure` + `cmd_suggest_refactoring` + `cmd_testmap` + `cmd_why_slow` + `cmd_ws`).
 - **Drift-guard remediation (W1237 + W1238).** W1237 canonicalized the edge-kind vocabulary in `cmd_risk` onto the `roam.db.edge_kinds` registry — closes a quiet drift class where edge-kind literals could diverge across cmd_*.py callsites. W1238 migrated the framework-detector plugin loop in `catalog/detectors.py` (previously at lines 2044/2048, drifted to 2153/2157) from bare `except Exception: continue|pass` to `log.warning(...) + continue` per W531 fail-loud discipline; the plugin-isolation perimeter rationale is preserved in the inline comments at the call site; the swallow is now visible. Two previously-grandfathered `_PRE_W662_PENDING` entries dropped to zero in `catalog/detectors.py` (stale-pin hygiene applied alongside the migration).
 - **Research memo — `(internal memo)` (884 LOC).** Catalogues the **seven-variant Pattern-2 family taxonomy** as of 2026-05-16: 2a compound-recipe / 2b empty-corpus / 2c resolution-state (W1241 helper substrate) / 2d producer-gap (W261 redaction reason) / 2e shared-substrate (W1018 YAML loader) / 2f packet-layer (W210 evidence_stale) / 2g closed-vocabulary-unknown (W1077/W1080 structured_unknown). Companion to `(internal memo)` (yesterday's Python-3.11+ language-feature survey of `warnings_out` — verdict STAY). Surfaces seven open gaps + counts adoption per variant. No source changes; sequencing decisions are Cranot's.
+<!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 
 ### Audits / verdicts — W1226-W1248 batch
 
@@ -753,7 +782,7 @@ The 2026-05-16 session that landed:
 > shipped impls.**
 
 - **SARIF helper substrate launched (W1177-audit + W1178 + W1179a/b in flight).** W1177-audit extracted PARTIAL verdict from the 5-phase pipeline survey across 20 SARIF emitters: 3 patterns identified (Fixed-rule, Dynamic-rule, Complex-multi-rule); ~500 LOC subtractive ceiling. W1178 shipped `_rule_entry()` + `_result_entry()` factories in `src/roam/output/sarif.py` (~80 LOC helpers) + 3 adopters (`cmd_dead` + `cmd_critique` + `cmd_partition`) (~50 LOC subtractive). 131/131 SARIF tests pass. W1179a + W1179b refactoring 17 more emitters in parallel; close-out captured at the next CONSOLIDATE checkpoint.
-- **Pattern-3b propagation arc launched — Wave 1 + Wave 2 + W1185 outliers (W1175-RESEARCH + W1180 + W1181-audit + W1181-impl + W1185-audit + W1185-impl).** W1175-RESEARCH (684-line memo at `(internal memo)`) inventoried the 196 unaudited `cmd_*.py` files: ~135 likely-SKIP + ~14-20 likely-SHIP + ~17 unclear. Asymmetric propagation pattern adopted: bulk audit-and-emit for SKIP; 1:1 audit-then-impl for SHIP. **Wave 1 (W1180, +95 LOC across 10 bootstrap commands)**: SARIF-skip docstring rationale propagated; drive-by pruned 10 stale `_KNOWN_MISSING` pins. **Wave 2 (W1181-audit + W1181-impl, 10 Bucket D commands)**: substrate-state nouns documented (concurrent merge with W1180/W1185-impl absorbed cleanly). **W1185 outliers (W1185-audit + W1185-impl, +15 LOC)**: `cmd_lsp` SKIP (editor protocol, not CI/findings) + `cmd_rules_validate` SKIP (validator-not-detector) docstrings landed. **`_KNOWN_MISSING` dropped from 196 to 174** across the 3 waves combined (33 done, 162 to go). **W1182-audit identified 12 Bucket C codegen commands for Wave 3** (`cmd_attest` + `cmd_capsule` + `cmd_agent_export` + `cmd_agents_md` + `cmd_graph_export` + `cmd_cga` + `cmd_sbom` + `cmd_skill_generate` + `cmd_pr_comment_render` + `cmd_audit_trail_export` + `cmd_evidence_oscal` + `cmd_fingerprint`).
+- **Pattern-3b propagation arc launched — Wave 1 + Wave 2 + W1185 outliers (W1175-RESEARCH + W1180 + W1181-audit + W1181-impl + W1185-audit + W1185-impl).** <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. --> W1175-RESEARCH (684-line memo at `(internal memo)`) inventoried the 196 unaudited `cmd_*.py` files: ~135 likely-SKIP + ~14-20 likely-SHIP + ~17 unclear. Asymmetric propagation pattern adopted: bulk audit-and-emit for SKIP; 1:1 audit-then-impl for SHIP. **Wave 1 (W1180, +95 LOC across 10 bootstrap commands)**: SARIF-skip docstring rationale propagated; drive-by pruned 10 stale `_KNOWN_MISSING` pins. **Wave 2 (W1181-audit + W1181-impl, 10 Bucket D commands)**: substrate-state nouns documented (concurrent merge with W1180/W1185-impl absorbed cleanly). **W1185 outliers (W1185-audit + W1185-impl, +15 LOC)**: `cmd_lsp` SKIP (editor protocol, not CI/findings) + `cmd_rules_validate` SKIP (validator-not-detector) docstrings landed. **`_KNOWN_MISSING` dropped from 196 to 174** across the 3 waves combined (33 done, 162 to go). **W1182-audit identified 12 Bucket C codegen commands for Wave 3** (`cmd_attest` + `cmd_capsule` + `cmd_agent_export` + `cmd_agents_md` + `cmd_graph_export` + `cmd_cga` + `cmd_sbom` + `cmd_skill_generate` + `cmd_pr_comment_render` + `cmd_audit_trail_export` + `cmd_evidence_oscal` + `cmd_fingerprint`).
 - **Vocabulary canonicalization disciplines extended (W1151 + W1156 + W1162 + W1164 + W1176).** W1151 removed cargo-cult `.upper()` from `_to_level()` across 7 sites in `sarif.py` — hash-stable. W1156 REFERENCE_REMOVAL_VERDICTS frozenset substrate fully operational (~100 LOC; carry-forward from W1156-CONSOLIDATE). W1162 `cmd_flag_dead.py` canonical "likely_stale" with display "likely-stale" preserved via `_STALENESS_DISPLAY` map (mirrors W1156 dual-form normalization pattern). W1176 realises the W1164 audit verdict: `cmd_pr_analyze` NO_CHANGES → NOCHANGES (3 LOC; sibling-aligned bare UPPERCASE).
 
 ### Audits / verdicts — W1177-W1185 batch
@@ -781,7 +810,7 @@ The 2026-05-16 session that landed:
 
 - **SARIF SHIP family expanded to 20 commands (W1159 + W1160 + W1165).** `cmd_impact` SHIP SARIF (~413 LOC across 6 files) emits 4 finding families — `affected-file` (importance→severity), `direct-dependent`, `sf-convention-test`, `indirect-ref` — and lifts `_SARIF_CONSUMERS` 15→16. `cmd_partition` SHIP SARIF (~189 LOC) emits PRIMARY + up-to-10 SECONDARY locations with `conflict_risk` severity scaling (`_SARIF_CONSUMERS` 17→18). `cmd_affected_tests` SHIP SARIF (~147 LOC) uses 3 closed-enum rules (`direct`=error / `transitive`=warning / `colocated`=note) (`_SARIF_CONSUMERS` 16→17). Concurrent-merge dance between W1159 + W1160 surfaced and resolved cleanly via the Edit guard. `cmd_smells` SHIP (~250 LOC) + `cmd_clones` SHIP (~300 LOC, dual-location) in flight as W1171 + W1172. Companion verdicts: `cmd_vibe_check` SKIP-DISCLOSURE (aggregate; W1170-bundle) + `cmd_test_scaffold` SKIP-DISCLOSURE (codegen, not analysis; W1170-bundle).
 - **W332 Pattern-3b SARIF CI-lint substrate complete (W1167 + W1168 + W1169).** `action.yml` `_SUPPORTED_SARIF` 7-command subset intent documented at the YAML source via a +10 LOC comment block (W1167); cli.py 18-command `_SARIF_CONSUMERS` ⊃ action.yml 7-command subset relationship pinned via +28 LOC new `test_action_yml_supported_sarif_subset_of_cli_consumers` in `test_sarif_consumer_list.py` (W1168); SARIF-disclosure coverage lint (+403 LOC new `tests/test_sarif_disclosure_coverage.py`) surfaces 196 unaudited `cmd_*.py` with `_KNOWN_MISSING` frozenset pin (W1169). **Key discovery**: the W1166-RESEARCH 4-8 unaudited estimate was off by ~25x; the CI lint baseline pins the gap so future SARIF audits propagate via single-source-of-truth rather than ad-hoc per-command sweeps.
-- **SARIF-disclosure-pattern maturity memo (W1166-RESEARCH).** 555-line memo at `(internal memo)`. **14 audits surveyed, ZERO contested verdicts** — the SARIF SHIP-vs-SKIP discipline has converged. Top recommendation: ship the W1169 CI lint (DONE this batch). Anti-recommendation: do NOT extract a shared docstring constant — the per-site rationale is load-bearing for future readers anchoring at the call site. Sibling research memo to W1175-RESEARCH (propagation strategy for the 196-file gap; in flight).
+- **SARIF-disclosure-pattern maturity memo (W1166-RESEARCH).** <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. --> 555-line memo at `(internal memo)`. **14 audits surveyed, ZERO contested verdicts** — the SARIF SHIP-vs-SKIP discipline has converged. Top recommendation: ship the W1169 CI lint (DONE this batch). Anti-recommendation: do NOT extract a shared docstring constant — the per-site rationale is load-bearing for future readers anchoring at the call site. Sibling research memo to W1175-RESEARCH (propagation strategy for the 196-file gap; in flight).
 - **Vocabulary canonicalization sweeps (W1162 + W1176).** `cmd_flag_dead.py` (+13/-5 LOC) canonicalizes "likely-stale" → `likely_stale` while preserving display form `"likely-stale"` via new `_STALENESS_DISPLAY` map — extends the W1156 dual-form normalization pattern. `cmd_pr_analyze` (3 LOC) renames `NO_CHANGES` → `NOCHANGES` (sibling-aligned bare UPPERCASE per W1164 audit verdict option a; 3 sites, no hard-coded test assertions). 154/155 tests pass.
 - **SARIF-disclosure docstrings on 2 more commands (W1173 + W1174).** `cmd_vibe_check.py` (+8 LOC) names `roam findings list --detector vibe-check` as the per-finding path; `cmd_test_scaffold.py` (+8 LOC) anchors codegen-artifact-not-analysis rationale (distinct from W1148's invocation-scoped template). The SKIP-DISCLOSURE docstring pattern now spans 17 commands total when combined with the in-flight W1170-bundle siblings.
 
@@ -837,7 +866,7 @@ The 2026-05-16 session that landed:
 - **SARIF audience-disclosure trilogy (W1144 + W1145 + W1148).** Three SARIF skip rationale docstrings landed at the command-module level: W1144 (+6 LOC on `cmd_doctor.py:1-12` — environment-scoped diagnostics, no file:line — no SARIF surface), W1145 (+9 LOC on `cmd_audit.py` — composed-subcommand SARIF flow; no top-level --sarif flag because each subcommand emits its own SARIF if relevant), W1148 (+14/-4 LOC on `cmd_pr_risk.py` — invocation-scoped aggregates with `subject_kind="commit"`; action.yml allowlist already excludes pr-risk by design). cmd_critique audited as SHIP candidate (W1146 verdict; W1146-impl in flight). Closes the W1085 → W1146 → W1147 audit triage chain at the documentation layer; the pattern propagates the deliberate-SARIF-skip rationale to the per-site source so future audits anchor at the call site, not at a separate audit memo.
 - **CLI symbol-cluster metavar alignment (W1100).** 14 sites across 11 files got `metavar="SYMBOL"` (or `"SYMBOL_OR_PATH"` / `"[SYMBOL]"` for context-aware variants on cmd_test_scaffold + cmd_testmap) + docstring identifier-tone refresh. ~28 LOC. Hash-stable. cmd_explain_command + cmd_plugins correctly NOT touched (DOMAIN-DISTINCT per W1108/W1120 — CLI command name + plugin name respectively). Strategy D from W1102-RESEARCH: align metavar without a breaking rename, lock the surface via the W1111 + W1121-target AST lints.
 - **`--file` → `--path` harmonization (W1099-narrow).** 6 CLI-only commands renamed `--file` → `--path` with hidden alias backward-compat: + mcp_server.py + 2 test files updated. ~80 LOC across the cluster. Click's `required=True` + alias limitation surfaced via cmd_triage (manual `UsageError` adaptation needed); cmd_pr_bundle deferred to W1141-followup. 508 of 509 tests pass.
-- **W1139-RESEARCH — Pattern-3b CLI-boundary completeness memo.** 361-line memo at `(internal memo)`. **Coverage matrix**: 6 axes SHIPPED + 2 PARTIAL + 0 GAP. Key finding: W332 functionally closeable in 15 min via the W1141 4th-mirror drift guard (DONE this batch). Companion to W1102-RESEARCH (Section 48) which closed the same question for the `@click.argument` axis.
+- **W1139-RESEARCH — Pattern-3b CLI-boundary completeness memo.** 361-line memo at `(internal memo)`. **Coverage matrix**: 6 axes SHIPPED + 2 PARTIAL + 0 GAP. Key finding: W332 functionally closeable in 15 min via the W1141 4th-mirror drift guard (DONE this batch). Companion to W1102-RESEARCH (Section 48) which closed the same question for the `@click.argument` axis. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 
 ### Audits / verdicts — W1136-W1149 batch
 
@@ -890,7 +919,7 @@ The 2026-05-16 session that landed:
 - **AST CI lint blocking `@click.argument('name')` drift (W1111).** New `tests/test_w1111_click_argument_name_lint.py` (199 LOC; 50 LOC executable). 12-file grandfather set (the 6 commands from the W1004 audit + 6 siblings discovered during the lint sweep). Negative path verified — adding a 13th `@click.argument("name")` site fails the AST scan. Closes the W1098 USER-DECISION via the W1102-RESEARCH deliverable: lock the current drift surface, defer the breaking-change rename until v14.0 ships for unrelated reason.
 - **`roam runs` placeholder-vocabulary unification sweep (W1097 + W1105 + W1116).** `cmd_runs.py` placeholders normalised: 1-line `NAME` → `<name>` at line 944 (W1097), 7-site `--agent NAME` → `--agent <name>` sweep (W1105), 1-line `--run-id ID` → `--run-id <id>` (W1116). 14/14 + 4/4 + 29/29 focused tests pass on each leg. All hash-stable comments/help-text only. Drive-by W1117 captured (square-bracket placeholder convention).
 - **Vocabulary cross-link discipline (W1094 + W1122).** +17 LOC across `src/roam/evidence/_vocabulary.py` + `src/roam/output/_severity.py` for the severity-vocabulary docstring cross-link (W1094 — closes the W1005 BAIL drive-by). +7-line reverse-pointer comment block in `src/roam/db/findings.py:101-107` to `evidence.SUBJECT_KINDS` (W1122 — closes a drive-by from the W1094 sweep). All 3 sites hash-stable (comments only); 55 W210 drift guards + 92 findings tests pass.
-- **W1102-RESEARCH — Click-argument rename strategy memo.** 677-line research memo at `(internal memo)`. Key finding: the MCP boundary is already sealed via the `_PARAM_ALIASES` table landed in W430, so the CLI-side `@click.argument("name")` drift does NOT silent-fail through MCP. Recommendation: ship the W1111 AST CI lint (DONE) to lock the current 12-site grandfather surface; defer a hard rename until v14.0 ships for an unrelated breaking-change reason. **W1098 USER-DECISION downgraded from BLOCKER to FOLLOW-UP.**
+- **W1102-RESEARCH — Click-argument rename strategy memo.** 677-line research memo at `(internal memo)`. Key finding: the MCP boundary is already sealed via the `_PARAM_ALIASES` table landed in W430, so the CLI-side `@click.argument("name")` drift does NOT silent-fail through MCP. Recommendation: ship the W1111 AST CI lint (DONE) to lock the current 12-site grandfather surface; defer a hard rename until v14.0 ships for an unrelated breaking-change reason. **W1098 USER-DECISION downgraded from BLOCKER to FOLLOW-UP.** <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 
 ### Audits / BAILs — W1086-W1126 batch
 
@@ -1023,7 +1052,7 @@ The 2026-05-16 session that landed:
 > **The headline is THREE flagship Pattern 2 silent-fallback bugs sealed in main this batch — all three share the "claim success on unanalyzed corpus" shape that the W805 empty-corpus sweep was designed to surface.** Mirroring the proven `cmd_vulns` Fix E template (`state="no_scan"` + `partial_success=True` + actionable verdict) and the `cmd_missing_index` `state="no_migrations"` discipline, each fix detects the empty-graph precondition BEFORE running the rule/check pipeline and emits an explicit Pattern-2 envelope instead of a default-success illusion. **W826 `cmd_taint`** — previously emitted `"No taint findings across 22 rule(s)"` + `partial_success=false` (W817 auto-injected, making the false claim deterministic) on a fully-empty corpus; the verdict read as a clean security pass on an unanalyzed repo. Fix: 52-line empty-corpus guard right after `open_db(...)`; on `COUNT(*) FROM symbols == 0` emits `state="empty_corpus"`, `partial_success=true`, `rules` (count loaded but not run), verdict `"no symbols to analyze (corpus empty; N rules loaded but not run — run \`roam index --force\` to populate the graph)"`. Test `tests/test_w825_taint_empty_corpus.py` xfail-strict flipped green plain; 35/35 taint regression tests pass. **W834 `cmd_health`** — the FLAGSHIP CI-gate command previously emitted `verdict: "Healthy codebase (100/100) — 0 critical issues"` with `health_score: 100` on an empty corpus, because every health factor defaulted to `1.0` on zero signal and the geometric mean returned exactly 100 → score ≥ 80 threshold matched `"Healthy codebase"`. A `100/100 Healthy` verdict on an unanalyzed repo was a HIGH-severity false claim that would silently pass CI gates. Fix: 65-line empty-corpus carve-out before `build_symbol_graph(...)`; emits `state="empty_corpus"`, `partial_success=true`, `health_score=None` (not 0, not 100), verdict `"no symbols to analyze"` + `next_command="roam index --force"`. `--gate` flag raises `GateFailureError` (exit 5) on empty corpus — mirrors W829 audit-trail-verify discipline (fail-closed on missing analysis). Test 1/1 pass; 93/93 health regression tests pass; LAW 4 lint 8/8 pass. **W836 `cmd_doctor`** — previously checked only environment markers (Python/tree-sitter/git/networkx/manifest) and never asked "did the indexer extract anything?". On a clean env + empty corpus, would emit `"all N checks passed"` even though zero symbols had been indexed. Fix: new `_check_corpus_content()` function queries `SELECT COUNT(*) FROM symbols`; states `no_index` / `empty` (advisory fail with actionable verdict) / `populated` / `error`. Wired into the check pipeline after `_check_required_tables` and into `_ADVISORY_CHECK_NAMES` so empty corpus warns but does not block CI by default. Total check count bumped 23 → 24; 71/71 doctor regression tests pass; 5/5 W835 tests pass. **W817 helper-level auto-inject closes Pattern 2 across 7 detectors in one shot**: added a 9-line auto-inject at `src/roam/output/formatter.py:json_envelope()` defaulting `summary.partial_success` to `False` when missing. Closed the gap for 7 detectors without per-command edits; companion W819 manual xfail-strict flip on the 7 corresponding empty-corpus smoke tests; W810 manual `cmd_complexity` Pattern 1B fix (`SystemExit(1)` → return). **W749 dispatch edge-attribution chain extended**: discovered dispatch edges were 100% mis-attributed via a DIFFERENT mechanism than W742 — `MIN(id)` synthetic-source in `registry_dispatch.py`. Replaced with per-file `[(line_start, line_end, symbol_id)]` map + `_symbol_for_assignment` lexical-extent lookup. `_COMMANDS` now sources 231 dispatch edges (was attributed to `_DEPRECATED_COMMANDS`); `_MATH_DETECTORS` 34 edges (was attributed to `log`); `PYTHON_IDIOM_DETECTORS` 22 edges (was attributed to `_MUTABLE_DEFAULT_RE`). **W805 empty-corpus sweep methodology validated**: 25+ detector commands smoke-tested; 12 already Pattern-2 clean; 7 auto-fixed by W817; 3 flagship dedicated fixes; every smoke test ships with a forbidden-fragment blacklist (`"safe"` / `"healthy"` / `"no concerns"` / `"all clear"` / `"100/100"`) as a regression guard. **W772 worktree-staleness operational finding**: ~8 dispatches bailed because agent worktrees branch from commit 850552af (pre-session main); user's `git config --global core.longpaths true` fix resolved the parallel W686 path-length issue. **Hash-stability mandate held across every fix** — `tests/test_evidence_schema_migration.py` 31/31 byte-identical.
 
 ### Added — Detector inventory memo (W850)
-- W850: (internal memo)
+- W850: (internal memo) <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 
 ### Fixed — THREE flagship Pattern 2 silent-fallback bugs SEALED (W826 taint + W834 health + W836 doctor)
 - **W826 — HIGH-SEV: `cmd_taint` silent-SAFE on empty corpus sealed.** Added 52-line empty-corpus guard at `src/roam/commands/cmd_taint.py` after `open_db(...)`. On `COUNT(*) FROM symbols == 0`, emits Pattern 2 envelope (`state="empty_corpus"`, `partial_success=True`, `rules` count loaded-but-not-run, actionable verdict). Mirror of `cmd_vulns` Fix E. `tests/test_w825_taint_empty_corpus.py` xfail-strict flipped green (2/2); 35/35 taint regression tests pass. **Security-critical** — pre-fix verdict read as a clean security pass on unanalyzed code.
@@ -1072,7 +1101,7 @@ The 2026-05-16 session that landed:
 - **`(internal memo)`** (W758) — MCP protocol evolution since 2025-11-25 spec freeze. **Headline: Claude Code bug #25081 silently drops ALL tools from any server that declares `toolAnnotations` or `outputSchema`** — hard block on tool-annotation adoption (W764 / W767 BLOCKED). 5 follow-up waves suggested.
 - **`(internal memo)`** (W765) — MCP Server Card readiness vs SEP-2127 draft. 7 gaps; 4 ready (W792-W794); 1 BLOCKED on SEP-2127 merge (W795). 10 sources cited.
 - **`(internal memo)`** (W766) — MCP Tasks primitive evaluation. **CRITICAL: 8 sync tools falsely declared in `_TASK_OPTIONAL_TOOLS`** (W785 captured). 10 candidate tools; 6 prerequisites; 3-tool migration order.
-- **`(internal memo)`** (W768) — Top-3 elicitation candidates: `roam_mutate`, `roam_cga_emit`, `roam_annotate_symbol`. 4 prerequisites; 4 runner-up candidates.
+- **`(internal memo)`** (W768) — Top-3 elicitation candidates: `roam_mutate`, `roam_cga_emit`, `roam_annotate_symbol`. 4 prerequisites; 4 runner-up candidates. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **`(internal memo)`** (W480) — FP-rate methodology: hybrid (OWASP Benchmark / public corpora / internal dogfood). **CRITICAL: 93% of BigCloneBench's Weak Type-3/4 pairs are mislabeled** per arXiv 2505.04311 (W797 captured). 13 sources cited.
 
 ### Operational findings (pending fix / decision)
@@ -1095,7 +1124,7 @@ The 2026-05-16 session that landed:
 ### Added — Strategy memos shipped earlier in the W836→W865 arc (W848 / W849 / W850 / W859)
 - **W848 — `(internal memo)`.** Fowler 22-smell coverage map + top-3 recommendations for the next detector wave. Drove the W852-W857 selection.
 - **W849 — `(internal memo)`.** Research memo identifying *cross-layer duplication* as the #1 real-world DRY debt class. Directly drove the W856 design (Jaccard over callee-name multisets across layers, NOT raw clone detection).
-- **W850 — `(internal memo)`.** 94 distinct detectors catalogued across the codebase. The first single source of truth for the full detector roster.
+- **W850 — `(internal memo)`.** 94 distinct detectors catalogued across the codebase. The first single source of truth for the full detector roster. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **W859 — Correction banner on W848.** W848's draft claimed `empty-catch` was a stub; W370 had already shipped a real detector. Banner added to the memo flagging the inventory drift — sealed silently before any downstream reader could be misled.
 
 ### Operational findings (W865 batch — pending fix / decision)
@@ -1109,7 +1138,7 @@ The 2026-05-16 session that landed:
 - **W873 — `is_test_path()` extension to `_shared.py` (~70 lines + 4 pattern tuples).** Covers Python / Go / JS-TS / Java-Kotlin / Ruby / Apex test-naming conventions. Folded 2 catalog-layer duplicates: `detectors._is_test_path` (37 call-sites; `_INCLUDE_TESTS_OVERRIDE` semantics preserved) + `type_switch._file_is_test` (1 call-site). 6 non-catalog sites left alone (already delegated correctly OR canonical at their own layer OR deliberate import-cycle break). **17/17 new + 216/216 sibling tests pass.**
 - **W862 — `tests/test_smells_detector_count_drift.py` (173 lines, 3 tests).** AST-parses both the module docstring and `run_all_detectors()` docstring; asserts both stay in lockstep with `len(ALL_DETECTORS)`. Catches the exact count-drift class W856 surfaced. Inline drift fixes: `smells.py:2893` "remaining 19 detectors" → "remaining detectors"; `cmd_smells.py:72` "The 15 detectors" → "The detectors".
 - **W867 — `tests/test_smells_confidence_mapping_parity.py` (208 lines, 3 tests).** AST parity lint between `ALL_DETECTORS` ids and `_SMELL_KIND_TO_CONFIDENCE` keys. Reference set computed as `ALL_DETECTORS ∪ AST-derived _finding("<id>",...) first-args` so the W647 rollup pattern (one detector emits two smell_ids like `temporal-coupling-cluster`) doesn't false-trip.
-- **W869 — `(internal memo)` (~600 lines, research memo).** Synthesises the registry-parity bug-class across 10+ session-observed drift instances (W852 / W856 / W862 / W867 / W432 / W702 / W785 / W332 / W397 / W37.1-W113); 8 industry references. Recommendation: hybrid Archetype B+E (decorator-driven `@detector(smell_id, confidence_tier)` + construction-time validation + parity-test backstop). **P0 = smell-detector registry** (24 detectors, W871); **P1 = MCP tool registry** (224 tools, next sprint); **P2 = mode-allowlists / `_DEPRECATED_COMMANDS` / `subject_kind`** (rare-touch).
+- **W869 — `(internal memo)` (~600 lines, research memo).** Synthesises the registry-parity bug-class across 10+ session-observed drift instances (W852 / W856 / W862 / W867 / W432 / W702 / W785 / W332 / W397 / W37.1-W113); 8 industry references. Recommendation: hybrid Archetype B+E (decorator-driven `@detector(smell_id, confidence_tier)` + construction-time validation + parity-test backstop). **P0 = smell-detector registry** (24 detectors, W871); **P1 = MCP tool registry** (224 tools, next sprint); **P2 = mode-allowlists / `_DEPRECATED_COMMANDS` / `subject_kind`** (rare-touch). <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **W874 — "Mirror smells.py" docstring anti-pattern sweep.** Audited ~75 mentions; only 4-5 are real code clones (captured as W877-W880 drive-bys). The rest are legitimate comparative-narrative documenting parallel-but-distinct behavior.
 - **W876 — Stale-pending triage cleanup.** Audited 20 candidates from the long-running BACKLOG queue; **flipped 13 actual stale-pending rows pending → shipped**: W125 (Wave30.1 doc-hygiene — already shipped W250; wave-number-vs-task-ID collision documented), W221 (flagged user-blocked), W224 (superseded by W240 / W242 / W261 / W266 / W267 / W268 producer-sealing waves), W298-polish, W319, W335, W342, W345, W346, W348, W349 (W377-W382 closed by W436 batch), W352, W353. **W107 left pending** — mode taxonomy still awaits user signoff.
 
@@ -1443,6 +1472,7 @@ The 2026-05-16 session that landed:
 > captured (W984 autouse conftest / W985 INFO log on the drop / W986
 > "first hypothesis" checklist in CLAUDE.md). **W983-RESEARCH memo
 > shipped** (`(internal memo)`,
+> <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 > 374 lines, 7 reusable patterns, 3 candidate modules) and **W999
 > amended it** with the W988/W989 outcomes — the case-study now
 > explicitly codifies "premise verification is the first step of
@@ -1478,7 +1508,7 @@ The 2026-05-16 session that landed:
 - **W970 — CLAUDE.md W966 sub-section gained a 7-line positive counter-example.** Added a paragraph naming `_DEFAULT_THRESHOLDS` (in `cmd_alerts.py`) as the canonical "when TypedDict IS appropriate" exemplar — the dict is constructed from a closed shape, no `slot.update()` mutation path exists, and the TypedDict surface (W919 `AlertThreshold`) accurately captures it. Pairs the W966 rule ("don't TypedDict a boundary you don't validate") with its inverse exemplar so the next reader sees both sides of the discipline.
 
 ### Research + memos (W983-RESEARCH / W999 — W1001-CONSOLIDATE)
-- **W983-RESEARCH — `(internal memo)`** (374 lines, 7 reusable patterns, 3 candidate modules). Synthesises the full W977 cmd_alerts.py Pattern-2 close into a reusable playbook: (1) `warnings_out: list[str] | None` accumulator on every boundary parser/normaliser; (2) `_VALID_*` closed-set frozensets at the boundary; (3) parse-time + check-time validation paths share the same frozenset; (4) latent-bug discipline (0-fixture paths are silent bugs); (5) `typing.get_type_hints` drift-guard pinning TypedDict `Literal[...]` ↔ `_VALID_*` frozenset; (6) coerce-helper pattern at construction time; (7) `_CANONICAL_*` frozenset for vocabulary that downstream code dictionaries-keys on. Three nominated candidates: cmd_smells (W987), cmd_conventions (W988), cmd_pr_risk (W989).
+- **W983-RESEARCH — `(internal memo)`** (374 lines, 7 reusable patterns, 3 candidate modules). Synthesises the full W977 cmd_alerts.py Pattern-2 close into a reusable playbook: (1) `warnings_out: list[str] | None` accumulator on every boundary parser/normaliser; (2) `_VALID_*` closed-set frozensets at the boundary; (3) parse-time + check-time validation paths share the same frozenset; (4) latent-bug discipline (0-fixture paths are silent bugs); (5) `typing.get_type_hints` drift-guard pinning TypedDict `Literal[...]` ↔ `_VALID_*` frozenset; (6) coerce-helper pattern at construction time; (7) `_CANONICAL_*` frozenset for vocabulary that downstream code dictionaries-keys on. Three nominated candidates: cmd_smells (W987), cmd_conventions (W988), cmd_pr_risk (W989). <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **W999 — W983 case-study amendment.** Added a new "Premise verification is the first step of every playbook application" section explicitly codifying the W988 + W989 outcomes: (a) W988 closed correctly as not-applicable because the premise didn't match cmd_conventions.py; (b) W989 found a DIFFERENT real Pattern-2 gap than the playbook's framing assumed (W718 floor in `_normalise_pr_risk_level`, not a `slot.update` framing). The amendment codifies: "a playbook that applies mechanically without checking the premise produces fabricated work; a playbook that applies with discipline either seals the nominated gap, finds a different real gap, or stops cleanly".
 
 ### Operational findings (W1001 batch — pending fix / decision)
@@ -1517,6 +1547,7 @@ The 2026-05-16 session that landed:
 
 ### Closed — Pattern-2 propagation continuing (W706 / W1009 / W1011 — W1015-CONSOLIDATE)
 - **W706 — `cmd_ignore_findings` Pattern-2 close.** YAML-loader unknown-key path now plumbs `warnings_out` + flips `summary.partial_success=true` + surfaces an `agent_contract.facts` entry on unknown keys instead of silently dropping the entry. Matches the W918 envelope shape proven on cmd_alerts. **Tests pass; hash-stability held** (no pre-fix envelope to compare against — new validation surface). See `(internal memo)` for the playbook applied. | `src/roam/commands/cmd_ignore_findings.py`
+<!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **W1009 — Per-finding-suppressions Pattern-2 close.** Sister to W994 / W995 (smells_suppress) but on the finding-suppressions substrate. Malformed entries previously dropped silently; now partition into `valid` + `dropped` lists, surface each via indexed `warnings_out` entries + rollup, flip `partial_success=true`. Same envelope shape as W994 / W995. | `src/roam/policy/finding_suppressions.py`
 - **W1011 — cmd_alerts Pattern-2 audit confirmation.** Audited cmd_alerts.py section-level loader paths post-W918 / W962 / W963 / W964 / W967 / W968 / W969; confirmed every silent-fallback surface now flows through `warnings_out`. **No new source changes**; closes the audit follow-up. Captured methodologically: the W983 playbook-propagation discipline (premise verification first) successfully reproduced the W977 close. | audit-only
 
@@ -1536,7 +1567,7 @@ The 2026-05-16 session that landed:
 - **W1015 — `tests/test_catalog_shared.py` (24 tests).** Direct coverage of the `src/roam/catalog/_shared.py` canonical helpers (W864 `_loc`, W873 `is_test_path`, W877 `_enclosing_symbol`, W923 `make_smell_finding`). Pre-W1015 the helpers had only transitive coverage via per-detector tests; the new file pins the canonical contract directly so future hoists can land with a single-file regression check. **24/24 pass.** | `tests/test_catalog_shared.py`
 
 ### Research memos (W1016-RESEARCH — W1015-CONSOLIDATE)
-- **W1016-RESEARCH — YAML loader hardening memo.** Memo evaluates the 7 YAML-loader callsites across the codebase (`cmd_alerts` / `cmd_ignore_findings` / `smells_suppress` / `finding_suppressions` / `rules/loader` / `permit/loader` / `constitution/loader`). Verdict: **roll our own shared helper rather than depend on a third-party YAML hardening library** — the surface area is small enough that the discipline rule + a thin shared parser is cheaper than a dependency. 2-phase plan: **Phase 1 = W1018** (queued — extract the canonical `_parse_yaml_with_warnings` + `_VALID_OPS`-style closed-set validator); **Phase 2 = W1019** (queued — migrate 5 of 7 callsites; 2 keep their bespoke parsers due to non-YAML envelope shapes). Net ~125 LOC removed across the migration. | `(internal memo)`
+- **W1016-RESEARCH — YAML loader hardening memo.** Memo evaluates the 7 YAML-loader callsites across the codebase (`cmd_alerts` / `cmd_ignore_findings` / `smells_suppress` / `finding_suppressions` / `rules/loader` / `permit/loader` / `constitution/loader`). Verdict: **roll our own shared helper rather than depend on a third-party YAML hardening library** — the surface area is small enough that the discipline rule + a thin shared parser is cheaper than a dependency. 2-phase plan: **Phase 1 = W1018** (queued — extract the canonical `_parse_yaml_with_warnings` + `_VALID_OPS`-style closed-set validator); **Phase 2 = W1019** (queued — migrate 5 of 7 callsites; 2 keep their bespoke parsers due to non-YAML envelope shapes). Net ~125 LOC removed across the migration. | `(internal memo)` <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 
 ### Operational findings (W1015 batch — pending fix / decision)
 - **W1004 — 7-command click-vocab audit** (W996 follow-up). Audit the `--kind` vs `--type` vs `--metric` boundary vocabulary across the 7 surfaced commands; recommend a canonical normalisation. | per-command audit | 2-3h
@@ -2085,12 +2116,13 @@ The 2026-05-16 session that landed:
 > The wave between the W436 consolidation and this one ran twelve
 > threads in parallel across five families. (1) **Standards
 > crosswalk research trilogy** — **W358-research** (SLSA v1.2
-> Source Track positioning, `(internal memo)`)
+> Source Track positioning, `(internal memo)`) <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 > found that roam de-facto covers SRC-L2 today, and the surprise
 > finding is that SRC-L3 lift is **one wave** — `cosign_sign_statement()`
 > at `attest/cga.py:495-594` is already implemented; new wave W451
 > queued. **W359-research** (OSCAL v1.2 Control Mapping,
 > `(internal memo)`) found that OSCAL v1.2
+> <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 > shipped a **7th model** (Control Mapping) which is the zero-prereq
 > first emission for per-run evidence; new waves W464/W465 queued.
 > **W360-research** (already landed in W436 batch) feeds W428.
@@ -2125,6 +2157,7 @@ The 2026-05-16 session that landed:
 > stability byte-identical. Drive-bys W443/W444/W445 and W446/W447/W448
 > queued. (6) **Perf research scoping** — **W433-research**
 > (`(internal memo)`) scoped three
+> <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 > optimization candidates for the W408 finding: (C) double-parse I/O
 > elimination 15-30s zero risk; (B) function-summary memoization
 > 35→5s; (A) file-signature cache warm-reindex 0s. **Surprise
@@ -2265,6 +2298,7 @@ The 2026-05-16 session that landed:
   surfaces the remaining 38 commands plus the skip-taxonomy
   allowlist. Refreshed planning lives in
   `(internal memo)` (W353).
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **Try-parse passthrough chokepoint sealing Variant B** (W325).
   The MCP wrapper's `_run_roam_inprocess` / `_run_roam_subprocess`
   chokepoint now passes structured failure envelopes through to
@@ -2395,6 +2429,7 @@ The 2026-05-16 session that landed:
   single module.
 - **TEAM-MCP-AUTHORITY-PRODUCT facade refresh** (W367). Updated
   `(internal memo)` to reflect the
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   post-W198 reality (real permits exist; the W292/W294 corroboration
   harvester reads them; the local single-agent receipt model is
   shipping ahead of any networked Team MCP work, as the threat-model
@@ -2533,12 +2568,17 @@ The 2026-05-16 session that landed:
 - **Strategic memos shipped overnight.** Five new dev docs landed
   alongside the agentic-assurance pipeline:
   `(internal memo)` (W202 milestone
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   integration note); `(internal memo)` (W214 — 6
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   threats, conditional P-tier escalation contingent on Team MCP
   Gateway shipping); `(internal memo)` (W215
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   — authority-product framing); `dev/DEMO-NARRATIVE-CANONICAL.md`
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   (W216 — 8/8 ideal-case fixture, deterministic content_hash
   `17958f73…`); `(internal memo)` (W230 —
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   end-to-end re-validation report).
 - **pr-replay `context_refs` producer** (W246). New
   `_gather_context_files` in `src/roam/commands/cmd_pr_replay.py:895`
@@ -2564,6 +2604,7 @@ The 2026-05-16 session that landed:
   otherwise INSUFFICIENT.
 - **Producer coverage matrix** (W252) —
   `(internal memo)` (168 lines). 15
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   tier-1 producers analysed per-field; 22 tier-2 detectors
   collapsed. Top three under-served fields: environment (1
   producer: pr-replay only), policy (2 producers: rules +
@@ -3122,22 +3163,26 @@ The 2026-05-16 session that landed:
   cited FastMCP / Anthropic / MCP-spec sources for the structured
   `isError: true` discipline. Memo lives at
   `(internal memo)`. Drove the W325
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   chokepoint fix and the W328 CLAUDE.md codification.
 - **Pattern 3 + Pattern 6 audit** (W329). Sonnet+web pass that
   enumerated 9+ MCP parameter-name mismatches and 8 commands
   returning 50K-1.6M tokens with no auto-handle. Memo lives at
   `(internal memo)`. Drove the W330
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   CLAUDE.md expansion, the W331 / W331b definition-field rollout,
   and the W332 `input_path` normalization.
 - **MCP state-mutating patterns** (W340). Sonnet+web pass that
   catalogued every state-mutating MCP wrapper and surfaced 4
   sub-waves (W363-W366) for hardening the mutation surface. Memo
   lives at `(internal memo)`.
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **Standards currency audit** (W341). Sonnet+web pass against
   SLSA v1.2, OSCAL v1.2, and the EU AI Act drafts. Surfaced 3
   sub-waves (W358-W360) to refresh the in-tree control-map
   language. Memo lives at
   `(internal memo)`. Headline finding:
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   SLSA v1.2 Source Track + OSCAL v1.2 Control Mapping landed
   after the W184 control-map shipped, so the in-tree wording
   ("maps to" / "supports evidence for") still holds but the
@@ -3151,6 +3196,7 @@ The 2026-05-16 session that landed:
   (empty-catch + primitive-obsession), taint OWASP Top-10 sink
   coverage. 5 sub-waves queued (W370-W374). Memo lives at
   `(internal memo)`.
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **Ecosystem positioning audit** (W385). Sonnet+web pass against
   7 adjacent tools (review tools, IDE plugins, governance
   platforms, supply-chain analysers, agent observability). Grades
@@ -3161,6 +3207,7 @@ The 2026-05-16 session that landed:
   portable evidence packet, so Roam's compiler position is
   defensible. Memo lives at
   `(internal memo)`. Feeds the W390 / W393
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   pitch-refresh wording and the W397 auto-count Codex-headline
   template update.
 - **Performance benchmarking research** (W395). Sonnet+web pass
@@ -3177,6 +3224,7 @@ The 2026-05-16 session that landed:
   default on first index, W399 Louvain cache expansion, W398-style
   parallel parse via `ProcessPoolExecutor`. Memo lives at
   `(internal memo)`. The five sub-waves
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   are queued as W404 + W405-W408 in the backlog (renumbered to
   avoid collision with the in-tree W396-W400 series).
 - **llm-smells pattern catalog** (W402-research). Sonnet+web pass
@@ -3193,6 +3241,7 @@ The 2026-05-16 session that landed:
   al. arXiv:2512.18020 (Dec 2025), 200-system empirical study with
   86.06% average detection precision. Memo lives at
   `(internal memo)`. Estimated v1
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   implementation: 6-8 hours (core detector + 11 patterns + MCP
   wrapper + tests). When shipped this is the **first
   production-grade multi-provider linter** for LLM API anti-patterns.
@@ -3211,6 +3260,7 @@ The 2026-05-16 session that landed:
   ranked the remaining phases (4-7) of the W395 perf roadmap against
   real-world signal. Memo at
   `(internal memo)`. Top 3 actionable
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   outcomes: **W423** (PageRank warm-start; 2-5s savings on warm
   re-index), **W424** (SQLite `synchronous=NORMAL` pragma; 1-3s
   savings on full-index commits), and **W407 reclassified to
@@ -3281,7 +3331,9 @@ The 2026-05-16 session that landed:
 
 ### Research / planning — W466 batch
 - **W433-research — `effects_taint` optimization scoping**. Memo at
-  `(internal memo)`. Three candidates
+  `(internal memo)`.
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
+  Three candidates
   ranked: **(C) double-parse I/O elimination — 15-30s, zero risk**;
   (B) function-summary memoization 35→5s; (A) file-signature cache
   warm-reindex 0s on cold path. **Surprise discovery: roam has TWO
@@ -3293,9 +3345,11 @@ The 2026-05-16 session that landed:
   `(internal memo)`. **roam de-facto covers
   SRC-L2 today.** SURPRISE: **SRC-L3 lift is ONE wave** —
   `cosign_sign_statement()` at `attest/cga.py:495-594` is already
-  implemented. New wave W451 queued to formalize the SRC-L3 mapping.
+  implemented. New wave W451 queued to formalize the SRC-L3 mapping. <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
 - **W359-research — OSCAL v1.2 Control Mapping decision**. Memo at
-  `(internal memo)`. SURPRISE: OSCAL v1.2
+  `(internal memo)`.
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
+  SURPRISE: OSCAL v1.2
   added a **7th model** (Control Mapping) which is the
   zero-prerequisite first emission for per-run evidence. AR for
   per-run evidence. New waves W464/W465 queued.
@@ -4159,6 +4213,7 @@ git directory regardless of whether `roam index` has been built.
 - **Markdown reference-style links** `[label]: path "title"`
 - **HTML `href` / `src` attributes** (single or double quoted)
 - **Backtick-wrapped paths** `` `internal backlog` `` — limited to
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   doc-shaped extensions to keep prose noise out
 
 #### False-positive filters
@@ -4544,6 +4599,7 @@ the launch of the new commercial landing page at https://roam-code.com.
   commits, wire roam into Claude Code, compare two indices, ship a
   pre-commit verdict.
 - `(internal memo)` — captured May 2026 competitor
+  <!-- PHANTOM 2026-05-18: declared SHIPPED but memo absent from disk. Regenerate from BACKLOG/test-fixture breadcrumbs before next release. -->
   state (GitNexus 10K stars, Codebase-Memory 66 langs, Qodo 2.0
   multi-agent, Greptile v4 82% bug catch, CodeRabbit Autofix). Drives
   next-session prioritisation.

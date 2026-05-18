@@ -89,8 +89,14 @@ def test_auth_gaps_zero_count_suppressed():
     # severities. The construct should be present in source so future
     # edits can't silently revert to auto-derive.
     assert "explicit_facts" in src, "auth-gaps must build an explicit_facts list for the agent_contract"
-    assert 'agent_contract={"facts": explicit_facts}' in src, (
-        "auth-gaps must pin the explicit facts onto agent_contract"
+    # W607-ED refactored agent_contract into envelope_kwargs dict; accept
+    # BOTH the legacy kwarg-call form AND the dict-literal form so the
+    # invariant ("facts must be pinned, not auto-derived") survives the
+    # additive aggregation-phase plumbing.
+    assert 'agent_contract={"facts": explicit_facts}' in src or '"agent_contract": {"facts": explicit_facts}' in src, (
+        "auth-gaps must pin the explicit facts onto agent_contract "
+        "(either as a kwarg to json_envelope() OR as a key in the "
+        "envelope_kwargs dict passed to json_envelope())"
     )
     # The zero-skip guard:
     assert "if n > 0" in src, "auth-gaps must skip zero-severity rows from the facts list"

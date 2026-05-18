@@ -1,5 +1,10 @@
 name: Architecture Guardian
 
+# Run the continuous architecture guardian baseline daily and on manual
+# dispatch. Emits Markdown + JSON reports as workflow artifacts; the JSON
+# gate step is informational (continue-on-error) so the workflow does not
+# fail on advisory findings — review the uploaded artifact instead.
+
 on:
   workflow_dispatch:
   schedule:

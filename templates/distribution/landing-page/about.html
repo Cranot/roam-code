@@ -74,29 +74,45 @@
       <h2>What Roam is for</h2>
       <p>
         Roam is the <strong>local codebase intelligence layer for
-        developers and coding agents</strong>. It turns a repository
-        into a queryable model of symbols, calls, imports, dependencies,
-        architecture, git history, tests, risks, smells, security flows,
-        and algorithmic patterns. AI agents write code; Roam gives them
+        developers and coding agents</strong>. It gives every AI coding
+        agent a <strong>map of your repo</strong> — callers, clones,
+        tests, layers, hot paths, dependencies, git history, smells,
+        security flows, and algorithmic patterns — compiled locally
+        into a SQLite graph. AI agents write code; Roam gives them
         the structural context they do not have by default.
       </p>
       <p>
-        The differentiator is <strong>algorithmic risk review</strong>
-        (<code>roam math</code>, alias <code>roam algo</code>): code
-        that is correct but computationally wrong — the exact class
-        of patterns AI agents ship that pass tests and fail at scale.
-        Nested-loop O(n²) lookups, N+1 queries, regex compiled inside
-        hot loops, repeated JSON parsing, quadratic string
-        concatenation, branching recursion without memoisation.
-        Linters don't catch this. Semantic AI reviewers don't catch
-        this. Roam does, deterministically.
+        On top of that engine, Roam compiles <strong>trustworthy
+        evidence for AI-assisted software change</strong>: who acted,
+        what authority existed, what context was read, what changed,
+        what could break, what policy applied, what verified it, who
+        accepted risk. Every analysis writes a tamper-evident
+        audit-trail entry plus signed in-toto v1 records, so a reviewer
+        can replay the work after the fact. Roam <em>maps to</em> and
+        <em>supports evidence for</em> SOC 2 CC8.1, ISO 42001, and
+        internal AI-governance controls — it does not certify
+        compliance with any framework.
+      </p>
+      <p>
+        One concrete differentiator is <strong>algorithmic risk
+        review</strong> (<code>roam math</code>, alias <code>roam
+        algo</code>): code that is correct but computationally wrong —
+        the class of patterns AI agents ship that pass tests and fail
+        at scale. Nested-loop O(n²) lookups, N+1 queries, regex
+        compiled inside hot loops, repeated JSON parsing, quadratic
+        string concatenation, branching recursion without memoisation.
+        Linters operate on tokens. Semantic AI reviewers operate on
+        diff text. Roam operates on the diff as a graph mutation, so
+        it catches the structural class those layers miss.
       </p>
       <p>
         Roam complements existing review layers. Linters, SAST, and
         AI semantic reviewers (CodeRabbit, Greptile, Qodo) operate on
         the diff as text. Roam operates on the diff as a graph
         mutation. Different layer, different bugs. Most teams that
-        ship serious AI-generated code want both signals.
+        ship serious AI-generated code want both signals — see
+        <a href="/compare">how Roam compares</a> to the semantic
+        reviewers.
       </p>
 
       <h2>Why now</h2>
@@ -108,20 +124,24 @@
         We saw the bills come in:
       </p>
       <ul>
-        <li>PocketOS — production database + 3 months of backups gone in 9 seconds. The agent was confident.</li>
+        <li>PocketOS — production database plus three months of backups deleted in nine seconds by an over-confident agent (<a href="https://news.ycombinator.com/item?id=44627536">incident discussion, Hacker News</a>).</li>
         <li>Amazon — outages including one linked to an internal AI coding tool; SVP Dave Treadwell ordered a 90-day reset on internal code controls (<a href="https://www.businessinsider.com/amazon-tightens-code-controls-after-outages-including-one-ai-2026-3">Business Insider, March 2026</a>).</li>
-        <li>Faros AI 2026 telemetry — bugs/dev up 54%, incidents/PR up 242.7% on AI-adopting teams.</li>
+        <li>Faros AI 2026 telemetry — bugs per developer up 54%, incidents per PR up 242.7% on AI-adopting teams (<a href="https://www.faros.ai/blog/ai-coding-tools-telemetry-2026">Faros AI engineering benchmarks, 2026</a>).</li>
       </ul>
       <p>
         Roam's assurance layer is built on top of that local intelligence
-        engine. It runs locally (the engine is Apache 2.0, free forever)
-        and ships paid layers — Review (PR bot), Cloud (dashboard),
-        Self-Hosted (your network) — on top when teams need them. The
-        fastest way to see what it would have
-        caught on your team's last quarter is the
-        <a href="/audit"><strong>PR Replay audit</strong></a> — free
-        5-PR DIY sample, paid Team and Deep engagements.
+        engine. The CLI runs locally under Apache 2.0 and stays free
+        forever. Paid layers sit on top when teams want continuous
+        review, hosted dashboards, or a paid audit of the last quarter:
+        the <strong>PR Replay audit</strong> is the fastest path from
+        "I'd like to know what Roam would have caught on my repo" to a
+        written report.
       </p>
+      <ul>
+        <li><a href="/audit"><strong>PR Replay audit</strong></a> — paid one-shot replay against your last 5 / 30 / 90 PRs. Free DIY sample, Team $2,500, Deep $6,000. 50% of the fee credits toward Roam Review.</li>
+        <li><a href="/governance">Agent Governance Evidence Pack</a> — control mapping, sample audit report, and evidence checklist for SOC 2 / ISO 42001 / EU AI Act reviewers.</li>
+        <li><a href="/trust">Trust posture</a> — data handling, retention, and processing locations per product surface.</li>
+      </ul>
 
       <h2>Who built it</h2>
       <p>
@@ -139,7 +159,7 @@
 
       <h2>What we believe</h2>
       <ul>
-        <li><strong>Code stays on your machine by default.</strong> The CLI does not phone home. No telemetry, no analytics, no "anonymous usage data." Roam Cloud receives metrics only — never source code. Roam Review processes PR diffs ephemerally to render verdicts, or runs entirely inside your infrastructure with Self-Hosted. See the <a href="/privacy">privacy page</a> for the full data-flow per product.</li>
+        <li><strong>Code stays on your machine by default.</strong> The CLI does not phone home. No telemetry, no analytics, no "anonymous usage data." Roam Cloud receives metrics only — never source code. Roam Review processes PR diffs ephemerally to render verdicts; private-deployment pilots are scoped separately when hosted processing is blocked by policy. See the <a href="/privacy">privacy page</a> for the full data-flow per product.</li>
         <li><strong>Verifiable claims beat marketing copy.</strong> Every analysis Roam runs writes a tamper-evident audit-trail file plus signed records (in-toto v1, verifiable with cosign). The kind of evidence SOC 2, ISO 42001, and internal AI-governance policies want to see. We don't ask you to trust us; we give you the receipts.</li>
         <li><strong>Open source is the default for the engine.</strong> Apache 2.0. Fork it, audit it, ship a competitor. The CLI will stay free forever — we make money from the hosted layers, not from gatekeeping the engine.</li>
         <li><strong>Privacy is the floor, not a feature.</strong> Zero cookies, zero tracking, zero analytics on this site (see the <a href="/no-cookies">receipt</a>). After the August 2025 CodeRabbit RCE that leaked write access to ~1M repos, careful data-handling stopped being a differentiator and became the minimum bar.</li>
@@ -149,11 +169,21 @@
       <h2>Funding model</h2>
       <p>
         Roam is customer-funded. The free CLI exists because it earns
-        the right to charge for the hosted layers — once teams trust the
-        engine, they pay to run it on every PR (Review), in a shared
-        dashboard (Cloud), or inside their network (Self-Hosted). No
-        VC, no acquisition track. The company stays small enough to
-        answer email personally.
+        the right to charge for the paid layers — PR Replay engagements
+        today, Roam Review (hosted continuous review) and Roam Cloud
+        (shared metrics dashboard) as early-access products, and
+        scoped private-deployment pilots when hosted processing is
+        blocked by policy. No VC, no acquisition track. The company
+        stays small enough to answer email personally. See
+        <a href="/pricing">pricing</a> for the per-tier breakdown and
+        <a href="/audit">/audit</a> for the paid PR Replay engagement.
+      </p>
+      <p class="legal-meta">
+        Billing entity, tax-ID, and invoice format are disclosed on the
+        <a href="/terms">terms of service</a> and the
+        <a href="/refund">refund policy</a>. Live payment endpoints
+        are pending finalisation of the procurement gates listed on
+        the <a href="/audit">audit page</a>.
       </p>
 
       <h2>Roadmap</h2>
@@ -169,8 +199,11 @@
       <ul>
         <li>Site: <a href="/">roam-code.com</a></li>
         <li>Docs: <a href="/docs/">roam-code.com/docs/</a></li>
-        <li>GitHub: <a href="https://github.com/Cranot/roam-code">github.com/Cranot/roam-code</a></li>
-        <li>PyPI: <a href="https://pypi.org/project/roam-code/">pypi.org/project/roam-code</a></li>
+        <li>GitHub (engine, Apache 2.0): <a href="https://github.com/Cranot/roam-code">github.com/Cranot/roam-code</a></li>
+        <li>PyPI (free CLI): <a href="https://pypi.org/project/roam-code/">pypi.org/project/roam-code</a></li>
+        <li>Paid PR Replay audit: <a href="/audit">/audit</a></li>
+        <li>Governance evidence pack: <a href="/governance">/governance</a> · trust posture: <a href="/trust">/trust</a></li>
+        <li>Pricing: <a href="/pricing">/pricing</a> · compare with semantic reviewers: <a href="/compare">/compare</a></li>
         <li>Email: <a href="mailto:hello@roam-code.com">hello@roam-code.com</a></li>
         <li>Security disclosures: <a href="mailto:security@roam-code.com">security@roam-code.com</a> (see <a href="/security">policy</a>)</li>
       </ul>
@@ -180,9 +213,9 @@
       </p>
     </article>
 
-  <section class="page-cta-strip">
+  <section class="page-cta-strip" aria-label="Get started with Roam">
     <div class="page-cta-inner">
-      <p>Ready to try Roam? <a href="/" class="btn-primary">Install the free CLI</a> · or <a href="/pricing">see paid plans</a></p>
+      <p>Ready to try Roam? <a href="/" class="btn-primary">Install the free CLI</a> · <a href="/audit">book a PR Replay audit</a> · <a href="/pricing">see paid plans</a></p>
     </div>
   </section>
   </main>

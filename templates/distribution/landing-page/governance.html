@@ -79,16 +79,16 @@
         made on your repo: which agent touched what, what context it read
         before editing, which risks it accepted vs mitigated, who authorized
         risky edits, and which tests closed the loop. The pack supports
-        audit review against SOC 2, ISO 42001, NIST AI RMF, and EU AI Act
-        Article 12 record-keeping expectations — without claiming
-        certification against any of them.
+        evidence for SOC 2 CC8.1, ISO/IEC 42001, NIST AI RMF, and EU AI Act
+        Article 12 record-keeping expectations — and maps to common controls
+        without claiming certification against any framework.
       </p>
       <div class="hero-ctas">
-        <a class="btn-primary" href="#sample">See a sample report</a>
-        <a class="btn-secondary" href="#controls">Control mapping</a>
+        <a class="btn-primary" href="#sample">Read the sample report</a>
+        <a class="btn-secondary" href="#eight-questions">See the eight questions</a>
       </div>
       <p class="hero-trust-strip">
-        Built on the free Apache 2.0 CLI · Evidence stays on your machine and hash-verifies offline · Tamper-evident ledger (HMAC-chained) · Proof bundles signed with in-toto v1
+        Built on the free Apache 2.0 CLI · Evidence stays on your machine and hash-verifies offline · Tamper-evident ledger (HMAC-chained) · Optional in-toto v1 attestation, verifiable offline with cosign
       </p>
     </div>
   </header>
@@ -165,9 +165,60 @@
       </div>
       <p class="how-it-works-foot" style="margin-top: 24px;">
         All five evidence types ship as JSON (machine-readable), Markdown
-        (human-readable), and a signed in-toto v1 attestation
-        (cryptographically verifiable with cosign).
+        (human-readable), and an optional in-toto v1 attestation
+        (cryptographically verifiable offline with cosign).
       </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       The eight evidence questions
+       ────────────────────────────────────────────────────────── -->
+  <section class="compare" id="eight-questions">
+    <div class="compare-inner">
+      <h2 class="compare-h2--tight">The eight evidence questions</h2>
+      <p class="lede compare-lede--tight">
+        Every Roam audit answers eight axes about an AI-assisted code
+        change. The pack covers all eight; the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-audit-report.md">sample report</a>
+        shows worked coverage with per-axis evidence rows, and
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/evidence-checklist.md">evidence-checklist.md</a>
+        names the exact command for each axis.
+      </p>
+      <div class="verbs-grid verbs-grid--3">
+        <div class="verb-cell">
+          <code>Q1. Who acted?</code>
+          <span>Per-run agent identity, model, MCP client id, and git author from <code>roam runs show</code>.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Q2. What authority existed?</code>
+          <span>Mode, permits, leases, and policy decisions from <code>roam mode</code>, <code>roam permit</code>, <code>roam lease</code>.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Q3. What context was read?</code>
+          <span>Pre-edit commands, symbols, and files from the bundle's <code>context_read</code> block.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Q4. What changed?</code>
+          <span>Diff hash, commit SHA, and affected symbols from <code>roam diff</code> + <code>roam pr-risk</code>.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Q5. What could break?</code>
+          <span>Blast radius and findings from <code>roam preflight</code>, <code>roam impact</code>, <code>roam critique</code>.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Q6. What policy applied?</code>
+          <span>Rules config hash, constitution hash, and policy-decision events from <code>roam runs show</code>.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Q7. What verified it?</code>
+          <span>Required vs run tests from the bundle's <code>tests_required[]</code> / <code>tests_run[]</code> reconciliation.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Q8. Who accepted risk?</code>
+          <span>Authorizer and accepted-risk records from the bundle's <code>approvals[]</code> / <code>accepted_risks[]</code> arrays. Approvals recorded outside the substrate surface as <code>redactions[].reason = "producer_not_available"</code>.</span>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -178,24 +229,32 @@
     <div class="how-it-works-inner">
       <h2>Sample report</h2>
       <p class="lede">
-        See the full
+        Read the full
         <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-audit-report.md">Governance Pack sample report</a>
-        for a complete deliverable example, with worked control-mapping table
-        and disclaimer block. The pack format mirrors the
-        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">PR Replay sample report</a>:
-        per-run sections, aggregated risk tables, control-mapping appendix,
-        and the underlying signed JSON ledger. For a redacted draft on
-        your repository, email <a href="mailto:hello@roam-code.com?subject=Governance%20Evidence%20Pack%20sample">hello@roam-code.com</a>.
+        (schema <code>governance-pack/1.0</code>) for a complete deliverable
+        example, with the eight-question coverage table, worked
+        control-mapping, recommended next steps, and disclaimer block.
+        Reproduce the same artifact extraction on your own repo with
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/evidence-checklist.md">evidence-checklist.md</a>;
+        for the control map and wording-discipline rules, see
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/control-mapping-README.md">control-mapping-README.md</a>.
+        The companion
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">PR Replay sample</a>
+        covers merged-history detector replay (no run ledger required).
+        For a redacted draft on your repository, email
+        <a href="mailto:hello@roam-code.com?subject=Governance%20Evidence%20Pack%20sample">hello@roam-code.com</a>.
       </p>
       <ol class="flow">
         <li>
           <span class="flow-num">1</span>
           <strong>Generate locally.</strong>
-          The free CLI emits every evidence type. Pipe
-          <code>roam runs verify</code>, <code>roam pr-bundle emit --strict</code>,
-          and <code>roam agent-score</code> into the render template;
-          the substrate is in <code>src/roam/runs/</code> and
-          <code>src/roam/pr_bundle/</code>.
+          Run <code>roam runs verify</code>,
+          <code>roam pr-bundle emit --strict</code>, and
+          <code>roam agent-score</code> against an indexed repo, then feed
+          the JSON envelopes through the render template. The substrate
+          lives in <code>src/roam/runs/</code>,
+          <code>src/roam/pr_bundle/</code>, and
+          <code>src/roam/evidence/</code>.
         </li>
         <li>
           <span class="flow-num">2</span>
@@ -342,7 +401,7 @@
           machine; nothing leaves the local environment. See the
           <a href="/security">security policy</a>, the
           <a href="/trust">trust &amp; compliance posture page</a> for
-          named timelines on SOC 2 and ISO 42001, and the
+          current certification status, DPA, and roadmap posture, and the
           <a href="https://github.com/Cranot/roam-code/tree/main/templates/legal">procurement packet</a>
           for the DPA, no-training commitment, and supply-chain posture.
         </span>
@@ -356,13 +415,19 @@
   <section class="page-cta-strip">
     <div class="page-cta-inner">
       <p>
-        Want a redacted sample on a real repository, or a quote for a
-        written governance pack against your last 30 or 90 agent runs?
-        Email
-        <a href="mailto:hello@roam-code.com?subject=Governance%20Evidence%20Pack">hello@roam-code.com</a>
+        Commission a written Governance Evidence Pack against your last
+        30 or 90 agent runs, or request a redacted sample on a real
+        repository. Email
+        <a href="mailto:hello@roam-code.com?subject=Governance%20Evidence%20Pack&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Governance%20Evidence%20Pack.%0A%0ARepo%3A%20%0AAudit%20window%20%28default%3A%20last%2030%20or%2090%20agent%20runs%29%3A%20%0AFrameworks%20to%20cross-reference%20%28SOC%202%20%2F%20ISO%2042001%20%2F%20EU%20AI%20Act%20Art.%2012%20%2F%20NIST%20AI%20RMF%29%3A%20%0APreferred%20walk-through%20window%3A%20%0A%0A%E2%80%94%20">hello@roam-code.com</a>
         — same engagement shape as the
         <a href="/audit">PR Replay</a> service, same DPA, same
         no-training commitment.
+      </p>
+      <p class="footer-meta" style="margin-top: 12px;">
+        <!-- [TBD: governance Stripe Payment Link once business setup lands; see (internal memo) P1] -->
+        <!-- [TBD: governance pricing tier on /pricing; today this is founder-delivered, quoted on intake] -->
+        Pricing today is per-engagement, quoted on intake; published tiers
+        and a Stripe checkout path land alongside the PR Replay payment path.
       </p>
     </div>
   </section>

@@ -1,217 +1,439 @@
 # Customer-journey email templates
 
-> ⚠️ Drafts. Pricing and offer references in these emails predate the current
-> pricing on roam-code.com/pricing — review and update before sending.
+> Drafts, refreshed 2026-05-18 for the current PR Replay revenue path.
+> Review before sending: fill placeholders, confirm the payment path, and
+> avoid implying the hosted Roam Review app is live until that launch path is
+> ready.
 
-11 templates covering qualification → sale → delivery → retention → crisis.
+Templates covering qualification -> sale -> delivery -> retention -> crisis.
+Each template names the **playbook SOP** it triggers (see
+`internal operator notes`) and the **funnel stage** it
+sits in:
+
+```
+cold-introduce  ->  /audit visit  ->  SOW sign  ->  engagement-kickoff
+                                                            |
+                                                            v
+                            delivery  ->  Roam Review upsell
+```
+
+**Read these first before personalising:**
+- `templates/distribution/landing-page/audit.html` — the public buyer page
+  emails point to (canonical prices, credit math, tier copy)
+- `templates/legal/sow-pr-replay.md` — the SOW the buyer countersigns
+- `internal operator notes` — the operator SOPs each
+  email triggers
 
 ## Personalisation rules
 
 - Replace bracketed `[placeholders]`; never send raw.
-- Reference one specific thing the prospect said on a previous call (not just
-  their company name) — that single sentence is the difference between a
-  template and a personal note.
-- Length stays short. The discovery flow tolerates 3–5 sentence emails much
-  better than wall-of-text paragraphs. If a template exceeds 200 words after
-  personalisation, cut.
+- Reference one specific thing the prospect said on a previous call.
+- Keep emails short. If a template exceeds 200 words after personalisation,
+  cut it.
+- Do not promise specific findings before Roam has run.
+- Never overclaim certification — PR Replay **maps to** and **supports
+  evidence for** control frameworks; it does **not certify compliance**
+  with SOC 2, ISO 42001, the EU AI Act, or any other framework (mirrors
+  SOW §12.1).
+- Pricing is fixed at `$2,500` (Team) / `$6,000` (Deep) with `$1,250` /
+  `$3,000` Roam Review credits within 60 days of delivery. Match
+  `/audit` and SOW §1 / §7 verbatim; do not improvise.
+
+## Honest-banner discipline (mandatory canonical wording)
+
+When an email references compliance, audit, or governance framing, use
+this canonical clause verbatim:
+
+> PR Replay produces a structural-review report that **maps to** and
+> **supports evidence for** SOC 2, ISO 42001, and EU AI Act Article 14
+> (human-oversight) controls. It does **not certify** compliance with
+> any framework; the classification call stays with you and your DPO.
+
+This mirrors SOW §12.1 (warranty disclaimer) and the report's
+honest-banner clause (`templates/audit-report/sample-pr-replay-team.md`).
+
+## GDPR opt-out (append to every outbound)
+
+The footer below MUST appear in every cold-introduce, proposal, and
+upsell email (not strictly required on transactional emails — kickoff,
+daily status, post-delivery, crisis — but harmless to include and
+simpler to keep it universal):
+
+```
+---
+You're receiving this because you booked a call / opened a paid
+engagement / asked about PR Replay. Reply with the word "unsubscribe"
+or email hello@roam-code.com to be removed from all future outreach;
+we'll confirm removal within 2 business days and never email again.
+Data-handling details: https://roam-code.com/privacy and
+https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md
+```
 
 ---
 
-## 4. Calendly screening question
+## 1. Calendly screening question — funnel stage: cold-introduce
 
 Single field on the booking form, required:
 
-> "In one sentence: what AI coding tool is your team using and what's the most
-> recent thing it got wrong?"
+> "In one sentence: what AI coding tool is your team using and what is the
+> most recent thing it got wrong?"
 
-Auto-DQ message for vague/generic answers (no specific tool, no specific pain):
+Auto-DQ message for vague/generic answers:
 
-> Thanks for booking! Looking at your answer, sounds like you're in good shape
-> right now. I'd recommend re-engaging when you hit a specific issue — happy
-> to chat then. Cancelling this slot so it goes to someone with active pain.
+> Thanks for booking. Looking at your answer, it sounds like you are in good
+> shape right now. I would recommend re-engaging when you hit a specific issue.
+> Cancelling this slot so it goes to someone with active pain.
 
-## 5. Pre-call email — 24h before discovery
+## 2. Pre-call email — 24h before discovery — funnel stage: cold-introduce
 
-> **Subject**: Tomorrow's call — quick prep
+Triggers: nothing operator-side; this is pre-engagement.
+
+> **Subject**: Prep for tomorrow's call — repo + AI tooling
 >
 > [first_name], looking forward to talking tomorrow.
 >
 > Two things help me come prepared:
-> 1. **Repo size + stack**: which languages, monorepo or polyrepo, ~LoC?
-> 2. **Current AI tooling**: what's deployed, who's using it, since when?
+> 1. **Repo size + stack**: languages, monorepo/polyrepo, rough LOC.
+> 2. **Current AI tooling**: what is deployed, who uses it, and since when.
 >
-> One-line answers are fine. If you can share the repo URL (even private — I
-> won't browse without permission), I'll come with 1-2 specific observations
-> to discuss.
+> One-line answers are fine. If you can share a public repo URL or a redacted
+> example PR, I will come with 1-2 concrete observations.
+>
+> If you want to skim what a paid engagement produces before the call:
+> [https://roam-code.com/audit](https://roam-code.com/audit) (tiers + sample
+> report + the credit math).
 >
 > Talk tomorrow.
 >
-> — `[YOUR_NAME]`
+> — [TBD: founder signature]
 
-## 6. Discovery call closer — in-call script
+## 3. Discovery call closer — funnel stage: /audit visit -> SOW sign
 
-Use at minute 25 of a 30-min call, after they've described pain + goals:
+Use at minute 25 of a 30-minute call, after they have described pain and goals.
 
-> "Based on what you described, I think the **Standard Audit (`[FEE]`)** is
-> the right fit — it covers your repo size, gives you the full report + 2
-> calls + 30-day Q&A. Shall I send the proposal now to lock this week's
-> slot, or do you want me to follow up after you discuss with [boss/team]?"
+This is the call where you point the buyer at `/audit` for the canonical
+prices + sample report, and offer to send the SOW to lock the delivery slot.
+Triggers: playbook **Pre-flight** (verify the buyer page + Stripe Payment
+Links are live before quoting).
 
-Two-option close (send-now OR follow-up) beats yes/no — either answer moves
-the deal forward.
+> "Based on what you described, **PR Replay [Team/Deep]** is the right fit.
+> Team is `$2,500` (30 PRs, 30-min walk-through, `$1,250` credits toward
+> Roam Review within 60 days). Deep is `$6,000` (90 PRs, 90-min walk-through,
+> per-detector deep-dive + 90-day remediation plan, `$3,000` credits).
+>
+> Same credit math + sample report at roam-code.com/audit. Want me to send
+> the SOW now to hold this week's delivery slot, or follow up after you
+> discuss with [boss/team]?"
 
-## 7. Proposal email
+## 4. Proposal email — funnel stage: SOW sign
 
-> **Subject**: Proposal — Standard Audit for [Company]
+Triggers: playbook **Day 0** (Stripe payment lands → 1-hour ack → 24-hour
+SOW package).
+
+> **Subject**: PR Replay [Tier] proposal for [Company]
 >
 > [first_name], as discussed:
 >
-> **Scope**: 1 repo (~[X] LoC), 10-day delivery, full 15-page report + 2
-> walkthrough calls + 30-day Q&A Slack channel.
+> **Scope**: PR Replay [Team / Deep]. [Team: trailing 30 merged PRs,
+> 5-business-day delivery, 30-min walk-through / Deep: trailing 90 PRs
+> (or agreed range), 10-business-day delivery, 90-min walk-through +
+> per-detector deep-dive + written 90-day remediation plan].
 >
-> **Investment**: `[FEE]`. (Optional founding-customer pricing: `[DISCOUNT]`% off if
-> you can share a public testimonial after delivery — your call.)
+> **Investment**: `$[2,500 / 6,000]`. **`$[1,250 / 3,000]` credits toward
+> Roam Review** if you subscribe within 60 days of delivery. Credit math
+> + sample report shape: [roam-code.com/audit](https://roam-code.com/audit).
 >
-> **Timeline**: Kickoff [date], delivery [date].
+> **What it does NOT do**: certify compliance with any framework. The
+> report **maps to** and **supports evidence for** SOC 2, ISO 42001, and
+> EU AI Act Article 14 controls — useful as evidence, not a certification.
 >
-> Sign + pay here: [DocuSign / Stripe link]. Includes mutual NDA + SOW +
-> 30-day refund guarantee.
+> **Timeline**: kickoff [date], delivery [date].
 >
-> Questions? Reply or [Calendly link] for a quick call. Proposal expires
-> [date + 7 days].
+> Sign here: [SOW link — fill from Day 0 step 5]. Pay here: [Stripe
+> Payment Link / invoice instructions]. Includes the
+> [DPA](https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md),
+> [refund terms](https://roam-code.com/refund), and repo-access options
+> ([security policy](https://roam-code.com/security)).
 >
-> — `[YOUR_NAME]`
+> Questions? Reply or [TBD: Calendly link] for a quick call. Proposal
+> expires [date + 7 days].
+>
+> — [TBD: founder signature]
 
-## 8. Kickoff email — sent on payment confirmation
+## 5. Kickoff email — funnel stage: engagement-kickoff
 
-> **Subject**: Welcome — your audit kicks off [date]
+Send on payment or written purchase-approval confirmation.
+Triggers: playbook **Day 0 step 9** (kickoff email template, verbatim
+in playbook).
+
+> **Subject**: Kickoff package — your PR Replay starts [date]
 >
-> Payment received, thank you. Three things to start:
+> Payment / purchase approval confirmed, thank you. Three things to start:
 >
 > 1. **Repo access** (pick one):
->    - Add `[your audit email]` as a temporary GitHub collaborator (preferred —
->      7-day rotation).
->    - Email a git bundle to [secure email] (I'll provide encrypted upload link).
->    - Screen-share session — I run roam-code on your machine, no code transfer.
+>    - Add the deploy-key public key below as a temporary read-only key
+>      on [REPO_URL]: `[PUBLIC_KEY]`
+>    - Send a git bundle through [secure upload path].
+>    - Screen-share session: I run roam-code on your machine, no code
+>      transfer. (Data-handling details:
+>      [roam-code.com/privacy](https://roam-code.com/privacy).)
 >
-> 2. **Slack/email channel**: I'll send daily 3-sentence status updates from
->    Day 1 to delivery. Tell me which you prefer.
+> 2. **Status updates**: I will send daily 3-sentence updates from Day 1
+>    to delivery. Tell me Slack or email.
 >
-> 3. **Walkthrough call**: book your delivery-day call here [Calendly link,
->    60-min slot].
+> 3. **Walkthrough call**: book your delivery call here
+>    [TBD: Calendly link, `[30/90]`-minute slot].
 >
-> Delivery date: **[date]**. If anything blocks me, you'll know the same day.
+> Delivery date: **[date]**. If anything blocks me, you will know the
+> same day.
 >
-> Excited to dig in.
->
-> — `[YOUR_NAME]`
+> — [TBD: founder signature]
 
-## 9. Daily status email
+## 6. Daily status email — funnel stage: engagement-kickoff -> delivery
 
-> **Subject**: Day [X]/[N] — [client name] audit
+Triggers: playbook **Day 2–N** (replay execution).
+
+> **Subject**: Day [X]/[N] — [client name] PR Replay
 >
-> **Today**: [3–5 word summary]
-> **Tomorrow**: [3–5 word summary]
+> **Today**: [3-5 word summary]
+> **Tomorrow**: [3-5 word summary]
 > **On track for**: [delivery date]
 > **Need from you**: [if anything; usually nothing]
 
-Keep it that short. Daily presence > daily essay.
+Daily presence beats daily essays.
 
-## 10. Post-delivery email — the value moment
+## 7. Post-delivery email — funnel stage: delivery
 
-> **Subject**: Your audit is ready
+Triggers: playbook **Day N step 19** (send report ~10 min before walk-
+through call); see playbook for the verbatim "ahead of our call" body.
+This template covers the **post-call** email that ships the final deliverable.
+
+> **Subject**: Your PR Replay report — final deliverable
 >
-> [first_name], the full report is attached. Quick orientation:
+> [first_name], the final report is attached (Markdown + PDF). Quick
+> orientation:
 >
-> - **Pages 1-2**: Executive summary — read these first.
-> - **Pages 3-13**: Findings, recommendations, suggested CLAUDE.md drop-in.
-> - **Pages 14-15**: 30 / 60 / 90 day fix roadmap.
+> - **Executive summary**: read this first.
+> - **Eight-evidence-questions table**: what the report covers + what's
+>   explicitly Out of scope (per the honest-banner discipline at SOW
+>   §12.1).
+> - **Detector breakdown**: detector classes, example PRs, severity
+>   ranking.
+> - **Recommended CI gates**: the few checks worth wiring into CI now.
 >
-> Loom walkthrough: [link, 8 min]. Watch on 1.5×.
+> Reminder on framing: the report **maps to** and **supports evidence
+> for** SOC 2 / ISO 42001 / EU AI Act Article 14 controls; it does **not
+> certify** compliance with any framework. Useful as evidence for your
+> auditor, not a substitute for certification.
 >
-> **Q&A available**: 30 days. DM/email anytime.
+> Walkthrough: [link / calendar invite already sent].
+>
+> **Q&A available**: through `[DATE]` (5 business days from the walk-
+> through call, per SOW §6 acceptance window). DM/email anytime.
 >
 > Two asks:
-> 1. **Testimonial**: 2-3 sentences on what you found valuable.
->    Link: [Typeform / Google Form, 5 questions, 5 min].
-> 2. **Retainer**: Monthly check-ins ($1,400/mo Pro) keep these wins
->    compounding. Want a quick call to discuss? [Calendly link].
+> 1. **Testimonial**: 2-3 sentences on what landed. Link:
+>    [TBD: testimonial-form URL].
+> 2. **Review follow-up**: Want me to price the Roam Review founding-
+>    customer path for this repo using your **`$[1,250 / 3,000]` PR
+>    Replay credit**? [TBD: Calendly link].
 >
 > Thanks for the trust on this one.
 >
-> — `[YOUR_NAME]`
+> — [TBD: founder signature]
 
-## 11. Day-7 follow-up
+## 8. Day-7 follow-up — funnel stage: delivery -> Roam Review upsell
 
-> **Subject**: Quick check on [audit project name]
->
-> [first_name], quick check — did anything in the report not land? Want me to
-> clarify any finding?
->
-> Also — saw [recent development at their company]. Worth flagging that the
-> [specific audit finding X] connects to that. Happy to talk through it.
->
-> — `[YOUR_NAME]`
+Triggers: playbook **Day N+5** (acceptance window closes); useful prompt
+to confirm the buyer is silent (= accepted) or surface objections early.
 
-## 12. Retainer pitch — paragraph version (or 3-slide deck)
-
-For audit clients 30+ days post-delivery.
-
-> **Where you were** (start of audit): [their starting context, paste from
->   exec summary].
+> **Subject**: Day-7 check on [PR Replay project name]
 >
-> **What we found**: [top 3 findings — paste from report].
+> [first_name], quick check — did anything in the report not land? Want me
+> to clarify any finding?
 >
-> **How a Pro retainer keeps the wins compounding**:
-> - Monthly health re-runs (catch regressions before they ship).
-> - 2 new architecture rules per quarter (your rules, encoded into CI).
-> - Slack support, 2-day SLA (questions during implementation).
+> Also, [specific finding X] is the one I would wire into CI first because
+> it connects directly to [pain they described]. Happy to talk through it.
 >
-> **Investment**: $1,400/mo, cancel anytime. Annual prepay 10% off.
+> Reminder: the SOW §6 acceptance window closes [date — 5 business days
+> after walk-through call]. If nothing is wrong, no action needed on
+> your side.
 >
-> Want a 20-min call to walk through what would land first? [Calendly link]
+> — [TBD: founder signature]
 
-## 13. Referral ask — Day 30
+## 9. Roam Review follow-up pitch — funnel stage: Roam Review upsell
 
-> **Subject**: One quick ask
+For PR Replay clients 7–30 days post-delivery.
+Triggers: playbook **Day N+60** (credit window closes); send the soft
+nudge at D+45 per the playbook reminder.
+
+> **Subject**: Apply your `$[1,250 / 3,000]` Review credit — [Company]
+>
+> **Where you were**: [their starting context, pasted from the exec summary].
+>
+> **What we found**: [top 3 findings].
+>
+> **How Roam Review keeps the wins compounding**:
+> - Same structural checks on every new PR.
+> - Repo-specific rules encoded into CI instead of living in a report.
+> - A monthly evidence digest for engineering leadership (maps to SOC 2
+>   CC7.x change-management evidence; does not certify SOC 2).
+>
+> **Investment**: `[REVIEW_TIER]`, with **`$[1,250 / 3,000]` credit from
+> PR Replay** applied to the first year if signed by `[CREDIT_EXPIRY —
+> 60 calendar days from delivery per SOW §7]`.
+>
+> Want a 20-minute call to walk through what would land first?
+> [TBD: Calendly link]
+
+## 10. Referral ask — Day 30 — funnel stage: Roam Review upsell
+
+> **Subject**: One quick ask — referral on [Company]
 >
 > [first_name], one quick ask — if you know one other team that would benefit
-> from an Agent Readiness Audit, intro me by email and I'll give them 15% off
-> + you 15% off your next service. No pressure if no fit.
+> from PR Replay, intro me by email and I will give them 15% off + you 15% off
+> your next service. No pressure if no fit.
 >
-> P.S. did the [specific recommendation from audit] get implemented? Always
+> P.S. did [specific recommendation from the report] get implemented? Always
 > curious how recommendations land.
 >
-> — `[YOUR_NAME]`
+> — [TBD: founder signature]
 
-## 14. Crisis communication — delayed delivery
+## 11. Crisis communication — delayed delivery — funnel stage: delivery
 
 When you have to extend a delivery date.
+Triggers: playbook **When things go wrong → mid-replay smaller than
+expected**. Refund position resolves via SOW §8.
 
-> **Subject**: Heads-up on [audit project name] — new delivery date
+> **Subject**: New delivery date — [PR Replay project name]
 >
-> [first_name], heads-up: I'm hitting an unexpected [scope challenge / personal
-> availability issue]. New delivery date: **[X + 5 days]**. Two options if
-> this doesn't work:
+> [first_name], heads-up: I am hitting an unexpected [scope challenge /
+> availability issue]. New delivery date: **[X + 5 days]**.
 >
-> 1. Stick with new date (full deliverable, 5 days late) — most common choice.
-> 2. Refund unworked portion (estimate: $[X]).
+> Two options if this does not work:
+> 1. Stick with the new date — full deliverable, 5 days late.
+> 2. Refund the unworked portion per SOW §8 — estimate: $[X]. Refund
+>    policy: [roam-code.com/refund](https://roam-code.com/refund).
 >
-> Either way, no charge for the delay itself. I'll send daily updates from now
-> to delivery. Sorry for the change.
+> Either way, no charge for the delay itself. I will send daily updates
+> from now to delivery. Sorry for the change.
 >
-> — `[YOUR_NAME]`
+> — [TBD: founder signature]
+
+## 12. Chargeback-acknowledgment — funnel stage: post-delivery dispute
+
+Triggers: playbook **When things go wrong → buyer disputes the credit-
+card charge**, step 1 (try to resolve before responding to Stripe;
+refund-policy commitment: acknowledge within 2 business days, resolve
+within 5).
+
+> **Subject**: Your PR Replay chargeback — let's resolve directly
+>
+> [first_name], Stripe just notified me of a chargeback on the [Team /
+> Deep] PR Replay engagement [date]. Before this goes through the
+> Stripe dispute process, I would like to resolve it with you directly.
+>
+> What works for you?
+> 1. Acknowledge a specific issue with the deliverable and I issue a
+>    partial / full refund directly (faster than Stripe's process, and
+>    avoids the chargeback-handling fee per
+>    [roam-code.com/refund](https://roam-code.com/refund)).
+> 2. We get on a 15-minute call to walk through whatever didn't land,
+>    and you withdraw the dispute.
+> 3. You confirm you want the Stripe process; I respond there with the
+>    signed SOW + delivery proof + engagement record per the refund
+>    policy.
+>
+> I respond to Stripe within 7 days regardless. Either way, here's a
+> 2-business-day acknowledgement per our refund commitment.
+>
+> — [TBD: founder signature]
+
+## 13. Right-to-delete acknowledgment — funnel stage: post-delivery
+
+Triggers: playbook **When things go wrong → buyer requests deletion of
+engagement artefacts (DPA §7 / SOW §9)**, step 1 (acknowledge within 2
+business days; comply within 30 calendar days; state Greek tax
+retention exception explicitly).
+
+> **Subject**: Deletion request received — [PR Replay project name]
+>
+> [first_name], confirming receipt of your deletion request for the
+> [Team / Deep] PR Replay engagement [date]. Per SOW §9 "Right to
+> delete" and our DPA §7, I will comply within **30 calendar days**.
+>
+> What gets deleted:
+> - Temporary clone (already deleted on Day N+1 per DPA §7.1).
+> - The delivered report copies (PDF + Markdown) on my side.
+> - All working-file notes containing your repo identifiers, file
+>   paths, or contributor names.
+>
+> What is retained (Greek tax obligation, ~5 years):
+> - The Greek-myDATA invoice issued by my accountant.
+> - The single-line ledger entry: `tier`, `client`, `commits scanned`,
+>   `output path`, `generated_at`.
+>
+> Confirmation of deletion will land in your inbox by **[date + 30
+> calendar days]**.
+>
+> — [TBD: founder signature]
+
+## 14. Day N+90 retention-deletion confirmation — funnel stage: post-delivery
+
+Triggers: playbook **Day N+90** (DPA §7.3 retention enforcement); send
+when the 90-day follow-up window has elapsed and the buyer has not
+already invoked SOW §9.
+
+> **Subject**: 90-day follow-up window closed — report copies deleted
+>
+> [first_name], a quick housekeeping note. Ninety calendar days have
+> passed since the [Team / Deep] PR Replay delivery on [date], so per
+> our DPA §7.3 I have now deleted the delivered report copies on my
+> side. You still have your own copies and the report remains yours;
+> this is purely about Provider-side retention.
+>
+> What is retained (Greek tax, ~5 years): the single-line ledger entry
+> + the Greek-myDATA invoice. Nothing identifying your source.
+>
+> If you ever need a re-issue from the engagement record, reply and I
+> can confirm exactly what's retained per DPA §7.4–7.5.
+>
+> — [TBD: founder signature]
 
 ---
 
-## Anti-patterns (don't ever do these)
+## Anti-patterns
 
-- Don't promise specific findings before the audit runs. Say "I expect to
-  find X-class issues based on what you described" — never "I will find X."
-- Don't apologise for pricing. If pricing is wrong for the prospect, end the
-  conversation respectfully — don't discount on the call.
-- Don't send proposals without an expiration date (default: 7 days).
-- Don't move to retainer pitch on Day 0 — wait for the value moment to land
-  (Day 7+) before asking for monthly recurring.
-- Don't cold-blast template 4-14 to every prospect at once; each is keyed to
-  a specific stage.
+- Do not promise specific findings before the replay runs.
+- Do not apologise for pricing. If pricing is wrong for the prospect, end the
+  conversation respectfully.
+- Do not send proposals without an expiration date.
+- Do not pitch hosted Review as generally available before the launch path is
+  ready.
+- Do not cold-blast templates to every prospect; each is keyed to a stage.
+- Do not write "certifies SOC 2 / ISO 42001 / EU AI Act compliance" or any
+  variant — the report **maps to** and **supports evidence for** controls,
+  never certifies. Mirror SOW §12.1 verbatim when in doubt.
+- Do not invent customer quotes, case studies, prior-engagement counts, or
+  testimonials. Leave `[TBD: testimonial-form URL]` and similar markers in
+  place until real ones land.
+- Do not omit the GDPR opt-out footer on cold-introduce / proposal / upsell
+  outbound. Transactional emails (kickoff, daily status, post-delivery,
+  crisis, chargeback, deletion, retention) are exempt by GDPR but harmless
+  to include.
+
+## [TBD: ...] placeholders the operator must resolve before first send
+
+- [TBD: founder signature] — the literal sign-off block (name, title,
+  one-line context). Used in every template; resolve once and substitute
+  globally.
+- [TBD: Calendly link] — used in templates 2, 4, 5, 7, 9 for booking the
+  walk-through call + Review follow-up call. One Cal.com / Calendly URL;
+  resolve once and substitute globally.
+- [TBD: testimonial-form URL] — used in template 7 (post-delivery ask).
+  Could be a Typeform, a Google Form, or a plain `mailto:` — pick one
+  and resolve.
+- [TBD: secure upload path] — used in template 5 (kickoff) for the git
+  bundle alternative path. Currently `mailto:` works for small bundles;
+  if engagements grow, switch to a temporary signed-URL pattern and
+  document it here.

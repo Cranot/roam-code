@@ -157,20 +157,26 @@ def test_migrated_caller_cmd_budget_load_budgets(tmp_path: Path) -> None:
     assert result[0]["metric"] == "cycles"
     assert warnings == []
 
-    # Empty file path: ``[]`` returned untouched. Pre-W1030 callsites
-    # like _load_budgets still WARN here ("no `budgets:` key") because
-    # they cannot distinguish empty_file from "well-formed dict missing
-    # the key". That's exactly the conflation W1030's return_status
-    # opt-in fixes -- when this callsite migrates to consume the status,
-    # it will be able to skip the "no key" warning on empty_file and
-    # treat the absence as a valid empty state.
+    # Empty file path: ``[]`` returned untouched. W1030-followup-A:
+    # opt-in load_status surfacing — _load_budgets now consumes
+    # ``load_yaml_with_warnings(return_status=True)`` and short-circuits
+    # the ``empty_file`` / ``empty_yaml`` states BEFORE the "no
+    # `budgets:` key" warning fires, so the zero-byte stub disambiguates
+    # from "well-formed dict missing the key". The pre-W1030-followup-A
+    # contract pinned a single "no budgets key" warning here; the
+    # post-migration contract is that an empty stub emits NO warning
+    # (the absence is a valid empty state). Callers that need to know
+    # the file existed-but-empty consume the status via
+    # _load_budgets_with_status instead.
     empty = _write(tmp_path, "budget-empty.yaml", "")
     warnings_empty: list[str] = []
     result_empty: list[Any] = _load_budgets(empty, warnings_out=warnings_empty)
     assert result_empty == []
-    # Pre-W1030 contract: caller still warns "no budgets key".
-    assert len(warnings_empty) == 1
-    assert "no `budgets:` key" in warnings_empty[0]
+    # W1030-followup-A: empty file is now a clean (zero-warning) path.
+    assert warnings_empty == [], (
+        f"W1030-followup-A: empty_file must short-circuit before the "
+        f"'no `budgets:` key' warning fires, got: {warnings_empty!r}"
+    )
 
     # Missing file path: ``[]`` returned untouched (helper short-circuits).
     missing_result = _load_budgets(tmp_path / "absent.yaml", warnings_out=[])

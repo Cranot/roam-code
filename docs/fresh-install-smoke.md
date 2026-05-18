@@ -87,15 +87,13 @@ also exposes `commands[]`, `categories[]`, and `mcp_tools[]` arrays):
 }
 ```
 
-The counts above (commands / canonical / categories / MCP tools) match the
-README sub-headline. The `summary.mcp_tool_count_by_preset` field on the
-same envelope breaks the MCP-tool total down per preset (`core` is the
-default curated subset; `full` enumerates every registered tool). These
-counts are AST-derived from `src/roam/mcp_server.py`, so they hold
-whether or not the `[mcp]` extras are installed at runtime. (W844-drive-
-by-2: the inline 238/224/7 numbers were a v13.1 snapshot of the headline;
-v13.2 dropped the count-headline framing and the live count is now
-whatever `surface --json` reports.)
+The counts above are the captured v13.2 smoke output, not a hand-maintained
+headline. The README and MCP metadata use generated release facts and may move
+forward as commands are added. For the current count, run
+`roam surface --json` in the checkout or `python dev/build_readme_counts.py
+--check` in this repository. The `summary.mcp_tool_count_by_preset` field on
+the same envelope breaks the MCP-tool total down per preset (`core` is the
+default curated subset; `full` enumerates every registered tool).
 
 ---
 
@@ -240,17 +238,18 @@ intelligence that produces verifiable evidence without leaving the
 machine.** If a CTO or CISO wants to verify the air-gap claim, this
 transcript is the minimum-effort reproduction.
 
-The same loop scales: on the roam-code repo itself, `roam init` takes ~30s
-and indexes 200+ files; the same `preflight` / `impact` envelope shape
-returns. The synthetic project is here so the transcript stays unbiased and
-copy-pasteable; the production claim is that the shape holds at 100×
-scale.
+The same loop scales to larger repositories: the `preflight` / `impact`
+envelope shape is the same, while runtime depends on file count, language mix,
+and git-history depth. The synthetic project is here so the transcript stays
+unbiased and copy-pasteable.
 
 ---
 
-## Smoke findings (real gaps surfaced by this run)
+## Smoke findings (real gaps surfaced and closed)
 
-The smoke is most valuable when it finds rough edges. Three observations:
+The smoke is most valuable when it finds rough edges. This run surfaced four
+first-run issues; all four are now closed in code and pinned by regression
+tests or generated-count checks:
 
 1. **`roam surface --json` reports `mcp tool count 0` even with `[mcp]`
    extras installed.** *RESOLVED (W1290).* The CLI-side surface now reads
@@ -262,22 +261,20 @@ The smoke is most valuable when it finds rough edges. Three observations:
    map (`core`: 57, `review`: 70, `refactor`: 70, `debug`: 69,
    `architecture`: 71, `compliance`: 13, `full`: 224).
 2. **`roam mcp-status` raises `KeyError: 'symbol'` on a fresh install with
-   no built index.** Cold-start guard should produce a structured "index
-   not built" envelope (Pattern 1 variant A) instead of a bare verdict
-   line.
+   no built index.** *RESOLVED (W1289).* The command now emits a structured
+   Pattern-1A prerequisite envelope instead of a traceback when the MCP
+   runtime cannot be imported.
 3. **`roam init` prints `Health: 14/100` in its closing summary, but
    `roam health` immediately after returns `63/100` on the same index.**
-   The init-time health line is computed differently from the dedicated
-   command and contradicts it. Either align the computation or drop the
-   number from the init summary.
+   *RESOLVED (W1288).* The init banner no longer prints a quick health score;
+   users are pointed at `roam health` for the canonical computation.
 4. **`roam init` echoes "No roam index found. Run `roam init`..." before
-   it builds the index.** The advisory is harmless but confusing on a
-   literal first-time invocation. Suppress the not-found path when the
-   command is `init`.
+   it builds the index.** *RESOLVED (W1291).* `cmd_init` suppresses the
+   self-recommendation while other cold-start commands keep the advisory.
 
-None of these block the smoke from passing — but they're exactly the kind
-of first-impression noise a launch readiness pass should fix before the
-README claim is published broadly.
+Keep this section in the transcript: it documents why fresh-install smoke is
+not just marketing proof but a launch-readiness harness that catches
+first-impression defects.
 
 ---
 

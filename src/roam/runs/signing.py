@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import Optional
 
 from roam.atomic_io import atomic_write_bytes
+from roam.output.formatter import WarningsOut
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -89,7 +90,11 @@ def ledger_key_path(repo_root: Path) -> Path:
     return Path(repo_root) / ".roam" / "runs" / LEDGER_KEY_FILE
 
 
-def ensure_ledger_key(repo_root: Path) -> bytes:
+def ensure_ledger_key(
+    repo_root: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> bytes:
     """Read (or generate) the per-repo HMAC key. Returns raw bytes.
 
     Generation policy:
@@ -107,7 +112,33 @@ def ensure_ledger_key(repo_root: Path) -> bytes:
     If the existing file is the wrong length, we treat it as corrupt and
     refuse to silently regenerate (regenerating would invalidate every
     existing chain). Callers see a :class:`ValueError`.
+
+    W601 lineage disclosure ("Make fallback chains loud", agi-in-md
+    CP45/CP46/CP52/CP53). The chmod permission-tighten failure on the
+    write-side of first-generation was previously swallowed silently;
+    when ``warnings_out`` is supplied, this function appends ONE
+    closed-enum marker on the silent path. The return semantic is
+    PRESERVED — the function still returns the 32-byte key regardless of
+    whether chmod succeeded. ``warnings_out=None`` (default) preserves
+    pre-W601 silent behaviour.
+
+    Closed-enum marker (exactly 1 kind — per W978 first-hypothesis
+    discipline: the read-side paths at lines 112-122 already raise
+    ``ValueError`` loudly; only the write-side chmod was silent):
+
+      * ``signing_key_perm_tighten_failed:<rel_path>:<exc_class>:<detail>``
+        — operational anomaly. The file was generated successfully but
+        the subsequent ``os.chmod`` raised ``OSError`` (typically on
+        Windows, read-only FS, or noexec mounts). The key is usable; the
+        permission tightening is informational. Mirrors W596's
+        ``run_meta_read_failed`` marker shape with a ``signing_key_``
+        prefix.
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     path = ledger_key_path(repo_root)
     if path.exists():
         try:
@@ -131,29 +162,69 @@ def ensure_ledger_key(repo_root: Path) -> bytes:
     # filesystem ACL is the real defense.
     try:
         os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-    except OSError:
+    except OSError as exc:
         # Permission tightening failure is non-fatal — the file is still
         # under .roam/ which is in .gitignore and inside the user's home.
-        pass
+        # W601: disclose lineage when a warnings_out bucket is supplied.
+        _emit(f"signing_key_perm_tighten_failed:{LEDGER_KEY_FILE}:{type(exc).__name__}:{exc}")
     return new_key
 
 
-def key_file_mode(repo_root: Path) -> Optional[int]:
+def key_file_mode(
+    repo_root: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> Optional[int]:
     """Return the POSIX permission bits of the key file, or ``None``.
 
     Returns ``None`` on Windows (where st_mode doesn't carry POSIX
     semantics) or when the file is absent. Exposed primarily for tests.
+
+    W601-bonus lineage disclosure: when ``warnings_out`` is supplied,
+    each silent ``None`` return path (other than the Windows
+    not-meaningful branch, which is a deliberate non-applicability per
+    W597 daemon-discipline intentional-absence pattern) appends one
+    closed-enum marker. ``warnings_out=None`` (default) preserves the
+    pre-W601 silent contract.
+
+    Closed-enum markers (exactly 2 kinds — per W978 first-hypothesis
+    discipline: ``stat`` is the only I/O, no parse step exists, and
+    the Windows branch is intentional non-applicability, not failure):
+
+      * ``signing_key_not_found:<rel_path>`` — informational. The
+        key file does not exist (callers in tests / before
+        ``ensure_ledger_key`` has run). Mirrors W596's
+        ``run_meta_not_found`` informational missing-state marker.
+      * ``signing_key_stat_failed:<rel_path>:<exc_class>:<detail>`` —
+        operational anomaly. ``Path.stat`` raised ``OSError`` on a file
+        the ``exists()`` check just saw (TOCTOU window, permission-
+        flipped mid-call, etc.).
+
+    The Windows branch (``os.name == "nt"``) does NOT emit a marker —
+    returning ``None`` there is intentional design (st_mode doesn't
+    carry POSIX semantics), not a silent failure. Per "Make fallback
+    chains loud" rule, lineage emission is reserved for paths where
+    the caller might otherwise mistake the result for a successful
+    POSIX-meaningful return.
     """
+
+    def _emit(kind: str) -> None:
+        if warnings_out is not None:
+            warnings_out.append(kind)
+
     path = ledger_key_path(repo_root)
     if not path.exists():
+        _emit(f"signing_key_not_found:{LEDGER_KEY_FILE}")
         return None
     if os.name == "nt":
         # NTFS reports a synthetic mode that isn't comparable to POSIX
         # 0o600; signal "not meaningful" instead of lying.
+        # No marker: this is deliberate non-applicability, not a failure.
         return None
     try:
         return stat.S_IMODE(path.stat().st_mode)
-    except OSError:
+    except OSError as exc:
+        _emit(f"signing_key_stat_failed:{LEDGER_KEY_FILE}:{type(exc).__name__}:{exc}")
         return None
 
 

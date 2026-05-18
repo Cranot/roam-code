@@ -73,6 +73,8 @@ import click
 from roam.capability import roam_capability
 from roam.evidence.completeness_compat import classify_completeness
 from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.risk import normalize_risk_level, risk_rank
+from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
 # Verdict ladder
@@ -153,8 +155,8 @@ def _load_raw_packet(
             source_label = "<stdin>"
         else:
             p = Path(path or "")
-            raw = p.read_text(encoding="utf-8")
             source_label = str(p)
+            raw = p.read_text(encoding="utf-8")
     except OSError as exc:
         return None, f"could not read packet ({source_label!r}): {exc}"
     try:
@@ -595,8 +597,145 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     if from_stdin and packet_path:
         raise click.UsageError("Pass either a packet path or --stdin, not both.")
 
+    # --- W607-AT: substrate-CALL marker plumbing -------------------------
+    # cmd_evidence_doctor is the VALIDATOR at the head of the
+    # evidence-compiler pipeline. It validates W174 (ChangeEvidence
+    # dataclass) + W226 (export profiles) + W228 (false-positive feedback)
+    # + the collector -> exporter chain. After W607-AT, the marker stack
+    # composes from the audit-trail quartet (W607-AD/AI/AL/AP) through
+    # evidence-doctor's consumption of those markers downstream.
+    #
+    # Substrate boundaries wrapped here:
+    #
+    #   load_raw_packet              (JSON read + parse)
+    #   validate_closed_enums        (W174 vocabulary check)
+    #   recompute_content_hash       (W218 integrity recompute)
+    #   classify_completeness        (W1266 raw-dict completeness scorer)
+    #   classify_banner              (W259 banner tier classification)
+    #   classify_trust_tiers         (W281 actor-trust tier tally)
+    #   classify_authority_kinds     (W350 authority-kind tally)
+    #   packet_size_bytes            (W280 byte-count measurement)
+    #   classify_packet_budget       (W280 budget-state classification)
+    #   build_next_steps             (Q-gap -> action recipe)
+    #   build_verdict                (FAIL/WARN/PASS ladder scoring)
+    #
+    # Each raise becomes an
+    # ``evidence_doctor_<phase>_failed:<exc_class>:<detail>`` marker via
+    # ``_w607at_warnings_out``. partial_success flips on any non-empty
+    # bucket. Empty bucket on the clean path keeps the envelope shape
+    # byte-identical to the pre-W607-AT command.
+    #
+    # PATTERN-2 CHECK: pre-W607-AT cmd_evidence_doctor has THREE narrow
+    # try/except blocks in module-level helpers (lines 150/160/312) and
+    # ZERO bare ``except ...: pass`` Pattern-2 swallows. The three blocks
+    # all return structured sentinel values (error string / None) rather
+    # than degrading silently, so they are NOT Pattern-2 candidates -
+    # W607-AT does not need to eliminate any.
+    #
+    # VALIDATOR-CLOSURE milestone: cmd_evidence_doctor is the validator
+    # that consumes everything the audit-trail quartet emits. With
+    # W607-AT plumbing, the producer/validator chain on the
+    # evidence-compiler pipeline is W607-plumbed end-to-end. A raise
+    # anywhere in {emit, verify, conform, export, validate} surfaces a
+    # marker rather than crashing.
+    _w607at_warnings_out: list[str] = []
+
+    def _run_check_at(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AT marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an
+        ``evidence_doctor_<phase>_failed:<exc_class>:<detail>`` marker
+        via ``_w607at_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607at_warnings_out.append(f"evidence_doctor_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # --- W607-CF: aggregation-phase marker plumbing (additive) ----------
+    # cmd_evidence_doctor is the evidence-packet diagnostic sentinel and
+    # the VALIDATOR-CLOSURE at the head of the evidence-compiler pipeline
+    # (see W607-AT preamble above). With W607-AT covering the
+    # substrate-CALL layer (11 phases), W607-CF additively wraps the
+    # AGGREGATION-PHASE layer that sits ON TOP of those substrate signals:
+    #
+    #   - ``score_classify``     -- map the W259 banner_tier
+    #                               (strong/partial/insufficient) onto an
+    #                               internal evidence-completeness risk
+    #                               vocabulary projected into W631 levels
+    #                               (low/medium/high). Schema/hash FAIL
+    #                               precedence promotes to ``critical``.
+    #                               Floor=None drives the
+    #                               ``score_classification: "unknown"``
+    #                               sentinel (mirror of cmd_pr_analyze
+    #                               W607-BY / cmd_pr_risk W607-BU).
+    #   - ``score_normalize``    -- canonical W631 risk-LEVEL projection
+    #                               (``normalize_risk_level`` +
+    #                               ``risk_rank``). Pattern 3a discipline
+    #                               -- route through the W631 canonical
+    #                               helper, NOT through an inline severity
+    #                               map. cmd_evidence_doctor is a
+    #                               validator that ALSO emits a canonical
+    #                               risk-LEVEL so cross-command consumers
+    #                               (pr-bundle, pr-replay) can gate on the
+    #                               same vocabulary.
+    #   - ``compute_verdict``    -- augmented verdict text build appending
+    #                               the canonical ``(risk_level X)``
+    #                               suffix (LAW 6 standalone-parse).
+    #                               Floor must NOT re-format
+    #                               risk_level_canonical -- W978 first-
+    #                               hypothesis discipline (literal "low"
+    #                               floor instead).
+    #   - ``auto_log``           -- active-run ledger write (silent no-op
+    #                               if no run is active; the underlying
+    #                               auto_log can still raise on HMAC chain
+    #                               misshape or filesystem failures).
+    #   - ``serialize_envelope`` -- ``json_envelope("evidence-doctor", ...)``
+    #                               projection. Floor to a parseable stub
+    #                               so consumers still receive structured
+    #                               JSON with the marker attached + the
+    #                               canonical command name.
+    #
+    # All boundaries share the canonical ``evidence_doctor_*`` marker
+    # family (same as W607-AT; W607-CF is ADDITIVE, not a separate
+    # prefix). The two buckets (``_w607at_warnings_out`` substrate-CALL +
+    # ``_w607cf_warnings_out`` aggregation-phase) are combined at
+    # envelope-emit time so consumers see the full degradation lineage.
+    #
+    # EVIDENCE-COMPILER COMPLETENESS milestone: cmd_evidence_doctor closes
+    # the assurance-layer thesis (CLAUDE.md "Evidence compiler layer").
+    # With W607-AT (substrate) + W607-CF (aggregation), the validator at
+    # the head of the evidence-compiler pipeline is W607-plumbed
+    # end-to-end alongside cmd_pr_bundle (W607-AE + BW) and cmd_pr_replay
+    # (W607-AH + CA).
+    _w607cf_warnings_out: list[str] = []
+
+    def _run_check_cf(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CF marker emission.
+
+        Mirror of ``_run_check_at`` shape (same
+        ``evidence_doctor_<phase>_failed:`` marker family) but writes into
+        ``_w607cf_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cf_warnings_out.append(f"evidence_doctor_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     source_label = "<stdin>" if from_stdin else str(packet_path)
-    payload, load_error = _load_raw_packet(packet_path, from_stdin=from_stdin)
+    load_result = _run_check_at(
+        "load_raw_packet",
+        _load_raw_packet,
+        packet_path,
+        from_stdin=from_stdin,
+        default=(None, "load_raw_packet helper raised; see warnings_out"),
+    )
+    payload, load_error = load_result if load_result is not None else (None, "load_raw_packet returned None")
 
     if payload is None:
         # Hard load failure — emit a FAIL envelope so JSON consumers
@@ -688,13 +827,23 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         sys.exit(2)
 
     # Validate closed enumerations
-    enum_violations = _validate_closed_enums(payload)
+    enum_violations = _run_check_at(
+        "validate_closed_enums",
+        _validate_closed_enums,
+        payload,
+        default=[],
+    )
     schema_version = payload.get("schema_version")
     schema_ok = bool(schema_version) and not enum_violations
 
     # Recompute content_hash
     stamped_hash = payload.get("content_hash")
-    recomputed_hash = _recompute_content_hash(payload)
+    recomputed_hash = _run_check_at(
+        "recompute_content_hash",
+        _recompute_content_hash,
+        payload,
+        default=None,
+    )
     hash_ok = isinstance(stamped_hash, str) and isinstance(recomputed_hash, str) and stamped_hash == recomputed_hash
     # If no content_hash is stamped, treat as "present but unverified" —
     # don't mark hash_ok True, but also don't FAIL on a packet that simply
@@ -712,8 +861,25 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     # Completeness + banner. W1266 - shared raw-dict helper applies the
     # W1254 stale-demotion penalty so a stale-but-otherwise-complete
     # packet drops from STRONG to PARTIAL via :func:`_classify_banner`.
-    q_results, totals = classify_completeness(payload)
-    banner_tier, banner_label, banner_rationale = _classify_banner(totals)
+    _EMPTY_TOTALS = {"complete": 0, "partial": 0, "missing": 8, "not_applicable": 0}
+    completeness_result = _run_check_at(
+        "classify_completeness",
+        classify_completeness,
+        payload,
+        default=({}, dict(_EMPTY_TOTALS)),
+    )
+    q_results, totals = completeness_result if completeness_result is not None else ({}, dict(_EMPTY_TOTALS))
+    banner_result = _run_check_at(
+        "classify_banner",
+        _classify_banner,
+        totals,
+        default=("insufficient", "Insufficient evidence", "banner classification raised; see warnings_out"),
+    )
+    banner_tier, banner_label, banner_rationale = (
+        banner_result
+        if banner_result is not None
+        else ("insufficient", "Insufficient evidence", "banner classification raised; see warnings_out")
+    )
 
     # W1262: staleness signal from W1254 producer. Read ``evidence_stale``
     # + ``stale_reasons`` directly from the packet dict so the doctor
@@ -728,7 +894,13 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     )
 
     # W281: actor-trust tier counts + WARN signals.
-    trust_counts, trust_warnings = _classify_trust_tiers(payload)
+    trust_result = _run_check_at(
+        "classify_trust_tiers",
+        _classify_trust_tiers,
+        payload,
+        default=({k: 0 for k in _TRUST_TIER_KEYS}, []),
+    )
+    trust_counts, trust_warnings = trust_result if trust_result is not None else ({k: 0 for k in _TRUST_TIER_KEYS}, [])
 
     # W350: authority-kind tally (permit / mode / lease / policy_rule /
     # approval / token_scope). Permits are exposed as authority_refs with
@@ -737,7 +909,22 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     # producer axis). Surfacing the breakdown lets reviewers see at a
     # glance "this packet binds 2 permits + 1 mode" without re-parsing
     # the raw authority_refs[] array.
-    authority_kind_counts = _classify_authority_kinds(payload)
+    _EMPTY_AUTHORITY_COUNTS = {
+        "approval": 0,
+        "lease": 0,
+        "mode": 0,
+        "permit": 0,
+        "policy_rule": 0,
+        "token_scope": 0,
+    }
+    authority_kind_counts = _run_check_at(
+        "classify_authority_kinds",
+        _classify_authority_kinds,
+        payload,
+        default=dict(_EMPTY_AUTHORITY_COUNTS),
+    )
+    if authority_kind_counts is None:
+        authority_kind_counts = dict(_EMPTY_AUTHORITY_COUNTS)
     authority_refs_total = sum(authority_kind_counts.values())
 
     # W280: packet-size budget readout. The doctor never mutates the
@@ -750,8 +937,22 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         packet_size_bytes,
     )
 
-    pkt_size_bytes = packet_size_bytes(payload)
-    pkt_budget_state = classify_packet_budget(pkt_size_bytes)
+    pkt_size_bytes = _run_check_at(
+        "packet_size_bytes",
+        packet_size_bytes,
+        payload,
+        default=0,
+    )
+    if pkt_size_bytes is None:
+        pkt_size_bytes = 0
+    pkt_budget_state = _run_check_at(
+        "classify_packet_budget",
+        classify_packet_budget,
+        pkt_size_bytes,
+        default="within_budget",
+    )
+    if pkt_budget_state is None:
+        pkt_budget_state = "within_budget"
 
     # Honesty signals: redactions + limitations
     redactions = [r for r in (payload.get("redactions") or []) if isinstance(r, str)]
@@ -759,12 +960,21 @@ def evidence_doctor(ctx, packet_path, from_stdin):
     has_producer_not_available = "producer_not_available" in redactions
 
     # Next steps for partial / missing questions
-    next_steps = _build_next_steps(q_results)
+    next_steps = _run_check_at(
+        "build_next_steps",
+        _build_next_steps,
+        q_results,
+        default=[],
+    )
+    if next_steps is None:
+        next_steps = []
 
     # Verdict (FAIL > WARN > PASS). W281: trust_warnings on a STRONG
     # banner downgrade PASS -> WARN. W280: oversized_after_truncation
     # contributes WARN (not FAIL) and joins the verdict line.
-    level, verdict_line = _build_verdict(
+    verdict_result = _run_check_at(
+        "build_verdict",
+        _build_verdict,
         schema_ok=schema_ok,
         hash_ok=hash_ok,
         banner_tier=banner_tier,
@@ -774,6 +984,12 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         packet_budget_state=pkt_budget_state,
         packet_size_bytes_val=pkt_size_bytes,
         packet_budget_bytes=PACKET_SIZE_BUDGET_BYTES,
+        default=(_VERDICT_WARN, "WARN: verdict scorer raised; see warnings_out"),
+    )
+    level, verdict_line = (
+        verdict_result
+        if verdict_result is not None
+        else (_VERDICT_WARN, "WARN: verdict scorer raised; see warnings_out")
     )
 
     summary = {
@@ -818,6 +1034,98 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         "packet_size_bytes": pkt_size_bytes,
         "budget_state": pkt_budget_state,
     }
+
+    # W607-AT -- a non-empty substrate bucket flips partial_success. We
+    # OR with any existing partial_success so we never DOWNGRADE a real
+    # failure-induced flag set elsewhere.
+    if _w607at_warnings_out:
+        summary["warnings_out"] = list(_w607at_warnings_out)
+        summary["partial_success"] = True
+
+    # W607-CF -- score_classify boundary. Map the W259 banner_tier
+    # (strong / partial / insufficient) plus FAIL precedence onto an
+    # internal risk vocabulary projected into W631 levels
+    # (low / medium / high / critical). Schema/hash FAIL drives critical;
+    # banner-driven tiers drive low/medium/high. Floors to ``None`` so
+    # the ``score_classification: "unknown"`` sentinel disambiguates a
+    # degraded outcome from a real ``"low"`` classification (mirror of
+    # cmd_pr_risk W607-BU / cmd_pr_analyze W607-BY / cmd_attest W607-BT).
+    def _classify_evidence_doctor_level(_level: str, _banner_tier: str | None) -> str:
+        if _level == _VERDICT_FAIL:
+            return "critical"
+        if _banner_tier == "insufficient":
+            return "high"
+        if _banner_tier == "partial":
+            return "medium"
+        # banner_tier == "strong" (or any unknown) floors to ``low`` --
+        # mirror of cmd_pr_analyze W531 CI-safety lesson: a typo'd / new
+        # banner tier MUST NOT promote a finding into a CI-failing rank.
+        return "low"
+
+    _cf_score_probe = _run_check_cf(
+        "score_classify",
+        _classify_evidence_doctor_level,
+        level,
+        banner_tier,
+        default=None,
+    )
+    _score_classification_state = "unknown" if _cf_score_probe is None else "classified"
+    _evidence_doctor_domain_level = _cf_score_probe if _cf_score_probe is not None else "low"
+
+    # W607-CF -- score_normalize boundary. Wraps the canonical W631
+    # ``normalize_risk_level`` + ``risk_rank`` projections so a future
+    # signature change / closed-enum vocabulary drift surfaces a marker
+    # rather than crashing the envelope. Floors to ``"low"`` / rank ``1``
+    # so downstream comparators stay non-null. Pattern 3a discipline:
+    # route through ``normalize_risk_level`` (the W631 canonical helper).
+    risk_level_canonical = _run_check_cf(
+        "score_normalize",
+        lambda _level: normalize_risk_level(_level) or "low",
+        _evidence_doctor_domain_level,
+        default="low",
+    )
+    risk_rank_int = _run_check_cf(
+        "score_normalize",
+        risk_rank,
+        risk_level_canonical,
+        default=1,
+    )
+
+    # W607-CF -- compute_verdict boundary. Wraps the augmented verdict
+    # text build appending the canonical ``(risk_level X)`` suffix (LAW 6
+    # standalone-parse). Floor MUST NOT re-format risk_level_canonical --
+    # the same value that tripped the closure would re-raise inside the
+    # default f-string. Use a literal "low" floor (LAW 6 still holds:
+    # the line works standalone; W631 floor is "low"). W978 first-
+    # hypothesis discipline mirror of cmd_pr_analyze W607-BY.
+    def _build_augmented_verdict() -> str:
+        return f"{verdict_line} (risk_level {risk_level_canonical})"
+
+    augmented_verdict = _run_check_cf(
+        "compute_verdict",
+        _build_augmented_verdict,
+        default="evidence-doctor completed (risk_level low)",
+    )
+
+    # Thread the augmented verdict + canonical risk-LEVEL onto the
+    # summary block; consumers can call
+    # ``risk_rank(data["summary"]["risk_level_canonical"]) >= 3`` to gate
+    # on high-or-worse without re-deriving the threshold (Pattern 3a).
+    summary["verdict"] = augmented_verdict
+    summary["risk_level_canonical"] = risk_level_canonical
+    summary["risk_rank"] = risk_rank_int
+    summary["score_classification"] = _score_classification_state
+
+    # W607-CF -- combined buckets. ``partial_success`` flips when EITHER
+    # bucket is non-empty -- mirrors the W607-BY / W607-BU / W607-BT
+    # bucket-merge pattern. Both buckets share the ``evidence_doctor_*``
+    # marker family; the additive W607-CF bucket stays distinguishable
+    # in tests + audits via its phase names (score_classify /
+    # score_normalize / compute_verdict / auto_log / serialize_envelope).
+    _combined_warnings_out_cf: list[str] = list(_w607at_warnings_out) + list(_w607cf_warnings_out)
+    if _combined_warnings_out_cf:
+        summary["warnings_out"] = list(_combined_warnings_out_cf)
+        summary["partial_success"] = True
 
     if json_mode:
         # agent_contract.facts — each terminal anchors on a concrete-noun
@@ -919,8 +1227,41 @@ def evidence_doctor(ctx, packet_path, from_stdin):
                 next_commands.append(f"# {qk} {step['state']}: {step['action']}")
                 next_commands.append("roam pr-bundle add-approval")
 
-        envelope = json_envelope(
+        # W607-CF -- serialize_envelope boundary. Wraps the envelope
+        # serialisation. A downstream schema-shape refactor that breaks
+        # ``json_envelope("evidence-doctor", ...)`` would otherwise crash
+        # AFTER all substrate + aggregation signals were already gathered.
+        # Floor to a minimal envelope stub so consumers still receive a
+        # parseable JSON object with the marker attached + the canonical
+        # command name. Mirror of cmd_pr_analyze W607-BY / cmd_pr_risk
+        # W607-BU / cmd_attest W607-BT serialize_envelope floor pattern.
+        # W978 first-hypothesis discipline: the floor uses LITERAL string
+        # values for risk_level_canonical / risk_rank rather than the
+        # captured ``risk_level_canonical`` / ``risk_rank_int`` variables
+        # -- a downstream f-string crash in the score_normalize boundary
+        # could leave a non-string sentinel in those locals, which would
+        # then re-crash inside json.dumps when the floor stub is
+        # serialised. Literal "low" / 1 keep the floor JSON-safe.
+        _envelope_floor_cf: dict = {
+            "command": "evidence-doctor",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": "evidence-doctor completed (risk_level low)",
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out_cf),
+                "risk_level_canonical": "low",
+                "risk_rank": 1,
+                "score_classification": _score_classification_state,
+            },
+            "risk_level_canonical": "low",
+            "risk_rank": 1,
+            "warnings_out": list(_combined_warnings_out_cf),
+        }
+        envelope = _run_check_cf(
+            "serialize_envelope",
+            json_envelope,
             "evidence-doctor",
+            default=_envelope_floor_cf,
             summary=summary,
             budget=token_budget,
             source=source_label,
@@ -979,7 +1320,109 @@ def evidence_doctor(ctx, packet_path, from_stdin):
                 "facts": facts,
                 "next_commands": next_commands,
             },
+            # W607-CF -- top-level mirrors of summary.risk_level_canonical
+            # / summary.risk_rank so cross-command consumers (pr-bundle,
+            # pr-replay) reading the top-level envelope head (without
+            # descending into ``summary``) see the canonical bucket.
+            # Mirror of the W641-followup contract across the risk-LEVEL
+            # emitter family.
+            risk_level_canonical=risk_level_canonical,
+            risk_rank=risk_rank_int,
+            # W607-AT + W607-CF: mirror substrate-CALL + aggregation-phase
+            # markers at the top level too so consumers reading
+            # envelope.warnings_out (rather than envelope.summary.warnings_out)
+            # see the same disclosure. Use the combined bucket.
+            **({"warnings_out": list(_combined_warnings_out_cf)} if _combined_warnings_out_cf else {}),
         )
+        # W607-CF -- if serialize_envelope raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``evidence_doctor_serialize_envelope_failed:`` marker was
+        # appended to ``_w607cf_warnings_out`` and the floor stub carries
+        # only the old combined list. Rebuild the floor stub's
+        # warnings_out so the new marker reaches the JSON output. Clean
+        # path -> envelope is the real json_envelope return, no rebuild.
+        if envelope is _envelope_floor_cf and _w607cf_warnings_out:
+            _combined_warnings_out_cf = list(_w607at_warnings_out) + list(_w607cf_warnings_out)
+            _envelope_floor_cf["summary"]["warnings_out"] = list(_combined_warnings_out_cf)
+            _envelope_floor_cf["warnings_out"] = list(_combined_warnings_out_cf)
+            envelope = _envelope_floor_cf
+
+        # W607-CF -- auto_log boundary. Silent no-op if no active run;
+        # the wrap surfaces HMAC chain-misshape / filesystem failures as
+        # ``evidence_doctor_auto_log_failed:...`` markers instead of
+        # crashing the envelope after it was already built. Mirror of
+        # cmd_pr_analyze W607-BY / cmd_pr_risk W607-BU auto_log pattern.
+        _run_check_cf(
+            "auto_log",
+            auto_log,
+            envelope,
+            action="evidence-doctor",
+            target=source_label,
+            default=None,
+        )
+        # W607-CF -- if auto_log raised, rebuild the envelope so the
+        # marker reaches the JSON output. Empty bucket (clean auto_log)
+        # -> envelope stays byte-identical to the version already built.
+        _existing_summary_wo_cf = summary.get("warnings_out") or []
+        if _w607cf_warnings_out and not any(
+            m.startswith("evidence_doctor_auto_log_failed:") for m in _existing_summary_wo_cf
+        ):
+            _combined_warnings_out_cf = list(_w607at_warnings_out) + list(_w607cf_warnings_out)
+            summary["warnings_out"] = list(_combined_warnings_out_cf)
+            summary["partial_success"] = True
+            # Rebuild via wrapped serialize_envelope so a later
+            # rebuild-time raise still surfaces a marker.
+            envelope = _run_check_cf(
+                "serialize_envelope",
+                json_envelope,
+                "evidence-doctor",
+                default=_envelope_floor_cf,
+                summary=summary,
+                budget=token_budget,
+                source=source_label,
+                schema_version=schema_version,
+                content_hash={
+                    "stamped": stamped_hash,
+                    "recomputed": recomputed_hash,
+                    "state": hash_state,
+                },
+                packet_size={
+                    "bytes": pkt_size_bytes,
+                    "budget_bytes": PACKET_SIZE_BUDGET_BYTES,
+                    "budget_state": pkt_budget_state,
+                },
+                banner={
+                    "tier": banner_tier,
+                    "label": banner_label,
+                    "rationale": banner_rationale,
+                },
+                evidence_completeness={
+                    "per_question": q_results,
+                    "totals": totals,
+                },
+                enum_violations=enum_violations,
+                redactions=redactions,
+                honesty={
+                    "redactions_declared": has_redactions,
+                    "producer_not_available_marker": has_producer_not_available,
+                },
+                trust_tiers=trust_counts,
+                trust_warnings=trust_warnings,
+                authority_kinds=authority_kind_counts,
+                staleness={
+                    "stale": stale_flag,
+                    "stale_reasons": stale_reasons,
+                },
+                next_steps=next_steps,
+                agent_contract={
+                    "facts": facts,
+                    "next_commands": next_commands,
+                },
+                risk_level_canonical=risk_level_canonical,
+                risk_rank=risk_rank_int,
+                warnings_out=list(_combined_warnings_out_cf),
+            )
+
         click.echo(to_json(envelope))
         return
 

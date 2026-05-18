@@ -311,12 +311,17 @@ def check_imports_from(
     # 2. Fallback to symbol-edges (kind='import') when file_edges has no rows
     #    for this file. This makes the clause resilient to indexers that
     #    only emit symbol-level imports.
+    # W543-followup: source the IN-clause from the shared helper so this
+    # fallback unions the plugin-defensive plural ``'imports'`` alongside
+    # the canonical singular.
     if not matches and not rows:
+        from roam.db.edge_kinds import import_in_clause
+
         sym_rows = conn.execute(
             "SELECT DISTINCT f.path FROM edges e "
             "JOIN symbols s ON e.target_id = s.id "
             "JOIN files f ON s.file_id = f.id "
-            "WHERE e.source_file_id = ? AND e.kind = 'import'",
+            f"WHERE e.source_file_id = ? AND {import_in_clause('e.kind')}",
             (file_id,),
         ).fetchall()
         for r in sym_rows:

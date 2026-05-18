@@ -109,12 +109,22 @@ def _git_pickaxe(
     return commits, None
 
 
-def _diff_polarity(root: Path, sha: str, pattern: str, fixed: bool) -> str | None:
-    """Return 'introduced', 'removed', or 'modified' (or None on failure).
+def _diff_polarity(root: Path, sha: str, pattern: str, fixed: bool) -> tuple[str | None, str | None]:
+    """Return ``(polarity, degrade_reason)``.
 
-    Heuristic: count occurrences of the pattern in the +/- side of the
-    diff for that commit. If only +, it was introduced; only -, removed;
-    both, modified.
+    ``polarity`` is one of 'introduced' / 'removed' / 'modified' / None
+    (no occurrence match on either side of the diff). ``degrade_reason``
+    is ``None`` on a successful git invocation (regardless of whether
+    polarity was annotated); otherwise one of the canonical degrade
+    sentinels disclosing why polarity could not be computed:
+    ``polarity_git_missing`` / ``polarity_git_timeout`` /
+    ``polarity_git_error``.
+
+    W607-H: the previous shape collapsed all three failure modes into a
+    silent ``None`` return — observationally indistinguishable from a
+    successful git invocation that simply found no +/- match. Callers
+    MUST propagate ``degrade_reason`` to ``warnings_out`` so the
+    Pattern-2 contract holds.
     """
     cmd = ["git", "show", "--unified=0", "--no-color", sha]
     try:
@@ -128,10 +138,12 @@ def _diff_polarity(root: Path, sha: str, pattern: str, fixed: bool) -> str | Non
             errors="replace",
             env=worktree_git_env(root),
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
+    except FileNotFoundError:
+        return None, "polarity_git_missing"
+    except subprocess.TimeoutExpired:
+        return None, "polarity_git_timeout"
     if result.returncode != 0:
-        return None
+        return None, "polarity_git_error"
     plus = 0
     minus = 0
     if fixed:
@@ -151,12 +163,12 @@ def _diff_polarity(root: Path, sha: str, pattern: str, fixed: bool) -> str | Non
             elif ln.startswith("-") and not ln.startswith("---") and rx.search(ln):
                 minus += 1
     if plus and not minus:
-        return "introduced"
+        return "introduced", None
     if minus and not plus:
-        return "removed"
+        return "removed", None
     if plus or minus:
-        return "modified"
-    return None
+        return "modified", None
+    return None, None
 
 
 @roam_capability(
@@ -235,24 +247,61 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
     # stays literal (-S) for backward compatibility.
     fixed_mode = fixed and not regexp_mode
 
+    # W607-H: Pattern-2 consumer-layer wiring — thread a warnings_out
+    # bucket through the GIT-SUBPROCESS axis (pickaxe + diff-polarity).
+    # cmd_history_grep's substrate is `git log -S/-G` + `git show` — a
+    # distinct subprocess shape from cmd_grep's ripgrep / git-grep
+    # fan-out (sealed at W607-G). Threading is COMPLEMENTARY to the
+    # existing CP45/CP46 ``git_errors`` disclosure: ``git_errors`` names
+    # the per-pattern pickaxe failure kind; ``warnings_out`` carries
+    # both an outer-guard for unexpected exceptions on either subprocess
+    # AND the previously-silent ``--polarity`` degrade reason (W805-DD
+    # MEDIUM-class shape parity gap: --polarity was requested but the
+    # diff-polarity subprocess failed silently, indistinguishable from
+    # "no +/- match"). Marker family is ``history_*`` (NOT ``grep_*`` /
+    # ``search_*`` / ``complete_*`` / ``semantic_*``) — closed-enum
+    # discipline parity with W607-G's ``grep_*`` family.
+    warnings_out: list[str] = []
+
     per_pattern: dict[str, list[dict]] = {}
     git_errors: dict[str, str] = {}
     for p in pats:
-        commits, err_kind = _git_pickaxe(
-            root,
-            p,
-            fixed=fixed_mode,
-            case_insensitive=ci,
-            since=since,
-            until=until,
-            limit=limit,
-            paths=list(paths),
-        )
+        try:
+            commits, err_kind = _git_pickaxe(
+                root,
+                p,
+                fixed=fixed_mode,
+                case_insensitive=ci,
+                since=since,
+                until=until,
+                limit=limit,
+                paths=list(paths),
+            )
+        except Exception as exc:  # noqa: BLE001 — W607-H outer-guard
+            # The inner ``_git_pickaxe`` swallows FileNotFoundError +
+            # TimeoutExpired + rc!=0 into ``err_kind``. Anything else
+            # (e.g. PermissionError on Windows) propagates — disclose
+            # it loudly via warnings_out (complementary to git_errors).
+            warnings_out.append(f"history_pickaxe_failed:{type(exc).__name__}:{exc}")
+            commits, err_kind = [], _GIT_ERROR
         if err_kind is not None:
             git_errors[p] = err_kind
         if polarity:
             for c in commits:
-                c["polarity"] = _diff_polarity(root, c["sha"], p, fixed_mode)  # W421
+                try:
+                    pol, degrade = _diff_polarity(root, c["sha"], p, fixed_mode)  # W421
+                except Exception as exc:  # noqa: BLE001 — W607-H outer-guard
+                    warnings_out.append(f"history_polarity_failed:{type(exc).__name__}:{exc}")
+                    pol, degrade = None, "polarity_git_error"
+                c["polarity"] = pol
+                if degrade is not None:
+                    # W607-H + W805-DD shape-parity: the --polarity
+                    # subprocess silently degraded (git missing / timed
+                    # out / errored on `git show`). Disclose so an
+                    # agent can distinguish "feature flag honored,
+                    # nothing to annotate" from "feature flag silently
+                    # broken on this commit".
+                    warnings_out.append(f"history_polarity_degraded:{degrade}:sha={c.get('short_sha', c['sha'][:8])}")
         per_pattern[p] = commits
 
     total = sum(len(v) for v in per_pattern.values())
@@ -274,20 +323,33 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
             verdict += f" — {len(git_errors)} pattern(s) failed: see git_errors"
 
     if json_mode:
+        _summary: dict = {
+            "verdict": verdict,
+            "patterns": len(pats),
+            "total_commits": total,
+            "partial_success": bool(git_errors),
+        }
+        # W607-H: non-empty bucket → summary mirror + partial_success
+        # flip + top-level mirror. Empty bucket → byte-identical
+        # envelope (hash-stable). ``warnings_out`` is complementary to
+        # the CP45/CP46 ``git_errors`` field: ``git_errors`` survives
+        # for per-pattern pickaxe failure kinds; ``warnings_out``
+        # carries outer-guard exceptions + polarity-degrade lineage.
+        extra: dict = {}
+        if warnings_out:
+            _summary["warnings_out"] = list(warnings_out)
+            _summary["partial_success"] = True
+            extra["warnings_out"] = list(warnings_out)
         click.echo(
             to_json(
                 json_envelope(
                     "history-grep",
                     budget=token_budget,
-                    summary={
-                        "verdict": verdict,
-                        "patterns": len(pats),
-                        "total_commits": total,
-                        "partial_success": bool(git_errors),
-                    },
+                    summary=_summary,
                     patterns=list(pats),
                     git_errors=git_errors or None,
                     results=[{"pattern": p, "commits": commits} for p, commits in per_pattern.items()],
+                    **extra,
                 )
             )
         )

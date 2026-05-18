@@ -43,6 +43,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
+from roam.runs.helpers import auto_log
 
 
 @roam_capability(
@@ -212,6 +213,14 @@ def cga_emit(
     to the CGA at ``<stem>.vsa.json``. The VSA is byte-identical to what
     ``pr-bundle emit --slsa-l3`` would produce on the same ChangeEvidence
     (W472). ``--sign`` covers both statements when both flags are set.
+
+    NOTE (W487): the standalone CGA emit path produces a Code Graph
+    Attestation but CANNOT achieve SLSA Source Track L3 by itself — a
+    CGA alone is not a Verification Summary Attestation, so the
+    supply-chain claim falls short of SRC-L3 requirements. For the
+    canonical SRC-L3 path, pass ``--also-vsa`` (W472) to emit a sibling
+    VSA alongside the CGA, or use ``roam pr-bundle emit --slsa-l3``
+    (W451) to wire the same VSA through the proof-bundle pipeline.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
@@ -219,13 +228,107 @@ def cga_emit(
     ensure_index()
     project_root = find_project_root()
 
+    # W607-AF -- substrate-boundary plumbing for the cryptographic-attestation
+    # triad (cmd_attest + cmd_pr_bundle + cmd_cga). Prior to W607-AF a raise
+    # inside any of build_cga_statement / serialize_statement /
+    # cosign_sign_statement / atomic_write_text / emit_vsa_sibling crashed the
+    # whole CGA emit path wholesale. Each is wrapped via _run_check_af so a
+    # raise becomes a structured
+    # ``cga_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607af_warnings_out`` -- the envelope still emits cleanly with
+    # whatever signal the remaining substrates produced.
+    #
+    # cmd_cga is the cryptographic core of the W805 cross-artifact-consistency
+    # family (CGA / VSA / Rekor pipeline) -- the W607-AF markers fire AT
+    # RUNTIME when an emission boundary raises, complementing the W805
+    # xfail-strict pins that catch structural inconsistency at the dataclass
+    # level.
+    #
+    # Marker prefix discipline: every W607-AF substrate marker uses the
+    # canonical ``cga_<phase>_failed:<exc_class>:<detail>`` shape. cmd_cga
+    # has NO pre-existing W607 plumbing (fresh-template wave) so a single
+    # bucket + single helper applies.
+    _w607af_warnings_out: list[str] = []
+
+    def _run_check_af(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AF marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``cga_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607af_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607af_warnings_out.append(f"cga_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-BZ -- ADDITIVE aggregation-phase plumbing on top of the W607-AF
+    # substrate-CALL markers. W607-AF already wrapped the 7 substrate-helper
+    # boundaries on the emit path (git_dirty_hash / run_taint /
+    # build_cga_statement / serialize_statement / atomic_write_text /
+    # cosign_sign_statement / emit_vsa_sibling); W607-BZ extends marker
+    # coverage to the AGGREGATION-PHASE boundaries that W607-AF left
+    # unguarded:
+    #
+    #   - ``compute_predicate``    -- per-field extraction of predicate
+    #                                 fields (symbol_count / edge_count /
+    #                                 merkle_root / reachability_claims)
+    #                                 used to compose the verdict string.
+    #                                 A future predicate-schema refactor
+    #                                 that drops or renames one of these
+    #                                 keys would otherwise crash the
+    #                                 envelope post-build.
+    #   - ``compute_verdict``      -- verdict string assembly. Floor to a
+    #                                 literal "CGA emit completed"
+    #                                 string per LAW 6 (standalone-parse)
+    #                                 + W978 first-hypothesis discipline
+    #                                 (no re-interpolation of the same
+    #                                 values that just raised).
+    #   - ``auto_log``             -- active-run ledger write. Silent
+    #                                 no-op when no run is active, but
+    #                                 the underlying ``auto_log`` can
+    #                                 still raise on HMAC chain misshape
+    #                                 or filesystem failures. Mirror of
+    #                                 cmd_attest W607-BT auto_log pattern.
+    #   - ``serialize_envelope``   -- ``json_envelope("cga-emit", ...)``
+    #                                 projection (downstream contract
+    #                                 changes / shape regressions).
+    #
+    # cmd_cga is the CRYPTOGRAPHIC core of the W805 cross-artifact-
+    # consistency family (CGA / VSA / Rekor pipeline). Closes the
+    # attestation triad together with W607-AD/BT (cmd_attest) and
+    # W607-AE/BW (cmd_pr_bundle). The W607-BZ markers fire AT RUNTIME
+    # when an aggregation-phase boundary raises, complementing the W805
+    # xfail-strict pins that catch structural inconsistency at the
+    # dataclass level.
+    #
+    # Marker family ``cga_*`` -- same family as W607-AF (additive, not a
+    # separate prefix). Empty bucket -> byte-identical envelope on the
+    # success path.
+    _w607bz_warnings_out: list[str] = []
+
+    def _run_check_bz(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-BZ marker emission.
+
+        Mirror of ``_run_check_af`` shape (same ``cga_<phase>_failed:``
+        marker family) but writes into ``_w607bz_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bz_warnings_out.append(f"cga_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     # Refuse on dirty tree by default. The attestation binds to a commit
     # SHA — emitting on uncommitted state produces a misleading receipt.
     # --allow-dirty opts in (still records the dirty-hash in the predicate).
     if not allow_dirty:
         from roam.attest.cga import _git_dirty_hash
 
-        dirty = _git_dirty_hash(project_root)
+        dirty = _run_check_af("git_dirty_hash", _git_dirty_hash, project_root, default=None)
         if dirty is not None:
             from roam.output.errors import DIRTY_TREE, structured_usage_error
 
@@ -266,15 +369,42 @@ def cga_emit(
 
     with open_db(readonly=True) as conn:
         if include_taint:
-            taint_findings = run_taint(conn, rules)
-        statement = build_cga_statement(
+            taint_findings = _run_check_af("run_taint", run_taint, conn, rules, default=[])
+        statement = _run_check_af(
+            "build_cga_statement",
+            build_cga_statement,
             conn,
             project_root=project_root,
             taint_findings=taint_findings,
             include_aibom=aibom,
+            default=None,
         )
 
-    canonical = serialize_statement(statement)
+    if statement is None:
+        # Pattern 1C / Pattern 1D: build_cga_statement raised. Emit a
+        # structured envelope that discloses the substrate failure rather
+        # than crashing the whole emit path. The W607-AF marker on
+        # ``_w607af_warnings_out`` carries the actionable diagnostic.
+        _build_failed_envelope = json_envelope(
+            "cga-emit",
+            summary={
+                "verdict": "CGA emit aborted: build_cga_statement substrate raised",
+                "state": "build_failed",
+                "partial_success": True,
+                "warnings_out": list(_w607af_warnings_out),
+            },
+            warnings_out=list(_w607af_warnings_out),
+            partial_success=True,
+        )
+        if json_mode:
+            click.echo(to_json(_build_failed_envelope))
+            return
+        click.echo("VERDICT: CGA emit aborted -- build_cga_statement substrate raised")
+        for marker in _w607af_warnings_out:
+            click.echo(f"  - {marker}")
+        return
+
+    canonical = _run_check_af("serialize_statement", serialize_statement, statement, default="")
 
     written_to: str | None = None
     written_path: Path | None = None
@@ -289,9 +419,9 @@ def cga_emit(
             # (R28 substrate flagged this as ``unsafe_mutation``).
             from roam.atomic_io import atomic_write_text
 
-            atomic_write_text(target, canonical + "\n")
+            _write_ok = _run_check_af("atomic_write_text", atomic_write_text, target, canonical + "\n", default=None)
             written_to = str(target)
-            written_path = target
+            written_path = target if _write_ok is not False else None
 
     sign_result = None
     if sign:
@@ -301,20 +431,29 @@ def cga_emit(
                 "skipped_reason": "cannot sign without a written statement file",
             }
         else:
-            cresult = cosign_sign_statement(
+            cresult = _run_check_af(
+                "cosign_sign_statement",
+                cosign_sign_statement,
                 written_path,
                 key_path=Path(key_path) if key_path else None,
                 keyless=keyless,
+                default=None,
             )
-            sign_result = {
-                "signed": cresult.signed,
-                "statement_path": str(cresult.statement_path),
-                "signature_path": str(cresult.signature_path) if cresult.signature_path else None,
-                "bundle_path": str(cresult.bundle_path) if cresult.bundle_path else None,
-                "certificate_path": str(cresult.certificate_path) if cresult.certificate_path else None,
-                "skipped_reason": cresult.skipped_reason,
-                "cosign_version": cresult.cosign_version,
-            }
+            if cresult is None:
+                sign_result = {
+                    "signed": False,
+                    "skipped_reason": "cosign_sign_statement substrate raised (see warnings_out)",
+                }
+            else:
+                sign_result = {
+                    "signed": cresult.signed,
+                    "statement_path": str(cresult.statement_path),
+                    "signature_path": str(cresult.signature_path) if cresult.signature_path else None,
+                    "bundle_path": str(cresult.bundle_path) if cresult.bundle_path else None,
+                    "certificate_path": str(cresult.certificate_path) if cresult.certificate_path else None,
+                    "skipped_reason": cresult.skipped_reason,
+                    "cosign_version": cresult.cosign_version,
+                }
 
     # W472 - optional SLSA VSA sibling, mirroring the pr-bundle
     # --slsa-l3 wiring at cmd_pr_bundle.py:_emit_slsa_l3_attestations.
@@ -322,7 +461,9 @@ def cga_emit(
     # emit path) when the prerequisites aren't met.
     vsa_result: dict | None = None
     if also_vsa:
-        vsa_result = _emit_vsa_sibling(
+        vsa_result = _run_check_af(
+            "emit_vsa_sibling",
+            _emit_vsa_sibling,
             statement=statement,
             written_path=written_path,
             written_to=written_to,
@@ -331,16 +472,70 @@ def cga_emit(
             sign=sign,
             key_path=key_path,
             keyless=keyless,
+            default=None,
         )
 
     pred = statement["predicate"]
-    n_claims = len(pred.get("reachability_claims") or [])
-    n_sanitized = sum(1 for c in (pred.get("reachability_claims") or []) if c.get("status") == "not_affected")
-    claim_summary = f", {n_claims} reachability claim(s) ({n_sanitized} sanitized)" if n_claims else ""
-    verdict = (
-        f"CGA emitted: {pred['symbol_count']} symbols / "
-        f"{pred['edge_count']} edges, merkle={pred['merkle_root'][:12]}…"
-        f"{claim_summary}"
+
+    # W607-BZ -- compute_predicate boundary. Wraps the predicate-field
+    # extraction so a future schema refactor that drops/renames keys
+    # surfaces a marker rather than crashing the envelope. Floor to
+    # documented empty-shape ints / lists matching the happy-path return
+    # so downstream verdict/summary fields stay non-null.
+    def _compute_predicate_fields(pred_local: dict) -> dict:
+        claims_local = pred_local.get("reachability_claims") or []
+        n_claims_local = len(claims_local)
+        n_sanitized_local = sum(1 for c in claims_local if c.get("status") == "not_affected")
+        return {
+            "symbol_count": pred_local["symbol_count"],
+            "edge_count": pred_local["edge_count"],
+            "merkle_root": pred_local["merkle_root"],
+            "n_claims": n_claims_local,
+            "n_sanitized": n_sanitized_local,
+        }
+
+    _pred_fields = _run_check_bz(
+        "compute_predicate",
+        _compute_predicate_fields,
+        pred,
+        default={
+            "symbol_count": 0,
+            "edge_count": 0,
+            "merkle_root": "",
+            "n_claims": 0,
+            "n_sanitized": 0,
+        },
+    )
+
+    # W607-BZ -- compute_verdict boundary. Wraps the verdict-string
+    # assembly so a downstream f-string refactor (e.g. a non-string
+    # merkle_root from a vocabulary refactor) surfaces a marker rather
+    # than crashing the envelope. Floor must NOT re-interpolate the
+    # same values that tripped the closure (W978 first-hypothesis
+    # discipline: a __format__-raising sentinel under test would
+    # re-raise inside the default f-string). Use a literal
+    # ``"CGA emit completed"`` floor instead (LAW 6 still holds: the
+    # line works standalone). Mirror of cmd_attest W607-BT
+    # compute_verdict pattern.
+    def _build_verdict_str(fields: dict) -> str:
+        claim_summary_local = (
+            f", {fields['n_claims']} reachability claim(s) ({fields['n_sanitized']} sanitized)"
+            if fields["n_claims"]
+            else ""
+        )
+        merkle_local = fields["merkle_root"]
+        merkle_short = merkle_local[:12] if merkle_local else ""
+        return (
+            f"CGA emitted: {fields['symbol_count']} symbols / "
+            f"{fields['edge_count']} edges, merkle={merkle_short}…"
+            f"{claim_summary_local}"
+        )
+
+    verdict = _run_check_bz(
+        "compute_verdict",
+        _build_verdict_str,
+        _pred_fields,
+        default="CGA emit completed",
     )
 
     if json_mode:
@@ -350,12 +545,18 @@ def cga_emit(
         # W1101/W1006); the top-level ``qualified_only_violations`` list
         # only appears when N > 0 (W1006 redactions[] precedent for
         # content lists). Shape mirrors cmd_taint's envelope byte-for-byte.
+        # W607-BZ -- accessors are safe-floored via ``.get()`` so a
+        # malformed predicate (missing keys) caught by the
+        # compute_predicate wrap above doesn't trip a KeyError post-
+        # disclosure. The W607-BZ marker is already on the bucket; the
+        # envelope still emits with documented empty-floor values so
+        # consumers see the degradation lineage rather than empty stdout.
         _w489_a_summary: dict = {
             "verdict": verdict,
-            "merkle_root": pred["merkle_root"],
-            "edge_bundle_digest": pred["edge_bundle_digest"],
-            "symbol_count": pred["symbol_count"],
-            "edge_count": pred["edge_count"],
+            "merkle_root": pred.get("merkle_root", ""),
+            "edge_bundle_digest": pred.get("edge_bundle_digest", ""),
+            "symbol_count": pred.get("symbol_count", 0),
+            "edge_count": pred.get("edge_count", 0),
             "predicate_type": statement.get("predicateType", PREDICATE_TYPE),
             "statement_type": STATEMENT_TYPE,
             "written_to": written_to,
@@ -368,26 +569,135 @@ def cga_emit(
             "sign_result": sign_result,
             "vsa_result": vsa_result,
         }
+        # W489-A pre-existing bucket: qualified_only lint flag (rules-shape
+        # disclosure). W607-AF bucket: substrate-CALL markers (helper raised).
+        # Both axes feed the SAME ``summary.warnings_out`` field on emission;
+        # the marker PREFIX disambiguates them downstream
+        # (``qualified_only lint flagged ...`` vs ``cga_<phase>_failed:*``).
+        # ``partial_success`` flips when EITHER bucket is non-empty.
+        _w489_a_lint_warnings: list[str] = []
         if include_taint:
             _w489_a_summary["rules_lint"] = {
                 "qualified_only_violations": len(_w489_a_violations),
                 "total_rules": _w489_a_total_rules,
             }
             if _w489_a_violations:
-                _w489_a_summary["partial_success"] = True
-                _w489_a_summary["warnings_out"] = [
+                _w489_a_lint_warnings.append(
                     f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
-                ]
+                )
                 _w489_a_envelope_extra["qualified_only_violations"] = _w489_a_violations
-        click.echo(
-            to_json(
-                json_envelope(
+        # W607-BZ -- ADDITIVE aggregation-phase markers join the combined
+        # channel: W489-A lint + W607-AF substrate-CALL + W607-BZ
+        # aggregation-phase. All three buckets share the canonical
+        # ``cga_*`` family (W489-A uses prose strings; the W607-* buckets
+        # use the ``cga_<phase>_failed:`` shape). The additive bucket
+        # stays distinguishable in tests + audits via its phase names
+        # (``compute_predicate`` / ``compute_verdict`` / ``auto_log`` /
+        # ``serialize_envelope``).
+        _combined_warnings_out: list[str] = (
+            list(_w489_a_lint_warnings) + list(_w607af_warnings_out) + list(_w607bz_warnings_out)
+        )
+        if _combined_warnings_out:
+            _w489_a_summary["partial_success"] = True
+            _w489_a_summary["warnings_out"] = list(_combined_warnings_out)
+            # W607-AF / W607-BZ top-level mirror so consumers reading the
+            # envelope head (without descending into ``summary``) see the
+            # marker channel.
+            _w489_a_envelope_extra["warnings_out"] = list(_combined_warnings_out)
+            _w489_a_envelope_extra["partial_success"] = True
+
+        # W607-BZ -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("cga-emit", ...)`` would otherwise crash
+        # AFTER all substrate + aggregation signals were already gathered.
+        # Floor to a minimal envelope stub so consumers still receive a
+        # parseable JSON object with the marker attached + the canonical
+        # command name. Mirror of cmd_attest's W607-BT
+        # serialize_envelope floor pattern.
+        _envelope_floor: dict = {
+            "command": "cga-emit",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": verdict,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out),
+            },
+            "warnings_out": list(_combined_warnings_out),
+        }
+        cga_envelope = _run_check_bz(
+            "serialize_envelope",
+            json_envelope,
+            "cga-emit",
+            default=_envelope_floor,
+            summary=_w489_a_summary,
+            **_w489_a_envelope_extra,
+        )
+        # W607-BZ -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``cga_serialize_envelope_failed:`` marker was appended to
+        # ``_w607bz_warnings_out`` and the floor stub carries only the
+        # pre-raise combined list. Rebuild the floor stub's warnings_out
+        # so the new marker reaches the JSON output. Clean path ->
+        # envelope is the real json_envelope return value, no rebuild
+        # needed.
+        if cga_envelope is _envelope_floor and _w607bz_warnings_out:
+            _combined_warnings_out = (
+                list(_w489_a_lint_warnings) + list(_w607af_warnings_out) + list(_w607bz_warnings_out)
+            )
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+            cga_envelope = _envelope_floor
+
+        # W607-BZ -- auto_log boundary. Silent no-op if no active run;
+        # the wrap surfaces HMAC chain-misshape / filesystem failures as
+        # ``cga_auto_log_failed:...`` markers instead of crashing the
+        # envelope after it was already built. Mirror of cmd_attest's
+        # W607-BT auto_log pattern.
+        _run_check_bz(
+            "auto_log",
+            auto_log,
+            cga_envelope,
+            action="cga-emit",
+            target=written_to or "no-write",
+            repo_root=project_root,
+            default=None,
+        )
+        # W607-BZ -- if ``auto_log`` raised, rebuild the envelope so the
+        # marker reaches the JSON output. Empty bucket (clean auto_log)
+        # -> envelope stays byte-identical to the version already built
+        # above.
+        _had_pre_auto_log_serialize = any(
+            m.startswith("cga_serialize_envelope_failed:") for m in (_w489_a_summary.get("warnings_out") or [])
+        )
+        if (
+            _w607bz_warnings_out
+            and any(m.startswith("cga_auto_log_failed:") for m in _w607bz_warnings_out)
+            and not any(m.startswith("cga_auto_log_failed:") for m in (_w489_a_summary.get("warnings_out") or []))
+        ):
+            _combined_warnings_out = (
+                list(_w489_a_lint_warnings) + list(_w607af_warnings_out) + list(_w607bz_warnings_out)
+            )
+            _w489_a_summary["warnings_out"] = list(_combined_warnings_out)
+            _w489_a_summary["partial_success"] = True
+            _w489_a_envelope_extra["warnings_out"] = list(_combined_warnings_out)
+            _w489_a_envelope_extra["partial_success"] = True
+            # Re-serialize only if the prior serialize succeeded; if it
+            # already raised, keep the floor stub but update warnings_out.
+            if not _had_pre_auto_log_serialize:
+                cga_envelope = _run_check_bz(
+                    "serialize_envelope",
+                    json_envelope,
                     "cga-emit",
+                    default=_envelope_floor,
                     summary=_w489_a_summary,
                     **_w489_a_envelope_extra,
                 )
-            )
-        )
+            else:
+                _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+                _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+                cga_envelope = _envelope_floor
+
+        click.echo(to_json(cga_envelope))
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -535,10 +845,34 @@ def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign, cert_i
 
         raise structured_usage_error(INVALID_FORMAT, f"attestation is not valid JSON: {exc}") from exc
 
+    # W607-AF -- substrate-boundary plumbing for the verify path. cmd_cga
+    # verify wraps verify_cga_statement and cosign_verify_statement so a
+    # raise inside either substrate becomes a structured
+    # ``cga_<phase>_failed:<exc_class>:<detail>`` marker rather than crashing
+    # the verifier. The fresh-template single-bucket pattern applies here too
+    # (no pre-existing W607 plumbing on the verify subcommand).
+    _w607af_warnings_out: list[str] = []
+
+    def _run_check_af(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AF marker emission (verify)."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607af_warnings_out.append(f"cga_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     ensure_index()
     project_root = find_project_root()
     with open_db(readonly=True) as conn:
-        ok, errors = verify_cga_statement(statement, conn, project_root=project_root)
+        _verify_result = _run_check_af(
+            "verify_cga_statement",
+            verify_cga_statement,
+            statement,
+            conn,
+            project_root=project_root,
+            default=(False, ["verify_cga_statement substrate raised (see warnings_out)"]),
+        )
+        ok, errors = _verify_result
 
     # Auto-detect a sibling bundle if not explicit.
     sp = Path(statement_path)
@@ -577,12 +911,15 @@ def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign, cert_i
                 "message": "keyless verify refused: cert-identity / cert-oidc-issuer missing",
             }
         else:
-            cosign_ok, message = cosign_verify_statement(
+            cosign_ok, message = _run_check_af(
+                "cosign_verify_statement",
+                cosign_verify_statement,
                 sp,
                 bundle_path=Path(cosign_bundle) if cosign_bundle else None,
                 public_key_path=Path(cosign_key) if cosign_key else None,
                 certificate_identity=cert_identity,
                 certificate_oidc_issuer=cert_oidc_issuer,
+                default=(False, "cosign_verify_statement substrate raised (see warnings_out)"),
             )
             cosign_result = {
                 "verified": cosign_ok,
@@ -615,19 +952,28 @@ def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign, cert_i
         verdict = f"CGA mismatch: {len(errors)} error(s)"
 
     if json_mode:
+        _verify_summary: dict = {
+            "verdict": verdict,
+            "ok": ok,
+            "error_count": len(errors),
+            "cosign_verified": bool(cosign_result and cosign_result["verified"]),
+        }
+        _verify_envelope_extra: dict = dict(
+            errors=errors,
+            statement_path=str(statement_path),
+            cosign=cosign_result,
+        )
+        if _w607af_warnings_out:
+            _verify_summary["partial_success"] = True
+            _verify_summary["warnings_out"] = list(_w607af_warnings_out)
+            _verify_envelope_extra["warnings_out"] = list(_w607af_warnings_out)
+            _verify_envelope_extra["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(
                     "cga-verify",
-                    summary={
-                        "verdict": verdict,
-                        "ok": ok,
-                        "error_count": len(errors),
-                        "cosign_verified": bool(cosign_result and cosign_result["verified"]),
-                    },
-                    errors=errors,
-                    statement_path=str(statement_path),
-                    cosign=cosign_result,
+                    summary=_verify_summary,
+                    **_verify_envelope_extra,
                 )
             )
         )

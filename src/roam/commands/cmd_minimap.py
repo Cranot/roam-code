@@ -353,19 +353,55 @@ def _get_project_notes(root: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _render_minimap(conn, root: Path) -> str:
-    """Assemble the full minimap content (no sentinel wrappers)."""
+def _render_minimap(
+    conn,
+    root: Path,
+    *,
+    warnings_out: list[str] | None = None,
+) -> str:
+    """Assemble the full minimap content (no sentinel wrappers).
+
+    W607-L: optional ``warnings_out`` accumulator threads DB-shape silent
+    failures (substrate helper raises) out to the envelope. Each helper
+    is wrapped per-phase so a single substrate failure does NOT abort
+    the full minimap render — it surfaces a ``minimap_<phase>_failed:``
+    marker and falls back to an empty section. Marker family
+    ``minimap_*`` (DB-scope, distinct from W607-G/H/I/J subprocess
+    families and W607-K's ``describe_*``).
+
+    Complementary to W805-B strict-xfail Pattern-2 set (empty-corpus
+    silent-SAFE verdict). W607-L does NOT graduate any W805-B bug — on
+    an empty corpus the helpers return empty results (NOT exceptions),
+    so warnings_out stays empty and the envelope is byte-identical to
+    the pre-W607-L shape. Empty-corpus state disclosure is a separate
+    Pattern-2 contract.
+    """
     out: list[str] = []
 
     # Stack line
-    stack = _get_stack(conn)
+    try:
+        stack = _get_stack(conn)
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"minimap_stack_failed:{type(exc).__name__}:{exc}")
+        stack = ""
     if stack:
         out.append(f"**Stack:** {stack}")
         out.append("")
 
-    # Annotated directory tree
-    paths = [r["path"] for r in conn.execute("SELECT path FROM files ORDER BY path").fetchall()]
-    annotations = _get_file_annotations(conn)
+    # Annotated directory tree (files + annotations are coupled)
+    try:
+        paths = [r["path"] for r in conn.execute("SELECT path FROM files ORDER BY path").fetchall()]
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"minimap_files_failed:{type(exc).__name__}:{exc}")
+        paths = []
+    try:
+        annotations = _get_file_annotations(conn)
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"minimap_annotations_failed:{type(exc).__name__}:{exc}")
+        annotations = {}
     tree = _build_tree(paths)
     tree_lines = _render_tree(tree, annotations)
 
@@ -380,25 +416,45 @@ def _render_minimap(conn, root: Path) -> str:
     out.append("")
 
     # Key symbols by PageRank
-    key = _get_key_symbols(conn, 5)
+    try:
+        key = _get_key_symbols(conn, 5)
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"minimap_key_symbols_failed:{type(exc).__name__}:{exc}")
+        key = []
     if key:
         out.append(f"**Key symbols** (PageRank): {' · '.join(key)}")
         out.append("")
 
     # High fan-in: touch carefully
-    touch = _get_touch_carefully(conn)
+    try:
+        touch = _get_touch_carefully(conn)
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"minimap_touch_carefully_failed:{type(exc).__name__}:{exc}")
+        touch = []
     if touch:
         out.append(f"**Touch carefully** (fan-in >= 15): {' · '.join(touch)}")
         out.append("")
 
     # Hotspots
-    hotspots = _get_hotspots(conn)
+    try:
+        hotspots = _get_hotspots(conn)
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"minimap_hotspots_failed:{type(exc).__name__}:{exc}")
+        hotspots = []
     if hotspots:
         out.append(f"**Hotspots** (churn x complexity): {' · '.join(hotspots)}")
         out.append("")
 
     # Conventions
-    conventions = _get_conventions(conn)
+    try:
+        conventions = _get_conventions(conn)
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"minimap_conventions_failed:{type(exc).__name__}:{exc}")
+        conventions = "mixed conventions"
     out.append(f"**Conventions:** {conventions}")
 
     # Project-specific notes
@@ -551,10 +607,75 @@ def minimap(ctx, update_claude, output_file, init_notes):
 
     ensure_index()
 
-    with open_db(readonly=True) as conn:
-        content = _render_minimap(conn, root)
+    # W607-L: Pattern-2 consumer-layer wiring — thread a ``warnings_out``
+    # bucket through the DB-shape minimap pipeline. cmd_minimap is a
+    # DB-shape aggregator that consumes graph_metrics / symbols / files /
+    # file_stats / file_edges substrates via per-helper SQL queries; any
+    # of those raising silently degrades the rendered block into an empty
+    # section while the JSON envelope claims success. The W607-L
+    # outer-guard + per-helper marker thread makes the degrade lineage
+    # visible to consumers independent of the markdown blob. Marker
+    # family ``minimap_*`` (DB scope, distinct from W607-G/H/I/J grep_* /
+    # history_* / refs_text_* / delete_check_* subprocess families and
+    # W607-K's ``describe_*`` flagship-aggregator family).
+    #
+    # Complementary to W805-B strict-xfail Pattern-2 set (which pins the
+    # empty-corpus silent-SAFE "minimap rendered (N chars)" verdict).
+    # W607-L does NOT graduate any W805-B bug — empty-corpus state
+    # disclosure is a separate Pattern-2 contract orthogonal to the
+    # DB-shape degrade axis here. On empty corpus the helpers return
+    # empty results (NOT exceptions) so warnings_out stays empty and the
+    # envelope is byte-identical to the pre-W607-L shape.
+    #
+    # Empty bucket → byte-identical envelope (no warnings_out key in
+    # either ``summary`` or top-level).
+    warnings_out: list[str] = []
 
-    block = _wrap_sentinels(content)
+    # W607-AZ: per-phase substrate-CALL marker plumbing (ADDITIVE to W607-L's
+    # outer-guard + per-section-helper bare try/except family). cmd_minimap
+    # is a high-traffic exploration aggregator that builds a navigable map
+    # the next-action agent uses for orientation. W607-L wrapped the
+    # per-section DB-shape helpers inside ``_render_minimap``; W607-AZ adds
+    # the canonical ``_run_check_az`` closure-based wrapper covering the
+    # downstream NON-DB substrate boundaries — markdown-sentinel wrap,
+    # filesystem upsert (``--update`` / ``-o``), and JSON serialization.
+    # A raise in any of those previously bubbled as a Click traceback;
+    # W607-AZ surfaces them as structured
+    # ``minimap_<phase>_failed:<exc_class>:<detail>`` markers and falls back
+    # to safe defaults. Same ``minimap_*`` family as W607-L (closed-enum
+    # marker-prefix discipline preserved). Mirrors the canonical W607-AV
+    # additive template (cmd_dogfood) — additive bucket merged into the
+    # canonical ``warnings_out`` channel below.
+    _w607az_warnings_out: list[str] = []
+
+    def _run_check_az(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AZ marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``minimap_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607az_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607az_warnings_out.append(f"minimap_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    try:
+        with open_db(readonly=True) as conn:
+            content = _render_minimap(conn, root, warnings_out=warnings_out)
+    except Exception as exc:
+        # W607-L outer-guard: the full minimap DB pipeline raised (db
+        # corruption / locked / schema drift). Disclose via
+        # ``minimap_pipeline_failed:...`` + fall back to empty content.
+        warnings_out.append(f"minimap_pipeline_failed:{type(exc).__name__}:{exc}")
+        content = ""
+
+    # W607-AZ: wrap sentinel-block construction. Today _wrap_sentinels is a
+    # trivial f-string, but future surface evolution (e.g. embedding repo
+    # metadata, git SHA, generated_by token) could raise on missing inputs.
+    block = _run_check_az("wrap_sentinels", _wrap_sentinels, content, default="")
 
     # Determine target
     target: Path | None = None
@@ -565,43 +686,107 @@ def minimap(ctx, update_claude, output_file, init_notes):
         target = root / "CLAUDE.md"
 
     if target is not None:
-        verb = _upsert_file(target, block)
+        # W607-AZ: wrap filesystem upsert. _upsert_file performs read +
+        # regex-substitute + write; any I/O substrate raise (permission
+        # denied, read-only filesystem, encoding error) previously bubbled
+        # as a Click traceback. Default to "Failed" verb on substrate raise.
+        verb = _run_check_az("upsert_file", _upsert_file, target, block, default="Failed")
+
+    # W607-AZ: merge per-phase bucket into the canonical W607-L
+    # ``warnings_out`` channel. Same marker-family prefix (``minimap_*``);
+    # the two buckets share a single envelope channel so consumers don't
+    # need to know which sub-wave (L or AZ) produced any individual marker.
+    combined_warnings = list(warnings_out) + list(_w607az_warnings_out)
+
+    if target is not None:
         if json_mode:
             # LAW 4 (W17.3): concrete verb + path beats bare ``"ok"``.
-            click.echo(
-                to_json(
+            mm_summary: dict[str, object] = {
+                "verdict": f"minimap {verb.lower()} in {target}",
+                "action": verb.lower(),
+                "file": str(target),
+            }
+            # W607-L + W607-AZ: surface combined marker bucket on summary
+            # mirror + top-level so the substrate-degrade lineage is
+            # visible to consumers reading either the summary block or the
+            # preserved-list top-level field.
+            if combined_warnings:
+                mm_summary["warnings_out"] = list(combined_warnings)
+                mm_summary["partial_success"] = True
+            envelope_text = _run_check_az(
+                "serialize_envelope",
+                lambda: to_json(
                     json_envelope(
                         "minimap",
-                        summary={
-                            "verdict": f"minimap {verb.lower()} in {target}",
-                            "action": verb.lower(),
-                            "file": str(target),
-                        },
+                        summary=mm_summary,
                         file=str(target),
+                        **({"warnings_out": list(combined_warnings)} if combined_warnings else {}),
+                    )
+                ),
+                default=None,
+            )
+            if envelope_text is None:
+                # serialize_envelope raised — re-merge bucket (it grew) and
+                # produce a minimal envelope so the contract still holds.
+                combined_warnings = list(warnings_out) + list(_w607az_warnings_out)
+                mm_summary["warnings_out"] = list(combined_warnings)
+                mm_summary["partial_success"] = True
+                envelope_text = to_json(
+                    json_envelope(
+                        "minimap",
+                        summary=mm_summary,
+                        file=str(target),
+                        warnings_out=list(combined_warnings),
                     )
                 )
-            )
+            click.echo(envelope_text)
         else:
             click.echo(f"{verb}: {target}")
     else:
         # Print to stdout
         if json_mode:
-            click.echo(
-                to_json(
+            mm_summary = {
+                # LAW 4 (W17.3): name the analytical subject
+                # (the rendered block) + a size cue, not bare "ok".
+                "verdict": (f"minimap rendered ({len(block)} chars) — wrap in CLAUDE.md with --update-claude"),
+                "content_char_count": len(block),
+                "caller_metric_definition": "direct_in_degree (Touch carefully + file annotations)",
+            }
+            # W607-L + W607-AZ: surface combined marker bucket on summary
+            # mirror + top-level on the stdout JSON-mode path. Note: we DO
+            # flip partial_success here when substrate failures fire, but
+            # this is orthogonal to W805-B's empty-corpus xfail-strict
+            # tests — on empty corpus the helpers return empty results
+            # (not exceptions), so combined_warnings is empty and
+            # partial_success is NOT flipped, preserving W805-B's pinned
+            # bug-state.
+            if combined_warnings:
+                mm_summary["warnings_out"] = list(combined_warnings)
+                mm_summary["partial_success"] = True
+            envelope_text = _run_check_az(
+                "serialize_envelope",
+                lambda: to_json(
                     json_envelope(
                         "minimap",
-                        summary={
-                            # LAW 4 (W17.3): name the analytical subject
-                            # (the rendered block) + a size cue, not bare "ok".
-                            "verdict": (
-                                f"minimap rendered ({len(block)} chars) — wrap in CLAUDE.md with --update-claude"
-                            ),
-                            "content_char_count": len(block),
-                            "caller_metric_definition": "direct_in_degree (Touch carefully + file annotations)",
-                        },
+                        summary=mm_summary,
                         content=block,
+                        **({"warnings_out": list(combined_warnings)} if combined_warnings else {}),
+                    )
+                ),
+                default=None,
+            )
+            if envelope_text is None:
+                combined_warnings = list(warnings_out) + list(_w607az_warnings_out)
+                mm_summary["warnings_out"] = list(combined_warnings)
+                mm_summary["partial_success"] = True
+                envelope_text = to_json(
+                    json_envelope(
+                        "minimap",
+                        summary=mm_summary,
+                        content=block,
+                        warnings_out=list(combined_warnings),
                     )
                 )
-            )
+            click.echo(envelope_text)
         else:
             click.echo(block)

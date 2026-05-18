@@ -16,7 +16,6 @@ from __future__ import annotations
 import json as _json
 import re
 import shutil
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -403,10 +402,18 @@ def _check_command_registry() -> dict:
             "passed": False,
             "detail": f"{len(failures)} command(s) fail to import: {sample}{more}",
         }
+    # W420: headline count must be plugin-invariant (AST-sourced) even
+    # though the integrity-check loop above iterates the runtime
+    # ``_COMMANDS`` dict (which is the right surface for import-test
+    # integrity, including plugin-registered commands). Promoting the
+    # runtime count into the user-visible detail string drifts the
+    # same way ``cmd_surface.command_count`` did before W420.
+    from roam.surface_counts import cli_commands as _cli_commands_ast  # noqa: PLC0415
+
     return {
         "name": "CLI command registry",
         "passed": True,
-        "detail": f"{len(_COMMANDS)} CLI commands import cleanly",
+        "detail": f"{len(_cli_commands_ast())} CLI commands import cleanly",
     }
 
 
@@ -457,10 +464,13 @@ def _check_mcp_registry() -> dict:
             full_count = len(_re.findall(r"^@_tool\(\s*name=", text, _re.MULTILINE))
         except Exception:
             full_count = 0
-    if full_count and full_count != len(declared):
-        detail = f"{len(declared)} MCP tools registered ({preset} preset; {full_count} in full preset)"
+    # W420 dual-source: report runtime-active AND AST-shipped counts
+    # side-by-side so the operator can see plugin-loading / preset state
+    # at a glance. Single-source would hide one axis of drift.
+    if full_count:
+        detail = f"{len(declared)} active / {full_count} shipped MCP tools registered ({preset} preset)"
     else:
-        detail = f"{len(declared)} MCP tools registered"
+        detail = f"{len(declared)} active MCP tools registered ({preset} preset)"
     return {
         "name": "MCP tool registry",
         "passed": True,
@@ -1514,6 +1524,11 @@ def _github_template_registry() -> list[tuple[str, str]]:
         ("slsa-src-l3.yml", ".github/workflows/roam-slsa-src-l3.yml"),
         # Pre-existing agent-review drop-in.
         ("agent-review.yml", ".github/workflows/agent-review.yml"),
+        # W391 — roam SARIF + CodeQL co-deploy sample. Live filename is
+        # documented in the template header ("Copy this file to
+        # .github/workflows/security.yml"); drift advisory only fires once
+        # the user has actually committed the sample under that path.
+        ("roam-sarif-with-codeql.yml", ".github/workflows/security.yml"),
     ]
 
 
@@ -1860,45 +1875,91 @@ def doctor(ctx, strict, persist):
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
+    # W607-N: Pattern-2 consumer-layer wiring — thread a ``warnings_out``
+    # bucket through the doctor pipeline. cmd_doctor is the DB-shape
+    # aggregator that consumes findings + health + describe + retrieve +
+    # index_status substrates through ~22 per-check helpers (corpus,
+    # required tables, manifest, manifest history, index step failures,
+    # phase timings, math_signals drift, CI workflow drift, …). Every
+    # per-check helper already catches exceptions internally and emits a
+    # ``passed: False`` record, BUT each helper itself can still raise
+    # before reaching that floor (Python misconfig, networkx import
+    # explosion, unhandled OSError during ``shutil.which``, etc.) — and
+    # the outer ``checks.append(_check_X())`` loop has no guards. The
+    # W607-N wrapper turns each helper invocation into a marker-emitting
+    # try/except + skips the check on failure so the envelope still emits.
+    #
+    # Marker family ``doctor_*`` (DB / environment-aggregator scope,
+    # distinct from W607-M's ``health_*`` flagship CI-gate family,
+    # W607-K's ``describe_*`` flagship-aggregator family, W607-L's
+    # ``minimap_*`` DB-shape family, and W607-G/H/I/J subprocess
+    # families). The marker-prefix discipline keeps each consumer's
+    # scope identifiable downstream.
+    #
+    # Complementary to W805-836 Pattern-2 silent "all checks passed" on
+    # empty corpus (which pins the corpus-content advisory). W607-N
+    # does NOT graduate any W805-836 bug — the corpus-content disclosure
+    # is a separate Pattern-2 contract orthogonal to the per-helper
+    # substrate-failure axis here.
+    #
+    # Empty bucket → byte-identical envelope (no warnings_out key in
+    # either ``summary`` or top-level).
+    _w607n_warnings_out: list[str] = []
+
+    def _run_check(phase: str, fn, *args):
+        """Run one ``_check_*`` helper with W607-N marker emission.
+
+        On a clean call the result is appended to ``checks`` as before.
+        On an uncaught exception (the helper itself raised before
+        producing its own pass/fail dict), surface a
+        ``doctor_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607n_warnings_out`` and skip the check — the envelope still
+        emits cleanly with the remaining checks.
+        """
+        try:
+            result = fn(*args)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607n_warnings_out.append(f"doctor_{phase}_failed:{type(exc).__name__}:{exc}")
+            return None
+        checks.append(result)
+        return result
+
     # --- Run all checks ---
     checks: list[dict] = []
 
-    checks.append(_check_python_version())
-    checks.append(_check_tree_sitter())
-    checks.append(_check_tree_sitter_language_pack())
-    checks.append(_check_git())
-    checks.append(_check_networkx())
-    checks.append(_check_optional_extras())
-    checks.append(_check_cloud_sync())
-    checks.append(_check_cache_permissions())
-    checks.append(_check_command_registry())
-    checks.append(_check_mcp_registry())
-    checks.append(_check_mcp_backpressure())
-    checks.append(_check_plugin_discovery())
-    checks.append(_check_required_tables())
-    checks.append(_check_corpus_content())
-    checks.append(_check_stale_math_signal_column())
+    _run_check("python_version", _check_python_version)
+    _run_check("tree_sitter", _check_tree_sitter)
+    _run_check("tree_sitter_language_pack", _check_tree_sitter_language_pack)
+    _run_check("git", _check_git)
+    _run_check("networkx", _check_networkx)
+    _run_check("optional_extras", _check_optional_extras)
+    _run_check("cloud_sync", _check_cloud_sync)
+    _run_check("cache_permissions", _check_cache_permissions)
+    _run_check("command_registry", _check_command_registry)
+    _run_check("mcp_registry", _check_mcp_registry)
+    _run_check("mcp_backpressure", _check_mcp_backpressure)
+    _run_check("plugin_discovery", _check_plugin_discovery)
+    _run_check("required_tables", _check_required_tables)
+    _run_check("corpus_content", _check_corpus_content)
+    _run_check("stale_math_signal_column", _check_stale_math_signal_column)
 
     # Index checks: existence feeds into freshness and SQLite checks
-    index_check = _check_index_exists()
-    checks.append(index_check)
+    index_check = _run_check("index_exists", _check_index_exists)
 
-    db_path_str = index_check.get("_db_path")
-    checks.append(_check_index_freshness(db_path_str))
-    checks.append(_check_sqlite(db_path_str))
-    checks.append(_check_index_manifest())
-    checks.append(_check_index_manifest_history())
-    checks.append(_check_index_step_failures())
+    db_path_str = index_check.get("_db_path") if index_check else None
+    _run_check("index_freshness", _check_index_freshness, db_path_str)
+    _run_check("sqlite", _check_sqlite, db_path_str)
+    _run_check("index_manifest", _check_index_manifest)
+    _run_check("index_manifest_history", _check_index_manifest_history)
+    _run_check("index_step_failures", _check_index_step_failures)
     # W408: surface per-phase wallclock from the latest indexer run. The
     # check itself is always advisory; the JSON envelope adds a top-level
     # ``phase_timings`` block so consumers can read seconds-per-phase
     # without parsing the human-readable detail string.
-    phase_check = _check_phase_timings()
-    checks.append(phase_check)
-    checks.append(_check_installed_binary_matches_source())
+    phase_check = _run_check("phase_timings", _check_phase_timings) or {}
+    _run_check("installed_binary", _check_installed_binary_matches_source)
     # W482 — emitted-workflow drift (follow-up to W471 SLSA SRC-L3).
-    ci_drift_check = _check_ci_workflow_drift()
-    checks.append(ci_drift_check)
+    ci_drift_check = _run_check("ci_workflow_drift", _check_ci_workflow_drift) or {}
 
     # --- Compute summary, with advisory / blocking severity split ---
     total = len(checks)
@@ -1915,30 +1976,171 @@ def doctor(ctx, strict, persist):
     # reproducible problems the codebase or CI can act on, so they earn a
     # row. Wrapped defensively: a pre-W89 DB (no ``findings`` table) or a
     # missing index silently no-ops rather than crashing doctor.
-    if persist and blocking_failed:
+    #
+    # W607-BE: ADDITIVE substrate-boundary plumbing over the prior W607-N
+    # closure. cmd_doctor's persist path collapses three distinct
+    # registry-side substrate boundaries into a single ``except Exception:
+    # _w607n_warnings_out.append(...)`` channel — losing the ability to
+    # tell which step crashed (DB existence probe vs connection open vs
+    # finding emit vs commit). W607-BE splits the boundary so each
+    # registry-side raise surfaces a structured
+    # ``doctor_<phase>_failed:<exc_class>:<detail>`` marker via
+    # ``_w607be_warnings_out``; markers are merged into BOTH
+    # ``summary.warnings_out`` and the top-level ``warnings_out`` at
+    # output time. Empty bucket -> byte-identical envelope.
+    _w607be_warnings_out: list[str] = []
+
+    def _run_check_be(phase: str, fn, *args, default=None, **kwargs):
+        """Run one persist-side substrate with W607-BE marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``doctor_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607be_warnings_out`` and return *default* — the
+        envelope still emits cleanly with the remaining substrates. This
+        complements W607-N's per-``_check_*`` wrapper (which catches
+        helpers raising before producing their pass/fail dict) by
+        disclosing which registry-side step crashed when ``--persist``
+        is set.
+        """
         try:
-            from roam.db.connection import db_exists, open_db
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607be_warnings_out.append(f"doctor_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
 
-            if db_exists():
-                with open_db(readonly=False) as _conn:
-                    _emit_doctor_findings(_conn, checks, DOCTOR_DETECTOR_VERSION)
-                    _conn.commit()
-        except sqlite3.OperationalError:
-            # findings table missing (pre-W89 schema) — degrade gracefully.
-            pass
-        except Exception:
-            # Persist is best-effort. A broken --persist must never
-            # break the normal diagnostic output path.
-            pass
+    if persist and blocking_failed:
+        from roam.db.connection import db_exists, open_db
 
-    if not failed:
-        verdict = f"all {total} checks passed"
-    elif blocking_failed and len(failed) == 1:
-        verdict = f"1 check failed ({failed[0]['name']})"
-    elif blocking_failed:
-        verdict = f"{len(blocking_failed)} blocking, {len(advisory_failed)} advisory"
-    else:
-        verdict = f"{len(advisory_failed)} advisory check(s) — non-blocking"
+        _db_present = _run_check_be("persist_db_exists", db_exists, default=False)
+        if _db_present:
+            _conn_ctx = _run_check_be(
+                "persist_open_db",
+                lambda: open_db(readonly=False),
+                default=None,
+            )
+            if _conn_ctx is not None:
+                try:
+                    with _conn_ctx as _conn:
+                        _run_check_be(
+                            "persist_emit_findings",
+                            _emit_doctor_findings,
+                            _conn,
+                            checks,
+                            DOCTOR_DETECTOR_VERSION,
+                        )
+                        _run_check_be(
+                            "persist_commit_findings",
+                            _conn.commit,
+                        )
+                except Exception as exc:  # noqa: BLE001 — context-manager raise
+                    # The ``with`` context may itself raise on exit (e.g.
+                    # connection.__exit__ rolling back a transaction that
+                    # hit a sqlite3.OperationalError on schema drift). The
+                    # individual inner boundaries already disclosed via
+                    # ``_run_check_be`` when they raised; this outer
+                    # marker captures only the context-exit edge.
+                    _w607be_warnings_out.append(f"doctor_persist_context_failed:{type(exc).__name__}:{exc}")
+
+    # W607-DW: post-capture substrate-CALL plumbing LAYERED on top of
+    # W607-N (capture-layer per-check wrap) and W607-BE (persist-side
+    # boundaries). cmd_doctor's POST-capture path collapses five distinct
+    # substrate boundaries into one unguarded sequence — score
+    # computation, verdict composition, section assembly, envelope
+    # serialization, and text formatting. A raise inside any of these
+    # (e.g. a poisoned ``len(failed)``, an f-string format-spec crash on
+    # a degraded ``_check_*`` result, a non-JSON-serializable section
+    # payload, a ``__str__`` raise during click.echo) would torpedo the
+    # envelope WITHOUT lineage.
+    #
+    # W607-DW splits the post-capture boundary into 5 wrapped substrate
+    # calls so each raise surfaces a structured
+    # ``doctor_<phase>_failed:<exc_class>:<detail>`` marker via
+    # ``_w607dw_warnings_out``; markers merge into BOTH
+    # ``summary.warnings_out`` and the top-level ``warnings_out`` at
+    # output time. Empty bucket → byte-identical envelope.
+    #
+    # Phase sub-vocabulary (DISJOINT from W607-N's ``_check_*`` phase
+    # names and W607-BE's ``persist_*`` phase names so the shared
+    # ``doctor_*`` marker family carries no collision):
+    #   compute_scores / compose_verdict / assemble_sections /
+    #   serialize_envelope / format_text
+    #
+    # Mirrors the cmd_dashboard W607-DP shape exactly. The helper
+    # template returns ``default`` VERBATIM on raise (NOT
+    # ``default if default is not None else {}``) so the
+    # serialize_envelope path's ``rendered is None`` guard works.
+    _w607dw_warnings_out: list[str] = []
+
+    def _run_check_dw(phase: str, fn, *args, default=None, **kwargs):
+        """Run one W607-DW post-capture substrate with marker emission.
+
+        Clean call returns the result as-is. On an uncaught raise,
+        surface ``doctor_<phase>_failed:<exc_class>:<detail>`` via
+        ``_w607dw_warnings_out`` and substitute *default* — the
+        envelope still emits the remaining substrates cleanly.
+
+        ``default`` is returned VERBATIM on raise (including ``None``)
+        so callers can distinguish a degraded-but-empty result (``{}``)
+        from a degraded-no-output result (``None``). This is critical
+        for the ``serialize_envelope`` phase whose ``rendered is None``
+        guard precedes the minimal-fallback echo (W978 #6).
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607dw_warnings_out.append(f"doctor_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-DW ``compute_scores`` substrate: derive verdict from per-check
+    # pass/fail counts. A raise inside ``len(failed)`` or
+    # ``failed[0]['name']`` (e.g. a degraded ``_check_*`` returning a
+    # non-dict surrogate) surfaces a canonical marker instead of crashing.
+    def _compute_scores():
+        if not failed:
+            return {"verdict_kind": "all_passed", "verdict_arg": total}
+        elif blocking_failed and len(failed) == 1:
+            return {"verdict_kind": "single_fail", "verdict_arg": failed[0]["name"]}
+        elif blocking_failed:
+            return {
+                "verdict_kind": "mixed_blocking",
+                "verdict_arg": (len(blocking_failed), len(advisory_failed)),
+            }
+        else:
+            return {
+                "verdict_kind": "only_advisory",
+                "verdict_arg": len(advisory_failed),
+            }
+
+    _scores = _run_check_dw(
+        "compute_scores",
+        _compute_scores,
+        default={"verdict_kind": "degraded", "verdict_arg": None},
+    )
+
+    # W607-DW ``compose_verdict`` substrate: the LAW 6 single-line floor
+    # lives here. A raise inside the f-string composition returns the
+    # literal floor verdict instead of crashing.
+    def _compose_verdict():
+        kind = _scores.get("verdict_kind") if isinstance(_scores, dict) else "degraded"
+        arg = _scores.get("verdict_arg") if isinstance(_scores, dict) else None
+        if kind == "all_passed":
+            return f"all {arg} checks passed"
+        elif kind == "single_fail":
+            return f"1 check failed ({arg})"
+        elif kind == "mixed_blocking":
+            return f"{arg[0]} blocking, {arg[1]} advisory"
+        elif kind == "only_advisory":
+            return f"{arg} advisory check(s) — non-blocking"
+        else:
+            return "DOCTOR — verdict unavailable"
+
+    # W978 #1: verdict floor is a non-empty literal string so a
+    # degraded compose_verdict still satisfies LAW 6.
+    verdict = _run_check_dw(
+        "compose_verdict",
+        _compose_verdict,
+        default="DOCTOR — verdict unavailable",
+    )
 
     # Issue-template-ready summary line: a single string capturing the
     # diagnostic in copy-paste form, so users filing GitHub bugs can
@@ -1993,34 +2195,114 @@ def doctor(ctx, strict, persist):
         state = "all_passed"
 
     if json_mode:
-        click.echo(
-            to_json(
+        # W607-N + W607-BE + W607-DW: Pattern-2 consumer-layer wiring —
+        # when any per-check helper, persist-side substrate, OR
+        # post-capture substrate raised before producing its own dict,
+        # the marker bucket carries the lineage. Surface on BOTH the
+        # summary mirror (so consumers reading only ``summary`` see the
+        # disclosure) AND the top-level (so the preserved-list field at
+        # ``_ALWAYS_PRESERVED_LIST_FIELDS`` in formatter.py survives
+        # detail-mode list-payload stripping). Non-empty bucket also
+        # flips ``partial_success`` to True regardless of any check pass.
+        #
+        # W607-DW ``assemble_sections`` substrate boundary: build the
+        # summary_block + envelope_kwargs in one wrapped call so a
+        # ``.get`` chain on a degraded sub-envelope does not crash.
+        def _assemble_sections():
+            _summary_block: dict = {
+                "verdict": verdict,
+                "issue_line": issue_line,
+                "total": total,
+                "passed": passed_count,
+                "failed": len(failed),
+                "advisory_failed": len(advisory_failed),
+                "blocking_failed": len(blocking_failed),
+                "all_passed": len(failed) == 0,
+                "partial_success": (
+                    bool(failed)
+                    or bool(_w607n_warnings_out)
+                    or bool(_w607be_warnings_out)
+                    or bool(_w607dw_warnings_out)
+                ),
+                "state": state,
+                "strict": bool(strict),
+            }
+            _envelope_kwargs: dict = {
+                "checks": clean_checks,
+                "failed_checks": [c for c in clean_checks if not c["passed"]],
+                "advisory_failed": [c for c in clean_checks if c["name"] in _ADVISORY_CHECK_NAMES and not c["passed"]],
+                "blocking_failed": [
+                    c for c in clean_checks if c["name"] not in _ADVISORY_CHECK_NAMES and not c["passed"]
+                ],
+                "phase_timings": phase_timings_block,
+                "ci_workflow_drift": ci_workflow_drift_block,
+            }
+            return {"summary_block": _summary_block, "envelope_kwargs": _envelope_kwargs}
+
+        # Floor on degrade: minimal summary + empty kwargs so the
+        # serialize_envelope substrate still has structurally valid
+        # input. The verdict literal floor preserved separately.
+        _assembled = _run_check_dw(
+            "assemble_sections",
+            _assemble_sections,
+            default={
+                "summary_block": {"verdict": verdict, "partial_success": True},
+                "envelope_kwargs": {},
+            },
+        )
+        summary_block = (
+            _assembled.get("summary_block", {"verdict": verdict})
+            if isinstance(_assembled, dict)
+            else {"verdict": verdict}
+        )
+        envelope_kwargs: dict = _assembled.get("envelope_kwargs", {}) if isinstance(_assembled, dict) else {}
+
+        # W607-N + W607-BE + W607-DW additive: merge all three marker
+        # buckets into a single ``warnings_out`` channel. All three
+        # prefix families use the ``doctor_<phase>_failed:<exc_class>:<detail>``
+        # shape so downstream parsers see one closed-enum prefix family.
+        _combined_markers = list(_w607n_warnings_out) + list(_w607be_warnings_out) + list(_w607dw_warnings_out)
+        if _combined_markers:
+            summary_block["partial_success"] = True
+            summary_block["warnings_out"] = list(_combined_markers)
+            envelope_kwargs["warnings_out"] = list(_combined_markers)
+
+        # W607-DW ``serialize_envelope`` substrate boundary: a raise in
+        # ``json_envelope`` or ``to_json`` (e.g. a non-serializable
+        # section payload) surfaces as the canonical marker; the
+        # command still emits a minimal envelope on the degraded path.
+        def _serialize_envelope():
+            return to_json(
                 json_envelope(
                     "doctor",
-                    summary={
-                        "verdict": verdict,
-                        "issue_line": issue_line,
-                        "total": total,
-                        "passed": passed_count,
-                        "failed": len(failed),
-                        "advisory_failed": len(advisory_failed),
-                        "blocking_failed": len(blocking_failed),
-                        "all_passed": len(failed) == 0,
-                        "partial_success": bool(failed),
-                        "state": state,
-                        "strict": bool(strict),
-                    },
-                    checks=clean_checks,
-                    failed_checks=[c for c in clean_checks if not c["passed"]],
-                    advisory_failed=[c for c in clean_checks if c["name"] in _ADVISORY_CHECK_NAMES and not c["passed"]],
-                    blocking_failed=[
-                        c for c in clean_checks if c["name"] not in _ADVISORY_CHECK_NAMES and not c["passed"]
-                    ],
-                    phase_timings=phase_timings_block,
-                    ci_workflow_drift=ci_workflow_drift_block,
+                    summary=summary_block,
+                    **envelope_kwargs,
                 )
             )
-        )
+
+        rendered = _run_check_dw("serialize_envelope", _serialize_envelope, default=None)
+        # W978 #6: ``rendered is None`` guard before echo so a degraded
+        # serialize_envelope does not crash on the print path. The
+        # minimal hand-rolled fallback re-surfaces the markers + verdict
+        # so consumers reading stdout see the disclosure.
+        if rendered is None:
+            import json as _json_fallback
+
+            summary_block["partial_success"] = True
+            summary_block["warnings_out"] = (
+                list(_w607n_warnings_out) + list(_w607be_warnings_out) + list(_w607dw_warnings_out)
+            )
+            click.echo(
+                _json_fallback.dumps(
+                    {
+                        "command": "doctor",
+                        "summary": summary_block,
+                        "warnings_out": summary_block["warnings_out"],
+                    }
+                )
+            )
+        else:
+            click.echo(rendered)
         # Three-tier exit codes:
         #   0 = clean
         #   1 = only advisory failures (CI users who want zero drift use --strict)
@@ -2033,29 +2315,37 @@ def doctor(ctx, strict, persist):
         return
 
     # --- Text output ---
-    click.echo(f"VERDICT: {verdict}\n")
-    for c in clean_checks:
-        if c["passed"]:
-            label = "PASS"
-        elif c["name"] in _ADVISORY_CHECK_NAMES:
-            label = "WARN"  # advisory failures get distinct visual weight
-        else:
-            label = "FAIL"
-        click.echo(f"  [{label}] {c['detail']}")
+    # W607-DW ``format_text`` substrate boundary: a raise during
+    # click.echo formatting (e.g. a __str__ raise on a degraded check
+    # entry, a missing key on a degraded ``clean_checks`` dict)
+    # surfaces a marker rather than crashing.
+    def _format_text():
+        click.echo(f"VERDICT: {verdict}\n")
+        for c in clean_checks:
+            if c["passed"]:
+                label = "PASS"
+            elif c["name"] in _ADVISORY_CHECK_NAMES:
+                label = "WARN"  # advisory failures get distinct visual weight
+            else:
+                label = "FAIL"
+            click.echo(f"  [{label}] {c['detail']}")
 
-    # One-line diagnostic, copy-pasteable into a GitHub issue or chat.
-    click.echo()
-    click.echo(f"  {issue_line}")
-
-    if failed:
+        # One-line diagnostic, copy-pasteable into a GitHub issue or chat.
         click.echo()
-        if blocking_failed and advisory_failed:
-            click.echo(f"  {len(blocking_failed)} blocking, {len(advisory_failed)} advisory.")
-        elif blocking_failed:
-            click.echo(f"  {len(blocking_failed)} check{'s' if len(blocking_failed) != 1 else ''} failed.")
-        else:
-            note = " (use --strict to fail CI on advisory)" if not strict else ""
-            click.echo(f"  {len(advisory_failed)} advisory check(s) — non-blocking{note}.")
+        click.echo(f"  {issue_line}")
+
+        if failed:
+            click.echo()
+            if blocking_failed and advisory_failed:
+                click.echo(f"  {len(blocking_failed)} blocking, {len(advisory_failed)} advisory.")
+            elif blocking_failed:
+                click.echo(f"  {len(blocking_failed)} check{'s' if len(blocking_failed) != 1 else ''} failed.")
+            else:
+                note = " (use --strict to fail CI on advisory)" if not strict else ""
+                click.echo(f"  {len(advisory_failed)} advisory check(s) — non-blocking{note}.")
+        return None
+
+    _run_check_dw("format_text", _format_text, default=None)
 
     if blocking_failed or (strict and advisory_failed):
         ctx.exit(2)

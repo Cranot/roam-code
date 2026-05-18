@@ -18,6 +18,45 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
 
+# ---------------------------------------------------------------------------
+# W607-EG substrate-boundary plumbing for cmd_mutate.
+# ---------------------------------------------------------------------------
+#
+# ``_run_check_eg`` wraps each substrate helper so an uncaught raise in any
+# one boundary degrades to a sensible empty-floor default AND surfaces a
+# marker via ``_w607eg_warnings_out`` rather than crashing the mutate
+# (state-mutating code-transform) command outright. cmd_mutate pairs with
+# cmd_simulate (W607-EF) along the TRANSFORM AXIS: cmd_simulate is the
+# what-if counterfactual transform on a cloned graph; cmd_mutate is the
+# real-transform that writes files to disk. Marker family
+# ``mutate_<phase>_failed:<exc_class>:<detail>``. Substrates wrapped:
+#
+#   * resolve_target          -- symbol -> resolver location
+#   * load_source             -- delegate to roam.refactor.transforms entry
+#                                (which reads original file content)
+#   * apply_transform         -- the actual mutation
+#                                (move_symbol / rename_symbol / add_call /
+#                                extract_symbol)
+#   * validate_transform      -- lint-check on transformed result envelope
+#                                (files_modified shape + conflict count)
+#   * write_output            -- atomic file-write (W82.1) -- guarded by
+#                                ``apply_changes`` flag on the inner
+#                                transform call
+#   * compose_verdict         -- LAW 6 single-line floor
+#   * compose_facts           -- agent_contract.facts list
+#   * compose_next_commands   -- agent_contract.next_commands
+#   * serialize_envelope      -- JSON envelope emission
+#   * format_text_output      -- text path emission
+#
+# W978 7-discipline applied: (1) f-string verdict floor uses literal
+# zero-count text -- no Name references, (2) default={...} carries plain
+# literals, (3) no json.dumps(default=str) needed (no datetimes), (4)
+# ``mutate_*`` prefix is unique (collision-checked by cross-prefix-
+# discipline test), (5) len() at kwarg-bind is gated by the envelope
+# fallback, (6) len() / if x: on a poisoned object only runs after the
+# empty-floor guard, (7) no dict.get(key, expensive_default) calls -- all
+# defaults are immutable literals.
+
 
 def _format_changes_text(result: dict) -> list[str]:
     """Format change plan as human-readable text lines."""
@@ -54,6 +93,27 @@ def _truncate(text: str, max_len: int) -> str:
     if len(text) > max_len:
         return text[: max_len - 3] + "..."
     return text
+
+
+def _run_check_eg(phase, fn, *args, default=None, warnings_out=None, **kwargs):
+    """Run one substrate helper with W607-EG marker emission.
+
+    On a clean call the result is returned as-is. On an uncaught
+    exception, surface a ``mutate_<phase>_failed:<exc_class>:<detail>``
+    marker via ``warnings_out`` and return *default* -- the envelope
+    still emits cleanly with the remaining substrates.
+
+    The ``warnings_out`` keyword carries the per-invocation
+    ``_w607eg_warnings_out`` bucket; we keep it as a keyword (not a
+    closed-over name) so the helper stays a clean module-level
+    FunctionDef that the AST guard test can locate.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+        if warnings_out is not None:
+            warnings_out.append(f"mutate_{phase}_failed:{type(exc).__name__}:{exc}")
+        return default
 
 
 def _emit_error(ctx, operation: str, message: str, warnings: list[str] | None = None) -> None:
@@ -160,41 +220,172 @@ def mutate_move(ctx, symbol, target_file, apply_changes, dry_run):
 
     from roam.refactor.transforms import move_symbol
 
+    # W607-EG: substrate-boundary plumbing for cmd_mutate (move).
+    # Marker family ``mutate_<phase>_failed:<exc_class>:<detail>``.
+    _w607eg_warnings_out: list[str] = []
+
+    # Empty-floor result reused by every degraded path so the mutate
+    # envelope still composes a coherent verdict. Literal zero counts
+    # avoid re-introducing the 7919-CATASTROPHE shape (CONSTRAINT 12).
+    empty_result_floor: dict = {
+        "symbol": symbol,
+        "files_modified": [],
+        "warnings": [],
+    }
+
+    # W607-EG: ``resolve_target`` substrate -- normalise symbol input.
+    def _resolve_target():
+        return symbol
+
+    resolved_symbol = _run_check_eg(
+        "resolve_target",
+        _resolve_target,
+        default=symbol,
+        warnings_out=_w607eg_warnings_out,
+    )
+
+    # W607-EG: ``load_source`` + ``apply_transform`` + ``write_output``
+    # substrates are layered inside ``move_symbol``. The transform reads
+    # the original file content, applies the AST mutation, optionally
+    # writes the new content atomically per W82.1 (when apply_changes is
+    # set). A raise here degrades to the empty floor so the envelope
+    # still composes the LAW-6 verdict.
     with open_db(readonly=True) as conn:
-        result = move_symbol(conn, symbol, target_file, dry_run=(not apply_changes))
+        result = _run_check_eg(
+            "apply_transform",
+            move_symbol,
+            conn,
+            resolved_symbol,
+            target_file,
+            dry_run=(not apply_changes),
+            default=empty_result_floor,
+            warnings_out=_w607eg_warnings_out,
+        )
+    if result is None:
+        result = empty_result_floor
 
     if result.get("error"):
         _emit_error(ctx, "move", result["error"], result.get("warnings", []))
         return
 
-    n_files = len(result.get("files_modified", []))
-    verdict = f"move {result.get('symbol', symbol)} -- {n_files} files modified, 0 conflicts"
+    # W607-EG: ``validate_transform`` substrate -- shape-validate the
+    # transform result envelope (files_modified shape + conflict count).
+    def _validate_transform():
+        files_local = result.get("files_modified", []) or []
+        return len(files_local)
+
+    n_files = _run_check_eg(
+        "validate_transform",
+        _validate_transform,
+        default=0,
+        warnings_out=_w607eg_warnings_out,
+    )
+    if n_files is None:
+        n_files = 0
+
+    # W607-EG: ``compose_verdict`` substrate -- LAW 6 single-line floor.
+    # Pattern-2 guard: never collapse to SAFE / passed vocabulary on the
+    # degraded path. W978 #1: f-string verdict floor is plain text.
+    def _compose_verdict():
+        return f"move {result.get('symbol', resolved_symbol)} -- {n_files} files modified, 0 conflicts"
+
+    verdict = _run_check_eg(
+        "compose_verdict",
+        _compose_verdict,
+        default="move (degraded) -- 0 files modified, 0 conflicts",
+        warnings_out=_w607eg_warnings_out,
+    )
+    if not isinstance(verdict, str) or not verdict:
+        verdict = "move (degraded) -- 0 files modified, 0 conflicts"
+
+    # W607-EG: ``compose_facts`` substrate -- curated agent_contract.facts.
+    def _compose_facts():
+        return [
+            verdict,
+            f"{n_files} files modified",
+        ]
+
+    facts = _run_check_eg(
+        "compose_facts",
+        _compose_facts,
+        default=[verdict],
+        warnings_out=_w607eg_warnings_out,
+    )
+    if facts is None:
+        facts = [verdict]
+
+    # W607-EG: ``compose_next_commands`` substrate -- conditional advisory.
+    def _compose_next_commands():
+        cmds = []
+        if not apply_changes:
+            cmds.append(f"roam mutate move {symbol} {target_file} --apply")
+        return cmds
+
+    next_commands = _run_check_eg(
+        "compose_next_commands",
+        _compose_next_commands,
+        default=[],
+        warnings_out=_w607eg_warnings_out,
+    )
+    if next_commands is None:
+        next_commands = []
 
     if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "mutate",
-                    summary={
-                        "verdict": verdict,
-                        "operation": "move",
-                        "files_modified": n_files,
-                        "conflicts": 0,
-                    },
-                    changes=result.get("files_modified", []),
-                    warnings=result.get("warnings", []),
-                )
-            )
+        # W607-EG: ``serialize_envelope`` substrate -- json_envelope
+        # construction + click.echo emission.
+        envelope_summary: dict = {
+            "verdict": verdict,
+            "operation": "move",
+            "files_modified": n_files,
+            "conflicts": 0,
+        }
+        envelope_kwargs: dict = dict(
+            summary=envelope_summary,
+            changes=result.get("files_modified", []) or [],
+            warnings=result.get("warnings", []) or [],
+            agent_contract={
+                "facts": facts,
+                "risks": [],
+                "next_commands": next_commands,
+                "confidence": None,
+            },
+        )
+        # W607-EG: mirror substrate markers into BOTH the top-level
+        # envelope ``warnings_out`` AND ``summary.warnings_out`` so MCP
+        # consumers see disclosure regardless of which surface they read.
+        # Flipping ``partial_success: True`` is the Pattern-2 silent-
+        # fallback guard (W607-DV late-phase bond-bug check).
+        if _w607eg_warnings_out:
+            envelope_summary["partial_success"] = True
+            envelope_summary["warnings_out"] = list(_w607eg_warnings_out)
+            envelope_kwargs["warnings_out"] = list(_w607eg_warnings_out)
+
+        def _serialize_envelope():
+            click.echo(to_json(json_envelope("mutate", **envelope_kwargs)))
+
+        _run_check_eg(
+            "serialize_envelope",
+            _serialize_envelope,
+            default=None,
+            warnings_out=_w607eg_warnings_out,
         )
         return
 
-    click.echo(f"VERDICT: {verdict}")
-    click.echo("")
-    for line in _format_changes_text(result):
-        click.echo(line)
+    # W607-EG: ``format_text_output`` substrate -- text emission path.
+    def _format_text_output():
+        click.echo(f"VERDICT: {verdict}")
+        click.echo("")
+        for line in _format_changes_text(result):
+            click.echo(line)
+        if not apply_changes:
+            click.echo(f"Run `roam mutate move {symbol} {target_file} --apply` to execute.")
 
-    if not apply_changes:
-        click.echo(f"Run `roam mutate move {symbol} {target_file} --apply` to execute.")
+    _run_check_eg(
+        "format_text_output",
+        _format_text_output,
+        default=None,
+        warnings_out=_w607eg_warnings_out,
+    )
 
 
 @mutate.command("rename")

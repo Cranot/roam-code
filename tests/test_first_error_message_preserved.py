@@ -109,6 +109,41 @@ def test_no_leak_across_error_codes_in_trimmed_envelope():
     assert "DB_LOCKED message" not in trimmed.get("first_error_message", "")
 
 
+def test_trimmed_envelope_keeps_command_without_cross_command_message_leak():
+    """Repeated same-code usage errors from different tools must keep the
+    current command identity and avoid replaying another command's text."""
+    from roam.mcp_server import _structured_error
+
+    _structured_error(
+        {
+            "command": "roam_for_refactor",
+            "error": "symbol is required for roam_for_refactor",
+            "error_code": "USAGE_ERROR",
+            "hint": "pass a symbol",
+        }
+    )
+    _structured_error(
+        {
+            "command": "roam_for_security_review",
+            "error": "vulns list rejected extra argument",
+            "error_code": "USAGE_ERROR",
+            "hint": "call vulns without list",
+        }
+    )
+    trimmed = _structured_error(
+        {
+            "command": "roam_for_bug_fix",
+            "error": "symbol is required for roam_for_bug_fix",
+            "error_code": "USAGE_ERROR",
+            "hint": "pass a symbol",
+        }
+    )
+
+    assert trimmed.get("trimmed") is True
+    assert trimmed.get("command") == "roam_for_bug_fix"
+    assert trimmed.get("first_error_message") == "symbol is required for roam_for_bug_fix"
+
+
 def test_r9_preserved_fields_still_present_in_trimmed_envelope():
     """Regression guard: the R9 security recheck fields (``retryable``,
     ``doc_link``) must stay alongside the new ``first_error_message``

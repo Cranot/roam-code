@@ -44,7 +44,99 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
-from roam.output.risk import risk_rank
+from roam.output.risk import normalize_risk_level, risk_rank
+
+# ---------------------------------------------------------------------------
+# W641-followup-H — canonical risk-LEVEL projection from per-step risk
+# ---------------------------------------------------------------------------
+#
+# cmd_migration_plan is the EIGHTH emitter joining the W641 risk-axis cluster
+# after cmd_pr_risk (W641), cmd_impact (W641-followup-A), cmd_critique
+# (W641-followup-B), cmd_pr_bundle (W641-followup-C), cmd_attest
+# (W641-followup-D), cmd_diff (W641-followup-E), and cmd_dark_matter
+# (W641-followup-G). The roam/output/risk.py module docstring explicitly
+# cites cmd_migration_plan as the canonical pre-W631 risk-rank polarity
+# emitter — this follow-up closes the loop by adding the EMIT side
+# (the W631 sort-polarity consumer-side at lines 125 / 138 / 142 already
+# landed under W631 task #733).
+#
+# cmd_migration_plan's per-step risk vocabulary is the 3-tier ``low`` /
+# ``medium`` / ``high`` set (lines 248-253 of ``_evaluate_move`` — derived
+# from blast-radius + cross-layer signal). It does NOT emit ``critical``
+# natively; the PLAN-level rollup picks the worst step's risk via
+# max-tier aggregation and floors at ``high`` to stay consistent with the
+# rest of the W641 cluster's conservative-on-critical discipline.
+#
+# Aggregation: **max-tier wins**. The PLAN inherits the worst step's risk
+# (mirrors W641-followup-B cmd_critique severity aggregation). Skipped
+# steps (above ``--max-risk`` threshold) are EXCLUDED from the aggregation
+# because they're not part of the plan; if a user gates at
+# ``--max-risk medium``, the plan-level canonical risk SHOULD reflect what
+# the plan actually executes, not what was rejected.
+#
+# Conservative-on-critical: cmd_migration_plan saturates at ``high``
+# because its per-step vocabulary tops out at ``high`` and the underlying
+# signal is single-axis (blast-radius + cross-layer). ``critical`` is
+# reserved for the multi-factor composite-score commands (cmd_attest's
+# ``_collect_risk``). The W531 CI-safety lesson: a threshold wobble MUST
+# NOT promote a finding into a CI-gating rank.
+
+
+def _migration_plan_risk_level(
+    step_risks: list[str],
+    *,
+    warnings_out: list[str] | None = None,
+) -> str:
+    """Project per-step migration risks onto the canonical W631 risk-LEVEL set.
+
+    Aggregation: max-tier wins (the worst step's risk drives the plan's
+    risk). Empty plan / no steps safe-floors to ``low`` (W531 CI-safety:
+    a no-op migration MUST NOT promote into a gating rank).
+
+    Returns a string in :data:`roam.output.risk.RISK_LEVELS`
+    (``critical``/``high``/``medium``/``low``). cmd_migration_plan
+    saturates at ``high`` (W641-followup-A/B/E/G discipline — single-axis
+    blast-radius + cross-layer signal does not justify escalating to
+    ``critical``).
+
+    Unknown / non-list inputs accumulate a marker on *warnings_out* (when
+    provided) under ``migration_plan_unknown_severity:<value>`` so
+    Pattern-2 silent-fallback stays loud — mirrors the W918 alerts /
+    W989 pr-risk / W641-followup-B critique / W641-followup-D attest /
+    W641-followup-E diff / W641-followup-G dark-matter discipline.
+    """
+    if not isinstance(step_risks, list):
+        if warnings_out is not None:
+            warnings_out.append(f"migration_plan_unknown_severity:non_list({step_risks!r})")
+        return "low"
+    if not step_risks:
+        return "low"
+
+    max_rank = 0
+    saw_unknown = False
+    for risk in step_risks:
+        canonical = normalize_risk_level(risk)
+        if canonical is None:
+            saw_unknown = True
+            continue
+        r = risk_rank(canonical)
+        if r > max_rank:
+            max_rank = r
+
+    if saw_unknown and warnings_out is not None:
+        warnings_out.append(f"migration_plan_unknown_severity:unknown_token({step_risks!r})")
+
+    # Conservative-on-critical: cmd_migration_plan's per-step vocabulary
+    # tops out at ``high``; saturate the rollup at ``high`` even if a
+    # downstream rename introduces ``critical`` upstream of this helper.
+    if max_rank >= 3:
+        return "high"
+    if max_rank >= 2:
+        return "medium"
+    if max_rank >= 1:
+        return "low"
+    # All-unknown path lands here (max_rank stayed 0). Safe-floor to low.
+    return "low"
 
 
 @roam_capability(
@@ -100,12 +192,32 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
         # stdout for Cloud Lite / MCP / agent consumers). Text mode emits
         # the human-readable line.
         if json_mode:
+            # W641-followup-H — empty plan safe-floors to canonical ``low``
+            # so consumers downstream can call ``risk_rank(...)``
+            # unconditionally (parity with W641-followup-D/E/G).
+            _empty_canonical = "low"
+            _empty_rank = risk_rank(_empty_canonical)
             click.echo(
                 to_json(
                     json_envelope(
                         "migration-plan",
-                        summary={"verdict": "NO PLAN", "reason": "no target moves provided", "step_count": 0},
+                        summary={
+                            "verdict": f"NO PLAN (risk_level {_empty_canonical})",
+                            "reason": "no target moves provided",
+                            "step_count": 0,
+                            # W641-followup-H — canonical W631 risk-LEVEL +
+                            # integer rank. Empty plan floors to ``low``.
+                            "risk_level_canonical": _empty_canonical,
+                            "risk_rank": _empty_rank,
+                        },
                         steps=[],
+                        # W641-followup-H — top-level mirror of summary
+                        # canonical fields so consumers reading the envelope
+                        # head without descending into ``summary`` see the
+                        # canonical bucket too (parity with cmd_impact /
+                        # cmd_critique / cmd_attest / cmd_diff / cmd_dark_matter).
+                        risk_level_canonical=_empty_canonical,
+                        risk_rank=_empty_rank,
                     )
                 )
             )
@@ -148,30 +260,96 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
     verdict = _verdict(plan, skipped)
 
     if json_mode:
+        # W641-followup-H — canonical W631 risk-LEVEL projection from the
+        # plan's per-step risks. Aggregation is max-tier wins (the worst
+        # step's risk drives the plan's risk). Skipped steps are EXCLUDED
+        # from the aggregation: the canonical bucket reflects what the
+        # plan actually executes, not what was rejected by --max-risk.
+        # Cross-command consumers can compare e.g.
+        # ``risk_rank(summary.risk_level_canonical) >= 3`` to gate on
+        # high-or-worse plans without re-deriving the threshold table.
+        _mp_warnings_out: list[str] = []
+        _mp_step_risks = [s["risk"] for s in plan]
+        _mp_domain_level = _migration_plan_risk_level(
+            _mp_step_risks,
+            warnings_out=_mp_warnings_out,
+        )
+        risk_level_canonical = normalize_risk_level(_mp_domain_level) or "low"
+        risk_rank_int = risk_rank(risk_level_canonical)
+
+        # Verdict augmentation: append the canonical bucket so LAW 6
+        # standalone-parse holds — an agent reading just the verdict line
+        # can call ``risk_rank`` on the parenthesised token without
+        # consulting any other envelope field. Mirrors the W641-followup-
+        # A/B/C/D/E/G verdict-augmentation contract.
+        verdict_augmented = f"{verdict} (risk_level {risk_level_canonical})"
+
+        # Stamp canonical risk_level_canonical onto each step too so a
+        # downstream consumer iterating ``summary.steps[]`` can call
+        # ``risk_rank(step["risk_level_canonical"])`` without re-normalising
+        # the per-step ``risk`` token. The pre-existing per-step ``risk``
+        # field is preserved verbatim so the regression contract (text
+        # render, sort polarity, --max-risk gate) stays intact.
+        plan_with_canonical = [
+            {
+                **s,
+                "risk_level_canonical": normalize_risk_level(s["risk"]) or "low",
+                "risk_rank": risk_rank(normalize_risk_level(s["risk"]) or "low"),
+            }
+            for s in plan
+        ]
+        skipped_with_canonical = [
+            {
+                **s,
+                "risk_level_canonical": normalize_risk_level(s["risk"]) or "low",
+                "risk_rank": risk_rank(normalize_risk_level(s["risk"]) or "low"),
+            }
+            for s in skipped
+        ]
+
+        _summary: dict = {
+            "verdict": verdict_augmented,
+            "step_count": len(plan),
+            "skipped_count": len(skipped),
+            "max_risk": max_risk,
+            "high_risk_steps": sum(1 for s in plan if s["risk"] == "high"),
+            "medium_risk_steps": sum(1 for s in plan if s["risk"] == "medium"),
+            "low_risk_steps": sum(1 for s in plan if s["risk"] == "low"),
+            # Pattern 2: when the gate skipped moves, the user's
+            # intent was only partially honoured. Disclose it
+            # explicitly so agents don't read step_count=N as
+            # "all N moves planned".
+            "partial_success": bool(skipped),
+            # Pattern 1D: closed-enum risk-level summary of what
+            # actually emerges, so the verdict doesn't have to
+            # carry every detail.
+            "risk_definition": "max(callers,cross_layer) -> low|medium|high",
+            # W641-followup-H — canonical W631 risk-LEVEL + integer rank.
+            # Projected from per-step risks via ``_migration_plan_risk_level``
+            # (Pattern-3a structural close-out, eighth axis after W641 +
+            # followup-A/B/C/D/E/G).
+            "risk_level_canonical": risk_level_canonical,
+            "risk_rank": risk_rank_int,
+        }
+        # Surface Pattern-2 silent-fallback markers (unknown / non-list
+        # inputs). Empty list omitted to keep the envelope tight.
+        if _mp_warnings_out:
+            _summary["warnings_out"] = list(_mp_warnings_out)
+
         click.echo(
             to_json(
                 json_envelope(
                     "migration-plan",
-                    summary={
-                        "verdict": verdict,
-                        "step_count": len(plan),
-                        "skipped_count": len(skipped),
-                        "max_risk": max_risk,
-                        "high_risk_steps": sum(1 for s in plan if s["risk"] == "high"),
-                        "medium_risk_steps": sum(1 for s in plan if s["risk"] == "medium"),
-                        "low_risk_steps": sum(1 for s in plan if s["risk"] == "low"),
-                        # Pattern 2: when the gate skipped moves, the user's
-                        # intent was only partially honoured. Disclose it
-                        # explicitly so agents don't read step_count=N as
-                        # "all N moves planned".
-                        "partial_success": bool(skipped),
-                        # Pattern 1D: closed-enum risk-level summary of what
-                        # actually emerges, so the verdict doesn't have to
-                        # carry every detail.
-                        "risk_definition": "max(callers,cross_layer) -> low|medium|high",
-                    },
-                    steps=plan,
-                    skipped=skipped,
+                    summary=_summary,
+                    steps=plan_with_canonical,
+                    skipped=skipped_with_canonical,
+                    # W641-followup-H — top-level mirror of summary
+                    # canonical fields so consumers reading the envelope
+                    # head without descending into ``summary`` see the
+                    # canonical bucket too (parity with cmd_impact /
+                    # cmd_critique / cmd_attest / cmd_diff / cmd_dark_matter).
+                    risk_level_canonical=risk_level_canonical,
+                    risk_rank=risk_rank_int,
                 )
             )
         )

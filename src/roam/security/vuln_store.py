@@ -77,13 +77,19 @@ def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[d
                 }
             )
 
-    # Edge-based: look for import edges targeting a symbol whose name matches
+    # Edge-based: look for import edges targeting a symbol whose name matches.
+    # W543-followup: previously bare ``e.kind = 'import'``; the canonical
+    # writer emits singular but plugin extractors may emit ``'imports'``.
+    # Source the IN-clause from the shared helper so vuln-reach catches
+    # plugin-emitted rows too.
+    from roam.db.edge_kinds import import_in_clause
+
     rows = conn.execute(
         "SELECT DISTINCT e.source_id, s.name, s.qualified_name, f.path AS file_path "
         "FROM edges e "
         "JOIN symbols s ON e.source_id = s.id "
         "JOIN files f ON s.file_id = f.id "
-        "WHERE e.kind = 'import' AND EXISTS ("
+        f"WHERE {import_in_clause('e.kind')} AND EXISTS ("
         "  SELECT 1 FROM symbols t WHERE t.id = e.target_id AND t.name = ?"
         ")",
         (package_name,),

@@ -213,7 +213,11 @@ def test_complexity_finding_evidence_carries_metric_factors(tmp_path):
         assert "cognitive_complexity" in evidence
         assert evidence["cognitive_complexity"] >= COMPLEXITY_FINDING_THRESHOLD
         # Severity label must be one of the structured values.
-        assert evidence["severity"] in {"HIGH", "CRITICAL"}
+        # W761: ``_severity()`` now emits the canonical W547 lowercase
+        # vocabulary (was UPPER-case pre-W761). The same threshold table
+        # produces ``"high"`` for score in [15, 25) and ``"critical"``
+        # for score >= 25 — the only change is the case.
+        assert evidence["severity"] in {"high", "critical"}
         # Per-factor breakdown should be retrievable for follow-up triage.
         for k in (
             "nesting_depth",

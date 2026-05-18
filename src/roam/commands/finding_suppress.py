@@ -351,7 +351,7 @@ def load_per_finding_suppressions_typed(
     from roam.policy.suppression_v2 import FindingIdSuppression
 
     raw = _load_per_finding_suppressions(path, warnings_out=warnings_out)
-    return [FindingIdSuppression.from_dict(fid, entry) for fid, entry in raw.items()]
+    return [FindingIdSuppression.from_dict(fid, entry, warnings_out=warnings_out) for fid, entry in raw.items()]
 
 
 def annotate_with_suppression(

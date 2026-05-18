@@ -16,7 +16,9 @@ delivered before merge.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -255,30 +257,80 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
     ensure_index()
     root = find_project_root()
 
+    # W607-J: Pattern-2 consumer-layer wiring — thread a warnings_out bucket
+    # through the SUBPROCESS-shaped axes (engine fan-out + git diff-source).
+    # cmd_delete_check is the fourth subprocess-axis consumer (paired with
+    # cmd_grep W607-G + cmd_history_grep W607-H + cmd_refs_text W607-I —
+    # completes the grep_helpers consumer quartet). Silent-fallback locations:
+    #   1. ``detect_engine`` silently returns ``"fallback"`` when
+    #      ROAM_GREP_ENGINE pins an absent binary → user pin not honored.
+    #   2. ``run_search`` / ``_run_and_parse`` silently swallow
+    #      FileNotFoundError + TimeoutExpired → return [] (looks like a
+    #      no-match) while the subprocess never ran.
+    #   3. ``indexed_file_scan`` silently OSError-skips unreadable files.
+    #   4. ``_git_diff`` (the diff-source subprocess for --source
+    #      working/staged/pr/head) returns ``(_, error_kind)`` on git
+    #      missing / timeout / non-zero return. Already surfaces via
+    #      ``git_error`` field; W607-J adds ``warnings_out`` mirror so a
+    #      consumer scanning the bucket can detect the degrade lineage.
+    #   5. Reachability degrade via ``build_reachable_set`` returning None.
+    #      Already surfaces via Pattern-1D state/resolution disclosure;
+    #      W607-J adds ``warnings_out`` mirror.
+    # Marker family is ``delete_check_*`` (NOT ``grep_*`` / ``history_*`` /
+    # ``refs_text_*`` / ``search_*`` / ``complete_*`` / ``semantic_*``) —
+    # cmd_delete_check is the diff-gating-with-CI-exit-5 axis, distinct
+    # shape from the sibling subprocess consumers. Empty bucket →
+    # byte-identical envelope (hash-stable). Non-empty bucket →
+    # summary.warnings_out + summary.partial_success=True + top-level
+    # mirror.
+    #
+    # Complementary (NOT a replacement) to the W805-Z strict-xfail
+    # Pattern-2 disclosure pins on the empty-corpus zero-survivors silent
+    # SAFE path. W805-Z pins the empty-corpus state-disclosure axis
+    # (state="empty_corpus" / partial_success=True / non-SAFE verdict /
+    # exit 5 under --ci). W607-J adds the subprocess-degrade disclosure
+    # axis. The W805-Z xfail-strict tests MUST remain xfailed after
+    # W607-J lands.
+    warnings_out: list[str] = []
+
     diff, git_err = _git_diff(root, source, base_ref, commit_range)
     if git_err is not None:
         # CP45/CP46 fail-loud: a CI gate that cannot read its diff MUST NOT
         # report SAFE. Surface the unavailability and (when --ci is set) exit
         # with the gate-failure code so the job fails rather than silently
         # passing on a host with no git installed.
+        #
+        # W607-J: also disclose the diff-source subprocess degrade via
+        # ``warnings_out`` so an agent scanning the bucket can detect the
+        # silent-degrade lineage independently of the existing
+        # ``git_error`` field. Pattern-2 disclosure axis — the underlying
+        # --source flag was honored, just the git subprocess that
+        # implements it failed.
+        warnings_out.append(f"delete_check_git_diff_failed:{git_err}:source={source!r} cannot read diff")
         verdict = f"diff unavailable: {git_err} — cannot gate"
         if sarif_mode:
             from roam.output.sarif import delete_check_to_sarif, write_sarif
 
             click.echo(write_sarif(delete_check_to_sarif({"command": "delete-check", "deletions": []})))
         elif json_mode:
+            _summary: dict = {
+                "verdict": verdict,
+                "deletions": 0,
+                "partial_success": True,
+                "git_error": git_err,
+            }
+            _extra: dict = {}
+            if warnings_out:
+                _summary["warnings_out"] = list(warnings_out)
+                _extra["warnings_out"] = list(warnings_out)
             click.echo(
                 to_json(
                     json_envelope(
                         "delete-check",
                         budget=token_budget,
-                        summary={
-                            "verdict": verdict,
-                            "deletions": 0,
-                            "partial_success": True,
-                            "git_error": git_err,
-                        },
+                        summary=_summary,
                         deletions=[],
+                        **_extra,
                     )
                 )
             )
@@ -358,18 +410,59 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         return
 
     # Search for surviving references
+    # W607-J: engine-pin honoring check (outer-guard). If the user pinned
+    # ROAM_GREP_ENGINE to a specific binary AND the binary is not on PATH,
+    # ``detect_engine`` silently returns ``"fallback"``. That's an unhonored
+    # pin — disclose it via the ``delete_check_engine_pin_missing:`` marker
+    # family. Mirrors the equivalent disclosure in cmd_grep (W607-G) /
+    # cmd_history_grep (W607-H) / cmd_refs_text (W607-I).
+    _engine_pin = os.environ.get("ROAM_GREP_ENGINE", "auto").strip().lower()
     engine = detect_engine()
+    if _engine_pin in {"ripgrep", "rg"} and engine != "ripgrep":
+        warnings_out.append(
+            "delete_check_engine_pin_missing:ripgrep:binary 'rg' not on PATH (shutil.which returned None)"
+        )
+    elif _engine_pin in {"git", "git-grep"} and engine != "git":
+        warnings_out.append("delete_check_engine_pin_missing:git:binary 'git' not on PATH (shutil.which returned None)")
+
     pattern_strings = sorted({t["name"] for t in targets})
-    matches = run_search(
-        patterns=pattern_strings,
-        root=root,
-        fixed_string=True,
-        engine=engine,
-    )
+    # W607-J: outer-guard around run_search. ``_run_and_parse`` silently
+    # swallows FileNotFoundError + TimeoutExpired (returns []); other
+    # exceptions (PermissionError on Windows when binary path is masked,
+    # arbitrary OSError on weird filesystems) propagate. The outer-guard
+    # catches THOSE and threads the marker.
+    try:
+        matches = run_search(
+            patterns=pattern_strings,
+            root=root,
+            fixed_string=True,
+            engine=engine,
+        )
+    except Exception as exc:  # noqa: BLE001 — W607-J outer-guard
+        if engine == "ripgrep":
+            warnings_out.append(f"delete_check_ripgrep_failed:{type(exc).__name__}:{exc}")
+        elif engine == "git":
+            warnings_out.append(f"delete_check_git_grep_failed:{type(exc).__name__}:{exc}")
+        else:
+            warnings_out.append(f"delete_check_engine_failed:{type(exc).__name__}:{exc}")
+        matches = []
+
     if not matches and engine == "fallback":
+        # W607-J: disclose the auto-fan-out fallthrough so the agent can
+        # distinguish "no engines on PATH (fell through to indexed scan)"
+        # from "engines present, just no matches". Same silent-fallback
+        # shape as cmd_grep / cmd_refs_text.
+        _rg_present = bool(shutil.which("rg"))
+        _git_present = bool(shutil.which("git"))
+        if not _rg_present and not _git_present:
+            warnings_out.append("delete_check_engine_fanout_fallback:auto:neither 'rg' nor 'git' on PATH")
         compiled = [re.compile(re.escape(s)) for s in pattern_strings]
-        with open_db(readonly=True) as conn_tmp:
-            matches = indexed_file_scan(compiled, conn_tmp, root, [])
+        try:
+            with open_db(readonly=True) as conn_tmp:
+                matches = indexed_file_scan(compiled, conn_tmp, root, [])
+        except Exception as exc:  # noqa: BLE001 — W607-J outer-guard
+            warnings_out.append(f"delete_check_indexed_scan_failed:{type(exc).__name__}:{exc}")
+            matches = []
 
     # Matches come from the post-edit working tree, so deleted lines are
     # already gone — no double-counting risk. Only filter out files the
@@ -391,22 +484,36 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
             # Pattern 1B/1D: degraded resolution — anchor symbol not in
             # index. Emit a structured envelope so MCP wrappers see
             # actionable state instead of a raw COMMAND_FAILED.
+            #
+            # W607-J: also disclose the reachability degrade via
+            # ``warnings_out`` so an agent scanning the bucket can detect
+            # the silent-degrade lineage independently of the existing
+            # ``state``/``resolution`` Pattern-1D disclosure.
+            warnings_out.append(
+                f"delete_check_reachability_degraded:unresolved_entry:entry symbol '{reachable_from}' not found in index"
+            )
             msg = f"entry symbol '{reachable_from}' not found in index"
             if json_mode:
+                _summary: dict = {
+                    "verdict": msg,
+                    "state": "unresolved_entry",
+                    "partial_success": True,
+                    "resolution": "unresolved",
+                    "deletions": 0,
+                }
+                _extra: dict = {}
+                if warnings_out:
+                    _summary["warnings_out"] = list(warnings_out)
+                    _extra["warnings_out"] = list(warnings_out)
                 click.echo(
                     to_json(
                         json_envelope(
                             "delete-check",
                             budget=token_budget,
-                            summary={
-                                "verdict": msg,
-                                "state": "unresolved_entry",
-                                "partial_success": True,
-                                "resolution": "unresolved",
-                                "deletions": 0,
-                            },
+                            summary=_summary,
                             hint="Verify the symbol exists; try `roam search <name>` first.",
                             deletions=[],
+                            **_extra,
                         )
                     )
                 )
@@ -535,6 +642,16 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
             "likely_safe": likely,
             "safe": safe,
         }
+        # W607-J: non-empty bucket → summary mirror + partial_success flip
+        # + top-level mirror. Empty bucket → byte-identical envelope
+        # (hash-stable). Preserves the W805-Z Pattern-2 silent SAFE
+        # contract (state disclosure) as a separate axis that W607-J
+        # does NOT graduate.
+        extra: dict = {}
+        if warnings_out:
+            summary["warnings_out"] = list(warnings_out)
+            summary["partial_success"] = True
+            extra["warnings_out"] = list(warnings_out)
         click.echo(
             to_json(
                 json_envelope(
@@ -542,6 +659,7 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
                     budget=token_budget,
                     summary=summary,
                     deletions=results,
+                    **extra,
                 )
             )
         )

@@ -88,7 +88,10 @@ def run_search(
 
 
 def _run_ripgrep(patterns, root, globs, fixed, ci, wb, timeout):
-    cmd = ["rg", "-n", "--no-heading", "--color", "never", "-H", "-I"]
+    # ripgrep's ``-I`` means ``--no-filename`` (unlike ``git grep -I``,
+    # where it means "skip binary files"). Keep filenames explicit because
+    # the parser expects ``path:line:content`` records.
+    cmd = ["rg", "-n", "--no-heading", "--color", "never", "--with-filename"]
     if fixed:
         cmd.append("-F")
     if ci:

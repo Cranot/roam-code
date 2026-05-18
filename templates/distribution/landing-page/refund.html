@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Refund Policy — Roam · 30-day money-back + EU 14-day withdrawal</title>
-  <meta name="description" content="Roam refund policy: 30-day money-back for Roam Cloud, EU 14-day right of withdrawal, and refund mechanics for Roam Review and Roam Self-Hosted.">
+  <meta name="description" content="Roam refund policy: PR Replay refund terms, planned hosted subscription refunds, EU 14-day right of withdrawal, and private-deployment pilot terms.">
   <link rel="canonical" href="https://roam-code.com/refund">
   <meta property="og:title" content="Refund Policy — Roam">
-  <meta property="og:description" content="The 30-day money-back guarantee for Roam Cloud, plus refund mechanics for the other paid tiers.">
+  <meta property="og:description" content="Refund mechanics for PR Replay, planned hosted subscriptions, and private-deployment pilots.">
   <meta property="og:url" content="https://roam-code.com/refund">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -20,7 +20,7 @@
     "name": "Refund Policy",
     "url": "https://roam-code.com/refund",
     "inLanguage": "en",
-    "dateModified": "2026-05-07",
+    "dateModified": "2026-05-18",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -70,21 +70,25 @@
   <main id="main" class="legal-page">
     <header class="legal-header">
       <h1>Refund Policy</h1>
-      <p class="legal-meta">Last updated: <time datetime="2026-05-07">2026-05-07</time> · Effective: <time datetime="2026-05-07">2026-05-07</time></p>
+      <p class="legal-meta">Last updated: <time datetime="2026-05-18">2026-05-18</time> · Effective: <time datetime="2026-05-18">2026-05-18</time></p>
     </header>
 
     <article>
       <p>
         We back our paid services with a clear refund policy. The summary:
-        <strong>30 days, no questions asked, on Roam Cloud</strong>. Other tiers
-        have specific terms below.
+        <strong>PR Replay is refundable before kickoff (Day 1)</strong>,
+        and Roam Cloud will carry a 30-day first-charge refund once
+        generally available. Other tiers have specific terms below.
+        For PR Replay engagements, the signed
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">Statement of Work</a>
+        takes precedence over this page where the two diverge.
       </p>
 
-      <h2>Roam Cloud — 30-day money-back guarantee</h2>
+      <h2>Roam Cloud (when available) — 30-day first-charge refund</h2>
       <p>
-        If you subscribe to Roam Cloud (any tier — Starter, Team, Growth) and
-        decide it's not for you within <strong>30 days of your first charge</strong>,
-        we will refund the full subscription amount.
+        When Roam Cloud is available, if you subscribe to any tier (Starter,
+        Team, Growth) and decide it's not for you within <strong>30 days of
+        your first charge</strong>, we will refund the full subscription amount.
       </p>
       <ul>
         <li><strong>How to claim:</strong> email <a href="mailto:hello@roam-code.com?subject=Refund%20request">hello@roam-code.com</a> from the email address on the account, with the order ID or charge date. No reason required.</li>
@@ -95,8 +99,8 @@
 
       <h2>Roam Review — 14-day withdrawal, then term-bound</h2>
       <p>
-        Roam Review is sold as a flat-tier subscription (Starter $99, Team
-        $299, Business $799, Scale $1,499/mo) with usage caps, billed
+        Roam Review is planned as a flat-tier subscription (Starter $99,
+        Team $299, Business $799, Scale $1,499/mo) with usage caps, billed
         monthly or annually. EU consumer law gives you a 14-day right of
         withdrawal from any distance contract. Within those 14 days, email
         us for a full refund.
@@ -115,21 +119,50 @@
 
       <h2>Roam Self-Hosted — case-by-case</h2>
       <p>
-        Self-Hosted is delivered as an annual licence with custom onboarding.
-        Refund terms are negotiated and written into your individual order form
-        (typically a 30-day pilot window with a refund option, then non-
-        refundable for the term).
+        Self-Hosted is not a packaged GA product today. Private-deployment
+        pilots are scoped individually, and refund terms are negotiated and
+        written into the order form before work starts.
       </p>
 
-      <h2>PR Replay — refund before delivery</h2>
+      <h2>PR Replay — refund before kickoff</h2>
       <p>
-        <a href="/audit">PR Replay</a> fees are refundable in full if
-        requested before the engagement kickoff call. Once the kickoff
-        happens, fees are non-refundable but deliverables are guaranteed
-        — we keep working until the agreed scope is delivered. If a Team
-        engagement surfaces zero findings worth wiring into CI we'll
-        either run it on a different range at no extra cost or refund
-        50% of the fee.
+        <a href="/audit">PR Replay</a> terms are governed by the signed
+        Statement of Work (SOW) Section 8, which takes precedence over
+        this page where the two diverge. Reference template:
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">sow-pr-replay.md</a>.
+        The clauses most material to a chargeback or dispute:
+      </p>
+      <ul>
+        <li><strong>Pre-kickoff (Day 1 only):</strong> full refund, no
+          questions asked, on written request to
+          <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20refund%20request">hello@roam-code.com</a>.
+          Kickoff is defined as Day 2 of the engagement timeline in
+          SOW Section 4 — the day the replay run begins.</li>
+        <li><strong>EU 14-day right of withdrawal:</strong> EU consumers
+          may withdraw within 14 calendar days of payment per Directive
+          2011/83/EU. Where the buyer is a business (B2B), the right of
+          withdrawal does not strictly apply but we honour it in practice.</li>
+        <li><strong>Zero-findings clause (Team tier only):</strong> if a
+          Team engagement surfaces zero findings worth wiring into CI
+          (our reasonable judgement, narrated in the report), we will
+          at your choice either (a) re-run the replay on a different
+          range at no additional fee, or (b) refund 50% of the fee.
+          Deep engagements do not carry this clause due to the longer
+          window.</li>
+        <li><strong>Post-kickoff cancellation (buyer request):</strong>
+          non-refundable, but we will deliver the work-in-progress at
+          the time of cancellation if you request it.</li>
+        <li><strong>Acceptance window:</strong> deliverables are deemed
+          accepted 5 business days after the walk-through call unless
+          you raise specific written objections in writing within that
+          window (SOW Section 6). If objections are raised and not
+          resolved within 30 calendar days, SOW Section 8 refund
+          clauses apply.</li>
+      </ul>
+      <p>
+        Data-handling for PR Replay engagements is governed by the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">Data Processing Agreement (DPA)</a>,
+        incorporated by reference into every SOW.
       </p>
 
       <h2>How to cancel a subscription</h2>
@@ -152,19 +185,36 @@
         than this Refund Policy, those rights apply.
       </p>
       <p>
-        For digital content delivered immediately (the Roam Review GitHub App
-        is installed and active immediately upon subscription), we ask that you
-        explicitly consent to immediate delivery and acknowledge that the right
-        of withdrawal lapses upon use. If you don't want immediate delivery,
-        contact us before completing checkout and we'll arrange a delayed start.
+        For digital content delivered immediately after launch (for example,
+        the Roam Review GitHub App being installed and active immediately upon
+        subscription), we ask that you explicitly consent to immediate delivery
+        and acknowledge that the right of withdrawal lapses upon use. If you
+        don't want immediate delivery, contact us before completing checkout
+        and we'll arrange a delayed start.
       </p>
 
       <h2>Disputes and chargebacks</h2>
       <p>
-        Please contact us first at <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
-        before initiating a chargeback. We aim to resolve refund requests
-        within 5 business days. Chargebacks initiated without prior contact
-        may incur a chargeback-handling fee on subsequent reinstatement.
+        Please contact us first at
+        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20refund%20or%20dispute">hello@roam-code.com</a>
+        before initiating a credit-card chargeback. We aim to acknowledge
+        refund or dispute requests within <strong>2 business days</strong>
+        and to resolve them within <strong>5 business days</strong>.
+        Most disputes are resolved by clarifying scope against the signed
+        SOW; please reference your SOW effective date and tier in the
+        first email so we can match the engagement record quickly.
+      </p>
+      <p>
+        For EU consumer disputes only, the EU Online Dispute Resolution
+        platform at <a href="https://ec.europa.eu/consumers/odr">ec.europa.eu/consumers/odr</a>
+        is also available (Regulation (EU) No 524/2013).
+      </p>
+      <p>
+        Chargebacks initiated without prior contact may incur a
+        chargeback-handling fee on subsequent reinstatement, and we
+        reserve the right to submit the signed SOW, delivery proof,
+        engagement record, and walk-through-call record to the card
+        network as evidence in the dispute.
       </p>
 
       <p class="legal-foot">

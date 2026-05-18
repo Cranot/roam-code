@@ -182,10 +182,20 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
    - Add to the appropriate category in `_CATEGORIES` dict
 
 3. Add an MCP tool wrapper in `mcp_server.py` if the command would be useful for AI agents
+   (skip-taxonomy exceptions: setup/bootstrap, local-state-only, daemon, REPL — see CLAUDE.md
+   "Adding a new CLI command" step 4 for the full rule)
 
-4. Add tests in `tests/`
+4. Add `@roam_capability(name="...", category="...", ...)` to the click command — the
+   auto-derived `tests/test_capability_decoration.py` will fail without it. Aliases sharing
+   the same `(module, function)` tuple in `_COMMANDS` go into `_DEPRECATED_COMMANDS` instead.
 
-5. Refresh the command/MCP-tool counts that appear in `README.md`, `CLAUDE.md`,
+5. Anchor any `agent_contract.facts` strings on concrete-noun terminals (LAW 4); the
+   `tests/test_law4_lint.py` lint blocks merges on un-anchored facts. See CLAUDE.md
+   "Concrete-noun anchor vocabulary" for the accepted terminal tokens.
+
+6. Add tests in `tests/`
+
+7. Refresh the command/MCP-tool counts that appear in `README.md`, `CLAUDE.md`,
    `llms-install.md`, and the MCP server cards:
 
    ```bash

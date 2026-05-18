@@ -28,6 +28,7 @@ import click
 from click.testing import CliRunner as _CliRunner
 
 from roam.ask.workflow import workflow_metadata_for_recipe
+from roam.cli import _COMMANDS  # W907 verified: no cycle exists; see tests/test_w907_cycle_hedge_audit.py
 
 _FASTMCP_IMPORT_ERROR: str | None = None
 try:
@@ -2484,18 +2485,21 @@ _SEVERITY_MAP: dict[str, str] = {
 # error storm rate-limit. When the same error_code fires N
 # times in a row, the verbose envelope (hint, suggested_action,
 # doc_link, severity) is dropped on subsequent fires and replaced with
-# a tight ``{error_code, repeat_count}`` shape. The full envelope
-# returns the moment a different error_code fires (resets the counter).
+# a tight ``{error_code, repeat_count}`` shape that still keeps command
+# identity when the caller supplied it. The full envelope returns the
+# moment a different error_code fires (resets the counter).
 _ERROR_STORM_THRESHOLD = 3
-_ERROR_STORM_STATE: dict[str, int] = {"_last_code": 0, "_count": 0}
+_ERROR_STORM_STATE: dict[str, object] = {"_last_code": 0, "_count": 0}
+_FIRST_ERROR_COMMAND_SEP = "\x1f"
 
 # Task 2 (IMPLEMENTATION-2026-05-12) — preserve the FIRST error message
 # observed for a given error_code so trimmed-envelope replies still
 # carry the actionable stderr text. Without this cache the agent loop
 # loses the remediation hint after the 3rd fire (storm trim drops the
 # verbose `error` field) and has to guess from `error_code` alone.
-# Keyed by `error_code` — overwritten whenever a fresh first-occurrence
-# of that code is captured; cleared by `_reset_error_storm`.
+# Keyed by `error_code` for legacy/no-command callers, plus
+# `error_code + separator + command` for MCP tools that provide command
+# identity. Cleared by `_reset_error_storm`.
 _first_error_message: dict[str, str] = {}
 
 # Fix E (Sub-task 4) — session-wide counter for ``partial_success: true``
@@ -3567,10 +3571,13 @@ def _structured_error(error_dict: dict) -> dict:
     so agents can branch on severity without parsing the message.
     when the same ``error_code`` fires ≥
     ``_ERROR_STORM_THRESHOLD`` times in a row, drop the verbose fields
-    on subsequent fires to save tokens in agent loops.
+    on subsequent fires to save tokens in agent loops while preserving
+    command identity when available.
     """
     error_dict["isError"] = True
     code = error_dict.get("error_code", "UNKNOWN")
+    command = error_dict.get("command")
+    command_key = f"{code}{_FIRST_ERROR_COMMAND_SEP}{command}" if isinstance(command, str) and command else None
     error_dict["retryable"] = code in _RETRYABLE_CODES
     error_dict["suggested_action"] = error_dict.get("hint", "check the error message")
     error_dict.setdefault("doc_link", _DOC_LINKS.get(code, _DOC_LINKS["UNKNOWN"]))
@@ -3585,6 +3592,10 @@ def _structured_error(error_dict: dict) -> dict:
         prev_code = _ERROR_STORM_STATE.get("_last_code")
         if isinstance(prev_code, str) and prev_code != code:
             _first_error_message.pop(prev_code, None)
+            prev_prefix = f"{prev_code}{_FIRST_ERROR_COMMAND_SEP}"
+            for key in list(_first_error_message):
+                if key.startswith(prev_prefix):
+                    _first_error_message.pop(key, None)
         _ERROR_STORM_STATE["_last_code"] = code
         _ERROR_STORM_STATE["_count"] = 1
     repeat = int(_ERROR_STORM_STATE["_count"])
@@ -3593,10 +3604,12 @@ def _structured_error(error_dict: dict) -> dict:
     # can replay it in trimmed envelopes that would otherwise drop the
     # `error` field. Always overwrite on storm-reset so a stale first
     # message doesn't survive a code change.
-    if repeat == 1:
-        msg = error_dict.get("error")
-        if isinstance(msg, str) and msg:
+    msg = error_dict.get("error")
+    if isinstance(msg, str) and msg:
+        if repeat == 1:
             _first_error_message[code] = msg
+        if command_key and command_key not in _first_error_message:
+            _first_error_message[command_key] = msg
     if repeat >= _ERROR_STORM_THRESHOLD:
         # R9 security recheck #3: keep ``retryable`` and ``doc_link`` in
         # the trimmed envelope. Agents that branch on ``retryable``
@@ -3617,10 +3630,17 @@ def _structured_error(error_dict: dict) -> dict:
                 "or by calling another tool first to reset the counter."
             ),
         }
+        if isinstance(command, str) and command:
+            trimmed["command"] = command
         # Task 2 — propagate the first occurrence's stderr text so the
         # agent still sees WHY the storm started without having to break
-        # the storm to recover it.
-        first_msg = _first_error_message.get(code)
+        # the storm to recover it. For command-scoped errors, do not
+        # fall back to the plain error_code cache; that can leak another
+        # command's first error into the current tool's trimmed envelope.
+        if command_key:
+            first_msg = _first_error_message.get(command_key)
+        else:
+            first_msg = _first_error_message.get(code)
         if first_msg:
             trimmed["first_error_message"] = first_msg
         return trimmed
@@ -6292,8 +6312,6 @@ def _verify_compound_registry() -> None:
     shipping again — the module won't import if a compound recipe key
     references a command that isn't in ``roam.cli._COMMANDS``.
     """
-    from roam.cli import _COMMANDS  # local import to avoid module-load cycle
-
     missing = [v for v in _COMPOUND_REGISTRY.values() if v not in _COMMANDS]
     if missing:
         raise ImportError(
@@ -6348,29 +6366,140 @@ def for_new_feature(area: str = "", root: str = ".", ctx: _Context | None = None
     context, complexity_report}. ``summary.verdict`` aggregates each
     sub-verdict.
     """
+    # W607-AR -- substrate-CALL marker plumbing for the for_new_feature
+    # compound recipe. FOURTH and FINAL compound-recipe W607 wave.
+    # Mirrors the canonical W607 template (sibling waves: W607-AG
+    # cmd_for_refactor, W607-AJ cmd_for_security_review, W607-AO
+    # cmd_for_bug_fix). With this landing the 4-compound family is
+    # complete.
+    #
+    # Each substrate boundary in the recipe (understand / complexity /
+    # search / context subcommand dispatch + the compound envelope
+    # assembly) is wrapped in ``_run_check_ar`` so a raise surfaces a
+    # structured
+    # ``for_new_feature_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607ar_warnings_out`` -- the envelope still emits cleanly with
+    # whatever signal the remaining substrates produced.
+    #
+    # The accumulator is intentionally distinct from the pre-existing
+    # ``failed_subcommands`` data-shape channel (which
+    # _compound_envelope populates when a child returned a top-level
+    # ``error`` key -- the OUTPUT-SHAPE axis). The W607-AR bucket
+    # records when a helper raised BEFORE producing a payload at all
+    # (the CALL axis). Both feed the same envelope ``warnings_out``
+    # field on emission; ``partial_success`` flips when EITHER bucket
+    # is non-empty. Mirrors the W607-AG / W607-AJ / W607-AO bucket-merge
+    # discipline.
+    #
+    # NOTE on conditional substrates: ``search`` runs only when ``area``
+    # is non-empty, and ``context`` runs only when ``search`` returned
+    # matches. The W607-AR plumbing only wraps a substrate when the
+    # recipe actually invokes it -- absence of a marker on a
+    # conditional-skipped phase is NOT a regression; it's the recipe
+    # honouring its own input contract.
+    _w607ar_warnings_out: list[str] = []
+
+    def _run_check_ar(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AR marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a
+        ``for_new_feature_<phase>_failed:<exc_class>:<detail>`` marker
+        via ``_w607ar_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ar_warnings_out.append(f"for_new_feature_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    _understand_result = _run_check_ar(
+        "understand",
+        _safe_run,
+        [_cr("understand")],
+        root,
+        default={"error": "understand_w607ar_default"},
+    ) or {"error": "understand_w607ar_default"}
+    _complexity_result = _run_check_ar(
+        "complexity_report",
+        _safe_run,
+        [_cr("complexity"), "--limit", "10"],
+        root,
+        default={"error": "complexity_w607ar_default"},
+    ) or {"error": "complexity_w607ar_default"}
+
     sections = [
-        ("understand", _safe_run([_cr("understand")], root)),
-        ("complexity_report", _safe_run([_cr("complexity"), "--limit", "10"], root)),
+        ("understand", _understand_result),
+        ("complexity_report", _complexity_result),
     ]
     if area:
-        sections.append(("search", _safe_run([_cr("search"), area], root)))
+        _search_result = _run_check_ar(
+            "search",
+            _safe_run,
+            [_cr("search"), area],
+            root,
+            default={"error": "search_w607ar_default"},
+        ) or {"error": "search_w607ar_default"}
+        sections.append(("search", _search_result))
         # Only fetch context if search found a symbol — context for an
         # unmatched query is wasted tokens.
-        search_res = sections[-1][1]
         matches = []
-        if isinstance(search_res, dict):
-            matches = search_res.get("matches") or search_res.get("results") or []
+        if isinstance(_search_result, dict):
+            matches = _search_result.get("matches") or _search_result.get("results") or []
         if matches:
             top = matches[0] if isinstance(matches, list) and matches else None
             anchor = top.get("qualified_name") or top.get("name") if isinstance(top, dict) else None
             if anchor:
-                sections.append(("context", _safe_run([_cr("context"), anchor], root)))
-    return _compound_envelope(
+                _context_result = _run_check_ar(
+                    "context",
+                    _safe_run,
+                    [_cr("context"), anchor],
+                    root,
+                    default={"error": "context_w607ar_default"},
+                ) or {"error": "context_w607ar_default"}
+                sections.append(("context", _context_result))
+    envelope = _run_check_ar(
+        "compound_envelope",
+        _compound_envelope,
         "for-new-feature",
         sections,
         situation="new_feature",
         target=area,
+        default=None,
     )
+    if envelope is None:
+        # Aggregator itself raised -- synthesise a minimal envelope so
+        # the marker still rides home rather than vanishing with the
+        # crash. Mirrors the W607-AG / W607-AJ / W607-AO compute_verdict
+        # default discipline.
+        envelope = {
+            "command": "for-new-feature",
+            "summary": {
+                "verdict": "PARTIAL — compound aggregator raised; see warnings_out",
+                "partial_success": True,
+                "failed_subcommands": [name for name, _ in sections],
+                "sections": [],
+                "situation": "new_feature",
+                "target": area,
+            },
+        }
+
+    # W607-AR -- thread substrate-CALL markers onto BOTH summary.warnings_out
+    # and the top-level envelope.warnings_out so consumers that read either
+    # surface see the disclosure channel. ``partial_success`` flips when the
+    # bucket is non-empty -- mirrors the W607-AG / W607-AJ / W607-AO
+    # bucket-merge pattern. Pre-existing data-shape channels
+    # (``failed_subcommands``) stay separable from W607-AR substrate-CALL
+    # markers; they coexist on the same envelope under disjoint keys.
+    if _w607ar_warnings_out:
+        summary = envelope.setdefault("summary", {})
+        existing_summary_wo = list(summary.get("warnings_out") or [])
+        summary["warnings_out"] = existing_summary_wo + list(_w607ar_warnings_out)
+        summary["partial_success"] = True
+        existing_top_wo = list(envelope.get("warnings_out") or [])
+        envelope["warnings_out"] = existing_top_wo + list(_w607ar_warnings_out)
+    return envelope
 
 
 @_tool(
@@ -6403,21 +6532,128 @@ def for_bug_fix(symbol: str, root: str = ".", ctx: _Context | None = None) -> di
                 "command": "roam_for_bug_fix",
             }
         )
+    # W607-AO -- substrate-CALL marker plumbing for the for_bug_fix
+    # compound recipe. Mirrors the canonical W607 template (latest
+    # landed compound: W607-AJ for_security_review, W607-AG
+    # cmd_for_refactor). This is the THIRD compound-recipe W607 wave.
+    # Each substrate boundary in the recipe (diagnose / affected_tests /
+    # diff / context subcommand dispatch + the compound envelope
+    # assembly) is wrapped in ``_run_check_ao`` so a raise surfaces a
+    # structured
+    # ``for_bug_fix_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607ao_warnings_out`` -- the envelope still emits cleanly with
+    # whatever signal the remaining substrates produced.
+    #
+    # The accumulator is intentionally distinct from the pre-existing
+    # ``failed_subcommands`` data-shape channel (which
+    # _compound_envelope populates when a child returned a top-level
+    # ``error`` key -- the OUTPUT-SHAPE axis). The W607-AO bucket
+    # records when a helper raised BEFORE producing a payload at all
+    # (the CALL axis). Both feed the same envelope ``warnings_out``
+    # field on emission; ``partial_success`` flips when EITHER bucket
+    # is non-empty. This mirrors the W607-AG / W607-AJ bucket-merge
+    # discipline.
+    _w607ao_warnings_out: list[str] = []
+
+    def _run_check_ao(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AO marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a
+        ``for_bug_fix_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607ao_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ao_warnings_out.append(f"for_bug_fix_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    _diagnose_result = _run_check_ao(
+        "diagnose",
+        _safe_run,
+        [_cr("diagnose"), symbol],
+        root,
+        default={"error": "diagnose_w607ao_default"},
+    ) or {"error": "diagnose_w607ao_default"}
+    _affected_tests_result = _run_check_ao(
+        "affected_tests",
+        _safe_run,
+        [_cr("affected-tests"), symbol],
+        root,
+        default={"error": "affected_tests_w607ao_default"},
+    ) or {"error": "affected_tests_w607ao_default"}
+    # `roam diff` of the working tree shows what's recently been
+    # touched in the area — context for whether this is a new
+    # regression or a long-standing issue.
+    _diff_result = _run_check_ao(
+        "diff",
+        _safe_run,
+        [_cr("diff")],
+        root,
+        default={"error": "diff_w607ao_default"},
+    ) or {"error": "diff_w607ao_default"}
+    _context_result = _run_check_ao(
+        "context",
+        _safe_run,
+        [_cr("context"), symbol],
+        root,
+        default={"error": "context_w607ao_default"},
+    ) or {"error": "context_w607ao_default"}
+
     sections = [
-        ("diagnose", _safe_run([_cr("diagnose"), symbol], root)),
-        ("affected_tests", _safe_run([_cr("affected-tests"), symbol], root)),
-        # `roam diff` of the working tree shows what's recently been
-        # touched in the area — context for whether this is a new
-        # regression or a long-standing issue.
-        ("diff", _safe_run([_cr("diff")], root)),
-        ("context", _safe_run([_cr("context"), symbol], root)),
+        ("diagnose", _diagnose_result),
+        ("affected_tests", _affected_tests_result),
+        ("diff", _diff_result),
+        ("context", _context_result),
     ]
-    return _compound_envelope(
+    envelope = _run_check_ao(
+        "compound_envelope",
+        _compound_envelope,
         "for-bug-fix",
         sections,
         situation="bug_fix",
         target=symbol,
+        default=None,
     )
+    if envelope is None:
+        # Aggregator itself raised -- synthesise a minimal envelope so
+        # the marker still rides home rather than vanishing with the
+        # crash. Mirrors the W607-AG / W607-AJ compute_verdict default
+        # discipline.
+        envelope = {
+            "command": "for-bug-fix",
+            "summary": {
+                "verdict": "PARTIAL — compound aggregator raised; see warnings_out",
+                "partial_success": True,
+                "failed_subcommands": [
+                    "diagnose",
+                    "affected_tests",
+                    "diff",
+                    "context",
+                ],
+                "sections": [],
+                "situation": "bug_fix",
+                "target": symbol,
+            },
+        }
+
+    # W607-AO -- thread substrate-CALL markers onto BOTH summary.warnings_out
+    # and the top-level envelope.warnings_out so consumers that read either
+    # surface see the disclosure channel. ``partial_success`` flips when the
+    # bucket is non-empty -- mirrors the W607-AG / W607-AJ bucket-merge
+    # pattern. Pre-existing data-shape channels (``failed_subcommands``)
+    # stay separable from W607-AO substrate-CALL markers; they coexist on
+    # the same envelope under disjoint keys.
+    if _w607ao_warnings_out:
+        summary = envelope.setdefault("summary", {})
+        existing_summary_wo = list(summary.get("warnings_out") or [])
+        summary["warnings_out"] = existing_summary_wo + list(_w607ao_warnings_out)
+        summary["partial_success"] = True
+        existing_top_wo = list(envelope.get("warnings_out") or [])
+        envelope["warnings_out"] = existing_top_wo + list(_w607ao_warnings_out)
+    return envelope
 
 
 @_tool(
@@ -6451,23 +6687,131 @@ def for_refactor(symbol: str, root: str = ".", ctx: _Context | None = None) -> d
                 "command": "roam_for_refactor",
             }
         )
+    # W607-AG -- substrate-CALL marker plumbing for the for_refactor
+    # compound recipe. Mirrors the canonical W607 template (latest
+    # landed: W607-AD cmd_attest, W607-AC cmd_pr_prep, W607-AA
+    # cmd_pr_analyze). cmd_for_refactor is the THIRD layer in the
+    # marker-composition stack: workflow (W607-AA pr_analyze) ->
+    # recipe (W607-AC pr_prep) -> THIS compound recipe (W607-AG).
+    #
+    # Each substrate boundary in the recipe (preflight / impact /
+    # complexity_report / clones subcommand dispatch + the compound
+    # envelope assembly) is wrapped in ``_run_check`` so a raise
+    # surfaces a structured
+    # ``for_refactor_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607ag_warnings_out`` -- the envelope still emits cleanly with
+    # whatever signal the remaining substrates produced.
+    #
+    # The accumulator is intentionally distinct from the pre-existing
+    # ``failed_subcommands`` data-shape channel (which _compound_envelope
+    # populates when a child returned a top-level ``error`` key -- the
+    # OUTPUT-SHAPE axis). The W607-AG bucket records when a helper
+    # raised BEFORE producing a payload at all (the CALL axis). Both
+    # feed the same envelope ``warnings_out`` field on emission;
+    # ``partial_success`` flips when EITHER bucket is non-empty. This
+    # mirrors the W607-AC bucket-merge discipline.
+    _w607ag_warnings_out: list[str] = []
+
+    def _run_check(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AG marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a
+        ``for_refactor_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607ag_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ag_warnings_out.append(f"for_refactor_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     # Fix B — go through ``_cr`` so the ``complexity-report`` typo can
     # never come back: any drift between this dict and the live CLI
     # surface raises ImportError at module load.
+    _preflight_result = _run_check(
+        "preflight",
+        _safe_run,
+        [_cr("preflight"), symbol],
+        root,
+        default={"error": "preflight_w607ag_default"},
+    ) or {"error": "preflight_w607ag_default"}
+    _impact_result = _run_check(
+        "impact",
+        _safe_run,
+        [_cr("impact"), symbol],
+        root,
+        default={"error": "impact_w607ag_default"},
+    ) or {"error": "impact_w607ag_default"}
+    _complexity_result = _run_check(
+        "complexity_report",
+        _safe_run,
+        [_cr("complexity"), "--limit", "5"],
+        root,
+        default={"error": "complexity_report_w607ag_default"},
+    ) or {"error": "complexity_report_w607ag_default"}
+    # Cap at top-20 clone clusters; --top is the right flag (clones
+    # uses --top, not --limit; CLI surface drift caught here).
+    _clones_result = _run_check(
+        "clones",
+        _safe_run,
+        [_cr("clones"), "--top", "20"],
+        root,
+        default={"error": "clones_w607ag_default"},
+    ) or {"error": "clones_w607ag_default"}
+
     sections = [
-        ("preflight", _safe_run([_cr("preflight"), symbol], root)),
-        ("impact", _safe_run([_cr("impact"), symbol], root)),
-        ("complexity_report", _safe_run([_cr("complexity"), "--limit", "5"], root)),
-        # Cap at top-20 clone clusters; --top is the right flag (clones
-        # uses --top, not --limit; CLI surface drift caught here).
-        ("clones", _safe_run([_cr("clones"), "--top", "20"], root)),
+        ("preflight", _preflight_result),
+        ("impact", _impact_result),
+        ("complexity_report", _complexity_result),
+        ("clones", _clones_result),
     ]
-    return _compound_envelope(
+    envelope = _run_check(
+        "compound_envelope",
+        _compound_envelope,
         "for-refactor",
         sections,
         situation="refactor",
         target=symbol,
+        default=None,
     )
+    if envelope is None:
+        # Aggregator itself raised -- synthesise a minimal envelope so
+        # the marker still rides home rather than vanishing with the
+        # crash. Mirrors the W607-AC compute_verdict default discipline.
+        envelope = {
+            "command": "for-refactor",
+            "summary": {
+                "verdict": "PARTIAL — compound aggregator raised; see warnings_out",
+                "partial_success": True,
+                "failed_subcommands": [
+                    "preflight",
+                    "impact",
+                    "complexity_report",
+                    "clones",
+                ],
+                "sections": [],
+                "situation": "refactor",
+                "target": symbol,
+            },
+        }
+
+    # W607-AG -- thread substrate-CALL markers onto BOTH summary.warnings_out
+    # and the top-level envelope.warnings_out so consumers that read either
+    # surface see the disclosure channel. ``partial_success`` flips when the
+    # bucket is non-empty -- mirrors the W607-AC bucket-merge pattern.
+    # Pre-existing data-shape channels (``failed_subcommands``) stay
+    # separable from W607-AG substrate-CALL markers; they coexist on the
+    # same envelope under disjoint keys.
+    if _w607ag_warnings_out:
+        summary = envelope.setdefault("summary", {})
+        existing_summary_wo = list(summary.get("warnings_out") or [])
+        summary["warnings_out"] = existing_summary_wo + list(_w607ag_warnings_out)
+        summary["partial_success"] = True
+        existing_top_wo = list(envelope.get("warnings_out") or [])
+        envelope["warnings_out"] = existing_top_wo + list(_w607ag_warnings_out)
+    return envelope
 
 
 @_tool(
@@ -6493,27 +6837,133 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
     Returns: compound envelope with sections {taint, vuln, critique,
     adversarial}.
     """
+    # W607-AJ -- substrate-CALL marker plumbing for the
+    # for_security_review compound recipe. Mirrors the canonical W607
+    # template (latest landed compound: W607-AG cmd_for_refactor). This
+    # is the SECOND compound-recipe W607 wave -- prior W607 waves
+    # targeted standalone Click commands, CLI-side helpers, or the
+    # for_refactor compound. Each substrate boundary in the recipe
+    # (taint / vulns / critique / adversarial subcommand dispatch + the
+    # compound envelope assembly) is wrapped in ``_run_check_aj`` so a
+    # raise surfaces a structured
+    # ``for_security_review_<phase>_failed:<exc_class>:<detail>``
+    # marker on ``_w607aj_warnings_out`` -- the envelope still emits
+    # cleanly with whatever signal the remaining substrates produced.
+    #
+    # The accumulator is intentionally distinct from the pre-existing
+    # ``failed_subcommands`` data-shape channel (which
+    # _compound_envelope populates when a child returned a top-level
+    # ``error`` key -- the OUTPUT-SHAPE axis). The W607-AJ bucket
+    # records when a helper raised BEFORE producing a payload at all
+    # (the CALL axis). Both feed the same envelope ``warnings_out``
+    # field on emission; ``partial_success`` flips when EITHER bucket
+    # is non-empty. This mirrors the W607-AG bucket-merge discipline.
+    _w607aj_warnings_out: list[str] = []
+
+    def _run_check_aj(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AJ marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a
+        ``for_security_review_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607aj_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607aj_warnings_out.append(f"for_security_review_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     # Fix B — go through ``_cr`` so the ``vuln`` typo (CLI key is
     # ``vulns``) can never come back. ``vulns list`` is the
     # subcommand-style invocation the CLI expects.
-    sections = [
-        ("taint", _safe_run([_cr("taint")], root)),
-        ("vulns", _safe_run([_cr("vulns"), "list"], root)),
-        # ``critique`` reads the working-tree diff (and is a no-op if
-        # nothing's staged); it pairs naturally here because the agent
-        # is often reviewing a PR's worth of changes.
-        ("critique", _safe_run([_cr("critique")], root)),
-    ]
+    _taint_result = _run_check_aj(
+        "taint",
+        _safe_run,
+        [_cr("taint")],
+        root,
+        default={"error": "taint_w607aj_default"},
+    ) or {"error": "taint_w607aj_default"}
+    _vulns_result = _run_check_aj(
+        "vulns",
+        _safe_run,
+        [_cr("vulns"), "list"],
+        root,
+        default={"error": "vulns_w607aj_default"},
+    ) or {"error": "vulns_w607aj_default"}
+    # ``critique`` reads the working-tree diff (and is a no-op if
+    # nothing's staged); it pairs naturally here because the agent
+    # is often reviewing a PR's worth of changes.
+    _critique_result = _run_check_aj(
+        "critique",
+        _safe_run,
+        [_cr("critique")],
+        root,
+        default={"error": "critique_w607aj_default"},
+    ) or {"error": "critique_w607aj_default"}
     adv_args = [_cr("adversarial")]
     if symbol:
         adv_args.append(symbol)
-    sections.append(("adversarial", _safe_run(adv_args, root)))
-    return _compound_envelope(
+    _adversarial_result = _run_check_aj(
+        "adversarial",
+        _safe_run,
+        adv_args,
+        root,
+        default={"error": "adversarial_w607aj_default"},
+    ) or {"error": "adversarial_w607aj_default"}
+
+    sections = [
+        ("taint", _taint_result),
+        ("vulns", _vulns_result),
+        ("critique", _critique_result),
+        ("adversarial", _adversarial_result),
+    ]
+    envelope = _run_check_aj(
+        "compound_envelope",
+        _compound_envelope,
         "for-security-review",
         sections,
         situation="security_review",
         target=symbol or "(full repo)",
+        default=None,
     )
+    if envelope is None:
+        # Aggregator itself raised -- synthesise a minimal envelope so
+        # the marker still rides home rather than vanishing with the
+        # crash. Mirrors the W607-AG compute_verdict default discipline.
+        envelope = {
+            "command": "for-security-review",
+            "summary": {
+                "verdict": "PARTIAL — compound aggregator raised; see warnings_out",
+                "partial_success": True,
+                "failed_subcommands": [
+                    "taint",
+                    "vulns",
+                    "critique",
+                    "adversarial",
+                ],
+                "sections": [],
+                "situation": "security_review",
+                "target": symbol or "(full repo)",
+            },
+        }
+
+    # W607-AJ -- thread substrate-CALL markers onto BOTH summary.warnings_out
+    # and the top-level envelope.warnings_out so consumers that read either
+    # surface see the disclosure channel. ``partial_success`` flips when the
+    # bucket is non-empty -- mirrors the W607-AG bucket-merge pattern.
+    # Pre-existing data-shape channels (``failed_subcommands``) stay
+    # separable from W607-AJ substrate-CALL markers; they coexist on the
+    # same envelope under disjoint keys.
+    if _w607aj_warnings_out:
+        summary = envelope.setdefault("summary", {})
+        existing_summary_wo = list(summary.get("warnings_out") or [])
+        summary["warnings_out"] = existing_summary_wo + list(_w607aj_warnings_out)
+        summary["partial_success"] = True
+        existing_top_wo = list(envelope.get("warnings_out") or [])
+        envelope["warnings_out"] = existing_top_wo + list(_w607aj_warnings_out)
+    return envelope
 
 
 @_tool(
@@ -8262,6 +8712,171 @@ def roam_llm_smells(
     args: list[str] = ["llm-smells"]
     if min_severity and min_severity.lower() != "info":
         args.extend(["--min-severity", min_severity])
+    return _run_roam(args, root)
+
+
+# W421: roam_boundary -- public-by-accident exports + changed-range layer
+# violations. Closed-enum kinds: public_by_accident (warning),
+# wrong_direction_import (high). Pure read-only detector; --persist mirrors
+# into the findings registry but is a per-row UPSERT (idempotent across reruns).
+@_tool(
+    name="roam_boundary",
+    description=(
+        "Surface public-by-accident exports + changed-range layer violations. "
+        "Two closed-enum kinds: public_by_accident (warning, _-prefixed name in "
+        "__all__) and wrong_direction_import (high, lower-layer module imports "
+        "from higher-layer caller)."
+    ),
+    read_only=True,
+    destructive=False,
+    idempotent=True,
+)
+def boundary_tool(
+    changed_range: str = "working",
+    base_ref: str = "main",
+    persist: bool = False,
+    root: str = ".",
+) -> dict:
+    """Surface public-by-accident exports + changed-range layer violations.
+
+    WHEN TO USE: Run before merging a PR to catch (a) symbols whose
+    underscore-prefix says "private" but whose ``__all__`` membership
+    says "public", and (b) imports that reach back up the dependency
+    layer stack (foundation modules importing from caller-shaped
+    modules). The wrong-direction kind is changed-range scoped — layer
+    numbering is derived (no config-pinned DAG), so partial_success is
+    surfaced on clean runs.
+
+    Parameters
+    ----------
+    changed_range:
+        Diff source for wrong_direction_import scope.
+        ``pr`` / ``working`` (default) / ``staged`` / ``head`` / ``all``.
+    base_ref:
+        Base branch for ``--changed-range pr`` (default ``main``).
+    persist:
+        Mirror each finding into the central findings registry
+        (``roam findings list --detector boundary``).
+
+    Returns: per-kind counts, findings list with file/line + evidence,
+    LAW-4 anchored facts.
+    """
+    args: list[str] = ["boundary", "--changed-range", changed_range]
+    if base_ref and base_ref != "main":
+        args.extend(["--base-ref", base_ref])
+    if persist:
+        args.append("--persist")
+    return _run_roam(args, root)
+
+
+# W421: roam_test_hermeticity -- AI-generated test risk detector. Six
+# closed-enum kinds (network/time/random/filesystem/env/subprocess) via
+# AST-driven call-classifier; module-level suppression for monkeypatch /
+# freezegun / responses / random.seed. --persist is per-row UPSERT.
+@_tool(
+    name="roam_test_hermeticity",
+    description=(
+        "Detect non-hermetic test patterns that cause CI flakiness. Six "
+        "closed-enum kinds: network, time, random, filesystem, env, "
+        "subprocess. AST-driven (not regex) with module-level suppression "
+        "for monkeypatch / freezegun / responses / random.seed."
+    ),
+    read_only=True,
+    destructive=False,
+    idempotent=True,
+)
+def test_hermeticity_tool(
+    persist: bool = False,
+    ci_mode: bool = False,
+    root: str = ".",
+) -> dict:
+    """Scan Python test files for non-hermetic patterns (AI-test flakiness risk).
+
+    WHEN TO USE: Run after an agent generates or modifies tests, before
+    merging. Catches the common AI failure mode where generated tests
+    reach for the real network, the wall clock, ``random.*`` without a
+    seed, the filesystem, ``os.environ``, or ``subprocess.run`` without
+    mocking. Each call site flags as one of six closed-enum kinds. False
+    positives suppressed by ``monkeypatch.setenv``, ``random.seed``,
+    ``freezegun`` / ``time_machine`` / ``responses`` / ``httpx_mock``.
+
+    Parameters
+    ----------
+    persist:
+        Mirror each non-hermetic finding into the central findings
+        registry (``roam findings list --detector test-hermeticity``).
+    ci_mode:
+        Exit 5 when any non-hermetic finding is detected (CI gate).
+
+    Returns: hermeticity_rate (% hermetic), per-kind counts, findings
+    list with file/line + evidence call-chain.
+    """
+    args: list[str] = ["test-hermeticity"]
+    if persist:
+        args.append("--persist")
+    if ci_mode:
+        args.append("--ci")
+    return _run_roam(args, root)
+
+
+# W421: roam_compatibility -- outbound surface regression detector vs a
+# baseline snapshot. Read-only diff mode only; --write-baseline writes to
+# disk (one-time human-driven setup) and stays CLI-only by design.
+@_tool(
+    name="roam_compatibility",
+    description=(
+        "Detect outbound surface regressions vs a baseline snapshot. "
+        "Closed-enum verdicts: no regressions / surface additions / "
+        "surface drift / breaking changes. Compares commands, flags, "
+        "envelope summary fields, MCP tools, and preset counts. Capture "
+        "the baseline via CLI: roam compatibility --write-baseline PATH."
+    ),
+    read_only=True,
+    destructive=False,
+    idempotent=True,
+)
+def compatibility_tool(
+    baseline: str = "",
+    current: str = "",
+    ci_mode: bool = False,
+    root: str = ".",
+) -> dict:
+    """Diff the live build's outbound surface against a baseline snapshot.
+
+    WHEN TO USE: Before tagging a release or merging a refactor that may
+    rename/remove commands, flags, envelope fields, or MCP tools. Catches
+    the same bug class CLAUDE.md Constraint 8 protects against (closed
+    enumeration vs free string composition) but for OUTBOUND contracts
+    consumers depend on.
+
+    The ``--write-baseline`` path is deliberately CLI-only — it's a
+    one-time human-driven setup action that writes to disk. Run
+    ``roam compatibility --write-baseline dev/compatibility-baseline.json``
+    from the shell to capture a fresh baseline; then this MCP tool gates
+    every subsequent diff.
+
+    Parameters
+    ----------
+    baseline:
+        Path to baseline snapshot JSON (default
+        ``dev/compatibility-baseline.json``).
+    current:
+        Path to a captured current snapshot JSON. Default: capture the
+        live build.
+    ci_mode:
+        Exit 5 (EXIT_GATE_FAILURE) on any breaking entry.
+
+    Returns: closed-enum verdict, per-category counts (removed_commands,
+    removed_flags, removed_envelope_fields, removed_mcp_tools,
+    changed_presets), full per-category lists.
+    """
+    args: list[str] = ["compatibility"]
+    if baseline:
+        args.extend(["--baseline", baseline])
+    if current:
+        args.extend(["--current", current])
+    if ci_mode:
+        args.append("--ci")
     return _run_roam(args, root)
 
 

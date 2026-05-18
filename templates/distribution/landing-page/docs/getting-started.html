@@ -82,7 +82,14 @@
     <section>
       <h2>Why Roam is different</h2>
       <p>
-        IDE-surface tools (Cursor, Cody, Windsurf, Continue, Sweep) and cloud semantic reviewers (CodeRabbit, Greptile, Qodo, SonarQube) all read the diff after the agent writes it, in the cloud, after credentials. Roam is the local-CLI surface that gates the change <em>before</em> the diff and emits portable proof <em>after</em>. Side-by-side facts (Cody enterprise-only since July 2025, Cursor multi-repo + audit-logs 2026-05-13, Windsurf SOC2 II + FedRAMP High + HIPAA) live on <a href="/compare">/compare</a>. The Roam moat is three properties no competitor combines today:
+        IDE-surface tools (Cursor, Cody, Windsurf, Continue, Sweep) and
+        semantic reviewers (CodeRabbit, Greptile, Qodo, SonarQube) mainly
+        help humans write or review code through hosted accounts, LLM
+        endpoints, editor surfaces, or CI services. Roam is the local-CLI
+        surface that gates the change <em>before</em> the diff and emits
+        portable proof <em>after</em>. The dated side-by-side vendor research
+        lives on <a href="/compare">/compare</a>. The Roam moat is three
+        properties no competitor combines today:
       </p>
       <ul>
         <li><strong>Credential-free.</strong> No account, no API key, no cloud login. <code>pip install</code> and run.</li>
@@ -136,6 +143,7 @@ roam init</code></pre>
         <li><strong>Full surface reference:</strong> <a href="/docs/command-reference">Command Reference</a> — every command, every flag, every JSON envelope.</li>
         <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> — how the graph, findings registry, run ledger, and evidence compiler fit together.</li>
         <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> — context before edit, impact before delete, critique before merge, simulate before refactor, math before optimise.</li>
+        <li><strong>Want a worked example on your own repo?</strong> <a href="/audit">Run a paid PR Replay</a> — we replay your last 5 PRs through Roam, return a signed evidence packet plus a written analyst report, and your spend converts to Review credit if you continue with the hosted product.</li>
       </ul>
     </section>
 
@@ -143,14 +151,15 @@ roam init</code></pre>
       <h2>Hands-on Workflow</h2>
 
       <h3>1. Explore the codebase</h3>
-<pre><code>roam understand
-roam search auth
-roam symbol src/auth/service.py</code></pre>
+<pre><code>roam understand                 # high-level tour: layers, hot paths, frameworks
+roam search auth                # find symbols matching a pattern
+roam symbol auth_login          # callers + callees for one symbol
+roam file src/auth/service.py   # file skeleton (symbols + line ranges)</code></pre>
 
       <h3>2. Estimate change risk</h3>
-<pre><code>roam impact auth_login
-roam preflight auth_login
-roam test-gaps --changed</code></pre>
+<pre><code>roam impact auth_login          # blast radius: what breaks if this changes
+roam preflight auth_login       # pre-edit gate: blast + tests + complexity + fitness
+roam test-gaps --changed        # tests missing for the current diff</code></pre>
 
       <h3>3. Working in tests (pytest projects)</h3>
       <p>
@@ -184,6 +193,10 @@ roam --sarif health --gate
 roam --json test-gaps --changed</code></pre>
       <p>
         Use <code>--sarif</code> output for Code Scanning annotations and <code>--json</code> envelopes for stable machine parsing.
+      </p>
+      <h3>Example: roam + CodeQL co-deploy</h3>
+      <p>
+        Run roam alongside GitHub CodeQL and upload both SARIF streams to Code Scanning — coverage is additive, not redundant. See the sample workflow: <a href="https://github.com/Cranot/roam-code/blob/main/src/roam/templates/ci/roam-sarif-with-codeql.yml"><code>src/roam/templates/ci/roam-sarif-with-codeql.yml</code></a>.
       </p>
     </section>
 

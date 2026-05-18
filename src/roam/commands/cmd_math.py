@@ -64,8 +64,24 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     "--confidence",
     "confidence_filter",
     default=None,
-    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-    help="Filter by confidence level",
+    # W1005-followup-D: widened from 3-tier {high, medium, low} to the W547
+    # canonical 7-tier so agents can pass any of {critical, error, high,
+    # warning, medium, low, info} and have the floor compared via
+    # ``severity_rank()`` from ``roam.output._severity``. Detectors emit only
+    # {high, medium, low} (CVSS 3-tier) but the Choice accepts the full
+    # canonical vocabulary so canonical-aware agents can pass any tier.
+    # Semantic change: equality → floor (pre-fix kept findings with EXACTLY
+    # that confidence; post-fix keeps findings AT OR ABOVE that rank).
+    type=click.Choice(
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
+    help=(
+        "Minimum confidence floor. Uses the canonical W547 7-tier ordering "
+        "(critical > error == high > warning > medium > low > info). "
+        "Detectors emit high/medium/low today; canonical aliases rank via "
+        "the same severity_rank() comparator."
+    ),
 )
 @click.option(
     "--profile",

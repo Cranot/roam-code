@@ -1,4 +1,5 @@
 <!-- W216 canonical demo fixture; values are illustrative, not from a real repo -->
+<!-- Audience: CTO / CISO / dev-tools lead. Five-minute read. -->
 
 # What did Cursor + Claude actually do in this PR, and how do you know it's safe to merge?
 
@@ -25,22 +26,51 @@ failed, and an honest report has to say so out loud. The fictional
 setup is described in `canonical-pr-context.md`; this page shows the
 report Roam renders for the reviewer.
 
+> **Synthetic fixture.** The buyer name, SHAs, symbols, advisory id,
+> and finding counts are illustrative — the shape is what
+> `roam pr-replay --evidence-bundle` emits on any real repo.
+
 ---
 
-## The rendered ChangeEvidence Markdown report
+## The five commands that produced this report
 
-What follows is the report a reviewer would see if they ran:
+This report is the artifact of a credential-free, zero-egress arc
+that runs entirely on the developer's laptop or CI runner. No
+account, no API key, no source upload. Read the
+[5-Minute Demo](https://roam-code.com/docs/canonical-demo) for the
+full walkthrough; the abridged arc is:
 
 ```bash
+# 1. Install + index (offline, ~30s on a 25k-symbol repo)
+pip install "roam-code[mcp]" && roam init
+
+# 2. Gate the change before the agent edits — blast radius from the graph
+roam preflight settle
+
+# 3. Map the structural blast radius of the proposed edit
+roam impact settle
+
+# 4. Critique the diff as a graph mutation (clones, taint, layer drift)
+git diff | roam critique
+
+# 5. Compile the signed ChangeEvidence packet + render the buyer report
 roam pr-replay \
   --range main:abc1234..def5678 \
   --evidence-bundle .roam/reports/pr-42 \
   --client "Acme Shop"
 ```
 
-against the canonical evidence packet. The format mirrors the
+Step 5 emits two files into `.roam/reports/pr-42/`: the canonical
+`evidence.json` (byte-stable, content-hashed) and the rendered
+`report.md` shown below. The format mirrors the
 `templates/audit-report/pr-replay-template.md` skeleton; values are
-filled in deterministically from the packet.
+filled in deterministically from the packet. The same packet powers
+every projection — SARIF, OSCAL-ish controls, PDF render — without
+re-querying the graph.
+
+---
+
+## The rendered ChangeEvidence Markdown report
 
 ---
 
@@ -254,10 +284,16 @@ skipped. The W259 honest-coverage banner flags that packet
 explicitly and warns the reviewer not to publish it as governance
 evidence.
 
+## What to do next
+
+- **Run this on your own repo.** `pip install roam-code && roam pr-replay --tier sample` produces a watermarked 5-PR DIY report on your last merged window. No code leaves your machine; no account needed. The full 5-minute walkthrough lives at <https://roam-code.com/docs/canonical-demo>.
+- **See the engagement shape.** The paid Team / Deep tiers ship a polished report with founder review across 30 / 90 PRs. The canonical post-fill artefact is [`sample-pr-replay-team.md`](../audit-report/sample-pr-replay-team.md) — same packet shape, real-engagement narrative, recommended CI gates ranked by leverage.
+- **Commission a paid replay.** Tier-pickers, SOW, DPA, and Stripe checkout live at <https://roam-code.com/audit>. 50% of the engagement fee credits toward a Roam Review subscription within 60 days.
+- **Wire the gate yourself.** Skip the report entirely: `roam critique --ci --fail-on clones-not-edited:high,taint:high` is the single-line CI gate that this report's "Suggested CI gates" section recommends.
+
 ---
 
-*Per the agentic-assurance crosswalk
-(`(internal memo)`), Roam **supports
-evidence for** governance review and **maps to** change-management
-controls. The conformity assessment for any specific framework
-remains with the customer.*
+*Per the retained agentic-assurance wording in `(internal memo)`,
+Roam **supports evidence for** governance review and **maps to**
+change-management controls. The conformity assessment for any specific
+framework remains with the customer.*

@@ -1,10 +1,11 @@
 # Statement of Work — Roam PR Replay
 
-> ⚠️ **REVIEW BEFORE USE.** v1 draft, 2026-05-08. Have a qualified
+> **REVIEW BEFORE USE.** v2 draft, 2026-05-18. Have a qualified
 > attorney review before binding execution. Bracketed placeholders
-> `[LIKE_THIS]` are filled in per engagement; the Stripe Payment Link
-> custom fields the buyer completed at checkout map 1:1 to the
-> bracketed fields in **Section 2 (Scope)**.
+> `[LIKE_THIS]` are filled in per engagement. If Stripe Payment Links are
+> live, checkout custom fields should map 1:1 to **Section 2 (Scope)**.
+> If payment is handled by manual invoice, collect the same fields before
+> countersignature.
 
 ---
 
@@ -43,8 +44,8 @@ the **`[TIER]`** tier on the codebase identified in **Section 2** below.
 
 ## 2. Scope
 
-The replay window and points of focus are as captured at checkout via the
-Stripe Payment Link custom fields:
+The replay window and points of focus are captured either at checkout via
+Stripe Payment Link custom fields or during manual-invoice intake:
 
 | Field | Buyer-supplied value |
 |---|---|
@@ -102,8 +103,9 @@ Where `[COMMIT_RANGE]` is left blank, Provider will replay the trailing
 
 ## 4. Timeline
 
-- **Day 0** — Client pays via Stripe Payment Link; Provider receives
-  webhook confirmation.
+- **Day 0** — Client pays via Stripe Payment Link or agrees the manual
+  invoice / bank-transfer path in writing; Provider confirms payment or
+  written purchase approval before work begins.
 - **Day 1** — Provider sends this SOW to Client for countersignature
   along with a read-only deploy-key invitation to the temporary working
   tree Provider will use.
@@ -122,13 +124,19 @@ repos but does not guarantee it.
 
 ## 5. Fees and payment
 
-Total fee: **`[TIER_PRICE]` USD**, paid in full at checkout via the
-Stripe Payment Link before this SOW is issued. No additional fees
-apply to the engagement scope above.
+Total fee: **`[TIER_PRICE]` USD**, paid in full before kickoff via the
+payment path named in the order form or invoice. No additional fees apply
+to the engagement scope above.
 
 A separate Greek-myDATA-compliant invoice for tax purposes will be
 issued by Provider's accountant within 30 days of payment receipt;
-the Stripe receipt does not substitute for the Greek invoice.
+the Stripe receipt does not substitute for the Greek invoice. Where
+Client is an EU B2B buyer with a valid VAT-ID, the invoice applies
+reverse-charge VAT (no VAT charged by Provider; Client self-accounts).
+Where Client is a non-EU buyer, no Greek VAT applies. Where Client is a
+Greek-established buyer, Greek VAT applies at the standard rate. The
+applicable treatment is determined at invoice time from the VAT-ID and
+address Client supplies at checkout or intake.
 
 ---
 
@@ -208,6 +216,10 @@ governs. The clauses most material to PR Replay engagements:
   artefacts at any time after acceptance. Provider will comply within
   30 days, except where Greek tax law requires retention of the
   invoice + ledger entry (typically 5 years).
+- **Personal-data breach notification**: Where the engagement involves
+  Personal Data within the meaning of the GDPR, breach-handling is
+  governed by **DPA Section 9** (Article 33 GDPR — notification without
+  undue delay and, where feasible, within 72 hours).
 
 ---
 
@@ -223,10 +235,19 @@ governs. The clauses most material to PR Replay engagements:
   to perform this engagement.
 - **Provider tooling**: Provider's `roam-code` CLI is Apache 2.0; Client
   may continue to use it after the engagement under that licence.
-- **Detector improvements**: Provider may incorporate generalised
-  learnings (patterns, rule additions) into the open-source `roam-code`
-  detector set. Provider will not include any Client-specific code,
-  identifier, or quote in such improvements without written consent.
+- **Aggregate detector improvements** (the "dogfood right"): Provider
+  may incorporate **non-identifying, aggregate learnings** from the
+  engagement into the open-source `roam-code` detector set. Scope of
+  the right is limited to:
+  (a) new or refined detector heuristics and rules,
+  (b) anonymised counts and ratios (e.g., "30% of engagements have an
+      N+1 pattern in their auth path") without naming Client, the repo,
+      contributors, or any code path,
+  (c) test fixtures synthesised to reproduce a pattern, where the
+      fixture contains no Client source, identifier, comment, or quote.
+  Provider will **not** publish, quote, or reference Client source code,
+  file paths, function names, commit messages, contributor identities,
+  or any other identifying detail without Client's prior written consent.
 
 ---
 
@@ -241,7 +262,31 @@ the other on 14 calendar days' written notice. On termination:
 
 ---
 
-## 12. Limitation of liability
+## 12. Warranty disclaimer and limitation of liability
+
+### 12.1 Warranty disclaimer
+
+The deliverables are provided on an **"as-is" structural-review basis**.
+Provider warrants only that the engagement is performed with reasonable
+skill and care, using the `roam-code` detector set in effect at the
+**`[EFFECTIVE_DATE]`**. Provider makes no warranty, express or implied,
+that the report:
+
+- identifies every structural risk in the codebase or commit range,
+- is exhaustive of the categories listed in **Section 2 ("What is out
+  of scope")** above,
+- substitutes for semantic correctness review, security audit,
+  penetration testing, or performance profiling,
+- **certifies** Client's codebase as compliant with any law, regulation,
+  framework, or standard, or **makes** Client compliant with any of the
+  foregoing. Where the report references control families, frameworks,
+  or standards, it **maps to** and **supports evidence for** them; it
+  does not constitute certification.
+
+Recommended CI gates and remediation items are professional
+recommendations, not guarantees of incident prevention.
+
+### 12.2 Limitation of liability
 
 To the maximum extent permitted by Greek law, Provider's total
 aggregate liability under this SOW will not exceed the fees paid by

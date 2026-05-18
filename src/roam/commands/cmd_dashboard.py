@@ -362,207 +362,431 @@ def dashboard(ctx):
     budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W607-O: Pattern-2 consumer-layer wiring — thread a ``warnings_out``
+    # bucket through the dashboard aggregator. cmd_dashboard is the DB-shape
+    # aggregator that consumes overview / health (collect_metrics) /
+    # hotspots / risks / vibe-check / danger-zone substrates. Several
+    # of these helpers ALREADY have internal try/except returning safe
+    # fallbacks (None / [] / floor-zero values), but a helper itself
+    # can still raise BEFORE reaching that floor (e.g., a downstream
+    # substrate refactor changes the SQL shape, or networkx blows up
+    # during build_symbol_graph in _risk_areas). The outer call sites
+    # in dashboard() have no guards, so the envelope crashes whole.
+    #
+    # W607-O wraps each helper call with a single try/except that
+    # emits ``dashboard_<phase>_failed:<exc>:<detail>`` markers via
+    # ``warnings_out`` and falls back to a safe default — the envelope
+    # still emits cleanly with the remaining sections.
+    #
+    # Marker family ``dashboard_*`` — distinct from W607-N's ``doctor_*``
+    # (environment aggregator), W607-M's ``health_*`` (CI-gate flagship),
+    # W607-L's ``minimap_*``, W607-K's ``describe_*`` (aggregator), and
+    # the W607-G/H/I/J subprocess families. The marker-prefix discipline
+    # keeps each consumer's scope identifiable downstream.
+    #
+    # Empty bucket → byte-identical envelope (no warnings_out key in
+    # either ``summary`` or top-level, no partial_success key).
+    _w607o_warnings_out: list[str] = []
+
+    def _run_check(phase: str, fn, *args, default=None):
+        """Run one substrate helper with W607-O marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception (the helper itself raised before producing its own
+        floor value), surface a ``dashboard_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607o_warnings_out`` and return *default* — the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607o_warnings_out.append(f"dashboard_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-DP: producer-side substrate-CALL plumbing LAYERED on top of
+    # the W607-O capture-layer wrap (which guards the 7 helper-call
+    # boundaries above). W607-DP extends the marker family to the
+    # POST-capture substrate boundaries — score assembly, verdict
+    # composition, section dict-build, envelope serialization, and
+    # text formatting — so a raise inside the f-string verdict
+    # construction, the JSON envelope kwargs build, or ``to_json`` no
+    # longer torpedoes the dashboard envelope without lineage.
+    #
+    # Marker family ``dashboard_*`` (canonical; same prefix as W607-O,
+    # but DISJOINT phase-name sub-vocabulary so the two layers compose
+    # without collision):
+    #   - W607-O phases: overview / collect_metrics / hotspots /
+    #     risk_areas / vibe_check / discoverable_via / danger_top
+    #   - W607-DP phases: compute_scores / compose_verdict /
+    #     assemble_sections / serialize_envelope / format_text
+    #
+    # Combined-warnings discipline: ``summary.warnings_out`` mirrors
+    # the top-level ``warnings_out``; both equal
+    # ``_w607o_warnings_out + _w607dp_warnings_out``. ``partial_success``
+    # flips True on any non-empty bucket. Empty buckets → byte-identical
+    # clean envelope.
+    _w607dp_warnings_out: list[str] = []
+
+    def _run_check_dp(phase: str, fn, *args, default=None, **kwargs):
+        """Run one W607-DP substrate-CALL with marker emission.
+
+        Clean call returns the result as-is. On an uncaught raise,
+        surface ``dashboard_<phase>_failed:<exc_class>:<detail>`` via
+        ``_w607dp_warnings_out`` and substitute *default*. The envelope
+        still emits the remaining substrates cleanly.
+
+        ``default`` is returned VERBATIM on raise (including ``None``)
+        so callers can distinguish a degraded-but-empty result (``{}``)
+        from a degraded-no-output result (``None``). This is critical
+        for the ``serialize_envelope`` phase whose ``rendered is None``
+        guard precedes the minimal-fallback echo (W978 #6).
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607dp_warnings_out.append(f"dashboard_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=True) as conn:
         # -- Overview --
-        overview = _overview(conn)
+        overview = _run_check(
+            "overview",
+            _overview,
+            conn,
+            default={
+                "files": 0,
+                "symbols": 0,
+                "edges": 0,
+                "clusters": 0,
+                "languages": [],
+                "index_age_s": None,
+            },
+        )
 
         # -- Health (reuse collect_metrics for consistency with health cmd) --
         from roam.commands.metrics_history import collect_metrics
 
-        health = collect_metrics(conn)
+        health = _run_check("collect_metrics", collect_metrics, conn, default={})
 
         # -- Top hotspots --
-        hotspots = _top_hotspots(conn)
+        hotspots = _run_check("hotspots", _top_hotspots, conn, default=[]) or []
 
         # -- Risk areas --
-        risks = _risk_areas(conn)
+        risks = _run_check(
+            "risk_areas",
+            _risk_areas,
+            conn,
+            default={
+                "bus_factor_1_files": 0,
+                "bus_factor_1_pct": 0,
+                "dead_symbols": 0,
+                "dead_pct": 0,
+                "cycles": 0,
+                "total_files": 0,
+            },
+        )
 
         # -- Vibe-check (canonical 8-pattern algorithm via roam.quality.ai_rot) --
         # Pattern 3 reconciliation: this used to run a 2-pattern
         # approximation that disagreed with `roam vibe-check`. Now
         # delegates to the same code path vibe-check uses.
-        vibe = _vibe_check_canonical(conn)
+        vibe = _run_check("vibe_check", _vibe_check_canonical, conn, default=None)
 
         # -- Unique-signal discovery (LAW 11: server-side hints) --
         # `discoverable_via` is the canonical block; `danger_score_top_5`
         # is the one inline-cheap headline pulled from the same DB
         # columns the full `metrics-push` / `hotspots --danger` chain reads.
-        discoverable_via = _unique_signal_hints()
-        danger_top = _top_danger_files(conn, limit=5)
+        discoverable_via = _run_check("discoverable_via", _unique_signal_hints, default={})
+        danger_top = _run_check("danger_top", _top_danger_files, conn, 5, default=[]) or []
 
         # -- Build verdict --
-        hs = health["health_score"]
-        h_label = _health_label(hs)
-        vibe_part = ""
-        if vibe is not None:
-            vibe_part = f", AI rot {vibe['score']}/100"
-        verdict = f"Codebase is {h_label} (health {hs}/100{vibe_part})"
+        # W607-O: ``health`` may be the empty default ``{}`` if
+        # collect_metrics raised — guard the score read so the envelope
+        # still emits with a floor 0/UNHEALTHY label and the marker
+        # disclosure carries the lineage.
+        #
+        # W607-DP ``compute_scores`` substrate boundary: assemble
+        # health-score + label across capture results in one wrapped
+        # call so a future refactor of ``health.get`` chain (or a
+        # monkeypatched __getitem__ raise on a degraded ``vibe`` dict)
+        # surfaces a canonical marker instead of crashing.
+        def _compute_scores():
+            hs_local = health.get("health_score", 0) if isinstance(health, dict) else 0
+            h_label_local = _health_label(hs_local)
+            return {"hs": hs_local, "h_label": h_label_local}
+
+        _scores = _run_check_dp("compute_scores", _compute_scores, default={"hs": 0, "h_label": "UNHEALTHY"})
+        # W978 #6: degraded _scores still a dict (default is a literal).
+        hs = _scores.get("hs", 0) if isinstance(_scores, dict) else 0
+        h_label = _scores.get("h_label", "UNHEALTHY") if isinstance(_scores, dict) else "UNHEALTHY"
+
+        # W607-DP ``compose_verdict`` substrate boundary: the LAW 6
+        # single-line floor lives here. A raise inside the f-string (e.g.
+        # a poisoned ``vibe['score']`` lookup, monkeypatched __getitem__,
+        # or downstream f-string format-spec failure) returns the literal
+        # floor verdict instead of crashing.
+        def _compose_verdict():
+            vibe_part = ""
+            if vibe is not None:
+                vibe_part = f", AI rot {vibe['score']}/100"
+            return f"Codebase is {h_label} (health {hs}/100{vibe_part})"
+
+        # W978 #1: verdict floor is a non-empty literal string so a
+        # degraded compose_verdict still satisfies LAW 6.
+        verdict = _run_check_dp(
+            "compose_verdict",
+            _compose_verdict,
+            default="DASHBOARD — verdict unavailable",
+        )
 
         # -- JSON output --
         if json_mode:
-            unique_signals = {
-                # Concrete numeric headline that callers can act on; the
-                # full per-file list lives behind `roam metrics-push --dry-run`
-                # (linked via discoverable_via).  Empty list is a valid
-                # signal (no danger-zone files) — never crash on it.
-                "danger_score_top_5": danger_top,
-                # Server-side teaching block: tells agents *which command*
-                # produces each metric they'd otherwise have to guess at.
-                "discoverable_via": discoverable_via,
-            }
-            # Pattern 3 reconciliation (W16.3): expose the AI rot score
-            # at a top-level path AND attach the canonical definition
-            # label. Old consumers continue reading ``vibe_check.score``;
-            # new consumers can rely on ``summary.ai_rot_score`` plus
-            # ``summary.ai_rot_definition`` to confirm they're seeing
-            # the canonical 8-pattern number.
-            ai_rot_score_top = vibe["score"] if vibe is not None else None
-            ai_rot_definition_top = vibe.get("ai_rot_definition") if vibe is not None else None
+            # W607-DP ``assemble_sections`` substrate boundary: build
+            # the summary + envelope_kwargs in one wrapped call. A
+            # ``.get`` chain on a degraded sub-envelope (W607-O would
+            # already have wrapped the substrate capture; W607-DP adds
+            # defense in depth at the dict-build site) does not crash.
+            def _assemble_sections():
+                unique_signals = {
+                    # Concrete numeric headline that callers can act on; the
+                    # full per-file list lives behind `roam metrics-push --dry-run`
+                    # (linked via discoverable_via).  Empty list is a valid
+                    # signal (no danger-zone files) — never crash on it.
+                    "danger_score_top_5": danger_top,
+                    # Server-side teaching block: tells agents *which command*
+                    # produces each metric they'd otherwise have to guess at.
+                    "discoverable_via": discoverable_via,
+                }
+                # Pattern 3 reconciliation (W16.3): expose the AI rot score
+                # at a top-level path AND attach the canonical definition
+                # label. Old consumers continue reading ``vibe_check.score``;
+                # new consumers can rely on ``summary.ai_rot_score`` plus
+                # ``summary.ai_rot_definition`` to confirm they're seeing
+                # the canonical 8-pattern number.
+                ai_rot_score_top = vibe["score"] if vibe is not None else None
+                ai_rot_definition_top = vibe.get("ai_rot_definition") if vibe is not None else None
 
-            summary_block = {
-                "verdict": verdict,
-                "health_score": hs,
-                "files": overview["files"],
-                "symbols": overview["symbols"],
-                "edges": overview["edges"],
-                "danger_zone_count": len(danger_top),
-            }
-            if ai_rot_score_top is not None:
-                summary_block["ai_rot_score"] = ai_rot_score_top
-            if ai_rot_definition_top is not None:
-                summary_block["ai_rot_definition"] = ai_rot_definition_top
+                _summary_block = {
+                    "verdict": verdict,
+                    "health_score": hs,
+                    "files": overview["files"],
+                    "symbols": overview["symbols"],
+                    "edges": overview["edges"],
+                    "danger_zone_count": len(danger_top),
+                }
+                if ai_rot_score_top is not None:
+                    _summary_block["ai_rot_score"] = ai_rot_score_top
+                if ai_rot_definition_top is not None:
+                    _summary_block["ai_rot_definition"] = ai_rot_definition_top
+
+                _envelope_kwargs: dict = {
+                    "overview": overview,
+                    "health": {
+                        "score": hs,
+                        "label": h_label,
+                        "label_axis": "project_health_score",
+                        "label_axis_definition": (
+                            "Project-health label derived from composite health "
+                            "score (0-100, higher = healthier). Bands: HEALTHY "
+                            ">=80, FAIR >=60, NEEDS ATTENTION >=40, UNHEALTHY <40. "
+                            "NOT the same axis as vibe-check's severity label "
+                            "(rot-axis, 0-100 lower = healthier)."
+                        ),
+                        "tangle_ratio": health.get("tangle_ratio", 0),
+                        "cycles": health.get("cycles", 0),
+                        "god_components": health.get("god_components", 0),
+                        "bottlenecks": health.get("bottlenecks", 0),
+                        "dead_exports": health.get("dead_exports", 0),
+                        "layer_violations": health.get("layer_violations", 0),
+                        "avg_complexity": health.get("avg_complexity", 0),
+                    },
+                    "hotspots": [
+                        {
+                            "path": h["path"],
+                            "churn": h["churn"],
+                            "complexity": h["complexity"],
+                            "bus_factor": h["bus_factor"],
+                        }
+                        for h in hotspots
+                    ],
+                    "risks": risks,
+                    "vibe_check": vibe,
+                    "unique_signals": unique_signals,
+                    # `next_steps` is consumed by the formatter's
+                    # ``_derive_agent_contract`` and surfaces as
+                    # ``agent_contract.next_commands`` — copy-paste-executable
+                    # roam invocations agents on tight context can follow
+                    # without re-reading the envelope.  Order matters: most
+                    # broadly-useful unique signals first.
+                    "next_steps": [
+                        "roam vibe-check",
+                        "roam ai-readiness",
+                        "roam ai-ratio",
+                        "roam algo",
+                        "roam forecast",
+                    ],
+                }
+                return {"summary_block": _summary_block, "envelope_kwargs": _envelope_kwargs}
+
+            # Floor on degrade: a minimal summary + empty kwargs so the
+            # serialize_envelope substrate still has structurally valid
+            # input. The verdict literal floor preserved separately.
+            _assembled = _run_check_dp(
+                "assemble_sections",
+                _assemble_sections,
+                default={
+                    "summary_block": {"verdict": verdict},
+                    "envelope_kwargs": {},
+                },
+            )
+            summary_block = (
+                _assembled.get("summary_block", {"verdict": verdict})
+                if isinstance(_assembled, dict)
+                else {"verdict": verdict}
+            )
+            envelope_kwargs: dict = _assembled.get("envelope_kwargs", {}) if isinstance(_assembled, dict) else {}
+
+            # W607-O + W607-DP: surface combined warnings_out on the
+            # disclosure path. Both buckets feed the SAME envelope keys
+            # so consumers reading either ``summary.warnings_out`` or
+            # top-level ``warnings_out`` see the full lineage. Empty
+            # combined bucket → byte-identical clean envelope (no new
+            # keys, no partial_success flip).
+            combined_warnings_out = list(_w607o_warnings_out) + list(_w607dp_warnings_out)
+            if combined_warnings_out:
+                summary_block["partial_success"] = True
+                summary_block["warnings_out"] = list(combined_warnings_out)
+                envelope_kwargs["warnings_out"] = list(combined_warnings_out)
 
             # W17.2 / Pattern 3c: name the axis the health label measures
             # so consumers never confuse it with vibe-check's rot-axis
             # severity (which also uses "HEALTHY" but on a different scale).
-            envelope = json_envelope(
-                "dashboard",
-                budget=budget,
-                summary=summary_block,
-                overview=overview,
-                health={
-                    "score": hs,
-                    "label": h_label,
-                    "label_axis": "project_health_score",
-                    "label_axis_definition": (
-                        "Project-health label derived from composite health "
-                        "score (0-100, higher = healthier). Bands: HEALTHY "
-                        ">=80, FAIR >=60, NEEDS ATTENTION >=40, UNHEALTHY <40. "
-                        "NOT the same axis as vibe-check's severity label "
-                        "(rot-axis, 0-100 lower = healthier)."
-                    ),
-                    "tangle_ratio": health.get("tangle_ratio", 0),
-                    "cycles": health.get("cycles", 0),
-                    "god_components": health.get("god_components", 0),
-                    "bottlenecks": health.get("bottlenecks", 0),
-                    "dead_exports": health.get("dead_exports", 0),
-                    "layer_violations": health.get("layer_violations", 0),
-                    "avg_complexity": health.get("avg_complexity", 0),
-                },
-                hotspots=[
-                    {
-                        "path": h["path"],
-                        "churn": h["churn"],
-                        "complexity": h["complexity"],
-                        "bus_factor": h["bus_factor"],
-                    }
-                    for h in hotspots
-                ],
-                risks=risks,
-                vibe_check=vibe,
-                unique_signals=unique_signals,
-                # `next_steps` is consumed by the formatter's
-                # ``_derive_agent_contract`` and surfaces as
-                # ``agent_contract.next_commands`` — copy-paste-executable
-                # roam invocations agents on tight context can follow
-                # without re-reading the envelope.  Order matters: most
-                # broadly-useful unique signals first.
-                next_steps=[
-                    "roam vibe-check",
-                    "roam ai-readiness",
-                    "roam ai-ratio",
-                    "roam algo",
-                    "roam forecast",
-                ],
-            )
-            click.echo(to_json(envelope))
+            #
+            # W607-DP ``serialize_envelope`` substrate boundary: a raise
+            # in ``json_envelope`` or ``to_json`` (e.g. a
+            # non-serializable section payload) surfaces as the canonical
+            # marker; the command still emits a minimal envelope on the
+            # degraded path.
+            def _serialize_envelope():
+                return to_json(
+                    json_envelope(
+                        "dashboard",
+                        budget=budget,
+                        summary=summary_block,
+                        **envelope_kwargs,
+                    )
+                )
+
+            rendered = _run_check_dp("serialize_envelope", _serialize_envelope, default=None)
+            # W978 #6: ``rendered is None`` guard before echo so a
+            # degraded serialize_envelope does not crash on the print
+            # path.
+            if rendered is None:
+                import json as _json_fallback
+
+                # Re-surface the markers the wrapper just appended so
+                # consumers reading stdout see the disclosure.
+                summary_block["partial_success"] = True
+                summary_block["warnings_out"] = list(_w607o_warnings_out) + list(_w607dp_warnings_out)
+                click.echo(
+                    _json_fallback.dumps(
+                        {
+                            "command": "dashboard",
+                            "summary": summary_block,
+                            "warnings_out": summary_block["warnings_out"],
+                        }
+                    )
+                )
+                return
+            click.echo(rendered)
             return
 
         # -- Text output (<40 lines) --
-        click.echo(f"VERDICT: {verdict}")
-        click.echo()
+        # W607-DP ``format_text`` substrate boundary: a raise during
+        # click.echo formatting (e.g. a __str__ raise on a degraded
+        # numeric field, a missing key on a degraded ``overview`` /
+        # ``risks`` / ``vibe`` dict) surfaces a marker rather than
+        # crashing.
+        def _format_text():
+            click.echo(f"VERDICT: {verdict}")
+            click.echo()
 
-        # === Overview ===
-        lang_parts = []
-        for lang in overview["languages"][:4]:
-            lang_parts.append(f"{lang['name']} {lang['pct']:.0f}%")
-        if len(overview["languages"]) > 4:
-            lang_parts.append(f"+{len(overview['languages']) - 4} more")
-        lang_str = ", ".join(lang_parts) if lang_parts else "none"
+            # === Overview ===
+            lang_parts = []
+            for lang in overview["languages"][:4]:
+                lang_parts.append(f"{lang['name']} {lang['pct']:.0f}%")
+            if len(overview["languages"]) > 4:
+                lang_parts.append(f"+{len(overview['languages']) - 4} more")
+            lang_str = ", ".join(lang_parts) if lang_parts else "none"
 
-        click.echo("  === Overview ===")
-        click.echo(f"  Files: {overview['files']} ({lang_str})")
-        click.echo(f"  Symbols: {overview['symbols']} | Edges: {overview['edges']} | Clusters: {overview['clusters']}")
-        click.echo(f"  Last indexed: {_format_age(overview['index_age_s'])}")
-        click.echo()
+            click.echo("  === Overview ===")
+            click.echo(f"  Files: {overview['files']} ({lang_str})")
+            click.echo(
+                f"  Symbols: {overview['symbols']} | Edges: {overview['edges']} | Clusters: {overview['clusters']}"
+            )
+            click.echo(f"  Last indexed: {_format_age(overview['index_age_s'])}")
+            click.echo()
 
-        # === Health ===
-        click.echo("  === Health ===")
-        click.echo(f"  Score: {hs}/100 ({h_label})")
-        click.echo(
-            f"  Tangle ratio: {health.get('tangle_ratio', 0)}"
-            f" | Avg complexity: {health.get('avg_complexity', 0)}"
-            f" | Dead symbols: {risks['dead_symbols']}"
-        )
-        click.echo()
+            # === Health ===
+            click.echo("  === Health ===")
+            click.echo(f"  Score: {hs}/100 ({h_label})")
+            click.echo(
+                f"  Tangle ratio: {health.get('tangle_ratio', 0)}"
+                f" | Avg complexity: {health.get('avg_complexity', 0)}"
+                f" | Dead symbols: {risks['dead_symbols']}"
+            )
+            click.echo()
 
-        # === Top Hotspots ===
-        if hotspots:
-            click.echo("  === Top Hotspots (change with care) ===")
-            for i, h in enumerate(hotspots, 1):
+            # === Top Hotspots ===
+            if hotspots:
+                click.echo("  === Top Hotspots (change with care) ===")
+                for i, h in enumerate(hotspots, 1):
+                    click.echo(
+                        f"  {i}. {h['path']:<40s}"
+                        f" churn:{h['churn']:<5d}"
+                        f" complexity:{int(h['complexity']):<4d}"
+                        f" bus-factor:{h['bus_factor']}"
+                    )
+                click.echo()
+
+            # === Risk Areas ===
+            click.echo("  === Risk Areas ===")
+            click.echo(f"  Bus factor 1: {risks['bus_factor_1_files']} files ({risks['bus_factor_1_pct']}%)")
+            click.echo(f"  Dead symbols: {risks['dead_symbols']} ({risks['dead_pct']}%)")
+            click.echo(f"  Cycles: {risks['cycles']} SCCs")
+            click.echo()
+
+            # === AI Rot ===
+            if vibe is not None and vibe["total_issues"] > 0:
+                click.echo("  === AI Rot (vibe-check) ===")
+                cat_parts = []
+                for cat in vibe["categories"]:
+                    cat_parts.append(f"{cat['name']} ({cat['count']})")
+                cats_str = ", ".join(cat_parts) if cat_parts else "none"
+                approx_note = " (approximate)" if vibe.get("approximate") else ""
                 click.echo(
-                    f"  {i}. {h['path']:<40s}"
-                    f" churn:{h['churn']:<5d}"
-                    f" complexity:{int(h['complexity']):<4d}"
-                    f" bus-factor:{h['bus_factor']}"
+                    f"  Score: {vibe['score']}/100 ({vibe['severity']}){approx_note} | {vibe['total_issues']} issues"
                 )
-            click.echo()
+                click.echo(f"  Top: {cats_str}")
+                click.echo()
 
-        # === Risk Areas ===
-        click.echo("  === Risk Areas ===")
-        click.echo(f"  Bus factor 1: {risks['bus_factor_1_files']} files ({risks['bus_factor_1_pct']}%)")
-        click.echo(f"  Dead symbols: {risks['dead_symbols']} ({risks['dead_pct']}%)")
-        click.echo(f"  Cycles: {risks['cycles']} SCCs")
-        click.echo()
+            # === Unique signals (discovery hints, LAW 11) ===
+            # Several commands produce signal NOT available anywhere else; surface
+            # the headline + the command name so agents discover them without
+            # scraping prose.  Compact: one line each, only show non-zero.
+            if danger_top:
+                top = danger_top[0]
+                click.echo("  === Unique signals ===")
+                click.echo(
+                    f"  Top danger-zone file: {top['path']} "
+                    f"(score={top['danger_score']}) — run `roam metrics-push --dry-run` for full list"
+                )
+                click.echo()
 
-        # === AI Rot ===
-        if vibe is not None and vibe["total_issues"] > 0:
-            click.echo("  === AI Rot (vibe-check) ===")
-            cat_parts = []
-            for cat in vibe["categories"]:
-                cat_parts.append(f"{cat['name']} ({cat['count']})")
-            cats_str = ", ".join(cat_parts) if cat_parts else "none"
-            approx_note = " (approximate)" if vibe.get("approximate") else ""
-            click.echo(
-                f"  Score: {vibe['score']}/100 ({vibe['severity']}){approx_note} | {vibe['total_issues']} issues"
-            )
-            click.echo(f"  Top: {cats_str}")
-            click.echo()
+            click.echo("  Run `roam health`, `roam hotspots`, `roam vibe-check` for details.")
+            click.echo("  Discover more: `roam algo` (anti-patterns), `roam ai-readiness` (agent-readiness),")
+            click.echo("    `roam ai-ratio` (AI-generated %), `roam forecast` (30d health projection),")
+            click.echo("    `roam module <dir>` (cohesion %).")
+            return None
 
-        # === Unique signals (discovery hints, LAW 11) ===
-        # Several commands produce signal NOT available anywhere else; surface
-        # the headline + the command name so agents discover them without
-        # scraping prose.  Compact: one line each, only show non-zero.
-        if danger_top:
-            top = danger_top[0]
-            click.echo("  === Unique signals ===")
-            click.echo(
-                f"  Top danger-zone file: {top['path']} "
-                f"(score={top['danger_score']}) — run `roam metrics-push --dry-run` for full list"
-            )
-            click.echo()
-
-        click.echo("  Run `roam health`, `roam hotspots`, `roam vibe-check` for details.")
-        click.echo("  Discover more: `roam algo` (anti-patterns), `roam ai-readiness` (agent-readiness),")
-        click.echo("    `roam ai-ratio` (AI-generated %), `roam forecast` (30d health projection),")
-        click.echo("    `roam module <dir>` (cohesion %).")
+        _run_check_dp("format_text", _format_text, default=None)

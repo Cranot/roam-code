@@ -576,6 +576,98 @@ def duplicates(
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    # W607-BM -- substrate-boundary plumbing on the duplicates DRY-detection
+    # detector. cmd_duplicates is the W805 paired-scoring sibling of
+    # cmd_dark_matter (W607-BK, just landed); both detect DRY/architecture
+    # debt from different signal axes (co-change vs structural-similarity).
+    # The substrate boundaries we wrap:
+    #
+    #   * query_candidates           -- the symbol_metrics + math_signals
+    #                                    + graph_metrics SELECT that feeds
+    #                                    the bucketed pair generator.
+    #   * compute_similarity         -- the per-pair weighted scoring
+    #                                    (``_compute_similarity`` calls
+    #                                    over the bucketed candidate pairs).
+    #   * classify_role_buckets      -- W165 production/test/mixed bucket
+    #                                    classification per cluster.
+    #   * emit_findings              -- registry mirror under --persist
+    #                                    (W136 cluster subject_kind).
+    #   * serialize_to_sarif         -- SARIF projection for CI gates.
+    #
+    # Marker family ``duplicates_<phase>_failed:<exc_class>:<detail>``
+    # (underscore form -- matches the W805 paired sibling cmd_dark_matter
+    # marker discipline). Empty bucket -> no field added -> byte-identical
+    # envelope on the happy path (W607-A..BK parity).
+    # Threads into BOTH the top-level ``warnings_out`` (preserved-list-field
+    # discipline) AND ``summary.warnings_out`` + ``summary.partial_success
+    # = True``.
+    _w607bm_warnings_out: list[str] = []
+
+    def _run_check_bm(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BM marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a
+        ``duplicates_<phase>_failed:<exc_class>:<detail>`` marker via
+        ``_w607bm_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bm_warnings_out.append(f"duplicates_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-DD -- additive aggregation-phase plumbing on the duplicates
+    # DRY-detection detector. Mirror of cmd_dark_matter's W607-CZ wave on
+    # the W805 structural-debt paired-scoring sibling. The four
+    # aggregation-phase boundaries we wrap:
+    #
+    #   * score_classify     -- cluster ranking / sorting step that
+    #                            turns the raw union-find groups into a
+    #                            stable display order.
+    #   * compute_predicate  -- per-bucket cluster counts +
+    #                            total_functions / estimated_reducible
+    #                            -lines rollup.
+    #   * compute_verdict    -- verdict-string assembly (bucket count
+    #                            sentence + sampled / truncated
+    #                            qualifiers).
+    #   * serialize_envelope -- ``json_envelope("duplicates", ...)`` call.
+    #                            A schema-shape refactor that breaks the
+    #                            serializer would otherwise crash AFTER
+    #                            all substrate + aggregation signals
+    #                            were already gathered.
+    #
+    # W607-BM / DD PHASE-NAME COLLISION (W607-CH 4th-discipline): the
+    # substrate-CALL layer uses phase names query_candidates /
+    # compute_similarity / classify_role_buckets / emit_findings /
+    # serialize_to_sarif. None collide with score_classify /
+    # compute_predicate / compute_verdict / serialize_envelope, so no
+    # rename is required. ``serialize_to_sarif`` vs ``serialize_envelope``
+    # are deliberately distinct phase names so an agent can tell which
+    # serialiser raised.
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: every ``default=`` in a
+    # ``_run_check_dd(...)`` call MUST be a literal constant. cmd_sbom
+    # W607-CG / cmd_taint W607-CJ / cmd_audit_trail_export W607-CR sealed
+    # this axis. The 5th discipline (``len()`` lives INSIDE the closure,
+    # not at the kwarg-bind site) is pinned by the test AST audit.
+    _w607dd_warnings_out: list[str] = []
+
+    def _run_check_dd(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-DD marker emission.
+
+        Mirror of ``_run_check_bm`` shape (same
+        ``duplicates_<phase>_failed:`` marker family) but writes into
+        ``_w607dd_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607dd_warnings_out.append(f"duplicates_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
         # ── 1. Candidate selection ───────────────────────────────────
         scope_clause = ""
@@ -585,29 +677,38 @@ def duplicates(
             scope_clause = " AND f.path LIKE ?"
             params.append(f"{scope_norm}%")
 
-        candidates = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, s.signature, "
-            "       s.line_start, s.line_end, f.path AS file_path, "
-            "       COALESCE(sm.line_count, s.line_end - s.line_start + 1, 0) AS line_count, "
-            "       COALESCE(sm.param_count, 0) AS param_count, "
-            "       COALESCE(sm.nesting_depth, 0) AS nesting_depth, "
-            "       COALESCE(sm.cognitive_complexity, 0) AS cognitive_complexity, "
-            "       COALESCE(sm.return_count, 0) AS return_count, "
-            "       COALESCE(sm.bool_op_count, 0) AS bool_op_count, "
-            "       COALESCE(sm.callback_depth, 0) AS callback_depth, "
-            "       COALESCE(ms.loop_depth, 0) AS loop_depth, "
-            "       COALESCE(ms.has_nested_loops, 0) AS has_nested_loops, "
-            "       COALESCE(ms.has_self_call, 0) AS has_self_call, "
-            "       COALESCE(gm.pagerank, 0) AS pagerank "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "LEFT JOIN symbol_metrics sm ON s.id = sm.symbol_id "
-            "LEFT JOIN math_signals ms ON s.id = ms.symbol_id "
-            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-            "WHERE s.kind IN ('function', 'method') "
-            "  AND COALESCE(sm.line_count, s.line_end - s.line_start + 1, 0) >= ? " + scope_clause,
-            [min_lines] + params,
-        ).fetchall()
+        def _query_candidates():
+            return conn.execute(
+                "SELECT s.id, s.name, s.qualified_name, s.kind, s.signature, "
+                "       s.line_start, s.line_end, f.path AS file_path, "
+                "       COALESCE(sm.line_count, s.line_end - s.line_start + 1, 0) AS line_count, "
+                "       COALESCE(sm.param_count, 0) AS param_count, "
+                "       COALESCE(sm.nesting_depth, 0) AS nesting_depth, "
+                "       COALESCE(sm.cognitive_complexity, 0) AS cognitive_complexity, "
+                "       COALESCE(sm.return_count, 0) AS return_count, "
+                "       COALESCE(sm.bool_op_count, 0) AS bool_op_count, "
+                "       COALESCE(sm.callback_depth, 0) AS callback_depth, "
+                "       COALESCE(ms.loop_depth, 0) AS loop_depth, "
+                "       COALESCE(ms.has_nested_loops, 0) AS has_nested_loops, "
+                "       COALESCE(ms.has_self_call, 0) AS has_self_call, "
+                "       COALESCE(gm.pagerank, 0) AS pagerank "
+                "FROM symbols s "
+                "JOIN files f ON s.file_id = f.id "
+                "LEFT JOIN symbol_metrics sm ON s.id = sm.symbol_id "
+                "LEFT JOIN math_signals ms ON s.id = ms.symbol_id "
+                "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+                "WHERE s.kind IN ('function', 'method') "
+                "  AND COALESCE(sm.line_count, s.line_end - s.line_start + 1, 0) >= ? " + scope_clause,
+                [min_lines] + params,
+            ).fetchall()
+
+        candidates = _run_check_bm(
+            "query_candidates",
+            _query_candidates,
+            default=[],
+        )
+        if candidates is None:
+            candidates = []
 
         if len(candidates) < 2:
             # W805 (Pattern 2: silent fallbacks) — fewer than 2 candidate
@@ -642,23 +743,28 @@ def duplicates(
                     "(duplicate detection requires at least 2 to form a pair)"
                 )
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "duplicates",
-                            summary={
-                                "verdict": verdict,
-                                "total_clusters": 0,
-                                "total_functions": 0,
-                                "estimated_reducible_lines": 0,
-                                "state": w805_state,
-                                "partial_success": True,
-                                "candidates_scanned": len(candidates),
-                            },
-                            clusters=[],
-                        )
-                    )
-                )
+                _early_summary: dict = {
+                    "verdict": verdict,
+                    "total_clusters": 0,
+                    "total_functions": 0,
+                    "estimated_reducible_lines": 0,
+                    "state": w805_state,
+                    "partial_success": True,
+                    "candidates_scanned": len(candidates),
+                }
+                _early_kwargs: dict = {
+                    "summary": _early_summary,
+                    "clusters": [],
+                }
+                # W607-BM: even the early-exit path may carry substrate
+                # markers (the candidate query itself can raise -> we end
+                # up here with an empty candidates list and a marker on
+                # the accumulator). Surface them via the same
+                # top-level + summary mirror discipline.
+                if _w607bm_warnings_out:
+                    _early_summary["warnings_out"] = list(_w607bm_warnings_out)
+                    _early_kwargs["warnings_out"] = list(_w607bm_warnings_out)
+                click.echo(to_json(json_envelope("duplicates", **_early_kwargs)))
             else:
                 click.echo(f"VERDICT: {verdict}")
             return
@@ -777,12 +883,24 @@ def duplicates(
         uf = _UnionFind()
         pair_scores: dict[tuple[int, int], float] = {}
 
-        for a, b in pairs_to_check:
-            sim = _compute_similarity(a, b)
-            if sim >= threshold:
-                pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
-                pair_scores[pair_key] = sim
-                uf.union(a["id"], b["id"])
+        # W607-BM: wrap the scoring loop so a raise inside
+        # ``_compute_similarity`` surfaces a structured marker rather than
+        # crashing the command. The default is a no-op (empty union-find
+        # / empty pair_scores) so the envelope still emits the
+        # ``no semantic duplicates detected`` verdict on a degraded path.
+        def _score_pairs():
+            for a, b in pairs_to_check:
+                sim = _compute_similarity(a, b)
+                if sim >= threshold:
+                    pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
+                    pair_scores[pair_key] = sim
+                    uf.union(a["id"], b["id"])
+
+        _run_check_bm(
+            "compute_similarity",
+            _score_pairs,
+            default=None,
+        )
 
         # ── 4. Build clusters ────────────────────────────────────────
         raw_clusters = uf.clusters()
@@ -835,7 +953,19 @@ def duplicates(
 
         # ── 5. Rank clusters ────────────────────────────────────────
         # Sort by: size desc, similarity desc, pagerank desc
-        cluster_list.sort(key=lambda c: (-c["size"], -c["similarity"], -c["total_pagerank"]))
+        # W607-DD: wrap the ranking step so a __lt__-raising sentinel in
+        # the key tuple (e.g. a custom score type) surfaces a structured
+        # marker rather than crashing the command. Floor is a no-op (the
+        # union-find already produced a deterministic, if unsorted,
+        # cluster_list).
+        def _score_classify_clusters():
+            cluster_list.sort(key=lambda c: (-c["size"], -c["similarity"], -c["total_pagerank"]))
+
+        _run_check_dd(
+            "score_classify",
+            _score_classify_clusters,
+            default=None,
+        )
 
         # ── 5.W165 Bucket + filter ──────────────────────────────────
         # Attach role_bucket to every cluster on the live structure so
@@ -845,8 +975,25 @@ def duplicates(
         # side test) survive deliberately as a test-leakage signal.
         # ``--exclude-fixtures`` drops any cluster touching a fixtures/
         # / testdata/ path regardless of bucket.
+        # W607-BM: wrap the W165 role-bucket classification. A raise inside
+        # ``_role_bucket_for_files`` (e.g., on a malformed file_path) now
+        # surfaces a structured marker rather than crashing the command;
+        # the cluster's bucket safe-floors to "production" so the
+        # downstream verdict/JSON paths still emit cleanly.
+        def _classify_buckets():
+            for c in cluster_list:
+                c["role_bucket"] = _role_bucket_for_files([r["file_path"] for r in c["functions"]])
+
+        _run_check_bm(
+            "classify_role_buckets",
+            _classify_buckets,
+            default=None,
+        )
+        # Safe-floor: any cluster left without a bucket (e.g. partial
+        # success of the loop above) gets the production default so the
+        # downstream verdict/JSON shape stays well-formed.
         for c in cluster_list:
-            c["role_bucket"] = _role_bucket_for_files([r["file_path"] for r in c["functions"]])
+            c.setdefault("role_bucket", "production")
 
         if exclude_tests or exclude_fixtures:
             filtered: list[dict] = []
@@ -862,23 +1009,50 @@ def duplicates(
         # Per-bucket cluster counts surfaced in the verdict line
         # (Pattern-3 vocabulary improvement: buckets at the surface, not
         # hidden in JSON).
-        bucket_counts = {"production": 0, "test_intentional": 0, "mixed": 0}
-        for c in cluster_list:
-            bucket_counts[c.get("role_bucket", "production")] += 1
+        # W607-DD: wrap the per-bucket roll-up. A KeyError-poisoned
+        # role_bucket vocabulary refactor would otherwise crash here.
+        # Floor returns a zeroed dict matching the empty-state branch so
+        # downstream verdict + summary fields stay non-null. W978 5th-
+        # discipline: ``len()`` calls live INSIDE the closure, not at the
+        # kwarg-bind site.
+        def _compute_bucket_counts():
+            _bc = {"production": 0, "test_intentional": 0, "mixed": 0}
+            for _c in cluster_list:
+                _bc[_c.get("role_bucket", "production")] += 1
+            return _bc
+
+        bucket_counts = _run_check_dd(
+            "compute_predicate",
+            _compute_bucket_counts,
+            default={"production": 0, "test_intentional": 0, "mixed": 0},
+        )
+        if bucket_counts is None:
+            bucket_counts = {"production": 0, "test_intentional": 0, "mixed": 0}
 
         # ── 5a. W136: mirror full cluster set into findings registry ─
         # Runs ONLY with --persist. We emit BEFORE --max-pairs truncation
         # so the registry stays comprehensive regardless of how the
-        # current invocation slices the display. Wrapped so a pre-W89 DB
-        # (no ``findings`` table) silently no-ops rather than crashing
-        # the standard duplicates read path.
+        # current invocation slices the display.
+        #
+        # W607-BM: replaces the pre-existing ``try / except
+        # sqlite3.OperationalError: pass`` Pattern-2 silent-fallback. The
+        # old block silently no-op'd whenever the findings table was
+        # missing (pre-W89 schema) OR whenever ANY OperationalError
+        # surfaced (locked DB, full disk, etc.). New path surfaces the
+        # exception class + detail via a structured marker so the
+        # degradation is visible to consumers -- mirrors the W607-BK
+        # paired-sibling Pattern-2 elimination on cmd_dark_matter.
         if persist:
-            try:
+
+            def _emit_and_commit():
                 _emit_duplicates_findings(conn, cluster_list, DUPLICATES_DETECTOR_VERSION)
                 conn.commit()
-            except sqlite3.OperationalError:
-                # findings table missing (pre-W89 schema) — degrade gracefully.
-                pass
+
+            _run_check_bm(
+                "emit_findings",
+                _emit_and_commit,
+                default=None,
+            )
 
         # ── 5b. Apply --max-pairs truncation ─────────────────────────
         total_clusters_found = len(cluster_list)
@@ -897,22 +1071,42 @@ def duplicates(
             if len(lines) > 1:
                 estimated_lines += sum(lines[:-1])  # keep the longest
 
-        verdict_parts: list[str] = []
-        if cluster_list:
-            verdict_parts.append(
-                f"{len(cluster_list)} duplicate cluster"
-                f"{'s' if len(cluster_list) != 1 else ''} found ({total_functions} functions) "
-                f"({bucket_counts['production']} production"
-                f" · {bucket_counts['test_intentional']} test_intentional"
-                f" · {bucket_counts['mixed']} mixed)"
-            )
-        else:
-            verdict_parts.append("No semantic duplicates detected")
-        if sampled:
-            verdict_parts.append(f"sampled {sample_size}/{original_candidate_count} candidates")
-        if truncated:
-            verdict_parts.append(f"truncated to top {len(cluster_list)}/{total_clusters_found} clusters")
-        verdict = "; ".join(verdict_parts)
+        # W607-DD: wrap the verdict-string assembly. A __format__-raising
+        # sentinel inside one of the count fields (or a vocabulary
+        # refactor that removes a bucket key) would otherwise crash here.
+        # Floor must NOT re-interpolate the values that tripped the
+        # closure (W978 first-hypothesis discipline). Use a literal
+        # "duplicates completed" floor that still satisfies LAW 6
+        # standalone-parse.
+        #
+        # W978 KWARG-DEFAULT EAGERNESS TRAP: ``len(cluster_list)`` /
+        # ``len(...)`` calls live INSIDE the closure, not at the
+        # kwarg-bind site. cmd_taint W607-CJ 5th-discipline anchor.
+        def _build_verdict_str():
+            _parts: list[str] = []
+            if cluster_list:
+                _parts.append(
+                    f"{len(cluster_list)} duplicate cluster"
+                    f"{'s' if len(cluster_list) != 1 else ''} found ({total_functions} functions) "
+                    f"({bucket_counts['production']} production"
+                    f" · {bucket_counts['test_intentional']} test_intentional"
+                    f" · {bucket_counts['mixed']} mixed)"
+                )
+            else:
+                _parts.append("No semantic duplicates detected")
+            if sampled:
+                _parts.append(f"sampled {sample_size}/{original_candidate_count} candidates")
+            if truncated:
+                _parts.append(f"truncated to top {len(cluster_list)}/{total_clusters_found} clusters")
+            return "; ".join(_parts)
+
+        verdict = _run_check_dd(
+            "compute_verdict",
+            _build_verdict_str,
+            default="duplicates completed",
+        )
+        if verdict is None:
+            verdict = "duplicates completed"
 
         # ── 7. Output ───────────────────────────────────────────────
         # Build the per-cluster JSON dicts once — the SARIF path and the
@@ -970,7 +1164,21 @@ def duplicates(
                 },
                 clusters=clusters_json,
             )
-            click.echo(write_sarif(duplicates_to_sarif(sarif_envelope)))
+            # W607-BM: wrap the SARIF projection so a raise inside
+            # ``duplicates_to_sarif`` surfaces a structured marker rather
+            # than crashing the CI gate. Default is an empty SARIF
+            # document shape so ``write_sarif`` still emits valid JSON.
+            sarif_doc = _run_check_bm(
+                "serialize_to_sarif",
+                duplicates_to_sarif,
+                sarif_envelope,
+                default={
+                    "version": "2.1.0",
+                    "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                    "runs": [],
+                },
+            )
+            click.echo(write_sarif(sarif_doc))
             return
 
         if json_mode:
@@ -993,16 +1201,64 @@ def duplicates(
                 summary_payload["truncated"] = True
                 summary_payload["clusters_total"] = total_clusters_found
                 summary_payload["max_pairs"] = max_pairs
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "duplicates",
-                        summary=summary_payload,
-                        budget=token_budget,
-                        clusters=clusters_json,
-                    )
-                )
+
+            # W607-BM + W607-DD: surface substrate-call AND aggregation-
+            # phase markers (preserved-list-field discipline). Both
+            # families share the canonical ``duplicates_*`` prefix and
+            # combine into the same top-level ``warnings_out`` + summary
+            # mirror. Empty combined list -> no field added -> byte-
+            # identical envelope on the happy path.
+            _combined_warnings = list(_w607bm_warnings_out) + list(_w607dd_warnings_out)
+            _envelope_kwargs: dict = {
+                "summary": summary_payload,
+                "budget": token_budget,
+                "clusters": clusters_json,
+            }
+            if _combined_warnings:
+                summary_payload["warnings_out"] = list(_combined_warnings)
+                summary_payload["partial_success"] = True
+                _envelope_kwargs["warnings_out"] = list(_combined_warnings)
+
+            # W607-DD -- serialize_envelope boundary. Wraps the envelope
+            # serialization itself. A downstream schema-shape refactor
+            # that breaks ``json_envelope("duplicates", ...)`` would
+            # otherwise crash AFTER all substrate + aggregation signals
+            # were already gathered. Floor to a minimal envelope stub so
+            # consumers still receive a parseable JSON object with the
+            # marker attached + the canonical command name. Mirror of
+            # cmd_dark_matter's W607-CZ serialize_envelope floor.
+            _envelope_floor: dict = {
+                "command": "duplicates",
+                "schema_version": "1.0.0",
+                "summary": {
+                    "verdict": verdict,
+                    "partial_success": True,
+                    "warnings_out": list(_combined_warnings),
+                },
+                "warnings_out": list(_combined_warnings),
+            }
+            _envelope = _run_check_dd(
+                "serialize_envelope",
+                json_envelope,
+                "duplicates",
+                default=_envelope_floor,
+                **_envelope_kwargs,
             )
+            # W607-DD -- if ``serialize_envelope`` raised AFTER the
+            # combined bucket was already snapshotted, the new
+            # ``duplicates_serialize_envelope_failed:`` marker was
+            # appended to ``_w607dd_warnings_out`` and the floor stub
+            # carries only the pre-raise combined list. Rebuild the
+            # floor stub's warnings_out so the new marker reaches the
+            # JSON output. Clean path -> envelope is the real
+            # json_envelope return value, no rebuild needed.
+            if _envelope is _envelope_floor and _w607dd_warnings_out:
+                _combined_warnings = list(_w607bm_warnings_out) + list(_w607dd_warnings_out)
+                _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
+                _envelope_floor["warnings_out"] = list(_combined_warnings)
+                _envelope = _envelope_floor
+
+            click.echo(to_json(_envelope))
             return
 
         # ── Text output ──────────────────────────────────────────────

@@ -12,7 +12,9 @@
 
 <sub>Credential-free · zero network egress · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
 
-<sub>241 commands · 224 MCP tools (57 in the default `core` preset) · 28 languages</sub>
+<!-- BEGIN auto-count:readme-headline-counts -->
+<sub>241 commands · 227 MCP tools (57 in the default `core` preset) · 28 languages</sub>
+<!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
 
@@ -1054,7 +1056,7 @@ Core preset tools: `roam_affected_tests`, `roam_alerts`, `roam_ask`, `roam_audit
 
 <details>
 <!-- BEGIN auto-count:readme-mcp-tool-list-summary -->
-<summary><strong>MCP tool list (all 224)</strong></summary>
+<summary><strong>MCP tool list (all 227)</strong></summary>
 <!-- END auto-count:readme-mcp-tool-list-summary -->
 
 *New in v12.26: `roam_pr_analyze`, `roam_pr_comment_render`, `roam_metrics_push`, `roam_audit_trail_verify`, `roam_audit_trail_export`, `roam_audit_trail_conformance_check`, `roam_rules_validate`, `roam_dogfood` — Roam Review + Cloud engines + governance audit-trail toolkit + production-grade rules linting + one-shot v2 stack runner.*
@@ -1091,6 +1093,7 @@ Core preset tools: `roam_affected_tests`, `roam_alerts`, `roam_ask`, `roam_audit
 | `roam_batch_get` | Get details for up to 50 symbols in one call. Replaces 50 sequential roam_symbol calls. |
 | `roam_batch_search` | Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls. |
 | `roam_bisect_blame` | Find snapshots that caused architectural degradation, ranked by impact. |
+| `roam_boundary` | Surface public-by-accident exports + changed-range layer violations. Two closed-enum kinds: public_by_accident (warning, _-prefixed name in __all__) and wrong_direction_import (high, lower-layer module imports from higher-layer caller). |
 | `roam_breaking_changes` | Detect breaking API changes between git refs: removed exports, changed signatures. |
 | `roam_brief` | Compose a one-page agent briefing covering five sections: ``next`` (what ``roam next`` would recommend), ``highlights`` (stack / top danger zones / top mined laws from ``roam agents-md``), ``pr_bundle`` (current PR-bundle status on the active branch), ``mode`` (active agent mode and its allow-list size), and ``runs`` (the N most-recent runs from the ledger). Designed as the FIRST command an agent runs when joining a roam-indexed repo. Different from ``roam_next`` (single-command router) -- this is the verdict-first session kickoff packet. |
 | `roam_budget_check` | Check changes against architectural budgets (cycles, health floor, complexity). |
@@ -1108,6 +1111,7 @@ Core preset tools: `roam_affected_tests`, `roam_alerts`, `roam_ask`, `roam_audit
 | `roam_clusters` | Show Louvain code clusters and directory mismatches. Returns per-cluster size, cohesion, conductance, modularity Q, mega-cluster sub-group breakdowns, and inter-cluster coupling. Different from ``roam_layers`` (dependency-layer violations) -- this groups by community detection, not by topological depth. |
 | `roam_codeowners` | CODEOWNERS coverage, ownership distribution, unowned files, drift detection. |
 | `roam_compare` | Diff two roam indices structurally: reports symbols added/removed/moved, per-file complexity deltas above a threshold, language counts, and a one-line health verdict (improved / regressed / sideways). Different from ``roam_graph_diff`` (commit-range graph delta from one index) -- this is the cross-index structural delta for release-vs-release comparisons. |
+| `roam_compatibility` | Detect outbound surface regressions vs a baseline snapshot. Closed-enum verdicts: no regressions / surface additions / surface drift / breaking changes. Compares commands, flags, envelope summary fields, MCP tools, and preset counts. Capture the baseline via CLI: roam compatibility --write-baseline PATH. |
 | `roam_complete` | Prefix completion for symbols / file paths / commands. Faster than search; returns just names. |
 | `roam_complexity_report` | Functions ranked by cognitive complexity above threshold. |
 | `roam_congestion` | Detect developer congestion: files with too many concurrent authors within a sliding time window. Combines author count, churn intensity, and complexity into a congestion score that predicts merge conflicts and coordination failures. Different from ``roam_bus_factor`` (knowledge-loss risk) and ``roam_owner`` (per-file blame breakdown) -- this measures too-many-cooks contention. |
@@ -1260,6 +1264,7 @@ Core preset tools: `roam_affected_tests`, `roam_alerts`, `roam_ask`, `roam_audit
 | `roam_taint` | Graph-reach taint analysis. Returns OpenVEX-shaped findings (spec-legal status + justification — never `code_not_reachable`). 10 starter rule packs: sqli, xss, ssrf, path-traversal, command-injection, deserialization, open-redirect, urllib, socketio, fileupload. Pair with --ci to gate on findings (exit 5). |
 | `roam_taint_classify` | Run `roam taint` then ask the agent's own LLM (via MCP sampling) to classify each reachable finding as IDOR/AUTHZ/SQLI/XSS/CMD_INJECTION/etc. with confidence + reasoning. Counter to Semgrep Multimodal — same LLM-reasoning narrative without a hosted API key. |
 | `roam_test_gaps` | Find changed symbols missing test coverage, ranked by severity. |
+| `roam_test_hermeticity` | Detect non-hermetic test patterns that cause CI flakiness. Six closed-enum kinds: network, time, random, filesystem, env, subprocess. AST-driven (not regex) with module-level suppression for monkeypatch / freezegun / responses / random.seed. |
 | `roam_test_impact` | Tests transitively reachable from changed symbols — sharper scope than affected_tests. |
 | `roam_test_map` | Map a symbol or file to its current test coverage: direct test edges (test file calls the symbol), file-level importers (test file imports the symbol's module), and convention-based matches (Salesforce ``<Name>Test`` / ``<Name>_Test`` classes). Different from ``roam_test_gaps`` (untested symbols in changed files) and ``roam_affected_tests`` (forward trace from changes to affected tests) -- this is the lookup for what currently exercises a given symbol. |
 | `roam_test_pyramid` | Count indexed test files by kind (unit / integration / e2e / smoke / unknown) using path and name conventions, and flag inverted pyramids (when ``e2e + integration > unit``). Different from ``roam_test_gaps`` (missing coverage) -- this measures the shape of the existing test suite for slow-CI risk. |

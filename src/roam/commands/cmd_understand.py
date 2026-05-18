@@ -25,7 +25,8 @@ from roam.commands.changed_files import is_test_file
 from roam.commands.conventions_helper import compute_conventions
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.db.edge_kinds import inheritance_in_clause
+from roam.output.formatter import abbrev_kind, json_envelope, loc, resolution_disclosure, to_json
 from roam.output.framework_filter import is_framework_alias
 
 # ---------------------------------------------------------------------------
@@ -576,14 +577,19 @@ def _detect_patterns_summary(conn):
     """Quick lightweight pattern detection (strategy, factory)."""
     patterns = []
 
-    # Strategy: classes sharing a parent
+    # Strategy: classes sharing a parent.
+    # W543-followup: previously filtered on bare ``e.kind = 'inherits'``
+    # which silently dropped ``implements`` / ``uses_trait`` rows that
+    # the canonical writers emit. Source the IN-clause from the shared
+    # helper so future writer additions reach this detector too.
     try:
         rows = conn.execute(
             "SELECT p.name as parent, COUNT(*) as impl_count "
             "FROM symbols s "
             "JOIN edges e ON e.source_id = s.id "
             "JOIN symbols p ON e.target_id = p.id "
-            "WHERE e.kind = 'inherits' AND p.kind IN ('class', 'interface') "
+            f"WHERE {inheritance_in_clause('e.kind')} "
+            "AND p.kind IN ('class', 'interface') "
             "GROUP BY p.name "
             "HAVING COUNT(*) >= 3 "
             "ORDER BY COUNT(*) DESC LIMIT 5"
@@ -726,6 +732,39 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
     # ------------------------------------------------------------------
     # Normal understand output
     # ------------------------------------------------------------------
+    # W607-BC: per-phase substrate-CALL marker plumbing for the canonical
+    # exploration aggregator. cmd_understand is the third member of the
+    # exploration trio (cmd_describe W607-K + cmd_minimap W607-L + W607-AZ
+    # + cmd_understand W607-BC) — agents invoke it as the single-call
+    # orientation report covering structure, tech stack, architecture,
+    # health, hotspots, and reading order. A raise in any one downstream
+    # substrate (graph build, layer detection, cluster query, metrics
+    # collection, conventions/complexity/patterns/debt detector, render,
+    # serialize) previously bubbled as a Click traceback and dropped the
+    # whole envelope. W607-BC surfaces each raise as a structured
+    # ``understand_<phase>_failed:<exc_class>:<detail>`` marker and falls
+    # back to a safe default so the remaining substrates still emit.
+    # Closed-enum marker prefix ``understand_*`` (mirrors W607-K's
+    # ``describe_*`` + W607-AZ/L's ``minimap_*`` family discipline).
+    #
+    # Empty bucket on the success path produces a byte-identical envelope
+    # (no ``warnings_out`` key in either ``summary`` or top-level).
+    _w607bc_warnings_out: list[str] = []
+
+    def _run_check_bc(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BC marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``understand_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607bc_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bc_warnings_out.append(f"understand_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     root = find_project_root()
 
     with open_db(readonly=True) as conn:
@@ -750,50 +789,77 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
             )
 
         # --- Tech stack ---
-        frameworks = _detect_frameworks(conn)
-        build_tool = _detect_build(conn)
+        frameworks = _run_check_bc("detect_frameworks", _detect_frameworks, conn, default=[])
+        build_tool = _run_check_bc("detect_build", _detect_build, conn, default=None)
 
         # --- Architecture ---
-        G = None
-        try:
+        # W607-BC: wrap build_symbol_graph + detect_layers. Pre-existing
+        # bare try/except now gets phase-scoped markers so a layer-detection
+        # raise is distinguishable from a graph-build raise.
+        def _build_graph_and_layers():
             from roam.graph.builder import build_symbol_graph
             from roam.graph.layers import detect_layers
 
-            G = build_symbol_graph(conn)
-            layer_map = detect_layers(G)
-            layers = sorted(set(layer_map.values())) if layer_map else []
-        except Exception:
-            layers = []
+            G_local = build_symbol_graph(conn)
+            layer_map = detect_layers(G_local)
+            return G_local, sorted(set(layer_map.values())) if layer_map else []
 
-        entry_points = _find_entry_points(conn)
-        key_abs = _key_abstractions(conn, limit=15 if full else 10)
+        _gl_result = _run_check_bc("build_graph_layers", _build_graph_and_layers, default=(None, []))
+        G, layers = _gl_result if _gl_result is not None else (None, [])
+
+        entry_points = _run_check_bc("find_entry_points", _find_entry_points, conn, default=[])
+        key_abs = _run_check_bc(
+            "key_abstractions",
+            _key_abstractions,
+            conn,
+            limit=15 if full else 10,
+            default=[],
+        )
 
         # Clusters
-        cluster_rows = conn.execute(
-            "SELECT cluster_id, cluster_label, COUNT(*) as size FROM clusters GROUP BY cluster_id ORDER BY size DESC"
-        ).fetchall()
-        clusters_data = []
-        for cr in cluster_rows[: 20 if full else 8]:
-            top_syms = conn.execute(
-                "SELECT s.name, s.kind FROM clusters c "
-                "JOIN symbols s ON c.symbol_id = s.id "
-                "WHERE c.cluster_id = ? "
-                "ORDER BY s.name LIMIT 5",
-                (cr["cluster_id"],),
+        def _load_clusters():
+            cluster_rows = conn.execute(
+                "SELECT cluster_id, cluster_label, COUNT(*) as size FROM clusters GROUP BY cluster_id ORDER BY size DESC"
             ).fetchall()
-            clusters_data.append(
-                {
-                    "id": cr["cluster_id"],
-                    "label": cr["cluster_label"] or f"cluster-{cr['cluster_id']}",
-                    "size": cr["size"],
-                    "top_symbols": [s["name"] for s in top_syms],
-                }
-            )
+            cd = []
+            for cr in cluster_rows[: 20 if full else 8]:
+                top_syms = conn.execute(
+                    "SELECT s.name, s.kind FROM clusters c "
+                    "JOIN symbols s ON c.symbol_id = s.id "
+                    "WHERE c.cluster_id = ? "
+                    "ORDER BY s.name LIMIT 5",
+                    (cr["cluster_id"],),
+                ).fetchall()
+                cd.append(
+                    {
+                        "id": cr["cluster_id"],
+                        "label": cr["cluster_label"] or f"cluster-{cr['cluster_id']}",
+                        "size": cr["size"],
+                        "top_symbols": [s["name"] for s in top_syms],
+                    }
+                )
+            return cd
+
+        clusters_data = _run_check_bc("load_clusters", _load_clusters, default=[])
 
         # --- Health ---
-        from roam.commands.metrics_history import collect_metrics
+        def _collect_health():
+            from roam.commands.metrics_history import collect_metrics
 
-        health = collect_metrics(conn)
+            return collect_metrics(conn)
+
+        health = _run_check_bc(
+            "collect_metrics",
+            _collect_health,
+            default={
+                "health_score": 0,
+                "cycles": 0,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
+        )
 
         # Worst issues
         worst = []
@@ -805,29 +871,43 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
             worst.append(f"{health['dead_exports']} dead exports")
 
         # --- Hotspots ---
-        hotspots = _find_hotspots(conn, limit=20 if full else 10)
+        hotspots = _run_check_bc(
+            "find_hotspots",
+            _find_hotspots,
+            conn,
+            limit=20 if full else 10,
+            default=[],
+        )
 
         # --- Conventions ---
-        conventions_summary = _detect_conventions(conn)
+        conventions_summary = _run_check_bc("detect_conventions", _detect_conventions, conn, default={})
 
         # --- Complexity overview ---
-        complexity_summary = _complexity_overview(conn)
+        complexity_summary = _run_check_bc("complexity_overview", _complexity_overview, conn, default=None)
 
         # --- Patterns ---
-        patterns_detected = _detect_patterns_summary(conn)
+        patterns_detected = _run_check_bc("detect_patterns", _detect_patterns_summary, conn, default=[])
 
         # --- Debt hotspots ---
-        debt_hotspots = _top_debt(conn, limit=5)
+        debt_hotspots = _run_check_bc("top_debt", _top_debt, conn, limit=5, default=[])
 
         # --- Reading order ---
-        reading_order = _suggest_reading_order(conn, entry_points, key_abs, hotspots)
+        reading_order = _run_check_bc(
+            "suggest_reading_order",
+            _suggest_reading_order,
+            conn,
+            entry_points,
+            key_abs,
+            hotspots,
+            default=[],
+        )
 
         # ------------------------------------------------------------------
         # Flag: --tour  (gather tour data to append after normal output)
         # ------------------------------------------------------------------
         tour_data = None
         if tour_mode:
-            tour_data = _gather_tour_data(conn, G)
+            tour_data = _run_check_bc("gather_tour_data", _gather_tour_data, conn, G, default=None)
 
         # --- JSON output ---
         if json_mode:
@@ -914,26 +994,65 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
             )
             if tour_data is not None:
                 envelope_kwargs["tour"] = tour_data
-            click.echo(
-                to_json(
+            # W607-BC: thread the per-phase marker bucket into BOTH
+            # summary.warnings_out and top-level warnings_out. Empty
+            # bucket -> byte-identical envelope (the keys are only
+            # added when non-empty). partial_success flips only when
+            # any substrate raised.
+            understand_summary: dict[str, object] = {
+                "verdict": _understand_verdict,
+                "files": file_count,
+                "symbols": sym_count,
+                "health_score": health["health_score"],
+                "languages": len(languages),
+                "caller_metric_definition": "direct_in_degree (architecture.key_abstractions[*].fan_in)",
+            }
+            combined_warnings = list(_w607bc_warnings_out)
+            if combined_warnings:
+                understand_summary["warnings_out"] = list(combined_warnings)
+                understand_summary["partial_success"] = True
+                envelope_kwargs["warnings_out"] = list(combined_warnings)
+            # W607-BC: wrap JSON serialization itself — the last
+            # downstream substrate. On serialize raise, fall back to a
+            # minimal envelope so the contract still holds.
+            envelope_text = _run_check_bc(
+                "serialize_envelope",
+                lambda: to_json(
                     json_envelope(
                         cmd_name,
-                        summary={
-                            "verdict": _understand_verdict,
-                            "files": file_count,
-                            "symbols": sym_count,
-                            "health_score": health["health_score"],
-                            "languages": len(languages),
-                            "caller_metric_definition": "direct_in_degree (architecture.key_abstractions[*].fan_in)",
-                        },
+                        summary=understand_summary,
                         budget=token_budget,
                         **envelope_kwargs,
                     )
-                )
+                ),
+                default=None,
             )
+            if envelope_text is None:
+                # serialize_envelope raised — re-merge bucket (it grew)
+                # and produce a minimal envelope so the contract holds.
+                combined_warnings = list(_w607bc_warnings_out)
+                understand_summary["warnings_out"] = list(combined_warnings)
+                understand_summary["partial_success"] = True
+                envelope_text = to_json(
+                    json_envelope(
+                        cmd_name,
+                        summary=understand_summary,
+                        budget=token_budget,
+                        warnings_out=list(combined_warnings),
+                    )
+                )
+            click.echo(envelope_text)
             return
 
-        _understand_text(
+        # W607-BC: wrap the text-render substrate boundary. A raise here
+        # (formatter import error, missing template, broken renderer)
+        # would previously bubble as a Click traceback; surface as a
+        # ``understand_render_text_failed:...`` marker. Text mode emits
+        # the marker as a stderr-style note so the operator sees the
+        # disclosure; the JSON envelope channel is reserved for json_mode.
+        _run_check_bc(
+            "render_text",
+            _understand_text,
             root,
             file_count,
             sym_count,
@@ -953,11 +1072,27 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
             patterns_detected,
             debt_hotspots,
             reading_order,
+            default=None,
         )
 
         # Append tour output if --tour was given
         if tour_data is not None:
-            _emit_tour_text(tour_data, conn, G, mermaid_mode)
+            _run_check_bc(
+                "emit_tour_text",
+                _emit_tour_text,
+                tour_data,
+                conn,
+                G,
+                mermaid_mode,
+                default=None,
+            )
+
+        # W607-BC text-mode disclosure: surface non-empty marker bucket on
+        # stderr so operators see substrate degradations even when running
+        # without ``--json``. The text-mode happy path stays byte-identical.
+        if _w607bc_warnings_out:
+            for marker in _w607bc_warnings_out:
+                click.echo(f"# warning: {marker}", err=True)
 
 
 def _understand_text(
@@ -1219,6 +1354,13 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
     directory = directory.replace("\\", "/").rstrip("/")
 
     with open_db(readonly=True) as conn:
+        # W1311: track which resolution tier the skeleton input hit. The
+        # legacy code silently fell back from an exact ``directory/%`` prefix
+        # match to a ``%directory/%`` substring match and emitted the same
+        # success verdict for both tiers — a textbook Pattern-1 Variant D
+        # silent-success-on-degraded-resolution shape. Disclose the tier via
+        # ``resolution_disclosure`` so agents can branch on ``file`` vs
+        # ``file_substring`` vs ``unresolved``.
         symbols = conn.execute(
             "SELECT s.*, f.path as file_path "
             "FROM symbols s JOIN files f ON s.file_id = f.id "
@@ -1226,9 +1368,10 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
             "ORDER BY f.path, s.line_start",
             (f"{directory}/%",),
         ).fetchall()
+        skeleton_tier = "file" if symbols else None
 
         if not symbols:
-            # Try partial match
+            # Try partial match — degraded resolution tier (W1311).
             symbols = conn.execute(
                 "SELECT s.*, f.path as file_path "
                 "FROM symbols s JOIN files f ON s.file_id = f.id "
@@ -1236,8 +1379,11 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
                 "ORDER BY f.path, s.line_start",
                 (f"%{directory}/%",),
             ).fetchall()
+            if symbols:
+                skeleton_tier = "file_substring"
 
         if not symbols:
+            disclosure = resolution_disclosure("unresolved", target=directory)
             if json_mode:
                 click.echo(
                     to_json(
@@ -1247,11 +1393,14 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
                                 "verdict": f"no symbols found in {directory}/",
                                 "file_count": 0,
                                 "symbol_count": 0,
+                                "resolution": disclosure["resolution"],
+                                "partial_success": disclosure["partial_success"],
                             },
                             budget=token_budget,
                             directory=directory,
                             files={},
                             symbol_count=0,
+                            resolution=disclosure,
                         )
                     )
                 )
@@ -1266,8 +1415,19 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
         for s in symbols:
             by_file[s["file_path"]].append(s)
 
+        # W1311 disclosure: stamp the resolved tier ("file" exact-prefix vs
+        # "file_substring" %directory% fallback) onto the success envelope so
+        # the verdict reflects degraded resolution. The text-mode verdict
+        # carries a "[file substring match]" suffix mirroring preflight's
+        # convention.
+        skeleton_disclosure = resolution_disclosure(
+            skeleton_tier or "file",
+            target=directory,
+        )
+        verdict_suffix = " [file substring match]" if skeleton_tier == "file_substring" else ""
+
         if json_mode:
-            _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols"
+            _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols{verdict_suffix}"
             result = {}
             for fp in sorted(by_file.keys()):
                 result[fp] = [
@@ -1289,12 +1449,15 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
                             "verdict": _verdict,
                             "file_count": len(by_file),
                             "symbol_count": len(symbols),
+                            "resolution": skeleton_disclosure["resolution"],
+                            "partial_success": skeleton_disclosure["partial_success"],
                         },
                         budget=token_budget,
                         directory=directory,
                         file_count=len(by_file),
                         symbol_count=len(symbols),
                         files=result,
+                        resolution=skeleton_disclosure,
                     )
                 )
             )
@@ -1302,9 +1465,11 @@ def _run_skeleton_mode(json_mode, cmd_name, directory, token_budget=0):
 
         file_count = len(by_file)
         sym_count = len(symbols)
-        _verdict = f"{directory}/: {file_count} files, {sym_count} exported symbols"
+        _verdict = f"{directory}/: {file_count} files, {sym_count} exported symbols{verdict_suffix}"
         click.echo(f"VERDICT: {_verdict}\n")
         click.echo(f"{directory}/ ({file_count} files, {sym_count} exported symbols)")
+        if skeleton_tier == "file_substring":
+            click.echo("  Note: substring match on directory path — input was not an exact directory prefix.")
         click.echo()
 
         # Build parent lookup for indentation

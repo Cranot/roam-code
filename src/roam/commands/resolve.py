@@ -419,6 +419,99 @@ def _stamp_tier(row, tier: str) -> dict:
     return out
 
 
+def resolve_file_symbols(
+    conn: sqlite3.Connection, raw_input: str
+) -> tuple[int | None, set[int], str | None, str | None]:
+    """Resolve a file-path-like target to its file row + owned symbols + tier.
+
+    Pattern-1 Variant D substrate (Wave A of the
+    ``(internal memo)`` remediation): replaces
+    three drifted lookalike helpers that lived inline in
+    ``cmd_safe_zones`` (returned ``(file_id, sym_ids)``),
+    ``cmd_affected_tests`` (returned ``(sym_ids, file_paths)``), and
+    ``cmd_metrics`` (returned ``(kind, id, row)`` with the file-substring
+    path silently undisclosed). Each helper silently fell back to a
+    ``LIKE %name`` substring match without surfacing the degradation, and
+    callers then emitted a fully-resolved success verdict — the canonical
+    Variant D failure shape.
+
+    The canonical contract:
+
+    1. Try an exact-path match (``files.path = ?``). Returns ``tier="file"``.
+    2. On miss, try a ``LIKE %name`` substring match (``files.path LIKE ?``).
+       Returns ``tier="file_substring"`` so callers can disclose the
+       degradation via :func:`roam.output.formatter.resolution_disclosure`
+       (the W1309 ``file_substring`` enum member already lives in
+       ``_RESOLUTION_KINDS``).
+    3. On miss, return ``(None, set(), None, None)`` so callers can route
+       to ``unresolved`` disclosure / "target not found" envelopes.
+
+    The path-separator normalisation (Windows ``\\`` -> POSIX ``/``) is
+    applied once at the boundary so consumer call sites stay agnostic.
+
+    Args:
+        conn: A live ``sqlite3.Connection`` from ``open_db``.
+        raw_input: The user-supplied target string. May contain either
+            POSIX or Windows path separators; both are normalised.
+
+    Returns:
+        A 4-tuple ``(file_id, sym_ids, file_path, tier)``:
+
+        - ``file_id``: The resolved ``files.id`` value, or ``None`` on miss.
+        - ``sym_ids``: ``set[int]`` of symbol ids owned by ``file_id``.
+          Empty set on miss OR on a file with zero indexed symbols (both
+          tier-disclosable; the empty-set + ``tier="file"`` shape is a
+          valid resolution).
+        - ``file_path``: The canonical ``files.path`` value as stored in
+          the index (may differ from ``raw_input`` after substring match),
+          or ``None`` on miss.
+        - ``tier``: One of ``"file"`` (exact match), ``"file_substring"``
+          (LIKE %name fallback), or ``None`` (no match). The tier is a
+          member of ``_RESOLUTION_KINDS`` so callers can pass it directly
+          to ``resolution_disclosure(tier, target=raw_input)``.
+
+    Caller pattern (post-Wave B adoption template)::
+
+        file_id, sym_ids, fpath, tier = resolve_file_symbols(conn, target)
+        if file_id is None:
+            # ... unresolved disclosure ...
+            return
+        disclosure = resolution_disclosure(tier, target=target)
+        # disclosure["partial_success"] is True when tier == "file_substring"
+    """
+    normalized = raw_input.replace("\\", "/")
+
+    # Tier 1: exact-path match.
+    row = conn.execute(
+        "SELECT id, path FROM files WHERE path = ?",
+        (normalized,),
+    ).fetchone()
+    tier: str | None
+    if row is not None:
+        tier = "file"
+    else:
+        # Tier 2: LIKE %name substring fallback. ORDER BY path keeps the
+        # result deterministic when multiple files share a basename suffix
+        # (e.g. ``service.py`` matches both ``src/service.py`` and
+        # ``tests/service.py``); LIMIT 1 mirrors the legacy single-row
+        # behaviour all three helpers shared.
+        row = conn.execute(
+            "SELECT id, path FROM files WHERE path LIKE ? ORDER BY path LIMIT 1",
+            (f"%{normalized}",),
+        ).fetchone()
+        if row is None:
+            return None, set(), None, None
+        tier = "file_substring"
+
+    file_id = row["id"]
+    file_path = row["path"]
+    syms = conn.execute(
+        "SELECT id FROM symbols WHERE file_id = ?",
+        (file_id,),
+    ).fetchall()
+    return file_id, {s["id"] for s in syms}, file_path, tier
+
+
 def find_symbol_with_alternatives(conn: sqlite3.Connection, name: str) -> tuple[dict | None, list[dict]]:
     """Find a symbol with disambiguation, returning the best plus alternatives.
 

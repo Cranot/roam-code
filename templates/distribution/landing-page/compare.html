@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Roam vs Cursor, Cody, Windsurf, CodeRabbit — Local-CLI Agent Assurance</title>
-  <meta name="description" content="Roam is local-CLI agent assurance — credential-free, zero-egress, emits a tamper-evident ChangeEvidence packet. Compared with Cursor, Cody, CodeRabbit, Greptile, SonarQube.">
+  <title>Roam vs AI Coding Tools — Local-CLI Agent Assurance</title>
+  <meta name="description" content="Compare Roam's local-CLI agent assurance with AI IDEs, coding agents, semantic reviewers, and SAST tools.">
   <link rel="canonical" href="https://roam-code.com/compare">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -17,8 +17,8 @@
   <link rel="preload" href="./landing.css" as="style">
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
-  <meta property="og:title" content="Roam vs Cursor, Cody, Windsurf, CodeRabbit — Local-CLI Agent Assurance">
-  <meta property="og:description" content="Credential-free, zero-egress local intelligence with a portable tamper-evident ChangeEvidence packet — no direct substitute in the surveyed market.">
+  <meta property="og:title" content="Roam vs AI Coding Tools — Local-CLI Agent Assurance">
+  <meta property="og:description" content="Credential-free, zero-egress local intelligence with a portable tamper-evident ChangeEvidence packet — no direct substitute among the products surveyed as of 2026-05-18.">
   <meta property="og:url" content="https://roam-code.com/compare">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -68,14 +68,16 @@
         <strong>local-CLI agent-assurance.</strong>
       </h1>
       <p class="hero-subhead">
-        Every other tool on this page is either a cloud-IDE agent
-        (Cursor, Cody, Windsurf, Continue, Sweep) or a cloud semantic
-        reviewer (CodeRabbit, Greptile, Qodo). Roam runs entirely on the
-        developer's machine — <strong>zero accounts, zero API keys, zero
-        network egress</strong> — and emits a portable tamper-evident
-        <code>ChangeEvidence</code> packet that answers eight questions
-        about every AI-assisted change. No surveyed product offers a
-        direct substitute.
+        The other products on this page focus on different layers — cloud-IDE
+        agents (Cursor, Cody, Windsurf, Continue, Sweep) help write code; cloud
+        semantic reviewers (CodeRabbit, Greptile, Qodo) read diffs as text on a
+        cloud server. Roam runs entirely on the developer's machine — <strong>zero
+        accounts, zero API keys, zero network egress</strong> — and emits a portable
+        tamper-evident <code>ChangeEvidence</code> packet (optionally cosign-signed)
+        that answers eight evidence questions about every AI-assisted change. Among
+        the products surveyed below as of <time datetime="2026-05-18">2026-05-18</time>,
+        we did not find a direct substitute for this combination; if you know of
+        one, email us and we will update the page.
       </p>
     </div>
   </header>
@@ -93,7 +95,7 @@
         <div class="verb-cell">
           <code>Cloud-IDE agent</code>
           <span><strong>"Help me write code."</strong>
-          Cursor, Cody (enterprise-only since July 2025), Windsurf,
+          Cursor, Sourcegraph Cody Enterprise, Windsurf,
           Continue, Sweep, Claude Code. Human-first surface inside an
           editor or terminal. Requires a vendor account and at least
           one cloud LLM endpoint. Audit logs answer <em>who ran what</em>.</span>
@@ -111,21 +113,21 @@
           <span><strong>"Was this change structurally understood?"</strong>
           <strong>Roam.</strong> Agent-first CLI + MCP server. Builds a
           local SQLite graph of symbols, callers, layers, runtime hot
-          spots, and clones; gates every change behind preflight +
-          blast-radius + critique; emits a signed
-          <code>ChangeEvidence</code> packet that answers <em>was the
+          spots, and clones; offers preflight + blast-radius + critique
+          gates for changes; emits a portable <code>ChangeEvidence</code>
+          packet (optionally cosign-signed) that answers <em>was the
           change understood, gated, tested, approved, and recorded</em>.</span>
         </div>
       </div>
       <p class="review-layers-foot">
         Roam composes with both other categories — keep your cloud-IDE
         agent for code generation, keep your semantic reviewer for
-        intent checks, add Roam underneath for the structural and
-        evidence layer they don't ship.
+        intent checks, add Roam underneath for a local structural and
+        evidence layer that complements them.
         <strong>See it end-to-end in five commands:</strong>
         <a href="/docs/canonical-demo">the canonical 5-minute demo</a> walks
         install &rarr; health &rarr; preflight &rarr; critique &rarr;
-        signed <code>ChangeEvidence</code> packet without leaving the laptop.
+        portable <code>ChangeEvidence</code> packet without leaving the laptop.
       </p>
     </div>
   </section>
@@ -163,18 +165,20 @@
         <div class="verb-cell verb-cell--accent">
           <code>4. Algorithmic</code>
           <span><strong>Is it correct but slow?</strong>
-          <strong>Roam.</strong> Detects code that is computationally wrong:
-          O(n²) nested-loop lookups, N+1 queries, regex compiled in hot
-          loops, repeated JSON parses, quadratic strings, branching
-          recursion without memoisation. The exact patterns AI agents ship
-          that pass tests and fail at scale. Nothing else in the
-          AI-code-review space catches this deterministically.</span>
+          <strong>Roam.</strong> Detects patterns that are computationally
+          expensive: O(n²) nested-loop lookups, N+1 queries, regex compiled
+          in hot loops, repeated JSON parses, quadratic strings, branching
+          recursion without memoisation. The kinds of patterns AI agents
+          frequently ship that pass tests and fail at scale. Among the
+          AI-code-review products surveyed below, we did not find a
+          comparable deterministic algorithmic-pattern detector documented
+          on their public pages.</span>
         </div>
       </div>
       <p class="review-layers-foot">
-        Roam isn't a replacement for the semantic or static layers — it's
-        the structural <em>and</em> algorithmic layer that the other tools
-        don't cover. The flat-tier pricing is intentional:
+        Roam isn't a replacement for the semantic or static layers — it
+        complements them by adding the structural <em>and</em> algorithmic
+        layers. The flat-tier pricing is intentional:
         <strong>add structural + algorithmic review without a per-seat
         headcount conversation.</strong>
       </p>
@@ -185,9 +189,10 @@
     <div class="compare-inner">
       <h2 class="compare-h2--tight">Side-by-side 1 of 2: against cloud semantic reviewers</h2>
       <p class="lede compare-lede--tight">
-        CodeRabbit, Greptile, Qodo, and SonarQube live in the cloud semantic
-        reviewer category. Roam adds the structural + algorithmic + evidence
-        layer they don't ship. Every cell is verifiable; sources are listed below.
+        CodeRabbit, Greptile, Qodo, and SonarQube focus on the cloud semantic
+        reviewer category. Roam complements them with a local structural,
+        algorithmic, and evidence layer. Each cell links to a vendor-page citation
+        below; if we've mischaracterised a capability, email us and we'll update.
       </p>
       <div class="compare-table-wrap">
         <table class="compare-table">
@@ -262,9 +267,9 @@
             <tr>
               <th scope="row">Free tier for individuals</th>
               <td class="yes">Yes, forever</td>
-              <td class="ltd">Trial</td>
-              <td class="ltd">Trial</td>
-              <td class="ltd">Trial</td>
+              <td class="yes">Free tier</td>
+              <td class="ltd">Trial + OSS</td>
+              <td class="yes">Developer tier</td>
               <td class="ltd">Community ed.</td>
             </tr>
             <tr>
@@ -279,7 +284,7 @@
         </table>
       </div>
       <p class="compare-foot">
-        <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (agents call roam tools directly); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and embedded MCP in SonarQube Cloud in March 2026.
+        <sup>*</sup>self-host or private deployment is vendor-specific and generally enterprise-scoped; <sup>**</sup>annual billing where listed (Qodo lists $38 monthly / $30 annual); <sup>***</sup>Roam exposes the code graph as an MCP server (agents call roam tools directly); CodeRabbit lists MCP connections, Greptile lists external-app connections, Qodo lists Enterprise MCP tools, and SonarQube ships an MCP server plus Cloud-native MCP.
       </p>
     </div>
   </section>
@@ -289,10 +294,11 @@
       <h2 class="compare-h2--tight">Side-by-side 2 of 2: against cloud-IDE agents</h2>
       <p class="lede compare-lede--tight">
         Cursor, Cody, Aider, Windsurf, Continue, Sweep, and Claude Code
-        live in the cloud-IDE-agent category — they write code with the
-        developer. Roam runs underneath as the assurance layer. Three
-        axes — credentials, network egress, and audience — separate
-        Roam from every product in this cohort.
+        focus on the cloud-IDE-agent category — they write code with the
+        developer. Roam runs underneath as a local assurance layer. Three
+        axes — credentials required, network egress required, and primary
+        audience — differ between Roam and the products in this cohort
+        based on each vendor's public documentation.
       </p>
       <div class="compare-table-wrap">
         <table class="compare-table">
@@ -326,7 +332,7 @@
               <th scope="row">Credentials required</th>
               <td class="yes">None</td>
               <td class="no">Account + LLM tokens</td>
-              <td class="no">License ($59/seat/mo)<sup>1</sup></td>
+              <td class="no">Enterprise contract<sup>1</sup></td>
               <td class="no">LLM API key (BYOK)</td>
               <td class="no">Account</td>
               <td class="no">BYOK + OAuth</td>
@@ -356,20 +362,20 @@
               <td class="yes">AGENT-first</td>
             </tr>
             <tr>
-              <th scope="row">Compliance certifications</th>
+              <th scope="row">Compliance certifications<sup>4</sup></th>
               <td class="yes">N/A by design<sup>3</sup></td>
-              <td class="ltd">SOC2 Type II</td>
-              <td class="ltd">SOC2 II + ISO27001</td>
-              <td class="no">None</td>
-              <td class="ltd">SOC2 II + FedRAMP High + HIPAA</td>
-              <td class="no">None</td>
-              <td class="ltd">SOC2</td>
+              <td class="ltd">SOC 2 (vendor-stated)</td>
+              <td class="ltd">SOC 2 + ISO 27001 (vendor portal)</td>
+              <td class="no">None advertised</td>
+              <td class="ltd">SOC 2 Type II + FedRAMP High + HIPAA (vendor-stated)</td>
+              <td class="no">None advertised</td>
+              <td class="ltd">SOC 2 (vendor-stated)</td>
               <td class="no">None advertised</td>
             </tr>
             <tr>
               <th scope="row">Audit / evidence shape</th>
               <td class="yes">HMAC run ledger + <code>ChangeEvidence</code> packet (8 questions)</td>
-              <td class="ltd">Cloud Agent infra logs (May 2026)</td>
+              <td class="ltd">Enterprise audit logs</td>
               <td class="ltd">Activity audit log</td>
               <td class="no">git history only</td>
               <td class="ltd">SSO/SCIM/RBAC + session audit</td>
@@ -403,16 +409,24 @@
         </table>
       </div>
       <p class="compare-foot">
-        <sup>1</sup>Sourcegraph deprecated Cody Free + Pro on 2025-07-23;
-        Cody is now enterprise-only at $59/seat/mo. Sourcegraph launched
-        <strong>Amp</strong> as the consumer/team agentic successor —
-        tracked but no comparable public surface yet.
+        <sup>1</sup>Sourcegraph deprecated Cody Free + Pro on 2025-07-23.
+        Cody now sits inside Sourcegraph's enterprise platform; the public
+        pricing page lists an Enterprise plan starting at $16K rather than a
+        self-serve seat price. Sourcegraph positions <strong>Amp</strong> as
+        the consumer/team agentic successor.
         <sup>2</sup>Windsurf supports cloud / hybrid / self-hosted
         deployment with offline install; the self-hosted path still
         contacts an LLM endpoint by default.
-        <sup>3</sup>Roam has no service to certify because the data, the
-        index, and the evidence never leave the developer's machine.
-        Sources verified <time datetime="2026-05-16">2026-05-16</time>
+        <sup>3</sup>Roam has no hosted service to certify: the CLI runs
+        locally, and by default neither source, index, nor evidence
+        leaves the developer's machine. Roam itself is not a substitute
+        for a hosted vendor's compliance program — it can, however,
+        produce artefacts that <em>support evidence for</em> SOC 2 CC8.1,
+        ISO 42001, and similar AI-governance controls.
+        <sup>4</sup>Certification rows reflect each vendor's own public
+        claims as of the verification date below — Roam has not
+        independently audited any third-party certificate.
+        Sources verified <time datetime="2026-05-18">2026-05-18</time>
         — see <a href="#methodology">methodology</a> below for full
         citations.
       </p>
@@ -435,18 +449,18 @@
 
   <section class="whats-in whats-in--flush-top">
     <div class="whats-in-inner whats-in-inner--prose">
-      <h3 class="text-center">Sources verified <time datetime="2026-05-16">2026-05-16</time></h3>
+      <h3 class="text-center">Sources verified <time datetime="2026-05-18">2026-05-18</time></h3>
       <ul class="prose-list">
-        <li><strong>CodeRabbit:</strong> pricing — <a href="https://www.coderabbit.ai/pricing">coderabbit.ai/pricing</a>; product capabilities — <a href="https://www.coderabbit.ai/">coderabbit.ai</a>. Pro tier: $24/dev/mo annual.</li>
-        <li><strong>Greptile:</strong> pricing — <a href="https://www.greptile.com/pricing">greptile.com/pricing</a>; product — <a href="https://www.greptile.com/">greptile.com</a>. Team tier: $30/seat/mo + $1 per review beyond 50.</li>
-        <li><strong>Qodo (formerly Codium):</strong> pricing — <a href="https://www.qodo.ai/pricing/">qodo.ai/pricing</a>; product — <a href="https://www.qodo.ai/">qodo.ai</a>. Teams tier: $30/user/mo annual, $38 monthly.</li>
-        <li><strong>SonarQube:</strong> pricing — <a href="https://www.sonarsource.com/plans-and-pricing/">sonarsource.com/plans-and-pricing</a>; product — <a href="https://www.sonarsource.com/products/sonarqube/">sonarsource.com/products/sonarqube</a>. Cloud Team: from $32/mo (LOC-based, not per-developer).</li>
-        <li><strong>Cursor:</strong> enterprise compliance + audit — <a href="https://cursor.com/docs/enterprise/compliance-and-monitoring">cursor.com/docs/enterprise/compliance-and-monitoring</a>; May 2026 release notes — <a href="https://releasebot.io/updates/cursor">releasebot.io/updates/cursor</a>. Multi-repo Cloud Agents + audit logs shipped 2026-05-13.</li>
-        <li><strong>Sourcegraph Cody / Amp:</strong> plan deprecation — <a href="https://sourcegraph.com/blog/changes-to-cody-free-pro-and-enterprise-starter-plans">sourcegraph.com/blog/changes-to-cody-free-pro-and-enterprise-starter-plans</a>; enterprise pricing — <a href="https://sourcegraph.com/pricing">sourcegraph.com/pricing</a>. Cody Free + Pro deprecated 2025-07-23; enterprise-only at $59/seat/mo. Amp is the agentic successor.</li>
+        <li><strong>CodeRabbit:</strong> pricing — <a href="https://www.coderabbit.ai/pricing">coderabbit.ai/pricing</a>; product capabilities — <a href="https://www.coderabbit.ai/">coderabbit.ai</a>. Pro tier: $24/user/mo annual; Free tier includes PR summarization and IDE/CLI reviews; Enterprise lists self-hosting, RBAC, SSO, and audit logging.</li>
+        <li><strong>Greptile:</strong> pricing — <a href="https://www.greptile.com/pricing">greptile.com/pricing</a>; product — <a href="https://www.greptile.com/">greptile.com</a>. Pro tier: $30/seat/mo with 50 reviews included per seat and $1 additional reviews; Enterprise lists self-hosting.</li>
+        <li><strong>Qodo:</strong> pricing — <a href="https://www.qodo.ai/pricing/">qodo.ai/pricing</a>; product — <a href="https://www.qodo.ai/">qodo.ai</a>. Teams tier: $30/user/mo annual, $38 monthly; Enterprise lists MCP tools, on-prem, and air-gapped deployment.</li>
+        <li><strong>SonarQube:</strong> pricing — <a href="https://www.sonarsource.com/plans-and-pricing/">sonarsource.com/plans-and-pricing</a>; MCP announcements — <a href="https://www.sonarsource.com/blog/announcing-sonarqube-mcp-server">standalone MCP server</a> and <a href="https://www.sonarsource.com/blog/announcing-native-mcp-server-in-sonarqube-cloud/">native Cloud MCP</a>. Cloud Team starts at $32/mo for private projects up to 100k LOC.</li>
+        <li><strong>Cursor:</strong> pricing and enterprise feature list — <a href="https://cursor.com/en-US/pricing">cursor.com/pricing</a>. Teams lists shared team context, SSO, privacy mode, analytics, and centralized billing; Enterprise lists SCIM, AI code tracking API, audit logs, granular admin controls, and pooled usage.</li>
+        <li><strong>Sourcegraph Cody / Amp:</strong> plan deprecation — <a href="https://sourcegraph.com/blog/changes-to-cody-free-pro-and-enterprise-starter-plans">sourcegraph.com/blog/changes-to-cody-free-pro-and-enterprise-starter-plans</a>; enterprise pricing — <a href="https://sourcegraph.com/pricing">sourcegraph.com/pricing</a>; security portal — <a href="https://security.sourcegraph.com/">security.sourcegraph.com</a>. Cody Free + Pro ended on 2025-07-23; Sourcegraph pricing now lists an Enterprise platform starting at $16K.</li>
         <li><strong>Aider:</strong> homepage — <a href="https://aider.chat/">aider.chat</a>. v3.0 ships internal debugger + NL query interpretation; no native MCP, no governance surface; BYOK LLM.</li>
-        <li><strong>Windsurf (Codeium / Cognition):</strong> compliance — <a href="https://windsurf.com/blog/codeium-is-soc2-type2-compliant">windsurf.com/blog/codeium-is-soc2-type2-compliant</a>; enterprise deployment — <a href="https://windsurf.com/enterprise">windsurf.com/enterprise</a>. SOC2 Type II + FedRAMP High + HIPAA BAA; cloud / hybrid / self-hosted with offline install.</li>
+        <li><strong>Windsurf:</strong> security — <a href="https://windsurf.com/security">windsurf.com/security</a>. SOC 2 Type II certification, FedRAMP High accreditation, HIPAA posture, Cloud / Hybrid / Self-hosted tiers, and detailed data-flow notes are documented there.</li>
         <li><strong>Continue.dev:</strong> MCP transports — <a href="https://docs.continue.dev/customize/deep-dives/mcp">docs.continue.dev/customize/deep-dives/mcp</a>; changelog — <a href="https://changelog.continue.dev/">changelog.continue.dev</a>. Stdio + SSE + streamable-http with OAuth on MCP servers.</li>
-        <li><strong>Sweep AI:</strong> product + pricing — <a href="https://sweep.dev/">sweep.dev</a>, <a href="https://docs.sweep.dev/pricing">docs.sweep.dev/pricing</a>. Pivoted from GitHub PR bot to JetBrains plugin with proprietary LLMs; SOC2 compliant.</li>
+        <li><strong>Sweep AI:</strong> product + pricing — <a href="https://sweep.dev/">sweep.dev</a>, <a href="https://docs.sweep.dev/pricing">docs.sweep.dev/pricing</a>. Current public surface is a JetBrains coding assistant with proprietary LLMs, zero third-party retention claims, MCP changelog entries, and SOC 2 compliance language.</li>
         <li><strong>Claude Code:</strong> Anthropic's official CLI agent; consumes MCP servers including Roam.</li>
         <li><strong>Roam:</strong> pricing — <a href="/pricing">/pricing</a>; product — <a href="/">homepage</a>; source — <a href="https://github.com/Cranot/roam-code">github.com/Cranot/roam-code</a>.</li>
       </ul>
@@ -466,7 +480,8 @@
         bugs in the logic?</em>. Structural review (Roam) reads the diff as
         a graph mutation and asks: <em>what else does this touch? What's
         the blast radius? Are there clones we should also update?</em>.
-        Most production-quality engineering teams want both signals.
+        Teams that ship AI-assisted changes often benefit from running
+        both signals side by side rather than choosing one.
       </p>
       <p>
         That's why our pricing assumes you keep your existing reviewer:

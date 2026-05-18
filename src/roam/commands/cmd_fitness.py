@@ -142,33 +142,73 @@ def _load_rules(
     silent-empty behaviour so the existing happy-path
     ``cmd_fitness.fitness`` envelope stays unchanged when
     ``.roam/fitness.yaml`` is well-formed.
+
+    W1030-followup-D: legacy single-value return preserved for the existing
+    callers (``cmd_diff._fitness_intersection`` /
+    ``cmd_preflight._collect_fitness_signal``). Callers that need the
+    on-disk state for envelope disambiguation use
+    :func:`_load_rules_with_status` instead.
+    """
+    rules, _status = _load_rules_with_status(project_root, warnings_out=warnings_out)
+    return rules
+
+
+def _load_rules_with_status(
+    project_root: Path,
+    *,
+    warnings_out: WarningsOut = None,
+) -> tuple[list[dict], str]:
+    """W1030-followup-D: load fitness rules and return ``(rules, status)``.
+
+    ``status`` is a closed-enum string drawn from
+    :data:`roam.commands._yaml_loader.LOAD_STATUSES`
+    (``"ok"`` / ``"missing"`` / ``"empty_file"`` / ``"empty_yaml"`` /
+    ``"read_error"`` / ``"parse_error"`` / ``"wrong_root_type"`` /
+    ``"schema_invalid"``). Lets the fitness command envelope disambiguate
+    "no fitness.yaml configured yet" (``missing`` -> use baseline rules
+    silently) from "fitness.yaml exists but is empty" (``empty_file`` ->
+    use baseline rules + flag the empty stub) from "fitness.yaml is
+    broken" (``parse_error`` / ``wrong_root_type`` -> partial_success,
+    warnings already populated by the canonical loader).
     """
     config_path = project_root / ".roam" / "fitness.yaml"
     if not config_path.exists():
         # Try .yml extension
         config_path = project_root / ".roam" / "fitness.yml"
     if not config_path.exists():
-        return []
+        return [], "missing"
 
     from roam.commands._yaml_loader import load_yaml_with_warnings
 
     path_str = str(config_path)
     pre_warnings = len(warnings_out) if warnings_out is not None else 0
-    data = load_yaml_with_warnings(
+    data, status = load_yaml_with_warnings(
         config_path,
         tiny_parser=_parse_simple_yaml_dict,
         config_label="fitness",
         warnings_out=warnings_out,
+        return_status=True,
     )
     if data is None:
         # Missing file — default state, no warning emitted by the helper.
-        return []
+        return [], status
+    if status in ("empty_file", "empty_yaml"):
+        # W1030-followup-D: zero-byte / comments-only file is a distinct
+        # on-disk state from "non-empty file missing the ``rules:`` key"
+        # -- the user created a stub but did not write any rules.
+        # Suppress the "no `rules:` key" warning that the legacy
+        # missing-key branch would emit so the empty-stub state surfaces
+        # cleanly as ``config_state=empty_file`` (or ``empty_yaml``) on
+        # the envelope, with no warning. Pattern 2 is preserved for the
+        # malformed cases — ``parse_error`` / ``wrong_root_type`` still
+        # emit the canonical loader's warning above.
+        return [], status
     if warnings_out is not None and len(warnings_out) > pre_warnings:
         # Helper already explained the failure (read error / malformed
         # YAML / wrong root type / tiny-parser fallback). Propagate the
         # empty result without piling on a second "no `rules:` key"
         # warning that would just confuse the caller.
-        return []
+        return [], status
     assert isinstance(data, dict)
     if "rules" not in data:
         if warnings_out is not None:
@@ -177,7 +217,7 @@ def _load_rules(
                 f"Expected shape: `rules:` followed by a list of "
                 f"`{{name, type, ...}}` entries."
             )
-        return []
+        return [], status
     # W1038 — shared "load → check type → warn-or-default" extractor.
     from roam.commands._yaml_loader import extract_typed
 
@@ -201,7 +241,7 @@ def _load_rules(
                 )
             continue
         out.append(r)
-    return out
+    return out, status
 
 
 def _parse_simple_yaml_dict(text: str) -> dict:
@@ -219,6 +259,37 @@ def _parse_simple_yaml_dict(text: str) -> dict:
 
     rules = parse_rule_list(text)
     return {"rules": rules} if rules else {}
+
+
+# W1030-followup-D: closed-enum set of LoadStatus values that flip
+# ``partial_success=True`` even when no warning fired (e.g. empty stub on
+# disk doesn't warn, but ``schema_invalid`` does -- treat them uniformly
+# at the partial_success level). Mirrors cmd_alerts + cmd_budget +
+# cmd_health + cmd_check_rules vocabularies.
+_DEGRADED_LOAD_STATUSES: frozenset[str] = frozenset({"parse_error", "wrong_root_type", "read_error", "schema_invalid"})
+
+
+def _build_config_state_facts(config_state: str) -> list[str]:
+    """W1030-followup-D: build ``agent_contract.facts`` for the ``config_state``.
+
+    LAW 4 anchored on the concrete-noun terminal ``"rules"`` (the
+    fitness rules ``cmd_fitness`` evaluates). Mirrors cmd_check_rules
+    (anchors on ``"rules"``), cmd_alerts (anchors on ``"defaults"``),
+    and cmd_health (anchors on ``"gates"``) by using the command's own
+    subject-noun.
+
+    Returns an empty list when ``config_state == "ok"`` -- no need to
+    disclose the happy path.
+    """
+    if config_state == "missing":
+        return ["no .roam/fitness.yaml configured; using baseline rules"]
+    if config_state == "empty_file":
+        return ["empty .roam/fitness.yaml stub on disk; using baseline rules"]
+    if config_state == "empty_yaml":
+        return ["comment-only .roam/fitness.yaml on disk; using baseline rules"]
+    if config_state in _DEGRADED_LOAD_STATUSES:
+        return [f"fitness config rejected ({config_state}); using baseline rules"]
+    return []
 
 
 # ── Rule checkers ────────────────────────────────────────────────────
@@ -682,28 +753,57 @@ def _rules_for_baseline_mode(rules: list[dict]) -> list[dict]:
     return out
 
 
-def _emit_no_rules(json_mode: bool, *, warnings_out: list[str] | None = None) -> None:
+def _emit_no_rules(
+    json_mode: bool,
+    *,
+    warnings_out: list[str] | None = None,
+    config_state: str = "missing",
+) -> None:
     if json_mode:
+        verdict = "no rules configured"
         summary_payload: dict = {
             "rules_checked": 0,
             "passed": 0,
             "failed": 0,
             "total_violations": 0,
-            "verdict": "no rules configured",
+            "verdict": verdict,
         }
+        # W1030-followup-D: closed-enum LoadStatus disclosure on the
+        # envelope. Mirrors cmd_alerts + cmd_budget + cmd_health +
+        # cmd_check_rules vocabulary so the five W1030-followup-cohort
+        # emitters use a uniform field name (``summary.config_state``)
+        # and value space (LOAD_STATUSES). Lets agents disambiguate "no
+        # .roam/fitness.yaml configured yet" (missing -> use baseline
+        # rules silently) from ".roam/fitness.yaml exists but is empty"
+        # (empty_file / empty_yaml -> use baseline rules + flag the
+        # empty stub) from ".roam/fitness.yaml is broken" (parse_error /
+        # wrong_root_type / read_error / schema_invalid -- already
+        # accompanied by a warning in warnings_out).
+        summary_payload["config_state"] = config_state
+        _degraded = config_state in _DEGRADED_LOAD_STATUSES
         if warnings_out:
             summary_payload["warnings_out"] = list(warnings_out)
             summary_payload["partial_success"] = True
-        click.echo(
-            to_json(
-                json_envelope(
-                    "fitness",
-                    summary=summary_payload,
-                    rules=[],
-                    violations=[],
-                )
-            )
+        elif _degraded:
+            # W1030-followup-D: a degraded config_state flips
+            # partial_success regardless of warning emission, mirroring
+            # cmd_alerts + cmd_budget + cmd_health + cmd_check_rules.
+            # The user's fitness config did not materialize -- agents
+            # must see the discard, not just the "no rules configured"
+            # verdict.
+            summary_payload["partial_success"] = True
+        _state_facts = _build_config_state_facts(config_state)
+        envelope_kwargs: dict = dict(
+            summary=summary_payload,
+            rules=[],
+            violations=[],
         )
+        if _state_facts:
+            envelope_kwargs["agent_contract"] = {
+                "facts": [verdict, *_state_facts],
+                "next_commands": ["roam fitness --init"],
+            }
+        click.echo(to_json(json_envelope("fitness", **envelope_kwargs)))
         return
     click.echo("No fitness rules found. Create .roam/fitness.yaml or run:\n  roam fitness --init")
     if warnings_out:
@@ -801,7 +901,14 @@ def _json_violations(violations: list[dict]) -> list[dict]:
     return [{key: value for key, value in violation.items()} for violation in violations[:100]]
 
 
-def _emit_fitness_json(summary, rule_results, all_violations, new_violations) -> None:
+def _emit_fitness_json(
+    summary,
+    rule_results,
+    all_violations,
+    new_violations,
+    *,
+    config_state: str = "ok",
+) -> None:
     # R22: wrap each violation in {value, confidence, reason}.
     # Consumers that previously read violations[i]["rule"] must now
     # read violations[i]["value"]["rule"] plus
@@ -820,17 +927,23 @@ def _emit_fitness_json(summary, rule_results, all_violations, new_violations) ->
     # consumer cannot misread it as McCabe cyclomatic complexity.
     if any(v.get("metric") == "cognitive_complexity" for v in all_violations):
         enriched_summary["complexity_definition"] = COGNITIVE_COMPLEXITY_DEFINITION
-    click.echo(
-        to_json(
-            json_envelope(
-                "fitness",
-                summary=enriched_summary,
-                rules=rule_results,
-                violations=violation_triples,
-                new_violations=new_violation_triples,
-            )
-        )
+    # W1030-followup-D: surface the on-disk state via
+    # agent_contract.facts so consumers reading only the contract still
+    # see the silent-state disclosure. LAW 4 anchored on the
+    # concrete-noun terminal "rules". LAW 6: every fact stands alone.
+    _state_facts = _build_config_state_facts(config_state)
+    envelope_kwargs: dict = dict(
+        summary=enriched_summary,
+        rules=rule_results,
+        violations=violation_triples,
+        new_violations=new_violation_triples,
     )
+    if _state_facts:
+        envelope_kwargs["agent_contract"] = {
+            "facts": [enriched_summary.get("verdict", "fitness check"), *_state_facts],
+            "next_commands": ["roam fitness --init"],
+        }
+    click.echo(to_json(json_envelope("fitness", **envelope_kwargs)))
 
 
 def _emit_rule_line(rule_result: dict, explain: bool) -> None:
@@ -982,10 +1095,15 @@ def fitness(ctx, do_init, rule_filter, explain, baseline_path, write_baseline):
 
     ensure_index()
     _fitness_warnings: list[str] = []
-    rules = _load_rules(root, warnings_out=_fitness_warnings)
+    # W1030-followup-D: use the with-status variant so the on-disk state
+    # ("missing" / "empty_file" / "ok" / ...) reaches the envelope as a
+    # closed-enum field — agents reading the fitness envelope can
+    # disambiguate "no fitness.yaml configured yet" from "fitness.yaml is
+    # broken / empty stub" without re-statting the file.
+    rules, config_state = _load_rules_with_status(root, warnings_out=_fitness_warnings)
 
     if not rules:
-        _emit_no_rules(json_mode, warnings_out=_fitness_warnings)
+        _emit_no_rules(json_mode, warnings_out=_fitness_warnings, config_state=config_state)
         return
 
     rules = _filter_rules(rules, rule_filter)
@@ -1002,15 +1120,32 @@ def fitness(ctx, do_init, rule_filter, explain, baseline_path, write_baseline):
     baseline_info, new_violations = _baseline_compare(all_violations, baseline_path)
     written_baseline_path = _maybe_write_baseline(root, write_baseline, rule_results, all_violations)
     summary = _fitness_summary(rule_results, passed, failed, all_violations, baseline_info, written_baseline_path)
+    # W1030-followup-D: closed-enum LoadStatus disclosure on the envelope.
+    # Mirrors the cmd_alerts + cmd_budget + cmd_health + cmd_check_rules
+    # vocabulary so the five W1030-followup-cohort emitters use a uniform
+    # field name (``summary.config_state``) and value space (LOAD_STATUSES).
+    summary["config_state"] = config_state
+    _config_degraded = config_state in _DEGRADED_LOAD_STATUSES
     if _fitness_warnings:
         # W1051: surface loader warnings (malformed rules entries that
         # were skipped) so the agent doesn't see a green verdict that
         # silently dropped half its rules.
         summary["warnings_out"] = list(_fitness_warnings)
         summary["partial_success"] = True
+    elif _config_degraded:
+        # W1030-followup-D: a degraded config_state flips partial_success
+        # too -- even when no warning fired, agents must see that the
+        # user's intent did not materialize.
+        summary["partial_success"] = True
 
     if json_mode:
-        _emit_fitness_json(summary, rule_results, all_violations, new_violations)
+        _emit_fitness_json(
+            summary,
+            rule_results,
+            all_violations,
+            new_violations,
+            config_state=config_state,
+        )
     else:
         _emit_fitness_text(
             rule_results,

@@ -27,7 +27,85 @@ from roam.commands.changed_files import (
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
+from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
+
+# ---------------------------------------------------------------------------
+# W641-followup-D — canonical risk-LEVEL projection (cluster closer)
+# ---------------------------------------------------------------------------
+#
+# Pattern-3a structural close-out (cluster-closer, fifth+ axis after W641 +
+# followup-A/B/C):
+#
+# W641 shipped canonical risk-LEVEL emission on ``cmd_pr_risk`` (third axis
+# after W547 severity + W596 confidence). Follow-ups extended the discipline
+# to ``cmd_impact`` (W641-followup-A), ``cmd_critique`` (W641-followup-B),
+# and ``cmd_pr_bundle`` (W641-followup-C). ``cmd_attest`` is the natural
+# cluster closer: it aggregates risk + breaking + budget + fitness signals
+# into a single proof-carrying artifact and emits its own internal risk
+# level (``LOW``/``MODERATE``/``HIGH``/``CRITICAL`` from ``_collect_risk``),
+# but never projected onto the canonical W631 set so agents comparing
+# attest's worst-case against pr-risk / impact / critique on a single floor
+# had to re-derive the rank.
+#
+# The attest internal vocabulary is already a near-mirror of W631's
+# 4-tier set — the only domain alias is ``MODERATE`` → canonical
+# ``medium`` (resolved via ``RISK_ALIASES``).
+#
+# Conservative-on-critical: ``_collect_risk`` IS allowed to emit
+# ``CRITICAL`` (the composite-risk score's >75/100 tier) — unlike
+# critique / impact, attest's composite is a multi-factor blend that
+# can legitimately reach the critical threshold. We preserve that
+# escalation through the projection (do NOT saturate at ``high``).
+#
+# Safe-floor: missing risk (``_collect_risk`` returned None because
+# networkx isn't installed, or a degraded-resolution path produced an
+# empty bundle) collapses to ``low`` (W531 CI-safety floor: a
+# typo'd / absent label MUST NOT promote into a CI-gating rank).
+# Emitted unconditionally — agents can call
+# ``risk_rank(summary["risk_level_canonical"])`` without None-handling.
+
+
+def _attest_risk_level(
+    risk: dict | None,
+    *,
+    warnings_out: list[str] | None = None,
+) -> str:
+    """Project attest's internal risk dict onto the canonical W631 risk-LEVEL set.
+
+    Returns a string in :data:`roam.output.risk.RISK_LEVELS`
+    (``critical``/``high``/``medium``/``low``). Missing / unknown
+    inputs safe-floor to ``low`` (the W531 CI-safety lesson: a typo'd
+    or absent label MUST NOT promote a finding into a CI-failing rank).
+
+    Unknown ``risk.level`` strings accumulate a marker on *warnings_out*
+    (when provided) under the ``attest_unknown_status:<value>`` key so
+    Pattern-2 silent-fallback discipline stays loud — the projection
+    safe-floors to ``low`` but the marker disambiguates a real-low
+    finding from an unrecognised-label drop (mirrors W641-followup-B
+    critique + W989 pr-risk + W918 alerts).
+
+    Conservative-on-critical: unlike critique / impact which saturate
+    at ``high``, the attest composite-risk score IS allowed to reach
+    ``critical`` (the >75/100 tier of ``_collect_risk``). We preserve
+    that escalation through the projection.
+    """
+    if risk is None:
+        # Missing risk evidence — networkx import failed OR degraded
+        # path. Safe-floor to ``low``; never None.
+        return "low"
+    level_raw = risk.get("level") if isinstance(risk, dict) else None
+    if not level_raw:
+        return "low"
+    canonical = normalize_risk_level(level_raw)
+    if canonical is None:
+        # Unknown label — safe-floor + record marker so the silent
+        # fallback stays loud.
+        if warnings_out is not None:
+            warnings_out.append(f"attest_unknown_status:{level_raw}")
+        return "low"
+    return canonical
+
 
 # ---------------------------------------------------------------------------
 # Evidence collectors
@@ -657,6 +735,14 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
     this command assembles multiple independent evidence dimensions into
     one auditable artifact.
 
+    The JSON envelope emits ``summary.risk_level_canonical`` +
+    ``summary.risk_rank`` on the canonical W631 risk-LEVEL axis
+    (``critical``/``high``/``medium``/``low``) so cross-command floor
+    comparators against ``pr-risk`` / ``impact`` / ``critique`` /
+    ``pr-bundle`` work on a single floor. Missing risk safe-floors to
+    ``low`` (the W531 CI-safety lesson); the verdict line terminates on
+    ``(risk_level <canonical>)`` per LAW 6 (standalone-parseable).
+
     \b
     Examples:
       roam attest                          # attest uncommitted changes
@@ -676,11 +762,129 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
     ensure_index()
     root = find_project_root()
 
+    # ── W607-AD substrate-boundary plumbing ──────────────────────────
+    #
+    # cmd_attest is the proof-carrying PR attestation aggregator: it
+    # composes blast-radius / risk / breaking / fitness / budget / tests
+    # / effects evidence into a single auditable artifact. Each collector
+    # is a substrate boundary that can raise -- e.g. a malformed graph
+    # row inside ``_collect_blast_radius`` or a missing optional import
+    # propagating through ``_collect_risk`` previously crashed the whole
+    # attestation build. W607-AD wraps each collector + the
+    # ``get_changed_files`` shared-helper boundary with ``_run_check_ad``
+    # so a raise becomes a structured
+    # ``attest_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607ad_warnings_out`` -- the envelope still emits cleanly with
+    # whatever signal the remaining substrates produced.
+    #
+    # cmd_attest sits on the W805 cross-artifact consistency family
+    # (CGA / VSA / Rekor pipeline): the W607-AD markers fire AT RUNTIME
+    # when an emission boundary raises, complementing the W805 xfail-
+    # strict pins that catch structural inconsistency at the dataclass
+    # level.
+    #
+    # Marker prefix discipline: every W607-AD substrate marker uses the
+    # canonical ``attest_<phase>_failed:<exc_class>:<detail>`` shape.
+    # The accumulator is intentionally distinct from the pre-existing
+    # ``_attest_warnings_out`` bucket (W641-followup-D unknown-status
+    # tracking) so the two axes don't entangle: unknown-status is a
+    # data-shape disclosure (a risk.level couldn't be mapped to the
+    # canonical W631 set), while W607-AD is a substrate-CALL disclosure
+    # (a helper raised before producing its floor value). Both feed the
+    # same envelope ``warnings_out`` field on emission; ``partial_success``
+    # flips when EITHER bucket is non-empty.
+    _w607ad_warnings_out: list[str] = []
+
+    def _run_check_ad(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AD marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an ``attest_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607ad_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ad_warnings_out.append(f"attest_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-BT -- ADDITIVE aggregation-phase plumbing on top of the
+    # W607-AD substrate-CALL markers. W607-AD already wrapped the 11
+    # substrate-helper boundaries (get_changed_files / resolve_changed_to_db /
+    # collect_blast_radius / collect_risk / collect_breaking /
+    # collect_fitness / collect_budget / collect_tests / collect_effects /
+    # content_hash / compute_verdict); W607-BT extends marker coverage to
+    # the AGGREGATION-PHASE boundaries that W607-AD left unguarded:
+    #
+    #   - ``score_classify``       -- per-factor classification of the
+    #                                 internal attest risk-LEVEL set
+    #                                 (``LOW``/``MODERATE``/``HIGH``/
+    #                                 ``CRITICAL``) via ``_attest_risk_level``
+    #                                 -- mirror of cmd_diff's W607-BP
+    #                                 severity_classify pattern with
+    #                                 default=None driving the
+    #                                 score_classification "unknown" sentinel
+    #   - ``severity_normalize``   -- canonical W631 risk-LEVEL projection
+    #                                 (``normalize_risk_level`` + ``risk_rank``)
+    #                                 -- CRITICAL-PATH instrumentation: this
+    #                                 is the only edit-loop command where
+    #                                 the projection legitimately reaches
+    #                                 ``critical`` (the composite-risk score
+    #                                 >75/100 tier). Mirror of cmd_diff
+    #                                 W607-BP / cmd_critique W607-BL but
+    #                                 without saturation-at-high
+    #   - ``compute_verdict``      -- augmented_verdict text build with the
+    #                                 canonical risk_level suffix (LAW 6
+    #                                 standalone-parse) via ``_make_verdict_str``
+    #   - ``auto_log``             -- active-run ledger write (silent no-op
+    #                                 if no run is active, but the underlying
+    #                                 ``auto_log`` can still raise on HMAC
+    #                                 chain misshape or filesystem failures)
+    #   - ``serialize_envelope``   -- ``json_envelope("attest", ...)`` projection
+    #                                 (downstream contract changes / shape
+    #                                 regressions)
+    #
+    # cmd_attest is the proof-carrying PR attestation aggregator: it
+    # composes blast-radius / risk / breaking / fitness / budget / tests /
+    # effects evidence into a single auditable artifact. With W607-BT
+    # landed, the full W631 risk-LEVEL vocabulary range is now dual-bucket
+    # plumbed -- cmd_attest is the only command in the W607-* family that
+    # legitimately reaches ``risk_level "critical"`` (the >75/100 tier of
+    # ``_collect_risk``).
+    #
+    # Marker family ``attest_*`` -- same family as W607-AD (additive,
+    # not a separate prefix). Empty bucket -> byte-identical envelope.
+    _w607bt_warnings_out: list[str] = []
+
+    def _run_check_bt(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-BT marker emission.
+
+        Mirror of ``_run_check_ad`` shape (same ``attest_<phase>_failed:``
+        marker family) but writes into ``_w607bt_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bt_warnings_out.append(f"attest_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     # Resolve git range
     base_ref, head_ref = _resolve_git_range(root, commit_range)
     hashes = _get_git_hashes(root, base_ref, head_ref)
 
-    changed = get_changed_files(root, staged=staged, commit_range=commit_range)
+    def _changed_files_for_attest():
+        return get_changed_files(root, staged=staged, commit_range=commit_range)
+
+    changed = (
+        _run_check_ad(
+            "get_changed_files",
+            _changed_files_for_attest,
+            default=[],
+        )
+        or []
+    )
     if not changed:
         # Pattern 1D / Pattern 2: no-changes is a degraded-resolution path,
         # NOT a fully-assessed "safe to merge" verdict. An agent reading
@@ -688,14 +892,26 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
         # check never ran (there was nothing to assess). Disclose state +
         # partial_success explicitly so the verdict and the field agree.
         label = commit_range or ("staged" if staged else "uncommitted")
+        # W641-followup-D — degraded-resolution path still emits the
+        # canonical risk-LEVEL fields unconditionally. Empty changeset →
+        # canonical ``low`` floor (W531 CI-safety: a no-changes path
+        # must NOT promote into a CI-failing rank). Agents downstream
+        # can call ``risk_rank(summary["risk_level_canonical"])`` without
+        # None-handling.
+        _empty_risk_level_canonical = "low"
+        _empty_risk_rank = risk_rank(_empty_risk_level_canonical)
         _attest_empty_envelope = json_envelope(
             "attest",
             summary={
-                "verdict": f"no changes found for {label}",
+                "verdict": (f"no changes found for {label} (risk_level {_empty_risk_level_canonical})"),
                 "state": "no_changes",
                 "partial_success": True,
                 "safe_to_merge": None,
+                "risk_level_canonical": _empty_risk_level_canonical,
+                "risk_rank": _empty_risk_rank,
             },
+            risk_level_canonical=_empty_risk_level_canonical,
+            risk_rank=_empty_risk_rank,
         )
         auto_log(_attest_empty_envelope, action="attest", target=label, repo_root=root)
         if json_mode or output_format == "json":
@@ -705,7 +921,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
         return
 
     with open_db(readonly=True) as conn:
-        file_map = resolve_changed_to_db(conn, changed)
+        file_map = _run_check_ad("resolve_changed_to_db", resolve_changed_to_db, conn, changed, default={}) or {}
 
         if not file_map:
             # Pattern-1C / Pattern-1D: emit a structured envelope on the
@@ -714,18 +930,32 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
             # none of the changed files resolved against the index. Mirrors
             # the empty-changeset envelope above at L686-694.
             label = commit_range or ("staged" if staged else "uncommitted")
+            # W641-followup-D — unresolved path still emits canonical
+            # risk-LEVEL fields. The W531 CI-safety floor applies even
+            # on a degraded-resolution branch: a typo'd / absent label
+            # must NOT promote a finding into a CI-failing rank. The
+            # underlying risk was never assessed (the resolver failed),
+            # so the floor lands on ``low`` — the verdict + safe_to_merge
+            # carry the actionable disclosure.
+            _unresolved_risk_level_canonical = "low"
+            _unresolved_risk_rank = risk_rank(_unresolved_risk_level_canonical)
             _attest_unresolved_envelope = json_envelope(
                 "attest",
                 summary={
                     "verdict": (
                         f"{len(changed)} changed files unresolved against the index "
-                        f"({label}); run `roam index` then re-attest"
+                        f"({label}); run `roam index` then re-attest "
+                        f"(risk_level {_unresolved_risk_level_canonical})"
                     ),
                     "safe_to_merge": False,
                     "partial_success": True,
                     "resolution": "unresolved",
                     "unresolved_file_count": len(changed),
+                    "risk_level_canonical": _unresolved_risk_level_canonical,
+                    "risk_rank": _unresolved_risk_rank,
                 },
+                risk_level_canonical=_unresolved_risk_level_canonical,
+                risk_rank=_unresolved_risk_rank,
                 unresolved_files=sorted(changed),
             )
             auto_log(_attest_unresolved_envelope, action="attest", target=label, repo_root=root)
@@ -736,29 +966,85 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
             return
 
         # ── Collect all evidence ──────────────────────────────────────
+        # W607-AD wraps every collector. Each collector's documented
+        # empty-floor (matching its happy-path return shape) is passed
+        # as ``default=`` so a raise degrades cleanly and the envelope
+        # still emits whatever signal the remaining collectors produced.
 
         # 1. Blast radius
-        blast = _collect_blast_radius(conn, file_map)
+        blast = _run_check_ad(
+            "collect_blast_radius",
+            _collect_blast_radius,
+            conn,
+            file_map,
+            default={
+                "changed_files": len(file_map),
+                "affected_symbols": 0,
+                "affected_files": 0,
+                "per_file": [],
+            },
+        )
         sym_by_file = blast.pop("sym_by_file", {})
 
         # 2. Risk score
-        risk = _collect_risk(conn, root, file_map, staged, commit_range)
+        risk = _run_check_ad(
+            "collect_risk",
+            _collect_risk,
+            conn,
+            root,
+            file_map,
+            staged,
+            commit_range,
+            default=None,
+        )
 
         # 3. Breaking changes
         breaking_ref = base_ref if commit_range else "HEAD"
-        breaking = _collect_breaking(conn, root, breaking_ref)
+        breaking = _run_check_ad(
+            "collect_breaking",
+            _collect_breaking,
+            conn,
+            root,
+            breaking_ref,
+            default={"removed": [], "signature_changed": [], "renamed": []},
+        )
 
         # 4. Fitness violations
-        fitness = _collect_fitness_evidence(conn, file_map, root)
+        fitness = _run_check_ad(
+            "collect_fitness",
+            _collect_fitness_evidence,
+            conn,
+            file_map,
+            root,
+            default={"rules": [], "violations": []},
+        )
 
         # 5. Budget consumed
-        budget = _collect_budget_evidence(conn, root)
+        budget = _run_check_ad(
+            "collect_budget",
+            _collect_budget_evidence,
+            conn,
+            root,
+            default={"rules_checked": 0, "passed": 0, "failed": 0, "skipped": 0, "rules": []},
+        )
 
         # 6. Affected tests
-        tests = _collect_affected_tests_evidence(conn, sym_by_file)
+        tests = _run_check_ad(
+            "collect_tests",
+            _collect_affected_tests_evidence,
+            conn,
+            sym_by_file,
+            default={"selected": 0, "direct": 0, "transitive": 0, "colocated": 0, "command": "", "tests": []},
+        )
 
         # 7. Effects
-        effects = _collect_effects_evidence(conn, file_map)
+        effects = _run_check_ad(
+            "collect_effects",
+            _collect_effects_evidence,
+            conn,
+            file_map,
+            default=[],
+        )
 
         # ── Build attestation ─────────────────────────────────────────
 
@@ -791,33 +1077,267 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
         }
 
         if sign:
-            attestation["content_hash"] = _content_hash(evidence)
+            # W607-AD: signing boundary -- the CRYPTOGRAPHIC core. A
+            # raise here previously crashed the whole attestation build
+            # (e.g. unserialisable evidence dict).
+            def _stamp_content_hash() -> None:
+                attestation["content_hash"] = _content_hash(evidence)
 
-        verdict = _compute_verdict(risk, breaking, fitness, budget)
+            _run_check_ad("content_hash", _stamp_content_hash, default=None)
+
+        verdict = _run_check_ad(
+            "compute_verdict",
+            _compute_verdict,
+            risk,
+            breaking,
+            fitness,
+            budget,
+            default={"safe_to_merge": False, "conditions": [], "warnings": []},
+        )
+
+        # W641-followup-D — canonical W631 risk-LEVEL projection from the
+        # internal attest risk dict. Conservative-on-critical: unlike
+        # critique / impact which saturate at ``high``, attest's
+        # composite-risk score IS allowed to reach ``critical`` (the
+        # >75/100 tier of ``_collect_risk``). Missing risk (networkx
+        # import failed OR degraded path) safe-floors to ``low``.
+        # Unknown ``risk.level`` strings accumulate a marker on
+        # ``_attest_warnings_out`` so Pattern-2 silent-fallback stays
+        # loud (mirrors W641-followup-B critique).
+        _attest_warnings_out: list[str] = []
+        # W607-BT -- score_classify boundary. Wraps the ``_attest_risk_level``
+        # projection so a future closed-enum vocabulary refactor surfaces a
+        # marker rather than crashing the envelope. Floors to ``None`` so
+        # the score_classification "unknown" sentinel disambiguates a
+        # degraded outcome from a real ``"low"`` classification (mirror of
+        # cmd_diff W607-BP severity_classify pattern).
+        _bt_score_probe = _run_check_bt(
+            "score_classify",
+            _attest_risk_level,
+            risk,
+            warnings_out=_attest_warnings_out,
+            default=None,
+        )
+        # When the BT probe raised (None floor), mark classification unknown.
+        # Clean path -> classification is "classified". This sentinel rides
+        # the summary block below.
+        _score_classification_state = "unknown" if _bt_score_probe is None else "classified"
+        # When the W607-BT probe returned a clean tier we reuse it. When it
+        # raised (None floor), do NOT re-call ``_attest_risk_level`` -- the
+        # same call would re-raise (W978 first-hypothesis check: don't
+        # re-trip the same boundary that just raised). Safe-floor to "low"
+        # directly, since the W641-followup-D unknown-status bucket couldn't
+        # be populated by the helper on a raise anyway.
+        _attest_domain_level = _bt_score_probe if _bt_score_probe is not None else "low"
+        # W607-BT -- severity_normalize boundary. Wraps the canonical W631
+        # ``normalize_risk_level`` + ``risk_rank`` projections so a future
+        # signature change / closed-enum vocabulary drift surfaces a marker
+        # rather than crashing the envelope. CRITICAL-PATH instrumentation:
+        # this is the only edit-loop command where the projection
+        # legitimately reaches ``critical`` (the composite-risk score
+        # >75/100 tier). Floors to ``"low"`` / rank ``1`` so downstream
+        # comparators stay non-null.
+        risk_level_canonical = _run_check_bt(
+            "severity_normalize",
+            lambda level: normalize_risk_level(level) or "low",
+            _attest_domain_level,
+            default="low",
+        )
+        risk_rank_int = _run_check_bt(
+            "severity_normalize",
+            risk_rank,
+            risk_level_canonical,
+            default=1,
+        )
+
+        # W607-BT -- compute_verdict boundary. Wraps the canonical
+        # ``_make_verdict_str`` build so a future format-spec regression on
+        # the components (e.g. non-string risk_level_canonical from a
+        # vocabulary refactor) surfaces a marker rather than crashing the
+        # envelope. Floor must NOT re-format ``risk_level_canonical`` --
+        # the same value that tripped the closure (e.g. a __format__-
+        # raising sentinel under test) would re-raise inside the default
+        # f-string. Use a literal "low" floor instead (LAW 6 still holds:
+        # the line works standalone; the W631 floor is "low"). Mirror of
+        # cmd_diff W607-BP compute_verdict discipline (W978 first-hypothesis
+        # check: the canonical floor MUST NOT re-interpolate the same value
+        # that raised on the BadLevel sentinel test).
+        _attest_verdict_str = _run_check_bt(
+            "compute_verdict",
+            _make_verdict_str,
+            verdict,
+            risk,
+            risk_level_canonical,
+            default="attest completed (risk_level low)",
+        )
+
+        summary_block = {
+            "verdict": _attest_verdict_str,
+            "safe_to_merge": verdict["safe_to_merge"],
+            "risk_score": risk["score"] if risk else None,
+            "risk_level": risk["level"] if risk else None,
+            # W641-followup-D — canonical W631 risk-LEVEL projection +
+            # integer rank. The internal ``risk_level`` field above is
+            # the domain-specific 4-tier (``LOW``/``MODERATE``/``HIGH``/
+            # ``CRITICAL``); ``risk_level_canonical`` is the W631 closed-
+            # enum mirror so cross-command floor comparators
+            # (``risk_rank(summary.risk_level_canonical) >= 3`` to gate
+            # on high-or-worse) work without re-deriving the rank
+            # vocabulary at the call site (Pattern-3a).
+            "risk_level_canonical": risk_level_canonical,
+            "risk_rank": risk_rank_int,
+            # W607-BT -- SCORE-CLASSIFY DEGRADATION sentinel. When the
+            # ``score_classify`` boundary raises (and the classify result
+            # floors to ``None``), surface
+            # ``score_classification: "unknown"`` so the agent sees the
+            # degraded outcome alongside the canonical floor (``"low"``)
+            # rather than mistaking the floor for a real classification.
+            # Clean path -> ``"classified"``. Mirror of cmd_diff's
+            # ``severity_classification`` / cmd_impact's
+            # ``risk_classification`` sentinel.
+            "score_classification": _score_classification_state,
+            "breaking_changes": (
+                len(breaking.get("removed", []))
+                + len(breaking.get("signature_changed", []))
+                + len(breaking.get("renamed", []))
+            ),
+            "budget_failed": budget.get("failed", 0),
+            "affected_tests": tests.get("selected", 0),
+            "effects_count": len(effects),
+        }
+        # W641-followup-D — record any unknown-status drops on the
+        # summary so Pattern-2 silent-fallback stays visible. Non-empty
+        # ``warnings_out`` flips ``partial_success`` (mirrors W989 pr-
+        # risk + W918 alerts + W641-followup-B critique discipline) so
+        # a downstream consumer reading ``partial_success`` alone sees
+        # the degradation.
+        #
+        # W607-AD — substrate-CALL markers ride the same ``warnings_out``
+        # channel but accumulate in a DIFFERENT bucket
+        # (``_w607ad_warnings_out``) so the two axes (unknown-status data
+        # shape vs. helper-raised substrate boundary) don't conflate at
+        # the call site. They merge into a single ``warnings_out`` list
+        # on emission; the marker PREFIX disambiguates them downstream
+        # (``attest_unknown_status:*`` vs. ``attest_<phase>_failed:*``).
+        # ``partial_success`` flips when EITHER bucket is non-empty --
+        # consumers reading ``partial_success`` alone need not
+        # distinguish the two flavours.
+        #
+        # W607-BT -- ADDITIVE aggregation-phase markers join the same
+        # combined channel: ``_attest_warnings_out`` (unknown-status) +
+        # ``_w607ad_warnings_out`` (substrate-CALL) +
+        # ``_w607bt_warnings_out`` (aggregation-phase). All three share
+        # the ``attest_*`` family per the marker-prefix discipline test;
+        # the additive bucket stays distinguishable in tests + audits via
+        # its phase names (``score_classify`` / ``severity_normalize`` /
+        # ``compute_verdict`` / ``auto_log`` / ``serialize_envelope``).
+        _combined_warnings_out: list[str] = (
+            list(_attest_warnings_out) + list(_w607ad_warnings_out) + list(_w607bt_warnings_out)
+        )
+        if _combined_warnings_out:
+            summary_block["warnings_out"] = list(_combined_warnings_out)
+            summary_block["partial_success"] = True
 
         # ── Envelope (built unconditionally so we can auto-log it) ───
-        attest_envelope = json_envelope(
-            "attest",
-            summary={
-                "verdict": _make_verdict_str(verdict, risk),
-                "safe_to_merge": verdict["safe_to_merge"],
-                "risk_score": risk["score"] if risk else None,
-                "risk_level": risk["level"] if risk else None,
-                "breaking_changes": (
-                    len(breaking.get("removed", []))
-                    + len(breaking.get("signature_changed", []))
-                    + len(breaking.get("renamed", []))
-                ),
-                "budget_failed": budget.get("failed", 0),
-                "affected_tests": tests.get("selected", 0),
-                "effects_count": len(effects),
-            },
+        _envelope_kwargs: dict = dict(
+            summary=summary_block,
             attestation=attestation,
             evidence=evidence,
             verdict=verdict,
+            # W641-followup-D — top-level mirrors of
+            # summary.risk_level_canonical / summary.risk_rank so
+            # consumers that read the top-level envelope head (without
+            # descending into ``summary``) see the canonical bucket.
+            # Mirror of the W641-followup-A cmd_impact + W641-followup-B
+            # cmd_critique contract.
+            risk_level_canonical=risk_level_canonical,
+            risk_rank=risk_rank_int,
         )
+        # W607-AD / W607-BT — top-level mirror of summary.warnings_out so
+        # consumers that read the top-level envelope directly (without
+        # descending into ``summary``) see the marker channel. Mirror
+        # parity with W607-Y cmd_critique (and the rest of the W607 family).
+        if _combined_warnings_out:
+            _envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+            _envelope_kwargs["partial_success"] = True
+
+        # W607-BT -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("attest", ...)`` would otherwise crash
+        # AFTER all substrate + aggregation signals were already gathered.
+        # Floor to a minimal envelope stub so consumers still receive a
+        # parseable JSON object with the marker attached + the canonical
+        # command name. Mirror of cmd_diff's W607-BP serialize_envelope
+        # floor pattern.
+        _envelope_floor: dict = {
+            "command": "attest",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": _attest_verdict_str,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out),
+            },
+            "warnings_out": list(_combined_warnings_out),
+        }
+        attest_envelope = _run_check_bt(
+            "serialize_envelope",
+            json_envelope,
+            "attest",
+            default=_envelope_floor,
+            **_envelope_kwargs,
+        )
+        # W607-BT -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``attest_serialize_envelope_failed:`` marker was appended to
+        # ``_w607bt_warnings_out`` and the floor stub carries only the old
+        # combined list. Rebuild the floor stub's warnings_out so the new
+        # marker reaches the JSON output. Clean path -> envelope is the
+        # real json_envelope return value, no rebuild needed.
+        if attest_envelope is _envelope_floor and _w607bt_warnings_out:
+            _combined_warnings_out = (
+                list(_attest_warnings_out) + list(_w607ad_warnings_out) + list(_w607bt_warnings_out)
+            )
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+            attest_envelope = _envelope_floor
+
         _attest_target = commit_range or ("staged" if staged else "uncommitted")
-        auto_log(attest_envelope, action="attest", target=_attest_target, repo_root=root)
+        # W607-BT -- auto_log boundary. Silent no-op if no active run; the
+        # wrap surfaces HMAC chain-misshape / filesystem failures as
+        # ``attest_auto_log_failed:...`` markers instead of crashing the
+        # envelope after it was already built. Mirror of cmd_diff's
+        # W607-BP auto_log pattern.
+        _run_check_bt(
+            "auto_log",
+            auto_log,
+            attest_envelope,
+            action="attest",
+            target=_attest_target,
+            repo_root=root,
+            default=None,
+        )
+        # W607-BT -- if ``auto_log`` raised, rebuild the envelope so the
+        # marker reaches the JSON output. Empty bucket (clean auto_log)
+        # -> envelope stays byte-identical to the version already built
+        # above.
+        if _w607bt_warnings_out and not any(
+            m.startswith("attest_auto_log_failed:") for m in (summary_block.get("warnings_out") or [])
+        ):
+            _combined_warnings_out = (
+                list(_attest_warnings_out) + list(_w607ad_warnings_out) + list(_w607bt_warnings_out)
+            )
+            summary_block["warnings_out"] = list(_combined_warnings_out)
+            summary_block["partial_success"] = True
+            _envelope_kwargs["summary"] = summary_block
+            _envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+            _envelope_kwargs["partial_success"] = True
+            attest_envelope = _run_check_bt(
+                "serialize_envelope",
+                json_envelope,
+                "attest",
+                default=_envelope_floor,
+                **_envelope_kwargs,
+            )
 
         # ── Output ────────────────────────────────────────────────────
 
@@ -869,11 +1389,19 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
 # ---------------------------------------------------------------------------
 
 
-def _make_verdict_str(verdict, risk):
-    """Build a short verdict string."""
+def _make_verdict_str(verdict, risk, risk_level_canonical: str = "low"):
+    """Build a short verdict string.
+
+    LAW 6 (compression forces domain neutrality): the verdict line must
+    work without any other envelope field. W641-followup-D augments the
+    string with a closed-enum ``(risk_level <canonical>)`` parenthesis
+    so a consumer parsing only the verdict string sees the canonical
+    W631 risk_level directly. *risk_level_canonical* must already be a
+    member of :data:`roam.output.risk.RISK_LEVELS`.
+    """
     safe = "safe to merge" if verdict["safe_to_merge"] else "NOT safe to merge"
     risk_str = f" (risk: {risk['level']} {risk['score']}/100)" if risk else ""
-    return f"{safe}{risk_str}"
+    return f"{safe}{risk_str} (risk_level {risk_level_canonical})"
 
 
 def _emit_text(

@@ -70,11 +70,16 @@ stages:
               roam health
             displayName: 'Run health check'
 
+          # Advisory step (|| true): rules findings surface in artifacts + PR
+          # comment for review; the merge gate is health-score-only at the
+          # Enforce quality gate stage below.
           - script: |
               roam --json check-rules > $(Build.ArtifactStagingDirectory)/roam-rules.json || true
               roam check-rules || true
             displayName: 'Run rules check'
 
+          # Advisory step (|| true): SARIF artifacts ship for CI ingestion;
+          # generation failure does not block the pipeline.
           - script: |
               roam --sarif health > $(Build.ArtifactStagingDirectory)/roam-health.sarif || true
               roam --sarif check-rules > $(Build.ArtifactStagingDirectory)/roam-rules.sarif 2>/dev/null || true

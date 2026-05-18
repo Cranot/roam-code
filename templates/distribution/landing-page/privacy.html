@@ -20,7 +20,7 @@
     "name": "Privacy Policy",
     "url": "https://roam-code.com/privacy",
     "inLanguage": "en",
-    "dateModified": "2026-05-09",
+    "dateModified": "2026-05-18",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -70,15 +70,16 @@
   <main id="main" class="legal-page">
     <header class="legal-header">
       <h1>Privacy Policy</h1>
-      <p class="legal-meta">Last updated: <time datetime="2026-05-07">2026-05-07</time> · Effective: <time datetime="2026-05-07">2026-05-07</time></p>
+      <p class="legal-meta">Last updated: <time datetime="2026-05-18">2026-05-18</time> · Effective: <time datetime="2026-05-18">2026-05-18</time></p>
     </header>
 
     <article>
       <p>
         This page explains what data we collect, why, where it goes, how long we
         keep it, and what rights you have. It applies to <strong>roam-code.com</strong>
-        and all paid Roam services (Roam Review, Roam Cloud, Roam Self-Hosted).
-        It does not apply to the open-source CLI when run locally — that runs
+        and paid or early-access Roam services when enabled (PR Replay,
+        planned Roam Review and Cloud, and private-deployment pilots). It
+        does not apply to the open-source CLI when run locally — that runs
         entirely on your machine and sends nothing to us.
       </p>
 
@@ -96,10 +97,12 @@
       <h2>2. What runs locally vs. what touches our servers</h2>
       <p>
         The <strong>open-source CLI</strong> (<code>roam-code</code> on PyPI)
-        runs entirely on your machine. It writes a SQLite file inside your
-        repo's <code>.roam/</code> directory. <strong>It does not phone home,
-        send telemetry, or transmit any source code.</strong> No data crosses
-        the network.
+        is <strong>100% local, no API key, no vendor cloud endpoint</strong>.
+        It writes a SQLite file inside your repo's <code>.roam/</code>
+        directory. <strong>It does not phone home, send telemetry, or
+        transmit any source code.</strong> No data crosses the network. The
+        same local-only stance is contractually committed in
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#6-security-measures">DPA §6</a>.
       </p>
       <p>The paid services collect different things, listed below.</p>
 
@@ -125,7 +128,7 @@
         </li>
       </ul>
 
-      <h2>4. What Roam Cloud collects (paid SaaS)</h2>
+      <h2>4. What Roam Cloud collects (planned paid SaaS)</h2>
       <ul>
         <li>
           <strong>Metrics only.</strong> Health scores, complexity numbers,
@@ -144,12 +147,14 @@
       </ul>
       <p>Legal basis: performance of the contract you signed by subscribing.</p>
 
-      <h2>5. What Roam Review collects (paid GitHub App)</h2>
+      <h2>5. What Roam Review collects (planned paid GitHub App)</h2>
       <ul>
         <li>
-          <strong>Pull-request diffs</strong> are processed in our cloud (or in
-          your own infrastructure if you self-host). Diffs are held in memory
-          for the duration of the analysis, then discarded.
+          <strong>Pull-request diffs</strong> are processed ephemerally in our
+          cloud when the service is enabled. Private-deployment pilots are
+          scoped separately when hosted processing is blocked by policy.
+          Diffs are held in memory for the duration of the analysis, then
+          discarded.
         </li>
         <li>
           <strong>Repository metadata</strong> required to post comments back
@@ -168,23 +173,40 @@
       </p>
 
       <h2 id="sub-processors">6. Sub-processors</h2>
+      <p>
+        The canonical sub-processor list with location, processing purpose,
+        and transfer basis is in
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#5-sub-processors">DPA §5</a>.
+        At the effective date above:
+      </p>
       <ul>
-        <li><strong>Cloudflare</strong> (US/EU) — DNS, CDN, edge compute, server logs. <a href="https://www.cloudflare.com/privacypolicy/">privacy policy</a></li>
-        <li><strong>Stripe</strong> (US/EU) — payment processing for paid tiers. <a href="https://stripe.com/privacy">privacy policy</a></li>
-        <li><strong>GitHub</strong> (US) — for Roam Review only, the App auth + comment-posting layer. <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">privacy policy</a></li>
-        <li><strong>Hosting provider</strong> for Roam Cloud + Roam Review backend — to be selected and disclosed before paid general availability (EU-based; named in the DPA at GA). During early access there is no production backend processing customer data.</li>
+        <li><strong>Stripe, Inc.</strong> (USA) — payment processing, receipts, refunds, billing records. Billing-contact and transaction metadata only; no source code. Transfer basis: Stripe SCCs where applicable. <a href="https://stripe.com/privacy">privacy policy</a></li>
+        <li><strong>GitHub, Inc.</strong> (USA / global) — for PR Replay only when Controller chooses GitHub collaborator, deploy-key, GitHub App, or webhook access; for the planned Roam Review GitHub App, the auth + comment-posting layer. Transfer basis: GitHub SCCs where applicable. <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">privacy policy</a></li>
+        <li><strong>Cloudflare</strong> (US/EU) — DNS, CDN, edge compute, and standard server logs for the public website at <code>roam-code.com</code>. No source code, no customer data. <a href="https://www.cloudflare.com/privacypolicy/">privacy policy</a></li>
+        <li><strong>Hosting provider</strong> for Roam Cloud + Roam Review backend — <em>[TBD: HOSTING_PROVIDER]</em> (EU-based; to be selected and disclosed before paid general availability; named in the DPA at GA). During early access there is no production backend processing customer data, and PR Replay v1 has no hosted sub-processor for analysis (the CLI is local-only).</li>
       </ul>
       <p>
-        We will keep this list current. Material changes will be announced 30
-        days in advance to subscribers, allowing you to object.
+        New sub-processors are added with at least <strong>14 calendar days'</strong>
+        prior notice, unless emergency replacement is necessary to maintain
+        security or service continuity, per
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#5-sub-processors">DPA §5</a>.
+        Controllers may object on reasonable data-protection grounds; if the
+        objection cannot be resolved, the affected service may be terminated
+        with any refund required by the Agreement.
       </p>
 
       <h2>7. International transfers + edge caching</h2>
       <p>
-        Some sub-processors are US-based (Cloudflare, Stripe, GitHub). Transfers
-        happen under the EU Standard Contractual Clauses (2021/914) and / or
-        the EU-US Data Privacy Framework. We do not transfer source code outside
-        the EEA from the CLI (it stays local) or from Roam Cloud (metrics only).
+        Some sub-processors are US-based (Cloudflare, Stripe, GitHub). The
+        Processor's primary PR Replay processing location is Greece (EU)
+        per
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#11-cross-border-transfers">DPA §11</a>.
+        Where personal data is transferred outside the EEA, transfers happen
+        under an applicable GDPR Chapter V safeguard — typically the EU
+        Standard Contractual Clauses (2021/914), an adequacy decision, or the
+        EU-US Data Privacy Framework. We do not transfer source code outside
+        the EEA from the CLI (it stays local) or from Roam Cloud (metrics
+        only).
       </p>
       <p>
         The static site at <code>roam-code.com</code> is served from
@@ -194,28 +216,48 @@
       </p>
 
       <h2>8. Retention</h2>
+      <p>Website + paid-service retention windows:</p>
       <ul>
         <li>Server logs: 30 days</li>
         <li>Email correspondence: as long as operationally relevant, then deleted on a 12-month rolling basis</li>
         <li>Account data: until account deletion + 30 days for backup expiry</li>
         <li>Billing records: 7 years (Greek tax law requirement)</li>
-        <li>Audit-trail records (Roam Review): 1 year by default; longer on Self-Hosted per your retention policy</li>
+        <li>Audit-trail records (Roam Review, when enabled): 1 year by default; private-deployment pilot retention follows the order form</li>
+      </ul>
+      <p>
+        PR Replay-specific retention is set by
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#7-return-deletion-and-retention">DPA §7</a>:
+      </p>
+      <ul>
+        <li>Temporary repository clones, git bundles, indexes, and derivative working files: deleted within <strong>7 calendar days</strong> after report delivery or service termination (deletion confirmation available on request).</li>
+        <li>Final delivered report: retained up to <strong>90 days</strong> for follow-up questions, unless earlier deletion is requested.</li>
+        <li>Engagement ledger entries: retained up to <strong>2 years</strong> for audit defence, reconciliation, and dispute handling.</li>
+        <li>Anonymised aggregate product metrics: retained only where no client, repo, contributor, code, identifier, or quote can be reconstructed.</li>
       </ul>
 
       <h2>9. Your rights</h2>
-      <p>Under the GDPR you have the right to:</p>
+      <p>
+        Under the GDPR (Articles 15-22) you have the right to:
+      </p>
       <ul>
-        <li>Access the personal data we hold about you</li>
-        <li>Have inaccurate data corrected</li>
-        <li>Have data erased ("right to be forgotten")</li>
-        <li>Restrict processing</li>
-        <li>Receive your data in a portable format</li>
-        <li>Object to processing based on legitimate interest</li>
+        <li>Access the personal data we hold about you (Art. 15)</li>
+        <li>Have inaccurate data rectified (Art. 16)</li>
+        <li>Have data erased — "right to be forgotten" (Art. 17)</li>
+        <li>Restrict processing (Art. 18)</li>
+        <li>Receive your data in a portable format (Art. 20)</li>
+        <li>Object to processing based on legitimate interest (Art. 21)</li>
+        <li>Not be subject to a decision based solely on automated processing (Art. 22)</li>
         <li>Withdraw consent (for any processing based on consent)</li>
         <li>Lodge a complaint with your local data protection authority. In Greece, that's the Hellenic Data Protection Authority (search the <a href="https://www.edpb.europa.eu/about-edpb/about-edpb/members_en">EDPB members directory</a> for current contact details).</li>
       </ul>
       <p>
-        To exercise any of these rights, email
+        When Roam processes personal data on a customer's behalf under the
+        paid services, we act as the GDPR Article 28 processor under the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">Data Processing Agreement</a>;
+        the customer is the controller and is the primary point of contact
+        for data-subject requests in that flow. For requests about data we
+        hold as a controller (website logs, paid-tier accounts, support
+        correspondence), email
         <a href="mailto:hello@roam-code.com?subject=GDPR%20request">hello@roam-code.com</a>.
         We respond within 30 days.
       </p>
@@ -240,6 +282,16 @@
         active subscribers. The effective date at the top of this page tracks
         the latest version.
       </p>
+
+      <h2>13. Related documents</h2>
+      <ul>
+        <li><a href="/trust">Trust &amp; compliance posture</a> — procurement-overview companion to this page (framework status, sub-processor list, security contact, vulnerability disclosure, data-flow diagram).</li>
+        <li><a href="/security">Security policy</a> — threat model, secure-coding posture, vulnerability disclosure terms, PGP key.</li>
+        <li><a href="/terms">Terms of Service</a> — paid-service contract terms.</li>
+        <li><a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">Data Processing Agreement (DPA)</a> — GDPR Article 28 processor agreement for paid engagements.</li>
+        <li><a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">PR Replay Statement of Work</a> — incorporates the DPA by reference.</li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub source</a> — the Apache 2.0 CLI that produces every evidence artifact.</li>
+      </ul>
 
       <p class="legal-foot">
         Questions? <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.

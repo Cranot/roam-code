@@ -36,6 +36,196 @@ _FTS_COLUMNS = ["name", "qualified_name", "signature", "kind", "file_path"]
 _BM25_WEIGHTS = "10.0, 5.0, 2.0, 1.0, 3.0"
 
 
+# ---------------------------------------------------------------------------
+# W607-BR substrate-CALL boundaries (ADDITIVE to W607-E outer-guard)
+# ---------------------------------------------------------------------------
+# Module-level helpers that delegate to the underlying search substrate.
+# Tests monkeypatch THESE shims (not the substrate modules) so the W607-BR
+# marker plumbing inside ``search`` can disclose substrate-CALL failures
+# without colliding with the existing W607-E outer-guard
+# (``search_pipeline_failed:``) or the W607-E inner ``_get_explain_data``
+# fallbacks (``search_explain_<phase>_failed:``).
+#
+# Each shim accepts the same arguments as the underlying substrate call
+# and returns the same result. A raise inside any shim becomes a
+# ``search_<phase>_failed:<exc_class>:<detail>`` marker via the
+# ``_run_check_br`` closure inside the click command body.
+#
+# cmd_search is the EXACT-MATCH sibling of cmd_search_semantic
+# (W607-BO) and cmd_retrieve (W607-BI). Closes the SEARCH TRIO with
+# distinct marker prefixes (``search_*`` vs ``search_semantic_*`` vs
+# ``retrieve_*``) so a 3-way envelope inspection can demultiplex
+# every consumer's substrate axis.
+
+
+def _load_search_config():
+    """W607-BR substrate-CALL: configuration load.
+
+    cmd_search does not currently consume a dedicated config block (the
+    nine Click options carry the full state), so this shim returns an
+    empty dict. The wrapper exists for parity with sibling W607-* layers
+    (cmd_search_semantic W607-BO ``_load_search_semantic_config``,
+    cmd_retrieve W607-BI ``_load_retrieve_config``, cmd_context W607-BF)
+    so a future config addition can land without re-instrumenting the
+    marker plumbing.
+    """
+    return {}
+
+
+def _parse_query(pattern: str, mode: str):
+    """W607-BR substrate-CALL: parse + normalize the user-supplied query.
+
+    Normalizes the case-insensitive ``mode`` token, builds the LIKE
+    pattern, and returns the ``(mode_lower, like_pattern)`` pair the
+    SQL builder consumes downstream. A raise surfaces a marker via
+    ``search_parse_query_failed:``; degraded default keeps substring
+    mode + the raw pattern wrapped in ``%`` so the envelope still
+    emits.
+    """
+    mode_lower = (mode or "substring").lower()
+    like_pattern = f"%{pattern}%"
+    return mode_lower, like_pattern
+
+
+def _validate_kind_filter(kind_filter: str | None):
+    """W607-BR substrate-CALL: validate ``--kind`` against the closed
+    KIND_ABBREV vocabulary (W1068 Pattern-1D closest-match axis).
+
+    Returns a tuple ``(is_valid, known_kinds, frag)`` where:
+      * ``is_valid`` is True iff the kind is in KIND_ABBREV (full or
+        abbrev form) OR ``kind_filter`` is None (no filter requested).
+      * ``known_kinds`` is the sorted list of full+abbrev kinds.
+      * ``frag`` is the ``structured_unknown_filter`` payload for the
+        VERDICT/facts splice OR None when the kind is valid.
+
+    A raise surfaces ``search_validate_kind_filter_failed:`` and the
+    degraded default treats the kind as valid (no envelope-level
+    rejection) so the SQL path still runs and emits structured
+    results — preserves the SEARCH-TRIO contract that broken
+    substrate doesn't crash the envelope wholesale.
+    """
+    if kind_filter is None:
+        return True, [], None
+    full_kinds = set(KIND_ABBREV.keys())
+    abbrev_kinds = set(KIND_ABBREV.values())
+    known_kinds = sorted(full_kinds | abbrev_kinds)
+    frag = structured_unknown_filter(
+        requested=kind_filter,
+        known=known_kinds,
+        state="unknown_kind",
+        requested_field="requested_kind",
+        known_field="known_kinds",
+        fact_anchor="kinds",
+    )
+    if frag is None:
+        return True, known_kinds, None
+    return False, known_kinds, frag
+
+
+def _apply_kind_filter(kind_filter: str | None):
+    """W607-BR substrate-CALL: translate kind abbreviation to full kind.
+
+    The SQL builder filters on the FULL kind name (e.g. ``function``,
+    not ``fn``). This shim does the abbreviation-to-full translation
+    via a reverse-lookup on KIND_ABBREV. A raise surfaces
+    ``search_apply_kind_filter_failed:``; degraded default returns
+    the input kind unchanged so the SQL filter still runs (possibly
+    yielding 0 hits with the wrong kind, which is the same shape as
+    a valid-but-unmatched kind).
+    """
+    if kind_filter is None:
+        return None
+    abbrev_to_kind = {v: k for k, v in KIND_ABBREV.items()}
+    return abbrev_to_kind.get(kind_filter, kind_filter)
+
+
+def _fts_search(conn, where_sql, params, *, recent_days):
+    """W607-BR substrate-CALL: main symbol-search SQL execution.
+
+    Runs the LIKE/REGEXP/exact lookup against ``symbols JOIN files``
+    plus the ``graph_metrics`` LEFT JOIN for PageRank ordering, with
+    the optional recency boost. A raise (malformed REGEXP, locked DB,
+    missing column on stale schema, sqlite3 substrate corruption)
+    surfaces a marker via ``search_fts_search_failed:``; degraded
+    default returns an empty list so the envelope still emits a clean
+    no-match path.
+
+    Naming is preserved as ``fts_search`` per the W607-BR task brief
+    (matching the SEARCH-TRIO substrate-vocabulary requested by the
+    W607-BO agent's recommendation). The underlying query is LIKE-
+    based, not FTS5 — FTS5 is reached only by the explain helper
+    (W607-E ``_get_explain_data``).
+    """
+    if recent_days and recent_days > 0:
+        import time as _time
+
+        cutoff = _time.time() - recent_days * 86400
+        return conn.execute(
+            f"""
+            SELECT s.*, f.path as file_path,
+                   COALESCE(gm.pagerank, 0) as pagerank,
+                   CASE WHEN f.mtime >= ? THEN 1 ELSE 0 END AS recency_boost
+            FROM symbols s JOIN files f ON s.file_id = f.id
+            LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
+            WHERE {where_sql}
+            ORDER BY recency_boost DESC, COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
+            """,
+            [cutoff, *params],
+        ).fetchall()
+    return conn.execute(
+        f"""
+        SELECT s.*, f.path as file_path, COALESCE(gm.pagerank, 0) as pagerank
+        FROM symbols s JOIN files f ON s.file_id = f.id
+        LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
+        WHERE {where_sql}
+        ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
+        """,
+        params,
+    ).fetchall()
+
+
+def _fallback_like_match(conn, like_pattern):
+    """W607-BR substrate-CALL: LIKE-pattern fallback total-count lookup.
+
+    Reached in the text-output path when the primary search returned
+    exactly 50 hits (LIMIT cap) and the user did NOT pass ``--full``;
+    we re-issue the COUNT(*) without the ORDER BY/LIMIT/JOIN to give
+    the user the total match count for the "50 of <N>" hint. A raise
+    surfaces ``search_fallback_like_match_failed:``; degraded default
+    returns 0 so the envelope still emits.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) FROM symbols WHERE name LIKE ? COLLATE NOCASE",
+        (like_pattern,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def _extract_spans(rows, *, ref_counts, explanations, explain):
+    """W607-BR substrate-CALL: build the JSON results dict-list.
+
+    Mirrors the cmd_search_semantic W607-BO ``_extract_spans`` shape:
+    a single helper that walks the SQL rows and emits the JSON-result
+    dict-list. A raise surfaces ``search_extract_spans_failed:``;
+    degraded default returns ``[]`` so the envelope still emits.
+    """
+    results_list = []
+    for r in rows:
+        entry = {
+            "name": r["name"],
+            "qualified_name": r["qualified_name"] or "",
+            "kind": r["kind"],
+            "signature": r["signature"] or "",
+            "refs": ref_counts.get(r["id"], 0),
+            "pagerank": round(r["pagerank"], 6) if r["pagerank"] else 0,
+            "location": loc(r["file_path"], r["line_start"]),
+        }
+        if explain:
+            entry["explanation"] = explanations.get(r["id"], {})
+        results_list.append(entry)
+    return results_list
+
+
 def _fts5_available(conn) -> bool:
     """Check if the symbol_fts virtual table exists."""
     try:
@@ -52,7 +242,7 @@ def _build_fts_query(pattern: str) -> str:
     return _bfq(pattern)
 
 
-def _get_explain_data(conn, symbol_id: int, pattern: str) -> dict:
+def _get_explain_data(conn, symbol_id: int, pattern: str, *, warnings_out: list[str] | None = None) -> dict:
     """Build score explanation for a single symbol using FTS5 functions.
 
     Returns a dict with:
@@ -60,6 +250,12 @@ def _get_explain_data(conn, symbol_id: int, pattern: str) -> dict:
       - matched_fields: list of field names that contain the pattern
       - highlights: {field: highlighted_snippet} for matching fields
       - term_counts: {field: count} number of query term occurrences per field
+
+    W607-E: when ``warnings_out`` is threaded in, the three silent
+    ``except Exception: pass`` substrate fallbacks below disclose the
+    underlying failure via ``search_explain_<phase>_failed:<exc>:<detail>``
+    markers (phases: ``bm25``, ``highlight``, ``term_counts``). Empty
+    bucket / clean execution → byte-identical to pre-W607-E.
     """
     explanation: dict = {
         "bm25_score": None,
@@ -84,8 +280,9 @@ def _get_explain_data(conn, symbol_id: int, pattern: str) -> dict:
         ).fetchone()
         if score_row:
             explanation["bm25_score"] = round(score_row["score"], 4)
-    except Exception:
-        pass
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"search_explain_bm25_failed:{type(exc).__name__}:{exc}")
 
     # --- Per-field highlights and match detection ---
     # FTS5 highlight() wraps matched terms with <<>> markers (ASCII-safe).
@@ -112,8 +309,9 @@ def _get_explain_data(conn, symbol_id: int, pattern: str) -> dict:
                 if value and "<<" in value:
                     explanation["matched_fields"].append(field)
                     explanation["highlights"][field] = value
-    except Exception:
-        pass
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"search_explain_highlight_failed:{type(exc).__name__}:{exc}")
 
     # --- Per-field term counts ---
     # Count raw occurrences of each query term in the symbol's fields.
@@ -134,8 +332,9 @@ def _get_explain_data(conn, symbol_id: int, pattern: str) -> dict:
                 count = sum(field_val.count(term.lower()) for term in raw_terms if term)
                 if count > 0:
                     explanation["term_counts"][field] = count
-    except Exception:
-        pass
+    except Exception as exc:
+        if warnings_out is not None:
+            warnings_out.append(f"search_explain_term_counts_failed:{type(exc).__name__}:{exc}")
 
     return explanation
 
@@ -270,6 +469,42 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
             EMPTY_INPUT,
             "search pattern cannot be empty — pass a name substring or regex (e.g. `roam search Auth`)",
         )
+    # W607-BR: ADDITIVE per-phase substrate-CALL marker plumbing on top
+    # of the W607-E outer-guard below. cmd_search is the EXACT-MATCH
+    # sibling of cmd_search_semantic (W607-BO) and cmd_retrieve
+    # (W607-BI). A silent failure in any of its substrate boundaries
+    # (config load, query parse, kind-filter validation, fts/SQL search,
+    # fallback LIKE-count, kind-abbrev translation, span extraction,
+    # serialize) directly degrades agent productivity. W607-BR wraps
+    # each substrate call so a raise becomes a structured
+    # ``search_<phase>_failed:<exc_class>:<detail>`` marker instead of
+    # a Click traceback. The W607-E outer-guard remains for
+    # ``search_pipeline_failed:`` AND the W607-E inner explain
+    # fallbacks remain for ``search_explain_<phase>_failed:`` — both as
+    # final safety nets.
+    #
+    # Empty W607-BR bucket -> byte-identical envelope (hash-stable).
+    _w607br_warnings_out: list[str] = []
+
+    def _run_check_br(phase: str, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BR marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``search_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607br_warnings_out`` and return *default* —
+        the envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — top-level disclosure
+            _w607br_warnings_out.append(f"search_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-BR load_config substrate-CALL. cmd_search has no dedicated
+    # config today; the wrapper exists for parity so a future config
+    # addition can land without re-instrumenting.
+    _cfg = _run_check_br("load_config", _load_search_config, default={})
+
     # W1068 (sibling of W1063 + W1064): when ``--kind`` is supplied,
     # validate against the closed KIND_ABBREV vocabulary BEFORE running
     # the query. Unknown kinds previously fell into the generic "no
@@ -278,57 +513,92 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
     # Accept both the full kind ("function") and its abbreviation
     # ("fn") so the disclosure matches the help-text contract.
     # W1080: delegated to the shared ``structured_unknown_filter`` helper.
-    if kind_filter is not None:
-        full_kinds = set(KIND_ABBREV.keys())
-        abbrev_kinds = set(KIND_ABBREV.values())
-        known_kinds = sorted(full_kinds | abbrev_kinds)
-        frag = structured_unknown_filter(
-            requested=kind_filter,
-            known=known_kinds,
-            state="unknown_kind",
-            requested_field="requested_kind",
-            known_field="known_kinds",
-            fact_anchor="kinds",
-        )
-        if frag is not None:
-            verdict_unknown = f"unknown kind {kind_filter!r} ({len(known_kinds)} known){frag['verdict_suffix']}"
-            if json_mode:
-                # W1083: ``to_summary_payload(include_did_you_mean=False)``
-                # extracts the splice subset MINUS ``did_you_mean`` —
-                # pre-W1080 envelope did NOT carry the field in the
-                # summary (close-match suggestion only lands in the
-                # verdict suffix). Callsite-specific fields (``total``,
-                # ``pattern``) compose around it.
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "search",
-                            summary={
-                                "verdict": verdict_unknown,
-                                **to_summary_payload(frag, include_did_you_mean=False),
-                                "total": 0,
-                                "pattern": pattern,
-                            },
-                            budget=token_budget,
-                            pattern=pattern,
-                            results=[],
-                            agent_contract={
-                                # LAW 4: helper emits facts anchored on
-                                # ``kinds`` (in the formatter anchor set).
-                                "facts": frag["facts"],
-                                "next_commands": ["roam search --help"],
-                            },
-                        )
+    # W607-BR validate_kind_filter substrate-CALL: a raise here would
+    # otherwise short-circuit the entire command. Degraded default
+    # treats the kind as valid so the SQL path still runs and emits
+    # results — preserves the SEARCH-TRIO contract that broken
+    # substrate doesn't crash the envelope wholesale.
+    _kf_result = _run_check_br(
+        "validate_kind_filter",
+        _validate_kind_filter,
+        kind_filter,
+        default=(True, [], None),
+    )
+    is_valid_kind, known_kinds, frag = _kf_result
+    if kind_filter is not None and not is_valid_kind and frag is not None:
+        verdict_unknown = f"unknown kind {kind_filter!r} ({len(known_kinds)} known){frag['verdict_suffix']}"
+        if json_mode:
+            # W1083: ``to_summary_payload(include_did_you_mean=False)``
+            # extracts the splice subset MINUS ``did_you_mean`` —
+            # pre-W1080 envelope did NOT carry the field in the
+            # summary (close-match suggestion only lands in the
+            # verdict suffix). Callsite-specific fields (``total``,
+            # ``pattern``) compose around it.
+            # W607-BR: when the W607-BR bucket is non-empty (a prior
+            # substrate phase like load_config raised), mirror its
+            # markers into the unknown-kind early-return envelope
+            # too — otherwise the disclosure is lost on the early
+            # branch.
+            _unknown_summary = {
+                "verdict": verdict_unknown,
+                **to_summary_payload(frag, include_did_you_mean=False),
+                "total": 0,
+                "pattern": pattern,
+            }
+            if _w607br_warnings_out:
+                _unknown_summary["warnings_out"] = list(_w607br_warnings_out)
+                _unknown_summary["partial_success"] = True
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "search",
+                        summary=_unknown_summary,
+                        budget=token_budget,
+                        pattern=pattern,
+                        results=[],
+                        agent_contract={
+                            # LAW 4: helper emits facts anchored on
+                            # ``kinds`` (in the formatter anchor set).
+                            "facts": frag["facts"],
+                            "next_commands": ["roam search --help"],
+                        },
+                        **({"warnings_out": list(_w607br_warnings_out)} if _w607br_warnings_out else {}),
                     )
                 )
-                return
-            click.echo(f"VERDICT: {verdict_unknown}")
-            click.echo()
-            click.echo("Known kinds: " + ", ".join(known_kinds))
+            )
             return
+        click.echo(f"VERDICT: {verdict_unknown}")
+        click.echo()
+        click.echo("Known kinds: " + ", ".join(known_kinds))
+        return
     ensure_index()
-    like_pattern = f"%{pattern}%"
-    mode_lower = (mode or "substring").lower()
+    # W607-E: Pattern-2 consumer-layer wiring — thread a warnings_out
+    # bucket through the search pipeline. cmd_search does NOT call the
+    # W605-plumbed substrate directly (search_fts / fts5_available /
+    # fts5_populated): it issues raw SQL against ``symbols`` /
+    # ``files`` / ``graph_metrics`` and runs FTS5 explain via the local
+    # ``_get_explain_data`` helper. The disclosure shape therefore
+    # mirrors cmd_retrieve W607-B / cmd_dogfood W607-D outer-guard idioms:
+    #   * outer pipeline raise → ``search_pipeline_failed:<exc>:<detail>``
+    #   * inner ``_get_explain_data`` silent fallbacks → threaded
+    #     ``search_explain_<phase>_failed:`` markers (only when --explain)
+    # Empty bucket → byte-identical envelope (hash-stable). Non-empty
+    # bucket → summary.warnings_out + summary.partial_success=True +
+    # top-level mirror.
+    warnings_out: list[str] = []
+    # W607-BR parse_query substrate-CALL: normalize the case-insensitive
+    # mode token + build the LIKE pattern. A raise here surfaces a marker
+    # via ``search_parse_query_failed:``; degraded default keeps
+    # substring mode + the raw pattern wrapped in ``%`` so the envelope
+    # still emits.
+    _pq_result = _run_check_br(
+        "parse_query",
+        _parse_query,
+        pattern,
+        mode,
+        default=((mode or "substring").lower(), f"%{pattern}%"),
+    )
+    mode_lower, like_pattern = _pq_result
     with open_db(readonly=True) as conn:
         # register a REGEXP function so SQLite can route
         # ``WHERE name REGEXP ?`` through Python's ``re`` module. Exact
@@ -371,8 +641,16 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
             where_parts.append("LOWER(COALESCE(s.decorators, '')) LIKE ?")
             params.append(f"%{decorator_filter.lower()}%")
         if kind_filter:
-            abbrev_to_kind = {v: k for k, v in KIND_ABBREV.items()}
-            full_kind = abbrev_to_kind.get(kind_filter, kind_filter)
+            # W607-BR apply_kind_filter substrate-CALL: translate abbrev
+            # (``fn``) -> full kind (``function``) for the SQL filter.
+            # A raise surfaces ``search_apply_kind_filter_failed:``;
+            # degraded default returns ``kind_filter`` unchanged.
+            full_kind = _run_check_br(
+                "apply_kind_filter",
+                _apply_kind_filter,
+                kind_filter,
+                default=kind_filter,
+            )
             where_parts.append("s.kind = ?")
             params.append(full_kind)
         where_sql = " AND ".join(where_parts)
@@ -381,48 +659,98 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
         # synthetic ``recency_boost`` column (1 for files modified in the
         # last N days, 0 otherwise) and add it to ORDER BY in front of
         # PageRank. ``files.mtime`` is set during indexing.
-        if recent_days and recent_days > 0:
-            import time as _time
-
-            cutoff = _time.time() - recent_days * 86400
-            rows = conn.execute(
-                f"""
-                SELECT s.*, f.path as file_path,
-                       COALESCE(gm.pagerank, 0) as pagerank,
-                       CASE WHEN f.mtime >= ? THEN 1 ELSE 0 END AS recency_boost
-                FROM symbols s JOIN files f ON s.file_id = f.id
-                LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
-                WHERE {where_sql}
-                ORDER BY recency_boost DESC, COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
-                """,
-                [cutoff, *params],
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                f"""
-                SELECT s.*, f.path as file_path, COALESCE(gm.pagerank, 0) as pagerank
-                FROM symbols s JOIN files f ON s.file_id = f.id
-                LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
-                WHERE {where_sql}
-                ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
-                """,
+        # W607-E outer-guard: any SQL failure here (malformed REGEXP,
+        # locked DB, missing column on stale schema, sqlite3 substrate
+        # corruption) historically bubbled as a Click traceback with no
+        # structured envelope. Emit the canonical
+        # ``search_pipeline_failed:<exc_class>:<detail>`` marker and
+        # short-circuit to the empty-results path so the rest of the
+        # envelope still emits with consistent fields. Mirrors
+        # cmd_retrieve W607-B / cmd_dogfood W607-D outer-guard idioms.
+        # W607-BR fts_search substrate-CALL (ADDITIVE to W607-E outer-
+        # guard). The same SQL is now executed via a top-level shim so
+        # tests can monkeypatch ``_fts_search`` to simulate a substrate
+        # failure WITHOUT going through SQLite. On raise: W607-BR
+        # surfaces ``search_fts_search_failed:`` AND the W607-E
+        # outer-guard preserves its established
+        # ``search_pipeline_failed:`` marker. Degraded default returns
+        # an empty list so the envelope still emits.
+        try:
+            rows = _run_check_br(
+                "fts_search",
+                _fts_search,
+                conn,
+                where_sql,
                 params,
-            ).fetchall()
+                recent_days=recent_days,
+                default=None,
+            )
+            if rows is None:
+                # The W607-BR shim either ran cleanly and returned a
+                # list, OR raised and the default kicked in. If we got
+                # ``None``, the shim raised AND W607-BR captured it —
+                # mirror the W607-E outer-guard marker too so the
+                # backwards-compat contract holds (a consumer parsing
+                # ``search_pipeline_failed:`` still finds it).
+                _captured = next(
+                    (m for m in _w607br_warnings_out if m.startswith("search_fts_search_failed:")),
+                    None,
+                )
+                if _captured is not None:
+                    # Strip the W607-BR prefix and re-emit on the
+                    # W607-E channel. Shape: ``search_pipeline_failed:
+                    # <exc_class>:<detail>``.
+                    _w607e_marker = _captured.replace("search_fts_search_failed:", "search_pipeline_failed:", 1)
+                    warnings_out.append(_w607e_marker)
+                rows = []
+        except Exception as exc:  # noqa: BLE001 — W607-E outer-guard
+            warnings_out.append(f"search_pipeline_failed:{type(exc).__name__}:{exc}")
+            rows = []
 
         if not rows:
             suffix = f" of kind '{kind_filter}'" if kind_filter else ""
             _no_match_verdict = f"no matches for '{pattern}'{suffix}"
             if json_mode:
-                click.echo(
-                    to_json(
+                # W607-E + W607-BR combined disclosure: surface the
+                # outer-guard ``search_pipeline_failed:`` marker AND
+                # any W607-BR per-substrate markers. Both buckets are
+                # merged so consumers reading either channel see the
+                # full lineage. Empty combined bucket → byte-identical
+                # envelope (hash-stable on the clean no-match path).
+                _combined_no_match = list(warnings_out) + list(_w607br_warnings_out)
+                _no_match_summary: dict = {"verdict": _no_match_verdict, "total": 0}
+                if _combined_no_match:
+                    _no_match_summary["warnings_out"] = list(_combined_no_match)
+                    _no_match_summary["partial_success"] = True
+                # W607-BR serialize_envelope substrate-CALL: wrap to_json
+                # so a serialize raise falls back to a minimal envelope
+                # rather than crashing the entire search call.
+                _envelope = json_envelope(
+                    "search",
+                    summary=_no_match_summary,
+                    pattern=pattern,
+                    results=[],
+                    **({"warnings_out": list(_combined_no_match)} if _combined_no_match else {}),
+                )
+                _text = _run_check_br(
+                    "serialize_envelope",
+                    lambda env=_envelope: to_json(env),
+                    default=None,
+                )
+                if _text is None:
+                    _final_combined = list(warnings_out) + list(_w607br_warnings_out)
+                    _text = to_json(
                         json_envelope(
                             "search",
-                            summary={"verdict": _no_match_verdict, "total": 0},
-                            pattern=pattern,
-                            results=[],
+                            summary={
+                                "verdict": "search serialize failed",
+                                "warnings_out": list(_final_combined),
+                                "partial_success": True,
+                            },
+                            warnings_out=list(_final_combined),
                         )
                     )
-                )
+                click.echo(_text)
             else:
                 click.echo(f"VERDICT: {_no_match_verdict}")
                 click.echo()
@@ -445,7 +773,11 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
         explanations: dict[int, dict] = {}
         if explain:
             for r in rows:
-                expl = _get_explain_data(conn, r["id"], pattern)
+                # W607-E: thread warnings_out into _get_explain_data so
+                # the three inner ``except: pass`` substrate fallbacks
+                # surface ``search_explain_<phase>_failed:`` markers
+                # instead of silently dropping the disclosure.
+                expl = _get_explain_data(conn, r["id"], pattern, warnings_out=warnings_out)
                 # augment with the per-result PageRank so the
                 # user can see structural boost contribution alongside
                 # BM25.
@@ -457,38 +789,66 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
             _search_verdict += f" (kind={kind_filter})"
 
         if json_mode:
-            results_list = []
-            for r in rows:
-                entry = {
-                    "name": r["name"],
-                    "qualified_name": r["qualified_name"] or "",
-                    "kind": r["kind"],
-                    "signature": r["signature"] or "",
-                    "refs": ref_counts.get(r["id"], 0),
-                    # W361 — round to 6 decimals to match W336's cmd_impact
-                    # widening. On a 25k-symbol graph per-symbol PageRank
-                    # values fall in the 1e-6 to 1e-3 range, so 4-decimal
-                    # rounding silently zeroed legitimate small values.
-                    "pagerank": round(r["pagerank"], 6) if r["pagerank"] else 0,
-                    "location": loc(r["file_path"], r["line_start"]),
-                }
-                if explain:
-                    entry["explanation"] = explanations.get(r["id"], {})
-                results_list.append(entry)
+            # W607-BR extract_spans substrate-CALL: build the JSON-result
+            # dict-list. A raise surfaces ``search_extract_spans_failed:``;
+            # degraded default returns ``[]`` so the envelope still emits.
+            results_list = _run_check_br(
+                "extract_spans",
+                _extract_spans,
+                rows,
+                ref_counts=ref_counts,
+                explanations=explanations,
+                explain=explain,
+                default=[],
+            )
 
-            click.echo(
-                to_json(
+            # W607-E + W607-BR combined disclosure: merge BOTH buckets so
+            # consumers see every marker (outer-guard ``search_pipeline_*``
+            # + W607-E inner ``search_explain_*`` + W607-BR per-substrate
+            # ``search_<phase>_*``). Empty combined bucket → byte-identical
+            # envelope (hash-stable on clean happy path).
+            _combined_match = list(warnings_out) + list(_w607br_warnings_out)
+            _match_summary: dict = {
+                "verdict": _search_verdict,
+                "total": len(rows),
+                "pattern": pattern,
+            }
+            if _combined_match:
+                _match_summary["warnings_out"] = list(_combined_match)
+                _match_summary["partial_success"] = True
+            _envelope_match = json_envelope(
+                "search",
+                summary=_match_summary,
+                budget=token_budget,
+                pattern=pattern,
+                total=len(rows),
+                explain=explain,
+                results=results_list,
+                **({"warnings_out": list(_combined_match)} if _combined_match else {}),
+            )
+            # W607-BR serialize_envelope substrate-CALL: wrap to_json so
+            # a serialize raise falls back to a minimal envelope rather
+            # than crashing the entire search call. Mirrors
+            # cmd_search_semantic W607-BO ``serialize_envelope`` discipline.
+            _text_match = _run_check_br(
+                "serialize_envelope",
+                lambda env=_envelope_match: to_json(env),
+                default=None,
+            )
+            if _text_match is None:
+                _final_combined = list(warnings_out) + list(_w607br_warnings_out)
+                _text_match = to_json(
                     json_envelope(
                         "search",
-                        summary={"verdict": _search_verdict, "total": len(rows), "pattern": pattern},
-                        budget=token_budget,
-                        pattern=pattern,
-                        total=len(rows),
-                        explain=explain,
-                        results=results_list,
+                        summary={
+                            "verdict": "search serialize failed",
+                            "warnings_out": list(_final_combined),
+                            "partial_success": True,
+                        },
+                        warnings_out=list(_final_combined),
                     )
                 )
-            )
+            click.echo(_text_match)
             return
 
         # --- Text output ---
@@ -496,10 +856,18 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
         click.echo()
         total = len(rows)
         if not full and total == 50:
-            cnt = conn.execute(
-                "SELECT COUNT(*) FROM symbols WHERE name LIKE ? COLLATE NOCASE",
-                (like_pattern,),
-            ).fetchone()[0]
+            # W607-BR fallback_like_match substrate-CALL: count the full
+            # match population so the user sees "50 of <N>". A raise
+            # surfaces ``search_fallback_like_match_failed:``; degraded
+            # default returns 0 (and the "50 of 0" hint is loud enough
+            # to flag the disclosure inline).
+            cnt = _run_check_br(
+                "fallback_like_match",
+                _fallback_like_match,
+                conn,
+                like_pattern,
+                default=0,
+            )
             click.echo(f"=== Symbols matching '{pattern}' ({total} of {cnt}, use --full for all) ===")
         else:
             click.echo(f"=== Symbols matching '{pattern}' ({total}) ===")

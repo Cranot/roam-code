@@ -21,7 +21,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.db.edge_kinds import CALL_EDGE_KINDS
+from roam.db.edge_kinds import CALL_EDGE_KINDS, inheritance_in_clause
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 
@@ -431,7 +431,10 @@ def _detect_strategy(conn):
     """Detect Strategy pattern: multiple classes inheriting from the same parent
     with similar method signatures.
     """
-    # Find inheritance edges, group by target (parent class)
+    # Find inheritance edges, group by target (parent class).
+    # W543-followup: source the inheritance-kind tuple from the
+    # canonical helper so a future widening (e.g. ``uses_trait``,
+    # already in :data:`INHERITANCE_EDGE_KINDS`) reaches every reader.
     rows = conn.execute(
         "SELECT e.source_id, e.target_id, "
         "src.name as child_name, src.qualified_name as child_qname, "
@@ -445,7 +448,7 @@ def _detect_strategy(conn):
         "JOIN symbols tgt ON e.target_id = tgt.id "
         "JOIN files sf ON src.file_id = sf.id "
         "JOIN files tf ON tgt.file_id = tf.id "
-        "WHERE e.kind IN ('inherits', 'implements') "
+        f"WHERE {inheritance_in_clause('e.kind')} "
         "AND tgt.kind IN ('class', 'interface', 'trait')"
     ).fetchall()
 

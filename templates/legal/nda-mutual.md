@@ -1,13 +1,27 @@
 # Mutual Non-Disclosure Agreement
 
-> ⚠️ **REVIEW BEFORE USE.** v1 draft, 2026-05-05. Have a qualified attorney review before binding execution.
+> **REVIEW BEFORE USE.** v2 draft, 2026-05-18. Have a qualified attorney
+> review before binding execution. Bracketed placeholders `[LIKE_THIS]`
+> are filled in per engagement. This NDA is part of Provider's
+> procurement cluster alongside the
+> [PR Replay SOW](https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md),
+> the [Data Processing Agreement](https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md),
+> and the [security procurement packet](https://github.com/Cranot/roam-code/blob/main/templates/legal/security-procurement-packet.md);
+> see also the public [trust page](https://roam-code.com/trust). Where
+> this NDA is signed *before* a SOW for a sensitive engagement, the SOW
+> and DPA supersede the relevant confidentiality and personal-data
+> handling clauses on execution (Section 10A).
 
 ---
 
 This Mutual Non-Disclosure Agreement ("**Agreement**") is made effective `[EFFECTIVE_DATE]` between:
 
-- **`[PARTY_1_LEGAL_NAME]`**, of `[PARTY_1_ADDRESS]` ("**Party 1**"); and
-- **`[PARTY_2_LEGAL_NAME]`**, of `[PARTY_2_ADDRESS]` ("**Party 2**").
+- **`[PARTY_1_LEGAL_NAME]`**, `[TBD: PARTY_1_LEGAL_FORM]` (e.g., Greek
+  sole-trader / atomiki epicheirisi), tax ID `[TBD: PARTY_1_TAX_ID]`
+  (Greek `[PARTY_1_AFM]` / EU VAT-ID / other), of `[PARTY_1_ADDRESS]`
+  ("**Party 1**"); and
+- **`[PARTY_2_LEGAL_NAME]`**, `[TBD: PARTY_2_LEGAL_FORM]`, tax ID
+  `[TBD: PARTY_2_TAX_ID]`, of `[PARTY_2_ADDRESS]` ("**Party 2**").
 
 (Each a "Party" and together the "Parties".)
 
@@ -60,18 +74,67 @@ Nothing in this Agreement obligates either Party to enter into any further comme
 
 The Parties acknowledge that monetary damages may be inadequate for breach of this Agreement, and either Party may seek injunctive or equitable relief in any competent court without posting bond.
 
-## 10. Governing law
+## 10. Governing law and venue
 
-This Agreement is governed by the law of **`[GOVERNING_LAW]`** (default: Delaware, USA for US-rooted relationships; Greek law for Greek Clients; Republic of Ireland for other EU Clients). The Parties consent to the exclusive jurisdiction of the courts of `[FORUM]`, except for emergency injunctive relief which may be sought in any competent court.
+This Agreement is governed by the laws of **Greece**, matching the
+governing law of Provider's
+[PR Replay SOW §13](https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md)
+and [DPA §11](https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md).
+Disputes are subject to the exclusive jurisdiction of the courts of
+**Athens, Greece**, except for emergency injunctive relief which may be
+sought in any competent court.
+
+Where the Parties have agreed in writing to a different governing law
+appropriate to the Parties' jurisdictions (e.g., the law of an EU Member
+State or the law of a US state), that written election supersedes this
+default and the agreed forum applies. The agreed election must be
+recorded in `[GOVERNING_LAW_OVERRIDE]` / `[FORUM_OVERRIDE]` and signed
+by both Parties.
+
+For EU consumer disputes only, the EU Online Dispute Resolution
+platform (`https://ec.europa.eu/consumers/odr`) is also available.
+
+## 10A. Relationship to SOW and DPA
+
+Where the Parties subsequently sign a Statement of Work or Data
+Processing Agreement covering the same Confidential Information:
+
+- the SOW governs commercial terms, deliverables, fees, and acceptance;
+- the DPA governs Personal Data processing within the meaning of the GDPR;
+- this NDA continues to govern Confidential Information that falls
+  outside the scope of the SOW or DPA, and survives for the term in
+  **Section 5**.
+
+In case of conflict on the same subject matter, the SOW or DPA prevails
+to the extent of the conflict; this NDA otherwise remains in force.
 
 ## 11. Miscellaneous
 
-- **Entire agreement**: this Agreement supersedes all prior NDAs between the Parties on the same subject.
+- **Entire agreement**: this Agreement supersedes all prior NDAs between
+  the Parties on the same subject. The relationship between this NDA and
+  any subsequently executed SOW or DPA is governed by **Section 10A**.
 - **Amendments**: only by writing signed by both Parties.
-- **Severability**: unenforceable clauses are severed; the rest remains in force.
-- **Assignment**: neither Party may assign this Agreement without the other's written consent, except that either Party may assign to a successor in connection with a merger, acquisition, or sale of all or substantially all assets.
+- **Severability**: unenforceable clauses are severed; the rest remains
+  in force.
+- **Assignment**: neither Party may assign this Agreement without the
+  other's written consent, except that either Party may assign to a
+  successor in connection with a merger, acquisition, or sale of all or
+  substantially all assets. For Provider, an assignment to a successor
+  legal entity (e.g., on incorporation of the Greek sole-trader into an
+  IKE) may be made on 30 days' written notice.
 - **Notices**: by email to `[PARTY_1_EMAIL]` and `[PARTY_2_EMAIL]`.
-- **Counterparts**: may be signed in counterparts, including electronic signatures, each of which is an original.
+- **Counterparts**: may be signed in counterparts, including electronic
+  signatures, each of which is an original.
+
+## 12. No certification or compliance claim
+
+Nothing in this Agreement, and nothing disclosed under it, **certifies**
+either Party's codebase, processes, or systems as compliant with any
+law, regulation, framework, or standard (e.g., SOC 2, ISO/IEC 42001,
+ISO/IEC 27001, the EU AI Act, GDPR Article 12 record-keeping). Where
+either Party shares evidence artefacts derived from Provider's tooling,
+those artefacts **map to** and **supports evidence for** control
+families; they do not constitute formal conformity assessment.
 
 ---
 

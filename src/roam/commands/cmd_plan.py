@@ -411,12 +411,16 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
     resolution_tier: str, resolved_target: str | None)``.
 
     W1245 Pattern-2 variant-D: ``resolution_tier`` is one of
-    ``{"symbol", "fuzzy", "unresolved"}`` when a symbol target was
-    requested (via ``--symbol`` or positional non-file ``target``), or
-    ``"symbol"`` by default for the file / staged branches (which don't
-    walk the find_symbol fallback chain). ``resolved_target`` echoes the
-    qualified name that ``find_symbol`` actually landed on so callers
-    can disclose the divergence between input and resolved name.
+    ``{"symbol", "file", "file_substring", "fuzzy", "unresolved"}`` when
+    a target was requested (via ``--symbol``, ``--path``, or positional
+    ``target``). The file branches now consume the
+    :func:`roam.commands.resolve.resolve_file_symbols` substrate so a
+    LIKE-fallback substring match surfaces as ``"file_substring"`` rather
+    than collapsing into the exact-path ``"file"`` tier (Pattern-1
+    Variant D Wave B; closes the audit MEDIUM-severity vocab-mismatch
+    entry). ``resolved_target`` echoes the qualified name (for symbol
+    targets) or canonical file path (for file targets) so callers can
+    disclose the divergence between input and resolved value.
     """
     sym_ids = set()
     file_paths = set()
@@ -468,18 +472,16 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
     # --path option
     if file_path:
         fp_norm = file_path.replace("\\", "/")
-        sids, fpaths = _resolve_file_symbols(conn, fp_norm)
-        if not sids:
-            # Try LIKE match
-            frow = conn.execute(
-                "SELECT id, path FROM files WHERE path LIKE ? LIMIT 1",
-                (f"%{fp_norm}",),
-            ).fetchone()
-            if frow:
-                sids2 = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)).fetchall()
-                sids = {s["id"] for s in sids2}
-                fpaths = {frow["path"]}
-        if not sids and not staged:
+        # Pattern-1 Variant D Wave B: substrate handles the LIKE fallback
+        # internally and returns a tier discriminator (``"file"`` for
+        # exact-path, ``"file_substring"`` for LIKE %name). The legacy
+        # second LIKE block here was redundant on top of the substrate
+        # AND silently collapsed both tiers into the same shape — the
+        # canonical Variant D failure pattern. Threading ``file_tier``
+        # into the disclosure closes the MEDIUM-severity entry from the
+        # audit ((internal memo)).
+        sids, fpaths, file_tier = _resolve_file_symbols(conn, fp_norm)
+        if file_tier is None and not staged:
             return (
                 sym_ids,
                 file_paths,
@@ -491,22 +493,19 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
         sym_ids.update(sids)
         file_paths.update(fpaths)
         label = fp_norm
+        if file_tier is not None:
+            resolution_tier = file_tier
+            # Echo the resolved canonical path so disclosure.target
+            # surfaces the substring drift between input and resolved.
+            if fpaths:
+                resolved_target = next(iter(fpaths))
 
     # Positional target argument
     if target and not symbol_name and not file_path:
         target_norm = target.replace("\\", "/")
         if _looks_like_file(target_norm):
-            sids, fpaths = _resolve_file_symbols(conn, target_norm)
-            if not sids:
-                frow = conn.execute(
-                    "SELECT id, path FROM files WHERE path LIKE ? LIMIT 1",
-                    (f"%{target_norm}",),
-                ).fetchone()
-                if frow:
-                    sids2 = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)).fetchall()
-                    sids = {s["id"] for s in sids2}
-                    fpaths = {frow["path"]}
-            if not sids:
+            sids, fpaths, file_tier = _resolve_file_symbols(conn, target_norm)
+            if file_tier is None:
                 return (
                     sym_ids,
                     file_paths,
@@ -518,6 +517,9 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
             sym_ids.update(sids)
             file_paths.update(fpaths)
             label = target_norm
+            resolution_tier = file_tier
+            if fpaths:
+                resolved_target = next(iter(fpaths))
         else:
             sym = find_symbol(conn, target_norm)
             if sym is None:
@@ -615,7 +617,17 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
         # so both error and success envelope branches can merge it.
         disclosure_target = resolved_target or symbol_name or target or label
         resolution_block = resolution_disclosure(resolution_tier, target=disclosure_target)
-        fuzzy_suffix = " [fuzzy resolution]" if resolution_tier == "fuzzy" else ""
+        # Pattern-1 Variant D Wave B: append a degraded-tier suffix to the
+        # verdict so LAW-6 single-line consumers see the disclosure even
+        # without parsing the full envelope. ``file_substring`` is distinct
+        # from ``fuzzy`` and from the exact-``file`` tier (which doesn't
+        # need a suffix — it's a fully-resolved success).
+        if resolution_tier == "fuzzy":
+            fuzzy_suffix = " [fuzzy resolution]"
+        elif resolution_tier == "file_substring":
+            fuzzy_suffix = " [file substring match]"
+        else:
+            fuzzy_suffix = ""
 
         if error or not sym_ids:
             msg = error or f"No symbols found for: {label}"

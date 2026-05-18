@@ -24,7 +24,7 @@ import sqlite3
 import click
 
 from roam.capability import roam_capability
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.commands.resolve import ensure_index, find_symbol, resolve_file_symbols
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import (
     abbrev_kind,
@@ -464,36 +464,38 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_target(conn: sqlite3.Connection, target: str) -> tuple[str, int | None, dict | None]:
-    """Determine if target is a file or symbol and return (type, id, row).
+def _resolve_target(conn: sqlite3.Connection, target: str) -> tuple[str, int | None, dict | None, str | None]:
+    """Determine if target is a file or symbol and return (type, id, row, tier).
+
+    Pattern-1 Variant D Wave C (audit reference:
+    ``(internal memo)``). Delegates the file-path
+    branch to :func:`roam.commands.resolve.resolve_file_symbols` so the
+    silent LIKE %name% substring fallback is surfaced via a tier
+    discriminator (``"file"`` vs ``"file_substring"``) rather than emitted
+    with ``resolution: null`` on the success envelope — the most severe of
+    the audit's three HIGH-severity Variant D candidates.
 
     Returns:
-        ("file", file_id, file_row) or ("symbol", symbol_id, symbol_row)
-        or ("unknown", None, None)
+        ``("file", file_id, file_row, "file"|"file_substring")`` on file
+        resolution, ``("symbol", symbol_id, symbol_row, None)`` on symbol
+        resolution (caller reads ``row["_resolution_tier"]`` from
+        ``find_symbol``'s stamp for the symbol/fuzzy tier), or
+        ``("unknown", None, None, None)`` on miss.
     """
-    # Try file path first (exact match)
-    norm = target.replace("\\", "/")
-    row = conn.execute(
-        "SELECT id, path FROM files WHERE path = ?",
-        (norm,),
-    ).fetchone()
-    if row:
-        return ("file", row["id"], row)
-
-    # Try partial file path match
-    row = conn.execute(
-        "SELECT id, path FROM files WHERE path LIKE ? ORDER BY path LIMIT 1",
-        (f"%{norm}%",),
-    ).fetchone()
-    if row:
-        return ("file", row["id"], row)
+    # Try file path first via the shared substrate. Returns a tier
+    # discriminator so the callers can disclose substring fallback.
+    file_id, _sym_ids, file_path, tier = resolve_file_symbols(conn, target)
+    if file_id is not None:
+        # Return a row-shaped mapping consistent with the legacy
+        # ``SELECT id, path`` shape so downstream code stays unchanged.
+        return ("file", file_id, {"id": file_id, "path": file_path}, tier)
 
     # Try symbol lookup
     sym = find_symbol(conn, target)
     if sym:
-        return ("symbol", sym["id"], sym)
+        return ("symbol", sym["id"], sym, None)
 
-    return ("unknown", None, None)
+    return ("unknown", None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +537,7 @@ def metrics(ctx, target):
     ensure_index()
 
     with open_db(readonly=True) as conn:
-        target_type, target_id, target_row = _resolve_target(conn, target)
+        target_type, target_id, target_row, file_tier = _resolve_target(conn, target)
 
         if target_type == "unknown":
             msg = f'Target not found: "{target}"'
@@ -570,7 +572,11 @@ def metrics(ctx, target):
             # W1245 Pattern-2 variant-D: file target succeeds through the
             # file-path tier; surface as ``resolution=file`` so consumers
             # can distinguish file vs symbol resolution paths.
-            _output_file_metrics(conn, target_id, target, json_mode, token_budget)
+            # Pattern-1 Variant D Wave C: thread ``file_tier`` through so
+            # the substring-LIKE-fallback (``"file_substring"``) success
+            # path is distinguishable from an exact-match (``"file"``)
+            # success — pre-Wave-C this branch emitted ``resolution: null``.
+            _output_file_metrics(conn, target_id, target, json_mode, token_budget, file_tier or "file")
         else:
             # W1245 \ W1249 Pattern-2 variant-D: ``find_symbol`` stamps
             # ``_resolution_tier`` (symbol|fuzzy) on the returned row.
@@ -651,8 +657,15 @@ def _output_symbol_metrics(conn, symbol_id, target, json_mode, budget, resolutio
         click.echo(f"    {label:<20s} {val}")
 
 
-def _output_file_metrics(conn, file_id, target, json_mode, budget):
-    """Produce output for a file target."""
+def _output_file_metrics(conn, file_id, target, json_mode, budget, resolution_tier="file"):
+    """Produce output for a file target.
+
+    Pattern-1 Variant D Wave C: ``resolution_tier`` ("file"|"file_substring")
+    tells us whether the input exact-matched a file path or fell back to a
+    LIKE %name% substring match. Pre-Wave-C this path emitted
+    ``resolution: null`` on the success envelope — agents had no signal
+    that the file resolution was degraded.
+    """
     data = collect_file_metrics(conn, file_id)
     if not data:
         click.echo(f"File not found: {target}")
@@ -670,13 +683,20 @@ def _output_file_metrics(conn, file_id, target, json_mode, budget):
     )
 
     if json_mode:
+        verdict = f"{data['file']}: health={file_health}"
+        # Pattern-1 Variant D Wave C: suffix the verdict when the file
+        # target resolved through a substring-LIKE fallback so LAW-6
+        # single-line consumers still see the disclosure.
+        if resolution_tier == "file_substring":
+            verdict = f"{verdict} [file substring match]"
+        disclosure = resolution_disclosure(resolution_tier, target=data["file"])
         click.echo(
             to_json(
                 json_envelope(
                     "metrics",
                     budget=budget,
                     summary={
-                        "verdict": f"{data['file']}: health={file_health}",
+                        "verdict": verdict,
                         "target": data["file"],
                         "target_type": "file",
                         "health": file_health,
@@ -686,12 +706,22 @@ def _output_file_metrics(conn, file_id, target, json_mode, budget):
                         # file-level ``metrics.complexity`` aggregate are both
                         # sums of cognitive_complexity from symbol_metrics.
                         "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
+                        # Pattern-1 Variant D Wave C resolution disclosure.
+                        # Filter helper ``target`` to avoid clobbering the
+                        # explicit ``target=data["file"]`` kwarg already in
+                        # the summary above.
+                        **{k: v for k, v in disclosure.items() if k != "target"},
                     },
                     target_type="file",
                     file=data["file"],
                     language=data["language"],
                     file_role=data["file_role"],
                     metrics=fm,
+                    # Pattern-1 Variant D Wave C resolution disclosure at the
+                    # top level so the LAW-6 single-line consumer contract
+                    # is satisfied. ``target`` filtered to avoid collision
+                    # with the explicit ``file=data["file"]`` kwarg.
+                    **{k: v for k, v in disclosure.items() if k != "target"},
                     symbols=[
                         {
                             "name": s["name"],
@@ -718,7 +748,10 @@ def _output_file_metrics(conn, file_id, target, json_mode, budget):
         )
         return
 
-    click.echo(f"VERDICT: {data['file']}: health={file_health}")
+    text_verdict = f"{data['file']}: health={file_health}"
+    if resolution_tier == "file_substring":
+        text_verdict = f"{text_verdict} [file substring match]"
+    click.echo(f"VERDICT: {text_verdict}")
     click.echo(f"  language: {data['language'] or 'unknown'}  role: {data['file_role']}")
     click.echo()
     click.echo("  File Metrics:")

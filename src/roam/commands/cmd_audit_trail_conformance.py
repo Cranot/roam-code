@@ -409,7 +409,119 @@ def audit_trail_conformance_check(
     sarif = ctx.obj.get("sarif") if ctx.obj else False
 
     path = Path(input_path) if input_path else DEFAULT_AUDIT_TRAIL_PATH
-    records = _load_records(path)
+
+    # --- W607-AL: substrate-CALL marker plumbing -------------------------
+    # cmd_audit_trail_conformance is the COMPLIANCE-checking sibling of
+    # cmd_audit_trail_verify. Both are downstream consumers of the same
+    # audit-trail JSONL artifact:
+    #
+    #   cmd_audit_trail_verify (W607-AI)       -- chain-integrity verifier
+    #   cmd_audit_trail_conformance (W607-AL)  -- Article-12 conformance
+    #
+    # Substrate boundaries wrapped here:
+    #
+    #   load_records                                  (JSONL trail-read)
+    #   check_chain_integrity                         (delegates to verify)
+    #   check_timestamp_completeness                  (Article-12 §2)
+    #   check_actor_attribution                       (Article-12 §3)
+    #   check_reproducibility_metadata                (Article-12 §4)
+    #   check_verdict_and_rationale                   (Article-12 §5)
+    #   check_retention                               (Article-12 §6)
+    #   open_findings_db                              (registry conn)
+    #   emit_findings                                 (rows)
+    #   commit_findings                               (durable persist)
+    #
+    # The PRIOR code had TWO Pattern-2 silent-fallback blocks around the
+    # registry persist path (an inner ``except sqlite3.OperationalError:
+    # pass`` and an outer ``except Exception: pass``). Both are replaced
+    # with structured ``_run_check_al`` boundaries so the disclosure
+    # channel names which step crashed instead of silently degrading.
+    #
+    # Each raise becomes an
+    # ``audit_trail_conformance_<phase>_failed:<exc_class>:<detail>``
+    # marker via ``_w607al_warnings_out``. partial_success flips on any
+    # non-empty bucket. Empty bucket on the clean path keeps the envelope
+    # shape byte-identical to the pre-W607-AL command.
+    #
+    # TRIAD-CLOSURE milestone: with W607-AI (verify) and W607-AL
+    # (conformance), both downstream consumers of the audit-trail JSONL
+    # are W607-plumbed. Combined with W607-AD (cmd_attest, producer), the
+    # complete attest → verify → conformance triad is now closed.
+    _w607al_warnings_out: list[str] = []
+
+    def _run_check_al(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AL marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an
+        ``audit_trail_conformance_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607al_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607al_warnings_out.append(f"audit_trail_conformance_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # --- W607-CO: aggregation-phase marker plumbing (additive) -----------
+    # cmd_audit_trail_conformance is the COMPLIANCE-checking leg of the
+    # AUDIT-TRAIL FAMILY (cmd_audit_trail_verify W607-AI + CN aggregation;
+    # cmd_audit_trail_export W607-AP). W607-AL plumbed the substrate-CALL
+    # layer (10 substrate boundaries: load_records / 6 per-article checks /
+    # open_findings_db / emit_findings / commit_findings). W607-CO adds
+    # the AGGREGATION-PHASE layer on top:
+    #
+    #   score_classify       -- count passed checks + compute score 0-100
+    #   compute_predicate    -- per-article totals (passed/failed/total)
+    #   compute_verdict      -- composite verdict string ("conformant" /
+    #                           "partial conformance" / "NON-conformant")
+    #   serialize_envelope   -- json_envelope("audit-trail-conformance-check", ...)
+    #
+    # Marker family ``audit_trail_conformance_*`` -- same family as W607-AL
+    # (additive, not a separate prefix). Empty bucket -> byte-identical
+    # envelope on the success path. Both buckets are combined at envelope-
+    # emit time so consumers see the full degradation lineage in marker-
+    # emission order. The additive bucket stays distinguishable via its
+    # phase names (``score_classify`` / ``compute_predicate`` /
+    # ``compute_verdict`` / ``serialize_envelope``).
+    #
+    # AUDIT-TRAIL FAMILY pairing: with this in place, the family is dual-
+    # bucket plumbed:
+    #   cmd_audit_trail_verify       (W607-AI substrate + W607-CN aggregation)
+    #   cmd_audit_trail_conformance  (W607-AL substrate + W607-CO aggregation)
+    #   cmd_audit_trail_export       (W607-AP substrate; CP candidate)
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: every ``default=`` kwarg in a
+    # ``_run_check_co(...)`` call MUST be a literal constant (not a
+    # computed expression like ``len(checks) if ...``). A computed default
+    # expression evaluates BEFORE the wrap call, so a raise inside the
+    # expression escapes the try-block. cmd_sbom's W607-CG sealed this
+    # axis. cmd_taint's W607-CJ added the 5th discipline (move ``len()``
+    # INSIDE the closure, not at the kwarg-bind site).
+    #
+    # W607-AL/CO PHASE-NAME COLLISION (W607-CH): the substrate-CALL layer
+    # has NO ``serialize_envelope`` phase (the substrate uses ``to_json``
+    # at output, but it's NOT wrapped in W607-AL today). So no rename is
+    # required. If a future W607-AL revision adds a ``serialize_envelope``
+    # phase, rename W607-CO's to ``build_envelope`` to avoid collision.
+    _w607co_warnings_out: list[str] = []
+
+    def _run_check_co(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CO marker emission.
+
+        Mirror of ``_run_check_al`` shape (same
+        ``audit_trail_conformance_<phase>_failed:`` marker family) but
+        writes into ``_w607co_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607co_warnings_out.append(f"audit_trail_conformance_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    records = _run_check_al("load_records", _load_records, path, default=[])
 
     # Fix E (Pattern 2: silent fallbacks) — when no audit trail exists yet,
     # do NOT compute a 0/6 score and report NON-conformant. That misleads
@@ -507,12 +619,68 @@ def audit_trail_conformance_check(
             sys.exit(EXIT_GATE_FAILURE)
         return
 
-    chain_ok, chain_msg = _check_chain_integrity(path)
-    ts_ok, ts_msg = _check_timestamps(records) if records else (False, "no records loaded")
-    actor_ok, actor_msg = _check_actors(records) if records else (False, "no records loaded")
-    repro_ok, repro_msg = _check_reproducibility(records) if records else (False, "no records loaded")
-    verdict_ok, verdict_msg = _check_verdicts_and_rationale(records) if records else (False, "no records loaded")
-    retention_ok, retention_msg = _check_retention(records, retention_days) if records else (False, "no records loaded")
+    # W607-AL: each of the 6 Article-12 checks is a substrate boundary. A
+    # raise (corrupted record, encoding error, unexpected schema drift)
+    # previously crashed the whole conformance command; now the failing
+    # check degrades to a FAIL with a structured marker and the remaining
+    # 5 still run.
+    chain_ok, chain_msg = _run_check_al(
+        "check_chain_integrity",
+        _check_chain_integrity,
+        path,
+        default=(False, "chain integrity check did not run"),
+    )
+    ts_ok, ts_msg = (
+        _run_check_al(
+            "check_timestamp_completeness",
+            _check_timestamps,
+            records,
+            default=(False, "timestamp completeness check did not run"),
+        )
+        if records
+        else (False, "no records loaded")
+    )
+    actor_ok, actor_msg = (
+        _run_check_al(
+            "check_actor_attribution",
+            _check_actors,
+            records,
+            default=(False, "actor attribution check did not run"),
+        )
+        if records
+        else (False, "no records loaded")
+    )
+    repro_ok, repro_msg = (
+        _run_check_al(
+            "check_reproducibility_metadata",
+            _check_reproducibility,
+            records,
+            default=(False, "reproducibility metadata check did not run"),
+        )
+        if records
+        else (False, "no records loaded")
+    )
+    verdict_ok, verdict_msg = (
+        _run_check_al(
+            "check_verdict_and_rationale",
+            _check_verdicts_and_rationale,
+            records,
+            default=(False, "verdict + rationale check did not run"),
+        )
+        if records
+        else (False, "no records loaded")
+    )
+    retention_ok, retention_msg = (
+        _run_check_al(
+            "check_retention",
+            _check_retention,
+            records,
+            retention_days,
+            default=(False, "retention check did not run"),
+        )
+        if records
+        else (False, "no records loaded")
+    )
 
     checks = [
         {"id": "chain_integrity", "passed": chain_ok, "message": chain_msg},
@@ -527,46 +695,149 @@ def audit_trail_conformance_check(
     # Runs ONLY with --persist. The persisted set covers ONLY failing
     # checks — passed checks aren't findings, and "not_run" states (the
     # no-trail branch handled above this point) are also skipped so we
-    # don't fabricate rows for checks that never executed. Wrapped in a
-    # try/except so a pre-W89 DB (without the ``findings`` table)
-    # degrades gracefully rather than crashing the standard text/JSON
-    # output path that legacy consumers depend on.
+    # don't fabricate rows for checks that never executed.
+    #
+    # W607-AL: the prior code had TWO nested Pattern-2 silent fallback
+    # blocks here -- an inner ``except sqlite3.OperationalError: pass``
+    # and an outer ``except Exception: pass``. Both are replaced with
+    # structured ``_run_check_al`` boundaries so the disclosure channel
+    # names which step crashed (open_findings_db / emit_findings /
+    # commit_findings) instead of degrading silently. The conformance
+    # checker still keeps working without a roam index because each
+    # wrapper has a sensible default.
     if persist:
-        try:
+
+        def _open_findings_db():
             from roam.commands.resolve import ensure_index
             from roam.db.connection import open_db
 
             ensure_index(quiet=True)
-            with open_db(readonly=False) as conn:
-                try:
-                    _emit_audit_trail_conformance_findings(
+            return open_db(readonly=False)
+
+        _db_ctx = _run_check_al("open_findings_db", _open_findings_db, default=None)
+        if _db_ctx is not None:
+            try:
+                with _db_ctx as conn:
+                    _run_check_al(
+                        "emit_findings",
+                        _emit_audit_trail_conformance_findings,
                         conn,
                         checks,
                         str(path),
                         retention_days,
                         AUDIT_TRAIL_CONFORMANCE_DETECTOR_VERSION,
+                        default=0,
                     )
-                    conn.commit()
-                except sqlite3.OperationalError:
-                    # findings table missing (pre-W89 schema) — degrade gracefully.
-                    pass
-        except Exception:
-            # Any other persist-side failure (missing index, etc.) must
-            # not break the read-side output that legacy consumers
-            # depend on. The detector-output path stays the source of
-            # truth; the registry mirror is best-effort.
-            pass
+                    _run_check_al(
+                        "commit_findings",
+                        conn.commit,
+                        default=None,
+                    )
+            except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+                # The context-manager exit itself raised (rare: e.g.
+                # OperationalError on close). Capture via the
+                # ``commit_findings`` phase since the most likely cause
+                # is a deferred-write failure flushing on close.
+                _w607al_warnings_out.append(
+                    f"audit_trail_conformance_commit_findings_failed:{type(exc).__name__}:{exc}"
+                )
 
-    passed = sum(1 for c in checks if c["passed"])
-    total = len(checks)
-    score = round(100 * passed / total)
+    # W607-CO -- score_classify boundary. Wraps the passed-count + score
+    # computation so a downstream refactor (e.g. a non-bool ``passed`` from
+    # a vocabulary refactor, or a __bool__-raising sentinel) surfaces a
+    # marker rather than crashing the envelope. Floor returns documented
+    # zero counts matching the no-trail branch shape so downstream
+    # verdict/compute_predicate stay non-null.
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: ``len(checks)`` / ``sum(...)`` are
+    # computed INSIDE the wrapped closure rather than at the call site -- a
+    # _BadChecksList whose ``__len__`` or ``__iter__`` raises would
+    # otherwise escape the try-block at kwarg-bind time. W978 5th-
+    # discipline (cmd_taint W607-CJ): move ``len()`` INSIDE the closure.
+    def _score_classify_checks(_checks):
+        _passed = sum(1 for c in _checks if c["passed"])
+        _total = len(_checks)
+        _score = round(100 * _passed / _total) if _total else 0
+        return {"passed": _passed, "total": _total, "score": _score}
 
-    if score == 100:
-        verdict = f"conformant ({passed}/{total} checks)"
-    elif score >= 67:
-        verdict = f"partial conformance ({passed}/{total} checks, score {score}/100)"
-    else:
-        verdict = f"NON-conformant ({passed}/{total} checks, score {score}/100)"
+    _score_dict = _run_check_co(
+        "score_classify",
+        _score_classify_checks,
+        checks,
+        default={"passed": 0, "total": 6, "score": 0},
+    )
+    passed = _score_dict["passed"]
+    total = _score_dict["total"]
+    score = _score_dict["score"]
+
+    # W607-CO -- compute_verdict boundary. Wraps the verdict-string
+    # assembly so a downstream f-string refactor (non-int passed/total
+    # from a vocabulary refactor) surfaces a marker rather than crashing
+    # the envelope. Floor must NOT re-interpolate the same values that
+    # tripped the closure (W978 first-hypothesis: a __format__-raising
+    # sentinel would re-raise inside the default f-string). Use the
+    # literal "audit-trail-conformance check completed" floor (LAW 6
+    # still holds: the line works standalone).
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: ``passed`` / ``total`` / ``score``
+    # are int locals already bound BEFORE the wrap call (they are simple
+    # Name lookups, not Call/Attribute/BinOp expressions), so kwarg-bind
+    # is safe. The f-string interpolation itself is what could raise --
+    # that lives INSIDE the closure.
+    def _build_verdict_str(_passed: int, _total: int, _score: int) -> str:
+        if _score == 100:
+            return f"conformant ({_passed}/{_total} checks)"
+        if _score >= 67:
+            return f"partial conformance ({_passed}/{_total} checks, score {_score}/100)"
+        return f"NON-conformant ({_passed}/{_total} checks, score {_score}/100)"
+
+    verdict = _run_check_co(
+        "compute_verdict",
+        _build_verdict_str,
+        passed,
+        total,
+        score,
+        default="audit-trail-conformance check completed",
+    )
+
+    # W607-AL -- a non-empty substrate bucket flips partial_success. We
+    # OR with any existing partial_success so we never DOWNGRADE a real
+    # failure-induced flag set elsewhere.
+    _w607al_partial = bool(_w607al_warnings_out)
+
+    # W607-CO -- compute_predicate boundary. Wraps the per-article totals
+    # extraction so a future ``checks[]`` schema refactor that drops or
+    # renames count fields surfaces a marker rather than crashing the
+    # envelope. Floor to documented zero-counts matching the no-trail
+    # branch shape so downstream summary fields stay non-null. W978
+    # discipline: ``default=`` is a literal dict, NOT a computed expression
+    # over the (potentially poisoned) inputs.
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: ``len(records)`` is computed
+    # INSIDE the wrapped closure -- passing the raw records list keeps
+    # the kwarg-bind step pure (no ``__len__`` call until we're inside
+    # the try-block). cmd_taint W607-CJ 5th-discipline anchor.
+    def _compute_predicate_fields(_records, _passed: int, _total: int) -> dict:
+        return {
+            "articles_checked": _total,
+            "articles_passed": _passed,
+            "articles_failed": _total - _passed,
+            "total_records": len(_records),
+        }
+
+    _pred_fields = _run_check_co(
+        "compute_predicate",
+        _compute_predicate_fields,
+        records,
+        passed,
+        total,
+        default={
+            "articles_checked": 6,
+            "articles_passed": 0,
+            "articles_failed": 6,
+            "total_records": 0,
+        },
+    )
 
     # W17.2 / Pattern 3c: the audit-trail conformance score and the
     # article-12-check readiness score are GENUINELY different metrics
@@ -592,14 +863,29 @@ def audit_trail_conformance_check(
             "which measures repo-level readiness artifacts. "
             "Reference: EU AI Act Article 12 (event logging)."
         ),
-        "checks_passed": passed,
-        "checks_total": total,
-        "total_records": len(records),
+        "checks_passed": _pred_fields.get("articles_passed", passed),
+        "checks_total": _pred_fields.get("articles_checked", total),
+        "total_records": _pred_fields.get("total_records", len(records)),
         "audit_trail_path": str(path),
         "retention_days_required": retention_days,
         "schema_reference": "EU AI Act Regulation 2024/1689, Article 12",
         "disclaimer": "Triage signal only — not legal advice.",
     }
+    # W607-AL / W607-CO: thread substrate-CALL markers AND aggregation-
+    # phase markers onto BOTH summary.warnings_out AND top-level
+    # envelope.warnings_out so consumers reading either surface see the
+    # full disclosure lineage. Both buckets share the canonical
+    # ``audit_trail_conformance_*`` marker family (W607-CO is additive,
+    # not a separate prefix); the additive bucket stays distinguishable
+    # via its phase names (``score_classify`` / ``compute_predicate`` /
+    # ``compute_verdict`` / ``serialize_envelope``). Non-empty combined
+    # bucket flips partial_success. Empty combined bucket on the clean
+    # path keeps the envelope byte-identical to the pre-W607-AL/CO
+    # command (hash-stable happy path).
+    _combined_warnings_out = list(_w607al_warnings_out) + list(_w607co_warnings_out)
+    if _combined_warnings_out:
+        summary["warnings_out"] = list(_combined_warnings_out)
+        summary["partial_success"] = True
 
     if sarif:
         from roam.output.sarif import write_sarif
@@ -611,18 +897,60 @@ def audit_trail_conformance_check(
         elif not json_mode:
             click.echo(f"VERDICT: {verdict} — SARIF written to {sarif_output}")
     elif json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "audit-trail-conformance-check",
-                    summary=summary,
-                    checks=checks,
-                    # Top-level disclaimer so procurement consumers can't miss it.
-                    disclaimer="Triage signal only — not legal advice. Compliance depends on full system context.",
-                    schema_reference="EU AI Act Regulation 2024/1689, Article 12",
-                )
-            )
+        envelope_kwargs: dict = {
+            "summary": summary,
+            "checks": checks,
+            # Top-level disclaimer so procurement consumers can't miss it.
+            "disclaimer": "Triage signal only — not legal advice. Compliance depends on full system context.",
+            "schema_reference": "EU AI Act Regulation 2024/1689, Article 12",
+        }
+        # W607-AL / W607-CO: mirror BOTH substrate-CALL markers AND
+        # aggregation-phase markers at the top level too so a consumer
+        # reading envelope.warnings_out (rather than
+        # envelope.summary.warnings_out) sees the same disclosure.
+        if _combined_warnings_out:
+            envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
+
+        # W607-CO -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("audit-trail-conformance-check", ...)``
+        # would otherwise crash AFTER all substrate + aggregation signals
+        # were already gathered. Floor to a minimal envelope stub so
+        # consumers still receive a parseable JSON object with the marker
+        # attached + the canonical command name. Mirror of cmd_taint's
+        # W607-CJ serialize_envelope floor pattern.
+        _envelope_floor: dict = {
+            "command": "audit-trail-conformance-check",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": verdict,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out),
+            },
+            "warnings_out": list(_combined_warnings_out),
+        }
+        _envelope = _run_check_co(
+            "serialize_envelope",
+            json_envelope,
+            "audit-trail-conformance-check",
+            default=_envelope_floor,
+            **envelope_kwargs,
         )
+        # W607-CO -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``audit_trail_conformance_serialize_envelope_failed:`` marker
+        # was appended to ``_w607co_warnings_out`` and the floor stub
+        # carries only the pre-raise combined list. Rebuild the floor
+        # stub's warnings_out so the new marker reaches the JSON output.
+        # Clean path -> envelope is the real json_envelope return value,
+        # no rebuild needed.
+        if _envelope is _envelope_floor and _w607co_warnings_out:
+            _combined_warnings_out = list(_w607al_warnings_out) + list(_w607co_warnings_out)
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+            _envelope = _envelope_floor
+
+        click.echo(to_json(_envelope))
     elif not sarif:
         click.echo(f"VERDICT: {verdict}")
         click.echo(f"  path:    {path}")

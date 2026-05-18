@@ -340,7 +340,10 @@ def load_suppressions_typed(
     does. Pre-W1032 callers that don't supply ``warnings_out`` retain
     byte-identical silent-empty-list behaviour.
     """
-    return [RuleFileSuppression.from_dict(d) for d in load_suppressions(project_root, warnings_out=warnings_out)]
+    return [
+        RuleFileSuppression.from_dict(d, warnings_out=warnings_out)
+        for d in load_suppressions(project_root, warnings_out=warnings_out)
+    ]
 
 
 def is_suppressed(

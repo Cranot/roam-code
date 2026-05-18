@@ -76,20 +76,32 @@ _CANONICAL_ENVELOPE_KEYS: tuple[str, ...] = (
 def _build_snapshot() -> dict[str, Any]:
     """Capture the current build's outbound surface as a snapshot dict.
 
-    Reads from ``roam.cli._COMMANDS`` + ``roam.cli._DEPRECATED_COMMANDS`` +
-    Click param introspection per command + ``roam.surface_counts`` for the
+    Reads from the AST-parsed ``_COMMANDS`` dict (via
+    :func:`roam.surface_counts.cli_commands`) + ``roam.cli._DEPRECATED_COMMANDS``
+    + Click param introspection per command + ``roam.surface_counts`` for the
     AST-derived MCP tool / preset enumeration. The runtime ``roam.mcp_server``
     import is deliberately avoided here for the same reason
     ``cmd_surface._build_surface()`` avoids it (fragile on fresh installs).
+
+    W420 cascade: command names come from the AST source of truth (not the
+    runtime ``roam.cli._COMMANDS`` dict mutated by plugin discovery). The
+    compatibility baseline must reflect the shipped surface
+    (``pip install roam-code``); plugin commands surface separately via
+    ``roam plugins list``. ``_DEPRECATED_COMMANDS`` and ``_CATEGORIES`` are
+    plugin-stable (not mutated by ``_ensure_plugin_commands_loaded``) so
+    runtime reads are safe.
     """
-    from roam.cli import _CATEGORIES, _COMMANDS, _DEPRECATED_COMMANDS
+    from roam.cli import _CATEGORIES, _DEPRECATED_COMMANDS
+    from roam.surface_counts import cli_commands as _cli_commands_ast
     from roam.surface_counts import mcp_preset_counts, mcp_tool_names
+
+    _commands = _cli_commands_ast()
 
     # Commands + flags. Click param introspection per canonical command.
     commands: dict[str, dict[str, Any]] = {}
     canonical_seen: set[tuple[str, str]] = set()
-    for name in sorted(_COMMANDS):
-        module_path, func_name = _COMMANDS[name]
+    for name in sorted(_commands):
+        module_path, func_name = _commands[name]
         canonical_seen.add((module_path, func_name))
         flags = _introspect_flags(module_path, func_name)
         commands[name] = {

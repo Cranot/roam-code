@@ -72,6 +72,7 @@ import click
 from roam.capability import roam_capability
 from roam.evidence.completeness_compat import compute_completeness
 from roam.output.formatter import format_table, json_envelope, to_json
+from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
 # Completeness ladder
@@ -356,8 +357,124 @@ def evidence_diff(ctx, old_path, new_path):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
-    old = _load_packet(old_path)
-    new = _load_packet(new_path)
+    # --- W607-AX: substrate-CALL marker plumbing -------------------------
+    # cmd_evidence_diff is the SIBLING validator to cmd_evidence_doctor
+    # (W607-AT). Both consume the W1266 raw-dict completeness scorer per
+    # the docstring at evidence/completeness_compat.py: "Both
+    # cmd_evidence_doctor and cmd_evidence_diff recompute the W210
+    # evidence_completeness() projection locally." Plumbing both closes
+    # the raw-dict-completeness boundary for the validator family.
+    #
+    # Substrate boundaries wrapped here:
+    #
+    #   load_packet_old / load_packet_new   (JSON read + parse x2)
+    #   diff_refs_actor / diff_refs_authority / diff_refs_environment
+    #   diff_findings
+    #   diff_artifacts
+    #   diff_completeness     (W1266 raw-dict completeness scorer)
+    #   diff_scalar_verdicts  (verdict / risk_level scalar drift)
+    #   diff_scalar_timing    (W210 timing drift)
+    #   extract_stale_old / extract_stale_new   (W1262 staleness)
+    #   build_verdict         (one-line summary scorer)
+    #
+    # Each raise becomes an
+    # ``evidence_diff_<phase>_failed:<exc_class>:<detail>`` marker via
+    # ``_w607ax_warnings_out``. partial_success flips on any non-empty
+    # bucket. Empty bucket on the clean path keeps the envelope shape
+    # byte-identical to the pre-W607-AX command.
+    #
+    # PATTERN-2 CHECK: pre-W607-AX cmd_evidence_diff has ZERO bare
+    # ``except ...: pass`` Pattern-2 silent fallbacks. The defensive
+    # ``isinstance(... , list)`` checks in _diff_refs / _diff_findings /
+    # _diff_artifacts return structured empties (not silent passes), so
+    # there is no Pattern-2 antipattern to eliminate. The AST drift-guard
+    # (test 11 below) pins this for the future.
+    #
+    # VALIDATOR-FAMILY CLOSURE milestone: with W607-AT (doctor) and
+    # W607-AX (diff) both plumbed, the evidence-compiler validator family
+    # surfaces markers on the SAME shared boundary (W1266 raw-dict
+    # completeness scorer). A raise anywhere in either validator surfaces
+    # a marker rather than crashing.
+    _w607ax_warnings_out: list[str] = []
+
+    def _run_check_ax(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AX marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an
+        ``evidence_diff_<phase>_failed:<exc_class>:<detail>`` marker
+        via ``_w607ax_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ax_warnings_out.append(f"evidence_diff_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # --- W607-CK: aggregation-phase marker plumbing (additive) -----------
+    # cmd_evidence_diff is the ChangeEvidence-packet diff renderer (W225
+    # origin). With W607-AX covering the substrate-CALL layer (13 phases),
+    # W607-CK additively wraps the AGGREGATION-PHASE layer that sits ON
+    # TOP of those substrate signals:
+    #
+    #   - ``compute_drift_summary`` -- build the summary dict
+    #                                  (drift counts + verdict carry).
+    #                                  Floors to a minimal summary so the
+    #                                  envelope still emits with the
+    #                                  W607-AX-derived signals intact.
+    #   - ``compute_verdict``       -- final verdict text (carries the
+    #                                  literal-floor discipline; cmd_evidence_diff
+    #                                  does NOT emit risk_level so the floor
+    #                                  is a LITERAL "evidence-diff completed
+    #                                  (risk_level low)" rather than an
+    #                                  f-string interpolation of upstream
+    #                                  values).
+    #   - ``auto_log``              -- active-run ledger write. cmd_evidence_diff
+    #                                  did NOT auto-log pre-W607-CK; W607-CK
+    #                                  ADDS the call inside the wrap so an
+    #                                  HMAC chain-misshape / filesystem
+    #                                  failure surfaces a marker rather than
+    #                                  crashing the envelope.
+    #   - ``serialize_envelope``    -- ``json_envelope("evidence-diff", ...)``
+    #                                  projection. Floor to a parseable
+    #                                  stub so consumers still receive
+    #                                  structured JSON with the marker
+    #                                  attached + the canonical command
+    #                                  name.
+    #
+    # All boundaries share the canonical ``evidence_diff_*`` marker family
+    # (same as W607-AX; W607-CK is ADDITIVE, not a separate prefix). The
+    # two buckets (``_w607ax_warnings_out`` substrate-CALL +
+    # ``_w607ck_warnings_out`` aggregation-phase) combine at envelope-emit
+    # time so consumers see the full degradation lineage.
+    #
+    # EVIDENCE-COMPILER QUARTET milestone: with cmd_pr_bundle (W607-AE+BW),
+    # cmd_pr_replay (W607-AH+CA), cmd_evidence_doctor (W607-AT+CF), and
+    # cmd_evidence_diff (W607-AX+CK), every evidence-compiler-layer
+    # command carries substrate-CALL + aggregation-phase W607 coverage.
+    _w607ck_warnings_out: list[str] = []
+
+    def _run_check_ck(phase: str, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CK marker emission.
+
+        Mirror of ``_run_check_ax`` shape (same
+        ``evidence_diff_<phase>_failed:`` marker family) but writes into
+        ``_w607ck_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ck_warnings_out.append(f"evidence_diff_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    old = _run_check_ax("load_packet_old", _load_packet, old_path, default={})
+    if old is None:
+        old = {}
+    new = _run_check_ax("load_packet_new", _load_packet, new_path, default={})
+    if new is None:
+        new = {}
 
     # Hash drift
     old_hash = old.get("content_hash")
@@ -374,9 +491,39 @@ def evidence_diff(ctx, old_path, new_path):
         schema_drift_block = {"old": old_schema, "new": new_schema}
 
     # Refs (W182)
-    added_actor, removed_actor = _diff_refs(old, new, "actor_refs", "actor_kind", "actor_id")
-    added_authority, removed_authority = _diff_refs(old, new, "authority_refs", "authority_kind", "authority_id")
-    added_env, removed_env = _diff_refs(old, new, "environment_refs", "env_kind", "env_id")
+    actor_pair = _run_check_ax(
+        "diff_refs_actor",
+        _diff_refs,
+        old,
+        new,
+        "actor_refs",
+        "actor_kind",
+        "actor_id",
+        default=([], []),
+    )
+    added_actor, removed_actor = actor_pair if actor_pair is not None else ([], [])
+    authority_pair = _run_check_ax(
+        "diff_refs_authority",
+        _diff_refs,
+        old,
+        new,
+        "authority_refs",
+        "authority_kind",
+        "authority_id",
+        default=([], []),
+    )
+    added_authority, removed_authority = authority_pair if authority_pair is not None else ([], [])
+    env_pair = _run_check_ax(
+        "diff_refs_environment",
+        _diff_refs,
+        old,
+        new,
+        "environment_refs",
+        "env_kind",
+        "env_id",
+        default=([], []),
+    )
+    added_env, removed_env = env_pair if env_pair is not None else ([], [])
 
     added_refs = {
         "actor_refs": added_actor,
@@ -390,21 +537,60 @@ def evidence_diff(ctx, old_path, new_path):
     }
 
     # Verdict-level scalars
-    changed_verdicts = _diff_scalar_fields(old, new, ("verdict", "risk_level"))
+    changed_verdicts = _run_check_ax(
+        "diff_scalar_verdicts",
+        _diff_scalar_fields,
+        old,
+        new,
+        ("verdict", "risk_level"),
+        default=[],
+    )
+    if changed_verdicts is None:
+        changed_verdicts = []
 
     # Findings + artifacts
-    added_findings, removed_findings = _diff_findings(old, new)
-    added_artifacts, removed_artifacts = _diff_artifacts(old, new)
+    findings_pair = _run_check_ax(
+        "diff_findings",
+        _diff_findings,
+        old,
+        new,
+        default=([], []),
+    )
+    added_findings, removed_findings = findings_pair if findings_pair is not None else ([], [])
+    artifacts_pair = _run_check_ax(
+        "diff_artifacts",
+        _diff_artifacts,
+        old,
+        new,
+        default=([], []),
+    )
+    added_artifacts, removed_artifacts = artifacts_pair if artifacts_pair is not None else ([], [])
 
-    # Completeness deltas (W210 item 6)
-    changed_completeness, regressions, improvements = _diff_completeness(old, new)
+    # Completeness deltas (W210 item 6). W1266 - shared raw-dict scorer.
+    # A raise here is the validator-family closure boundary: same shared
+    # surface as cmd_evidence_doctor's classify_completeness phase.
+    completeness_triple = _run_check_ax(
+        "diff_completeness",
+        _diff_completeness,
+        old,
+        new,
+        default=([], [], []),
+    )
+    changed_completeness, regressions, improvements = (
+        completeness_triple if completeness_triple is not None else ([], [], [])
+    )
 
     # Timing drift (W210 item 2) — the three change-scope timestamps.
-    timing_drift = _diff_scalar_fields(
+    timing_drift = _run_check_ax(
+        "diff_scalar_timing",
+        _diff_scalar_fields,
         old,
         new,
         ("context_read_at", "edits_started_at", "edits_completed_at"),
+        default=[],
     )
+    if timing_drift is None:
+        timing_drift = []
 
     # W1262: staleness signal (W1254 producer). Read ``evidence_stale``
     # + ``stale_reasons`` from each packet so the diff surfaces the
@@ -418,40 +604,133 @@ def evidence_diff(ctx, old_path, new_path):
         reasons = [r for r in raw_reasons if isinstance(r, str)] if isinstance(raw_reasons, list) else []
         return flag, reasons
 
-    old_stale, old_stale_reasons = _extract_stale(old)
-    new_stale, new_stale_reasons = _extract_stale(new)
+    old_stale_pair = _run_check_ax(
+        "extract_stale_old",
+        _extract_stale,
+        old,
+        default=(False, []),
+    )
+    old_stale, old_stale_reasons = old_stale_pair if old_stale_pair is not None else (False, [])
+    new_stale_pair = _run_check_ax(
+        "extract_stale_new",
+        _extract_stale,
+        new,
+        default=(False, []),
+    )
+    new_stale, new_stale_reasons = new_stale_pair if new_stale_pair is not None else (False, [])
     stale_drift = (old_stale != new_stale) or (sorted(old_stale_reasons) != sorted(new_stale_reasons))
 
     # Verdict + summary counts
-    verdict = _build_verdict(
+    verdict = _run_check_ax(
+        "build_verdict",
+        _build_verdict,
         hash_drift=hash_drift_block is not None,
         schema_drift=schema_drift_block is not None,
         regressions=len(regressions),
         improvements=len(improvements),
         changed_verdicts=len(changed_verdicts),
+        default="verdict scorer raised; see warnings_out",
+    )
+    if verdict is None:
+        verdict = "verdict scorer raised; see warnings_out"
+
+    # W607-CK -- compute_drift_summary boundary. Builds the drift-totals
+    # summary block from the W607-AX substrate signals. Floors to a
+    # MINIMAL summary so the envelope still emits with the substrate
+    # signals intact when a future refactor breaks the dict-build path
+    # (e.g. a stale ``str``/``int`` cast that raises). W978 literal-floor
+    # discipline: the floor's ``verdict`` is a LITERAL string, NOT an
+    # f-string-interpolated copy of the upstream ``verdict`` -- because
+    # the same value that tripped the closure could re-raise inside the
+    # default f-string formatter. Mirror of cmd_evidence_doctor W607-CF
+    # compute_verdict floor discipline.
+    def _build_drift_summary() -> dict:
+        return {
+            "verdict": verdict,
+            "partial_success": False,
+            "hash_drift": hash_drift_block is not None,
+            "schema_drift": schema_drift_block is not None,
+            "regressions": len(regressions),
+            "improvements": len(improvements),
+            "changed_verdicts": len(changed_verdicts),
+            "added_refs_total": (len(added_actor) + len(added_authority) + len(added_env)),
+            "removed_refs_total": (len(removed_actor) + len(removed_authority) + len(removed_env)),
+            "added_findings": len(added_findings),
+            "removed_findings": len(removed_findings),
+            "added_artifacts": len(added_artifacts),
+            "removed_artifacts": len(removed_artifacts),
+            # W1262: staleness signal pair from W1254. ``stale_drift`` is
+            # True when the boolean flipped OR the reasons set changed; it
+            # surfaces a re-run that addressed (or introduced) staleness.
+            "old_stale": old_stale,
+            "new_stale": new_stale,
+            "stale_drift": stale_drift,
+        }
+
+    summary = _run_check_ck(
+        "compute_drift_summary",
+        _build_drift_summary,
+        # W978 literal-floor discipline: every value is a LITERAL (no
+        # captured locals from upstream), so a closure raise above cannot
+        # re-crash inside the floor stub. ``partial_success: True`` because
+        # a degraded summary IS partial success.
+        default={
+            "verdict": "evidence-diff completed (risk_level low)",
+            "partial_success": True,
+            "hash_drift": False,
+            "schema_drift": False,
+            "regressions": 0,
+            "improvements": 0,
+            "changed_verdicts": 0,
+            "added_refs_total": 0,
+            "removed_refs_total": 0,
+            "added_findings": 0,
+            "removed_findings": 0,
+            "added_artifacts": 0,
+            "removed_artifacts": 0,
+            "old_stale": False,
+            "new_stale": False,
+            "stale_drift": False,
+        },
     )
 
-    summary = {
-        "verdict": verdict,
-        "partial_success": False,
-        "hash_drift": hash_drift_block is not None,
-        "schema_drift": schema_drift_block is not None,
-        "regressions": len(regressions),
-        "improvements": len(improvements),
-        "changed_verdicts": len(changed_verdicts),
-        "added_refs_total": (len(added_actor) + len(added_authority) + len(added_env)),
-        "removed_refs_total": (len(removed_actor) + len(removed_authority) + len(removed_env)),
-        "added_findings": len(added_findings),
-        "removed_findings": len(removed_findings),
-        "added_artifacts": len(added_artifacts),
-        "removed_artifacts": len(removed_artifacts),
-        # W1262: staleness signal pair from W1254. ``stale_drift`` is
-        # True when the boolean flipped OR the reasons set changed; it
-        # surfaces a re-run that addressed (or introduced) staleness.
-        "old_stale": old_stale,
-        "new_stale": new_stale,
-        "stale_drift": stale_drift,
-    }
+    # W607-CK -- compute_verdict boundary. cmd_evidence_diff does NOT emit
+    # a risk_level (it's a diff renderer, not a risk scorer), so the
+    # aggregation-phase compute_verdict simply rewrites the existing
+    # summary["verdict"] through a closure that could in principle apply
+    # post-aggregation transformations. The wrap surfaces a marker if a
+    # future "augment verdict with delta-count suffix" refactor (or any
+    # post-aggregation projection) raises. W978 literal-floor: the floor
+    # is a LITERAL constant, NOT an f-string of summary["verdict"].
+    def _compute_final_verdict() -> str:
+        return summary["verdict"]
+
+    final_verdict = _run_check_ck(
+        "compute_verdict",
+        _compute_final_verdict,
+        # W978 literal-floor discipline: NEVER f-string-interpolate the
+        # upstream verdict here -- it could be a non-string sentinel
+        # whose __format__/__str__ raises. Use a LITERAL value (mirror of
+        # cmd_evidence_doctor W607-CF "evidence-doctor completed
+        # (risk_level low)" literal-floor pattern; cmd_evidence_diff
+        # does not emit risk_level but keeps the same canonical floor
+        # shape for cross-quartet uniformity).
+        default="evidence-diff completed (risk_level low)",
+    )
+    if final_verdict is None:
+        final_verdict = "evidence-diff completed (risk_level low)"
+    summary["verdict"] = final_verdict
+
+    # W607-AX + W607-CK -- combined buckets. ``partial_success`` flips
+    # when EITHER bucket is non-empty -- mirrors the W607-AT + W607-CF
+    # bucket-merge pattern. Both buckets share the ``evidence_diff_*``
+    # marker family; the additive W607-CK bucket stays distinguishable
+    # in tests + audits via its phase names (compute_drift_summary /
+    # compute_verdict / auto_log / serialize_envelope).
+    _combined_warnings_out_ck: list[str] = list(_w607ax_warnings_out) + list(_w607ck_warnings_out)
+    if _combined_warnings_out_ck:
+        summary["warnings_out"] = list(_combined_warnings_out_ck)
+        summary["partial_success"] = True
 
     if json_mode:
         # Build the agent_contract.facts strings as concrete-noun
@@ -485,8 +764,35 @@ def evidence_diff(ctx, old_path, new_path):
         if hash_drift_block is not None:
             next_commands.append("roam attest verify")
 
-        envelope = json_envelope(
+        # W607-CK -- serialize_envelope boundary. Wraps the envelope
+        # serialisation so a downstream schema-shape refactor that breaks
+        # ``json_envelope("evidence-diff", ...)`` would otherwise crash
+        # AFTER all substrate + aggregation signals were already gathered.
+        # Floor to a minimal envelope stub so consumers still receive a
+        # parseable JSON object with the marker attached + the canonical
+        # command name. Mirror of cmd_evidence_doctor W607-CF /
+        # cmd_pr_analyze W607-BY / cmd_pr_risk W607-BU / cmd_attest
+        # W607-BT serialize_envelope floor pattern. W978 first-hypothesis
+        # discipline: the floor uses LITERAL string values rather than
+        # captured upstream locals -- a downstream sentinel that crashed
+        # in upstream phase would re-crash inside json.dumps when the
+        # floor stub is serialised. Literal values keep the floor
+        # JSON-safe.
+        _envelope_floor_ck: dict = {
+            "command": "evidence-diff",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": "evidence-diff completed (risk_level low)",
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out_ck),
+            },
+            "warnings_out": list(_combined_warnings_out_ck),
+        }
+        envelope = _run_check_ck(
+            "serialize_envelope",
+            json_envelope,
             "evidence-diff",
+            default=_envelope_floor_ck,
             summary=summary,
             budget=token_budget,
             old_path=str(old_path),
@@ -523,12 +829,98 @@ def evidence_diff(ctx, old_path, new_path):
                 "facts": facts,
                 "next_commands": next_commands,
             },
+            # W607-AX + W607-CK: mirror substrate-CALL + aggregation-phase
+            # markers at the top level too so consumers reading
+            # envelope.warnings_out (rather than envelope.summary.warnings_out)
+            # see the same disclosure. Use the combined bucket.
+            **({"warnings_out": list(_combined_warnings_out_ck)} if _combined_warnings_out_ck else {}),
         )
+        # W607-CK -- if serialize_envelope raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``evidence_diff_serialize_envelope_failed:`` marker was
+        # appended to ``_w607ck_warnings_out`` and the floor stub carries
+        # only the old combined list. Rebuild the floor stub's
+        # warnings_out so the new marker reaches the JSON output. Clean
+        # path -> envelope is the real json_envelope return, no rebuild.
+        if envelope is _envelope_floor_ck and _w607ck_warnings_out:
+            _combined_warnings_out_ck = list(_w607ax_warnings_out) + list(_w607ck_warnings_out)
+            _envelope_floor_ck["summary"]["warnings_out"] = list(_combined_warnings_out_ck)
+            _envelope_floor_ck["warnings_out"] = list(_combined_warnings_out_ck)
+            envelope = _envelope_floor_ck
+
+        # W607-CK -- auto_log boundary. cmd_evidence_diff did NOT
+        # auto-log pre-W607-CK; W607-CK ADDS the call inside the wrap so
+        # an HMAC chain-misshape / filesystem failure surfaces a marker
+        # rather than crashing the envelope after it was already built.
+        # Mirror of cmd_evidence_doctor W607-CF / cmd_pr_analyze W607-BY
+        # / cmd_pr_risk W607-BU auto_log pattern.
+        _run_check_ck(
+            "auto_log",
+            auto_log,
+            envelope,
+            action="evidence-diff",
+            target=f"{old_path} -> {new_path}",
+            default=None,
+        )
+        # W607-CK -- if auto_log raised, rebuild the envelope so the
+        # marker reaches the JSON output. Empty bucket (clean auto_log)
+        # -> envelope stays byte-identical to the version already built.
+        _existing_summary_wo_ck = summary.get("warnings_out") or []
+        if _w607ck_warnings_out and not any(
+            m.startswith("evidence_diff_auto_log_failed:") for m in _existing_summary_wo_ck
+        ):
+            _combined_warnings_out_ck = list(_w607ax_warnings_out) + list(_w607ck_warnings_out)
+            summary["warnings_out"] = list(_combined_warnings_out_ck)
+            summary["partial_success"] = True
+            # Rebuild via wrapped serialize_envelope so a later
+            # rebuild-time raise still surfaces a marker.
+            envelope = _run_check_ck(
+                "serialize_envelope",
+                json_envelope,
+                "evidence-diff",
+                default=_envelope_floor_ck,
+                summary=summary,
+                budget=token_budget,
+                old_path=str(old_path),
+                new_path=str(new_path),
+                hash_drift=hash_drift_block,
+                schema_drift=schema_drift_block,
+                added_refs=added_refs,
+                removed_refs=removed_refs,
+                changed_verdicts=changed_verdicts,
+                added_findings=added_findings,
+                removed_findings=removed_findings,
+                added_artifacts=added_artifacts,
+                removed_artifacts=removed_artifacts,
+                changed_completeness=changed_completeness,
+                regressions=regressions,
+                improvements=improvements,
+                timing_drift=timing_drift,
+                staleness={
+                    "old": {
+                        "stale": old_stale,
+                        "stale_reasons": old_stale_reasons,
+                    },
+                    "new": {
+                        "stale": new_stale,
+                        "stale_reasons": new_stale_reasons,
+                    },
+                    "drift": stale_drift,
+                },
+                agent_contract={
+                    "facts": facts,
+                    "next_commands": next_commands,
+                },
+                warnings_out=list(_combined_warnings_out_ck),
+            )
+
         click.echo(to_json(envelope))
         return
 
-    # Text mode
-    click.echo(f"VERDICT: {verdict}")
+    # Text mode -- W607-CK: surface the final_verdict (carries the
+    # aggregation-phase compute_verdict result) so the text rendering
+    # stays in lockstep with the JSON envelope summary.verdict.
+    click.echo(f"VERDICT: {final_verdict}")
     click.echo(f"  old: {old_path}")
     click.echo(f"  new: {new_path}")
     click.echo("")

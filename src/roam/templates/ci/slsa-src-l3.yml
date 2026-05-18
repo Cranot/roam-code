@@ -88,6 +88,8 @@ jobs:
             --sign \
             --keyless
 
+      # Hard gate: non-zero exit on HMAC chain tamper breaks the pipeline
+      # before any signed attestation is uploaded.
       - name: Verify run-ledger HMAC chain integrity
         run: roam runs verify
 

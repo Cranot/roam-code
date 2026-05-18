@@ -19,6 +19,10 @@ import json as _json
 from pathlib import Path
 from typing import Any, Callable
 
+from roam.commands.cmd_auth_gaps import (
+    _auth_gap_confidence_tier,
+    _auth_gap_finding_kind,
+)
 from roam.output._severity import _legacy_level_map, to_sarif_level
 from roam.output.formatter import WarningsOut
 
@@ -887,13 +891,16 @@ def _load_suppressions(
             location = entry.get("location")
             if not (rule_id and location):
                 continue
+            # W744 — prefer sarif_status when set; fall back to legacy
+            # status field for byte-identity with pre-W744 entries.
+            status_value = entry.get("sarif_status") or entry.get("status") or "accepted"
             rows.append(
                 {
                     "rule_id": rule_id,
                     "location": location,
                     "reason": entry.get("reason", ""),
                     "kind": entry.get("kind", "external"),
-                    "status": entry.get("status", "accepted"),
+                    "status": status_value,
                     "finding_id": str(fid),
                 }
             )
@@ -1024,7 +1031,7 @@ def _load_suppressions_typed(
         # entry without rule_id + location is invisible to SARIF.
         if not (rule_id and location):
             continue
-        out.append(FindingIdSuppression.from_dict(str(fid), entry))
+        out.append(FindingIdSuppression.from_dict(str(fid), entry, warnings_out=warnings_out))
     return out
 
 
@@ -1084,6 +1091,13 @@ def _apply_suppressions_typed(results: list[dict], suppressions: list) -> list[d
       the on-disk value to ``None`` (i.e. anything outside the closed
       ``{safe, acknowledged, wont-fix}`` enumeration, including the
       legacy unwritten case).
+
+    W744 — status-field split. ``sarif_status`` (new, closed enum
+    ``suppressed`` / ``notSuppressed``) takes precedence over the legacy
+    ``status`` field when set. ``policy_status`` is intentionally NOT
+    consumed here — SARIF emission and policy decisions are orthogonal
+    concerns; findings reports / policy-decision events consume
+    ``policy_status`` instead.
     """
     suppression_map: dict[tuple[str, str], "object"] = {}
     for s in suppressions:
@@ -1108,10 +1122,13 @@ def _apply_suppressions_typed(results: list[dict], suppressions: list) -> list[d
             pass
         match = suppression_map.get((rule_id, loc_key))
         if match is not None:
+            # W744 — prefer sarif_status when set; fall back to legacy
+            # status for byte-identity with pre-W744 on-disk entries.
+            status_value = getattr(match, "sarif_status", None) or match.status or "accepted"
             r["suppressions"] = [
                 {
                     "kind": "external",
-                    "status": match.status or "accepted",
+                    "status": status_value,
                     "justification": match.reason or "",
                 }
             ]
@@ -3412,13 +3429,9 @@ def auth_gaps_to_sarif(findings: list[dict]) -> dict:
     emitted so consumers can introspect the rule vocabulary even on a
     clean run).
     """
-    # Lazy import: avoids a top-of-module cycle between
-    # roam.output.sarif and roam.commands.cmd_auth_gaps. The helper
-    # functions are pure (no side-effectful imports), so this is cheap.
-    from roam.commands.cmd_auth_gaps import (
-        _auth_gap_confidence_tier,
-        _auth_gap_finding_kind,
-    )
+    # W907 verified: no cycle exists; see tests/test_w907_cycle_hedge_audit.py
+    # (the helpers are imported at module top level alongside the other
+    # roam.* imports).
 
     # W1062-followup-2: stamp dashboard-filter tags on every rule descriptor
     # so a SARIF dashboard (GitHub Code Scanning / SonarQube) can slice the

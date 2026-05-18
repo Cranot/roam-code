@@ -17,7 +17,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.graph_helpers import bfs_nx
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.commands.resolve import ensure_index, find_symbol, resolve_file_symbols
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import (
     abbrev_kind,
@@ -30,20 +30,32 @@ from roam.output.formatter import (
 
 
 def _resolve_file_symbols(conn, target):
-    """If *target* looks like a file path, return all symbol IDs in that file."""
-    # Normalize separators for matching
-    normalized = target.replace("\\", "/")
+    """Return ``(file_id, sym_ids, tier)`` for a file-path-like target.
 
-    row = conn.execute(
-        "SELECT id FROM files WHERE path = ? OR path LIKE ?",
-        (normalized, f"%{normalized}"),
-    ).fetchone()
-    if row is None:
-        return None, None
+    Pattern-1 Variant D Wave C shim (audit reference:
+    ``(internal memo)``). Delegates to
+    :func:`roam.commands.resolve.resolve_file_symbols` so the silent
+    LIKE %name substring fallback is surfaced via a tier discriminator
+    rather than collapsed into the same shape as an exact-path match.
 
-    file_id = row["id"]
-    syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (file_id,)).fetchall()
-    return file_id, {s["id"] for s in syms}
+    Returns a 3-tuple ``(file_id, sym_ids, tier)``:
+
+    - ``file_id``: resolved ``files.id`` (or ``None`` on miss).
+    - ``sym_ids``: ``set[int]`` of symbol ids owned by ``file_id``
+      (empty on miss OR on a file indexed with zero symbols).
+    - ``tier``: ``"file"`` (exact match), ``"file_substring"`` (LIKE
+      fallback), or ``None`` (no match). Pass directly to
+      :func:`roam.output.formatter.resolution_disclosure` so callers
+      flip ``partial_success: true`` on the substring path.
+
+    Pre-Wave-C this helper returned a 2-tuple ``(file_id, sym_ids)``
+    and silently collapsed both tiers — the canonical Variant D failure
+    shape.
+    """
+    file_id, sym_ids, _fpath, tier = resolve_file_symbols(conn, target)
+    if file_id is None:
+        return None, None, None
+    return file_id, sym_ids, tier
 
 
 def _classify_zone(boundary_count):
@@ -109,9 +121,17 @@ def safe_zones(ctx, target, depth):
         resolution_tier: str = "symbol"
 
         # Try as file first
-        file_id, file_syms = _resolve_file_symbols(conn, target)
-        if file_syms:
-            seed_ids = file_syms
+        file_id, file_syms, file_tier = _resolve_file_symbols(conn, target)
+        if file_tier is not None:
+            # Pattern-1 Variant D Wave C: ``file_tier`` distinguishes
+            # an exact-path resolution (``"file"``) from a degraded
+            # LIKE %name substring fallback (``"file_substring"``).
+            # An empty ``file_syms`` set on a successful ``file`` tier
+            # is a valid resolved-but-empty shape (file indexed with
+            # zero symbols); gate this branch on tier rather than
+            # truthy-syms so the resolution stays tier-disclosable.
+            resolution_tier = file_tier
+            seed_ids = file_syms or set()
             # Fetch the canonical path for display
             frow = conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
             if frow:
@@ -262,9 +282,14 @@ def safe_zones(ctx, target, depth):
         )
         # W1245 Pattern-2 variant-D: suffix the verdict when the symbol-
         # target resolver succeeded through a degraded tier so LAW-6
-        # single-line consumers still see the disclosure.
+        # single-line consumers still see the disclosure. Pattern-1
+        # Variant D Wave C adds the ``file_substring`` case: distinct
+        # from the exact-``file`` tier so agents can tell a substring
+        # LIKE-fallback match from a fully-resolved exact-path success.
         if resolution_tier == "fuzzy":
             verdict = f"{verdict} [fuzzy resolution]"
+        elif resolution_tier == "file_substring":
+            verdict = f"{verdict} [file substring match]"
         disclosure = resolution_disclosure(resolution_tier, target=target_label)
 
         # --- JSON output ---

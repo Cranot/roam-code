@@ -35,6 +35,7 @@ from roam.db.findings import (
     CONFIDENCE_STRUCTURAL,
 )
 from roam.languages import JS_FAMILY_LANGUAGES
+from roam.output._severity import severity_rank
 
 # W1037: public surface declaration. New detector functions added below
 # follow the ``detect_*`` naming convention and should be appended to
@@ -4856,7 +4857,16 @@ def run_detectors(
         profile_filtered = pre_profile_count - len(findings)
 
         if confidence_filter:
-            findings = [f for f in findings if f["confidence"] == confidence_filter]
+            # W1005-followup-D: equality → floor semantic via canonical
+            # severity_rank(). Detectors emit {high, medium, low}; the Click
+            # Choice on ``--confidence`` (cmd_math) accepts the full W547
+            # 7-tier so agents can pass any canonical token. Floor keeps a
+            # finding when ``severity_rank(f.confidence) >= severity_rank(
+            # confidence_filter)``. Equality was the pre-W1005-followup-D
+            # semantic — kept only EXACTLY that tier; floor keeps that tier
+            # AND everything ranked above it.
+            _floor_rank = severity_rank(confidence_filter)
+            findings = [f for f in findings if severity_rank(f["confidence"]) >= _floor_rank]
 
         if return_meta:
             meta = {

@@ -105,17 +105,79 @@ def runs_start(ctx, agent):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
-    try:
-        root = find_project_root()
-        meta = start_run(root, agent=agent)
-    except ValueError as exc:
-        verdict = f"error: {exc}"
+    # W607-AS -- canonical W607 substrate-CALL plumbing. cmd_runs is the
+    # WRITER at the head of the audit-trail substrate (runs/ JSONL ledger
+    # + HMAC chain). Each wrapped phase becomes a structured
+    # ``runs_<phase>_failed:<exc_class>:<detail>`` marker on
+    # ``_w607as_warnings_out`` and the envelope still emits cleanly. The
+    # marker rides BOTH ``summary.warnings_out`` and top-level
+    # ``warnings_out`` so consumers reading either surface see the
+    # disclosure. ``partial_success`` flips on non-empty bucket.
+    #
+    # Audit-trail closure: W607-AS (write) + W607-AI (verify) +
+    # W607-AL (conform) + W607-AN (postmortem-read) close the
+    # producer/verifier/conformance/replay loop on the runs/ JSONL
+    # substrate -- a raise anywhere now surfaces a marker rather than
+    # crashing the substrate boundary.
+    _w607as_warnings_out: list[str] = []
+
+    def _run_check_as(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AS marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``runs_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607as_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607as_warnings_out.append(f"runs_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    root = _run_check_as("resolve_project_root", find_project_root, default=None)
+    if root is None:
+        # find_project_root raised -- surface the marker + bail with a
+        # usage-error envelope rather than crashing.
+        verdict = "error: could not resolve project root"
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "runs-start",
-                        summary={"verdict": verdict, "partial_success": True, "started": False},
+                        summary={
+                            "verdict": verdict,
+                            "partial_success": True,
+                            "started": False,
+                            "warnings_out": list(_w607as_warnings_out),
+                        },
+                        warnings_out=list(_w607as_warnings_out),
+                    )
+                )
+            )
+            ctx.exit(2)
+        click.echo(f"VERDICT: {verdict}")
+        ctx.exit(2)
+
+    try:
+        meta = _run_check_as("start_run", start_run, root, agent=agent, default=None)
+        if meta is None:
+            # start_run raised (caught by W607-AS) -- treat as a partial
+            # failure but preserve the original ValueError envelope shape.
+            raise ValueError(_w607as_warnings_out[-1] if _w607as_warnings_out else "start_run failed")
+    except ValueError as exc:
+        verdict = f"error: {exc}"
+        if json_mode:
+            err_summary = {"verdict": verdict, "partial_success": True, "started": False}
+            err_kwargs: dict = {"summary": err_summary}
+            if _w607as_warnings_out:
+                err_summary["warnings_out"] = list(_w607as_warnings_out)
+                err_kwargs["warnings_out"] = list(_w607as_warnings_out)
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "runs-start",
+                        **err_kwargs,
                     )
                 )
             )
@@ -138,18 +200,31 @@ def runs_start(ctx, agent):
         summary["mode"] = meta.mode
 
     if json_mode:
+        # W607-AS -- thread substrate-CALL markers onto BOTH
+        # summary.warnings_out AND top-level envelope.warnings_out so
+        # consumers reading either surface see the disclosure channel.
+        # ``partial_success`` flips when the bucket is non-empty. Empty
+        # bucket on the clean path keeps the envelope shape byte-identical
+        # to the pre-W607-AS runs-start (hash-stable happy path).
+        env_kwargs: dict = {
+            "summary": summary,
+            "budget": token_budget,
+            "run": meta.to_dict(),
+            "path": str(run_dir(root, meta.run_id)),
+            "hint": {
+                "env": "ROAM_RUN_ID",
+                "shell_export": f"export ROAM_RUN_ID={meta.run_id}",
+            },
+        }
+        if _w607as_warnings_out:
+            summary["warnings_out"] = list(_w607as_warnings_out)
+            summary["partial_success"] = True
+            env_kwargs["warnings_out"] = list(_w607as_warnings_out)
         click.echo(
             to_json(
                 json_envelope(
                     "runs-start",
-                    summary=summary,
-                    budget=token_budget,
-                    run=meta.to_dict(),
-                    path=str(run_dir(root, meta.run_id)),
-                    hint={
-                        "env": "ROAM_RUN_ID",
-                        "shell_export": f"export ROAM_RUN_ID={meta.run_id}",
-                    },
+                    **env_kwargs,
                 )
             )
         )
@@ -216,13 +291,52 @@ def runs_log(
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
-    root = find_project_root()
+    # W607-AS -- substrate-CALL plumbing for the runs-log path. This is
+    # the HMAC + write boundary: every event-append extends the rolling
+    # HMAC chain and writes a line to events.jsonl. The
+    # ``compute_hmac_and_write`` phase is the cryptographic
+    # chain-extension boundary -- HMAC failure or write-failure MUST abort
+    # the write (not silently corrupt the chain). See test
+    # ``test_runs_log_hmac_failure_aborts_write`` for the abort
+    # discipline.
+    _w607as_warnings_out: list[str] = []
+
+    def _run_check_as(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AS marker emission."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607as_warnings_out.append(f"runs_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    root = _run_check_as("resolve_project_root", find_project_root, default=None)
+    if root is None:
+        verdict = "error: could not resolve project root"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "runs-log",
+                        summary={
+                            "verdict": verdict,
+                            "partial_success": True,
+                            "state": "no_project_root",
+                            "logged": False,
+                            "warnings_out": list(_w607as_warnings_out),
+                        },
+                        warnings_out=list(_w607as_warnings_out),
+                    )
+                )
+            )
+            ctx.exit(2)
+        click.echo(f"VERDICT: {verdict}")
+        ctx.exit(2)
 
     if not run_id:
         # Resolve the implicit run: the most-recent in-progress one.
         # Surface a precise error if none is active so the caller knows
         # exactly what to do next.
-        active = latest_in_progress_run(root)
+        active = _run_check_as("latest_in_progress_run", latest_in_progress_run, root, default=None)
         if active is None:
             verdict = "no active run -- run `roam runs start --agent <name>` first"  # W20.6 error-msg consistency
             if json_mode:
@@ -250,7 +364,7 @@ def runs_log(
         run_id = active.run_id
 
     # Validate the run exists before logging.
-    meta = read_run_meta(root, run_id)
+    meta = _run_check_as("read_run_meta", read_run_meta, root, run_id, default=None)
     if meta is None:
         verdict = f"run {run_id} does not exist -- run `roam runs list` to find a valid run_id"
         if json_mode:
@@ -295,25 +409,68 @@ def runs_log(
         "signals": signals_dict,
         "elapsed_ms": int(elapsed_ms),
     }
-    seq = log_event(root, run_id, **event_fields)
+    # W607-AS HMAC-discipline note: the ``compute_hmac_and_write`` phase
+    # is the cryptographic chain-extension boundary. UNLIKE other W607
+    # phases, a raise here ABORTS the write entirely (no event line is
+    # written to events.jsonl) -- preserving chain integrity is more
+    # important than producing a marker. The ``_run_check_as`` wrap
+    # surfaces the marker; the ``seq is None`` check below skips the
+    # success envelope and produces an explicit partial_success envelope
+    # naming the abort.
+    seq = _run_check_as("compute_hmac_and_write", log_event, root, run_id, default=None, **event_fields)
+    if seq is None:
+        # HMAC or write-boundary failure -- abort the success path so the
+        # ledger does not silently report a successful write. Surface the
+        # marker on the envelope and exit non-zero.
+        verdict = "log aborted: hmac or write boundary raised (chain preserved)"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "runs-log",
+                        summary={
+                            "verdict": verdict,
+                            "partial_success": True,
+                            "state": "hmac_or_write_aborted",
+                            "logged": False,
+                            "warnings_out": list(_w607as_warnings_out),
+                        },
+                        warnings_out=list(_w607as_warnings_out),
+                    )
+                )
+            )
+            ctx.exit(2)
+        click.echo(f"VERDICT: {verdict}")
+        ctx.exit(2)
 
     verdict = f"logged event seq={seq} (action={action}) to {run_id}"
 
     if json_mode:
+        _log_summary = {
+            "verdict": verdict,
+            "partial_success": False,
+            "state": "ok",
+            "logged": True,
+            "run_id": run_id,
+            "seq": seq,
+        }
+        _log_kwargs: dict = {
+            "summary": _log_summary,
+            "budget": token_budget,
+            "event": {**event_fields, "seq": seq},
+        }
+        # W607-AS -- mirror warnings_out onto BOTH summary + envelope on
+        # the success path. Empty bucket -> envelope shape is byte-identical
+        # to the pre-W607-AS runs-log.
+        if _w607as_warnings_out:
+            _log_summary["warnings_out"] = list(_w607as_warnings_out)
+            _log_summary["partial_success"] = True
+            _log_kwargs["warnings_out"] = list(_w607as_warnings_out)
         click.echo(
             to_json(
                 json_envelope(
                     "runs-log",
-                    summary={
-                        "verdict": verdict,
-                        "partial_success": False,
-                        "state": "ok",
-                        "logged": True,
-                        "run_id": run_id,
-                        "seq": seq,
-                    },
-                    budget=token_budget,
-                    event={**event_fields, "seq": seq},
+                    **_log_kwargs,
                 )
             )
         )
@@ -367,10 +524,47 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
-    root = find_project_root()
+    # W607-AS -- substrate-CALL plumbing for the runs-end path. ``end_run``
+    # is the chain-root sealing boundary (produces what CGA later signs);
+    # ``emit_pr_bundle`` is the auto-bundle-ship boundary. Each raise
+    # surfaces a ``runs_<phase>_failed:`` marker without crashing the
+    # close-run path -- the run-close ALWAYS lands first (best-effort
+    # bundle emit must not block run-close, per existing W15.2 contract).
+    _w607as_warnings_out: list[str] = []
+
+    def _run_check_as(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AS marker emission."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607as_warnings_out.append(f"runs_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    root = _run_check_as("resolve_project_root", find_project_root, default=None)
+    if root is None:
+        verdict = "error: could not resolve project root"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "runs-end",
+                        summary={
+                            "verdict": verdict,
+                            "partial_success": True,
+                            "state": "no_project_root",
+                            "ended": False,
+                            "warnings_out": list(_w607as_warnings_out),
+                        },
+                        warnings_out=list(_w607as_warnings_out),
+                    )
+                )
+            )
+            ctx.exit(2)
+        click.echo(f"VERDICT: {verdict}")
+        ctx.exit(2)
 
     if not run_id:
-        active = latest_in_progress_run(root)
+        active = _run_check_as("latest_in_progress_run", latest_in_progress_run, root, default=None)
         if active is None:
             verdict = "no active run to end -- run `roam runs start --agent <name>` first"
             if json_mode:
@@ -398,20 +592,29 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
         run_id = active.run_id
 
     try:
-        meta = end_run(root, run_id, status=status)
+        meta = _run_check_as("end_run", end_run, root, run_id, status=status, default=None)
+        if meta is None:
+            # end_run raised (caught by W607-AS) -- treat as the existing
+            # error path but with the marker already on the bucket.
+            raise FileNotFoundError(_w607as_warnings_out[-1] if _w607as_warnings_out else "end_run failed")
     except (FileNotFoundError, ValueError) as exc:
         verdict = f"error: {exc}"
         if json_mode:
+            err_summary = {
+                "verdict": verdict,
+                "partial_success": True,
+                "state": "error",
+                "ended": False,
+            }
+            err_kwargs: dict = {"summary": err_summary}
+            if _w607as_warnings_out:
+                err_summary["warnings_out"] = list(_w607as_warnings_out)
+                err_kwargs["warnings_out"] = list(_w607as_warnings_out)
             click.echo(
                 to_json(
                     json_envelope(
                         "runs-end",
-                        summary={
-                            "verdict": verdict,
-                            "partial_success": True,
-                            "state": "error",
-                            "ended": False,
-                        },
+                        **err_kwargs,
                     )
                 )
             )
@@ -426,7 +629,14 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
     pr_bundle_state: str | None = None
     pr_bundle_partial = False
     if with_pr_bundle_emit:
-        pr_bundle_emitted, pr_bundle_state, pr_bundle_partial = _emit_pr_bundle_for_end(ctx, root)
+        _emit_result = _run_check_as(
+            "emit_pr_bundle",
+            _emit_pr_bundle_for_end,
+            ctx,
+            root,
+            default=(None, "emit_failed", True),
+        )
+        pr_bundle_emitted, pr_bundle_state, pr_bundle_partial = _emit_result
 
     verdict = f"ended run {meta.run_id} (status={meta.status})"
     if with_pr_bundle_emit:
@@ -464,6 +674,13 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
         }
         if pr_bundle_emitted is not None:
             env_payload["pr_bundle_emitted"] = pr_bundle_emitted
+        # W607-AS -- thread substrate-CALL markers onto BOTH summary +
+        # envelope. Empty bucket keeps the envelope byte-identical to the
+        # pre-W607-AS runs-end (hash-stable happy path).
+        if _w607as_warnings_out:
+            summary["warnings_out"] = list(_w607as_warnings_out)
+            summary["partial_success"] = True
+            env_payload["warnings_out"] = list(_w607as_warnings_out)
         click.echo(
             to_json(
                 json_envelope(
@@ -1024,37 +1241,189 @@ def runs_verify(ctx, run_id, verify_all):
         return
 
     results = [_verify_one_run(root, m.run_id) for m in all_runs]
-    total = len(results)
-    by_state: dict[str, int] = {}
-    total_events = 0
-    for r in results:
-        by_state[r["state"]] = by_state.get(r["state"], 0) + 1
-        total_events += int(r.get("events_verified", 0) or 0)
-    tampered = by_state.get("tampered", 0)
-    unsigned = by_state.get("unsigned", 0)
-    ok = by_state.get("ok", 0)
-    key_missing = by_state.get("key_missing", 0)
 
-    if tampered:
-        state = "tampered"
-        verdict = f"TAMPER DETECTED in {tampered}/{total} run{'s' if total != 1 else ''}"
-    elif key_missing:
-        state = "key_missing"
-        verdict = f"ledger key missing for {key_missing}/{total} run(s)"
-    elif unsigned:
-        # Pattern 2 (silent fallback): when ANY runs are unsigned, the
-        # overall state must reflect that — even if some other runs are
-        # ok. The verdict already names the mix ("X ok, Y unsigned"), so
-        # collapsing state="ok" on a mixed scan would contradict the
-        # verdict and let an agent reading only summary.state miss the
-        # advisory. ``partial_success=True`` is already set below.
-        state = "unsigned"
-        verdict = f"verified {total} run(s): {ok} ok, {unsigned} unsigned (legacy)"
-    else:
-        state = "ok"
-        verdict = f"verified {total} run(s), all signatures match"
+    # --- W607-CT: ADDITIVE aggregation-phase marker plumbing ------------
+    # W607-AS (runs-start/log/end) wraps the substrate-CALL boundaries
+    # (resolve_project_root / start_run / latest_in_progress_run /
+    # read_run_meta / compute_hmac_and_write / end_run / emit_pr_bundle);
+    # W607-CT extends marker coverage to the AGGREGATION-PHASE boundaries
+    # on the chain-VERIFY half of the runs ledger -- the multi-run
+    # ``--all`` path's compute_predicate / compute_verdict /
+    # serialize_envelope sites.
+    #
+    #   - ``compute_predicate``    -- per-result derivation of by_state
+    #                                 counts (tampered / unsigned / ok /
+    #                                 key_missing / total / total_events).
+    #                                 Floor to a literal "tampered=1, ok=0"
+    #                                 predicate set so the downstream
+    #                                 verdict still disambiguates from a
+    #                                 clean SAFE (Pattern-2 silent-fallback
+    #                                 discipline + chain-integrity floor).
+    #   - ``compute_verdict``      -- verdict string assembly + state
+    #                                 classification (4-way switch between
+    #                                 tampered / key_missing / unsigned /
+    #                                 ok). Floor to a literal
+    #                                 "Runs verification completed" string
+    #                                 per LAW 6 + W978 first-hypothesis
+    #                                 discipline (no re-interpolation of
+    #                                 the same values that just raised).
+    #   - ``serialize_envelope``   -- ``json_envelope("runs-verify", ...)``
+    #                                 projection (downstream contract
+    #                                 changes / shape regressions).
+    #
+    # cmd_runs is the HMAC-CHAINED EVENT LEDGER + verifier on the agent-OS
+    # ledger family. The W607-CT markers fire AT RUNTIME when an
+    # aggregation-phase boundary raises, complementing the W607-AS
+    # substrate-CALL coverage on runs-start/log/end. The chain-integrity
+    # invariant remains: a raise in compute_predicate floors to broken
+    # (tampered>=1) so the gate does not silently pass on a poisoned
+    # aggregation.
+    #
+    # Marker family ``runs_*`` -- same family as W607-AS (additive, not a
+    # separate prefix). Empty bucket -> byte-identical envelope on the
+    # success path.
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: every ``default=`` kwarg in a
+    # ``_run_check_ct(...)`` call MUST be a literal constant (not a
+    # computed expression like ``len(results) if ...``). cmd_sbom's
+    # W607-CG sealed this axis. cmd_taint's W607-CJ added the discipline
+    # of MOVING ``len()`` calls INSIDE the wrapped closure (not at
+    # kwarg-bind time). Floors below are literal-constant ints/strs.
+    _w607ct_warnings_out: list[str] = []
+
+    def _run_check_ct(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CT marker emission.
+
+        Mirror of ``_run_check_as`` shape (same ``runs_<phase>_failed:``
+        marker family) but writes into ``_w607ct_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ct_warnings_out.append(f"runs_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-CT -- compute_predicate boundary. Wraps the per-result
+    # aggregation step (by_state counts + total_events sum). A poisoned
+    # _BadResults whose ``__iter__`` raises would otherwise crash the
+    # aggregation. Floor to a "tampered=1" predicate set per Pattern-2 +
+    # chain-integrity discipline: a poisoned aggregation MUST land on
+    # tampered (the broken state), NEVER a clean SAFE. W978 discipline:
+    # default= is a literal dict with explicit ints, NOT a comprehension
+    # that re-walks the (potentially poisoned) results.
+    def _build_predicates(_results) -> dict:
+        _by_state: dict[str, int] = {}
+        _total_events = 0
+        for _r in _results:
+            _by_state[_r["state"]] = _by_state.get(_r["state"], 0) + 1
+            _total_events += int(_r.get("events_verified", 0) or 0)
+        _total = len(_results)
+        return {
+            "by_state": _by_state,
+            "total": _total,
+            "total_events": _total_events,
+            "tampered": _by_state.get("tampered", 0),
+            "unsigned": _by_state.get("unsigned", 0),
+            "ok": _by_state.get("ok", 0),
+            "key_missing": _by_state.get("key_missing", 0),
+        }
+
+    _pred = _run_check_ct(
+        "compute_predicate",
+        _build_predicates,
+        results,
+        default={
+            # Pattern-2 + chain-integrity silent-fallback discipline: a
+            # poisoned predicate floors to TAMPERED (the broken state),
+            # NOT a clean SAFE. The downstream verdict assembly then
+            # names the broken branch. Floor counts to 0/1 (literal-
+            # constant ints per W978 discipline) so the envelope's
+            # runs_verified / events_verified fields stay non-null on
+            # the floor path. tampered=1 ensures the gate-equivalent
+            # behaviour (ctx.exit(5) at the bottom of --all) still trips.
+            "by_state": {"tampered": 1},
+            "total": 0,
+            "total_events": 0,
+            "tampered": 1,
+            "unsigned": 0,
+            "ok": 0,
+            "key_missing": 0,
+        },
+    )
+    total = _pred["total"]
+    total_events = _pred["total_events"]
+    tampered = _pred["tampered"]
+    unsigned = _pred["unsigned"]
+    ok = _pred["ok"]
+    key_missing = _pred["key_missing"]
+
+    # W607-CT -- compute_verdict boundary. Wraps the verdict + state
+    # classifier together (they switch on the same predicates) so a
+    # downstream f-string refactor surfaces a marker rather than crashing
+    # the envelope. Floor MUST NOT re-interpolate the same values that
+    # tripped the closure (W978 first-hypothesis discipline). Use a
+    # literal "Runs verification completed" floor (LAW 6 still holds:
+    # the line works standalone). The state floors to "tampered" paired
+    # with partial_success=True per Pattern-2 chain-integrity discipline.
+    def _build_verdict_and_state(
+        _tampered: int,
+        _key_missing: int,
+        _unsigned: int,
+        _ok: int,
+        _total: int,
+    ) -> dict:
+        if _tampered:
+            return {
+                "state": "tampered",
+                "verdict": (f"TAMPER DETECTED in {_tampered}/{_total} run{'s' if _total != 1 else ''}"),
+            }
+        if _key_missing:
+            return {
+                "state": "key_missing",
+                "verdict": f"ledger key missing for {_key_missing}/{_total} run(s)",
+            }
+        if _unsigned:
+            # Pattern 2 (silent fallback): when ANY runs are unsigned, the
+            # overall state must reflect that -- even if some other runs are
+            # ok. The verdict already names the mix ("X ok, Y unsigned"), so
+            # collapsing state="ok" on a mixed scan would contradict the
+            # verdict and let an agent reading only summary.state miss the
+            # advisory. ``partial_success=True`` is already set below.
+            return {
+                "state": "unsigned",
+                "verdict": (f"verified {_total} run(s): {_ok} ok, {_unsigned} unsigned (legacy)"),
+            }
+        return {
+            "state": "ok",
+            "verdict": f"verified {_total} run(s), all signatures match",
+        }
+
+    _verdict_dict = _run_check_ct(
+        "compute_verdict",
+        _build_verdict_and_state,
+        tampered,
+        key_missing,
+        unsigned,
+        ok,
+        total,
+        default={
+            "state": "tampered",
+            "verdict": "Runs verification completed",
+        },
+    )
+    state = _verdict_dict["state"]
+    verdict = _verdict_dict["verdict"]
 
     partial_success = bool(tampered or unsigned or key_missing)
+
+    # W607-CT -- thread aggregation-phase markers onto BOTH
+    # summary.warnings_out AND the top-level envelope.warnings_out so
+    # consumers reading either surface see the disclosure channel. Empty
+    # bucket on the clean path keeps the envelope shape byte-identical
+    # to the pre-W607-CT runs-verify (hash-stable happy path).
+    if _w607ct_warnings_out:
+        partial_success = True
 
     summary = {
         "verdict": verdict,
@@ -1067,6 +1436,8 @@ def runs_verify(ctx, run_id, verify_all):
         "runs_unsigned": unsigned,
         "runs_key_missing": key_missing,
     }
+    if _w607ct_warnings_out:
+        summary["warnings_out"] = list(_w607ct_warnings_out)
 
     facts = [
         f"{total} run{'s' if total != 1 else ''} scanned",
@@ -1074,14 +1445,27 @@ def runs_verify(ctx, run_id, verify_all):
     ]
     next_commands = []
     if tampered:
-        first_bad = next((r for r in results if r["state"] == "tampered"), None)
+        # W607-CT W978 axis: ``r["state"]`` on a poisoned result whose
+        # ``__getitem__`` raises would crash here AFTER the predicate
+        # wrap already absorbed the same raise. Wrap the first_bad
+        # lookup in _run_check_ct so the iteration cannot escape the
+        # aggregation-phase guard. Floor to None -> the conditional
+        # below skips the next_command append (consumers see the
+        # tampered verdict + state, just without the per-run pointer).
+        def _find_first_bad(_results):
+            return next((r for r in _results if r["state"] == "tampered"), None)
+
+        first_bad = _run_check_ct("compute_predicate", _find_first_bad, results, default=None)
         if first_bad is not None:
             # CONSTRAINT 12 (CLAUDE.md): next_command must be a literal
             # copy-paste-executable ``roam <subcommand>`` string. Trailing
             # explanatory prose ("to see the broken chain") breaks paste
             # into a shell — keep the command bare; the surrounding
             # verdict already names the failure mode.
-            next_commands.append(f"roam runs verify {first_bad['run_id']}")
+            try:
+                next_commands.append(f"roam runs verify {first_bad['run_id']}")
+            except Exception as exc:  # noqa: BLE001 -- W607-CT defensive
+                _w607ct_warnings_out.append(f"runs_compute_predicate_failed:{type(exc).__name__}:{exc}")
     elif state == "ok":
         # CONSTRAINT 12: drop the trailing "to inspect run metadata" prose;
         # the verbose suffix is non-executable.
@@ -1094,20 +1478,60 @@ def runs_verify(ctx, run_id, verify_all):
         next_commands.append("roam runs start --agent <name>")
 
     if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "runs-verify",
-                    summary=summary,
-                    budget=token_budget,
-                    runs=results,
-                    agent_contract={
-                        "facts": facts,
-                        "next_commands": next_commands,
-                    },
-                )
-            )
+        # W607-CT -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("runs-verify", ...)`` would otherwise
+        # crash AFTER all aggregation signals were already gathered.
+        # Floor to a minimal envelope stub so consumers still receive a
+        # parseable JSON object with the marker attached + the canonical
+        # command name. Mirror of cmd_audit_trail_verify's W607-CN
+        # serialize_envelope floor pattern. Carry ``state`` + tampered
+        # count through to the floor so the broken-chain signal survives
+        # a json_envelope raise on the floor path -- a consumer parsing
+        # the floor stub still sees the broken state vs. a clean SAFE.
+        _envelope_floor: dict = {
+            "command": "runs-verify",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": verdict,
+                "state": state,
+                "partial_success": True,
+                "runs_tampered": tampered,
+                "warnings_out": list(_w607ct_warnings_out),
+            },
+            "warnings_out": list(_w607ct_warnings_out),
+        }
+        _envelope_kwargs: dict = {
+            "summary": summary,
+            "budget": token_budget,
+            "runs": results,
+            "agent_contract": {
+                "facts": facts,
+                "next_commands": next_commands,
+            },
+        }
+        if _w607ct_warnings_out:
+            _envelope_kwargs["warnings_out"] = list(_w607ct_warnings_out)
+        _envelope = _run_check_ct(
+            "serialize_envelope",
+            json_envelope,
+            "runs-verify",
+            default=_envelope_floor,
+            **_envelope_kwargs,
         )
+        # W607-CT -- if ``serialize_envelope`` raised AFTER the bucket
+        # was already snapshotted, the new
+        # ``runs_serialize_envelope_failed:`` marker was appended to
+        # ``_w607ct_warnings_out`` and the floor stub carries only the
+        # pre-raise list. Rebuild the floor stub's warnings_out so the
+        # new marker reaches the JSON output. Clean path -> envelope is
+        # the real json_envelope return value, no rebuild needed.
+        if _envelope is _envelope_floor and _w607ct_warnings_out:
+            _envelope_floor["summary"]["warnings_out"] = list(_w607ct_warnings_out)
+            _envelope_floor["warnings_out"] = list(_w607ct_warnings_out)
+            _envelope = _envelope_floor
+
+        click.echo(to_json(_envelope))
     else:
         click.echo(f"VERDICT: {verdict}")
         click.echo(f"  total_runs:     {total}")

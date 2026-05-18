@@ -4,43 +4,62 @@ This directory holds three sample deliverables Roam ships today: a
 codebase-architecture audit, a PR Replay engagement report, and the
 **Agent Governance Evidence Pack** sample for AI-change audit support.
 
+Every Governance Pack deliverable is a projection from one
+`ChangeEvidence` packet (carries `schema_version`, content hash, and
+explicit `redactions[]`). See `evidence-checklist.md` for the eight
+evidence questions (Q1-Q8) each engagement answers, and
+`control-mapping-README.md` for the YAML schema that drives the
+"Compliance evidence mapping" section.
+
 ## When to use
 
 - **Sales conversations about Governance Pack** — hand prospects
-  `sample-audit-report.md` so they see the artifact shape before signing.
+  [`sample-audit-report.md`](sample-audit-report.md) so they see the
+  artifact shape before signing.
 - **Customer onboarding** — use the sample as the base for the first
-  delivered report; the structure is engagement-ready.
+  delivered report; the structure is engagement-ready. Pick the export
+  profile up front (`internal` / `customer` / `audit` / `public`) — it
+  controls what fields surface in the rendered report and what lands in
+  `redactions[]`.
 - **AI policy / risk-committee briefings** — share the sample as the
-  neutral evidence layer the org's AI-change policy attests to.
+  neutral evidence layer the org's AI-change policy maps to (Roam
+  *supports evidence for* controls; it does not *certify* or *make
+  compliant*).
 
 ## Files
 
-- `sample-audit-report.md` — **Agent Governance Evidence Pack sample**
-  (illustrative). Mirrors the seven-section outline the paid deliverable
-  ships with: which agents changed what, context each agent read, risks
-  accepted vs. mitigated, who authorized risky edits, which tests closed
-  the loop, compliance-control cross-reference, and the disclaimer.
-- `evidence-checklist.md` — Per-section command index. Maps each section
-  of the Governance sample to the exact `roam` commands and envelope
-  fields that produce its evidence.
+- [`sample-audit-report.md`](sample-audit-report.md) — **Agent
+  Governance Evidence Pack sample** (illustrative). Mirrors the
+  eight-section outline the paid deliverable ships with: which agents
+  changed what, context each agent read, risks accepted vs. mitigated,
+  who authorized risky edits, which tests closed the loop,
+  compliance-control cross-reference, and the disclaimer.
+- [`evidence-checklist.md`](evidence-checklist.md) — Per-section command
+  index. Maps each section of the Governance sample to the exact `roam`
+  commands and envelope fields that produce its evidence, plus the
+  Q1-Q8 evidence-question crosswalk (who acted / what authority / what
+  context / what changed / what could break / what policy / what
+  verified / who accepted risk).
 - `audit-report.md.tmpl` — Markdown skeleton for the older codebase-
-  architecture audit. `{{PLACEHOLDER}}` slots for auto-content,
-  `<!-- TODO[narrative]: ... -->` slots for auditor prose.
+  architecture audit (pre-evidence-compiler era; kept for backward
+  compatibility). `{{PLACEHOLDER}}` slots for auto-content,
+  `<!-- TODO[narrative]: ... -->` slots for auditor prose. For new
+  engagements use the Governance Pack flow above.
 - `render.py` — Chains `roam audit --json` plus supporting commands, fills
   the auto-content slots of `audit-report.md.tmpl`, and emits a partial
   markdown file ready for narrative completion.
 - `sample-redacted.md` / `sample-redacted.pdf` — Redacted, narrative-
-  complete codebase-architecture audit (~12 pages).
-- `sample-pr-replay-team.md` — **PR Replay sample** (illustrative). The
-  shape `roam pr-replay --tier team` produces today. Read this before
-  quoting a paid PR Replay engagement.
-- `pr-replay-template.md` — Markdown skeleton the `roam pr-replay
-  --markdown` renderer mirrors. Drift between this template and the
-  rendered output is asserted in `tests/test_evidence_pr_replay.py`
-  (`test_pr_replay_emits_markdown`).
-- `control-mapping-README.md` — v1 schema reference for the YAML that
-  drives the "Compliance evidence mapping" section. Defines the closed
-  `wording_guard` enumeration enforced by
+  complete codebase-architecture audit (~12 pages, older template).
+- [`sample-pr-replay-team.md`](sample-pr-replay-team.md) — **PR Replay
+  sample** (illustrative). The shape `roam pr-replay --tier team`
+  produces today. Read this before quoting a paid PR Replay engagement.
+- [`pr-replay-template.md`](pr-replay-template.md) — Markdown skeleton
+  the `roam pr-replay --markdown` renderer mirrors. Drift between this
+  template and the rendered output is asserted in
+  `tests/test_evidence_pr_replay.py` (`test_pr_replay_emits_markdown`).
+- [`control-mapping-README.md`](control-mapping-README.md) — v1 schema
+  reference for the YAML that drives the "Compliance evidence mapping"
+  section. Defines the closed `wording_guard` enumeration enforced by
   `tests/test_doc_consistency.py`.
 
 ## How to generate a real Governance report
@@ -59,11 +78,14 @@ codebase-architecture audit, a PR Replay engagement report, and the
    done
    ```
 
-3. Walk the per-section command list in `evidence-checklist.md`. Each
-   section names the exact `roam` commands and envelope fields needed.
+3. Walk the per-section command list in
+   [`evidence-checklist.md`](evidence-checklist.md). Each section names
+   the exact `roam` commands and envelope fields needed, and the
+   evidence question (Q1-Q8) it answers.
 
-4. Render the markdown report (start from `sample-audit-report.md` as the
-   structural template), fill in the customer name, period, and per-section
+4. Render the markdown report (start from
+   [`sample-audit-report.md`](sample-audit-report.md) as the structural
+   template), fill in the customer name, period, and per-section
    findings.
 
 5. Optionally render to PDF with Pandoc (see the codebase-architecture
@@ -104,7 +126,12 @@ codebase-architecture audit, a PR Replay engagement report, and the
 
    Install eisvogel: <https://github.com/Wandmalfarbe/pandoc-latex-template>.
 
-## Sections at a glance
+## Sections at a glance (codebase-architecture audit, legacy template)
+
+The table below describes the older codebase-architecture audit driven
+by `audit-report.md.tmpl` + `render.py`. For the Governance Pack
+deliverable, see the Q1-Q8 crosswalk in
+[`evidence-checklist.md`](evidence-checklist.md) instead.
 
 | Section | Auto-filled? | Source |
 |---|---|---|
@@ -134,12 +161,14 @@ codebase-architecture audit, a PR Replay engagement report, and the
 
 ## Disclaimer (Governance Pack)
 
-The Agent Governance Evidence Pack delivers **evidence support**, not
-formal certification. The control-mapping table in
-`sample-audit-report.md` cross-references Roam artifacts to commonly-cited
-controls (SOC 2, ISO/IEC 42001, EU AI Act, NIST AI RMF) so auditors and
-risk officers can locate the relevant Roam evidence for their own
-framework. Roam does not perform compliance attestation; whether any
-particular control applies, and what additional evidence is required for
-formal certification, is a determination for qualified counsel or
-auditors.
+The Agent Governance Evidence Pack **supports evidence for** controls;
+it does not deliver formal certification. The control-mapping table in
+[`sample-audit-report.md`](sample-audit-report.md) cross-references
+Roam artifacts to commonly-cited controls (SOC 2, ISO/IEC 42001, EU AI
+Act, NIST AI RMF) so auditors and risk officers can locate the
+relevant Roam evidence for their own framework. Roam does not perform
+compliance attestation; whether any particular control applies, and
+what additional evidence is required for formal certification, is a
+determination for qualified counsel or auditors. The wording guardrail
+that enforces this distinction inside generated reports is documented
+in [`control-mapping-README.md`](control-mapping-README.md).

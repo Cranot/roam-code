@@ -39,6 +39,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output._severity import severity_rank
 from roam.output.confidence import (
     confidence_distribution,
     confidence_level_rank,
@@ -1358,8 +1359,24 @@ def _emit_missing_index_findings(
     "--confidence",
     "confidence_filter",
     default=None,
-    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-    help="Filter by confidence level",
+    # W1005-followup-D: widened from 3-tier {high, medium, low} to the W547
+    # canonical 7-tier so agents can pass any of {critical, error, high,
+    # warning, medium, low, info} and have the floor compared via
+    # ``severity_rank()`` from ``roam.output._severity``. The detector emits
+    # only {high, medium, low} (the CVSS 3-tier) but the Choice accepts the
+    # full canonical vocabulary so canonical-aware agents can pass any tier.
+    # Semantic change: equality → floor (pre-fix kept findings with EXACTLY
+    # that confidence; post-fix keeps findings AT OR ABOVE that rank).
+    type=click.Choice(
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
+    help=(
+        "Minimum confidence floor. Uses the canonical W547 7-tier ordering "
+        "(critical > error == high > warning > medium > low > info). Detector "
+        "emits high/medium/low today; canonical aliases rank via the same "
+        "severity_rank() comparator."
+    ),
 )
 @click.option(
     "--table",
@@ -1412,6 +1429,106 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
 
     root = find_project_root()
 
+    # W607-CI -- substrate-boundary plumbing for cmd_missing_index.
+    # ``_run_check_ci`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607ci_warnings_out`` rather than
+    # crashing the missing-index detector outright (W111 foundational
+    # detector; W807 sealed the empty-corpus smoke with explicit
+    # ``no_migrations`` state but did NOT install substrate isolation
+    # -- this wave adds it). Marker family
+    # ``missing_index_<phase>_failed:<exc_class>:<detail>``. Substrates
+    # wrapped:
+    #
+    #   * parse_migration_indexes   -- Step 2 index definitions
+    #   * parse_query_patterns      -- Step 3 query enumeration
+    #   * build_model_table_overrides -- M9 cross-file override index
+    #   * build_findings            -- Step 4 cross-reference +
+    #                                  W18.4 unconditional-predicate
+    #                                  flagging + W36.3 ordering
+    #   * apply_confidence_filter   -- W1005-followup-D floor
+    #   * apply_table_filter        -- --table display filter
+    #   * aggregate_by_confidence   -- histogram
+    #   * emit_findings             -- W111 findings-registry mirror
+    #                                  (sqlite3.OperationalError silent
+    #                                  no-op preserved for pre-W89 DB)
+    #   * serialize_to_sarif        -- SARIF projection
+    _w607ci_warnings_out: list[str] = []
+
+    def _run_check_ci(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-CI marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``missing_index_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607ci_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ci_warnings_out.append(f"missing_index_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-DX -- additive aggregation-phase plumbing for cmd_missing_index.
+    # Layered ON TOP of the W607-CI substrate-CALL plumbing above; both
+    # share the canonical ``missing_index_*`` marker family and the
+    # ``missing_index_<phase>_failed:<exc_class>:<detail>`` shape contract.
+    # The two bucket sources are merged at envelope-emit time into the
+    # single ``warnings_out`` mirror so consumers see the full degradation
+    # lineage. Aggregation phases wrapped (sibling pattern to cmd_n1's
+    # W607-DQ + cmd_over_fetch's W607-DT, closing the ORM-detector 3-way
+    # at the aggregation layer):
+    #
+    #   * score_classify     -- buckets the run by missing_index_count into
+    #                          NO_MISSING_INDEX / MI_LIGHT / MI_MODERATE /
+    #                          MI_HEAVY / DEGRADED
+    #   * compute_predicate  -- rollup metrics dict (total_count, by_kind
+    #                          (unconditional_predicate / unbounded_join /
+    #                          etc.), files_affected, hottest_models)
+    #   * compute_verdict    -- single-line verdict string (LAW 6 floor:
+    #                          "missing_index completed")
+    #   * serialize_envelope -- json_envelope("missing-index", ...) projection
+    #
+    # The 4 aggregation phase names DO NOT collide with the 9 W607-CI
+    # substrate phase names (parse_migration_indexes / parse_query_patterns
+    # / build_model_table_overrides / build_findings / apply_confidence_filter
+    # / apply_table_filter / aggregate_by_confidence / emit_findings /
+    # serialize_to_sarif).
+    #
+    # W978 7-DISCIPLINE applies to every ``_run_check_dx(...)`` call:
+    #   1. f-string verdict floor: NEVER re-interpolate the same values
+    #      that tripped the closure inside the ``default=`` floor.
+    #   2. kwarg-default eagerness: ``default=`` must be a literal
+    #      constant, never a computed expression.
+    #   3. json.dumps(default=str) sentinel: the serialize_envelope
+    #      floor must be JSON-serializable with the standard encoder.
+    #   4. phase-name collision: verified above against CI's 9 phases.
+    #   5. len() at kwarg-bind: move len() INSIDE the closure, never at
+    #      the ``_run_check_dx(...)`` call site.
+    #   6. unguarded len()/if on poisoned object: the floor MUST be a
+    #      concrete dict/str/None, never a sentinel that may
+    #      __len__-raise downstream.
+    #   7. dict.get(key, expensive_default): use bare ``dict[key]`` when
+    #      the floor guarantees the key.
+    _w607dx_warnings_out: list[str] = []
+
+    def _run_check_dx(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-DX marker emission.
+
+        Mirror of ``_run_check_ci`` shape (same
+        ``missing_index_<phase>_failed:`` marker family) but writes into
+        ``_w607dx_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits. W607-DW finding pin: the
+        return statement is verbatim ``return default`` (NOT
+        ``default if default is not None else {}``) so the floor is a
+        literal pass-through.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607dx_warnings_out.append(f"missing_index_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
         # Fetch all PHP file paths from the index
         all_php = conn.execute("SELECT path FROM files WHERE language = 'php'").fetchall()
@@ -1425,25 +1542,78 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
 
         # M9 — Step 0: build cross-file model→$table override index BEFORE
         # parsing queries, so _class_to_table consults it.
+        # W607-CI: ``build_model_table_overrides`` substrate -- raise in
+        # the cross-file walker degrades to {} so per-class snake_case
+        # fallback still runs.
         global _MODEL_TABLE_OVERRIDES
-        _MODEL_TABLE_OVERRIDES = _build_model_table_overrides(root, source_paths)
+        _MODEL_TABLE_OVERRIDES = _run_check_ci(
+            "build_model_table_overrides",
+            _build_model_table_overrides,
+            root,
+            source_paths,
+            default={},
+        )
+        if _MODEL_TABLE_OVERRIDES is None:
+            _MODEL_TABLE_OVERRIDES = {}
 
         # Step 2: Parse index definitions
-        table_indexes = _parse_migration_indexes(root, migration_paths)
+        # W607-CI: ``parse_migration_indexes`` substrate -- raise in
+        # migration regex parsing degrades to {} so the empty-state
+        # ``no_migrations`` branch still composes cleanly.
+        table_indexes = _run_check_ci(
+            "parse_migration_indexes",
+            _parse_migration_indexes,
+            root,
+            migration_paths,
+            default={},
+        )
+        if table_indexes is None:
+            table_indexes = {}
         total_indexes = sum(len(v) for v in table_indexes.values())
         total_tables = len(table_indexes)
 
         # Step 3: Parse query patterns
-        query_patterns = _parse_query_patterns(root, source_paths)
+        # W607-CI: ``parse_query_patterns`` substrate -- raise in the
+        # PHP source-file parser (W18.4 unconditional-predicate
+        # classification lives here) degrades to [] so the empty-state
+        # envelope still composes.
+        query_patterns = _run_check_ci(
+            "parse_query_patterns",
+            _parse_query_patterns,
+            root,
+            source_paths,
+            default=[],
+        )
+        if query_patterns is None:
+            query_patterns = []
 
         # Step 4: Cross-reference
-        findings = _build_findings(query_patterns, table_indexes)
+        # W607-CI: ``build_findings`` substrate -- the cross-reference
+        # phase that applies W18.4 unconditional-predicate detection +
+        # W36.3 unconditional-first ordering. A raise here degrades to
+        # [] so the rest of the envelope (counts, verdict, registry
+        # mirror) still composes.
+        findings = _run_check_ci(
+            "build_findings",
+            _build_findings,
+            query_patterns,
+            table_indexes,
+            default=[],
+        )
+        if findings is None:
+            findings = []
 
         # W111 — mirror findings into the central registry BEFORE applying
         # display filters. Re-running with --confidence high must not
         # truncate the persisted set — the registry documents what the
         # detector actually found, not what the current invocation chose
         # to render. Matches the W102 complexity --persist discipline.
+        # W607-CI: ``emit_findings`` substrate boundary. The pre-W89
+        # schema path (sqlite3.OperationalError on missing ``findings``
+        # table) is the EXPECTED degraded path -- the try/except below
+        # maintains the W111 silent no-op contract for that case.
+        # Generic exceptions surface via the
+        # ``missing_index_emit_findings_failed:<exc>:<detail>`` marker.
         if persist:
             try:
                 _emit_missing_index_findings(conn, findings)
@@ -1451,18 +1621,66 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-CI disclosure
+                _w607ci_warnings_out.append(
+                    f"missing_index_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}"
+                )
 
-        # Apply filters
+        # Apply filters — W1005-followup-D: equality → floor via canonical
+        # severity_rank(). Detector emits {high, medium, low}; the Click
+        # Choice accepts the full W547 7-tier. Floor keeps a finding when
+        # ``severity_rank(f.confidence) >= severity_rank(confidence_filter)``.
+        # W607-CI: ``apply_confidence_filter`` substrate -- raise in
+        # severity_rank() degrades to the unfiltered list so a single
+        # bad confidence string doesn't wipe the findings list.
         if confidence_filter:
-            findings = [f for f in findings if f["confidence"] == confidence_filter]
+
+            def _apply_confidence_filter():
+                _floor_rank = severity_rank(confidence_filter)
+                return [f for f in findings if severity_rank(f["confidence"]) >= _floor_rank]
+
+            _filtered = _run_check_ci(
+                "apply_confidence_filter",
+                _apply_confidence_filter,
+                default=findings,
+            )
+            if _filtered is not None:
+                findings = _filtered
+        # W607-CI: ``apply_table_filter`` substrate -- raise in the
+        # comprehension (e.g. malformed finding dict) degrades to the
+        # unfiltered list.
         if table_filter:
-            findings = [f for f in findings if f.get("table") == table_filter]
+
+            def _apply_table_filter():
+                return [f for f in findings if f.get("table") == table_filter]
+
+            _filtered = _run_check_ci(
+                "apply_table_filter",
+                _apply_table_filter,
+                default=findings,
+            )
+            if _filtered is not None:
+                findings = _filtered
 
         # Count before truncation
         total_findings = len(findings)
-        by_confidence: dict[str, int] = defaultdict(int)
-        for f in findings:
-            by_confidence[f["confidence"]] += 1
+
+        # W607-CI: ``aggregate_by_confidence`` substrate -- histogram
+        # construction. Degrades to an empty defaultdict on raise so
+        # the verdict composer still produces a coherent string.
+        def _aggregate_by_confidence():
+            agg: defaultdict[str, int] = defaultdict(int)
+            for f in findings:
+                agg[f["confidence"]] += 1
+            return agg
+
+        by_confidence = _run_check_ci(
+            "aggregate_by_confidence",
+            _aggregate_by_confidence,
+            default=defaultdict(int),
+        )
+        if by_confidence is None:
+            by_confidence = defaultdict(int)
 
         truncated = total_findings > limit
         findings = findings[:limit]
@@ -1482,12 +1700,12 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
         if len(migration_paths) == 0:
             state = "no_migrations"
             partial_success = True
-            verdict = (
+            verdict_floor_str = (
                 "no migrations scanned (no PHP migration files found; "
                 "missing-index detection requires Laravel-style migration files)"
             )
         elif total_findings == 0:
-            verdict = "No missing indexes detected"
+            verdict_floor_str = "No missing indexes detected"
         else:
             parts = []
             if high_n:
@@ -1496,11 +1714,104 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
                 parts.append(f"{medium_n} medium")
             if low_n:
                 parts.append(f"{low_n} low")
-            verdict = (
+            verdict_floor_str = (
                 f"{total_findings} potential missing index"
                 f"{'es' if total_findings != 1 else ''} found"
                 f" ({', '.join(parts)})"
             )
+
+        # W607-DX -- score_classify boundary. Buckets the run by total
+        # missing-index findings into a state label:
+        #   * NO_MISSING_INDEX -- total_findings == 0
+        #   * MI_LIGHT         -- 0 < total_findings <= 3
+        #   * MI_MODERATE      -- 3 < total_findings <= 10
+        #   * MI_HEAVY         -- total_findings > 10
+        #   * DEGRADED         -- floor on raise
+        # W978 5th-discipline: ``total_findings`` passed as a raw int;
+        # counting / iteration lives INSIDE the closure (no len() at
+        # kwarg-bind).
+        def _score_classify_run(_total):
+            if _total == 0:
+                _state_label = "NO_MISSING_INDEX"
+            elif _total <= 3:
+                _state_label = "MI_LIGHT"
+            elif _total <= 10:
+                _state_label = "MI_MODERATE"
+            else:
+                _state_label = "MI_HEAVY"
+            return {"state": _state_label, "scanned": _total}
+
+        _score_dict = _run_check_dx(
+            "score_classify",
+            _score_classify_run,
+            total_findings,
+            default={"state": "DEGRADED", "scanned": 0},
+        )
+
+        # W607-DX -- compute_predicate boundary. Rollup metrics dict
+        # surfacing aggregate dimensions (total_count / by_kind /
+        # files_affected / hottest_models) so a downstream refactor of
+        # the rollup logic surfaces a marker rather than crashing. W978
+        # 5th-discipline: ``findings`` passed as a raw arg; counting /
+        # iteration lives INSIDE the closure.
+        def _compute_predicate_fields(_findings):
+            _by_kind: dict[str, int] = {}
+            _files: set[str] = set()
+            _model_counts: dict[str, int] = {}
+            for _f in _findings:
+                # Missing-index findings carry an ``issue`` slug (e.g.
+                # ``unconditional_predicate`` / ``unbounded_join``) on
+                # the W18.4 + W36.3 classification path. Fall back to a
+                # bucket-collapsed key when absent.
+                _k = _f.get("issue") or _f.get("reason") or "missing_index"
+                _by_kind[_k] = _by_kind.get(_k, 0) + 1
+                _loc = _f.get("query_location") or ""
+                if _loc:
+                    _file = _loc.rsplit(":", 1)[0] if ":" in _loc else _loc
+                    if _file:
+                        _files.add(_file)
+                _table = _f.get("table") or ""
+                if _table:
+                    _model_counts[_table] = _model_counts.get(_table, 0) + 1
+            # hottest_models: top 3 (table, count) tuples by count desc
+            _hottest = sorted(_model_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+            return {
+                "total_count": len(_findings),
+                "by_kind": dict(_by_kind),
+                "files_affected": len(_files),
+                "hottest_models": [{"table": _t, "count": _c} for _t, _c in _hottest],
+            }
+
+        _pred_fields = _run_check_dx(
+            "compute_predicate",
+            _compute_predicate_fields,
+            findings,
+            default={
+                "total_count": 0,
+                "by_kind": {},
+                "files_affected": 0,
+                "hottest_models": [],
+            },
+        )
+
+        # W607-DX -- compute_verdict boundary. Wraps the verdict string
+        # assembly so a downstream f-string refactor surfaces a marker
+        # rather than crashing the envelope. Literal "missing_index
+        # completed" floor (LAW 6 still holds: the line works
+        # standalone).
+        #
+        # W978 1st-discipline: the floor MUST NOT re-interpolate the
+        # same values that tripped the closure. W978 2nd-discipline:
+        # ``default=`` is a literal constant.
+        def _build_verdict_str(_verdict_floor):
+            return _verdict_floor
+
+        verdict = _run_check_dx(
+            "compute_verdict",
+            _build_verdict_str,
+            verdict_floor_str,
+            default="missing_index completed",
+        )
 
         index_summary = f"Indexes found: {total_indexes} across {total_tables} tables"
         migrations_summary = f"Migrations scanned: {len(migration_paths)} | Source files scanned: {len(source_paths)}"
@@ -1512,9 +1823,17 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
         # filtered (--confidence / --table) and truncated to --limit,
         # so a CI gate sees the same evidence the human / agent sees.
         if sarif_mode:
-            from roam.output.sarif import missing_index_to_sarif, write_sarif
+            # W607-CI: SARIF projection substrate -- a raise in the
+            # SARIF writer used to crash the missing-index command on
+            # the CI integration path; now degrades silently to None
+            # with a marker, and the function returns early (matches
+            # pre-W607-CI semantics that SARIF mode short-circuits).
+            def _emit_sarif():
+                from roam.output.sarif import missing_index_to_sarif, write_sarif
 
-            click.echo(write_sarif(missing_index_to_sarif(findings)))
+                click.echo(write_sarif(missing_index_to_sarif(findings)))
+
+            _run_check_ci("serialize_to_sarif", _emit_sarif, default=None)
             return
 
         # --- JSON output ---
@@ -1526,29 +1845,95 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter, persist):
             finding_triples = wrap_findings(findings, classifier=_missing_index_classify)
             distribution = confidence_distribution(finding_triples)
             wrapped_verdict = verdict_with_high_count(verdict, distribution)
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "missing-index",
-                        summary={
-                            "verdict": wrapped_verdict,
-                            "state": state,
-                            "partial_success": partial_success,
-                            "total": total_findings,
-                            "by_confidence": dict(by_confidence),
-                            "indexes_found": total_indexes,
-                            "tables_with_indexes": total_tables,
-                            "migrations_scanned": len(migration_paths),
-                            "source_files_scanned": len(source_paths),
-                            "truncated": truncated,
-                            "confidence_filter": confidence_filter,
-                            "table_filter": table_filter,
-                            "findings_confidence_distribution": distribution,
-                        },
-                        findings=finding_triples,
-                    )
-                )
+            # W607-CI + W607-DX: any substrate-CALL OR aggregation-phase
+            # marker flips partial_success: True so a degraded envelope
+            # is NOT mistaken for a clean "no missing indexes" verdict
+            # (Pattern-2 silent-fallback guard). The pre-W607-CI
+            # ``no_migrations`` partial_success semantic is preserved
+            # on the happy path.
+            _combined_warnings = list(_w607ci_warnings_out) + list(_w607dx_warnings_out)
+            partial_success_w607ci = partial_success or bool(_combined_warnings)
+            summary_block = {
+                "verdict": wrapped_verdict,
+                "state": state,
+                "partial_success": partial_success_w607ci,
+                "total": total_findings,
+                "by_confidence": dict(by_confidence),
+                "indexes_found": total_indexes,
+                "tables_with_indexes": total_tables,
+                "migrations_scanned": len(migration_paths),
+                "source_files_scanned": len(source_paths),
+                "truncated": truncated,
+                "confidence_filter": confidence_filter,
+                "table_filter": table_filter,
+                "findings_confidence_distribution": distribution,
+                # W607-DX: surface score_classify result on the envelope
+                # so consumers can read the run state without re-deriving
+                # from raw counts. W978 7th-discipline anchor: bare
+                # ``_score_dict["state"]`` lookup (floor dict guarantees
+                # the key) -- NOT ``.get("state", expensive_default)``.
+                "run_state": _score_dict["state"],
+                # W607-DX: surface compute_predicate rollup on the
+                # envelope so consumers can read the aggregate
+                # dimensions without rebuilding from the raw list.
+                # W978 7th-discipline anchor: bare key lookups.
+                "by_kind": _pred_fields["by_kind"],
+                "files_affected": _pred_fields["files_affected"],
+                "hottest_models": _pred_fields["hottest_models"],
+            }
+            envelope_kwargs: dict = {
+                "summary": summary_block,
+                "findings": finding_triples,
+            }
+            # W607-CI + W607-DX: mirror combined substrate-CALL +
+            # aggregation-phase markers into BOTH the top-level envelope
+            # ``warnings_out`` AND ``summary.warnings_out`` so MCP
+            # consumers see disclosure regardless of which surface they
+            # read.
+            if _combined_warnings:
+                summary_block["warnings_out"] = list(_combined_warnings)
+                envelope_kwargs["warnings_out"] = list(_combined_warnings)
+
+            # W607-DX -- serialize_envelope boundary. Wraps the envelope
+            # serialization itself. A downstream schema-shape refactor
+            # that breaks ``json_envelope("missing-index", ...)`` would
+            # otherwise crash AFTER all substrate + aggregation signals
+            # were already gathered. Floor to a minimal envelope stub so
+            # consumers still receive a parseable JSON object with the
+            # marker attached + the canonical command name. W978
+            # 6th-discipline: floor is a concrete dict, not a sentinel
+            # that may __len__-raise downstream.
+            _envelope_floor: dict = {
+                "command": "missing-index",
+                "schema_version": "1.0.0",
+                "summary": {
+                    "verdict": wrapped_verdict,
+                    "partial_success": True,
+                    "warnings_out": list(_combined_warnings),
+                },
+                "warnings_out": list(_combined_warnings),
+            }
+            envelope = _run_check_dx(
+                "serialize_envelope",
+                json_envelope,
+                "missing-index",
+                default=_envelope_floor,
+                **envelope_kwargs,
             )
+            # W607-DX -- if ``serialize_envelope`` raised AFTER the
+            # combined bucket was already snapshotted, the new
+            # ``missing_index_serialize_envelope_failed:`` marker was
+            # appended to ``_w607dx_warnings_out`` and the floor stub
+            # carries only the pre-raise combined list. Rebuild the
+            # floor stub's warnings_out so the new marker reaches the
+            # JSON output. Clean path -> envelope is the real
+            # json_envelope return value, no rebuild.
+            if envelope is _envelope_floor and _w607dx_warnings_out:
+                _combined_warnings = list(_w607ci_warnings_out) + list(_w607dx_warnings_out)
+                _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
+                _envelope_floor["warnings_out"] = list(_combined_warnings)
+                envelope = _envelope_floor
+            click.echo(to_json(envelope))
             return
 
         # --- Text output ---

@@ -27,6 +27,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.output._severity import severity_rank
 from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import format_table, json_envelope, loc, to_json
 
@@ -608,8 +609,24 @@ def _analyse_orphan_routes(project_root: Path, conn, limit: int) -> dict:
     "--confidence",
     "confidence_filter",
     default=None,
-    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-    help="Only show orphans of a specific confidence level",
+    # W1005-followup-D: widened from 3-tier {high, medium, low} to the W547
+    # canonical 7-tier so agents can pass any of {critical, error, high,
+    # warning, medium, low, info} and have the floor compared via
+    # ``severity_rank()`` from ``roam.output._severity``. The detector emits
+    # only {high, medium, low} (the CVSS 3-tier) but the Choice accepts the
+    # full canonical vocabulary so canonical-aware agents can pass any tier.
+    # Semantic change: equality → floor (pre-fix kept orphans with EXACTLY
+    # that confidence; post-fix keeps orphans AT OR ABOVE that rank).
+    type=click.Choice(
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
+    help=(
+        "Minimum confidence floor. Uses the canonical W547 7-tier ordering "
+        "(critical > error == high > warning > medium > low > info). Detector "
+        "emits high/medium/low today; canonical aliases rank via the same "
+        "severity_rank() comparator."
+    ),
 )
 @click.option(
     "--no-unrouted",
@@ -653,9 +670,13 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
     routes_total = result["routes_total"]
     routes_with_consumers = result["routes_with_consumers"]
 
-    # Apply confidence filter if requested
+    # Apply confidence floor — W1005-followup-D: equality → floor via
+    # canonical severity_rank(). Detector emits {high, medium, low}; the
+    # Click Choice accepts the full W547 7-tier. Floor keeps an orphan when
+    # ``severity_rank(o.confidence) >= severity_rank(confidence_filter)``.
     if confidence_filter:
-        orphans = [o for o in orphans if o["confidence"] == confidence_filter.lower()]
+        _floor_rank = severity_rank(confidence_filter)
+        orphans = [o for o in orphans if severity_rank(o["confidence"]) >= _floor_rank]
 
     # --- SARIF output (W1227) -------------------------------------------
     # SARIF surfaces the closed-enum confidence rule catalogue

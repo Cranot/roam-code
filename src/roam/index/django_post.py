@@ -12,6 +12,14 @@ from __future__ import annotations
 import json
 import sys
 
+# W543-followup-C: canonical inheritance-kind IN-clause helper. Both
+# resolve_django_inheritance and resolve_django_custom_fields walk the
+# same ``edges WHERE kind ∈ inheritance-kinds`` shape; the helper widens
+# the legacy bare ``'inherits'`` literal to ``('inherits', 'implements',
+# 'uses_trait')`` without losing the canonical kind that python_lang.py
+# emits for Django models (the W156/W39.3 bridge contract still holds).
+from roam.db.edge_kinds import inheritance_in_clause
+
 # Django model + field vocabulary. Lives here because Django post-processing
 # is the only consumer in roam-code; `python_lang.py` is the generic Python
 # extractor and stays framework-agnostic. W902 audit verified these are not
@@ -100,8 +108,17 @@ def resolve_django_inheritance(conn) -> int:
     for r in class_rows:
         ids_by_name.setdefault(r["name"], set()).add(r["id"])
 
-    # 2. Load inherits edges: source_id inherits from target_id
-    inherits_rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'inherits'").fetchall()
+    # 2. Load inherits edges: source_id inherits from target_id.
+    # W543-followup-C: union all three canonical inheritance kinds via the
+    # shared helper (imported at module top). python_lang.py emits
+    # ``'inherits'`` for Django models (the W156/W39.3 bridge contract is
+    # unchanged — the canonical writer is still ``'inherits'``), but
+    # reading via the helper means a future plugin extractor that emits
+    # ``'implements'`` / ``'uses_trait'`` for Django-shaped class
+    # hierarchies will still flow through the post-resolver.
+    inherits_rows = conn.execute(
+        f"SELECT source_id, target_id FROM edges WHERE {inheritance_in_clause('kind')}"
+    ).fetchall()
 
     # parent_ids[child_id] = set of parent symbol IDs
     parent_ids = {}
@@ -181,8 +198,13 @@ def resolve_django_custom_fields(conn) -> int:
     for r in class_rows:
         ids_by_name.setdefault(r["name"], set()).add(r["id"])
 
-    # 2. Load inherits edges
-    inherits_rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'inherits'").fetchall()
+    # 2. Load inherits edges. W543-followup-C: same migration as
+    # resolve_django_inheritance above — union all three canonical
+    # inheritance kinds so plugin-emitted ``'implements'`` /
+    # ``'uses_trait'`` rows reach the custom-field resolver too.
+    inherits_rows = conn.execute(
+        f"SELECT source_id, target_id FROM edges WHERE {inheritance_in_clause('kind')}"
+    ).fetchall()
     parent_ids = {}
     for r in inherits_rows:
         src, tgt = r["source_id"], r["target_id"]

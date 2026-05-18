@@ -14,35 +14,35 @@ rules:
   # ---- Dangerous APIs ----
 
   - id: java-no-runtime-exec
-    description: "Runtime.exec() bypasses argv quoting; use ProcessBuilder with a list."
+    description: "Replace Runtime.getRuntime().exec() with ProcessBuilder + list args; exec() bypasses argv quoting."
     pattern: function_call
     source_glob: "src/**/*.java"
     forbidden_target_glob: "Runtime.getRuntime"
     severity: BLOCK
 
   - id: java-no-system-exit-in-libs
-    description: "System.exit() in library code kills the host process; throw an exception instead."
+    description: "Replace System.exit() in library code with a thrown exception; System.exit kills the host process."
     pattern: function_call
     source_glob: "src/main/java/**/*.java"
     forbidden_target_glob: "System.exit"
     severity: BLOCK
 
   - id: java-no-object-input-stream
-    description: "ObjectInputStream.readObject on untrusted data is RCE; use JSON/protobuf instead."
+    description: "Replace ObjectInputStream.readObject with JSON or protobuf; readObject on untrusted bytes is RCE."
     pattern: import_from
     source_glob: "src/**/*.java"
     forbidden_target_glob: "java.io.ObjectInputStream"
     severity: BLOCK
 
   - id: java-no-md5-mac
-    description: "MessageDigest.getInstance(MD5) and HmacMD5 are broken; use SHA-256+ or HmacSHA256+."
+    description: "Replace MessageDigest.getInstance(MD5) and HmacMD5 with SHA-256+ or HmacSHA256+; MD5 is broken for security uses."
     pattern: function_call
     source_glob: "src/**/*.java"
     forbidden_target_glob: "MessageDigest.getInstance"
     severity: WARN
 
   - id: java-no-printstacktrace
-    description: "e.printStackTrace() leaks exceptions to stderr; use a structured logger."
+    description: "Replace e.printStackTrace() with a structured logger (slf4j / log4j2); printStackTrace leaks exceptions to stderr."
     pattern: function_call
     source_glob: "src/main/java/**/*.java"
     forbidden_target_glob: "*.printStackTrace"
@@ -58,7 +58,7 @@ rules:
     severity: WARN
 
   - id: java-no-thread-stop
-    description: "Thread.stop() is deprecated and unsafe; use interruption."
+    description: "Replace Thread.stop() with cooperative interruption; Thread.stop is deprecated and corrupts monitor state."
     pattern: function_call
     source_glob: "src/**/*.java"
     forbidden_target_glob: "*.stop"
@@ -73,8 +73,11 @@ rules:
 
   # ---- LLM hallucination patterns ----
 
+  # WHY: LLMs frequently hallucinate "v2" / numbered package names when the
+  # real package already exists at a non-numbered path. Renaming forces the
+  # author to confirm the actual target.
   - id: java-no-numbered-packages
-    description: "Numbered packages (com.foo.v2, com.foo.utils2) signal LLM hallucinations."
+    description: "Rename or remove numbered packages (com.foo.v2, com.foo.utils2); these names are typical LLM hallucinations."
     pattern: import_from
     source_glob: "src/**/*.java"
     forbidden_target_glob: "*.v[0-9]*.*"
@@ -89,8 +92,11 @@ rules:
 
   # ---- Architecture / layer-violation ----
 
+  # BLOCK because a controller reaching java.sql.* skips the service /
+  # repository layer entirely — transaction boundaries, retry policy, and
+  # tests written against the repository contract all stop applying.
   - id: java-no-jdbc-from-controller
-    description: "Controllers must not call JDBC directly; go through a service / repository layer."
+    description: "Route controller persistence calls through the service / repository layer; controllers must not import java.sql.*."
     pattern: import_from
     source_glob: "src/main/java/**/controller/**/*.java"
     forbidden_target_glob: "java.sql.*"

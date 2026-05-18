@@ -207,3 +207,223 @@ def test_frozen_dataclasses_are_hashable():
     c = RuleFileSuppression.from_dict({"rule": "r", "file": "other"})
     assert a == b
     assert {a, b, c} == {a, c}
+
+
+# ---------------------------------------------------------------------------
+# W744 — sarif_status / policy_status split
+# ---------------------------------------------------------------------------
+
+
+def test_w744_new_status_fields_carry_through_from_dict():
+    """sarif_status + policy_status round-trip through from_dict/to_dict."""
+    from roam.policy.suppression_v2 import (
+        VALID_POLICY_STATUSES,
+        VALID_SARIF_STATUSES,
+    )
+
+    entry = {
+        "rule": "secret-detection",
+        "file": "tests/fake.py",
+        "sarif_status": "suppressed",
+        "policy_status": "accepted_with_caveats",
+    }
+    sup = RuleFileSuppression.from_dict(entry)
+    assert sup.sarif_status == "suppressed"
+    assert sup.policy_status == "accepted_with_caveats"
+    # Legacy field stays None when not supplied.
+    assert sup.status is None
+
+    out = sup.to_dict()
+    assert out["sarif_status"] == "suppressed"
+    assert out["policy_status"] == "accepted_with_caveats"
+    assert "status" not in out  # legacy stays absent
+    assert "suppressed" in VALID_SARIF_STATUSES
+    assert "accepted_with_caveats" in VALID_POLICY_STATUSES
+
+
+def test_w744_unknown_values_coerce_to_none():
+    """Out-of-enum values for the new fields drop to None (closed enum)."""
+    sup = RuleFileSuppression.from_dict(
+        {
+            "rule": "r",
+            "file": "f",
+            "sarif_status": "bogus",
+            "policy_status": "alsobogus",
+        }
+    )
+    assert sup.sarif_status is None
+    assert sup.policy_status is None
+
+
+def test_w744_legacy_status_only_emits_deprecation_warning():
+    """Legacy ``status`` field without new fields = deprecation warning."""
+    from roam.policy.suppression_v2 import LEGACY_STATUS_DEPRECATION_HINT
+
+    warnings_out: list[str] = []
+    sup = RuleFileSuppression.from_dict(
+        {"rule": "r", "file": "f.py", "status": "safe"},
+        warnings_out=warnings_out,
+    )
+    # Back-compat: legacy value still lands on the legacy field.
+    assert sup.status == "safe"
+    assert sup.sarif_status is None
+    assert sup.policy_status is None
+    # Warning carries the migration hint.
+    assert len(warnings_out) == 1
+    assert LEGACY_STATUS_DEPRECATION_HINT in warnings_out[0]
+    assert "sarif_status" in warnings_out[0]
+    assert "policy_status" in warnings_out[0]
+
+
+def test_w744_no_warning_when_new_field_present_alongside_legacy():
+    """When sarif_status or policy_status accompany legacy status, no warning."""
+    warnings_out: list[str] = []
+    sup = RuleFileSuppression.from_dict(
+        {
+            "rule": "r",
+            "file": "f.py",
+            "status": "safe",  # legacy
+            "sarif_status": "suppressed",  # new
+        },
+        warnings_out=warnings_out,
+    )
+    assert sup.status == "safe"
+    assert sup.sarif_status == "suppressed"
+    assert warnings_out == []
+
+
+def test_w744_legacy_only_no_warnings_out_stays_silent():
+    """Pre-W744 callers (no warnings_out) get byte-identical silent behaviour."""
+    sup = RuleFileSuppression.from_dict({"rule": "r", "file": "f.py", "status": "safe"})
+    assert sup.status == "safe"
+    # No warnings_out supplied → no crash, no warning, byte-identical legacy path.
+
+
+def test_w744_warning_propagates_through_finding_id_loader():
+    """FindingIdSuppression.from_dict accepts warnings_out per the W744 spec."""
+    from roam.policy.suppression_v2 import LEGACY_STATUS_DEPRECATION_HINT
+
+    warnings_out: list[str] = []
+    sup = FindingIdSuppression.from_dict(
+        "deadbeef",
+        {"reason": "x", "status": "acknowledged"},
+        warnings_out=warnings_out,
+    )
+    assert sup.status == "acknowledged"
+    assert len(warnings_out) == 1
+    assert LEGACY_STATUS_DEPRECATION_HINT in warnings_out[0]
+
+
+def test_w744_warning_propagates_through_kind_symbol_loader():
+    """KindSymbolSuppression.from_dict accepts warnings_out per the W744 spec."""
+    from roam.policy.suppression_v2 import LEGACY_STATUS_DEPRECATION_HINT
+
+    warnings_out: list[str] = []
+    sup = KindSymbolSuppression.from_dict(
+        {"kind": "shotgun-surgery", "symbol": "s", "status": "wont-fix"},
+        warnings_out=warnings_out,
+    )
+    assert sup.status == "wont-fix"
+    assert len(warnings_out) == 1
+    assert LEGACY_STATUS_DEPRECATION_HINT in warnings_out[0]
+
+
+def test_w744_sarif_emission_consumes_sarif_status_over_legacy():
+    """to_sarif() / SARIF applier consumes sarif_status, not legacy status."""
+    from roam.output.sarif import _apply_suppressions_typed
+
+    suppressions = [
+        FindingIdSuppression.from_dict(
+            "deadbeef0001",
+            {
+                "rule_id": "r1",
+                "location": "src/x.py:10",
+                "sarif_status": "notSuppressed",  # new field wins
+                "status": "safe",  # legacy is shadowed
+                "reason": "audited",
+            },
+        )
+    ]
+    results = [
+        {
+            "ruleId": "r1",
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": "src/x.py"},
+                        "region": {"startLine": 10},
+                    }
+                }
+            ],
+        }
+    ]
+    out = _apply_suppressions_typed(results, suppressions)
+    # sarif_status="notSuppressed" beats legacy status="safe"
+    assert out[0]["suppressions"][0]["status"] == "notSuppressed"
+
+
+def test_w744_sarif_emission_falls_back_to_legacy_status_when_sarif_status_unset():
+    """W736 byte-identity: when sarif_status is unset, legacy status passes through."""
+    from roam.output.sarif import _apply_suppressions_typed
+
+    suppressions = [
+        FindingIdSuppression.from_dict(
+            "deadbeef0002",
+            {
+                "rule_id": "r2",
+                "location": "src/y.py:20",
+                "status": "safe",  # legacy only — no sarif_status
+                "reason": "audited",
+            },
+        )
+    ]
+    results = [
+        {
+            "ruleId": "r2",
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": "src/y.py"},
+                        "region": {"startLine": 20},
+                    }
+                }
+            ],
+        }
+    ]
+    out = _apply_suppressions_typed(results, suppressions)
+    # Legacy "safe" passes through unchanged — W736 byte-identity preserved.
+    assert out[0]["suppressions"][0]["status"] == "safe"
+
+
+def test_w744_policy_status_not_consumed_by_sarif_emission():
+    """policy_status is NOT emitted to SARIF (orthogonality contract)."""
+    from roam.output.sarif import _apply_suppressions_typed
+
+    suppressions = [
+        FindingIdSuppression.from_dict(
+            "deadbeef0003",
+            {
+                "rule_id": "r3",
+                "location": "src/z.py:30",
+                "policy_status": "dismissed",  # policy concern, not SARIF
+                "reason": "rejected by reviewer",
+            },
+        )
+    ]
+    results = [
+        {
+            "ruleId": "r3",
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": "src/z.py"},
+                        "region": {"startLine": 30},
+                    }
+                }
+            ],
+        }
+    ]
+    out = _apply_suppressions_typed(results, suppressions)
+    # policy_status="dismissed" must NOT leak into SARIF status.
+    assert out[0]["suppressions"][0]["status"] == "accepted"  # fallback default
+    assert out[0]["suppressions"][0]["status"] != "dismissed"

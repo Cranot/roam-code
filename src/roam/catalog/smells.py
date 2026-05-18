@@ -1102,6 +1102,13 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
     method bodies into a queryable table.
     """
     results: list[dict] = []
+    # W543-followup-C: source the inheritance-kind IN-clause from the
+    # shared helper so plugin extractors that emit ``implements`` /
+    # ``uses_trait`` (e.g. Rust impl-Trait, PHP traits) reach this
+    # detector too. Pre-migration filter was bare ``e.kind = 'inherits'``
+    # which silently dropped the other two canonical kinds.
+    from roam.db.edge_kinds import inheritance_in_clause
+
     try:
         # Pull (child_class, parent_class) pairs from inherits edges. Limit
         # to in-repo parents (target_id resolves to a known symbol) -- this
@@ -1117,7 +1124,7 @@ def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
             "JOIN symbols s_child ON e.source_id = s_child.id "
             "JOIN symbols s_parent ON e.target_id = s_parent.id "
             "JOIN files f_child ON s_child.file_id = f_child.id "
-            "WHERE e.kind = 'inherits' "
+            f"WHERE {inheritance_in_clause('e.kind')} "
             "AND s_child.kind = 'class' "
             "AND s_parent.kind = 'class'"
         ).fetchall()
@@ -2726,6 +2733,15 @@ _COMMENT_SYNTAX_BY_LANG: dict[str, _CommentSyntax] = {
     "hcl": _CommentSyntax(line=("#", "//"), block=(("/*", "*/"),)),
     # Apex (Salesforce): ``//`` line + ``/* */`` block.
     "apex": _CommentSyntax(line=("//",), block=(("/*", "*/"),)),
+    # W725: Visual FoxPro line-START comments. The extractor at
+    # ``roam.languages.foxpro_lang._preprocess`` treats ``*`` at line
+    # start as a full-line comment (unambiguous -- multiplication
+    # requires a left operand and cannot appear at line-start). VFP
+    # also accepts ``&&`` as an inline end-of-line marker; the
+    # detector's line-prefix model only catches the rarer left-
+    # justified ``&& TODO: ...`` form, which is enough to keep VFP
+    # files in the marker-count pass without bespoke inline scanning.
+    "foxpro": _CommentSyntax(line=("*", "&&"), block=()),
     # W703: round out the canonical 28-language coverage. ``tsx`` and
     # ``jsonc`` are pure C-family. Vue / Svelte single-file components
     # carry a ``<script>`` block (C-family) AND an HTML template region
@@ -2749,12 +2765,6 @@ _COMMENT_SYNTAX_BY_LANG: dict[str, _CommentSyntax] = {
 # OR here -- no silent omission (Pattern 2 fallback).
 _COMMENT_DENSITY_NO_SUPPORT: frozenset[str] = frozenset(
     {
-        # FoxPro uses ``*`` at line-start and ``&&`` end-of-line markers.
-        # The current detector models neither (``*`` collides with VFP's
-        # multiplication operator if mid-line; ``&&`` overlaps with logical
-        # AND in other languages). Legacy tier-2 corpus is small enough
-        # that the cost of a dedicated branch outweighs the signal.
-        "foxpro",
         # MDX is Markdown + JSX. Markdown uses ``<!-- -->``; JSX uses
         # ``{/* */}`` which is neither a plain block nor a plain line
         # syntax. No canonical single comment vocabulary, so we skip
@@ -2806,6 +2816,7 @@ def detect_comment_density(conn: sqlite3.Connection) -> list[dict]:
     * SQL: ``--`` line + ``/* ... */`` block.
     * HCL/Terraform: ``#`` AND ``//`` line + ``/* ... */`` block.
     * Apex: ``//`` line + ``/* ... */`` block.
+    * FoxPro: ``*`` (line-start) and ``&&`` line prefixes; no block.
 
     The regex ``\\b(TODO|FIXME|XXX|HACK)\\b`` matches the four canonical
     markers. Line scans count one marker per line that hits; block scans

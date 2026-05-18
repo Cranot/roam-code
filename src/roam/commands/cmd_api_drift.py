@@ -20,6 +20,97 @@ from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
+# W1005-followup-H -- Pattern 3a (cross-command metric divergence) sealing.
+#
+# Pre-W1005-followup-H, ``roam api-drift --confidence`` accepted ONLY the
+# 3-tier ``{high, medium, low, all}`` emit vocab (where ``all`` was the
+# bypass sentinel that skipped filtering entirely). An agent fluent in
+# the W547 canonical vocab (``critical / error / high / warning /
+# medium / low / info / note``) who typed ``--confidence critical``
+# (because that's what ``roam smells``, ``roam alerts``, ``roam
+# api-changes``, ``roam dogfood-aggregate``, ``roam pr-bundle add risk``,
+# etc. accept post-W1005 / -C / -D / -F / -G) hit a click usage error 2.
+#
+# Path A-variant fix. Widen Click.Choice to accept canonical W547 tokens
+# AND the ``all`` bypass sentinel. Project canonical tokens onto the
+# emit-vocab (``high``/``medium``/``low``) BEFORE the equality filter.
+# EMIT vocab unchanged: every ``finding["confidence"]`` value is still
+# one of ``high``/``medium``/``low`` so downstream consumers (the
+# ``_CONF_LABEL`` formatter, JSON summary buckets) keep working.
+#
+# Projection mirrors :func:`roam.output._severity.severity_to_confidence_level`
+# (the W565 closed table; see ``_DEFAULT_SEVERITY_TO_CONFIDENCE_LEVEL``):
+#
+# * ``critical`` / ``error`` / ``high`` -> ``high`` -- CI-gate tier maps
+#   onto the missing_in_backend (runtime undefined) class.
+# * ``warning`` / ``medium`` -> ``medium`` -- mid-tier maps onto the
+#   missing_in_frontend (wasted bandwidth) class.
+# * ``info`` / ``low`` / ``note`` -> ``low`` -- floor maps onto the
+#   fuzzy-name-mismatch (heuristic) class.
+#
+# The ``all`` sentinel STAYS as a bypass token that short-circuits the
+# filter entirely (lines 675-676 below) so the existing semantics
+# ``--confidence all`` -> "return every finding" are preserved
+# byte-for-byte.
+#
+# Asymmetry note for the next maintainer: this is the LAST narrow Choice
+# site across the W1005 Pattern 3a cluster. Sibling references:
+#   * cmd_api_changes._CANONICAL_TO_SEMVER (W1005-followup-F)
+#   * cmd_dogfood_aggregate._CANONICAL_TO_SHORTCODE (W1005-followup-G)
+#   * cmd_pr_bundle._CANONICAL_TO_RISK_SHORTCODE (W1005-followup-G)
+# Each command picks the projection map shape that matches its own EMIT
+# vocab (SemVer 3-tier, H/M/L short-codes, low/medium/high here). The
+# uniform discipline: widen INPUT, project once, never widen EMIT.
+# ---------------------------------------------------------------------------
+
+# The bypass sentinel that short-circuits the confidence filter. Kept as
+# a module constant so tests can pin the literal and a future maintainer
+# can grep one symbol instead of chasing the string.
+_CONFIDENCE_BYPASS_SENTINEL = "all"
+
+# Canonical W547 token -> emit-vocab confidence projection. Closed map;
+# keys mirror :data:`roam.output._severity.SEVERITY_LEVELS` plus the
+# CVSS-style aliases tracked in
+# :data:`roam.output._severity.SEVERITY_ALIASES`. Values are the
+# 3-tier api-drift emit vocab (high/medium/low) -- NOT the canonical
+# 4-tier (critical/error/warning/info) -- because that's what the
+# detector emits at the finding level and what the equality filter
+# (line 675-676) compares against.
+_CANONICAL_TO_CONFIDENCE: dict[str, str] = {
+    # W547 canonical 4-tier
+    "critical": "high",
+    "error": "high",
+    "warning": "medium",
+    "info": "low",
+    # CVSS-style aliases (round-trip with OSV / npm-audit / trivy feeds)
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "note": "low",
+}
+
+
+def _project_confidence_input(label: str) -> str:
+    """Project a user-supplied confidence/severity token to the emit vocab.
+
+    Case-insensitive. Unknown labels fall through unchanged so the
+    Click.Choice (which is the closed-enum gate) stays the
+    source-of-truth for what's accepted; this helper is purely the
+    projection layer.
+
+    Examples
+    --------
+    >>> _project_confidence_input("critical")
+    'high'
+    >>> _project_confidence_input("WARNING")
+    'medium'
+    >>> _project_confidence_input("low")
+    'low'
+    """
+    return _CANONICAL_TO_CONFIDENCE.get(label.lower(), label.lower())
+
+
+# ---------------------------------------------------------------------------
 # Common auto-added fields to skip when comparing (not meaningful drift)
 # ---------------------------------------------------------------------------
 
@@ -440,9 +531,33 @@ def _is_ts_type_path(path: str) -> bool:
 @click.option("--limit", "-n", default=50, help="Max findings to show")
 @click.option(
     "--confidence",
-    type=click.Choice(["high", "medium", "low", "all"], case_sensitive=False),
-    default="all",
-    help="Filter findings by confidence level",
+    # Emit vocab (high/medium/low) + W547 canonical 4-tier (critical/error/
+    # warning/info) + CVSS aliases (note) + bypass sentinel (all). Pattern
+    # 3a alias widening per W1005-followup-H -- canonical-aware agents pass
+    # any of them without hitting click usage error 2. EMIT stays
+    # high/medium/low; ``all`` short-circuits the filter (see line ~675).
+    type=click.Choice(
+        [
+            "high",
+            "medium",
+            "low",  # emit vocab (back-compat)
+            "critical",
+            "error",
+            "warning",
+            "info",
+            "note",  # W547 canonical aliases
+            _CONFIDENCE_BYPASS_SENTINEL,  # bypass sentinel
+        ],
+        case_sensitive=False,
+    ),
+    default=_CONFIDENCE_BYPASS_SENTINEL,
+    help=(
+        "Filter findings by confidence level. Accepts the api-drift emit "
+        "vocab {high, medium, low} OR W547 canonical tokens {critical, "
+        "error, warning, info, note} -- canonical tokens project onto the "
+        "emit vocab (critical/error -> high; warning -> medium; info/note "
+        "-> low). Pass 'all' (the default) to bypass the filter."
+    ),
 )
 @click.option(
     "--model",
@@ -671,9 +786,17 @@ def api_drift_cmd(ctx, limit, confidence, model):
                 ts_info,
             )
 
-            # Apply confidence filter
-            if confidence != "all":
-                pair_findings = [f for f in pair_findings if f["confidence"] == confidence]
+            # Apply confidence filter.
+            #
+            # W1005-followup-H: ``confidence`` may be a canonical W547
+            # token (critical/error/warning/info/note) supplied by an
+            # agent fluent in the cross-command vocabulary. Project it
+            # onto the api-drift emit vocab (high/medium/low) BEFORE the
+            # equality comparison; EMIT vocab unchanged. ``all`` is the
+            # bypass sentinel that short-circuits the filter entirely.
+            if confidence.lower() != _CONFIDENCE_BYPASS_SENTINEL:
+                projected = _project_confidence_input(confidence)
+                pair_findings = [f for f in pair_findings if f["confidence"] == projected]
 
             findings_by_pair.append((match, pair_findings))
             all_findings.extend(pair_findings)

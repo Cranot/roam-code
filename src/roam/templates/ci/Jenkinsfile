@@ -71,6 +71,9 @@ pipeline {
             }
         }
 
+        // Advisory stage (|| true): rules findings ship in archived
+        // artifacts + warnings-ng report; the merge gate is health-score-only
+        // at the Quality Gate stage below.
         stage('Rules Check') {
             steps {
                 sh '''
@@ -82,6 +85,8 @@ pipeline {
             }
         }
 
+        // Advisory stage (|| true): SARIF artifacts ship for warnings-ng /
+        // CI ingestion; generation failure does not block the pipeline.
         stage('SARIF Reports') {
             steps {
                 sh '''

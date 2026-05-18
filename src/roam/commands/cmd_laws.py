@@ -72,6 +72,84 @@ _LAW_KIND_TO_CONFIDENCE: dict[str, str] = {
 _LAW_DEFAULT_CONFIDENCE: str = "structural"
 
 
+# ---------------------------------------------------------------------------
+# W1005-followup-J — Pattern 3a (cross-command metric divergence) sealing.
+#
+# Pre-W1005-followup-J, ``roam laws mine --min-confidence`` accepted ONLY the
+# 3-tier ``{low, medium, high}`` emit vocab. An agent fluent in the W547
+# canonical vocabulary (``critical / error / high / warning / medium / low /
+# info / note``) — the vocabulary every sibling --confidence / --severity
+# site accepts post-W1005-followup-{B, C, D, F, G, H} — who typed
+# ``--min-confidence critical`` hit a click usage error 2.
+#
+# Path A-variant fix (mirroring W1005-followup-H on cmd_api_drift). Widen
+# Click.Choice to accept the union of the emit vocab + W547 canonical
+# tokens. Project canonical tokens onto the emit vocab (``high`` /
+# ``medium`` / ``low``) BEFORE the existing
+# ``confidence_level_rank()`` floor comparison. EMIT vocab stays
+# ``low``/``medium``/``high`` so the W596 strict-floor clamp + the
+# existing comparator are unchanged byte-for-byte.
+#
+# Projection mirrors :data:`roam.output._severity._DEFAULT_SEVERITY_TO_CONFIDENCE_LEVEL`
+# (the W565 closed table; the same table api-drift adopts at W1005-followup-H):
+#
+# * ``critical`` / ``error`` / ``high`` -> ``high``
+# * ``warning`` / ``medium`` -> ``medium``
+# * ``info`` / ``low`` / ``note`` -> ``low``
+#
+# No ``all`` bypass sentinel: ``laws mine`` already treats
+# ``--min-confidence`` as optional (default ``None`` -> no filter), so the
+# pre-existing "no filter" path is the bypass.
+#
+# Asymmetry note for the next maintainer: this site uses a confidence-LEVEL
+# comparator (``confidence_level_rank``), NOT a severity-rank comparator —
+# unlike cmd_n1 / cmd_orphan_routes / cmd_auth_gaps which use
+# ``severity_rank`` directly. The reason: ``Law.confidence`` is emitted by
+# ``_confidence_from_pct()`` on the confidence-LEVEL axis (high/medium/low
+# from a conformance %), so the rank table that matches the EMIT axis is
+# ``_CONFIDENCE_LEVEL_RANK``. Sibling reference for the equality-flavoured
+# Path A-variant: cmd_api_drift._CANONICAL_TO_CONFIDENCE (W1005-followup-H).
+# ---------------------------------------------------------------------------
+
+# Canonical W547 token -> emit-vocab confidence-LEVEL projection. Closed map;
+# keys mirror :data:`roam.output._severity.SEVERITY_LEVELS` plus the
+# CVSS-style aliases. Values are the 3-tier laws emit vocab
+# (low/medium/high) — what ``_confidence_from_pct()`` actually emits and
+# what ``confidence_level_rank()`` ranks.
+_CANONICAL_TO_CONFIDENCE: dict[str, str] = {
+    # W547 canonical 4-tier
+    "critical": "high",
+    "error": "high",
+    "warning": "medium",
+    "info": "low",
+    # CVSS-style aliases (round-trip with OSV / npm-audit / trivy feeds)
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "note": "low",
+}
+
+
+def _project_confidence_input(label: str) -> str:
+    """Project a user-supplied confidence/severity token to the emit vocab.
+
+    Case-insensitive. Unknown labels fall through unchanged so the
+    Click.Choice (which is the closed-enum gate) stays the
+    source-of-truth for what's accepted; this helper is purely the
+    projection layer.
+
+    Examples
+    --------
+    >>> _project_confidence_input("critical")
+    'high'
+    >>> _project_confidence_input("WARNING")
+    'medium'
+    >>> _project_confidence_input("low")
+    'low'
+    """
+    return _CANONICAL_TO_CONFIDENCE.get(label.lower(), label.lower())
+
+
 def _law_finding_id(law: Law) -> str:
     """Stable, deterministic finding id for a mined law.
 
@@ -206,9 +284,35 @@ def laws_group(ctx):
 )
 @click.option(
     "--min-confidence",
-    type=click.Choice(["low", "medium", "high"]),
+    # W1005-followup-J: widened from 3-tier {low, medium, high} to the
+    # union of emit vocab + W547 canonical 4-tier + CVSS aliases so
+    # canonical-aware agents can pass any of {critical, error, high,
+    # warning, medium, low, info, note} without hitting click usage
+    # error 2. Canonical tokens project onto the emit vocab via
+    # :data:`_CANONICAL_TO_CONFIDENCE` BEFORE the existing
+    # ``confidence_level_rank()`` floor — EMIT vocab unchanged, the
+    # W596 strict-floor clamp at line 255 is preserved.
+    type=click.Choice(
+        [
+            "low",
+            "medium",
+            "high",  # emit vocab (back-compat)
+            "critical",
+            "error",
+            "warning",
+            "info",
+            "note",  # W547 canonical aliases
+        ],
+        case_sensitive=False,
+    ),
     default=None,
-    help="Drop laws below this confidence level.",
+    help=(
+        "Drop laws below this confidence level. Accepts the laws emit "
+        "vocab {low, medium, high} OR W547 canonical tokens {critical, "
+        "error, warning, info, note} — canonical tokens project onto the "
+        "emit vocab (critical/error/high -> high; warning/medium -> medium; "
+        "info/low/note -> low) before the floor comparison."
+    ),
 )
 @click.option(
     "--out",
@@ -252,7 +356,17 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
             # as "low"); canonical returns -1 for an unknown filter label
             # which would keep everything — clamp to 1 to preserve the
             # pre-W596 strict-floor semantic.
-            min_rank = max(confidence_level_rank(min_confidence), 1)
+            #
+            # W1005-followup-J: project the user-supplied token onto the
+            # emit-vocab BEFORE ranking. Pre-fix the Choice accepted only
+            # {low, medium, high}; post-fix it also accepts the W547
+            # canonical {critical, error, warning, info, note} which
+            # ``confidence_level_rank()`` doesn't recognise (its closed vocab
+            # is the LEVEL axis only). The projection lifts a severity-axis
+            # token onto the LEVEL axis so the existing rank+clamp
+            # machinery stays unchanged.
+            projected = _project_confidence_input(min_confidence)
+            min_rank = max(confidence_level_rank(projected), 1)
             laws = [law for law in laws if confidence_level_rank(law.confidence, fallback=-1) >= min_rank]
 
         # --- W119: mirror into the central findings registry ---

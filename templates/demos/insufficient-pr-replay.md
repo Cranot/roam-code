@@ -1,4 +1,5 @@
 <!-- W276 INSUFFICIENT-tier demo fixture; companion to canonical-pr-replay.md. Values are illustrative, not from a real repo. -->
+<!-- Audience: CTO / CISO / dev-tools lead. Five-minute read. Companion to canonical-pr-replay.md. -->
 
 # What does an INSUFFICIENT-tier evidence packet look like?
 
@@ -8,6 +9,12 @@ plugin might emit a JSON file that *looks* like a Roam evidence
 packet — it has a `schema_version`, a `commit_sha`, a `diff_hash`,
 even a few `changed_subjects` — but skips identity, authority,
 context, risk, policy, and verification entirely.
+
+> **Synthetic fixture.** The SHAs, file paths, hashes, and content
+> hash are illustrative — the shape is what `roam pr-replay` emits
+> when fed a thin third-party export that only populates
+> `changed_subjects` and a `redactions[]` marker. Compare against
+> the 8-of-8 STRONG-tier sibling in `canonical-pr-replay.md`.
 
 This fixture is what that packet looks like, and what the W259
 honest-coverage banner renders for it. The companion JSON lives in
@@ -30,6 +37,37 @@ both STRONG (complete < 7) and PARTIAL (missing > 3), so the banner
 falls through to **INSUFFICIENT**. The rationale string the banner
 emits warns the reader explicitly: *"do not publish as governance
 evidence."*
+
+---
+
+## The five commands that would have lifted this packet to STRONG
+
+This fixture is what `roam pr-replay` renders when a third-party
+exporter feeds it a stub: only `changed_subjects[]` and a
+`redactions[]` marker. The arc below is exactly the canonical
+sibling's 5-command arc — running it on the same repo would have
+populated the six missing slots:
+
+```bash
+# 1. Install + index (offline, ~30s on a 25k-symbol repo)
+pip install "roam-code[mcp]" && roam init
+
+# 2. Open a signed run-ledger entry — populates actor + authority
+roam runs start --agent-id agent:your-agent
+
+# 3. Gate the change before edit — populates context + risk
+roam preflight <symbol> && roam impact <symbol>
+
+# 4. Critique the diff as a graph mutation — populates findings + policy
+git diff | roam critique
+
+# 5. Emit the bundle + replay — populates approvals + verify
+roam pr-bundle emit --approval
+roam pr-replay --range main:9f8e7d6..a1b2c3d --evidence-bundle .roam/reports/pr-X
+```
+
+Skip any of those five and the corresponding evidence slot stays
+empty; the renderer below shows what that looks like.
 
 ---
 
@@ -173,6 +211,13 @@ Reproducible from the JSON companion file:
 These five invariants are pinned by tests in
 `tests/test_demo_fixtures.py`. Any drift fails the suite.
 
+## What to do next
+
+- **See the STRONG-tier counterpart.** [`canonical-pr-replay.md`](./canonical-pr-replay.md) walks the same shape with all 8 questions answered. Reading the two side by side is the fastest way to see the gap a real Roam pipeline closes; the full 5-minute walkthrough lives at <https://roam-code.com/docs/canonical-demo>.
+- **See the engagement-shape companion.** The paid Team / Deep tiers ship a polished report with founder review across 30 / 90 PRs. The canonical post-fill artefact is [`sample-pr-replay-team.md`](../audit-report/sample-pr-replay-team.md) — same packet shape, real-engagement narrative, recommended CI gates ranked by leverage.
+- **Run this on your own repo.** `pip install roam-code && roam pr-replay --tier sample` produces a watermarked 5-PR DIY report on your last merged window. No code leaves your machine; no account needed.
+- **Commission a paid replay.** Tier-pickers, SOW, DPA, and Stripe checkout live at <https://roam-code.com/audit>. 50% of the engagement fee credits toward a Roam Review subscription within 60 days.
+
 ---
 
 *This page (and the rest of `templates/demos/`) is a fixture for
@@ -181,3 +226,10 @@ synthetic. The data shape is real — it is the same `ChangeEvidence`
 schema (v1.0.0) the canonical demo uses, just with most fields
 deliberately left empty so the W259 honest-coverage banner has
 something to flag.*
+
+---
+
+*Per the retained agentic-assurance wording in `(internal memo)`,
+Roam **supports evidence for** governance review and **maps to**
+change-management controls. The conformity assessment for any specific
+framework remains with the customer.*

@@ -216,30 +216,47 @@ def _render_aggregate_markdown(agg: dict, path: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _build_integrity_summary(records: list[dict], path: Path) -> dict:
+def _compute_chain_head(path: Path) -> str:
+    """Read the trail tail and compute the SHA-256 of the last non-blank line.
+
+    Extracted from ``_build_integrity_summary`` so W607-AP can wrap this
+    I/O boundary as its own substrate phase (``compute_chain_head``).
+    Returns "" when the path does not exist or is empty.
+
+    W607-AP Pattern-2 elimination: the previous in-line ``except OSError:
+    pass`` is gone; an OSError now propagates to the ``_run_check_ap``
+    wrapper, surfacing a structured marker instead of silently degrading
+    to an empty chain_head.
+    """
+    import hashlib as _h
+
+    if not path.exists():
+        return ""
+    chain_head = ""
+    with path.open("rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - 8192))
+        tail = f.read().decode("utf-8", errors="replace")
+    for line in tail.strip().split("\n"):
+        if line.strip():
+            chain_head = _h.sha256(line.strip().encode("utf-8")).hexdigest()
+    return chain_head
+
+
+def _build_integrity_summary(records: list[dict], path: Path, chain_head: str = "") -> dict:
     """Compose the closing AuditIntegritySummary record.
 
     Format inspired by the SHA-256 chained log forensic-format conventions
     documented in https://dev.to/veritaschain/building-a-tamper-evident-audit-log-with-sha-256-hash-chains-zero-dependencies-h0b
     — a closing record that locks in the chain head + count + algorithm so
     a downstream consumer can verify "this is the trail at this moment in time".
+
+    W607-AP: ``chain_head`` is now computed by the caller via
+    ``_compute_chain_head`` (a separate substrate phase). Default "" keeps
+    direct callers (tests, future helpers) working without refactoring.
     """
     import datetime as _dt
-    import hashlib as _h
-
-    chain_head = ""
-    if path.exists():
-        try:
-            with path.open("rb") as f:
-                f.seek(0, 2)
-                size = f.tell()
-                f.seek(max(0, size - 8192))
-                tail = f.read().decode("utf-8", errors="replace")
-            for line in tail.strip().split("\n"):
-                if line.strip():
-                    chain_head = _h.sha256(line.strip().encode("utf-8")).hexdigest()
-        except OSError:
-            pass
 
     return {
         "schema": INTEGRITY_SUMMARY_SCHEMA,
@@ -430,61 +447,328 @@ def audit_trail_export(
 
     path = Path(input_path) if input_path else DEFAULT_AUDIT_TRAIL_PATH
 
+    # --- W607-AP: substrate-CALL marker plumbing -------------------------
+    # cmd_audit_trail_export is the EXPORT leg of the audit-trail family
+    # quartet (W607-AD attest produces, W607-AI audit_trail_verify checks
+    # chain integrity, W607-AL audit_trail_conformance scores Article-12
+    # conformance, W607-AP audit_trail_export -- THIS wave -- projects
+    # the trail to procurement-friendly markdown / JSON / CSV).
+    #
+    # Substrate boundaries wrapped here:
+    #
+    #   load_records_finalize                         (read for --finalize)
+    #   compute_chain_head                            (tail-read I/O boundary)
+    #   build_integrity_summary                       (closing record build)
+    #   append_integrity_summary                      (--finalize append I/O)
+    #   load_records                                  (JSONL trail-read)
+    #   filter_records                                (since/until/verdict)
+    #   aggregate_records                             (bucketing computation)
+    #   build_top_actors                              (ranking computation)
+    #   render_output                                 (projection: md/csv/json)
+    #   atomic_write_text                             (I/O boundary)
+    #
+    # The PRIOR code had ONE Pattern-2 silent-fallback block (``except
+    # OSError: pass`` in _build_integrity_summary's tail-read). It is
+    # replaced by extracting the tail-read into ``_compute_chain_head``
+    # and routing it through ``_run_check_ap("compute_chain_head", ...)``
+    # so the disclosure channel names the I/O failure instead of
+    # silently degrading to an empty chain_head.
+    #
+    # Each raise becomes an
+    # ``audit_trail_export_<phase>_failed:<exc_class>:<detail>`` marker
+    # via ``_w607ap_warnings_out``. partial_success flips on any
+    # non-empty bucket. Empty bucket on the clean path keeps the
+    # envelope shape byte-identical to the pre-W607-AP command.
+    #
+    # QUARTET-CLOSURE milestone: with W607-AD (attest, produce),
+    # W607-AI (verify), W607-AL (conform), and W607-AP (export -- this
+    # wave), the audit-trail family is W607-plumbed end-to-end. A raise
+    # anywhere in {produce, verify, conform, export} surfaces a marker
+    # rather than crashing.
+    _w607ap_warnings_out: list[str] = []
+
+    def _run_check_ap(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-AP marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an
+        ``audit_trail_export_<phase>_failed:<exc_class>:<detail>`` marker
+        via ``_w607ap_warnings_out`` and return *default* -- the envelope
+        still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607ap_warnings_out.append(f"audit_trail_export_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # --- W607-CR: aggregation-phase marker plumbing (additive) -----------
+    # cmd_audit_trail_export is the EXPORT leg of the AUDIT-TRAIL FAMILY
+    # (cmd_audit_trail_verify W607-AI+CN; cmd_audit_trail_conformance
+    # W607-AL+CO; cmd_audit_trail_export W607-AP+CR -- this layer).
+    # W607-AP plumbed the substrate-CALL layer (10 substrate boundaries:
+    # load_records / compute_chain_head / build_integrity_summary /
+    # append_integrity_summary / filter_records / aggregate_records /
+    # build_top_actors / render_output / atomic_write_text). W607-CR adds
+    # the AGGREGATION-PHASE layer on top:
+    #
+    #   score_classify       -- bucket records (records vs aggregate vs top)
+    #                           into RECORDS_EXPORTED / EMPTY / DEGRADED state
+    #   compute_predicate    -- per-format record totals (total/filtered)
+    #   compute_verdict      -- composite verdict text ("N record(s) exported"
+    #                           / "aggregate over N record(s)" / "top N actor(s)")
+    #   serialize_envelope   -- json_envelope("audit-trail-export", ...) projection
+    #
+    # Marker family ``audit_trail_export_*`` -- same family as W607-AP
+    # (additive, not a separate prefix). Empty bucket -> byte-identical
+    # envelope on the success path. Both buckets are combined at envelope-
+    # emit time so consumers see the full degradation lineage in marker-
+    # emission order. The additive bucket stays distinguishable via its
+    # phase names (``score_classify`` / ``compute_predicate`` /
+    # ``compute_verdict`` / ``serialize_envelope``).
+    #
+    # AUDIT-TRAIL FAMILY 3-WAY pairing -- closes the family at aggregation
+    # layer:
+    #   cmd_audit_trail_verify       (W607-AI substrate + W607-CN aggregation)
+    #   cmd_audit_trail_conformance  (W607-AL substrate + W607-CO aggregation)
+    #   cmd_audit_trail_export       (W607-AP substrate + W607-CR THIS)
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: every ``default=`` kwarg in a
+    # ``_run_check_cr(...)`` call MUST be a literal constant (not a
+    # computed expression like ``len(filtered) if ...``). A computed
+    # default expression evaluates BEFORE the wrap call, so a raise
+    # inside the expression escapes the try-block. cmd_sbom's W607-CG
+    # sealed this axis. cmd_taint's W607-CJ added the 5th discipline
+    # (move ``len()`` INSIDE the closure, not at the kwarg-bind site).
+    #
+    # W607-AP/CR PHASE-NAME COLLISION (W607-CH): the substrate-CALL layer
+    # has NO ``serialize_envelope`` phase (W607-AP wraps ``render_output``
+    # and ``atomic_write_text`` for I/O but NOT json_envelope). So no
+    # rename is required. If a future W607-AP revision adds a
+    # ``serialize_envelope`` phase, rename W607-CR's to ``build_envelope``
+    # to avoid collision.
+    #
+    # MULTI-FORMAT NOTE: cmd_audit_trail_export has 3 emit paths
+    # (CSV / JSON / markdown via ``--format``). W607-AP wraps the
+    # rendering phase via ``render_output`` / ``aggregate_records`` /
+    # ``build_top_actors``. W607-CR's aggregation phases live in the
+    # POST-rendering envelope-build flow and are format-agnostic (they
+    # operate on ``filtered`` counts + ``rendered`` content), so the
+    # marker family stays clean across all 3 formats by construction.
+    _w607cr_warnings_out: list[str] = []
+
+    def _run_check_cr(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-CR marker emission.
+
+        Mirror of ``_run_check_ap`` shape (same
+        ``audit_trail_export_<phase>_failed:`` marker family) but writes
+        into ``_w607cr_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cr_warnings_out.append(f"audit_trail_export_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     # --finalize is a side-effect operation: append the integrity summary
     # to the trail BEFORE rendering, so the rendered output reflects it too.
     if finalize and path.exists():
-        existing = _load_records(path)
-        summary_record = _build_integrity_summary(existing, path)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(_json.dumps(summary_record, separators=(",", ":"), sort_keys=True) + "\n")
+        existing = _run_check_ap("load_records_finalize", _load_records, path, default=[])
+        chain_head = _run_check_ap("compute_chain_head", _compute_chain_head, path, default="")
+        summary_record = _run_check_ap(
+            "build_integrity_summary",
+            _build_integrity_summary,
+            existing,
+            path,
+            chain_head,
+            default=None,
+        )
+        if summary_record is not None:
 
-    records = _load_records(path)
-    filtered = _filter_records(records, since=since, until=until, verdict_filter=verdict_filter)
+            def _append_summary():
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(_json.dumps(summary_record, separators=(",", ":"), sort_keys=True) + "\n")
+                return True
+
+            _run_check_ap("append_integrity_summary", _append_summary, default=False)
+
+    records = _run_check_ap("load_records", _load_records, path, default=[])
+    filtered = _run_check_ap(
+        "filter_records",
+        _filter_records,
+        records,
+        since=since,
+        until=until,
+        verdict_filter=verdict_filter,
+        default=list(records),
+    )
 
     aggregate_data: dict | None = None
     top_actors_data: list[dict] | None = None
-    if top_actors > 0:
-        top_actors_data = _build_top_actors(filtered, top_actors)
+
+    def _render_top_actors_branch():
+        data = _build_top_actors(filtered, top_actors)
         if fmt.lower() == "md":
-            rendered = _render_top_actors_markdown(top_actors_data, path)
+            return data, _render_top_actors_markdown(data, path)
         elif fmt.lower() == "csv":
-            rendered = _render_top_actors_csv(top_actors_data)
+            return data, _render_top_actors_csv(data)
         else:
-            rendered = _json.dumps(top_actors_data, indent=2, default=str)
-    elif aggregate:
-        aggregate_data = _aggregate_records(filtered)
+            return data, _json.dumps(data, indent=2, default=str)
+
+    def _render_aggregate_branch():
+        data = _aggregate_records(filtered)
         if fmt.lower() == "md":
-            rendered = _render_aggregate_markdown(aggregate_data, path)
+            return data, _render_aggregate_markdown(data, path)
         elif fmt.lower() == "csv":
-            rendered = _render_aggregate_csv(aggregate_data)
+            return data, _render_aggregate_csv(data)
         else:
-            rendered = _json.dumps(aggregate_data, indent=2, default=str)
-    else:
+            return data, _json.dumps(data, indent=2, default=str)
+
+    def _render_records_branch():
         if fmt.lower() == "md":
-            rendered = _render_markdown(filtered, path)
+            return _render_markdown(filtered, path)
         elif fmt.lower() == "csv":
-            rendered = _render_csv(filtered)
+            return _render_csv(filtered)
         else:
-            rendered = _render_json(filtered)
+            return _render_json(filtered)
 
     if top_actors > 0:
-        verdict_text = f"top {len(top_actors_data or [])} actor(s) by BLOCK count"
+        # W607-AP: combined ranking + projection -- a raise inside either
+        # _build_top_actors or _render_top_actors_* surfaces one marker.
+        result = _run_check_ap(
+            "build_top_actors",
+            _render_top_actors_branch,
+            default=([], ""),
+        )
+        top_actors_data, rendered = result
     elif aggregate:
-        verdict_text = f"aggregate over {len(filtered)} record(s)"
+        result = _run_check_ap(
+            "aggregate_records",
+            _render_aggregate_branch,
+            default=({}, ""),
+        )
+        aggregate_data, rendered = result
     else:
-        verdict_text = f"{len(filtered)} record(s) exported"
+        rendered = _run_check_ap("render_output", _render_records_branch, default="")
 
+    # W607-CR -- score_classify boundary. Wraps the export-mode bucketing
+    # (records-list / aggregate / top-actors) into a state label
+    # (RECORDS_EXPORTED / EMPTY / DEGRADED) so a downstream refactor of
+    # the mode-selection logic surfaces a marker rather than crashing.
+    # Floor returns documented zero counts matching the empty-trail
+    # branch shape so downstream verdict / compute_predicate stay
+    # non-null.
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: ``len(filtered)`` /
+    # ``len(top_actors_data or [])`` are computed INSIDE the wrapped
+    # closure rather than at the call site -- a _BadList whose
+    # ``__len__`` or ``__iter__`` raises would otherwise escape the
+    # try-block at kwarg-bind time. W978 5th-discipline (cmd_taint
+    # W607-CJ): move ``len()`` INSIDE the closure.
+    def _score_classify_export(_filtered, _top_actors_data, _aggregate_data, _top_actors_limit, _aggregate_mode):
+        _filtered_n = len(_filtered) if _filtered is not None else 0
+        if _top_actors_limit > 0:
+            _top_n = len(_top_actors_data) if _top_actors_data is not None else 0
+            _mode = "top_actors"
+            _state = "RECORDS_EXPORTED" if _top_n else "EMPTY"
+        elif _aggregate_mode:
+            _mode = "aggregate"
+            _state = "RECORDS_EXPORTED" if _filtered_n else "EMPTY"
+        else:
+            _mode = "records"
+            _state = "RECORDS_EXPORTED" if _filtered_n else "EMPTY"
+        return {"mode": _mode, "state": _state, "filtered_n": _filtered_n}
+
+    _score_dict = _run_check_cr(
+        "score_classify",
+        _score_classify_export,
+        filtered,
+        top_actors_data,
+        aggregate_data,
+        top_actors,
+        aggregate,
+        default={"mode": "records", "state": "DEGRADED", "filtered_n": 0},
+    )
+
+    # W607-CR -- compute_verdict boundary. Wraps the verdict-string
+    # assembly so a downstream f-string refactor (non-int counts from a
+    # vocabulary refactor, or a __format__-raising sentinel) surfaces a
+    # marker rather than crashing the envelope. Floor must NOT re-
+    # interpolate the same values that tripped the closure (W978 first-
+    # hypothesis). Use the literal "audit-trail-export completed" floor
+    # (LAW 6 still holds: the line works standalone).
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: ``top_actors_data`` /
+    # ``filtered`` / ``top_actors`` / ``aggregate`` are passed as raw
+    # args; ``len()`` lives INSIDE the closure (cmd_taint W607-CJ
+    # 5th-discipline anchor).
+    def _build_verdict_str(_top_actors_data, _filtered, _top_actors_limit, _aggregate_mode):
+        if _top_actors_limit > 0:
+            _n = len(_top_actors_data) if _top_actors_data is not None else 0
+            return f"top {_n} actor(s) by BLOCK count"
+        if _aggregate_mode:
+            return f"aggregate over {len(_filtered)} record(s)"
+        return f"{len(_filtered)} record(s) exported"
+
+    verdict_text = _run_check_cr(
+        "compute_verdict",
+        _build_verdict_str,
+        top_actors_data,
+        filtered,
+        top_actors,
+        aggregate,
+        default="audit-trail-export completed",
+    )
+
+    # W607-CR -- compute_predicate boundary. Wraps the per-format record
+    # totals extraction so a future ``records[]`` / ``filtered[]`` schema
+    # refactor that drops or renames count fields surfaces a marker
+    # rather than crashing the envelope. Floor to documented zero-counts
+    # matching the empty-trail branch shape so downstream summary fields
+    # stay non-null. W978 discipline: ``default=`` is a literal dict, NOT
+    # a computed expression over the (potentially poisoned) inputs.
+    #
+    # W978 KWARG-DEFAULT EAGERNESS TRAP: ``len(records)`` / ``len(filtered)``
+    # are computed INSIDE the wrapped closure -- passing the raw lists
+    # keeps the kwarg-bind step pure (no ``__len__`` call until we're
+    # inside the try-block). cmd_taint W607-CJ 5th-discipline anchor.
+    def _compute_predicate_fields(_records, _filtered) -> dict:
+        return {
+            "total_records": len(_records),
+            "filtered_records": len(_filtered),
+        }
+
+    _pred_fields = _run_check_cr(
+        "compute_predicate",
+        _compute_predicate_fields,
+        records,
+        filtered,
+        default={"total_records": 0, "filtered_records": 0},
+    )
+
+    # W978 KWARG-DEFAULT EAGERNESS NOTE: do NOT use
+    # ``_pred_fields.get("filtered_records", len(filtered))`` -- the
+    # second arg evaluates EAGERLY (Python evaluates .get's defaults at
+    # the call site), which would re-raise on a __len__-poisoned
+    # ``filtered`` sentinel. _pred_fields ALWAYS carries the keys
+    # (either real value or floor 0), so a bare lookup is correct.
     summary = {
         "verdict": verdict_text,
         "format": fmt.lower(),
         "aggregate": aggregate,
         "top_actors_limit": top_actors if top_actors > 0 else None,
         "input": str(path),
-        "total_records": len(records),
-        "filtered_records": len(filtered),
+        "total_records": _pred_fields["total_records"],
+        "filtered_records": _pred_fields["filtered_records"],
         "verdict_filter": verdict_filter,
         "since": since,
         "until": until,
+        # W607-CR: surface the score_classify result on the envelope so
+        # consumers can read the export mode + state without re-deriving
+        # from raw filtered/records counts.
+        "export_mode": _score_dict.get("mode", "records"),
+        "export_state": _score_dict.get("state", "RECORDS_EXPORTED"),
     }
 
     if output_path:
@@ -494,8 +778,30 @@ def audit_trail_export(
         # exported chain. Route through atomic_io (W880-shaped fix).
         from roam.atomic_io import atomic_write_text
 
-        atomic_write_text(Path(output_path), rendered)
+        _run_check_ap(
+            "atomic_write_text",
+            atomic_write_text,
+            Path(output_path),
+            rendered,
+            default=None,
+        )
         summary["output"] = output_path
+
+    # W607-AP / W607-CR: thread substrate-CALL markers AND aggregation-
+    # phase markers onto BOTH summary.warnings_out AND top-level
+    # envelope.warnings_out so consumers reading either surface see the
+    # full disclosure lineage. Both buckets share the canonical
+    # ``audit_trail_export_*`` marker family (W607-CR is additive, not a
+    # separate prefix); the additive bucket stays distinguishable via
+    # its phase names (``score_classify`` / ``compute_predicate`` /
+    # ``compute_verdict`` / ``serialize_envelope``). Non-empty combined
+    # bucket flips partial_success. Empty combined bucket on the clean
+    # path keeps the envelope byte-identical to the pre-W607-AP/CR
+    # command (hash-stable happy path).
+    _combined_warnings_out = list(_w607ap_warnings_out) + list(_w607cr_warnings_out)
+    if _combined_warnings_out:
+        summary["warnings_out"] = list(_combined_warnings_out)
+        summary["partial_success"] = True
 
     if json_mode:
         envelope_payload = {"summary": summary, "content": rendered}
@@ -503,7 +809,54 @@ def audit_trail_export(
             envelope_payload["aggregate"] = aggregate_data
         if top_actors_data is not None:
             envelope_payload["top_actors"] = top_actors_data
-        click.echo(to_json(json_envelope("audit-trail-export", **envelope_payload)))
+        # W607-AP / W607-CR: mirror BOTH substrate-CALL markers AND
+        # aggregation-phase markers at the top level too so a consumer
+        # reading envelope.warnings_out (rather than
+        # envelope.summary.warnings_out) sees the same disclosure.
+        if _combined_warnings_out:
+            envelope_payload["warnings_out"] = list(_combined_warnings_out)
+
+        # W607-CR -- serialize_envelope boundary. Wraps the envelope
+        # serialization itself. A downstream schema-shape refactor that
+        # breaks ``json_envelope("audit-trail-export", ...)`` would
+        # otherwise crash AFTER all substrate + aggregation signals were
+        # already gathered. Floor to a minimal envelope stub so consumers
+        # still receive a parseable JSON object with the marker attached
+        # + the canonical command name. Mirror of cmd_taint's W607-CJ /
+        # cmd_audit_trail_conformance's W607-CO serialize_envelope floor
+        # pattern.
+        _envelope_floor: dict = {
+            "command": "audit-trail-export",
+            "schema_version": "1.0.0",
+            "summary": {
+                "verdict": verdict_text,
+                "partial_success": True,
+                "warnings_out": list(_combined_warnings_out),
+            },
+            "warnings_out": list(_combined_warnings_out),
+        }
+        _envelope = _run_check_cr(
+            "serialize_envelope",
+            json_envelope,
+            "audit-trail-export",
+            default=_envelope_floor,
+            **envelope_payload,
+        )
+        # W607-CR -- if ``serialize_envelope`` raised AFTER the combined
+        # bucket was already snapshotted, the new
+        # ``audit_trail_export_serialize_envelope_failed:`` marker was
+        # appended to ``_w607cr_warnings_out`` and the floor stub carries
+        # only the pre-raise combined list. Rebuild the floor stub's
+        # warnings_out so the new marker reaches the JSON output. Clean
+        # path -> envelope is the real json_envelope return value, no
+        # rebuild needed.
+        if _envelope is _envelope_floor and _w607cr_warnings_out:
+            _combined_warnings_out = list(_w607ap_warnings_out) + list(_w607cr_warnings_out)
+            _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
+            _envelope_floor["warnings_out"] = list(_combined_warnings_out)
+            _envelope = _envelope_floor
+
+        click.echo(to_json(_envelope))
     elif output_path:
         click.echo(f"VERDICT: {summary['verdict']} -> {output_path}")
     else:

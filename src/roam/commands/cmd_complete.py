@@ -30,13 +30,19 @@ _VALID_KINDS = ("symbol", "path", "command", "all")
 _DEFAULT_LIMIT = 30
 
 
-def _prefix_symbols(prefix: str, *, limit: int) -> list[str]:
+def _prefix_symbols(prefix: str, *, limit: int, warnings_out: list[str] | None = None) -> list[str]:
     """Return symbol names that LITERALLY start with ``prefix``.
 
     Uses ``LIKE prefix%`` directly against ``symbols.name`` so camelCase
     tokenization (which the FTS5 indexer applies — ``MyUseFoo`` ->
     ``My Use Foo``) cannot widen the match. This is the contract the
     ``prefix`` argument promises.
+
+    W607-F: when ``warnings_out`` is threaded in, the silent SQL
+    fallback (``except Exception``) appends a structured
+    ``complete_symbols_query_failed:<exc_class>:<detail>`` marker
+    instead of dropping the substrate failure on the floor. Mirrors
+    cmd_search W607-E ``_get_explain_data`` inner disclosure shape.
     """
     if not prefix:
         return []
@@ -52,7 +58,9 @@ def _prefix_symbols(prefix: str, *, limit: int) -> list[str]:
                 "LIMIT ?",
                 (like, limit * 3),
             ).fetchall()
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — W607-F inner-bucket disclosure
+        if warnings_out is not None:
+            warnings_out.append(f"complete_symbols_query_failed:{type(exc).__name__}:{exc}")
         return []
     seen: set[str] = set()
     out: list[str] = []
@@ -154,39 +162,78 @@ def complete(ctx, prefix, kind, limit):
     # tokenization, byte-equivalent to what the user typed.
     from roam.mcp_extras.completions import complete_commands, complete_paths
 
+    # W607-F: Pattern-2 consumer-layer wiring — thread a warnings_out
+    # bucket through the completion pipeline. cmd_complete does NOT
+    # call the W605-plumbed substrate directly (search_fts /
+    # fts5_available / fts5_populated / search_stored): it issues raw
+    # SQL through ``_prefix_symbols`` + delegates to read-only helpers
+    # in ``mcp_extras.completions`` (complete_paths / complete_commands)
+    # which themselves wrap silent ``except Exception`` fallbacks. The
+    # disclosure shape therefore mirrors cmd_search W607-E outer-guard
+    # idioms but with three distinct sub-markers, one per kind bucket:
+    #   * symbol pipeline raise (in _prefix_symbols) → threaded
+    #     ``complete_symbols_query_failed:<exc>:<detail>`` (inner)
+    #   * paths helper raise → ``complete_paths_query_failed:<exc>:<detail>``
+    #   * commands helper raise → ``complete_commands_query_failed:<exc>:<detail>``
+    # Marker family is ``complete_*`` (NOT ``search_*`` / ``semantic_*``)
+    # — cmd_complete is the LEXICAL-PREFIX layer, distinct from the
+    # substring (cmd_search) and semantic (cmd_search_semantic) scopes.
+    # Empty bucket → byte-identical envelope (hash-stable). Non-empty
+    # bucket → summary.warnings_out + summary.partial_success=True +
+    # top-level mirror.
+    warnings_out: list[str] = []
+
     payload: dict[str, list[str]] = {}
     if kind_norm in ("symbol", "all"):
-        payload["symbols"] = _prefix_symbols(prefix, limit=limit)
+        payload["symbols"] = _prefix_symbols(prefix, limit=limit, warnings_out=warnings_out)
     if kind_norm in ("path", "all"):
-        payload["paths"] = complete_paths(prefix, limit=limit)
+        try:
+            payload["paths"] = complete_paths(prefix, limit=limit)
+        except Exception as exc:  # noqa: BLE001 — W607-F outer-guard
+            warnings_out.append(f"complete_paths_query_failed:{type(exc).__name__}:{exc}")
+            payload["paths"] = []
     if kind_norm in ("command", "all"):
-        payload["commands"] = complete_commands(prefix, limit=limit)
+        try:
+            payload["commands"] = complete_commands(prefix, limit=limit)
+        except Exception as exc:  # noqa: BLE001 — W607-F outer-guard
+            warnings_out.append(f"complete_commands_query_failed:{type(exc).__name__}:{exc}")
+            payload["commands"] = []
 
     # Total count across all kinds (for ``--kind all``).
     total = sum(len(v) for v in payload.values())
     verdict = f"{total} prefix completions for '{prefix}' (kind={kind_norm})"
     # ``partial_success`` required on every envelope. ``complete`` is
     # signal-producing only when at least one match comes back; empty
-    # results are partial since the prefix did not pin anything.
-    partial = total == 0
+    # results are partial since the prefix did not pin anything. W607-F:
+    # any substrate marker also flips ``partial_success`` to True so the
+    # agent can distinguish "valid prefix, 0 hits" from "completion
+    # pipeline degraded".
+    partial = total == 0 or bool(warnings_out)
 
     if json_mode:
+        _complete_summary: dict = {
+            "verdict": verdict,
+            "prefix": prefix,
+            "kind": kind_norm,
+            "total": total,
+            "match_mode": "prefix",
+            "partial_success": partial,
+            "index_ready": index_ready,
+        }
+        # W607-F disclosure: non-empty bucket → summary mirror + top-level
+        # mirror. Empty bucket → byte-identical envelope (hash-stable on
+        # clean happy path).
+        if warnings_out:
+            _complete_summary["warnings_out"] = list(warnings_out)
         click.echo(
             to_json(
                 json_envelope(
                     "complete",
-                    summary={
-                        "verdict": verdict,
-                        "prefix": prefix,
-                        "kind": kind_norm,
-                        "total": total,
-                        "match_mode": "prefix",
-                        "partial_success": partial,
-                        "index_ready": index_ready,
-                    },
+                    summary=_complete_summary,
                     prefix=prefix,
                     kind=kind_norm,
                     results=payload,
+                    **({"warnings_out": list(warnings_out)} if warnings_out else {}),
                 )
             )
         )

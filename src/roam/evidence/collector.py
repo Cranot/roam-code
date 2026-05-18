@@ -75,6 +75,7 @@ from roam.evidence.mcp_receipt import McpDecisionReceipt
 from roam.evidence.provenance import provenance_label
 from roam.evidence.refs import ActorRef, AuthorityRef, EnvironmentRef
 from roam.evidence.subject import EvidenceSubject
+from roam.output.risk import normalize_risk_level
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -520,6 +521,115 @@ def _get_pr_bundle_field(envelope: Mapping[str, Any], key: str) -> Any | None:
         if v:
             return v
     return None
+
+
+# W641-followup-F — risk-LEVEL projection helpers
+# ---------------------------------------------------------------------------
+
+#: Closed enum of the three lineage tokens that name WHERE the collector
+#: read the risk-LEVEL field from. Distinct from PROVENANCE_SOURCES
+#: (W282), which names the producer-side surface (``producer_envelope``
+#: / ``run_ledger`` / ``cli_flag`` / ...). This vocabulary names the
+#: COLLECTOR-side decision branch: which of the three priority lanes in
+#: :func:`_resolve_risk_level_with_lineage` fired.
+#:
+#: Tokens:
+#:
+#: * ``canonical``           — envelope carried ``risk_level_canonical``
+#:                              (top-level OR ``summary.risk_level_canonical``);
+#:                              the producer has already gone through
+#:                              ``normalize_risk_level``. Best signal.
+#: * ``verdict_text_legacy`` — envelope carried only the legacy
+#:                              ``risk_level`` / ``summary.risk_level``
+#:                              field (no canonical mirror). Lifted +
+#:                              normalised through ``normalize_risk_level``;
+#:                              preserved verbatim if normalize returns
+#:                              ``None`` for pre-W631 byte-stability.
+#: * ``missing``             — neither source present. The packet's
+#:                              ``risk_level`` field stays ``None`` and
+#:                              ``evidence_completeness()`` classifies Q5
+#:                              as ``not_applicable`` (when verdict is
+#:                              SAFE/PASS + no findings) or ``missing``.
+RISK_LEVEL_LINEAGE_SOURCES: frozenset[str] = frozenset({"canonical", "verdict_text_legacy", "missing"})
+
+
+def _resolve_risk_level_with_lineage(
+    envelope: Mapping[str, Any],
+) -> tuple[str | None, str, str | None]:
+    """Resolve the risk-LEVEL field with explicit lineage disclosure.
+
+    Returns a ``(value, source, divergence_warning)`` triple:
+
+    * ``value``               — the resolved risk-LEVEL string (or ``None``
+                                when neither source is present). Always
+                                run through :func:`normalize_risk_level`
+                                when a canonical source fires; falls back
+                                to the raw legacy string when normalize
+                                returns ``None`` on the legacy lane (so
+                                a pre-W631 envelope carrying an unknown
+                                label doesn't lose its value).
+    * ``source``              — one of the :data:`RISK_LEVEL_LINEAGE_SOURCES`
+                                tokens naming WHICH lane fired.
+    * ``divergence_warning``  — when BOTH canonical AND legacy are present
+                                AND they disagree post-normalize, a stable
+                                ``"risk_level_divergence:<canonical>:<legacy>"``
+                                string suitable for the collector's
+                                ``warnings`` channel. ``None`` when no
+                                divergence (silent happy path).
+
+    Priority chain:
+
+    1. ``envelope["risk_level_canonical"]``                  → ``canonical``
+    2. ``envelope["summary"]["risk_level_canonical"]``       → ``canonical``
+    3. ``envelope["risk_level"]``                            → ``verdict_text_legacy``
+       ``envelope["summary"]["risk_level"]``
+    4. neither present                                       → ``missing`` (value=None)
+
+    Canonical wins on disagreement — producers that emit
+    ``risk_level_canonical`` have already normalised the bucket.
+    """
+    canonical_raw = _coalesce(
+        envelope.get("risk_level_canonical"),
+        _nested(envelope, ("summary", "risk_level_canonical")),
+    )
+    legacy_raw = _coalesce(
+        envelope.get("risk_level"),
+        _nested(envelope, ("summary", "risk_level")),
+    )
+    canonical_norm = normalize_risk_level(canonical_raw) if canonical_raw else None
+    legacy_norm = normalize_risk_level(legacy_raw) if legacy_raw else None
+
+    if canonical_norm is not None:
+        divergence: str | None = None
+        if legacy_norm is not None and legacy_norm != canonical_norm:
+            divergence = f"risk_level_divergence:{canonical_norm}:{legacy_norm}"
+        return canonical_norm, "canonical", divergence
+    if legacy_norm is not None:
+        return legacy_norm, "verdict_text_legacy", None
+    if legacy_raw:
+        # Legacy field present but normalize returned None (unknown label).
+        # Preserve the raw string for pre-W631 byte-stability while still
+        # disclosing the legacy lineage.
+        return legacy_raw, "verdict_text_legacy", None
+    return None, "missing", None
+
+
+def resolve_risk_level_with_lineage(
+    envelope: Mapping[str, Any],
+) -> tuple[str | None, str, str | None]:
+    """Public wrapper around :func:`_resolve_risk_level_with_lineage`.
+
+    Exposed so tests + downstream consumers can introspect the
+    collector's risk-LEVEL lineage decision without re-implementing the
+    priority chain.
+
+    W641-followup-F: closes the producer→packet projection loop. Producers
+    emit ``risk_level_canonical`` (W641 cluster); the collector lifts the
+    canonical value via this helper and stamps it onto
+    :attr:`ChangeEvidence.risk_level`. Lineage is observable for audit
+    via the second return slot.
+    """
+    return _resolve_risk_level_with_lineage(envelope)
 
 
 def _build_changed_subjects_from_affected(
@@ -3245,10 +3355,41 @@ def collect_change_evidence(
                 bundle_verdict = scrubbed_verdict
             else:
                 bundle_verdict = raw_verdict
-            bundle_risk_level = _coalesce(
-                pr_bundle_envelope.get("risk_level"),
-                _nested(pr_bundle_envelope, ("summary", "risk_level")),
+            # W641-followup-F — prefer the canonical risk-LEVEL axis emitted
+            # by the W641 cluster producers (pr_risk, impact, critique,
+            # pr_bundle, attest). The producer→packet projection loop closes
+            # here: when ``risk_level_canonical`` is present we lift it
+            # verbatim; we only fall back to the legacy ``risk_level`` /
+            # ``summary.risk_level`` synthesis path for backward-compat with
+            # older pr-bundle envelopes that pre-date the canonical field.
+            #
+            # Priority chain (per "Make fallback chains loud" rule, CP45 /
+            # CP46):
+            #   1. ``envelope["risk_level_canonical"]``         → canonical
+            #   2. ``envelope["summary"]["risk_level_canonical"]`` → canonical
+            #   3. ``envelope["risk_level"]``                   → legacy verdict
+            #      ``envelope["summary"]["risk_level"]``          synthesis
+            #   4. neither present                              → None (Q5
+            #                                                     not_applicable
+            #                                                     or missing —
+            #                                                     ``evidence_completeness``
+            #                                                     classifies)
+            #
+            # Lineage disclosure: the canonical / legacy lineage is observable
+            # via ``_resolve_risk_level_with_lineage`` (returns ``(value,
+            # source)`` where ``source`` is one of the three closed-enum
+            # tokens). The collector keeps the lineage-tuple internally; we
+            # only surface a ``warnings`` entry when ACTUAL producer drift is
+            # detected (the canonical + legacy sources disagree). Silent
+            # happy-paths keep pre-existing collector tests green; the
+            # closed-enum lineage marker is exposed for downstream tests via
+            # the module-level :func:`resolve_risk_level_with_lineage` helper
+            # (W641-followup-F).
+            bundle_risk_level, _risk_level_source, _risk_level_divergence = _resolve_risk_level_with_lineage(
+                pr_bundle_envelope
             )
+            if _risk_level_divergence is not None:
+                warnings.append(_risk_level_divergence)
             bundle_repo_id = _coalesce(
                 pr_bundle_envelope.get("repo_id"),
             )
@@ -3820,4 +3961,8 @@ def _nested(envelope: Mapping[str, Any], path: tuple[str, ...]) -> Any | None:
     return cur
 
 
-__all__ = ["collect_change_evidence"]
+__all__ = [
+    "collect_change_evidence",
+    "resolve_risk_level_with_lineage",
+    "RISK_LEVEL_LINEAGE_SOURCES",
+]

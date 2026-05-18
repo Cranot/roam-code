@@ -241,7 +241,9 @@ def test_pr_analyze_clean_prep_keeps_existing_verdict(monkeypatch, clean_indexed
     summary = payload.get("summary") or {}
 
     # Healthy cascade → verdict from the normal verdict logic.
-    assert summary.get("verdict") in ("SAFE", "REVIEW", "BLOCK", "INTENTIONAL")
+    verdict = str(summary.get("verdict") or "").split(" ", 1)[0]
+    assert verdict in ("SAFE", "REVIEW", "BLOCK", "INTENTIONAL")
+    assert summary.get("risk_level_canonical") in {"low", "medium", "high", "critical"}
     # No state override (no failure / no_changes signal).
     assert summary.get("state") not in ("no_changes", "diff_failed", "subcommand_failed")
     # No failed_subcommands when nothing failed.

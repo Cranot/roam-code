@@ -1,28 +1,41 @@
-# .roam/rules.yml — example architecture rules for roam pr-analyze.
+# .roam-rules.yml — example architecture rules for `roam pr-analyze`.
 #
-# Drop this file at .roam/rules.yml in your repo root and roam pr-analyze
-# will auto-load it. Each rule matches one of the four pattern types:
+# Install: copy this file to `.roam/rules.yml` in your repo root (that is
+# the path `roam pr-analyze` auto-loads by default; override with `--rules`).
+# Each rule matches one of the four pattern types:
 #
 #   - import_from   — banned imports (Python `from X import`, JS `import ... from "X"`)
 #   - function_call — banned calls anywhere in added lines (e.g. eval, pickle.loads)
 #   - class_inherit — banned base classes in `class Foo(Base, ...)` declarations
 #   - decorator_use — banned decorators on added lines (@deprecated, @unsafe.*)
 #
-# Severities: BLOCK (gate failure) | WARN | INFO. Glob syntax is fnmatch
-# (`*` matches segments, `**` matches recursively, `{a,b}` enumerates options).
+# Severities: BLOCK (gate failure, exit 5) | WARN | INFO. Glob syntax is
+# fnmatch (`*` matches segments, `**` matches recursively, `{a,b}` enumerates
+# options). Required keys: `id`, `pattern`, `forbidden_target_glob`. Optional:
+# `description`, `source_glob`, `severity` (defaults to WARN).
+#
+# Validate before shipping (catches typos, unknown patterns, bad globs):
+#   roam rules-validate .roam/rules.yml --explain
+#
+# [TBD: tune `source_glob`] — the examples below use `src/**/*.py` and
+# `frontend/**/*.{ts,tsx,...}` as illustrative paths. Replace with your
+# real layout (e.g. `apps/api/**/*.py`, `packages/web/src/**/*.tsx`).
+#
+# Related: `roam audit-trail-conformance-check` validates EU AI Act
+# Article 12 record-keeping when `pr-analyze --audit-trail` is enabled.
 
 rules:
   # ---- Layer-violation rules: forbid imports across architectural boundaries.
 
   - id: no-frontend-db-import
-    description: Frontend modules must not import from db/ directly — go through services/
+    description: Route frontend DB access through services/ — direct lib/db imports break layering.
     pattern: import_from
     source_glob: "frontend/**/*.{ts,tsx,js,jsx,vue}"
     forbidden_target_glob: "lib/db/**"
     severity: BLOCK
 
   - id: no-test-imports-from-prod
-    description: Production code must not import from test fixtures
+    description: Production code must not import from test fixtures — refactor shared helpers into src/.
     pattern: import_from
     source_glob: "src/**/*.py"
     forbidden_target_glob: "tests.fixtures.*"
@@ -31,21 +44,21 @@ rules:
   # ---- Function-call bans: surface dangerous APIs at PR time.
 
   - id: no-eval
-    description: Banned — eval is unsafe; use ast.literal_eval or a real parser
+    description: Replace eval() with ast.literal_eval or a real parser — eval executes arbitrary code.
     pattern: function_call
     source_glob: "src/**/*.py"
     forbidden_target_glob: "eval"
     severity: BLOCK
 
   - id: no-pickle-loads
-    description: Use safe serialisation (json, msgpack) instead of pickle
+    description: Replace pickle.loads with json or msgpack — pickle.loads on untrusted data is RCE.
     pattern: function_call
     source_glob: "src/**/*.py"
     forbidden_target_glob: "pickle.loads"
     severity: WARN
 
   - id: no-os-system
-    description: os.system bypasses argv quoting; use subprocess.run with a list
+    description: Replace os.system with subprocess.run(list) — os.system bypasses argv quoting.
     pattern: function_call
     source_glob: "src/**/*.py"
     forbidden_target_glob: "os.system"
@@ -54,23 +67,23 @@ rules:
   # ---- Class-inheritance bans: prevent extending deprecated bases.
 
   - id: no-deprecated-base
-    description: DeprecatedModel is being phased out — extend Model instead
+    description: Extend Model instead of DeprecatedModel — DeprecatedModel is being phased out.
     pattern: class_inherit
     source_glob: "src/**/*.py"
     forbidden_target_glob: "DeprecatedModel"
     severity: WARN
 
-  # ---- Decorator-use bans.
+  # ---- Decorator-use bans: prevent stale-code markers and unreviewed unsafe APIs.
 
   - id: no-deprecated-decorator
-    description: New code shouldn't be marked @deprecated
+    description: Remove the @deprecated decorator or remove the function — new code should not be marked deprecated.
     pattern: decorator_use
     source_glob: "src/**/*.py"
     forbidden_target_glob: "deprecated"
     severity: WARN
 
   - id: no-unsafe-decorators
-    description: Anything under @unsafe.* needs explicit security review
+    description: Any @unsafe.* decorator requires explicit security review before merge.
     pattern: decorator_use
     source_glob: "src/**/*.py"
     forbidden_target_glob: "unsafe.*"

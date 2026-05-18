@@ -45,6 +45,54 @@ from roam.output.formatter import json_envelope, to_json
 _DEFAULT_STATUS = "open"
 _VALID_SEVERITIES = ("H", "M", "L")
 
+# Pattern 3a alias map (W1005-followup-G): canonical W547 severity tokens
+# projected onto the H/M/L short-code emit vocab. Lets a canonical-aware
+# agent pass ``--severity high`` (or ``critical``, ``error``, ``medium``,
+# ``low``, ``info``, ``note``) without hitting a click usage error. Projection
+# rationale mirrors :func:`roam.output._severity.severity_to_confidence_level`
+# (the W565 closed table):
+#
+# * ``critical`` / ``error`` / ``high`` -> ``H`` -- the W547 tiers that gate
+#   CI by default (SARIF level=error or rank>=4) map onto the short-code
+#   blocker tier H (eval rows the user previously marked as blockers).
+# * ``warning`` / ``medium`` -> ``M`` -- the W547 middle tiers (rank 3 / 2)
+#   project onto the short-code mid tier M (eval rows the user marked as
+#   warnings worth investigating).
+# * ``info`` / ``low`` / ``note`` -> ``L`` -- the W547 floor (rank 0 / 1 / 0)
+#   projects onto the short-code floor L (eval rows the user marked as
+#   informational/observational).
+#
+# This is a one-way projection: emit strings stay H/M/L (every ``f["sev"]``
+# in the JSON envelope is one of "H"/"M"/"L"; ``by_severity`` keys are
+# H/M/L), only INPUT parsing is widened. See module docstring + W1004
+# disclosure note above the command for the closed-enum rationale.
+_CANONICAL_TO_SHORTCODE: dict[str, str] = {
+    "critical": "H",
+    "error": "H",
+    "high": "H",
+    "warning": "M",
+    "medium": "M",
+    "info": "L",
+    "low": "L",
+    "note": "L",
+}
+
+
+def _project_severity_input(severity: str) -> str:
+    """Project a ``--severity`` input token onto the H/M/L emit vocab.
+
+    Accepts short-code tokens (``H``/``M``/``L``) as identity AND the W547
+    canonical 7-token vocab via :data:`_CANONICAL_TO_SHORTCODE`. Case-
+    insensitive. Unknown labels collapse to ``M`` (mid-tier default) so a
+    typo never accidentally hides every row OR widens to every row.
+    """
+    key = severity.strip().upper()
+    if key in _VALID_SEVERITIES:
+        return key
+    lower = severity.strip().lower()
+    return _CANONICAL_TO_SHORTCODE.get(lower, "M")
+
+
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _YAML_KV_RE = re.compile(r"^(\w[\w-]*)\s*:\s*(.+?)\s*$", re.MULTILINE)
 
@@ -209,7 +257,13 @@ def _matches_status(eval_status: str, wanted: tuple[str, ...]) -> bool:
 def _matches_severity(sev: str, wanted: tuple[str, ...]) -> bool:
     if not wanted:
         return True
-    return sev.upper() in {w.upper() for w in wanted}
+    # Pattern 3a alias projection (W1005-followup-G): user input may be
+    # H/M/L short-codes OR W547 canonical tokens (high/medium/low/etc.).
+    # Project each wanted token through _CANONICAL_TO_SHORTCODE before
+    # comparing against the emit-side H/M/L sev value. EMIT stays H/M/L
+    # (sev was already H/M/L-validated at parse time via _VALID_SEVERITIES).
+    projected = {_project_severity_input(w) for w in wanted}
+    return sev.upper() in projected
 
 
 def _matches_type(t: str, wanted: tuple[str, ...]) -> bool:
@@ -340,16 +394,25 @@ def _format_filter_label(
     destructive=False,
     stale_sensitive=False,
 )
-# W1004 (audit follow-up to W996): --severity uses click.Choice(["H","M","L"]) —
-# a small fixed closed enum. Unknown --severity raises a click usage error (exit 2).
-# --status and --type intentionally accept free strings: --status reflects whatever
-# values appear in eval frontmatter (open vocabulary authored by humans across
-# sprints), and --type is documented as a substring filter, not an exact-match
-# against a known type registry. Unknown --status / --type values therefore
-# silently filter to zero matching findings (the verdict shows "0 findings" with
-# the active filter label) rather than raising — same divergence rationale as
-# cmd_smells: registry-derived / open vocabularies stay permissive, fixed enums
-# hard-fail at parse.
+# W1004 (audit follow-up to W996): --severity uses a closed Click.Choice enum.
+# Unknown --severity raises a click usage error (exit 2). --status and --type
+# intentionally accept free strings: --status reflects whatever values appear
+# in eval frontmatter (open vocabulary authored by humans across sprints), and
+# --type is documented as a substring filter, not an exact-match against a
+# known type registry. Unknown --status / --type values therefore silently
+# filter to zero matching findings (the verdict shows "0 findings" with the
+# active filter label) rather than raising — same divergence rationale as
+# cmd_smells: registry-derived / open vocabularies stay permissive, fixed
+# enums hard-fail at parse.
+#
+# W1005-followup-G (Pattern 3a alias widening): the closed enum was H/M/L
+# pre-widening. Post-W1005, sibling commands (cmd_smells / cmd_alerts /
+# cmd_health / cmd_api_changes / etc.) accept the W547 canonical 7-token
+# vocab; an agent fluent in canonical severity who typed --severity high
+# would trip click usage error 2. The Choice now accepts BOTH short-codes
+# AND canonical tokens; canonical tokens project onto H/M/L via
+# :data:`_CANONICAL_TO_SHORTCODE` at filter time. EMIT vocab stays H/M/L
+# (one-way projection — _VALID_SEVERITIES still gates row parsing).
 @click.command(name="dogfood-aggregate")
 @click.option(
     "--path",
@@ -375,8 +438,21 @@ def _format_filter_label(
     "--severity",
     "severity_filter",
     multiple=True,
-    type=click.Choice(["H", "M", "L"], case_sensitive=False),
-    help="Filter findings by severity (repeatable; OR semantics).",
+    type=click.Choice(
+        # Short-code emit vocab (H/M/L) + W547 canonical 7-tier (input only,
+        # projected via _CANONICAL_TO_SHORTCODE). Pattern 3a alias widening
+        # per W1005-followup-G -- canonical-aware agents pass any of them
+        # without hitting click usage error 2. EMIT stays H/M/L.
+        ["H", "M", "L", "critical", "error", "high", "warning", "medium", "low", "info", "note"],
+        case_sensitive=False,
+    ),
+    help=(
+        "Filter findings by severity (repeatable; OR semantics). Accepts "
+        "short-codes {H, M, L} OR W547 canonical tokens {critical, error, "
+        "high, warning, medium, low, info, note} -- canonical tokens project "
+        "onto H/M/L (critical/error/high -> H; warning/medium -> M; "
+        "info/low/note -> L)."
+    ),
 )
 @click.option(
     "--type",

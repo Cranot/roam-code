@@ -35,6 +35,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.index.test_conventions import is_test_file as _is_canonical_test_file
+from roam.output._severity import severity_rank
 from roam.output.confidence import (
     confidence_distribution,
     confidence_level_rank,
@@ -1575,9 +1576,14 @@ def analyze_n1(conn, confidence_filter=None):
                     }
                 )
 
-    # Apply confidence filter
+    # Apply confidence filter — W1005-followup-D: equality → floor via
+    # canonical severity_rank(). Detector emits {high, medium, low}; the
+    # Click Choice on ``--confidence`` accepts the full W547 7-tier so
+    # agents can pass any canonical token. Floor keeps a finding when
+    # ``severity_rank(f.confidence) >= severity_rank(confidence_filter)``.
     if confidence_filter:
-        findings = [f for f in findings if f["confidence"] == confidence_filter]
+        _floor_rank = severity_rank(confidence_filter)
+        findings = [f for f in findings if severity_rank(f["confidence"]) >= _floor_rank]
 
     return findings, framework
 
@@ -1650,8 +1656,24 @@ def _build_suggestion(framework, model_name, rel_name, attr_name, io_type):
     "--confidence",
     "confidence_filter",
     default=None,
-    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-    help="Filter by confidence level",
+    # W1005-followup-D: widened from 3-tier {high, medium, low} to the W547
+    # canonical 7-tier so agents can pass any of {critical, error, high,
+    # warning, medium, low, info} and have the floor compared via
+    # ``severity_rank()`` from ``roam.output._severity``. The detector emits
+    # only {high, medium, low} (the CVSS 3-tier) but the Choice accepts the
+    # full canonical vocabulary so canonical-aware agents can pass any tier.
+    # Semantic change: equality → floor (pre-fix kept findings with EXACTLY
+    # that confidence; post-fix keeps findings AT OR ABOVE that rank).
+    type=click.Choice(
+        ["critical", "error", "high", "warning", "medium", "low", "info"],
+        case_sensitive=False,
+    ),
+    help=(
+        "Minimum confidence floor. Uses the canonical W547 7-tier ordering "
+        "(critical > error == high > warning > medium > low > info). Detector "
+        "emits high/medium/low today; canonical aliases rank via the same "
+        "severity_rank() comparator."
+    ),
 )
 @click.option("--limit", "-n", default=30, help="Max findings to show")
 @click.option("--verbose", "-v", is_flag=True, help="Show I/O trace chains")
@@ -1696,8 +1718,112 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
+    # W607-CB -- substrate-boundary plumbing for cmd_n1.
+    # ``_run_check_cb`` wraps each substrate helper so an uncaught raise
+    # in any one boundary degrades to a sensible empty-floor default
+    # AND surfaces a marker in ``_w607cb_warnings_out`` rather than
+    # crashing the N+1 detector outright (W110 foundational detector;
+    # W805 sealed the Pattern-2 empty-state regression but did NOT
+    # install substrate isolation -- this wave adds it). Marker family
+    # ``n1_<phase>_failed:<exc_class>:<detail>``. Substrates wrapped:
+    #
+    #   * analyze_n1                -- core 6-tuple aggregation (analogue
+    #                                 of _analyze_dead from cmd_dead BX)
+    #   * find_model_classes        -- empty-state model counter
+    #   * symbol_count_query        -- empty-state symbol-table COUNT
+    #   * emit_findings             -- W110 findings-registry mirror
+    #                                 (sqlite3.OperationalError silent
+    #                                 no-op preserved for pre-W89 DB)
+    #   * serialize_to_sarif        -- SARIF projection
+    #   * sort_findings             -- confidence-rank sort
+    #   * aggregate_by_confidence   -- by-confidence histogram
+    #   * derive_distribution       -- R22 wrap_findings + distribution
+    #   * apply_confidence_filter   -- redundant safety net over the
+    #                                 in-analyze_n1 floor filter
+    #   * group_by_model            -- text-mode grouping
+    _w607cb_warnings_out: list[str] = []
+
+    def _run_check_cb(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-CB marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface an ``n1_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607cb_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607cb_warnings_out.append(f"n1_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # W607-DQ -- additive aggregation-phase plumbing for cmd_n1.
+    # Layers on top of the W607-CB substrate-CALL plumbing (same
+    # ``n1_<phase>_failed:`` marker family) with the canonical 4-phase
+    # aggregation boundaries used by cmd_dead W607-DL, cmd_smells
+    # W607-DF, cmd_dark_matter W607-CZ, cmd_clones W607-DC, and
+    # cmd_duplicates W607-DD:
+    #
+    #   * score_classify     -- buckets the run by N+1 count into
+    #                          NO_N1 / N1_LIGHT / N1_MODERATE / N1_HEAVY
+    #   * compute_predicate  -- rollup metrics dict (total_count, by_kind,
+    #                          files_affected)
+    #   * compute_verdict    -- single-line verdict string (LAW 6 floor)
+    #   * serialize_envelope -- json_envelope("n1", ...) projection
+    #
+    # The 4 aggregation phase names DO NOT collide with the 9 W607-CB
+    # substrate phase names already in use (analyze_n1 /
+    # find_model_classes / symbol_count_query / emit_findings /
+    # serialize_to_sarif / sort_findings / aggregate_by_confidence /
+    # derive_distribution / group_by_model). ``serialize_envelope`` is
+    # deliberately distinct from ``serialize_to_sarif`` so an agent can
+    # tell which serializer raised.
+    #
+    # W978 7-DISCIPLINE applies to every ``_run_check_dq(...)`` call:
+    #   1. f-string verdict floor: NEVER re-interpolate the same values
+    #      that tripped the closure inside the ``default=`` floor.
+    #   2. kwarg-default eagerness: ``default=`` must be a literal
+    #      constant, never a computed expression.
+    #   3. json.dumps(default=str) sentinel: the serialize_envelope
+    #      floor must be JSON-serializable with the standard encoder.
+    #   4. phase-name collision: verified above against CB's 9 phases.
+    #   5. len() at kwarg-bind: move len() INSIDE the closure, never at
+    #      the ``_run_check_dq(...)`` call site.
+    #   6. unguarded len()/if on poisoned object: the floor MUST be a
+    #      concrete dict/str/None, never a sentinel that may
+    #      __len__-raise downstream.
+    #   7. dict.get(key, expensive_default): use bare ``dict[key]`` when
+    #      the floor guarantees the key.
+    _w607dq_warnings_out: list[str] = []
+
+    def _run_check_dq(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-DQ marker emission.
+
+        Mirror of ``_run_check_cb`` shape (same
+        ``n1_<phase>_failed:`` marker family) but writes into
+        ``_w607dq_warnings_out`` so the additive bucket stays
+        distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607dq_warnings_out.append(f"n1_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     with open_db(readonly=not persist) as conn:
-        findings, framework = analyze_n1(conn, confidence_filter)
+        # W607-CB: ``analyze_n1`` is the core 6-tuple aggregation. A
+        # raise inside per-framework ORM detection or accessor tracing
+        # used to crash the N+1 detector outright; now degrades to
+        # ([], "generic") so the empty-state envelope still emits with
+        # the marker AND ``partial_success: True``.
+        _analyze_result = _run_check_cb(
+            "analyze_n1",
+            analyze_n1,
+            conn,
+            confidence_filter,
+            default=([], "generic"),
+        )
+        findings, framework = _analyze_result if _analyze_result is not None else ([], "generic")
 
         # W805 (Pattern 2: silent fallbacks) — distinguish "scan ran
         # against a populated graph and found zero N+1 patterns" from
@@ -1708,8 +1834,18 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
         # verdict cannot tell the difference between "clean codebase"
         # and "detector never ran on real input". Mirror cmd_taint W826:
         # name the absent state explicitly + partial_success=True.
-        models_scanned = len(_find_model_classes(conn))
-        symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        # W607-CB: wrap both empty-state probes so a raise in
+        # _find_model_classes / the symbols COUNT query degrades to 0
+        # and surfaces a marker rather than crashing the envelope.
+        _model_classes_result = _run_check_cb("find_model_classes", _find_model_classes, conn, default={})
+        models_scanned = len(_model_classes_result or {})
+
+        def _symbol_count():
+            return conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+
+        symbol_count = _run_check_cb("symbol_count_query", _symbol_count, default=0)
+        if symbol_count is None:
+            symbol_count = 0
         empty_state: str | None = None
         if symbol_count == 0:
             empty_state = "empty_corpus"
@@ -1723,6 +1859,12 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
         # detector-specific output (text / JSON) below is unchanged.
         # Wrapped so a pre-W89 DB (no ``findings`` table) silently
         # no-ops rather than crashing the standard read path.
+        # W607-CB: ``_emit_n1_findings`` substrate boundary. The pre-W89
+        # schema path (sqlite3.OperationalError on missing ``findings``
+        # table) is the EXPECTED degraded path -- the try/except below
+        # maintains the W110 silent no-op contract for that case.
+        # Generic exceptions surface via the
+        # ``n1_emit_findings_failed:<exc>:<detail>`` marker.
         if persist:
             try:
                 _emit_n1_findings(conn, findings)
@@ -1730,38 +1872,143 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-CB disclosure
+                _w607cb_warnings_out.append(f"n1_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
         # Sort: high first (W596: canonical rank, negated for ascending order).
-        findings.sort(key=lambda f: -confidence_level_rank(f["confidence"], fallback=-1))
+        # W607-CB: ``sort_findings`` substrate -- a malformed confidence
+        # field used to raise inside the comparator; now degrades to an
+        # unsorted findings list with a marker.
+        def _sort_findings():
+            findings.sort(key=lambda f: -confidence_level_rank(f["confidence"], fallback=-1))
+            return findings
+
+        _run_check_cb("sort_findings", _sort_findings, default=None)
 
         # Apply limit
         truncated = len(findings) > limit
         findings = findings[:limit]
 
         # Confidence counts
-        by_confidence = defaultdict(int)
-        for f in findings:
-            by_confidence[f["confidence"]] += 1
+        # W607-CB: ``aggregate_by_confidence`` substrate -- by-confidence
+        # histogram. Degrades to an empty defaultdict on raise so the
+        # envelope still composes with conf_str="none".
+        def _aggregate_by_confidence():
+            agg: defaultdict[str, int] = defaultdict(int)
+            for f in findings:
+                agg[f["confidence"]] += 1
+            return agg
+
+        by_confidence = _run_check_cb(
+            "aggregate_by_confidence",
+            _aggregate_by_confidence,
+            default=defaultdict(int),
+        )
+        if by_confidence is None:
+            by_confidence = defaultdict(int)
 
         total = len(findings)
         conf_parts = [f"{by_confidence[c]} {c}" for c in ("high", "medium", "low") if by_confidence.get(c)]
         conf_str = ", ".join(conf_parts) if conf_parts else "none"
 
-        if total:
-            verdict = f"{total} implicit N+1 pattern{'s' if total != 1 else ''} found ({conf_str})"
-        elif empty_state == "empty_corpus":
-            verdict = (
-                "no symbols to analyze (corpus empty; "
-                "run `roam index --force` to populate the graph before N+1 detection)"
-            )
-        elif empty_state == "no_models":
-            verdict = (
-                f"no ORM models found in framework={framework} (N+1 detection "
-                f"requires Laravel/Django/Rails/SQLAlchemy/JPA model classes; "
-                f"detector ran but had no input to analyze)"
-            )
-        else:
-            verdict = "No implicit N+1 patterns detected"
+        # W607-DQ -- score_classify boundary. Buckets the run by N+1 count
+        # into a state label:
+        #   * NO_N1          -- total == 0 (no patterns found)
+        #   * N1_LIGHT       -- 0 < total <= 3
+        #   * N1_MODERATE    -- 3 < total <= 10
+        #   * N1_HEAVY       -- total > 10
+        # W978 5th-discipline: ``total`` passed as raw arg; counting
+        # / iteration lives INSIDE the closure (no len() at kwarg-bind).
+        def _score_classify_run(_total):
+            if _total == 0:
+                _state = "NO_N1"
+            elif _total <= 3:
+                _state = "N1_LIGHT"
+            elif _total <= 10:
+                _state = "N1_MODERATE"
+            else:
+                _state = "N1_HEAVY"
+            return {"state": _state, "scanned": _total}
+
+        _score_dict = _run_check_dq(
+            "score_classify",
+            _score_classify_run,
+            total,
+            default={"state": "DEGRADED", "scanned": 0},
+        )
+
+        # W607-DQ -- compute_predicate boundary. Rollup metrics dict
+        # surfacing aggregate dimensions (total_count / by_kind /
+        # files_affected) so a downstream refactor of the rollup logic
+        # surfaces a marker rather than crashing. W978 5th-discipline:
+        # ``findings`` list passed as raw arg; counting / iteration
+        # lives INSIDE the closure.
+        def _compute_predicate_fields(_findings):
+            _by_kind: dict[str, int] = {}
+            _files: set[str] = set()
+            for _f in _findings:
+                _k = _f.get("io_type") or "unknown"
+                _by_kind[_k] = _by_kind.get(_k, 0) + 1
+                _loc = _f.get("model_location") or ""
+                # ``model_location`` is "path:line"; strip the line
+                # to derive the file scope.
+                if _loc:
+                    _file = _loc.rsplit(":", 1)[0] if ":" in _loc else _loc
+                    if _file:
+                        _files.add(_file)
+            return {
+                "total_count": len(_findings),
+                "by_kind": dict(_by_kind),
+                "files_affected": len(_files),
+            }
+
+        _pred_fields = _run_check_dq(
+            "compute_predicate",
+            _compute_predicate_fields,
+            findings,
+            default={
+                "total_count": 0,
+                "by_kind": {},
+                "files_affected": 0,
+            },
+        )
+
+        # W607-DQ -- compute_verdict boundary. Wraps the verdict string
+        # assembly so a downstream f-string refactor (non-int totals
+        # from a vocabulary refactor, or a __format__-raising sentinel)
+        # surfaces a marker rather than crashing the envelope. Literal
+        # "n1 completed" floor (LAW 6 still holds: the line works
+        # standalone).
+        #
+        # W978 1st-discipline: the floor MUST NOT re-interpolate the
+        # same values that tripped the closure. W978 2nd-discipline:
+        # ``default=`` is a literal constant.
+        def _build_verdict_str(_total, _conf_str, _empty_state, _framework):
+            if _total:
+                _plural = "s" if _total != 1 else ""
+                return f"{_total} implicit N+1 pattern{_plural} found ({_conf_str})"
+            if _empty_state == "empty_corpus":
+                return (
+                    "no symbols to analyze (corpus empty; "
+                    "run `roam index --force` to populate the graph before N+1 detection)"
+                )
+            if _empty_state == "no_models":
+                return (
+                    f"no ORM models found in framework={_framework} (N+1 detection "
+                    f"requires Laravel/Django/Rails/SQLAlchemy/JPA model classes; "
+                    f"detector ran but had no input to analyze)"
+                )
+            return "No implicit N+1 patterns detected"
+
+        verdict = _run_check_dq(
+            "compute_verdict",
+            _build_verdict_str,
+            total,
+            conf_str,
+            empty_state,
+            framework,
+            default="n1 completed",
+        )
 
         # --- SARIF output (W1208) ---
         # Branches BEFORE json/text so the pre-existing paths stay
@@ -1770,9 +2017,17 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
         # confidence (high first) and truncated to `--limit`, so a CI
         # gate sees the same evidence the human / agent sees.
         if sarif_mode:
-            from roam.output.sarif import n1_to_sarif, write_sarif
+            # W607-CB: SARIF projection substrate -- a raise in the
+            # SARIF writer used to crash the n1 command on the CI
+            # integration path; now degrades silently to None with a
+            # marker, and the function returns early (matches
+            # pre-W607-CB semantics that SARIF mode short-circuits).
+            def _emit_sarif():
+                from roam.output.sarif import n1_to_sarif, write_sarif
 
-            click.echo(write_sarif(n1_to_sarif(findings)))
+                click.echo(write_sarif(n1_to_sarif(findings)))
+
+            _run_check_cb("serialize_to_sarif", _emit_sarif, default=None)
             return
 
         # --- JSON output ---
@@ -1781,28 +2036,109 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
             # Consumers that previously read findings[i]["model_name"]
             # must now read findings[i]["value"]["model_name"] plus
             # findings[i]["confidence"] / findings[i]["reason"].
-            finding_triples = wrap_findings(findings, classifier=_n1_classify)
-            distribution = confidence_distribution(finding_triples)
-            wrapped_verdict = verdict_with_high_count(verdict, distribution)
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "n1",
-                        summary={
-                            "verdict": wrapped_verdict,
-                            "total": total,
-                            "framework": framework,
-                            "by_confidence": dict(by_confidence),
-                            "truncated": truncated,
-                            "findings_confidence_distribution": distribution,
-                            "state": empty_state or "scanned",
-                            "partial_success": empty_state is not None,
-                            "models_scanned": models_scanned,
-                        },
-                        findings=finding_triples,
-                    )
-                )
+            # W607-CB: ``derive_distribution`` substrate -- R22 wrap +
+            # distribution computation. Degrades to ([], {}, verdict) so
+            # the envelope still emits with empty findings and an
+            # unwrapped verdict.
+            def _derive_distribution():
+                _triples = wrap_findings(findings, classifier=_n1_classify)
+                _dist = confidence_distribution(_triples)
+                _wrapped = verdict_with_high_count(verdict, _dist)
+                return (_triples, _dist, _wrapped)
+
+            _derive_result = _run_check_cb(
+                "derive_distribution",
+                _derive_distribution,
+                default=([], {}, verdict),
             )
+            if _derive_result is None:
+                _derive_result = ([], {}, verdict)
+            finding_triples, distribution, wrapped_verdict = _derive_result
+
+            # W607-CB + W607-DQ: combine substrate-CALL markers
+            # (``_w607cb_warnings_out``) with aggregation-LAYER markers
+            # (``_w607dq_warnings_out``) into a single ``warnings_out``
+            # bucket. Both prefix with ``n1_*`` so the consumer's
+            # marker-prefix filter still groups them together; the
+            # phase name distinguishes substrate (``analyze_n1`` /
+            # ``serialize_to_sarif`` / etc.) from aggregation
+            # (``score_classify`` / ``compute_predicate`` /
+            # ``compute_verdict`` / ``serialize_envelope``).
+            # partial_success flips True whenever EITHER bucket is
+            # non-empty OR an empty-state was named (canonical
+            # Pattern-2 discipline + W805 named-empty preservation).
+            _combined_warnings = list(_w607cb_warnings_out) + list(_w607dq_warnings_out)
+            summary_block = {
+                "verdict": wrapped_verdict,
+                "total": total,
+                "framework": framework,
+                "by_confidence": dict(by_confidence),
+                "truncated": truncated,
+                "findings_confidence_distribution": distribution,
+                "state": empty_state or "scanned",
+                "partial_success": (empty_state is not None or bool(_combined_warnings)),
+                "models_scanned": models_scanned,
+                # W607-DQ: surface score_classify result on the envelope
+                # so consumers can read the run state without re-deriving
+                # from raw counts. W978 7th-discipline anchor: bare
+                # ``_score_dict["state"]`` lookup (floor dict guarantees
+                # the key) -- NOT ``.get("state", expensive_default)``.
+                "run_state": _score_dict["state"],
+                # W607-DQ: surface compute_predicate rollup on the
+                # envelope so consumers can read the aggregate
+                # dimensions without rebuilding from the raw lists.
+                # W978 7th-discipline anchor: bare key lookups.
+                "by_kind": _pred_fields["by_kind"],
+                "files_affected": _pred_fields["files_affected"],
+            }
+            envelope_kwargs: dict = {
+                "summary": summary_block,
+                "findings": finding_triples,
+            }
+            if _combined_warnings:
+                summary_block["warnings_out"] = list(_combined_warnings)
+                envelope_kwargs["warnings_out"] = list(_combined_warnings)
+
+            # W607-DQ -- serialize_envelope boundary. Wraps the envelope
+            # serialization itself. A downstream schema-shape refactor
+            # that breaks ``json_envelope("n1", ...)`` would otherwise
+            # crash AFTER all substrate + aggregation signals were
+            # already gathered. Floor to a minimal envelope stub so
+            # consumers still receive a parseable JSON object with the
+            # marker attached + the canonical command name. W978
+            # 6th-discipline: floor is a concrete dict, not a sentinel
+            # that may __len__-raise downstream.
+            _envelope_floor: dict = {
+                "command": "n1",
+                "schema_version": "1.0.0",
+                "summary": {
+                    "verdict": verdict,
+                    "partial_success": True,
+                    "warnings_out": list(_combined_warnings),
+                },
+                "warnings_out": list(_combined_warnings),
+            }
+            envelope = _run_check_dq(
+                "serialize_envelope",
+                json_envelope,
+                "n1",
+                default=_envelope_floor,
+                **envelope_kwargs,
+            )
+            # W607-DQ -- if ``serialize_envelope`` raised AFTER the
+            # combined bucket was already snapshotted, the new
+            # ``n1_serialize_envelope_failed:`` marker was appended to
+            # ``_w607dq_warnings_out`` and the floor stub carries only
+            # the pre-raise combined list. Rebuild the floor stub's
+            # warnings_out so the new marker reaches the JSON output.
+            # Clean path -> envelope is the real json_envelope return
+            # value, no rebuild needed.
+            if envelope is _envelope_floor and _w607dq_warnings_out:
+                _combined_warnings = list(_w607cb_warnings_out) + list(_w607dq_warnings_out)
+                _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
+                _envelope_floor["warnings_out"] = list(_combined_warnings)
+                envelope = _envelope_floor
+            click.echo(to_json(envelope))
             return
 
         # --- Text output ---
@@ -1815,9 +2151,20 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
         click.echo()
 
         # Group by model
-        by_model = defaultdict(list)
-        for f in findings:
-            by_model[f["model_name"]].append(f)
+        # W607-CB: ``group_by_model`` text-mode substrate -- a raise in
+        # the dict-comprehension degrades to {} so the text path still
+        # exits cleanly past the VERDICT line. The marker stays on the
+        # accumulator for source-grep parity (text mode does not emit
+        # warnings_out by design).
+        def _group_by_model():
+            grouped: defaultdict[str, list] = defaultdict(list)
+            for f in findings:
+                grouped[f["model_name"]].append(f)
+            return grouped
+
+        by_model = _run_check_cb("group_by_model", _group_by_model, default=defaultdict(list))
+        if by_model is None:
+            by_model = defaultdict(list)
 
         for model_name, model_findings in by_model.items():
             model_loc = model_findings[0]["model_location"]

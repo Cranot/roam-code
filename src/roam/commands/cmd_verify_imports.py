@@ -24,6 +24,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.db.edge_kinds import import_in_clause
 from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -276,7 +277,14 @@ def _fts_suggestions(conn: sqlite3.Connection, name: str, limit: int = 3) -> lis
 
 
 def _get_edge_imports(conn: sqlite3.Connection, file_path: str | None) -> list[dict]:
-    """Get import edges from the edges table, optionally filtered by file."""
+    """Get import edges from the edges table, optionally filtered by file.
+
+    W543-followup: source the IN-clause from
+    :func:`roam.db.edge_kinds.import_in_clause` so the verifier matches
+    plugin-emitted ``'imports'`` rows alongside the canonical singular
+    ``'import'``.
+    """
+    kind_clause = import_in_clause("e.kind")
     if file_path:
         rows = conn.execute(
             "SELECT e.source_id, e.target_id, e.line, "
@@ -287,7 +295,7 @@ def _get_edge_imports(conn: sqlite3.Connection, file_path: str | None) -> list[d
             "JOIN symbols s_src ON e.source_id = s_src.id "
             "LEFT JOIN symbols s_tgt ON e.target_id = s_tgt.id "
             "JOIN files f ON s_src.file_id = f.id "
-            "WHERE e.kind = 'import' AND f.path = ?",
+            f"WHERE {kind_clause} AND f.path = ?",
             (file_path,),
         ).fetchall()
     else:
@@ -300,7 +308,7 @@ def _get_edge_imports(conn: sqlite3.Connection, file_path: str | None) -> list[d
             "JOIN symbols s_src ON e.source_id = s_src.id "
             "LEFT JOIN symbols s_tgt ON e.target_id = s_tgt.id "
             "JOIN files f ON s_src.file_id = f.id "
-            "WHERE e.kind = 'import'"
+            f"WHERE {kind_clause}"
         ).fetchall()
 
     return [dict(r) for r in rows]

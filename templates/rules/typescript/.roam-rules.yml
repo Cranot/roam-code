@@ -15,35 +15,39 @@ rules:
   # ---- Dangerous APIs ----
 
   - id: ts-no-eval
-    description: eval() executes arbitrary code; use JSON.parse or a safe parser.
+    description: Replace eval() with JSON.parse or a safe parser; eval() executes arbitrary code.
     pattern: function_call
     source_glob: "src/**/*.{ts,tsx,js,jsx}"
     forbidden_target_glob: eval
     severity: BLOCK
 
   - id: ts-no-function-constructor
-    description: new Function(...) is eval-equivalent at runtime.
+    description: Avoid new Function(...); it is eval-equivalent at runtime.
     pattern: function_call
     source_glob: "src/**/*.{ts,tsx,js,jsx}"
     forbidden_target_glob: Function
     severity: BLOCK
 
   - id: ts-no-document-write
-    description: document.write is a known XSS vector and blocks rendering.
+    description: Remove document.write; it is a known XSS vector and blocks rendering.
     pattern: function_call
     source_glob: "src/**/*.{ts,tsx,js,jsx}"
     forbidden_target_glob: document.write
     severity: BLOCK
 
   - id: ts-no-inner-html
-    description: innerHTML assignments enable XSS; use textContent or React state instead.
+    description: Replace innerHTML assignments with textContent or framework state to block XSS.
     pattern: function_call
     source_glob: "src/**/*.{ts,tsx,js,jsx}"
     forbidden_target_glob: "*.innerHTML"
     severity: WARN
 
+  # WARN (not BLOCK) because setTimeout/setInterval are legitimately called
+  # everywhere with function args — the violation is the string-arg form,
+  # which the literal `setTimeout` target match can't distinguish without
+  # human review of the call site.
   - id: ts-no-set-timeout-string
-    description: setTimeout/setInterval with a string argument is eval-equivalent.
+    description: Pass a function to setTimeout/setInterval instead of a string; the string form is eval-equivalent.
     pattern: function_call
     source_glob: "src/**/*.{ts,tsx,js,jsx}"
     forbidden_target_glob: setTimeout
@@ -74,8 +78,11 @@ rules:
 
   # ---- LLM-favourite hallucinated imports ----
 
+  # WHY: LLMs frequently hallucinate "v2" / numbered module names when the
+  # real module already exists at a non-numbered path. Renaming forces the
+  # author to confirm the actual target.
   - id: ts-no-numbered-modules
-    description: Numbered modules (foo_v2, util1) are typical LLM hallucinations.
+    description: Rename or remove numbered modules (foo_v2, util1); these names are typical LLM hallucinations.
     pattern: import_from
     source_glob: "src/**/*.{ts,tsx,js,jsx}"
     forbidden_target_glob: "*_v[0-9]*"

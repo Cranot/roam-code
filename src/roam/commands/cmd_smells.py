@@ -489,6 +489,119 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
     detail = ctx.obj.get("detail", False) if ctx.obj else False
     ensure_index()
 
+    # W607-BN -- substrate-CALL marker plumbing on the 24-detector smells
+    # aggregator. cmd_smells is the highest-impact detector surface
+    # (3047 findings rows on roam-code per W607-BJ note) and a key
+    # Pattern-2 case-study target (W987 + W1063 follow-ups).
+    #
+    # Substrate boundaries wrapped:
+    #
+    #   * load_suppress_rules        -- .roam/smells.suppress.yml loader
+    #   * query_findings_corpus      -- run_all_detectors dispatch loop
+    #   * apply_suppressions         -- typed-suppression applier
+    #   * apply_kind_filter          -- --kind closed-set filter (W987 Pattern-2)
+    #   * apply_min_severity_filter  -- W547/W1005 5-tier severity rank filter
+    #   * apply_tooling_filter       -- file_role + path-hint tooling exclusion
+    #   * aggregate_by_kind          -- Counter aggregation over 24 detectors
+    #   * classify_severity          -- wrap_findings + confidence_distribution
+    #   * serialize_to_sarif         -- centralized SARIF projection
+    #   * emit_findings              -- W109 findings-registry mirror
+    #
+    # Marker family ``smells_<phase>_failed:<exc_class>:<detail>``.
+    # Empty bucket -> byte-identical envelope on the happy path. Threads
+    # into the existing W987 ``warnings_list`` accumulator (preserved-
+    # list-field discipline) AND ``summary.partial_success=True`` on the
+    # degraded path. Coexists with the prior W987 Pattern-2 + W1063
+    # Pattern-1D plumbing -- the W607-BN bucket is purely additive.
+    _w607bn_warnings_out: list[str] = []
+
+    def _run_check_bn(phase, fn, *args, default=None, **kwargs):
+        """Run one substrate helper with W607-BN marker emission.
+
+        On a clean call the result is returned as-is. On an uncaught
+        exception, surface a ``smells_<phase>_failed:<exc_class>:<detail>``
+        marker via ``_w607bn_warnings_out`` and return *default* -- the
+        envelope still emits cleanly with the remaining substrates.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607bn_warnings_out.append(f"smells_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
+    # --- W607-DF: aggregation-phase marker plumbing (additive) -----------
+    # cmd_smells is the smell-pattern axis of the structural-debt paired-
+    # scoring 4-way (W805: clones BQ/DC, duplicates BM/DD, smells BN/DF,
+    # dark_matter BK/CZ). W607-BN (above) plumbed the substrate-CALL layer
+    # (10 boundaries: load_suppress_rules / query_findings_corpus /
+    # apply_suppressions / apply_kind_filter / apply_min_severity_filter /
+    # apply_tooling_filter / aggregate_by_kind / classify_severity /
+    # serialize_to_sarif / emit_findings). W607-DF adds the
+    # AGGREGATION-PHASE layer on top:
+    #
+    #   score_classify       -- bucket the run state (CLEAN / NEEDS_REFACTORING
+    #                            / FAIR / GOOD) from total + severity_counts
+    #                            so consumers can read the run classification
+    #                            without re-deriving from raw counts.
+    #   compute_predicate    -- extract smells rollup metrics
+    #                            (critical_count / warning_count / info_count /
+    #                            files_affected / smell_types_count).
+    #   compute_verdict      -- composite verdict-string assembly with the
+    #                            confidence-distribution high count suffix.
+    #   serialize_envelope   -- json_envelope("smells", ...) projection.
+    #
+    # Marker family ``smells_*`` -- SAME family as W607-BN (additive, not a
+    # separate prefix). Empty bucket -> byte-identical envelope on the
+    # success path. Two buckets (``_w607bn_warnings_out`` substrate-CALL +
+    # ``_w607df_warnings_out`` aggregation-phase) are combined with the
+    # pre-existing W987 ``warnings_list`` at envelope-emit time so
+    # consumers see the full degradation lineage in marker-emission order.
+    # The additive bucket stays distinguishable via its phase names
+    # (``score_classify`` / ``compute_predicate`` / ``compute_verdict`` /
+    # ``serialize_envelope``).
+    #
+    # STRUCTURAL-DEBT PAIRED-SCORING 4-WAY pairing analogue -- pattern
+    # reused here for the smell-pattern axis. After W607-DF lands, ALL
+    # FOUR members of the 4-way carry an aggregation-phase layer
+    # (closing the structural-debt 4-way at the agg-layer):
+    #   cmd_clones        (W607-BQ substrate + DC aggregation) -- AST-similarity axis
+    #   cmd_duplicates    (W607-BM substrate + DD aggregation) -- token-similarity axis
+    #   cmd_smells        (W607-BN substrate + DF THIS)        -- smell-pattern axis
+    #   cmd_dark_matter   (W607-BK substrate + CZ aggregation) -- co-change axis
+    #
+    # W978 7-DISCIPLINE: every ``default=`` kwarg in a ``_run_check_df(...)``
+    # call MUST be a literal constant (not a computed expression like
+    # ``len(findings) if ...``). cmd_sbom W607-CG sealed this axis;
+    # cmd_taint W607-CJ added the 5th discipline (move ``len()`` INSIDE
+    # the closure, not at the kwarg-bind site); cmd_audit_trail_export
+    # W607-CR added the 7th discipline (use bare ``dict[key]`` lookup when
+    # the floor dict guarantees the key, NOT
+    # ``dict.get(key, expensive_default)`` which evaluates default eagerly).
+    #
+    # W607-BN/DF PHASE-NAME COLLISION (W607-CH 4th-discipline): the
+    # substrate-CALL layer uses phase names load_suppress_rules /
+    # query_findings_corpus / apply_suppressions / apply_kind_filter /
+    # apply_min_severity_filter / apply_tooling_filter / aggregate_by_kind
+    # / classify_severity / serialize_to_sarif / emit_findings. None
+    # collide with score_classify / compute_predicate / compute_verdict /
+    # serialize_envelope, so no rename is required. ``serialize_to_sarif``
+    # vs ``serialize_envelope`` are deliberately distinct phase names so
+    # an agent can tell which serialiser raised.
+    _w607df_warnings_out: list[str] = []
+
+    def _run_check_df(phase, fn, *args, default=None, **kwargs):
+        """Run one aggregation-phase boundary with W607-DF marker emission.
+
+        Mirror of ``_run_check_bn`` shape (same ``smells_<phase>_failed:``
+        marker family) but writes into ``_w607df_warnings_out`` so the
+        additive bucket stays distinguishable in tests + audits.
+        """
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- top-level disclosure
+            _w607df_warnings_out.append(f"smells_{phase}_failed:{type(exc).__name__}:{exc}")
+            return default
+
     from roam.catalog.smells import ALL_DETECTORS, run_all_detectors
 
     # W1294 (perf pushdown): validate --only against the dispatchable
@@ -540,11 +653,23 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
     # — every silent path the CLI reaches has somewhere to surface.
     warnings_list: list[str] = []
 
+    # W607-BN: load_suppress_rules substrate boundary. A YAML parse error
+    # or filesystem failure here should not collapse the smells run --
+    # surface the marker and proceed with an empty suppression set so
+    # detectors still emit their full findings.
     smells_suppressions = (
         []
         if no_suppress or project_root is None
-        else load_smells_suppressions_typed(project_root, warnings_out=warnings_list)
+        else _run_check_bn(
+            "load_suppress_rules",
+            load_smells_suppressions_typed,
+            project_root,
+            warnings_out=warnings_list,
+            default=[],
+        )
     )
+    if smells_suppressions is None:
+        smells_suppressions = []
 
     # W987 (Pattern 2 — closed-set vocabulary): validate --kind against
     # the registered smell-detector set. Unknown ids surface as an
@@ -598,7 +723,19 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
                 warnings_list.append(base_msg)
 
     with open_db(readonly=not persist) as conn:
-        findings = run_all_detectors(conn, only=only_dispatch)
+        # W607-BN: query_findings_corpus substrate boundary. A raise in
+        # any of the 24 detector dispatches collapses run_all_detectors;
+        # surface the marker and proceed with an empty corpus so the
+        # envelope still composes cleanly with verdict + warnings_out.
+        findings = _run_check_bn(
+            "query_findings_corpus",
+            run_all_detectors,
+            conn,
+            only=only_dispatch,
+            default=[],
+        )
+        if findings is None:
+            findings = []
 
         # W658: apply the suppress.yml allowlist BEFORE persist so
         # suppressed findings never enter the findings registry. The
@@ -606,9 +743,19 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
         # (summary.suppressed_count + suppressed_smells[] in detail
         # mode) — Pattern-2 always-emit discipline says don't drop
         # signal silently.
+        #
+        # W607-BN: apply_suppressions substrate boundary.
         suppressed_smells: list[dict] = []
         if smells_suppressions:
-            findings, suppressed_smells = apply_suppressions_typed(findings, smells_suppressions)
+            _suppress_result = _run_check_bn(
+                "apply_suppressions",
+                apply_suppressions_typed,
+                findings,
+                smells_suppressions,
+                default=None,
+            )
+            if _suppress_result is not None:
+                findings, suppressed_smells = _suppress_result
 
         # --- W109: mirror into the central findings registry ---
         # Runs ONLY with --persist. The persisted set is independent of the
@@ -619,12 +766,20 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
         # the headline number; the registry is the cross-detector surface
         # and should carry the unfiltered set.
         if persist:
+            # W607-BN: emit_findings substrate boundary. The pre-W89
+            # schema path (sqlite3.OperationalError on missing
+            # ``findings`` table) is the EXPECTED degraded path -- the
+            # try/except below maintains the W109 silent no-op contract
+            # for that case. Generic exceptions surface via the
+            # ``smells_emit_findings_failed:<exc>:<detail>`` marker.
             try:
                 _emit_smells_findings(conn, findings, SMELLS_DETECTOR_VERSION)
                 conn.commit()
             except sqlite3.OperationalError:
                 # findings table missing (pre-W89 schema) — degrade gracefully.
                 pass
+            except Exception as _emit_exc:  # noqa: BLE001 -- W607-BN disclosure
+                _w607bn_warnings_out.append(f"smells_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
         # Default: exclude tooling, generated, examples, vendor, workspaces,
         # docs. The headline number is dominated by paths the user didn't
@@ -636,22 +791,43 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
         from roam.output.file_role_hints import is_excluded_path
 
         excluded_tooling = 0
-        if not include_tooling:
+
+        def _apply_tooling_filter_pass(items: list[dict]) -> tuple[list[dict], int]:
+            """W607-BN extracted helper: tooling-exclusion pass.
+
+            Returns ``(kept_findings, excluded_count)``. Pulled out so the
+            ``apply_tooling_filter`` substrate-CALL boundary can surface
+            a single ``smells_apply_tooling_filter_failed:<exc>`` marker
+            when either ``_file_role_lookup`` or ``is_excluded_path``
+            raises (degrades to the unfiltered list so the headline
+            number still emits).
+            """
             tooling_roles = {"ci", "scripts", "build", "generated"}
             tooling_roles_per_file = _file_role_lookup(conn)
-            kept: list[dict] = []
-            for f in findings:
-                loc = (f.get("location") or "").replace("\\", "/")
+            kept_local: list[dict] = []
+            excluded = 0
+            for ff in items:
+                loc = (ff.get("location") or "").replace("\\", "/")
                 file_path_only = loc.split(":", 1)[0] if loc else ""
                 role = tooling_roles_per_file.get(file_path_only)
                 if role in tooling_roles:
-                    excluded_tooling += 1
+                    excluded += 1
                     continue
                 if is_excluded_path(file_path_only):
-                    excluded_tooling += 1
+                    excluded += 1
                     continue
-                kept.append(f)
-            findings = kept
+                kept_local.append(ff)
+            return kept_local, excluded
+
+        if not include_tooling:
+            _tooling_result = _run_check_bn(
+                "apply_tooling_filter",
+                _apply_tooling_filter_pass,
+                findings,
+                default=None,
+            )
+            if _tooling_result is not None:
+                findings, excluded_tooling = _tooling_result
 
         # Filter by file
         if file_path:
@@ -662,48 +838,190 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
         # Known ids narrow the result set. Unknown-only filters resolve to
         # zero findings with a warning, instead of silently widening to all
         # findings.
-        if sanitised_kinds:
-            findings = [f for f in findings if f.get("smell_id") in sanitised_kinds]
-        elif kind_filter_requested:
-            findings = []
+        #
+        # W607-BN + W1063 (Pattern-1D): apply_kind_filter substrate boundary.
+        # A raise here would silently widen the result set on filter failure
+        # (LAW 11: user intent > inference); surface the marker and degrade
+        # to an empty set so the consumer sees the disclosure rather than a
+        # full unfiltered result that looks like the filter "worked".
+        def _apply_kind_filter_pass(items: list[dict]) -> list[dict]:
+            """W607-BN extracted helper: --kind closed-set filter."""
+            if sanitised_kinds:
+                return [f for f in items if f.get("smell_id") in sanitised_kinds]
+            if kind_filter_requested:
+                return []
+            return items
+
+        if sanitised_kinds or kind_filter_requested:
+            _kind_result = _run_check_bn(
+                "apply_kind_filter",
+                _apply_kind_filter_pass,
+                findings,
+                default=None,
+            )
+            # On failure, degrade to empty (NOT silent widen): preserves the
+            # closed-set vocabulary semantic from W987/W1063 -- the consumer
+            # sees the marker AND the empty set rather than an unexpectedly
+            # full list.
+            findings = [] if _kind_result is None else _kind_result
 
         # Filter by minimum severity (W564: canonical higher = worse).
+        # W607-BN: apply_min_severity_filter substrate boundary.
         if min_severity:
             min_sev = min_severity.lower()
-            floor = severity_rank(min_sev)
-            findings = [f for f in findings if severity_rank(f.get("severity", "info")) >= floor]
+
+            def _apply_min_severity_pass(items: list[dict]) -> list[dict]:
+                """W607-BN extracted helper: severity-rank filter."""
+                floor = severity_rank(min_sev)
+                return [f for f in items if severity_rank(f.get("severity", "info")) >= floor]
+
+            _sev_result = _run_check_bn(
+                "apply_min_severity_filter",
+                _apply_min_severity_pass,
+                findings,
+                default=None,
+            )
+            if _sev_result is not None:
+                findings = _sev_result
 
         # Compute summary stats
-        total_smells = len(findings)
-        severity_counts = Counter(f.get("severity", "info") for f in findings)
-        smell_types = Counter(f.get("smell_id", "unknown") for f in findings)
-        files_affected = len(set(f.get("location", "").split(":")[0] for f in findings if f.get("location")))
+        # W607-BN: aggregate_by_kind substrate boundary -- the 24-detector
+        # rollup. Counter() over the findings list is trivially safe, but
+        # the substrate boundary discipline keeps the marker family aligned
+        # with the canonical phase set.
+        def _aggregate_by_kind_pass(items: list[dict]) -> tuple[int, Counter, Counter, int]:
+            """W607-BN extracted helper: 24-detector summary aggregation."""
+            total = len(items)
+            sev_counts = Counter(f.get("severity", "info") for f in items)
+            sk_types = Counter(f.get("smell_id", "unknown") for f in items)
+            f_affected = len(set(f.get("location", "").split(":")[0] for f in items if f.get("location")))
+            return total, sev_counts, sk_types, f_affected
 
-        # Verdict
+        _agg_result = _run_check_bn(
+            "aggregate_by_kind",
+            _aggregate_by_kind_pass,
+            findings,
+            default=None,
+        )
+        if _agg_result is None:
+            # Empty-floor fallback: Counter-like dict that survives even if
+            # ``Counter`` itself is the substrate that raised (e.g. a
+            # monkeypatched aggregator under test, or a future numpy/native
+            # accelerator that replaces collections.Counter at import). The
+            # downstream consumer reads via ``.get(k, default)`` which dicts
+            # honour identically.
+            total_smells = 0
+            severity_counts = {}
+            smell_types = {}
+            files_affected = 0
+        else:
+            total_smells, severity_counts, smell_types, files_affected = _agg_result
+
+        # W607-DF -- score_classify boundary. Wraps the run-state
+        # bucketing (CLEAN / NEEDS_REFACTORING / FAIR / GOOD) into a
+        # single state label so a downstream refactor of the state-
+        # selection logic surfaces a marker rather than crashing. The
+        # state label is surfaced on the envelope so consumers can
+        # read it without re-deriving from raw counts. W978 5th-
+        # discipline: ``len()`` lives INSIDE the closure (cmd_taint
+        # W607-CJ anchor); raw counts are passed as positional args.
+        def _score_classify_run(_total, _critical, _warning):
+            if _total == 0:
+                _state = "CLEAN"
+            elif _critical > 0:
+                _state = "NEEDS_REFACTORING"
+            elif _warning > 0:
+                _state = "FAIR"
+            else:
+                _state = "GOOD"
+            return {"state": _state, "scanned": _total}
+
         critical = severity_counts.get("critical", 0)
         warning = severity_counts.get("warning", 0)
-        if total_smells == 0:
-            verdict = "Clean: no code smells detected"
-        elif critical > 0:
-            verdict = (
-                f"Needs refactoring: {total_smells} smell"
-                f"{'s' if total_smells != 1 else ''} "
-                f"({critical} critical, {warning} warning) "
-                f"in {files_affected} file{'s' if files_affected != 1 else ''}"
+
+        _score_dict = _run_check_df(
+            "score_classify",
+            _score_classify_run,
+            total_smells,
+            critical,
+            warning,
+            default={"state": "DEGRADED", "scanned": 0},
+        )
+
+        # W607-DF -- compute_predicate boundary. Wraps the rollup-metrics
+        # extraction (critical_count / warning_count / info_count /
+        # files_affected / smell_types_count). A future refactor of the
+        # severity_counts / smell_types shape would otherwise crash here.
+        # Floor to documented zero counts matching the empty-bucket
+        # branch shape so downstream verdict / serialize stay non-null.
+        # W978 5th-discipline: ``len()`` lives INSIDE the closure.
+        def _compute_predicate_fields(_sev_counts, _smell_types, _files_affected) -> dict:
+            return {
+                "critical_count": _sev_counts.get("critical", 0),
+                "warning_count": _sev_counts.get("warning", 0),
+                "info_count": _sev_counts.get("info", 0),
+                "files_affected": _files_affected,
+                "smell_types_count": len(_smell_types),
+            }
+
+        _pred_fields = _run_check_df(
+            "compute_predicate",
+            _compute_predicate_fields,
+            severity_counts,
+            smell_types,
+            files_affected,
+            default={
+                "critical_count": 0,
+                "warning_count": 0,
+                "info_count": 0,
+                "files_affected": 0,
+                "smell_types_count": 0,
+            },
+        )
+
+        # W607-DF -- compute_verdict boundary. Wraps the verdict-string
+        # assembly so a downstream f-string refactor (non-int totals from
+        # a vocabulary refactor, or a __format__-raising sentinel) surfaces
+        # a marker rather than crashing the envelope. Floor must NOT
+        # re-interpolate the same values that tripped the closure (W978
+        # first-hypothesis discipline). Use the literal "smells completed"
+        # floor (LAW 6 still holds: the line works standalone). Mirror of
+        # cmd_dark_matter W607-CZ "dark-matter completed" anchor.
+        #
+        # W978 5th-discipline: ``total_smells`` / ``critical`` / ``warning`` /
+        # ``files_affected`` passed as raw args; branching lives INSIDE.
+        def _build_verdict_str(_total, _critical, _warning, _files_affected):
+            if _total == 0:
+                return "Clean: no code smells detected"
+            if _critical > 0:
+                return (
+                    f"Needs refactoring: {_total} smell"
+                    f"{'s' if _total != 1 else ''} "
+                    f"({_critical} critical, {_warning} warning) "
+                    f"in {_files_affected} file{'s' if _files_affected != 1 else ''}"
+                )
+            if _warning > 0:
+                return (
+                    f"Fair: {_total} smell"
+                    f"{'s' if _total != 1 else ''} "
+                    f"({_warning} warning) "
+                    f"in {_files_affected} file{'s' if _files_affected != 1 else ''}"
+                )
+            return (
+                f"Good: {_total} minor smell"
+                f"{'s' if _total != 1 else ''} "
+                f"in {_files_affected} file{'s' if _files_affected != 1 else ''}"
             )
-        elif warning > 0:
-            verdict = (
-                f"Fair: {total_smells} smell"
-                f"{'s' if total_smells != 1 else ''} "
-                f"({warning} warning) "
-                f"in {files_affected} file{'s' if files_affected != 1 else ''}"
-            )
-        else:
-            verdict = (
-                f"Good: {total_smells} minor smell"
-                f"{'s' if total_smells != 1 else ''} "
-                f"in {files_affected} file{'s' if files_affected != 1 else ''}"
-            )
+
+        verdict = _run_check_df(
+            "compute_verdict",
+            _build_verdict_str,
+            total_smells,
+            critical,
+            warning,
+            files_affected,
+            default="smells completed",
+        )
 
         # SARIF output (W1171): projection for CI / GitHub Code Scanning.
         # Branches BEFORE json/text so the pre-existing paths stay
@@ -712,6 +1030,16 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
         # registered smell-kind vocabulary; per-finding severity drives
         # the SARIF level (critical -> error, warning -> warning,
         # info -> note).
+        # W607-BN / W607-DF: merge top-level warnings_list (W987) with
+        # the W607-BN substrate-CALL bucket AND the W607-DF aggregation-
+        # phase bucket. Empty buckets -> no change -> byte-identical
+        # envelope on the happy path. The two W607 buckets share the
+        # canonical ``smells_*`` marker family; phase-name disambiguates
+        # which layer raised (substrate vs aggregation).
+        def _merged_warnings() -> list[str]:
+            """Compose W987 ``warnings_list`` ++ ``_w607bn_warnings_out`` ++ ``_w607df_warnings_out``."""
+            return list(warnings_list) + list(_w607bn_warnings_out) + list(_w607df_warnings_out)
+
         if sarif_mode:
             from roam.output.sarif import (
                 runtime_filter_disclosure,
@@ -749,7 +1077,34 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
                 rule_ids_disabled=rule_disabled,
             )
 
-            click.echo(write_sarif(smells_to_sarif(findings, runtime_overrides=sarif_overrides or None)))
+            # W607-BN: serialize_to_sarif substrate boundary. A raise in
+            # the SARIF projection collapses to a degraded JSON envelope
+            # so the consumer still sees the smells corpus + the marker.
+            _sarif_payload = _run_check_bn(
+                "serialize_to_sarif",
+                lambda: write_sarif(smells_to_sarif(findings, runtime_overrides=sarif_overrides or None)),
+                default=None,
+            )
+            if _sarif_payload is not None:
+                click.echo(_sarif_payload)
+            else:
+                _all_w = _merged_warnings()
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "smells",
+                                summary={
+                                    "verdict": "SARIF projection failed; falling back to JSON envelope",
+                                    "total_smells": total_smells,
+                                    "partial_success": True,
+                                    "warnings_out": list(_all_w),
+                                },
+                                smells=[],
+                                warnings_out=list(_all_w),
+                            )
+                        )
+                    )
             return
 
         if json_mode:
@@ -772,8 +1127,21 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
                 }
                 for f in findings
             ]
-            smell_triples = wrap_findings(smell_values, classifier=_smell_classify)
-            distribution = confidence_distribution(smell_triples)
+            # W607-BN: classify_severity substrate boundary -- wrap_findings +
+            # confidence_distribution. A raise here is a substrate failure:
+            # emit the marker and fall back to bare values without the
+            # {value, confidence, reason} triples.
+            _classified = _run_check_bn(
+                "classify_severity",
+                lambda: (wrap_findings(smell_values, classifier=_smell_classify),),
+                default=None,
+            )
+            if _classified is not None:
+                smell_triples = _classified[0]
+                distribution = confidence_distribution(smell_triples)
+            else:
+                smell_triples = smell_values
+                distribution = {}
             verdict_with_conf = verdict_with_high_count(verdict, distribution)
             summary: dict = {
                 "verdict": verdict_with_conf,
@@ -783,6 +1151,12 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
                 "files_affected": files_affected,
                 "findings_confidence_distribution": distribution,
                 "suppressed_count": len(suppressed_smells),
+                # W607-DF: surface score_classify result on the envelope
+                # so consumers can read the run state without re-deriving
+                # from raw counts. W978 7th-discipline anchor: bare
+                # ``_score_dict["state"]`` lookup (floor dict guarantees
+                # the key) -- NOT ``.get("state", expensive_default)``.
+                "run_state": _score_dict["state"],
             }
             # W987 (Pattern 1 — surface silent fallbacks on the envelope):
             # any unknown ``--kind`` value or unknown ``kind:`` in the
@@ -790,22 +1164,71 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
             # both on the top-level ``warnings_out`` field AND flip
             # ``partial_success=True`` so a consumer reading only the
             # summary still sees the silent-state disclosure.
-            if warnings_list:
+            #
+            # W607-BN / W607-DF: the marker buckets _w607bn_warnings_out
+            # and _w607df_warnings_out are sub-streams of the same
+            # warnings_out field. Merge before stamping partial_success
+            # so a BN-only or DF-only failure still flips the bit.
+            _all_w = _merged_warnings()
+            if _all_w:
                 summary["partial_success"] = True
+                # W607-BN / W607-DF: mirror the merged marker stream onto
+                # summary.warnings_out so consumers reading the summary
+                # block alone see the degraded substrates + aggregation
+                # phases (paired with the top-level mirror).
+                summary["warnings_out"] = list(_all_w)
             # W1083-followup-3: when --kind had any unknown values, splice
             # the multi-value helper fragment so the JSON consumer can see
             # the partition + per-unknown ``did_you_mean`` map without
             # parsing the warnings_out strings.
             if _kind_frag is not None and _kind_frag.get("unknown_kinds"):
                 summary.update(to_summary_payload_many(_kind_frag, include_known=False))
-            envelope = json_envelope(
+
+            # W607-DF -- serialize_envelope boundary. Wraps the envelope
+            # serialization itself. A downstream schema-shape refactor
+            # that breaks ``json_envelope("smells", ...)`` would
+            # otherwise crash AFTER all substrate + aggregation signals
+            # were already gathered. Floor to a minimal envelope stub so
+            # consumers still receive a parseable JSON object with the
+            # marker attached + the canonical command name. Mirror of
+            # cmd_dark_matter's W607-CZ / cmd_postmortem's W607-CV /
+            # cmd_taint's W607-CJ / cmd_audit_trail_export's W607-CR
+            # serialize_envelope floor pattern.
+            _envelope_floor: dict = {
+                "command": "smells",
+                "schema_version": "1.0.0",
+                "summary": {
+                    "verdict": verdict,
+                    "partial_success": True,
+                    "warnings_out": list(_all_w),
+                },
+                "warnings_out": list(_all_w),
+            }
+            envelope = _run_check_df(
+                "serialize_envelope",
+                json_envelope,
                 "smells",
                 budget=token_budget,
                 summary=summary,
                 smells=smell_triples,
                 suppressed_smells=suppressed_smells if detail else [],
-                warnings_out=list(warnings_list),
+                warnings_out=list(_all_w),
+                default=_envelope_floor,
             )
+            # W607-DF -- if ``serialize_envelope`` raised AFTER the merged
+            # bucket was already snapshotted, the new
+            # ``smells_serialize_envelope_failed:`` marker was appended
+            # to ``_w607df_warnings_out`` and the floor stub carries only
+            # the pre-raise merged list. Rebuild the floor stub's
+            # warnings_out so the new marker reaches the JSON output.
+            # Clean path -> envelope is the real json_envelope return
+            # value, no rebuild needed.
+            if envelope is _envelope_floor and _w607df_warnings_out:
+                _all_w = _merged_warnings()
+                _envelope_floor["summary"]["warnings_out"] = list(_all_w)
+                _envelope_floor["warnings_out"] = list(_all_w)
+                envelope = _envelope_floor
+
             if not detail:
                 envelope = strip_list_payloads(envelope)
             click.echo(to_json(envelope))
@@ -814,13 +1237,15 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
         # Text output
         click.echo(f"VERDICT: {verdict}\n")
 
-        # W987: surface every accumulated warning prominently — before
-        # the smell list so the user sees the silent-state disclosure
+        # W987 + W607-BN: surface every accumulated warning prominently --
+        # before the smell list so the user sees the silent-state disclosure
         # even when stdout is piped to ``head``. Mirrors the alerts
-        # discipline (cmd_alerts._emit_alerts_text) from W918.
-        if warnings_list:
-            click.echo(f"Warnings ({len(warnings_list)}):")
-            for w in warnings_list:
+        # discipline (cmd_alerts._emit_alerts_text) from W918. Includes the
+        # W607-BN substrate-CALL markers via _merged_warnings().
+        _all_w_text = _merged_warnings()
+        if _all_w_text:
+            click.echo(f"Warnings ({len(_all_w_text)}):")
+            for w in _all_w_text:
                 click.echo(f"  - {w}")
             click.echo()
 

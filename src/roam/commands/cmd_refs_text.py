@@ -27,6 +27,9 @@ W1175-RESEARCH Bucket B propagation plan + W1148 audit memo.
 
 from __future__ import annotations
 
+import os
+import shutil
+
 import click
 
 from roam.capability import roam_capability
@@ -219,16 +222,64 @@ def refs_text_cmd(
     # stays fixed-string for backward compatibility.
     fixed_mode = fixed and not regexp_mode
 
+    # W607-I: Pattern-2 consumer-layer wiring — thread a warnings_out
+    # bucket through the SUBPROCESS-shaped engine fan-out. cmd_refs_text
+    # is the third subprocess-axis consumer (paired with cmd_grep W607-G
+    # + cmd_history_grep W607-H). Three silent fallback locations in the
+    # shared grep_helpers substrate (kept read-only per the task contract):
+    #   1. ``detect_engine`` silently returns ``"fallback"`` when
+    #      ROAM_GREP_ENGINE pins an absent binary → user pin not honored.
+    #   2. ``run_search`` / ``_run_and_parse`` silently swallow
+    #      FileNotFoundError + TimeoutExpired → return [] (looks like a
+    #      no-match) while the subprocess never ran.
+    #   3. Engine fallback re-labeling to "indexed_scan" happens silently
+    #      when the fan-out fallthrough fires.
+    # Marker family is ``refs_text_*`` (NOT ``grep_*`` / ``history_*`` /
+    # ``search_*`` / ``complete_*`` / ``semantic_*``) — refs-text is the
+    # string-audit-with-verdict axis, distinct shape from the sibling
+    # subprocess consumers cmd_grep (W607-G) + cmd_history_grep (W607-H).
+    # Empty bucket → byte-identical envelope (hash-stable). Non-empty
+    # bucket → summary.warnings_out + summary.partial_success=True +
+    # top-level mirror.
+    #
+    # Complementary (NOT a replacement) to the W805-W strict-xfail
+    # Pattern-2 disclosure pins on the empty-corpus SAFE-TO-REMOVE path.
+    # W805-W pins the empty-corpus state-disclosure axis (state="empty_corpus"
+    # / partial_success=True / non-SAFE verdict). W607-I adds the
+    # subprocess-degrade disclosure axis. The W805-W xfail-strict tests
+    # MUST remain xfailed after W607-I lands.
+    warnings_out: list[str] = []
+
+    # --- Engine pin honoring check (W607-I outer-guard) ---
+    # If the user pinned ROAM_GREP_ENGINE to a specific binary AND the
+    # binary is not on PATH, ``detect_engine`` silently returns
+    # ``"fallback"``. That's an unhonored pin — disclose it.
+    _engine_pin = os.environ.get("ROAM_GREP_ENGINE", "auto").strip().lower()
     engine = detect_engine()
+    if _engine_pin in {"ripgrep", "rg"} and engine != "ripgrep":
+        warnings_out.append("refs_text_engine_pin_missing:ripgrep:binary 'rg' not on PATH (shutil.which returned None)")
+    elif _engine_pin in {"git", "git-grep"} and engine != "git":
+        warnings_out.append("refs_text_engine_pin_missing:git:binary 'git' not on PATH (shutil.which returned None)")
+
     used_engine = engine
-    all_matches = run_search(
-        patterns=targets,
-        root=root,
-        globs=glob_filter,
-        fixed_string=fixed_mode,  # W421
-        case_insensitive=ci,
-        engine=engine,
-    )
+    # --- Run engine (outer-guarded) ---
+    try:
+        all_matches = run_search(
+            patterns=targets,
+            root=root,
+            globs=glob_filter,
+            fixed_string=fixed_mode,  # W421
+            case_insensitive=ci,
+            engine=engine,
+        )
+    except Exception as exc:  # noqa: BLE001 — W607-I outer-guard
+        if engine == "ripgrep":
+            warnings_out.append(f"refs_text_ripgrep_failed:{type(exc).__name__}:{exc}")
+        elif engine == "git":
+            warnings_out.append(f"refs_text_git_grep_failed:{type(exc).__name__}:{exc}")
+        else:
+            warnings_out.append(f"refs_text_engine_failed:{type(exc).__name__}:{exc}")
+        all_matches = []
 
     # Engine fallback to indexed-file scan.
     # W1010 lineage: when ``detect_engine`` returns ``"fallback"`` (no rg/git
@@ -239,17 +290,28 @@ def refs_text_cmd(
     if engine == "fallback":
         import re
 
+        # W607-I: disclose the auto-fan-out fallthrough so the agent can
+        # distinguish "no engines on PATH (fell through to indexed scan)"
+        # from "engines present, just no matches".
+        _rg_present = bool(shutil.which("rg"))
+        _git_present = bool(shutil.which("git"))
+        if not _rg_present and not _git_present:
+            warnings_out.append("refs_text_engine_fanout_fallback:auto:neither 'rg' nor 'git' on PATH")
         flags = re.IGNORECASE if ci else 0
         compiled = [re.compile(re.escape(s) if fixed_mode else s, flags) for s in targets]  # W421
-        with open_db(readonly=True) as conn_tmp:
-            all_matches = indexed_file_scan(compiled, conn_tmp, root, glob_filter)
+        try:
+            with open_db(readonly=True) as conn_tmp:
+                all_matches = indexed_file_scan(compiled, conn_tmp, root, glob_filter)
+        except Exception as exc:  # noqa: BLE001 — W607-I outer-guard
+            warnings_out.append(f"refs_text_indexed_scan_failed:{type(exc).__name__}:{exc}")
+            all_matches = []
         used_engine = "indexed_scan"
 
     # Tag each match with which target string(s) it matches (literal/case-aware).
     _tag_matches(all_matches, targets, fixed=fixed_mode, ci=ci)  # W421
 
     if not all_matches:
-        _emit_empty(json_mode, targets, token_budget, used_engine)
+        _emit_empty(json_mode, targets, token_budget, used_engine, warnings_out=warnings_out)
         return
 
     with open_db(readonly=True) as conn:
@@ -274,23 +336,37 @@ def refs_text_cmd(
             # Pattern 1B/1D: degraded resolution — anchor symbol not in
             # index. Emit a structured envelope so MCP wrappers see
             # actionable state instead of a raw COMMAND_FAILED.
+            #
+            # W607-I: also disclose the reachability degrade via
+            # ``warnings_out`` so an agent scanning the bucket can detect
+            # the silent-degrade lineage independently of the existing
+            # ``state``/``resolution`` Pattern-1D disclosure.
+            warnings_out.append(
+                f"refs_text_reachability_degraded:unresolved_entry:entry symbol '{reachable_from}' not found in index"
+            )
             msg = f"entry symbol '{reachable_from}' not found in index"
             if json_mode:
+                _summary: dict = {
+                    "verdict": msg,
+                    "state": "unresolved_entry",
+                    "partial_success": True,
+                    "resolution": "unresolved",
+                    "load_bearing": 0,
+                }
+                _extra: dict = {}
+                if warnings_out:
+                    _summary["warnings_out"] = list(warnings_out)
+                    _extra["warnings_out"] = list(warnings_out)
                 click.echo(
                     to_json(
                         json_envelope(
                             "refs-text",
                             budget=token_budget,
-                            summary={
-                                "verdict": msg,
-                                "state": "unresolved_entry",
-                                "partial_success": True,
-                                "resolution": "unresolved",
-                                "load_bearing": 0,
-                            },
+                            summary=_summary,
                             hint="Verify the symbol exists; try `roam search <name>` first.",
                             strings=list(targets),
                             results=[],
+                            **_extra,
                         )
                     )
                 )
@@ -339,7 +415,15 @@ def refs_text_cmd(
 
     # --- Emit ---
     if json_mode:
-        _emit_json(analyses, targets, token_budget, used_engine, reachable_from, per_match_detail)
+        _emit_json(
+            analyses,
+            targets,
+            token_budget,
+            used_engine,
+            reachable_from,
+            per_match_detail,
+            warnings_out=warnings_out,
+        )
         return
     _emit_text(analyses, targets, reachable_from)
 
@@ -378,8 +462,15 @@ def _tag_matches(matches, targets, *, fixed: bool, ci: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _emit_empty(json_mode, targets, budget, engine):
-    """Engine returned zero matches — emit a SAFE-TO-REMOVE row per target."""
+def _emit_empty(json_mode, targets, budget, engine, *, warnings_out=None):
+    """Engine returned zero matches — emit a SAFE-TO-REMOVE row per target.
+
+    W607-I: when ``warnings_out`` is non-empty, surface the bucket on both
+    summary and top-level (preserved-list-field discipline) and flip
+    ``partial_success`` so agents can distinguish "engine ran cleanly, no
+    matches" from "engine degraded / fanout fallback / pin missing".
+    Empty bucket → byte-identical envelope (hash-stable).
+    """
     results = [
         {
             "string": s,
@@ -391,18 +482,25 @@ def _emit_empty(json_mode, targets, budget, engine):
         for s in targets
     ]
     if json_mode:
+        _summary: dict = {
+            "verdict": f"{len(targets)} string(s) checked, 0 load-bearing",
+            "load_bearing": 0,
+            "engine": engine,
+        }
+        _extra: dict = {}
+        if warnings_out:
+            _summary["warnings_out"] = list(warnings_out)
+            _summary["partial_success"] = True
+            _extra["warnings_out"] = list(warnings_out)
         click.echo(
             to_json(
                 json_envelope(
                     "refs-text",
                     budget=budget,
-                    summary={
-                        "verdict": f"{len(targets)} string(s) checked, 0 load-bearing",
-                        "load_bearing": 0,
-                        "engine": engine,
-                    },
+                    summary=_summary,
                     strings=list(targets),
                     results=results,
+                    **_extra,
                 )
             )
         )
@@ -414,7 +512,15 @@ def _emit_empty(json_mode, targets, budget, engine):
             click.echo()
 
 
-def _emit_json(analyses, targets, budget, engine, reachable_from, per_match_detail):
+def _emit_json(analyses, targets, budget, engine, reachable_from, per_match_detail, *, warnings_out=None):
+    """Emit the populated-matches envelope.
+
+    W607-I: when ``warnings_out`` is non-empty, surface the bucket on both
+    summary and top-level (preserved-list-field discipline) and flip
+    ``partial_success`` so agents can detect subprocess-degrade lineage
+    even on a fully successful audit. Empty bucket → byte-identical
+    envelope (hash-stable).
+    """
     results = []
     overall_load = 0
     for s in targets:
@@ -435,12 +541,17 @@ def _emit_json(analyses, targets, budget, engine, reachable_from, per_match_deta
                 surface: [_serialise_match(m) for m in items] for surface, items in a["surfaces"].items()
             }
         results.append(entry)
-    summary = {
+    summary: dict = {
         "verdict": f"{len(targets)} string(s) checked, {overall_load} load-bearing",
         "load_bearing": overall_load,
         "engine": engine,
         "reachable_from": reachable_from,
     }
+    extra: dict = {}
+    if warnings_out:
+        summary["warnings_out"] = list(warnings_out)
+        summary["partial_success"] = True
+        extra["warnings_out"] = list(warnings_out)
     click.echo(
         to_json(
             json_envelope(
@@ -449,6 +560,7 @@ def _emit_json(analyses, targets, budget, engine, reachable_from, per_match_deta
                 summary=summary,
                 strings=list(targets),
                 results=results,
+                **extra,
             )
         )
     )
